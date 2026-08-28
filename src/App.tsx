@@ -103,6 +103,7 @@ import {
   ChevronDown,
   ThumbsUp,
   LayoutGrid,
+  Warehouse,
   ChevronUp,
   MapPin,
   Mail,
@@ -108624,6 +108625,11 @@ ${waybillLineItems(w).length > 1
               const e = waybillErrors;
               const fieldCls = (key: string) => `w-full rounded-lg border px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 ${e[key] ? "border-red-400 bg-red-50 focus:ring-red-200" : "border-gray-200 bg-white focus:ring-blue-200"}`;
               const Req = () => <span className="text-red-500 ml-0.5">*</span>;
+              // One shape for all six step headings, so a section can never be
+              // titled in a way the others are not.
+              const StepIcon = ({ icon, tone }: { icon: ReactNode; tone: string }) => (
+                <span className={`mr-2 inline-flex h-7 w-7 shrink-0 translate-y-[-1px] items-center justify-center rounded-lg align-middle ${tone}`}>{icon}</span>
+              );
               const ErrMsg = ({ k }: { k: string }) => e[k] ? <p className="mt-1 text-xs text-red-600 font-medium">{e[k]}</p> : null;
               return (
                 <div className="waybill-create-modal px-6 py-5 flex flex-col gap-4" aria-busy={waybillCreating}>
@@ -108631,7 +108637,7 @@ ${waybillLineItems(w).length > 1
                     {/* One waybill can carry several products - each its own qty, one shared route + fee. */}
                     <div className="sm:col-span-2">
                       <div className="flex items-center justify-between mb-1.5">
-                      <label className="block text-sm font-bold text-gray-900">1. Items<Req /></label>
+                      <label className="flex items-center text-sm font-bold text-gray-900"><StepIcon icon={<ClipboardCheck className="h-4 w-4" />} tone="bg-blue-100 text-blue-600" />1. Items<Req /></label>
                         {chosenWbRows.length > 0 && (
                           <span className="text-xs font-semibold text-gray-500">{chosenWbRows.length} {chosenWbRows.length === 1 ? "product" : "products"} · {totalWbQty} units</span>
                         )}
@@ -108653,13 +108659,30 @@ ${waybillLineItems(w).length > 1
                                   <option value="">Select product</option>
                                   {catalogProducts.filter((p) => p.active && (p.id === row.productId || !chosenElsewhere.has(p.id))).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                                 </select>
-                                <input
-                                  type="number" min={1}
-                                  className={`w-20 shrink-0 rounded-lg border px-3 py-2.5 text-sm text-gray-900 text-center focus:outline-none focus:ring-2 ${e.qty ? "border-red-400 bg-red-50 focus:ring-red-200" : "border-gray-200 bg-white focus:ring-blue-200"}`}
-                                  value={row.quantity}
-                                  onChange={(ev) => { updateWaybillItemRow(idx, { quantity: ev.target.value }); setWaybillErrors((prev) => ({ ...prev, qty: "" })); }}
-                                  aria-label="Quantity"
-                                />
+                                <span className={`inline-flex shrink-0 items-center overflow-hidden rounded-lg border ${e.qty ? "border-red-400" : "border-gray-200"} bg-white`}>
+                                  <button type="button" aria-label="Reduce quantity"
+                                    className="!min-h-0 px-2.5 py-2.5 text-gray-500 transition-colors hover:bg-gray-50 disabled:opacity-30"
+                                    disabled={(Number(row.quantity) || 0) <= 1}
+                                    onClick={() => { updateWaybillItemRow(idx, { quantity: String(Math.max(1, (Number(row.quantity) || 1) - 1)) }); setWaybillErrors((prev) => ({ ...prev, qty: "" })); }}>
+                                    <Minus className="h-3.5 w-3.5" />
+                                  </button>
+                                  {/* Typing still works. The buttons are for the
+                                      common case, and the floor of 1 is enforced
+                                      here rather than by trusting min={1}, which
+                                      a keyboard can walk straight past. */}
+                                  <input
+                                    type="number" min={1}
+                                    className="w-12 border-0 bg-transparent px-0 py-2.5 text-center text-sm text-gray-900 focus:outline-none focus:ring-0"
+                                    value={row.quantity}
+                                    onChange={(ev) => { updateWaybillItemRow(idx, { quantity: ev.target.value }); setWaybillErrors((prev) => ({ ...prev, qty: "" })); }}
+                                    aria-label="Quantity"
+                                  />
+                                  <button type="button" aria-label="Increase quantity"
+                                    className="!min-h-0 px-2.5 py-2.5 text-gray-500 transition-colors hover:bg-gray-50"
+                                    onClick={() => { updateWaybillItemRow(idx, { quantity: String((Number(row.quantity) || 0) + 1) }); setWaybillErrors((prev) => ({ ...prev, qty: "" })); }}>
+                                    <Plus className="h-3.5 w-3.5" />
+                                  </button>
+                                </span>
                                 {waybillItems.length > 1 && (
                                   <button type="button" className="!min-h-0 shrink-0 rounded-lg border border-gray-200 bg-white px-2.5 py-2.5 text-gray-400 hover:text-red-600 hover:border-red-200 transition-colors" onClick={() => removeWaybillItemRow(idx)} aria-label="Remove item" title="Remove item">✕</button>
                                 )}
@@ -108682,17 +108705,17 @@ ${waybillLineItems(w).length > 1
                       <input type="number" min={0} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" value={waybillFee} onChange={(e) => setWaybillFee(e.target.value)} />
                       <p className="mt-1.5 text-xs text-gray-500">One fee for the whole waybill</p>
                     </div>
-                    <div className="waybill-fee-note self-end rounded-xl bg-indigo-50 px-4 py-3 text-sm text-indigo-900"><strong>One fee covers the entire waybill</strong><span className="mt-1 block">This fee will be charged once for all items.</span></div>
+                    <div className="waybill-fee-note self-end flex items-start gap-3 rounded-xl bg-indigo-50 px-4 py-3 text-sm text-indigo-900"><span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-indigo-600"><ShieldCheck className="h-4 w-4" /></span><span><strong>One fee covers the entire waybill</strong><span className="mt-1 block">This fee will be charged once for all items.</span></span></div>
                     <div className="sm:col-span-2">
-                      <label className="block text-sm font-bold text-gray-900 mb-1.5">2. Logistics Partner / Carrier<Req /></label>
+                      <label className="mb-1.5 flex items-center text-sm font-bold text-gray-900"><StepIcon icon={<Truck className="h-4 w-4" />} tone="bg-sky-100 text-sky-600" />2. Logistics Partner / Carrier<Req /></label>
                       <input type="text" className={fieldCls("partner")} placeholder="e.g. RNR Log., Korrect, MR B/BSTAR" value={waybillPartner} onChange={(ev) => { setWaybillPartner(ev.target.value); setWaybillErrors((prev) => ({ ...prev, partner: "" })); }} />
                       <ErrMsg k="partner" />
                     </div>
                     <div className="sm:col-span-2">
-                      <label className="block text-sm font-bold text-gray-900 mb-1.5">3. Sending From<Req /></label>
+                      <label className="mb-1.5 flex items-center text-sm font-bold text-gray-900"><StepIcon icon={<Truck className="h-4 w-4" />} tone="bg-violet-100 text-violet-600" />3. Sending From<Req /></label>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
-                        <button type="button" className={`px-3 py-2 rounded-lg text-sm font-semibold border transition-colors ${waybillFromType === "Warehouse" ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"}`} onClick={() => { setWaybillFromType("Warehouse"); setWaybillFromAgentId(""); setWaybillFromAgentLocationId(""); setWaybillErrors((prev) => ({ ...prev, fromAgent: "" })); }}>Warehouse (Lagos)</button>
-                        <button type="button" className={`px-3 py-2 rounded-lg text-sm font-semibold border transition-colors ${waybillFromType === "Agent" ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"}`} onClick={() => { setWaybillFromType("Agent"); setWaybillFromAgentLocationId(""); }}>State Agent</button>
+                        <button type="button" aria-pressed={waybillFromType === "Warehouse"} className={`!min-h-0 flex items-center gap-2.5 rounded-xl border p-3 text-left transition-colors ${waybillFromType === "Warehouse" ? "border-[#1F8FE0] bg-blue-50/70 ring-1 ring-[#1F8FE0]" : "border-gray-200 bg-white hover:bg-gray-50"}`} onClick={() => { setWaybillFromType("Warehouse"); setWaybillFromAgentId(""); setWaybillFromAgentLocationId(""); setWaybillErrors((prev) => ({ ...prev, fromAgent: "" })); }}><span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${waybillFromType === "Warehouse" ? "bg-blue-100 text-[#1F8FE0]" : "bg-gray-100 text-gray-400"}`}><Warehouse className="h-4 w-4" /></span><span className="min-w-0 flex-1 text-sm font-bold text-gray-900">Warehouse (Lagos)</span>{waybillFromType === "Warehouse" && <CheckCircle2 className="h-5 w-5 shrink-0 text-[#1F8FE0]" />}</button>
+                        <button type="button" aria-pressed={waybillFromType === "Agent"} className={`!min-h-0 flex items-center gap-2.5 rounded-xl border p-3 text-left transition-colors ${waybillFromType === "Agent" ? "border-[#1F8FE0] bg-blue-50/70 ring-1 ring-[#1F8FE0]" : "border-gray-200 bg-white hover:bg-gray-50"}`} onClick={() => { setWaybillFromType("Agent"); setWaybillFromAgentLocationId(""); }}><span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${waybillFromType === "Agent" ? "bg-blue-100 text-[#1F8FE0]" : "bg-gray-100 text-gray-400"}`}><UserRound className="h-4 w-4" /></span><span className="min-w-0 flex-1 text-sm font-bold text-gray-900">State Agent</span>{waybillFromType === "Agent" && <CheckCircle2 className="h-5 w-5 shrink-0 text-[#1F8FE0]" />}</button>
                       </div>
                       {waybillFromType === "Warehouse" && (
                         <p className="text-xs text-gray-500">Each product's warehouse stock (and balance after dispatch) is shown beside it above.</p>
@@ -108750,7 +108773,7 @@ ${waybillLineItems(w).length > 1
                       )}
                     </div>
                     <div className="sm:col-span-2">
-                      <label className="block text-sm font-bold text-gray-900 mb-1.5">4. Sending To (Receiving Agent) <span className="font-normal text-gray-400">(optional)</span></label>
+                      <label className="mb-1.5 flex items-center text-sm font-bold text-gray-900"><StepIcon icon={<UserRound className="h-4 w-4" />} tone="bg-amber-100 text-amber-600" />4. Sending To (Receiving Agent) <span className="ml-1 font-normal text-gray-400">(optional)</span></label>
                       <select
                         className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200 mb-2"
                         value={waybillToAgentId}
@@ -108811,18 +108834,28 @@ ${waybillLineItems(w).length > 1
                       <ErrMsg k="toState" />
                     </div>
                     <div>
-                      <label className="block text-sm font-bold text-gray-900 mb-1.5">5. Date Sent<Req /></label>
+                      <label className="mb-1.5 flex items-center text-sm font-bold text-gray-900"><StepIcon icon={<CalendarDays className="h-4 w-4" />} tone="bg-emerald-100 text-emerald-600" />5. Date Sent<Req /></label>
                       <input type="date" className={fieldCls("dateSent")} value={waybillDateSent} onChange={(ev) => { setWaybillDateSent(ev.target.value); setWaybillErrors((prev) => ({ ...prev, dateSent: "" })); }} />
                       <ErrMsg k="dateSent" />
                     </div>
                     <div>
-                      <label className="block text-sm font-bold text-gray-900 mb-1.5">6. Note <span className="font-normal text-gray-400">(optional)</span></label>
+                      <label className="mb-1.5 flex items-center text-sm font-bold text-gray-900"><StepIcon icon={<StickyNote className="h-4 w-4" />} tone="bg-slate-100 text-slate-500" />6. Note <span className="ml-1 font-normal text-gray-400">(optional)</span></label>
                       <input type="text" className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="e.g. Restock, Urgent transfer" value={waybillNote} onChange={(e) => setWaybillNote(e.target.value)} />
                     </div>
                   </div>
-                  <div className="waybill-summary rounded-xl border border-emerald-100 bg-emerald-50/70 px-4 py-3">
-                    <p className="font-bold text-emerald-900">Summary</p>
-                    <p className="mt-1 text-sm text-emerald-800">Review all details before creating the waybill.</p>
+                  <div className="waybill-summary flex items-start gap-3 rounded-xl border border-emerald-100 bg-emerald-50/70 px-4 py-3">
+                    <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700"><Package className="h-5 w-5" /></span>
+                    <span>
+                      <p className="m-0 font-bold text-emerald-900">Summary</p>
+                      {/* Says what is actually on the waybill, not just that a
+                          summary exists - a heading with no figures under it is
+                          the one part of this modal nobody can check. */}
+                      <p className="m-0 mt-1 text-sm text-emerald-800">
+                        {chosenWbRows.length > 0
+                          ? `${totalWbQty} unit${totalWbQty === 1 ? "" : "s"} across ${chosenWbRows.length} product${chosenWbRows.length === 1 ? "" : "s"}${waybillPartner ? ` via ${waybillPartner}` : ""}. Review all details before creating the waybill.`
+                          : "Add at least one product. Review all details before creating the waybill."}
+                      </p>
+                    </span>
                   </div>
                   <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
                     <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center px-6 py-2.5 rounded-lg border border-gray-200 text-gray-900 text-sm font-bold hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
