@@ -108619,7 +108619,7 @@ ${waybillLineItems(w).length > 1
               const Req = () => <span className="text-red-500 ml-0.5">*</span>;
               const ErrMsg = ({ k }: { k: string }) => e[k] ? <p className="mt-1 text-xs text-red-600 font-medium">{e[k]}</p> : null;
               return (
-                <div className="px-6 py-5 flex flex-col gap-4">
+                <div className="waybill-create-modal px-6 py-5 flex flex-col gap-4">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {/* One waybill can carry several products - each its own qty, one shared route + fee. */}
                     <div className="sm:col-span-2">
