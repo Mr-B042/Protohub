@@ -9496,9 +9496,15 @@ html.dark .workspace-content :is(.text-rose-600, .text-rose-700, .text-rose-800,
 
 /* New Waybill modal: reference-style grouped form without changing its
    existing field order or validation behavior. */
+/* ⚠️ iPad-portrait width (52rem = 832px, an iPad Pro 11" is 834pt), NOT the
+   70rem/1120px this used to be. The form is a SEQUENCE of six numbered steps,
+   and at 1120px its paired rows stretch so far apart that step 3 and step 4 sit
+   at opposite ends of the screen and stop reading as one flow. The two-column
+   pairs still apply - Tailwind's sm: breakpoint is 640px - so the layout is the
+   one in the design, just at a width a person can actually scan top to bottom. */
 body:has(.waybill-create-modal) > .fixed > section {
-  width: min(70rem, calc(100vw - 2rem));
-  max-width: 70rem;
+  width: min(52rem, calc(100vw - 2rem));
+  max-width: 52rem;
   max-height: calc(100dvh - 2rem);
 }
 
