@@ -28745,8 +28745,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     };
 
     return (
-      <div className="space-y-5">
-        <section className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 to-emerald-50 p-5 shadow-sm">
+      <div className="manager-bonus-panel space-y-5">
+        <section className="manager-bonus-hero rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 to-emerald-50 p-5 shadow-sm">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="max-w-3xl">
               <div className="inline-flex items-center gap-2 rounded-full bg-white/80 border border-blue-100 px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-[#1F8FE0]">
@@ -29899,8 +29899,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       .sort((a, b) => a.revenue - b.revenue);
 
     return (
-      <div className="space-y-5">
-        <section className="rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50 to-blue-50 p-5 shadow-sm">
+      <div className="manager-upsell-panel space-y-5">
+        <section className="manager-upsell-hero rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50 to-blue-50 p-5 shadow-sm">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="max-w-3xl">
               <div className="inline-flex items-center gap-2 rounded-full bg-white/80 border border-emerald-100 px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-emerald-700">
@@ -32064,8 +32064,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     };
 
     return (
-      <div className="space-y-6">
-        <header className="flex flex-col gap-1 px-5 py-4 bg-gradient-to-r from-amber-50 to-transparent rounded-2xl border border-amber-100">
+      <div className="manager-needs-attention-panel space-y-6">
+        <header className="manager-needs-attention-hero flex flex-col gap-1 px-5 py-4 bg-gradient-to-r from-amber-50 to-transparent rounded-2xl border border-amber-100">
           <div className="flex items-center gap-2">
             <span className="inline-block w-2 h-2 rounded-full bg-amber-500" />
             <span className="text-xs font-semibold text-amber-700 uppercase tracking-widest">Live - not filtered by period</span>

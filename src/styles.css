@@ -9440,6 +9440,73 @@ html.dark .workspace-content :is(.text-rose-600, .text-rose-700, .text-rose-800,
   border-color: hsl(230 42% 42%) !important;
 }
 
+.app-shell[data-theme="dark"] .manager-bonus-panel .manager-bonus-hero {
+  background: linear-gradient(135deg, hsl(214 36% 18%), hsl(158 30% 16%)) !important;
+  border-color: hsl(211 52% 34%) !important;
+}
+
+.app-shell[data-theme="dark"] .manager-bonus-panel .manager-bonus-hero :is(.bg-white, .bg-white\/80) {
+  background: hsl(var(--surface-muted)) !important;
+  border-color: hsl(var(--border)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+.app-shell[data-theme="dark"] .manager-bonus-panel .manager-bonus-hero > div > div > p {
+  color: hsl(var(--text-muted)) !important;
+}
+
+.app-shell[data-theme="dark"] .manager-bonus-panel .manager-bonus-hero > div > div > h2 {
+  color: hsl(0 0% 98%) !important;
+}
+
+.app-shell[data-theme="dark"] .manager-bonus-panel .manager-bonus-hero button {
+  background: hsl(var(--surface-card)) !important;
+  border-color: hsl(var(--border)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+.app-shell[data-theme="dark"] .manager-bonus-panel .manager-bonus-hero button:hover {
+  background: hsl(var(--surface-hover)) !important;
+}
+
+.app-shell[data-theme="dark"] .manager-upsell-panel .manager-upsell-hero {
+  background: linear-gradient(135deg, hsl(158 30% 17%), hsl(211 34% 17%)) !important;
+  border-color: hsl(151 48% 32%) !important;
+}
+
+.app-shell[data-theme="dark"] .manager-upsell-panel .manager-upsell-hero :is(.bg-white, .bg-white\/80) {
+  background: hsl(var(--surface-muted)) !important;
+  border-color: hsl(var(--border)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+.app-shell[data-theme="dark"] .manager-upsell-panel .manager-upsell-hero h2 {
+  color: hsl(0 0% 98%) !important;
+}
+
+.app-shell[data-theme="dark"] .manager-upsell-panel .manager-upsell-hero p {
+  color: hsl(var(--text-muted)) !important;
+}
+
+.app-shell[data-theme="dark"] .manager-upsell-panel .manager-upsell-hero button {
+  background: hsl(var(--surface-card)) !important;
+  border-color: hsl(var(--border)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+.app-shell[data-theme="dark"] .manager-needs-attention-panel .manager-needs-attention-hero {
+  background: linear-gradient(110deg, hsl(35 42% 18%), hsl(220 31% 13%) 72%) !important;
+  border-color: hsl(35 54% 34%) !important;
+}
+
+.app-shell[data-theme="dark"] .manager-needs-attention-panel .manager-needs-attention-hero h1 {
+  color: hsl(0 0% 98%) !important;
+}
+
+.app-shell[data-theme="dark"] .manager-needs-attention-panel .manager-needs-attention-hero p {
+  color: hsl(var(--text-muted)) !important;
+}
+
 /* Follow-up Queue typography: keep operational data compact and aligned,
    while reserving italics for actual notes/secondary guidance. */
 .follow-up-queue-page {
