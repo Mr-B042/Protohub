@@ -247,7 +247,9 @@ const ORG_MANIFEST_PATH = "/org-manifest.webmanifest";
 // These screens monitor trends rather than a single live cart. They load the
 // complete timeline once, then poll incrementally. A one-minute cadence keeps
 // the dashboard fresh without repeatedly moving a large analytics dataset.
-const CART_JOURNEY_ANALYTICS_POLL_MS = 60_000;
+// Realtime is the fast path. Range analytics are a recovery snapshot, and can
+// be large on busy days, so avoid downloading them every minute in every tab.
+const CART_JOURNEY_ANALYTICS_POLL_MS = 5 * 60_000;
 const CART_JOURNEY_BULK_CHUNK_SIZE = 450;
 const WORKSPACE_FULL_RESYNC_MS = 30 * 60_000;
 
@@ -7218,12 +7220,12 @@ const CART_JOURNEY_POLL_MS = 60_000;
 // The cart-details modal subscribes to Realtime for instant updates. This
 // slower interval is a safety net for the rare case where the websocket
 // is dropped (reconnects, sleeping laptops, flaky mobile networks).
-const CART_DETAIL_FALLBACK_POLL_MS = 30_000;
+const CART_DETAIL_FALLBACK_POLL_MS = 60_000;
 
 // ── FORM_PULSE_POLL_MS ────────────────────
 // Realtime journey events refresh this panel immediately. This interval only
 // repairs websocket gaps, so it can stay slow and inexpensive.
-const FORM_PULSE_POLL_MS = 60_000;
+const FORM_PULSE_POLL_MS = 2 * 60_000;
 const NOTIFICATION_FALLBACK_POLL_MS = 5 * 60_000;
 const PRESENCE_HEARTBEAT_MS = 45_000;
 const PRESENCE_FALLBACK_POLL_MS = 15_000;
@@ -12265,7 +12267,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     createdAt: string;
   }>>([]);
   const [selectedCartId, setSelectedCartId] = useState("");
-  // Live activity poll - runs every 3s when a cart is selected and was active recently
+  // Live activity is approximate presence, not a customer action log. An
+  // eight-second refresh remains responsive without continuously reading the
+  // same row while a manager leaves the modal open.
   useEffect(() => {
     if (cartLivePollRef.current) { clearInterval(cartLivePollRef.current); cartLivePollRef.current = null; }
     setSelectedCartLiveStatus(null);
@@ -12278,7 +12282,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       } catch { /* ignore - cart may have been deleted */ }
     };
     poll();
-    cartLivePollRef.current = setInterval(poll, 3000);
+    cartLivePollRef.current = setInterval(poll, 8000);
     return () => { if (cartLivePollRef.current) { clearInterval(cartLivePollRef.current); cartLivePollRef.current = null; } };
   }, [selectedCartId]);
   const [expandedOrderCaptureDataId, setExpandedOrderCaptureDataId] = useState<string | null>(null);
@@ -39608,7 +39612,9 @@ ${waybillLineItems(w).length > 1
     showWhatsappField, requireWhatsapp, addressRequired
   ]);
 
-  // ── Embed form heartbeat - sends live activity to admin every 3s ──
+  // ── Embed form heartbeat ──
+  // Customer actions are sent immediately through journey events. This pulse
+  // only says the form is still open, so ten-second presence is sufficient.
   useEffect(() => {
     if (!publicProduct || publicOrderSubmitted || !abandonedDraftCartId) return;
     if (heartbeatIntervalRef.current) { clearInterval(heartbeatIntervalRef.current); heartbeatIntervalRef.current = null; }
@@ -39617,7 +39623,7 @@ ${waybillLineItems(w).length > 1
       cartsApi.heartbeat(abandonedDraftCartId, s);
     };
     send();
-    heartbeatIntervalRef.current = setInterval(send, 3000);
+    heartbeatIntervalRef.current = setInterval(send, 10_000);
     return () => { if (heartbeatIntervalRef.current) { clearInterval(heartbeatIntervalRef.current); heartbeatIntervalRef.current = null; } };
   }, [publicProduct, publicOrderSubmitted, abandonedDraftCartId]);
 

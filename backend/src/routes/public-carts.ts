@@ -494,7 +494,9 @@ router.post("/", captureRateLimit, async (req, res) => {
 
 // ── POST /api/public/carts/:id/heartbeat ─────────────────
 // Real-time "customer is typing / scrolling / idle" signal from the embed form.
-// Fires every 3s while the customer is active. Writes to live_status (jsonb).
+// The browser sends this periodically while the customer is active. Suppress
+// duplicate writes inside an eight-second window so stale/older clients cannot
+// turn one open form into a constant Postgres + Realtime fan-out.
 // Rate-limited via the same captureRateLimit (60 req/min per IP).
 router.post("/:id/heartbeat", captureRateLimit, async (req, res) => {
   const cartId = String(req.params.id ?? "").trim();
@@ -512,10 +514,12 @@ router.post("/:id/heartbeat", captureRateLimit, async (req, res) => {
   };
 
   // Only update if the cart exists — don't create phantom rows
+  const writeCutoff = new Date(Date.now() - 8_000).toISOString();
   const { error } = await supabase
     .from("abandoned_carts")
     .update({ live_status: liveStatus, last_activity: new Date().toISOString() })
-    .eq("id", cartId);
+    .eq("id", cartId)
+    .or(`last_activity.is.null,last_activity.lt.${writeCutoff}`);
 
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json({ ok: true });
