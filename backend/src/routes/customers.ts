@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
@@ -15,7 +16,11 @@ router.get("/", async (req, res) => {
     .from("orders")
     .select("phone, customer, city, state, amount, status, created_at, assigned_rep_id")
     .eq("org_id", req.user!.orgId)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    // ⚠️ The customer list is DERIVED from this scan. Capped at PostgREST's
+    // silent 1000, a customer whose only order is older than that stops
+    // existing - not shown late, absent.
+    .limit(REPORT_ROW_CEILING);
   // Sales Reps only see customers from their own orders (spy mode: use effective role/id)
   const scopeRole = req.user!.effectiveUserRole ?? req.user!.role;
   const scopeId   = req.user!.effectiveUserId   ?? req.user!.id;

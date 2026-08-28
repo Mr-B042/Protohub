@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -142,11 +143,17 @@ async function restoreWaybillSourceStock(
 }
 
 router.get("/", async (req, res) => {
+  // ⚠️ EXPLICIT CEILING. Unbounded, PostgREST caps this at 1000 rows and says
+  // nothing. With 2,092 waybills ordered newest-first that returned everything
+  // back to 2026-07-16 and silently hid 1,092 older ones - the whole of May and
+  // June looked as though the business had never waybilled anything, which is
+  // exactly how it was reported.
   const { data, error } = await supabase
     .from("waybill_records")
     .select("*")
     .eq("org_id", req.user!.orgId)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(REPORT_ROW_CEILING);
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json(data);
 });
