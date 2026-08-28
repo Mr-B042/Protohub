@@ -55184,7 +55184,7 @@ ${waybillLineItems(w).length > 1
     const atRisk = open.reduce((sum, row) => sum + Number(row.amount_at_risk ?? 0), 0);
 
     return (
-      <div className="space-y-4">
+      <div className="cart-follow-up-page space-y-4">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
             <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Open incidents</div>
