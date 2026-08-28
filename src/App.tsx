@@ -97938,13 +97938,18 @@ ${waybillLineItems(w).length > 1
               <span className="pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 z-10 bg-gradient-to-r from-transparent via-amber-200/30 dark:via-amber-300/20 to-transparent" style={{ animation: "goldShimmerSweep 3.2s ease-in-out infinite" }} />
             )}
             <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-100 dark:border-slate-800/80 shrink-0">
-              <h2 id="modal-title" className="min-w-0 flex-1 text-base font-semibold text-gray-900 dark:text-slate-100">
+              {modal === "createWaybill" && (
+                <div className="waybill-modal-icon shrink-0" aria-hidden="true"><Package className="h-7 w-7" /></div>
+              )}
+              <div className="min-w-0 flex-1">
+              <h2 id="modal-title" className="min-w-0 text-base font-semibold text-gray-900 dark:text-slate-100">
                 {modal === "createTeam" && "Create New Team"}
                 {modal === "editTeam" && "Edit Team"}
                 {modal === "notifications" && "Notifications"}
                 {modal === "help" && activeHelp.title}
                 {modal === "signout" && "Sign Out"}
                 {modal === "carts" && "Abandoned Carts"}
+                {modal === "createWaybill" && "Create New Waybill"}
                 {modal === "addProduct" && "Add New Product"}
                 {modal === "addExtraItems" && "Add other products"}
                 {modal === "updateStock" && "Update Stock"}
@@ -98087,7 +98092,9 @@ ${waybillLineItems(w).length > 1
                 {modal === "newStockCount" && "New Stock Count Session"}
                 {modal === "stockCountEntry" && "Enter Stock Counts"}
                 {modal === "adjustStockCount" && "Adjust Stock - Write-off Reason"}
-	              </h2>
+              </h2>
+              {modal === "createWaybill" && <p className="waybill-modal-subtitle">Fill in the details below to create a new waybill</p>}
+              </div>
               <button className="!min-h-0 p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:text-slate-400 dark:hover:text-slate-100 dark:hover:bg-[#1a2834] transition-colors" aria-label="Close dialog" onClick={closeModal}><X className="w-5 h-5" /></button>
             </div>
             <div className={`min-h-0 flex-1 overscroll-contain ${modal === "sendToAgent" ? "overflow-hidden" : "overflow-y-auto"}`}>

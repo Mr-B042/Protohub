@@ -9504,6 +9504,23 @@ body:has(.waybill-create-modal) > .fixed > section {
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
 }
 
+body:has(.waybill-create-modal) .waybill-modal-icon {
+  display: grid;
+  place-items: center;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 1.25rem;
+  color: #fff;
+  background: linear-gradient(135deg, #6475ff, #164cd8);
+  box-shadow: 0 10px 22px rgba(37, 99, 235, .22);
+}
+
+body:has(.waybill-create-modal) .waybill-modal-subtitle {
+  margin-top: .25rem;
+  color: #64748b;
+  font-size: .875rem;
+}
+
 .waybill-create-modal > .grid {
   gap: 1rem;
 }
