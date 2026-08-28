@@ -3202,6 +3202,9 @@ export type CartGridRow = {
   /** Finished: order delivered, customer said no, or the number was wrong.
    *  A display state only - logging stays possible if they come back. */
   closed?: boolean; closedReason?: string | null;
+  /** When it reached a terminal status. NULL for carts closed before
+   *  migration 239 - there was no record then - and NULL while still open. */
+  closedAt?: string | null;
   /** Untouched for 2+ days, never contacted, or a promised callback is due. */
   needsLog?: boolean; neverContacted?: boolean; staleDays?: number;
   /** When the rep told the customer they would ring back. */

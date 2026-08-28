@@ -60748,6 +60748,11 @@ ${waybillLineItems(w).length > 1
       rows.forEach((row) => { counts[recoveryOutcome(row) as keyof typeof counts] += 1; });
       return {
         assigned: rows.length,
+        // ⚠️ REACHED, not attempted. "246 worked" counts dialling; this counts
+        // conversations. The gap between the two is where a rep who rings and
+        // hangs up looks identical to one who actually spoke to the customer.
+        reached: rows.filter((row) => Object.values(row.cells ?? {})
+          .some((cell: any) => cell?.reached)).length,
         // "Worked" is a logged attempt, NOT a closed cart. Separating the two
         // is the whole point: a closed cart with no attempt was never worked.
         worked: rows.filter((row) => (row.attempts ?? 0) > 0).length,
@@ -60844,6 +60849,55 @@ ${waybillLineItems(w).length > 1
      * put a misconduct flag on a rep's name using a timestamp that means
      * something else. They need a column first.
      */
+    /**
+     * Closed within two minutes of the FIRST attempt on that cart.
+     *
+     * ⚠️ Only carts carrying a closed_at can be judged, i.e. those closed since
+     * migration 239. Everything older is skipped rather than guessed at - see
+     * the migration for why last_activity is not a substitute.
+     */
+    const flagQuickClose = weekScoped.filter((row) => {
+      if (!row.closedAt) return false;
+      const first = Object.values(row.cells ?? {})
+        .flatMap((cell: any) => (cell?.entries ?? []).map((entry: any) => entry.attemptedAt))
+        .filter(Boolean).map((iso: string) => new Date(iso).getTime())
+        .filter((time) => Number.isFinite(time));
+      if (first.length === 0) return false;
+      const gapMinutes = (new Date(row.closedAt).getTime() - Math.min(...first)) / 60_000;
+      return gapMinutes >= 0 && gapMinutes < 2;
+    });
+
+    /**
+     * Three or more carts closed by one rep inside a three-minute window -
+     * the signature of clearing a queue rather than working it.
+     *
+     * Counts the CARTS in every offending window, so the number reads as
+     * "carts closed in a burst" rather than "number of bursts".
+     */
+    const flagBulkClose = (() => {
+      const byRep = new Map<string, number[]>();
+      weekScoped.forEach((row) => {
+        if (!row.closedAt) return;
+        const time = new Date(row.closedAt).getTime();
+        if (!Number.isFinite(time)) return;
+        byRep.set(row.repId, [...(byRep.get(row.repId) ?? []), time]);
+      });
+      const flagged = new Set<string>();
+      byRep.forEach((times, repId) => {
+        const sorted = [...times].sort((a, b) => a - b);
+        for (let i = 0; i + 2 < sorted.length; i += 1) {
+          if (sorted[i + 2] - sorted[i] <= 3 * 60_000) {
+            for (let j = i; j <= i + 2; j += 1) flagged.add(`${repId}:${sorted[j]}`);
+          }
+        }
+      });
+      return flagged.size;
+    })();
+
+    /** Carts closed since the stamp existed, so the two flags above can say
+     *  what they actually looked at rather than implying full coverage. */
+    const closesWithTimestamp = weekScoped.filter((row) => Boolean(row.closedAt)).length;
+
     const flagWeakFollowUp = weekScoped.filter((row) =>
       recoveryOutcome(row) === "unresponsive" && (row.attempts ?? 0) < 3);
     const flagHighNotInterested = recoveryReps.filter((rep) =>
@@ -60884,7 +60938,9 @@ ${waybillLineItems(w).length > 1
                 icon: <Users className="h-5 w-5" />, tone: "bg-violet-50 text-violet-600", ring: "border-violet-200/70" },
               { label: "Worked", value: recoveryAll.worked.toLocaleString(), sub: `${pct(recoveryAll.worked, recoveryAll.assigned)}%`, note: "At least one logged attempt",
                 icon: <CheckCircle2 className="h-5 w-5" />, tone: "bg-blue-50 text-blue-600", ring: "border-blue-200/70" },
-              { label: "Converted", value: recoveryAll.converted.toLocaleString(), sub: `${pct(recoveryAll.converted, recoveryAll.worked)}%`, note: "Became an order",
+              { label: "Reached", value: recoveryAll.reached.toLocaleString(), sub: `${pct(recoveryAll.reached, recoveryAll.worked)}%`, note: "Customer actually answered",
+                icon: <Phone className="h-5 w-5" />, tone: "bg-sky-50 text-sky-600", ring: "border-sky-200/70" },
+              { label: "Converted", value: recoveryAll.converted.toLocaleString(), sub: `${pct(recoveryAll.converted, recoveryAll.reached)}%`, note: "Became an order",
                 icon: <ShoppingBag className="h-5 w-5" />, tone: "bg-amber-50 text-amber-600", ring: "border-amber-200/70" },
               { label: "Delivered", value: recoveryAll.delivered.toLocaleString(), sub: `${pct(recoveryAll.delivered, recoveryAll.converted)}% DR`, note: "Successfully delivered",
                 icon: <Package className="h-5 w-5" />, tone: "bg-emerald-50 text-emerald-600", ring: "border-emerald-200/70" },
@@ -61078,7 +61134,11 @@ ${waybillLineItems(w).length > 1
                 { n: flagHighNotInterested.length, title: "High Not Interested rate",
                   note: `More than 15 points above the team's ${teamNotInterestedPct}%`, tone: "border-amber-200 bg-amber-50", num: "text-amber-600", icon: <AlertTriangle className="h-4 w-4 text-amber-500" /> },
                 { n: flagWeakFollowUp.length, title: "Weak follow-ups",
-                  note: "Marked unresponsive after fewer than 3 attempts", tone: "border-blue-200 bg-blue-50", num: "text-blue-600", icon: <Phone className="h-4 w-4 text-blue-500" /> }
+                  note: "Marked unresponsive after fewer than 3 attempts", tone: "border-blue-200 bg-blue-50", num: "text-blue-600", icon: <Phone className="h-4 w-4 text-blue-500" /> },
+                { n: flagQuickClose.length, title: "Quick closes",
+                  note: "Closed under 2 minutes after first contact", tone: "border-rose-200 bg-rose-50", num: "text-rose-600", icon: <Clock className="h-4 w-4 text-rose-500" /> },
+                { n: flagBulkClose, title: "Bulk closes",
+                  note: "3+ carts closed by one rep within 3 minutes", tone: "border-amber-200 bg-amber-50", num: "text-amber-600", icon: <Zap className="h-4 w-4 text-amber-500" /> }
               ].map((flag) => (
                 <div key={flag.title} className={`flex items-center gap-2.5 rounded-lg border ${flag.tone} px-2.5 py-2`}>
                   <span className="shrink-0">{flag.icon}</span>
@@ -61090,6 +61150,13 @@ ${waybillLineItems(w).length > 1
                 </div>
               ))}
             </div>
+            {/* ⚠️ Coverage, stated. Carts closed before the closed_at stamp
+                existed carry no timestamp, so the two timing flags cannot see
+                them. Saying so beats a reassuring zero. */}
+            <p className="m-0 mt-2 text-[10px] font-medium leading-snug text-gray-400">
+              Timing flags read the {closesWithTimestamp} of {recoveryAll.assigned} carts closed since close-time tracking began.
+              {closesWithTimestamp === 0 ? " Nothing has been closed since then yet." : ""}
+            </p>
             {flagHighNotInterested.length > 0 && (
               <p className="m-0 mt-2 text-[10px] font-bold text-amber-700">
                 {flagHighNotInterested.map((rep) => `${rep.repName} ${pct(rep.counts.not_interested, rep.assigned)}%`).join(" · ")}
