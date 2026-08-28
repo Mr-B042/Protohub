@@ -108631,7 +108631,7 @@ ${waybillLineItems(w).length > 1
                     {/* One waybill can carry several products - each its own qty, one shared route + fee. */}
                     <div className="sm:col-span-2">
                       <div className="flex items-center justify-between mb-1.5">
-                        <label className="block text-sm font-bold text-gray-900">Items<Req /></label>
+                      <label className="block text-sm font-bold text-gray-900">1. Items<Req /></label>
                         {chosenWbRows.length > 0 && (
                           <span className="text-xs font-semibold text-gray-500">{chosenWbRows.length} {chosenWbRows.length === 1 ? "product" : "products"} · {totalWbQty} units</span>
                         )}
@@ -108678,16 +108678,18 @@ ${waybillLineItems(w).length > 1
                       <button type="button" className="!min-h-0 mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dashed border-blue-300 text-blue-700 text-xs font-bold hover:bg-blue-50 transition-colors" onClick={addWaybillItemRow}>+ Add another product</button>
                     </div>
                     <div>
-                      <label className="block text-sm font-bold text-gray-900 mb-1.5">Waybill Fee (₦) <span className="font-normal text-gray-400">(one fee · whole waybill)</span></label>
+                      <label className="block text-sm font-bold text-gray-900 mb-1.5">Waybill Fee (₦)</label>
                       <input type="number" min={0} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" value={waybillFee} onChange={(e) => setWaybillFee(e.target.value)} />
+                      <p className="mt-1.5 text-xs text-gray-500">One fee for the whole waybill</p>
                     </div>
+                    <div className="waybill-fee-note self-end rounded-xl bg-indigo-50 px-4 py-3 text-sm text-indigo-900"><strong>One fee covers the entire waybill</strong><span className="mt-1 block">This fee will be charged once for all items.</span></div>
                     <div className="sm:col-span-2">
-                      <label className="block text-sm font-bold text-gray-900 mb-1.5">Logistics Partner / Carrier<Req /></label>
+                      <label className="block text-sm font-bold text-gray-900 mb-1.5">2. Logistics Partner / Carrier<Req /></label>
                       <input type="text" className={fieldCls("partner")} placeholder="e.g. RNR Log., Korrect, MR B/BSTAR" value={waybillPartner} onChange={(ev) => { setWaybillPartner(ev.target.value); setWaybillErrors((prev) => ({ ...prev, partner: "" })); }} />
                       <ErrMsg k="partner" />
                     </div>
                     <div className="sm:col-span-2">
-                      <label className="block text-sm font-bold text-gray-900 mb-1.5">Sending From<Req /></label>
+                      <label className="block text-sm font-bold text-gray-900 mb-1.5">3. Sending From<Req /></label>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
                         <button type="button" className={`px-3 py-2 rounded-lg text-sm font-semibold border transition-colors ${waybillFromType === "Warehouse" ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"}`} onClick={() => { setWaybillFromType("Warehouse"); setWaybillFromAgentId(""); setWaybillFromAgentLocationId(""); setWaybillErrors((prev) => ({ ...prev, fromAgent: "" })); }}>Warehouse (Lagos)</button>
                         <button type="button" className={`px-3 py-2 rounded-lg text-sm font-semibold border transition-colors ${waybillFromType === "Agent" ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"}`} onClick={() => { setWaybillFromType("Agent"); setWaybillFromAgentLocationId(""); }}>State Agent</button>
@@ -108748,7 +108750,7 @@ ${waybillLineItems(w).length > 1
                       )}
                     </div>
                     <div className="sm:col-span-2">
-                      <label className="block text-sm font-bold text-gray-900 mb-1.5">Sending To (Receiving Agent) <span className="font-normal text-gray-400">(optional)</span></label>
+                      <label className="block text-sm font-bold text-gray-900 mb-1.5">4. Sending To (Receiving Agent) <span className="font-normal text-gray-400">(optional)</span></label>
                       <select
                         className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200 mb-2"
                         value={waybillToAgentId}
@@ -108809,14 +108811,18 @@ ${waybillLineItems(w).length > 1
                       <ErrMsg k="toState" />
                     </div>
                     <div>
-                      <label className="block text-sm font-bold text-gray-900 mb-1.5">Date Sent<Req /></label>
+                      <label className="block text-sm font-bold text-gray-900 mb-1.5">5. Date Sent<Req /></label>
                       <input type="date" className={fieldCls("dateSent")} value={waybillDateSent} onChange={(ev) => { setWaybillDateSent(ev.target.value); setWaybillErrors((prev) => ({ ...prev, dateSent: "" })); }} />
                       <ErrMsg k="dateSent" />
                     </div>
                     <div>
-                      <label className="block text-sm font-bold text-gray-900 mb-1.5">Note <span className="font-normal text-gray-400">(optional)</span></label>
+                      <label className="block text-sm font-bold text-gray-900 mb-1.5">6. Note <span className="font-normal text-gray-400">(optional)</span></label>
                       <input type="text" className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="e.g. Restock, Urgent transfer" value={waybillNote} onChange={(e) => setWaybillNote(e.target.value)} />
                     </div>
+                  </div>
+                  <div className="waybill-summary rounded-xl border border-emerald-100 bg-emerald-50/70 px-4 py-3">
+                    <p className="font-bold text-emerald-900">Summary</p>
+                    <p className="mt-1 text-sm text-emerald-800">Review all details before creating the waybill.</p>
                   </div>
                   <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
                     <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center px-6 py-2.5 rounded-lg border border-gray-200 text-gray-900 text-sm font-bold hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
