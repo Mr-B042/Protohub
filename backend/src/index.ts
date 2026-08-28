@@ -442,8 +442,8 @@ cron.schedule("30 2 * * *", async () => {
 }
 
 // Delete read notification history after 30 days and KYC uploads that never
-// became part of a submitted record. A 48-hour grace period protects files
-// belonging to an application that is still being completed.
+// became part of a submitted record. A seven-day grace period protects files
+// belonging to an application that is still being completed over several days.
 if (ENABLE_BACKGROUND_JOBS) {
 cron.schedule("45 2 * * *", async () => {
   logger.info("cron: running data retention cleanup");

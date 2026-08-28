@@ -3,7 +3,7 @@ import { supabase } from "./supabase.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NOTIFICATION_RETENTION_DAYS = Math.max(14, Number(process.env.NOTIFICATION_RETENTION_DAYS) || 30);
-const PDA_ORPHAN_GRACE_HOURS = Math.max(24, Number(process.env.PDA_ORPHAN_GRACE_HOURS) || 48);
+const PDA_ORPHAN_GRACE_HOURS = Math.max(24, Number(process.env.PDA_ORPHAN_GRACE_HOURS) || 7 * 24);
 const PDA_BUCKET = "pda-kyc";
 
 type StoredObject = { path: string; createdAt: string | null };
