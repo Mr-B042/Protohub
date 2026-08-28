@@ -648,7 +648,11 @@ function normalizeWaybillRecord(w: any): WaybillRecord {
     toAgentLocationId:     w.toAgentLocationId ?? w.to_agent_location_id ?? undefined,
     sendingLocationName:   w.sendingLocationName ?? w.fromLocation ?? w.from_location ?? undefined,
     receivingLocationName: w.receivingLocationName ?? w.toLocation ?? w.to_location ?? undefined,
-    dateSent:              w.dateSent     ?? w.dispatchedDate ?? w.dispatched_date ?? "",
+    // Older waybill rows may not have dispatched_date because that column was
+    // added after records already existed. Keep those historical rows visible
+    // in month/year filters by using their immutable creation date as the
+    // reporting fallback.
+    dateSent:              w.dateSent     ?? w.dispatchedDate ?? w.dispatched_date ?? w.createdAt ?? w.created_at ?? "",
     dateReceived:          w.dateReceived ?? w.receivedDate   ?? w.received_date ?? undefined,
     status:                w.status ?? "In Transit",
     note:                  w.note ?? w.notes ?? undefined,
