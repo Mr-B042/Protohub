@@ -22,6 +22,7 @@ import { runFollowUpCloseAllOrgs } from "./lib/follow-up-kpi.js";
 import { syncRecoveryNextActionReminders } from "./lib/recovery-next-action-reminders.js";
 import { runAgentStockDriftCheck } from "./lib/agent-stock-drift-check.js";
 import { pruneOldCartJourneyEvents } from "./lib/cart-journey.js";
+import { runStorageRetention } from "./lib/data-retention.js";
 import { dropDueDailySalaryForAllOrgs } from "./lib/salary-spread.js";
 import { supabase } from "./lib/supabase.js";
 import { processQueuedEmails, sendWeeklyReport } from "./lib/mailer.js";
@@ -437,6 +438,16 @@ cron.schedule("30 2 * * *", async () => {
   logger.info("cron: pruning old cart journey events");
   try { const deleted = await pruneOldCartJourneyEvents(); logger.info("cron: cart journey prune done", { deleted }); }
   catch (e) { logger.error("cron: cart journey prune crashed", { error: (e as Error).message }); }
+});
+}
+
+// Delete read notification history after 30 days and KYC uploads that never
+// became part of a submitted record. A 48-hour grace period protects files
+// belonging to an application that is still being completed.
+if (ENABLE_BACKGROUND_JOBS) {
+cron.schedule("45 2 * * *", async () => {
+  logger.info("cron: running data retention cleanup");
+  await runStorageRetention();
 });
 }
 
