@@ -8533,6 +8533,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [cartRecovery, setCartRecovery] = useState<CartRecoverySummary | null>(null);
   const [cartRecoveryLoading, setCartRecoveryLoading] = useState(false);
   /**
+   * ⚠️ A FAILED FETCH IS NOT AN EMPTY PERIOD. Without this the panel answered a
+   * 404 with "No carts were assigned to anyone in this period" - which is the
+   * same sentence the waybill page used to print over 2,092 records, and it
+   * sends people hunting for deleted data. Tracked separately so the screen can
+   * say which of the two actually happened.
+   */
+  const [cartRecoveryError, setCartRecoveryError] = useState("");
+  /**
    * Carts still to work in a "Log all" run, oldest first.
    *
    * ⚠️ WITHOUT THIS THE BUTTON LIED. "Log all 12 carts now" ticked twelve
@@ -12275,9 +12283,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const window = cartRecoveryPeriod === "All time"
       ? {}
       : periodRangeKeys(cartRecoveryPeriod as Period, cartsDateRange);
+    setCartRecoveryError("");
     cartsApi.recoverySummary({ ...window, productId: cartRecoveryProductId || undefined })
-      .then((result) => { if (!cancelled) setCartRecovery(result); })
-      .catch(() => { if (!cancelled) setCartRecovery(null); })
+      .then((result) => { if (!cancelled) { setCartRecovery(result); setCartRecoveryError(""); } })
+      .catch((error: any) => {
+        if (cancelled) return;
+        setCartRecovery(null);
+        setCartRecoveryError(error?.message || "Could not load recovery data.");
+      })
       .finally(() => { if (!cancelled) setCartRecoveryLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -60895,6 +60908,7 @@ ${waybillLineItems(w).length > 1
         </div>
 
         {/* ── A. Recovery funnel ─────────────────────────── */}
+        {!cartRecoveryError && (
         <div className="px-4 py-4">
           <p className="m-0 mb-2.5 text-[11px] font-black uppercase tracking-wider text-violet-700">
             Recovery funnel <span className="font-bold normal-case tracking-normal text-gray-400">
@@ -60941,8 +60955,17 @@ ${waybillLineItems(w).length > 1
             {" "}— of every 100 abandoned customers handed out in this window, {Math.round(pct(recoveryAll.delivered, recoveryAll.assigned))} became a delivered sale.
           </p>
         </div>
+        )}
 
-        {recoveryReps.length === 0 && !cartRecoveryLoading && (
+        {cartRecoveryError && !cartRecoveryLoading && (
+          <div className="border-t border-gray-100 px-4 py-8 text-center">
+            <p className="m-0 text-[12px] font-black text-rose-700">Recovery data could not be loaded.</p>
+            <p className="m-0 mt-1 text-[11px] font-medium text-gray-500">
+              {cartRecoveryError} — the figures below are not zero, they are unknown.
+            </p>
+          </div>
+        )}
+        {!cartRecoveryError && recoveryReps.length === 0 && !cartRecoveryLoading && (
           <p className="m-0 border-t border-gray-100 px-4 py-8 text-center text-[12px] font-semibold text-gray-400">
             No carts were assigned to anyone in this period.
           </p>
