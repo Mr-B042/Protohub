@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { fetchAllRows } from "../lib/query-limits.js";
+import { fetchAllRowsOrThrow } from "../lib/query-limits.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
@@ -32,7 +32,7 @@ router.get("/", async (req, res) => {
   // cap does not show customers late - it makes them cease to exist. An
   // explicit .limit() is not enough: PostgREST's own max-rows wins over it.
   let data: any[];
-  try { data = await fetchAllRows<any>(buildCustomerQuery); }
+  try { data = await fetchAllRowsOrThrow<any>(buildCustomerQuery); }
   catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed to load customers." }); return; }
   const error = null;
 

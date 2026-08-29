@@ -1,3 +1,5 @@
+import { fetchAllRows } from "./paginated-query.js";
+
 /**
  * PostgREST caps an unbounded select at 1000 rows and returns NO error when it
  * truncates. That is not a theoretical risk here - it silently dropped 712 of
@@ -25,7 +27,9 @@
  * It remains useful only as a sanity bound on a query already narrowed to far
  * fewer rows - a guard against a runaway scan, not against truncation.
  *
- * For anything that must return every matching row, use fetchAllRows() below.
+ * For anything that must return every matching row, page it: fetchAllRows()
+ * in paginated-query.ts, or fetchAllRowsOrThrow() below if you are already
+ * inside a try/catch. Both run the same loop.
  *
  * ⚠️ AND A MONTH FILTER IS NO LONGER A SHIELD. As at 2026-08, single-month
  * volumes already exceed the cap on their own:
@@ -41,33 +45,25 @@
 export const REPORT_ROW_CEILING = 20000;
 
 /**
- * Fetch every row a query matches, in pages.
+ * Throwing form of fetchAllRows() for callers that already sit inside a
+ * try/catch, taking a builder FACTORY rather than a page fetcher.
  *
- * ⚠️ A CLIENT .limit() CANNOT BEAT A SERVER CAP. PostgREST enforces its own
- * max-rows ceiling, and when it truncates it returns no error - so a route can
- * ask for 20,000 rows, be handed 1,000, and report them as the complete set.
- * That is how 1,145 expenses stopped reaching the browser: /api/expenses had
- * an explicit .limit(REPORT_ROW_CEILING) and STILL returned only the newest
- * 1,000, cutting the ledger off at 2026-07-18.
- *
- * .range() is the only way to get past it: ask for a window at a time and stop
- * when a page comes back short.
+ * ⚠️ NAMED DIFFERENTLY ON PURPOSE. This was also called fetchAllRows, so two
+ * different functions with two different error contracts answered to one name
+ * and which you got depended on your import path. The name now says which one
+ * it is. The paging itself lives in ONE place - paginated-query.ts - and this
+ * only adapts the signature and converts a returned error into a throw.
  */
-export async function fetchAllRows<T>(
+export async function fetchAllRowsOrThrow<T>(
   build: () => { range: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }> },
   pageSize = 1000
 ): Promise<T[]> {
-  const rows: T[] = [];
-  for (let page = 0; ; page += 1) {
-    const from = page * pageSize;
-    const { data, error } = await build().range(from, from + pageSize - 1);
-    if (error) throw new Error(error.message);
-    const batch = data ?? [];
-    rows.push(...batch);
-    // A short page means the end. A full page might be the end too, so the
-    // next request settles it rather than guessing from the count.
-    if (batch.length < pageSize) return rows;
-    // Belt and braces: never spin forever on a table that keeps growing.
-    if (page > 200) return rows;
-  }
+  // Rebuilt per page by construction: build() is called inside the loop below,
+  // never reused, because a PostgREST builder is single-use.
+  const { data, error } = await fetchAllRows<T>(
+    (from, to) => build().range(from, to),
+    pageSize
+  );
+  if (error) throw new Error(error.message ?? String(error));
+  return data ?? [];
 }
