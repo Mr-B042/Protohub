@@ -2971,7 +2971,12 @@ export type CartRecoveryStat = {
 export type CartRecoverySummary = {
   from: string | null; to: string | null; todayKey?: string;
   totals: CartRecoveryStat;
-  reps: Array<CartRecoveryStat & { repId: string; repName: string }>;
+  reps: Array<CartRecoveryStat & {
+    repId: string; repName: string;
+    /** Same shape as the team flags, scoped to this rep - so a flag can name
+     *  who owns it without a second request. */
+    flags: { quickClose: number; bulkClose: number; weakFollowUp: number; closedUnworked: number; closesWithTimestamp: number };
+  }>;
   flags: { quickClose: number; bulkClose: number; weakFollowUp: number; closedUnworked: number; closesWithTimestamp: number };
   days: Array<CartRecoveryStat & { key: string }>;
 };

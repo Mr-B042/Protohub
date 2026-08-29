@@ -60809,7 +60809,11 @@ ${waybillLineItems(w).length > 1
     // the grid's loaded week, so every period longer than a week silently
     // answered with one week of data.
     const canSeeCartRecovery = ["Owner", "Admin", "Manager"].includes(currentRole);
-    const pct = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0);
+    const pct = (part: number, whole: number) => {
+      const top = Number(part) || 0;
+      const bottom = Number(whole) || 0;
+      return bottom > 0 ? Math.round((top / bottom) * 1000) / 10 : 0;
+    };
     const recoveryAll = cartRecovery?.totals ?? {
       assigned: 0, worked: 0, reached: 0, converted: 0, delivered: 0, revenue: 0,
       counts: { converted: 0, not_interested: 0, unresponsive: 0, wrong_number: 0, pending: 0 },
@@ -61128,26 +61132,47 @@ ${waybillLineItems(w).length > 1
             <p className="m-0 mb-2 text-[11px] font-black uppercase tracking-wider text-violet-700">Quality flags</p>
             <div className="space-y-2">
               {[
-                { n: recoveryFlagCounts.closedUnworked, title: "Closed without an attempt",
+                { n: recoveryFlagCounts.closedUnworked, owner: (rep: typeof recoveryReps[number]) => rep.flags.closedUnworked, title: "Closed without an attempt",
                   note: "Cart reached a final state with no logged contact", tone: "border-rose-200 bg-rose-50", num: "text-rose-600", icon: <CircleX className="h-4 w-4 text-rose-500" /> },
-                { n: flagHighNotInterested.length, title: "High Not Interested rate",
+                { n: flagHighNotInterested.length, owner: null as null | ((rep: typeof recoveryReps[number]) => number), title: "High Not Interested rate",
                   note: `More than 15 points above the team's ${teamNotInterestedPct}%`, tone: "border-amber-200 bg-amber-50", num: "text-amber-600", icon: <AlertTriangle className="h-4 w-4 text-amber-500" /> },
-                { n: recoveryFlagCounts.weakFollowUp, title: "Weak follow-ups",
+                { n: recoveryFlagCounts.weakFollowUp, owner: (rep: typeof recoveryReps[number]) => rep.flags.weakFollowUp, title: "Weak follow-ups",
                   note: "Marked unresponsive after fewer than 3 attempts", tone: "border-blue-200 bg-blue-50", num: "text-blue-600", icon: <Phone className="h-4 w-4 text-blue-500" /> },
-                { n: recoveryFlagCounts.quickClose, title: "Quick closes",
+                { n: recoveryFlagCounts.quickClose, owner: (rep: typeof recoveryReps[number]) => rep.flags.quickClose, title: "Quick closes",
                   note: "Closed under 2 minutes after first contact", tone: "border-rose-200 bg-rose-50", num: "text-rose-600", icon: <Clock className="h-4 w-4 text-rose-500" /> },
-                { n: recoveryFlagCounts.bulkClose, title: "Bulk closes",
+                { n: recoveryFlagCounts.bulkClose, owner: (rep: typeof recoveryReps[number]) => rep.flags.bulkClose, title: "Bulk closes",
                   note: "3+ carts closed by one rep within 3 minutes", tone: "border-amber-200 bg-amber-50", num: "text-amber-600", icon: <Zap className="h-4 w-4 text-amber-500" /> }
-              ].map((flag) => (
-                <div key={flag.title} className={`flex items-center gap-2.5 rounded-lg border ${flag.tone} px-2.5 py-2`}>
-                  <span className="shrink-0">{flag.icon}</span>
-                  <span className="min-w-0 flex-1">
-                    <strong className="block truncate text-[11px] font-black text-gray-900">{flag.title}</strong>
-                    <span className="block text-[10px] font-medium leading-snug text-gray-500">{flag.note}</span>
-                  </span>
-                  <strong className={`shrink-0 text-[17px] font-black tabular-nums ${flag.num}`}>{flag.n}</strong>
+              ].map((flag) => {
+                // Whose flag is it. A count with no name is a number nobody can
+                // act on - the first question is always "who".
+                const owners = flag.owner
+                  ? recoveryReps
+                      .map((rep) => ({ name: rep.repName, n: flag.owner!(rep) }))
+                      .filter((row) => row.n > 0)
+                      .sort((a, b) => b.n - a.n)
+                  : [];
+                return (
+                <div key={flag.title} className={`rounded-lg border ${flag.tone} px-2.5 py-2`}>
+                  <div className="flex items-center gap-2.5">
+                    <span className="shrink-0">{flag.icon}</span>
+                    <span className="min-w-0 flex-1">
+                      <strong className="block truncate text-[11px] font-black text-gray-900">{flag.title}</strong>
+                      <span className="block text-[10px] font-medium leading-snug text-gray-500">{flag.note}</span>
+                    </span>
+                    <strong className={`shrink-0 text-[17px] font-black tabular-nums ${flag.num}`}>{flag.n}</strong>
+                  </div>
+                  {owners.length > 0 && (
+                    <p className="m-0 mt-1.5 flex flex-wrap gap-1 border-t border-white/60 pt-1.5">
+                      {owners.map((owner) => (
+                        <span key={owner.name} className="rounded bg-white/70 px-1.5 py-0.5 text-[10px] font-black text-gray-700">
+                          {owner.name} {owner.n}
+                        </span>
+                      ))}
+                    </p>
+                  )}
                 </div>
-              ))}
+                );
+              })}
             </div>
             {/* ⚠️ Coverage, stated. Carts closed before the closed_at stamp
                 existed carry no timestamp, so the two timing flags cannot see

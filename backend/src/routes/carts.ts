@@ -2468,10 +2468,17 @@ router.get("/recovery-summary",
       res.json({
         from, to, todayKey,
         totals: summariseRecovery(facts),
-        reps: [...new Set(facts.map((fact) => fact.repId))].map((repId) => ({
-          repId, repName: nameById.get(repId) ?? "Unassigned",
-          ...summariseRecovery(facts.filter((fact) => fact.repId === repId))
-        })).sort((a, b) => b.assigned - a.assigned),
+        // ⚠️ Flags PER REP, not just a team total. "6 weak follow-ups" with no
+        // name attached is a number nobody can act on - the first question is
+        // always whose, and answering it should not need a database.
+        reps: [...new Set(facts.map((fact) => fact.repId))].map((repId) => {
+          const own = facts.filter((fact) => fact.repId === repId);
+          return {
+            repId, repName: nameById.get(repId) ?? "Unassigned",
+            ...summariseRecovery(own),
+            flags: recoveryFlags(own)
+          };
+        }).sort((a, b) => b.assigned - a.assigned),
         flags: recoveryFlags(facts),
         days: [...new Set(facts.map((fact) => fact.assignedKey))].filter(Boolean).sort()
           .map((key) => ({ key, ...summariseRecovery(facts.filter((fact) => fact.assignedKey === key)) }))
