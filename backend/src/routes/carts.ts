@@ -1762,6 +1762,88 @@ router.post("/:id/contact-attempts",
 // for orders; carts have no such rule, and inventing one here would charge reps
 // against a target nobody set.
 const CART_WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+type RecoveryFact = {
+  repId: string; assignedKey: string; attempts: number; reached: boolean;
+  converted: boolean; delivered: boolean; revenue: number; outcome: string;
+  closedAt: number | null; quickClose: boolean; hoursToFirst: number | null;
+  loggedToday: boolean; open: boolean;
+};
+
+const addDaysKey = (key: string, days: number) => {
+  const date = new Date(`${key}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+};
+
+const emptyRecoveryTotals = () => ({
+  assigned: 0, worked: 0, reached: 0, converted: 0, delivered: 0, revenue: 0,
+  counts: { converted: 0, not_interested: 0, unresponsive: 0, wrong_number: 0, pending: 0 },
+  medianFirstContactHours: null as number | null, unloggedToday: 0, deepAttempts: 0, unconverted: 0
+});
+
+const emptyRecoveryFlags = () => ({
+  quickClose: 0, bulkClose: 0, weakFollowUp: 0, closedUnworked: 0, closesWithTimestamp: 0
+});
+
+/** ⚠️ CART_UNRESPONSIVE_MIN_ATTEMPTS lives on the client too; both mean "three
+ *  logged attempts before a customer may be called unresponsive". */
+const RECOVERY_MIN_ATTEMPTS = 3;
+
+const summariseRecovery = (facts: RecoveryFact[]) => {
+  const counts = { converted: 0, not_interested: 0, unresponsive: 0, wrong_number: 0, pending: 0 };
+  facts.forEach((fact) => { counts[fact.outcome as keyof typeof counts] += 1; });
+  const speeds = facts.map((fact) => fact.hoursToFirst)
+    .filter((hours): hours is number => hours !== null).sort((a, b) => a - b);
+  const unconverted = facts.filter((fact) => !fact.converted);
+  return {
+    assigned: facts.length,
+    // Worked = a logged attempt. NOT a closed cart: a cart closed with no
+    // attempt was never worked, and that difference is the whole point.
+    worked: facts.filter((fact) => fact.attempts > 0).length,
+    reached: facts.filter((fact) => fact.reached).length,
+    converted: facts.filter((fact) => fact.converted).length,
+    delivered: facts.filter((fact) => fact.delivered).length,
+    revenue: facts.reduce((sum, fact) => sum + fact.revenue, 0),
+    counts,
+    medianFirstContactHours: speeds.length > 0
+      ? Math.round(speeds[Math.floor(speeds.length / 2)] * 10) / 10 : null,
+    unloggedToday: facts.filter((fact) => fact.open && !fact.loggedToday).length,
+    deepAttempts: unconverted.filter((fact) => fact.attempts >= RECOVERY_MIN_ATTEMPTS).length,
+    unconverted: unconverted.length
+  };
+};
+
+const recoveryFlags = (facts: RecoveryFact[]) => {
+  // Three or more closes by one rep inside three minutes - clearing a queue
+  // rather than working it. Counts the CARTS in each offending window.
+  const byRep = new Map<string, number[]>();
+  facts.forEach((fact) => {
+    if (fact.closedAt === null) return;
+    byRep.set(fact.repId, [...(byRep.get(fact.repId) ?? []), fact.closedAt]);
+  });
+  let bulkClose = 0;
+  byRep.forEach((times) => {
+    const sorted = [...times].sort((a, b) => a - b);
+    const flagged = new Set<number>();
+    for (let i = 0; i + 2 < sorted.length; i += 1) {
+      if (sorted[i + 2] - sorted[i] <= 3 * 60_000) {
+        for (let j = i; j <= i + 2; j += 1) flagged.add(sorted[j]);
+      }
+    }
+    bulkClose += flagged.size;
+  });
+  return {
+    quickClose: facts.filter((fact) => fact.quickClose).length,
+    bulkClose,
+    weakFollowUp: facts.filter((fact) => fact.outcome === "unresponsive" && fact.attempts < RECOVERY_MIN_ATTEMPTS).length,
+    closedUnworked: facts.filter((fact) => !fact.open && fact.attempts === 0).length,
+    // Stated so the timing flags can say what they could actually see, rather
+    // than a zero that reads as "nothing suspicious".
+    closesWithTimestamp: facts.filter((fact) => fact.closedAt !== null).length
+  };
+};
+
 router.get("/follow-up-grid",
   requireRole("Owner", "Admin", "Manager", "Sales Rep"),
   async (req, res) => {
@@ -2281,6 +2363,124 @@ router.get("/:id/live", async (req, res) => {
 // cannot drift out of step with the board and nothing is ever auto-deducted.
 
 // ── GET /api/carts/log-penalties?range= ───────────────────
+
+// ── GET /api/carts/recovery-summary?from=&to=&productId= ──
+//
+// Did the rep RECOVER the cart, or only clear it? The follow-up grid answers
+// one week at a time because it draws a week of columns; this answers any
+// range, which is the only way "this month" or "all time" can be asked at all.
+//
+// ⚠️ COMPUTED SERVER-SIDE ON PURPOSE. The client used to derive this from the
+// loaded week's rows, so every period longer than that week was silently
+// answered with one week of data. Shipping every cart to the browser to fix
+// that would be tens of thousands of rows for six numbers.
+router.get("/recovery-summary",
+  requireRole("Owner", "Admin", "Manager"),
+  async (req, res) => {
+    try {
+      const orgId = req.user!.orgId;
+      const from = typeof req.query.from === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.from) ? req.query.from : null;
+      const to = typeof req.query.to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.to) ? req.query.to : null;
+      const productId = typeof req.query.productId === "string" && req.query.productId ? req.query.productId : null;
+      const todayKey = lagosDateKey(new Date());
+
+      // The cohort is carts ASSIGNED in the window. A cart handed out on Monday
+      // that converts on Thursday belongs to Monday, or no period ever shows
+      // what its own carts came to.
+      let cartQuery = supabase.from("abandoned_carts")
+        .select("id, status, amount, currency, product_id, assigned_rep_id, assigned_at, created_at, closed_at")
+        .eq("org_id", orgId)
+        .not("assigned_rep_id", "is", null)
+        .order("assigned_at", { ascending: true })
+        .limit(REPORT_ROW_CEILING);
+      if (from) cartQuery = cartQuery.gte("assigned_at", `${from}T00:00:00`);
+      if (to) cartQuery = cartQuery.lt("assigned_at", `${addDaysKey(to, 1)}T00:00:00`);
+      if (productId) cartQuery = cartQuery.eq("product_id", productId);
+
+      const { data: carts, error: cartsError } = await cartQuery;
+      if (cartsError) { res.status(500).json({ error: cartsError.message }); return; }
+      const cartRows = carts ?? [];
+      const cartIds = cartRows.map((row: any) => row.id);
+
+      if (cartIds.length === 0) {
+        res.json({ from, to, totals: emptyRecoveryTotals(), reps: [], flags: emptyRecoveryFlags(), days: [] });
+        return;
+      }
+
+      const [{ data: attempts }, { data: orders }, { data: people }] = await Promise.all([
+        supabase.from(CART_ATTEMPTS)
+          .select("cart_id, rep_id, attempted_at, customer_reached, outcome_code")
+          .eq("org_id", orgId).in("cart_id", cartIds)
+          .order("attempted_at", { ascending: true }).limit(REPORT_ROW_CEILING),
+        supabase.from("orders").select("source_cart_id, status, amount")
+          .eq("org_id", orgId).in("source_cart_id", cartIds).limit(REPORT_ROW_CEILING),
+        supabase.from("users").select("id, name").eq("org_id", orgId).limit(REPORT_ROW_CEILING)
+      ]);
+
+      const nameById = new Map((people ?? []).map((row: any) => [row.id, row.name as string]));
+      const orderByCart = new Map<string, any>();
+      (orders ?? []).forEach((order: any) => {
+        // Keep the best outcome per cart: a delivered order outranks any other.
+        const current = orderByCart.get(order.source_cart_id);
+        if (!current || (order.status === "Delivered" && current.status !== "Delivered")) {
+          orderByCart.set(order.source_cart_id, order);
+        }
+      });
+      const attemptsByCart = new Map<string, any[]>();
+      (attempts ?? []).forEach((attempt: any) => {
+        attemptsByCart.set(attempt.cart_id, [...(attemptsByCart.get(attempt.cart_id) ?? []), attempt]);
+      });
+
+      const dayKeyOf = (iso: string | null) => (iso ? lagosDateKey(new Date(iso)) : "");
+      const facts = cartRows.map((cart: any) => {
+        const own = attemptsByCart.get(cart.id) ?? [];
+        const order = orderByCart.get(cart.id) ?? null;
+        const firstAt = own.length > 0 ? new Date(own[0].attempted_at).getTime() : null;
+        const closedAt = cart.closed_at ? new Date(cart.closed_at).getTime() : null;
+        const lastOutcome = own.length > 0 ? String(own[own.length - 1].outcome_code ?? "") : "";
+        const label = `${lastOutcome} ${cart.status ?? ""}`.toLowerCase();
+        const outcome = order ? "converted"
+          : (label.includes("wrong number") || label.includes("not reachable")) ? "wrong_number"
+          : label.includes("not interested") ? "not_interested"
+          : (label.includes("unresponsive") || label.includes("no response")) ? "unresponsive"
+          : "pending";
+        const assignedTime = new Date(cart.assigned_at ?? cart.created_at).getTime();
+        return {
+          repId: cart.assigned_rep_id as string,
+          assignedKey: dayKeyOf(cart.assigned_at ?? cart.created_at),
+          attempts: own.length,
+          reached: own.some((attempt: any) => attempt.customer_reached === true),
+          converted: Boolean(order),
+          delivered: order?.status === "Delivered",
+          revenue: order?.status === "Delivered" ? Number(order.amount ?? cart.amount ?? 0) : 0,
+          outcome,
+          closedAt,
+          // Only carts closed since migration 239 carry a stamp; the rest are
+          // skipped by the timing flags rather than guessed at.
+          quickClose: closedAt !== null && firstAt !== null && (closedAt - firstAt) >= 0 && (closedAt - firstAt) < 2 * 60_000,
+          hoursToFirst: firstAt !== null && Number.isFinite(assignedTime)
+            ? Math.max(0, (firstAt - assignedTime) / 3_600_000) : null,
+          loggedToday: own.some((attempt: any) => dayKeyOf(attempt.attempted_at) === todayKey),
+          open: !["Not interested", "No response", "Converted"].includes(cart.status)
+        };
+      });
+
+      res.json({
+        from, to, todayKey,
+        totals: summariseRecovery(facts),
+        reps: [...new Set(facts.map((fact) => fact.repId))].map((repId) => ({
+          repId, repName: nameById.get(repId) ?? "Unassigned",
+          ...summariseRecovery(facts.filter((fact) => fact.repId === repId))
+        })).sort((a, b) => b.assigned - a.assigned),
+        flags: recoveryFlags(facts),
+        days: [...new Set(facts.map((fact) => fact.assignedKey))].filter(Boolean).sort()
+          .map((key) => ({ key, ...summariseRecovery(facts.filter((fact) => fact.assignedKey === key)) }))
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message ?? "Could not build the recovery summary." });
+    }
+  });
+
 router.get("/log-penalties",
   requireRole("Owner", "Admin", "Manager", "Sales Rep"),
   async (req, res) => {
