@@ -29128,16 +29128,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // so "which product is this order/expense for" is answered identically
   // whether it's building the Product performance cards or scoping the rest
   // of the dashboard down to whichever cards are ticked.
-  const normalizeProductLabel = (value?: string | null) => String(value ?? "").trim().toLowerCase();
-  const catalogProductForOrder = (order: TrackedOrder) =>
-    (order.productId ? products.find((product) => product.id === order.productId) : undefined)
-    ?? products.find((product) => normalizeProductLabel(product.name) === normalizeProductLabel(order.productName));
-  const productKeyForOrder = (order: TrackedOrder) => {
+  // These are declarations (rather than const arrows) because Manager bonus
+  // calculations use them earlier in the component render. Function
+  // declarations are hoisted and cannot hit the production-only TDZ crash.
+  function normalizeProductLabel(value?: string | null) {
+    return String(value ?? "").trim().toLowerCase();
+  }
+  function catalogProductForOrder(order: TrackedOrder) {
+    return (order.productId ? products.find((product) => product.id === order.productId) : undefined)
+      ?? products.find((product) => normalizeProductLabel(product.name) === normalizeProductLabel(order.productName));
+  }
+  function productKeyForOrder(order: TrackedOrder) {
     const catalogProduct = catalogProductForOrder(order);
     if (catalogProduct) return `id:${catalogProduct.id}`;
     if (order.productId) return `id:${order.productId}`;
     return `name:${normalizeProductLabel(order.productName) || "unknown-product"}`;
-  };
+  }
   const productMatchesFilterKeys = (product: Product, keys: Set<string>) => {
     if (keys.size === 0) return true;
     if (keys.has(`id:${product.id}`)) return true;
