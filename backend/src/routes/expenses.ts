@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { fetchAllRows } from "../lib/query-limits.js";
+import { fetchAllRowsOrThrow } from "../lib/query-limits.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
@@ -34,7 +34,7 @@ router.get("/", requireRole("Owner", "Admin"), async (req, res) => {
   // repeat or skip rows across page boundaries, and "date" alone has hundreds
   // of ties per day.
   try {
-    const rows = await fetchAllRows<any>(buildExpenseQuery);
+    const rows = await fetchAllRowsOrThrow<any>(buildExpenseQuery);
     res.json(rows);
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Failed to load expenses." });

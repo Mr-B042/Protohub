@@ -21,7 +21,8 @@ import { runCartAutoSubmit } from "./lib/cart-auto-submit.js";
 import { runFollowUpCloseAllOrgs } from "./lib/follow-up-kpi.js";
 import { syncRecoveryNextActionReminders } from "./lib/recovery-next-action-reminders.js";
 import { runAgentStockDriftCheck } from "./lib/agent-stock-drift-check.js";
-import { probeRowCap } from "./lib/row-cap-probe.js";
+import { logRowCapAtBoot } from "./lib/row-cap-probe.js";
+import systemRoutes from "./routes/system.js";
 import { pruneOldCartJourneyEvents } from "./lib/cart-journey.js";
 import { runStorageRetention } from "./lib/data-retention.js";
 import { dropDueDailySalaryForAllOrgs } from "./lib/salary-spread.js";
@@ -305,6 +306,7 @@ app.use("/api/auth/login",    authRateLimit);
 app.use("/api/auth/register", authRateLimit);
 app.use("/api/auth/refresh",  authRateLimit);
 app.use("/api/auth",          authRoutes);
+app.use("/api/system",        systemRoutes);
 app.use("/api/products",      productRoutes);
 app.use("/api/orders",        salesExpansionOrderRoutes);
 app.use("/api/orders",        orderRoutes);
@@ -399,7 +401,7 @@ app.listen(PORT, () => {
   // this codebase rely on a project setting no code can see; without this, a
   // wrong setting shows up months later as a number quietly missing from a
   // report - which is exactly how it showed up this time.
-  void probeRowCap().catch(() => undefined);
+  void logRowCapAtBoot().catch(() => undefined);
 });
 
 // ── Server-side cart auto-submit — every 2 minutes ───────

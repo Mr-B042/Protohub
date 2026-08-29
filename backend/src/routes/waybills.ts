@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { fetchAllRows, REPORT_ROW_CEILING } from "../lib/query-limits.js";
+import { fetchAllRowsOrThrow, REPORT_ROW_CEILING } from "../lib/query-limits.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -157,7 +157,7 @@ router.get("/", async (req, res) => {
     .order("created_at", { ascending: false })
     .order("id", { ascending: false });
   try {
-    res.json(await fetchAllRows<any>(buildWaybillQuery));
+    res.json(await fetchAllRowsOrThrow<any>(buildWaybillQuery));
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Failed to load waybills." });
   }

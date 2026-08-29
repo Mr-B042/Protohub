@@ -22,13 +22,20 @@ import {
   type SmartStockCandidate
 } from "./smart-stock-candidates.js";
 import { REPORT_ROW_CEILING } from "./query-limits.js";
+import type { UserRole } from "../types/index.js";
 
 const DAYS_OF_STOCK_THRESHOLD = 3;
 const MIN_RECENT_UNITS = 3;
 const RECENT_DAYS_WINDOW = 7;
 const SURGE_DAYS_WINDOW = 3;
 const DEDUPE_WINDOW_HOURS = 24;
-const RECIPIENT_ROLES = ["Owner", "Admin", "Manager", "Inventory Manager", "Inventory Manager & Logistics Operations", "Call Rep"] as const;
+// ⚠️ TYPED AS UserRole[] SO THE COMPILER CATCHES A ROLE THAT DOES NOT EXIST.
+// This list carried "Call Rep" - a PAGE name ("Call Rep Console"), never a
+// role; the page belongs to Sales Rep. Postgres rejected the whole recipient
+// query with `invalid input value for enum user_role: "Call Rep"` (400), the
+// error below was discarded, and low-stock alerts silently reached NOBODY.
+// Untyped, nothing flagged it. Typed, it is a build error.
+const RECIPIENT_ROLES: readonly UserRole[] = ["Owner", "Admin", "Manager", "Inventory Manager", "Inventory Manager & Logistics Operations"];
 
 type AgentRow = { id: string; org_id: string; name: string; primary_base_state: string | null; status: string | null };
 type StockRow = { agent_id: string; product_id: string; quantity: number; defective: number; missing: number };
@@ -355,6 +362,11 @@ async function scanOrgForSmartStockAlerts(orgId: string): Promise<number> {
   const { data: existingRaw } = await supabase
     .from("system_notifications")
     .select("link")
+    // system_notifications is 16,000+ rows and climbing. This is the only read
+    // on it without a natural bound - the other nine are .limit(1) existence
+    // checks - and a truncated dedupe set means re-alerting something already
+    // alerted, so it gets an explicit ceiling rather than trusting the volume.
+    .limit(REPORT_ROW_CEILING)
     .eq("org_id", orgId)
     .eq("type", "low_stock")
     .in("link", dedupeLinks)
@@ -366,12 +378,21 @@ async function scanOrgForSmartStockAlerts(orgId: string): Promise<number> {
   if (freshCandidates.length === 0) return 0;
 
   // 7. Resolve recipients for this org
-  const { data: recipientsRaw } = await supabase
+  const { data: recipientsRaw, error: recipientsError } = await supabase
     .from("users")
     .select("id")
     .eq("org_id", orgId)
     .eq("active", true)
     .in("role", RECIPIENT_ROLES as unknown as string[]);
+  // ⚠️ NEVER DISCARD THIS ERROR AGAIN. It used to be destructured away, so a
+  // 400 from the query above looked identical to "this org has no recipients"
+  // and returned 0 without a word. That is how the alerts stayed dead.
+  if (recipientsError) {
+    logger.error("smart stock alerts: could not resolve recipients - NO ALERTS WERE SENT", {
+      orgId, error: recipientsError.message, roles: RECIPIENT_ROLES
+    });
+    return 0;
+  }
   const recipientIds = Array.from(new Set(((recipientsRaw ?? []) as { id: string }[]).map((r) => r.id)));
   if (recipientIds.length === 0) return 0;
 

@@ -1,3 +1,4 @@
+import type { UserRole } from "../types/index.js";
 import { sendPushToUsers } from "./push.js";
 import { getOrgPushBranding } from "./push-branding.js";
 import { supabase } from "./supabase.js";
@@ -17,7 +18,9 @@ type WaybillContext = {
 
 type WaybillEvent = "dispatched" | "updated" | "status_changed";
 
-const RECIPIENT_ROLES = ["Owner", "Admin", "Inventory Manager", "Inventory Manager & Logistics Operations"];
+// Typed for the same reason as smart-stock-alerts.ts: an invented role here
+// would 400 the whole recipient query, not merely skip that one role.
+const RECIPIENT_ROLES: readonly UserRole[] = ["Owner", "Admin", "Inventory Manager", "Inventory Manager & Logistics Operations"];
 
 function buildRouteLabel(waybill: WaybillContext): string {
   const route = [waybill.fromLocation, waybill.toLocation].filter(Boolean).join(" -> ");
