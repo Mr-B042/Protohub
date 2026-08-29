@@ -23,6 +23,7 @@ import { syncRecoveryNextActionReminders } from "./lib/recovery-next-action-remi
 import { runAgentStockDriftCheck } from "./lib/agent-stock-drift-check.js";
 import { logRowCapAtBoot } from "./lib/row-cap-probe.js";
 import systemRoutes from "./routes/system.js";
+import targetPeriodRoutes from "./routes/target-periods.js";
 import { pruneOldCartJourneyEvents } from "./lib/cart-journey.js";
 import { runStorageRetention } from "./lib/data-retention.js";
 import { dropDueDailySalaryForAllOrgs } from "./lib/salary-spread.js";
@@ -307,6 +308,7 @@ app.use("/api/auth/register", authRateLimit);
 app.use("/api/auth/refresh",  authRateLimit);
 app.use("/api/auth",          authRoutes);
 app.use("/api/system",        systemRoutes);
+app.use("/api/target-periods", targetPeriodRoutes);
 app.use("/api/products",      productRoutes);
 app.use("/api/orders",        salesExpansionOrderRoutes);
 app.use("/api/orders",        orderRoutes);
