@@ -8530,6 +8530,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
    */
   const [cartRecoveryPeriod, setCartRecoveryPeriod] = useState<Period | "All time">("This Week");
   const [cartRecoveryProductId, setCartRecoveryProductId] = useState("");
+  const [cartRecoveryDateRange, setCartRecoveryDateRange] = useState<DateRange>({ start: "", end: "" });
+  const [cartRecoveryNavStart, setCartRecoveryNavStart] = useState<string>("");
   const [cartRecovery, setCartRecovery] = useState<CartRecoverySummary | null>(null);
   const [cartRecoveryLoading, setCartRecoveryLoading] = useState(false);
   /**
@@ -12282,7 +12284,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // server decides what "everything" means instead of a guess made here.
     const window = cartRecoveryPeriod === "All time"
       ? {}
-      : periodRangeKeys(cartRecoveryPeriod as Period, cartsDateRange);
+      : periodRangeKeys(cartRecoveryPeriod as Period, cartRecoveryDateRange);
     setCartRecoveryError("");
     cartsApi.recoverySummary({ ...window, productId: cartRecoveryProductId || undefined })
       .then((result) => { if (!cancelled) { setCartRecovery(result); setCartRecoveryError(""); } })
@@ -12294,7 +12296,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       .finally(() => { if (!cancelled) setCartRecoveryLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cartRecoveryPeriod, cartRecoveryProductId, currentRole, cartsDateRange.start, cartsDateRange.end]);
+  }, [cartRecoveryPeriod, cartRecoveryProductId, currentRole, cartRecoveryDateRange.start, cartRecoveryDateRange.end]);
   // ⚠️ Abandoning the run must end it. Otherwise a queue left over from a
   // closed "Log all" would hijack the next unrelated single follow-up and
   // march the rep through carts they never asked to work.
@@ -60909,7 +60911,13 @@ ${waybillLineItems(w).length > 1
             <span className="relative">
               <CalendarDays className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
               <select aria-label="Recovery period" value={cartRecoveryPeriod}
-                onChange={(e) => setCartRecoveryPeriod(e.target.value as Period | "All time")}
+                onChange={(e) => {
+                  setCartRecoveryPeriod(e.target.value as Period | "All time");
+                  // A named preset defines its own window, so drop whatever the
+                  // navigator had stepped to - otherwise the pill says "This
+                  // Month" while the range still reads last March.
+                  setCartRecoveryDateRange({ start: "", end: "" });
+                }}
                 className="!min-h-0 h-8 appearance-none rounded-lg border border-gray-200 bg-white pl-8 pr-7 text-[12px] font-bold text-gray-800">
                 {(["Today", "Yesterday", "This Week", "Last Week", "This Month", "Last Month", "This Year", "All time"] as const)
                   .map((option) => <option key={option} value={option}>{option}</option>)}
@@ -60929,6 +60937,19 @@ ${waybillLineItems(w).length > 1
             </span>
           </div>
         </div>
+
+        {cartRecoveryPeriod !== "All time" && (
+          <div className="border-b border-gray-100 px-4 py-2">
+            {renderWeekNav(
+              cartRecoveryNavStart, setCartRecoveryNavStart,
+              "1W", () => {},
+              (period) => setCartRecoveryPeriod(period),
+              setCartRecoveryDateRange,
+              cartRecoveryPeriod as Period,
+              cartRecoveryDateRange
+            )}
+          </div>
+        )}
 
         {/* ── A. Recovery funnel ─────────────────────────── */}
         {!cartRecoveryError && (
