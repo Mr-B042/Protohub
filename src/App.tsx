@@ -166,7 +166,7 @@ import {
   PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, CartLogPenaltiesView, CartLogRangePreset, RecoveryCalendarView, RecoveryFollowUpPairs, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, CostChangeImpact, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView } from "./lib/api";
+import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid,CartRecoverySummary, CartGridRow, CartLogPenaltiesView, CartLogRangePreset, RecoveryCalendarView, RecoveryFollowUpPairs, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, CostChangeImpact, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -4973,6 +4973,46 @@ const isInPeriod = (dateKey: string | undefined, activePeriod: Period, range: Da
   return value.slice(0, 4) === today.slice(0, 4);
 };
 
+/**
+ * The same windows isInPeriod tests, expressed as BOUNDS so a server query can
+ * ask for them.
+ *
+ * ⚠️ Mirrors isInPeriod deliberately - Sunday-anchored weeks, calendar months,
+ * "this X" ending today rather than at the period's end. If the two ever drift,
+ * a filter chip and the rows under it start describing different windows.
+ */
+const periodRangeKeys = (activePeriod: Period, range: DateRange): { from?: string; to?: string } => {
+  const now = new Date();
+  const today = formatDateKey(now);
+  const weekStart = new Date(now);
+  weekStart.setDate(now.getDate() - now.getDay());
+
+  if (activePeriod === "Custom") {
+    return range.start && range.end ? { from: range.start, to: range.end } : {};
+  }
+  if (activePeriod === "Today") return { from: today, to: today };
+  if (activePeriod === "Yesterday") {
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    return { from: formatDateKey(yesterday), to: formatDateKey(yesterday) };
+  }
+  if (activePeriod === "This Week") return { from: formatDateKey(weekStart), to: today };
+  if (activePeriod === "Last Week") {
+    const start = new Date(weekStart); start.setDate(weekStart.getDate() - 7);
+    const end = new Date(weekStart); end.setDate(weekStart.getDate() - 1);
+    return { from: formatDateKey(start), to: formatDateKey(end) };
+  }
+  if (activePeriod === "This Month") {
+    return { from: `${today.slice(0, 7)}-01`, to: today };
+  }
+  if (activePeriod === "Last Month") {
+    const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const last = new Date(now.getFullYear(), now.getMonth(), 0);
+    return { from: formatDateKey(first), to: formatDateKey(last) };
+  }
+  return { from: `${today.slice(0, 4)}-01-01`, to: today };
+};
+
 // ── Manager bonus week attribution ────────────────────
 // The manager bonus is a WEEKLY payment. Its own settings say so:
 // "If weekly Net Profit (Ops) is below the gate, the manager gets support only."
@@ -8480,6 +8520,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [cartPenaltyShowPolicy, setCartPenaltyShowPolicy] = useState(false);
   const [cartPenaltyShowHelp, setCartPenaltyShowHelp] = useState(false);
   const [cartPenaltySelectedIds, setCartPenaltySelectedIds] = useState<Set<string>>(new Set());
+  /**
+   * ⚠️ THE RECOVERY PANEL HAS ITS OWN PERIOD, and its own fetch.
+   *
+   * It used to derive everything from the follow-up grid's loaded week, so
+   * every period longer than that week was silently answered with one week of
+   * data - "This month" and "This week" returned identical numbers and neither
+   * said so. It now asks the server for whatever range is chosen.
+   */
+  const [cartRecoveryPeriod, setCartRecoveryPeriod] = useState<Period | "All time">("This Week");
+  const [cartRecoveryProductId, setCartRecoveryProductId] = useState("");
+  const [cartRecovery, setCartRecovery] = useState<CartRecoverySummary | null>(null);
+  const [cartRecoveryLoading, setCartRecoveryLoading] = useState(false);
   /**
    * Carts still to work in a "Log all" run, oldest first.
    *
@@ -12214,6 +12266,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     try { window.localStorage.setItem("protohub.density", density); } catch (_) { /* private mode */ }
   }, [density]);
   const [modal, setModal] = useState<ModalType>(null);
+  useEffect(() => {
+    if (!["Owner", "Admin", "Manager"].includes(currentRole)) { setCartRecovery(null); return; }
+    let cancelled = false;
+    setCartRecoveryLoading(true);
+    // "All time" sends no bounds at all rather than a very old date, so the
+    // server decides what "everything" means instead of a guess made here.
+    const window = cartRecoveryPeriod === "All time"
+      ? {}
+      : periodRangeKeys(cartRecoveryPeriod as Period, cartsDateRange);
+    cartsApi.recoverySummary({ ...window, productId: cartRecoveryProductId || undefined })
+      .then((result) => { if (!cancelled) setCartRecovery(result); })
+      .catch(() => { if (!cancelled) setCartRecovery(null); })
+      .finally(() => { if (!cancelled) setCartRecoveryLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cartRecoveryPeriod, cartRecoveryProductId, currentRole, cartsDateRange.start, cartsDateRange.end]);
   // ⚠️ Abandoning the run must end it. Otherwise a queue left over from a
   // closed "Log all" would hijack the next unrelated single follow-up and
   // march the rep through carts they never asked to work.
@@ -60724,73 +60792,19 @@ ${waybillLineItems(w).length > 1
     // actually matters - did the cart become delivered revenue - so clearing
     // and recovering stop looking like the same thing.
     //
-    // Same cohort as the penalty list (weekScoped), so the two panels cannot
-    // disagree about which carts are in scope.
+    // ⚠️ SERVER-COMPUTED over the chosen period. This used to be derived from
+    // the grid's loaded week, so every period longer than a week silently
+    // answered with one week of data.
     const canSeeCartRecovery = ["Owner", "Admin", "Manager"].includes(currentRole);
-    const followUpById = new Map(cartFollowUps.map((row) => [row.id, row]));
-
-    /** Where a cart ended up. Buckets are the values the data really holds. */
-    const recoveryOutcome = (row: CartGridRow) => {
-      const linked = followUpById.get(row.id);
-      if (linked?.convertedOrderId) return "converted";
-      const label = `${row.lastOutcome ?? ""} ${row.status ?? ""}`.toLowerCase();
-      if (label.includes("wrong number") || label.includes("not reachable")) return "wrong_number";
-      if (label.includes("not interested")) return "not_interested";
-      if (label.includes("unresponsive") || label.includes("no response")) return "unresponsive";
-      return "pending";
-    };
-
-    const recoveryStats = (rows: CartGridRow[]) => {
-      const linked = rows.map((row) => followUpById.get(row.id)).filter(Boolean) as CartFollowUpRow[];
-      const converted = linked.filter((row) => row.convertedOrderId);
-      const delivered = converted.filter((row) => row.convertedOrderStatus === "Delivered");
-      const counts = { converted: 0, not_interested: 0, unresponsive: 0, wrong_number: 0, pending: 0 };
-      rows.forEach((row) => { counts[recoveryOutcome(row) as keyof typeof counts] += 1; });
-      return {
-        assigned: rows.length,
-        // ⚠️ REACHED, not attempted. "246 worked" counts dialling; this counts
-        // conversations. The gap between the two is where a rep who rings and
-        // hangs up looks identical to one who actually spoke to the customer.
-        reached: rows.filter((row) => Object.values(row.cells ?? {})
-          .some((cell: any) => cell?.reached)).length,
-        // "Worked" is a logged attempt, NOT a closed cart. Separating the two
-        // is the whole point: a closed cart with no attempt was never worked.
-        worked: rows.filter((row) => (row.attempts ?? 0) > 0).length,
-        converted: converted.length,
-        delivered: delivered.length,
-        revenue: delivered.reduce((sum, row) => sum + Number(row.convertedOrderAmount ?? row.amount ?? 0), 0),
-        counts
-      };
-    };
-
-    /**
-     * Hours from assignment to the FIRST logged attempt. Null when the cart
-     * has never been touched, so an untouched cart cannot quietly score as
-     * "instant" - it is excluded from the median and punished by work
-     * completion instead, where it belongs.
-     */
-    const hoursToFirstContact = (row: CartGridRow) => {
-      const stamps = Object.values(row.cells ?? {})
-        .flatMap((cell: any) => (cell?.entries ?? []).map((entry: any) => entry.attemptedAt))
-        .filter(Boolean).map((iso: string) => new Date(iso).getTime())
-        .filter((time) => Number.isFinite(time));
-      if (stamps.length === 0) return null;
-      const start = new Date(row.assignedAt ?? row.createdAt).getTime();
-      if (!Number.isFinite(start)) return null;
-      return Math.max(0, (Math.min(...stamps) - start) / 3_600_000);
-    };
-
-    const recoveryAll = recoveryStats(weekScoped);
     const pct = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0);
-
-    const recoveryReps = [...new Map(weekScoped.map((row) => [row.repId, row.repName])).entries()]
-      .map(([repId, repName]) => {
-        const rows = weekScoped.filter((row) => row.repId === repId);
-        const stat = recoveryStats(rows);
-        return { repId, repName: repName || "Unassigned", ...stat, ...recoveryScoreFor(rows, stat) };
-      })
-      .filter((rep) => rep.assigned > 0)
-      .sort((a, b) => b.assigned - a.assigned);
+    const recoveryAll = cartRecovery?.totals ?? {
+      assigned: 0, worked: 0, reached: 0, converted: 0, delivered: 0, revenue: 0,
+      counts: { converted: 0, not_interested: 0, unresponsive: 0, wrong_number: 0, pending: 0 },
+      medianFirstContactHours: null, unloggedToday: 0, deepAttempts: 0, unconverted: 0
+    };
+    const recoveryFlagCounts = cartRecovery?.flags ?? {
+      quickClose: 0, bulkClose: 0, weakFollowUp: 0, closedUnworked: 0, closesWithTimestamp: 0
+    };
 
     /**
      * Cart Recovery Score /100 - the distinction between a rep who CLEARS carts
@@ -60798,8 +60812,7 @@ ${waybillLineItems(w).length > 1
      *
      * ⚠️ Every component is the rep's own rate, not a curve against the team.
      * A relative score always crowns somebody, even in a bad week; an absolute
-     * one can say "everyone is at 38" and mean it. So a score reads as "the
-     * weighted average of your rates", never as a class ranking.
+     * one can say "everyone is at 38" and mean it.
      *
      * Speed is the one component that is not already a percentage: 100 at two
      * hours or better, 0 at twenty-four, straight line between. Stated here
@@ -60814,103 +60827,34 @@ ${waybillLineItems(w).length > 1
       { key: "compliance", label: "Logging compliance", weight: 5 }
     ] as const;
 
-    const recoveryScoreFor = (rows: CartGridRow[], stat: ReturnType<typeof recoveryStats>) => {
-      const unconverted = rows.filter((row) => recoveryOutcome(row) !== "converted");
-      const speeds = rows.map(hoursToFirstContact).filter((hours): hours is number => hours !== null).sort((a, b) => a - b);
-      const medianHours = speeds.length > 0 ? speeds[Math.floor(speeds.length / 2)] : null;
+    const recoveryScoreOf = (stat: CartRecoverySummary["totals"]) => {
       const parts = {
         conversion: pct(stat.converted, stat.assigned),
         delivered: pct(stat.delivered, stat.assigned),
         work: pct(stat.worked, stat.assigned),
         // Chasing a "no" properly: of the carts that did NOT convert, how many
         // got a real sequence of attempts rather than one call and a label.
-        quality: unconverted.length > 0
-          ? pct(unconverted.filter((row) => (row.attempts ?? 0) >= CART_UNRESPONSIVE_MIN_ATTEMPTS).length, unconverted.length)
-          : 100,
-        speed: medianHours === null ? 0 : Math.max(0, Math.min(100, Math.round(((24 - medianHours) / 22) * 100))),
-        compliance: 100 - pct(rows.filter((row) => !row.closed && (row.cells?.[todayKey]?.attempts ?? 0) === 0).length, stat.assigned)
+        quality: stat.unconverted > 0 ? pct(stat.deepAttempts, stat.unconverted) : 100,
+        speed: stat.medianFirstContactHours === null
+          ? 0 : Math.max(0, Math.min(100, Math.round(((24 - stat.medianFirstContactHours) / 22) * 100))),
+        compliance: 100 - pct(stat.unloggedToday, stat.assigned)
       };
-      const score = RECOVERY_SCORE_WEIGHTS.reduce(
-        (sum, part) => sum + (parts[part.key as keyof typeof parts] * part.weight) / 100, 0);
-      return { score: Math.round(score), parts, medianHours };
+      return {
+        parts,
+        score: Math.round(RECOVERY_SCORE_WEIGHTS.reduce(
+          (sum, part) => sum + (parts[part.key as keyof typeof parts] * part.weight) / 100, 0))
+      };
     };
 
-    // Team average, so a rep's disposal mix is judged against the room rather
-    // than against a number somebody picked.
+    const recoveryReps = (cartRecovery?.reps ?? []).map((rep) => ({ ...rep, ...recoveryScoreOf(rep) }));
     const teamNotInterestedPct = pct(recoveryAll.counts.not_interested, recoveryAll.assigned);
-
-    /**
-     * ⚠️ ONLY THE FLAGS THE DATA CAN ACTUALLY SUPPORT.
-     *
-     * The design also asked for "quick closes" (closed under 2 minutes after
-     * first contact) and "bulk closes" (several closed within 3 minutes).
-     * Neither is built, because nothing records WHEN a cart was closed -
-     * there is no closed_at. Inventing them from the last attempt time would
-     * put a misconduct flag on a rep's name using a timestamp that means
-     * something else. They need a column first.
-     */
-    /**
-     * Closed within two minutes of the FIRST attempt on that cart.
-     *
-     * ⚠️ Only carts carrying a closed_at can be judged, i.e. those closed since
-     * migration 239. Everything older is skipped rather than guessed at - see
-     * the migration for why last_activity is not a substitute.
-     */
-    const flagQuickClose = weekScoped.filter((row) => {
-      if (!row.closedAt) return false;
-      const first = Object.values(row.cells ?? {})
-        .flatMap((cell: any) => (cell?.entries ?? []).map((entry: any) => entry.attemptedAt))
-        .filter(Boolean).map((iso: string) => new Date(iso).getTime())
-        .filter((time) => Number.isFinite(time));
-      if (first.length === 0) return false;
-      const gapMinutes = (new Date(row.closedAt).getTime() - Math.min(...first)) / 60_000;
-      return gapMinutes >= 0 && gapMinutes < 2;
-    });
-
-    /**
-     * Three or more carts closed by one rep inside a three-minute window -
-     * the signature of clearing a queue rather than working it.
-     *
-     * Counts the CARTS in every offending window, so the number reads as
-     * "carts closed in a burst" rather than "number of bursts".
-     */
-    const flagBulkClose = (() => {
-      const byRep = new Map<string, number[]>();
-      weekScoped.forEach((row) => {
-        if (!row.closedAt) return;
-        const time = new Date(row.closedAt).getTime();
-        if (!Number.isFinite(time)) return;
-        byRep.set(row.repId, [...(byRep.get(row.repId) ?? []), time]);
-      });
-      const flagged = new Set<string>();
-      byRep.forEach((times, repId) => {
-        const sorted = [...times].sort((a, b) => a - b);
-        for (let i = 0; i + 2 < sorted.length; i += 1) {
-          if (sorted[i + 2] - sorted[i] <= 3 * 60_000) {
-            for (let j = i; j <= i + 2; j += 1) flagged.add(`${repId}:${sorted[j]}`);
-          }
-        }
-      });
-      return flagged.size;
-    })();
-
-    /** Carts closed since the stamp existed, so the two flags above can say
-     *  what they actually looked at rather than implying full coverage. */
-    const closesWithTimestamp = weekScoped.filter((row) => Boolean(row.closedAt)).length;
-
-    const flagWeakFollowUp = weekScoped.filter((row) =>
-      recoveryOutcome(row) === "unresponsive" && (row.attempts ?? 0) < 3);
     const flagHighNotInterested = recoveryReps.filter((rep) =>
       rep.assigned >= 5 && pct(rep.counts.not_interested, rep.assigned) > teamNotInterestedPct + 15);
-    const flagClosedUnworked = weekScoped.filter((row) => row.closed && (row.attempts ?? 0) === 0);
+    const recoveryCohortDays = (cartRecovery?.days ?? []).map((day) => ({
+      ...day,
+      label: new Date(`${day.key}T12:00:00Z`).toLocaleDateString("en-NG", { weekday: "short", day: "numeric" })
+    }));
 
-    // By ASSIGNMENT DATE, not activity date. A cart handed out Monday that
-    // converts Thursday belongs to Monday - otherwise no day ever shows what
-    // its own carts came to.
-    const recoveryCohortDays = days.map((day) => {
-      const rows = weekScoped.filter((row) => assignedDayKey(row) === day.key);
-      return { key: day.key, label: day.label, ...recoveryStats(rows) };
-    });
     return (
       <>
       {canSeeCartRecovery && (
@@ -60922,15 +60866,41 @@ ${waybillLineItems(w).length > 1
               How assigned carts were worked, converted and delivered — not just cleared.
             </p>
           </div>
-          <span className="inline-flex items-center gap-1.5 rounded-lg bg-violet-50 px-2.5 py-1 text-[11px] font-black text-violet-700">
-            <Users className="h-3.5 w-3.5" />Owner · Admin · Manager
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-lg bg-violet-50 px-2.5 py-1 text-[11px] font-black text-violet-700">
+              <Users className="h-3.5 w-3.5" />Owner · Admin · Manager
+            </span>
+            <span className="relative">
+              <CalendarDays className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+              <select aria-label="Recovery period" value={cartRecoveryPeriod}
+                onChange={(e) => setCartRecoveryPeriod(e.target.value as Period | "All time")}
+                className="!min-h-0 h-8 appearance-none rounded-lg border border-gray-200 bg-white pl-8 pr-7 text-[12px] font-bold text-gray-800">
+                {(["Today", "Yesterday", "This Week", "Last Week", "This Month", "Last Month", "This Year", "All time"] as const)
+                  .map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+            </span>
+            <span className="relative">
+              <Package className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+              <select aria-label="Product" value={cartRecoveryProductId}
+                onChange={(e) => setCartRecoveryProductId(e.target.value)}
+                className="!min-h-0 h-8 appearance-none rounded-lg border border-gray-200 bg-white pl-8 pr-7 text-[12px] font-bold text-gray-800">
+                <option value="">All products</option>
+                {catalogProducts.filter((product) => product.active)
+                  .map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+            </span>
+          </div>
         </div>
 
         {/* ── A. Recovery funnel ─────────────────────────── */}
         <div className="px-4 py-4">
           <p className="m-0 mb-2.5 text-[11px] font-black uppercase tracking-wider text-violet-700">
-            Recovery funnel <span className="font-bold normal-case tracking-normal text-gray-400">· carts assigned this week</span>
+            Recovery funnel <span className="font-bold normal-case tracking-normal text-gray-400">
+              · carts assigned {cartRecoveryPeriod === "All time" ? "since records began" : cartRecoveryPeriod.toLowerCase()}
+              {cartRecoveryLoading ? " · loading…" : ""}
+            </span>
           </p>
           <div className="flex flex-col gap-2 lg:flex-row lg:items-stretch">
             {[
@@ -60968,9 +60938,15 @@ ${waybillLineItems(w).length > 1
           {/* The one number the whole panel exists for. */}
           <p className="m-0 mt-2.5 text-[11px] font-semibold text-gray-500">
             <strong className="text-gray-900">Cart → Delivered: {pct(recoveryAll.delivered, recoveryAll.assigned)}%</strong>
-            {" "}— of every 100 abandoned customers handed out this week, {Math.round(pct(recoveryAll.delivered, recoveryAll.assigned))} became a delivered sale.
+            {" "}— of every 100 abandoned customers handed out in this window, {Math.round(pct(recoveryAll.delivered, recoveryAll.assigned))} became a delivered sale.
           </p>
         </div>
+
+        {recoveryReps.length === 0 && !cartRecoveryLoading && (
+          <p className="m-0 border-t border-gray-100 px-4 py-8 text-center text-[12px] font-semibold text-gray-400">
+            No carts were assigned to anyone in this period.
+          </p>
+        )}
 
         {/* ── B. Rep cards ───────────────────────────────── */}
         {recoveryReps.length > 0 && (
@@ -61129,15 +61105,15 @@ ${waybillLineItems(w).length > 1
             <p className="m-0 mb-2 text-[11px] font-black uppercase tracking-wider text-violet-700">Quality flags</p>
             <div className="space-y-2">
               {[
-                { n: flagClosedUnworked.length, title: "Closed without an attempt",
+                { n: recoveryFlagCounts.closedUnworked, title: "Closed without an attempt",
                   note: "Cart reached a final state with no logged contact", tone: "border-rose-200 bg-rose-50", num: "text-rose-600", icon: <CircleX className="h-4 w-4 text-rose-500" /> },
                 { n: flagHighNotInterested.length, title: "High Not Interested rate",
                   note: `More than 15 points above the team's ${teamNotInterestedPct}%`, tone: "border-amber-200 bg-amber-50", num: "text-amber-600", icon: <AlertTriangle className="h-4 w-4 text-amber-500" /> },
-                { n: flagWeakFollowUp.length, title: "Weak follow-ups",
+                { n: recoveryFlagCounts.weakFollowUp, title: "Weak follow-ups",
                   note: "Marked unresponsive after fewer than 3 attempts", tone: "border-blue-200 bg-blue-50", num: "text-blue-600", icon: <Phone className="h-4 w-4 text-blue-500" /> },
-                { n: flagQuickClose.length, title: "Quick closes",
+                { n: recoveryFlagCounts.quickClose, title: "Quick closes",
                   note: "Closed under 2 minutes after first contact", tone: "border-rose-200 bg-rose-50", num: "text-rose-600", icon: <Clock className="h-4 w-4 text-rose-500" /> },
-                { n: flagBulkClose, title: "Bulk closes",
+                { n: recoveryFlagCounts.bulkClose, title: "Bulk closes",
                   note: "3+ carts closed by one rep within 3 minutes", tone: "border-amber-200 bg-amber-50", num: "text-amber-600", icon: <Zap className="h-4 w-4 text-amber-500" /> }
               ].map((flag) => (
                 <div key={flag.title} className={`flex items-center gap-2.5 rounded-lg border ${flag.tone} px-2.5 py-2`}>
@@ -61154,8 +61130,8 @@ ${waybillLineItems(w).length > 1
                 existed carry no timestamp, so the two timing flags cannot see
                 them. Saying so beats a reassuring zero. */}
             <p className="m-0 mt-2 text-[10px] font-medium leading-snug text-gray-400">
-              Timing flags read the {closesWithTimestamp} of {recoveryAll.assigned} carts closed since close-time tracking began.
-              {closesWithTimestamp === 0 ? " Nothing has been closed since then yet." : ""}
+              Timing flags read the {recoveryFlagCounts.closesWithTimestamp} of {recoveryAll.assigned} carts closed since close-time tracking began.
+              {recoveryFlagCounts.closesWithTimestamp === 0 ? " Nothing has been closed since then yet." : ""}
             </p>
             {flagHighNotInterested.length > 0 && (
               <p className="m-0 mt-2 text-[10px] font-bold text-amber-700">

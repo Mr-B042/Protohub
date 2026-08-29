@@ -2956,6 +2956,26 @@ export const notificationsApi = {
 };
 
 // ── Waybills ──────────────────────────────────────────────
+export type CartRecoveryStat = {
+  assigned: number; worked: number; reached: number; converted: number; delivered: number;
+  revenue: number;
+  counts: { converted: number; not_interested: number; unresponsive: number; wrong_number: number; pending: number };
+  /** Median hours from assignment to the first logged attempt. Null when no
+   *  cart in the set has ever been contacted. */
+  medianFirstContactHours: number | null;
+  unloggedToday: number;
+  /** Of the carts that did NOT convert, how many got 3+ attempts. */
+  deepAttempts: number; unconverted: number;
+};
+
+export type CartRecoverySummary = {
+  from: string | null; to: string | null; todayKey?: string;
+  totals: CartRecoveryStat;
+  reps: Array<CartRecoveryStat & { repId: string; repName: string }>;
+  flags: { quickClose: number; bulkClose: number; weakFollowUp: number; closedUnworked: number; closesWithTimestamp: number };
+  days: Array<CartRecoveryStat & { key: string }>;
+};
+
 export const waybillsApi = {
   list: () => get<any[]>("/api/waybills"),
   create: (body: unknown) => post<any>("/api/waybills", body),
@@ -3308,6 +3328,15 @@ export const productCostApi = {
 };
 
 export const cartsApi = {
+  /** Recovery funnel over ANY range - the follow-up grid only knows one week. */
+  recoverySummary: (params: { from?: string; to?: string; productId?: string }) => {
+    const qs = new URLSearchParams();
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
+    if (params.productId) qs.set("productId", params.productId);
+    const query = qs.toString();
+    return get<CartRecoverySummary>(`/api/carts/recovery-summary${query ? `?${query}` : ""}`);
+  },
   logPenalties: (params?: { range?: CartLogRangePreset; repId?: string }) => {
     const qs = new URLSearchParams();
     if (params?.range) qs.set("range", params.range);
