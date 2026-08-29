@@ -7293,8 +7293,11 @@ const CART_DETAIL_FALLBACK_POLL_MS = 60_000;
 // repairs websocket gaps, so it can stay slow and inexpensive.
 const FORM_PULSE_POLL_MS = 2 * 60_000;
 const NOTIFICATION_FALLBACK_POLL_MS = 5 * 60_000;
-const PRESENCE_HEARTBEAT_MS = 25_000;
-const PRESENCE_FALLBACK_POLL_MS = 10_000;
+// Presence intentionally favors low infrastructure usage over second-by-second
+// updates. Visibility/focus events still sync immediately; these timers only
+// maintain the lease and repair missed updates while the relevant page is open.
+const PRESENCE_HEARTBEAT_MS = 60_000;
+const PRESENCE_FALLBACK_POLL_MS = 60_000;
 
 // ── isNativePushShell ────────────────────
 const isNativePushShell = (() => {

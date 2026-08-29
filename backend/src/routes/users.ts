@@ -41,7 +41,10 @@ router.get("/", async (req, res) => {
 // from GET /api/users avoids repeatedly sending profiles, permissions, and
 // agent assignments just to recover from a missed realtime event.
 router.get("/presence", requireRole("Owner", "Admin", "Manager"), async (req, res) => {
-  const cutoff = new Date(Date.now() - 70_000).toISOString();
+  // Allow two missed one-minute heartbeats before expiring a session. Explicit
+  // visibility/page-hide updates still mark sessions offline immediately.
+  const activeWindowSeconds = 150;
+  const cutoff = new Date(Date.now() - activeWindowSeconds * 1000).toISOString();
   const [{ data, error }, { data: sessions, error: sessionsError }] = await Promise.all([
     supabase.from("users").select("id, active, last_seen_at")
       .eq("org_id", req.user!.orgId)
@@ -62,7 +65,7 @@ router.get("/presence", requireRole("Owner", "Admin", "Manager"), async (req, re
   res.setHeader("Cache-Control", "private, no-store");
   res.json({
     serverTime: new Date().toISOString(),
-    activeWindowSeconds: 70,
+    activeWindowSeconds,
     users: (data ?? []).map((row) => ({ ...row, online: row.active && onlineIds.has(row.id) }))
   });
 });
