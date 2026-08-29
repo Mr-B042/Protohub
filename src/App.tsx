@@ -61132,8 +61132,12 @@ ${waybillLineItems(w).length > 1
           </div>
 
           <div className="min-w-0 rounded-xl border border-gray-200 p-3">
-            <p className="m-0 mb-2 text-[11px] font-black uppercase tracking-wider text-violet-700">Outcome quality</p>
-            <p className="m-0 text-[10px] font-medium text-gray-400">How the {recoveryAll.assigned} assigned carts were disposed of.</p>
+            <p className="m-0 mb-2 text-[12px] font-black uppercase tracking-wider text-violet-700">
+              Outcome quality{" "}
+              <span className="text-[11px] font-bold normal-case tracking-normal text-gray-400">
+                ({cartRecoveryPeriod === "All time" ? "all time" : cartRecoveryPeriod.toLowerCase()})
+              </span>
+            </p>
             {/* ⚠️ Pie/Cell/ResponsiveContainer here are RECHARTS', not lucide's -
                 the two import blocks collide on names like Cell and Tooltip. */}
             <div className="mt-2 flex flex-wrap items-center gap-4">
@@ -61145,12 +61149,20 @@ ${waybillLineItems(w).length > 1
                       data={outcomeSlices} dataKey="n" nameKey="label"
                       innerRadius={52} outerRadius={84} paddingAngle={1} stroke="none"
                       labelLine={false}
-                      // Written ON the slice, so the ring reads without the eye
-                      // crossing to the legend and back. Hidden under 5%, where
-                      // the text would be wider than the wedge it labels.
-                      label={(entry: any) => {
-                        const share = pct(entry.n, recoveryAll.assigned);
-                        return share >= 5 ? `${share}%` : "";
+                      label={({ cx, cy, midAngle, innerRadius, outerRadius, value }: any) => {
+                        const share = pct(value, recoveryAll.assigned);
+                        // Under 5% the text is wider than the wedge it labels.
+                        if (share < 5) return null;
+                        const radians = Math.PI / 180;
+                        const mid = innerRadius + (outerRadius - innerRadius) * 0.5;
+                        return (
+                          <text
+                            x={cx + mid * Math.cos(-midAngle * radians)}
+                            y={cy + mid * Math.sin(-midAngle * radians)}
+                            fill="#ffffff" textAnchor="middle" dominantBaseline="central"
+                            fontSize={11} fontWeight={800}
+                          >{share}%</text>
+                        );
                       }}
                     >
                       {outcomeSlices.map((slice) => <Cell key={slice.label} fill={slice.hex} />)}
