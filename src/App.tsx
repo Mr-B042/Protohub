@@ -60867,6 +60867,25 @@ ${waybillLineItems(w).length > 1
     const teamNotInterestedPct = pct(recoveryAll.counts.not_interested, recoveryAll.assigned);
     const flagHighNotInterested = recoveryReps.filter((rep) =>
       rep.assigned >= 5 && pct(rep.counts.not_interested, rep.assigned) > teamNotInterestedPct + 15);
+    /** One source for the ring, the legend and the bar - three views of the
+     *  same five numbers must never disagree about a colour or a count. */
+    const outcomeSlices = [
+      { label: "Converted", n: recoveryAll.counts?.converted ?? 0, cls: "bg-emerald-500", text: "text-emerald-700", hex: "#10b981" },
+      { label: "Not interested", n: recoveryAll.counts?.not_interested ?? 0, cls: "bg-rose-500", text: "text-rose-700", hex: "#f43f5e" },
+      { label: "Unresponsive", n: recoveryAll.counts?.unresponsive ?? 0, cls: "bg-gray-400", text: "text-gray-600", hex: "#9ca3af" },
+      { label: "Wrong number", n: recoveryAll.counts?.wrong_number ?? 0, cls: "bg-amber-400", text: "text-amber-700", hex: "#fbbf24" },
+      { label: "Still working", n: recoveryAll.counts?.pending ?? 0, cls: "bg-blue-400", text: "text-blue-700", hex: "#60a5fa" }
+    ].filter((slice) => slice.n > 0);
+
+    /**
+     * ⚠️ READS THE SAME actionRows AND penalties AS THE PANEL BELOW. Two
+     * penalty figures on one page that were computed separately is exactly how
+     * a summary ends up contradicting the list it summarises.
+     */
+    const penaltyUnloggedCarts = actionRows.length;
+    const penaltyRepsAffected = new Set(actionRows.map((row) => row.repId)).size;
+    const penaltyAtRisk = penalties?.today?.atRisk || penaltyUnloggedCarts * (penalties?.missAmount ?? 0);
+
     const recoveryCohortDays = (cartRecovery?.days ?? []).map((day) => ({
       ...day,
       label: new Date(`${day.key}T12:00:00Z`).toLocaleDateString("en-NG", { weekday: "short", day: "numeric" })
@@ -61094,14 +61113,31 @@ ${waybillLineItems(w).length > 1
           <div className="min-w-0 rounded-xl border border-gray-200 p-3">
             <p className="m-0 mb-2 text-[11px] font-black uppercase tracking-wider text-violet-700">Outcome quality</p>
             <p className="m-0 text-[10px] font-medium text-gray-400">How the {recoveryAll.assigned} assigned carts were disposed of.</p>
+            {/* ⚠️ Pie/Cell/ResponsiveContainer here are RECHARTS', not lucide's -
+                the two import blocks collide on names like Cell and Tooltip. */}
+            {recoveryAll.assigned > 0 && (
+              <div className="relative mx-auto mt-2 h-40 w-40">
+                <ResponsiveContainer width="100%" height="100%">
+                  <RePieChart>
+                    <Pie
+                      data={outcomeSlices} dataKey="n" nameKey="label"
+                      innerRadius={46} outerRadius={72} paddingAngle={2} stroke="none"
+                    >
+                      {outcomeSlices.map((slice) => <Cell key={slice.label} fill={slice.hex} />)}
+                    </Pie>
+                    <Tooltip formatter={(value: any, name: any) => [`${value} carts`, name]} />
+                  </RePieChart>
+                </ResponsiveContainer>
+                {/* The centre carries the denominator, so every percentage on
+                    the ring is readable against the number it came from. */}
+                <span className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                  <strong className="text-[20px] font-black leading-none text-gray-900">{recoveryAll.assigned}</strong>
+                  <span className="text-[10px] font-bold text-gray-400">Assigned</span>
+                </span>
+              </div>
+            )}
             <div className="mt-2.5 space-y-1.5">
-              {[
-                { label: "Converted", n: recoveryAll.counts.converted, cls: "bg-emerald-500", text: "text-emerald-700" },
-                { label: "Not interested", n: recoveryAll.counts.not_interested, cls: "bg-rose-500", text: "text-rose-700" },
-                { label: "Unresponsive", n: recoveryAll.counts.unresponsive, cls: "bg-gray-400", text: "text-gray-600" },
-                { label: "Wrong number", n: recoveryAll.counts.wrong_number, cls: "bg-amber-400", text: "text-amber-700" },
-                { label: "Still working", n: recoveryAll.counts.pending, cls: "bg-blue-400", text: "text-blue-700" }
-              ].map((row) => (
+              {outcomeSlices.map((row) => (
                 <div key={row.label} className="flex items-center gap-2">
                   <span className={`h-2 w-2 shrink-0 rounded-full ${row.cls}`} />
                   <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-gray-600">{row.label}</span>
@@ -61113,14 +61149,8 @@ ${waybillLineItems(w).length > 1
               ))}
             </div>
             <span className="mt-2.5 flex h-2 w-full overflow-hidden rounded-full bg-gray-100">
-              {[
-                { n: recoveryAll.counts.converted, cls: "bg-emerald-500" },
-                { n: recoveryAll.counts.not_interested, cls: "bg-rose-500" },
-                { n: recoveryAll.counts.unresponsive, cls: "bg-gray-400" },
-                { n: recoveryAll.counts.wrong_number, cls: "bg-amber-400" },
-                { n: recoveryAll.counts.pending, cls: "bg-blue-400" }
-              ].filter((seg) => seg.n > 0).map((seg, i) => (
-                <span key={i} className={seg.cls} style={{ width: `${pct(seg.n, recoveryAll.assigned)}%` }} />
+              {outcomeSlices.map((seg) => (
+                <span key={seg.label} className={seg.cls} style={{ width: `${pct(seg.n, recoveryAll.assigned)}%` }} />
               ))}
             </span>
           </div>
@@ -61188,6 +61218,40 @@ ${waybillLineItems(w).length > 1
             )}
           </div>
         </div>
+
+        {penalties && (
+          <div className="border-t border-gray-100 px-4 pb-4">
+            <p className="m-0 mb-2 text-[11px] font-black uppercase tracking-wider text-violet-700">Penalty &amp; compliance</p>
+            <div className={`flex flex-wrap items-center gap-4 rounded-xl border px-4 py-3 ${
+              penalties.phase.active ? "border-rose-200 bg-rose-50/70" : "border-amber-200 bg-amber-50/70"}`}>
+              <span className={`inline-flex h-16 w-16 shrink-0 flex-col items-center justify-center rounded-full border-2 ${
+                penalties.phase.active ? "border-rose-300 bg-white text-rose-700" : "border-amber-300 bg-white text-amber-700"}`}>
+                <strong className="text-[13px] font-black leading-none">{cartRowMoney(penaltyAtRisk, "NGN")}</strong>
+                <span className="mt-0.5 text-[8px] font-black uppercase tracking-wide">At risk</span>
+              </span>
+              <span className="min-w-0 flex-1">
+                <strong className={`block text-[12px] font-black ${penalties.phase.active ? "text-rose-900" : "text-amber-900"}`}>
+                  {penalties.phase.active
+                    ? `Cart log penalty is live — ${cartRowMoney(penalties.missAmount, "NGN")} per cart per day`
+                    : `${penalties.phase.label} — ${cartRowMoney(penalties.missAmount, "NGN")} per cart per day`}
+                </strong>
+                <span className="mt-0.5 block text-[11px] font-medium text-gray-600">
+                  {penaltyUnloggedCarts === 0
+                    ? "Every assigned cart has been logged today."
+                    : `${penaltyUnloggedCarts} cart${penaltyUnloggedCarts === 1 ? "" : "s"} remain unlogged by ${penaltyRepsAffected} rep${penaltyRepsAffected === 1 ? "" : "s"}.`}
+                  {" "}Clearing a cart removes its charge.
+                </span>
+                <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-semibold text-gray-500">
+                  <span className="inline-flex items-center gap-1"><CalendarDays className="h-3 w-3" />Resets every day at 12:00 AM</span>
+                  <span className="inline-flex items-center gap-1"><Clock className="h-3 w-3" />Sundays are off</span>
+                  {/* ⚠️ Nothing is ever auto-deducted; a miss sits pending until
+                      the Owner rules on it. The card must not imply otherwise. */}
+                  <span className="inline-flex items-center gap-1"><Info className="h-3 w-3" />Nothing is charged until you approve it</span>
+                </span>
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* ── D. Daily cohort ────────────────────────────── */}
         {recoveryCohortDays.length > 0 && (
