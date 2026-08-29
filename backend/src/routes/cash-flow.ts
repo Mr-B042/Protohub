@@ -1701,7 +1701,10 @@ router.get("/inventory", async (req, res) => {
       sku: row.sku ?? "",
       imageUrl: row.image_url ?? null,
       catalogType: row.catalog_type ?? "standard",
-      warehouseUnits: Number(row.warehouse_stock ?? 0),
+      // Inventory Value is intentionally an agent-held stock report. Keep the
+      // warehouse figure available in the database for other workflows, but do
+      // not let global reserve stock inflate Units Available or valuation here.
+      warehouseUnits: 0,
       agentUnits: Number(row.agent_stock ?? 0),
       damagedUnits: damagedByProduct.get(row.id) ?? 0,
       unitCost: pricingByProduct.get(row.id)?.unitCost ?? 0,

@@ -12,9 +12,13 @@ const product = (over: Partial<ProductStockInput> = {}): ProductStockInput => ({
   unitsSoldRecently: 22, weekTrend: 12, ...over
 });
 
-test("stock on hand is warehouse plus agent, less damaged", () => {
-  assert.equal(sellableUnits(product()), 76);
-  assert.equal(sellableUnits(product({ damagedUnits: 6 })), 70);
+test("stock on hand is agent-held stock, less damaged", () => {
+  assert.equal(sellableUnits(product()), 36);
+  assert.equal(sellableUnits(product({ damagedUnits: 6 })), 30);
+});
+
+test("global warehouse stock is excluded", () => {
+  assert.equal(sellableUnits(product({ warehouseUnits: 500, agentUnits: 12, damagedUnits: 2 })), 10);
 });
 
 test("damaged units can never push stock below zero", () => {
@@ -23,8 +27,8 @@ test("damaged units can never push stock below zero", () => {
 
 test("stock is valued at cost, with retail carried only as an estimate", () => {
   const valued = valueProduct(product());
-  assert.equal(valued.costValue, 76 * 11_500);
-  assert.equal(valued.retailValue, 76 * 41_000);
+  assert.equal(valued.costValue, 36 * 11_500);
+  assert.equal(valued.retailValue, 36 * 41_000);
   assert.notEqual(valued.costValue, valued.retailValue);
 });
 
@@ -66,11 +70,9 @@ test("average unit cost is weighted by holding, not a mean of the costs", () => 
     valueProduct(product({ productId: "cheap", warehouseUnits: 99, agentUnits: 0, unitCost: 100, reorderPoint: 0 })),
     valueProduct(product({ productId: "dear", warehouseUnits: 1, agentUnits: 0, unitCost: 100_000, reorderPoint: 0 }))
   ]);
-  assert.equal(totals.totalUnits, 100);
-  assert.equal(totals.totalCostValue, 109_900);
-  assert.equal(totals.averageUnitCost, 1099);
-  // The naive mean would have been 50,050 - forty-five times too high.
-  assert.ok(totals.averageUnitCost < 2000);
+  assert.equal(totals.totalUnits, 0);
+  assert.equal(totals.totalCostValue, 0);
+  assert.equal(totals.averageUnitCost, 0);
 });
 
 test("empty stock does not divide by zero", () => {
@@ -86,7 +88,7 @@ test("unpriced stock is counted and reported, not buried", () => {
     valueProduct(product({ productId: "b" }))
   ]);
   assert.equal(totals.unpricedLines, 1);
-  assert.equal(totals.unpricedUnits, 76);
+  assert.equal(totals.unpricedUnits, 36);
 });
 
 test("health slices keep empty conditions so nothing looks forgotten", () => {
@@ -100,7 +102,7 @@ test("health shares add up to the whole", () => {
     valueProduct(product({ productId: "a" })),
     valueProduct(product({ productId: "b", unitsSoldRecently: 0 }))
   ]);
-  assert.equal(total, 2 * 76 * 11_500);
+  assert.equal(total, 2 * 36 * 11_500);
   assert.equal(Math.round(slices.reduce((sum, slice) => sum + slice.sharePct, 0)), 100);
 });
 

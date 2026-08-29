@@ -39,9 +39,13 @@ const num = (value: unknown): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-/** Good stock on hand. Damaged units are held apart, never counted as sellable. */
+/**
+ * Good stock currently held by agents. Warehouse/global stock is deliberately
+ * excluded from this report: this view measures inventory available through
+ * assigned agents, not the company's central reserve.
+ */
 export function sellableUnits(row: ProductStockInput): number {
-  return Math.max(num(row.warehouseUnits) + num(row.agentUnits) - num(row.damagedUnits), 0);
+  return Math.max(num(row.agentUnits) - num(row.damagedUnits), 0);
 }
 
 /**

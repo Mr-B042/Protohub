@@ -111,7 +111,7 @@ export default function InventoryValueTab(props: InventoryValueTabProps) {
 
   const cards = [
     { label: "Total Inventory (At Cost)", value: naira(view?.totals.totalCostValue ?? 0), hint: `Across ${view?.totals.productLines ?? 0} product lines`, icon: Boxes, tone: "bg-violet-50 text-violet-600" },
-    { label: "Total Units in Stock", value: `${(view?.totals.totalUnits ?? 0).toLocaleString("en-NG")} Units`, hint: "All locations", icon: Layers, tone: "bg-blue-50 text-blue-600" },
+    { label: "Units Available", value: `${(view?.totals.totalUnits ?? 0).toLocaleString("en-NG")} Units`, hint: "Held by assigned agents", icon: Layers, tone: "bg-blue-50 text-blue-600" },
     { label: "Avg. Cost per Unit", value: naira(view?.totals.averageUnitCost ?? 0), hint: "Weighted average", icon: Scale, tone: "bg-emerald-50 text-emerald-600" },
     { label: "Stock Movement (This Week)", value: `${signedUnits(view?.movements.netUnits ?? 0)} Units`, hint: "Net change", icon: TrendingUp, tone: "bg-amber-50 text-amber-600" },
     { label: "Potential Retail Value", value: naira(view?.totals.totalRetailValue ?? 0), hint: "Estimate, based on selling price", icon: Coins, tone: "bg-rose-50 text-rose-600" }
@@ -208,7 +208,7 @@ export default function InventoryValueTab(props: InventoryValueTabProps) {
                 <thead>
                   <tr className="border-b border-gray-100 text-[11px] font-black uppercase tracking-wide text-gray-500">
                     <th className="px-4 py-2.5">Product</th>
-                    <th className="px-4 py-2.5 text-right">Units Available</th>
+                    <th className="px-4 py-2.5 text-right">Units Available<br /><span className="font-semibold normal-case tracking-normal">Agent-held</span></th>
                     <th className="px-4 py-2.5 text-right">Avg. Cost/Unit (₦)</th>
                     <th className="px-4 py-2.5 text-right">Inventory Value (At Cost)</th>
                     <th className="px-4 py-2.5 text-right">Retail Value (Est.)</th>
