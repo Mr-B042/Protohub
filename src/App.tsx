@@ -61081,7 +61081,7 @@ ${waybillLineItems(w).length > 1
         )}
 
         {/* ── C. Rep comparison + outcome quality + flags ── */}
-        <div className="grid gap-3 border-t border-gray-100 px-4 py-4 xl:grid-cols-[1.3fr_1fr_1fr]">
+        <div className="grid gap-3 border-t border-gray-100 px-4 py-4 xl:grid-cols-[1.05fr_1.15fr_0.8fr]">
           <div className="min-w-0 rounded-xl border border-gray-200 p-3">
             <p className="m-0 mb-2 text-[11px] font-black uppercase tracking-wider text-violet-700">Rep performance comparison</p>
             <p className="m-0 mb-2 text-[10px] font-medium leading-snug text-gray-400">
@@ -61136,13 +61136,22 @@ ${waybillLineItems(w).length > 1
             <p className="m-0 text-[10px] font-medium text-gray-400">How the {recoveryAll.assigned} assigned carts were disposed of.</p>
             {/* ⚠️ Pie/Cell/ResponsiveContainer here are RECHARTS', not lucide's -
                 the two import blocks collide on names like Cell and Tooltip. */}
+            <div className="mt-2 flex flex-wrap items-center gap-4">
             {recoveryAll.assigned > 0 && (
-              <div className="relative mx-auto mt-2 h-40 w-40">
+              <div className="relative h-44 w-44 shrink-0">
                 <ResponsiveContainer width="100%" height="100%">
                   <RePieChart>
                     <Pie
                       data={outcomeSlices} dataKey="n" nameKey="label"
-                      innerRadius={46} outerRadius={72} paddingAngle={2} stroke="none"
+                      innerRadius={52} outerRadius={84} paddingAngle={1} stroke="none"
+                      labelLine={false}
+                      // Written ON the slice, so the ring reads without the eye
+                      // crossing to the legend and back. Hidden under 5%, where
+                      // the text would be wider than the wedge it labels.
+                      label={(entry: any) => {
+                        const share = pct(entry.n, recoveryAll.assigned);
+                        return share >= 5 ? `${share}%` : "";
+                      }}
                     >
                       {outcomeSlices.map((slice) => <Cell key={slice.label} fill={slice.hex} />)}
                     </Pie>
@@ -61152,28 +61161,30 @@ ${waybillLineItems(w).length > 1
                 {/* The centre carries the denominator, so every percentage on
                     the ring is readable against the number it came from. */}
                 <span className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                  <strong className="text-[20px] font-black leading-none text-gray-900">{recoveryAll.assigned}</strong>
-                  <span className="text-[10px] font-bold text-gray-400">Assigned</span>
+                  <strong className="text-[24px] font-black leading-none text-gray-900">{recoveryAll.assigned}</strong>
+                  <span className="mt-0.5 text-[11px] font-bold text-gray-500">Assigned</span>
                 </span>
               </div>
             )}
-            <div className="mt-2.5 space-y-1.5">
+            <div className="min-w-[9rem] flex-1 space-y-2.5">
               {outcomeSlices.map((row) => (
-                <div key={row.label} className="flex items-center gap-2">
-                  <span className={`h-2 w-2 shrink-0 rounded-full ${row.cls}`} />
-                  <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-gray-600">{row.label}</span>
-                  <span className="shrink-0 text-[11px] font-black tabular-nums text-gray-900">{row.n}</span>
-                  <span className={`w-11 shrink-0 text-right text-[10px] font-black tabular-nums ${row.text}`}>
-                    {pct(row.n, recoveryAll.assigned)}%
+                <div key={row.label} className="flex items-center gap-2.5">
+                  <span className={`h-3 w-3 shrink-0 rounded-full ${row.cls}`} />
+                  <span className="min-w-0 flex-1 truncate text-[12px] font-black text-gray-800">{row.label}</span>
+                  <span className="shrink-0 text-[12px] font-semibold tabular-nums text-gray-600">
+                    {row.n} ({pct(row.n, recoveryAll.assigned)}%)
                   </span>
                 </div>
               ))}
+              {outcomeSlices.length === 0 && (
+                <p className="m-0 text-[11px] font-semibold text-gray-400">Nothing disposed of yet in this period.</p>
+              )}
             </div>
-            <span className="mt-2.5 flex h-2 w-full overflow-hidden rounded-full bg-gray-100">
-              {outcomeSlices.map((seg) => (
-                <span key={seg.label} className={seg.cls} style={{ width: `${pct(seg.n, recoveryAll.assigned)}%` }} />
-              ))}
-            </span>
+            </div>
+            <button type="button" onClick={() => setCartFollowUpLayout("details")}
+              className="!min-h-0 mt-3 inline-flex items-center gap-1 text-[12px] font-black text-[#1F8FE0] hover:underline">
+              View all outcomes <ArrowRight className="h-3.5 w-3.5" />
+            </button>
           </div>
 
           {/* ⚠️ AUDIT FLAGS, NOT PROOF. Each names a pattern worth opening, and
