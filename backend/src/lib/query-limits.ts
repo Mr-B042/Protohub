@@ -13,6 +13,31 @@
  * If a query ever legitimately needs more than this, page it with .range()
  * instead of raising the number.
  */
+/**
+ * ⚠️ DO NOT USE THIS TO MAKE A LIST READ SAFE. It cannot.
+ *
+ * PostgREST enforces its OWN max-rows ceiling and silently truncates to it, so
+ * a query carrying .limit(REPORT_ROW_CEILING) can still be handed 1,000 rows
+ * and report them as the complete set. That is not theoretical: /api/expenses
+ * carried this constant and still cut the ledger off at 2026-07-18, hiding
+ * 1,145 rows and every ad cost before that date.
+ *
+ * It remains useful only as a sanity bound on a query already narrowed to far
+ * fewer rows - a guard against a runaway scan, not against truncation.
+ *
+ * For anything that must return every matching row, use fetchAllRows() below.
+ *
+ * ⚠️ AND A MONTH FILTER IS NO LONGER A SHIELD. As at 2026-08, single-month
+ * volumes already exceed the cap on their own:
+ *   order_contact_attempts  5,198 / month
+ *   stock_movements         1,723 / month
+ *   abandoned_carts         1,129 / month
+ *   cart_contact_attempts   1,078 / month
+ *   orders                    918 / month  (crosses next month)
+ *   expenses                  757 / month
+ * Scoping a query to "this month" used to keep it comfortably under 1,000. On
+ * these tables it no longer does.
+ */
 export const REPORT_ROW_CEILING = 20000;
 
 /**
