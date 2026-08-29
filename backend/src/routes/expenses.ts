@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
+import { fetchAllRows } from "../lib/query-limits.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
@@ -10,18 +10,35 @@ router.use(requireAuth);
 
 router.get("/", requireRole("Owner", "Admin"), async (req, res) => {
   const { from, to } = req.query;
-  let query = supabase
-    .from("expenses")
-    .select("*")
-    .eq("org_id", req.user!.orgId)
-    .order("date", { ascending: false });
-  if (from) query = query.gte("date", from as string);
-  if (to)   query = query.lte("date", to as string);
-  // Explicit ceiling: without one PostgREST silently returns the newest 1000
-  // and reports no truncation, so an unfiltered list quietly loses old spend.
-  const { data, error } = await query.limit(REPORT_ROW_CEILING);
-  if (error) { res.status(500).json({ error: error.message }); return; }
-  res.json(data);
+  // Rebuilt per page: a PostgREST query builder is single-use, so the paging
+  // helper needs a fresh one for every .range() call.
+  const buildExpenseQuery = () => {
+    let query = supabase
+      .from("expenses")
+      .select("*")
+      .eq("org_id", req.user!.orgId)
+      .order("date", { ascending: false })
+      .order("id", { ascending: false });
+    if (from) query = query.gte("date", from as string);
+    if (to)   query = query.lte("date", to as string);
+    return query;
+  };
+
+  // ⚠️ PAGED, NOT .limit(). An explicit ceiling did NOT get past PostgREST's
+  // own max-rows cap: this route asked for REPORT_ROW_CEILING and was still
+  // handed the newest 1,000, which cut the expense ledger off at 2026-07-18
+  // and made every ad cost before that date look deleted. Only .range() walks
+  // past a server-side cap.
+  //
+  // The secondary sort on id matters: paging a query whose sort has ties can
+  // repeat or skip rows across page boundaries, and "date" alone has hundreds
+  // of ties per day.
+  try {
+    const rows = await fetchAllRows<any>(buildExpenseQuery);
+    res.json(rows);
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Failed to load expenses." });
+  }
 });
 
 const ExpenseSchema = z.object({
