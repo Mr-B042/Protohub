@@ -21,6 +21,7 @@ import { runCartAutoSubmit } from "./lib/cart-auto-submit.js";
 import { runFollowUpCloseAllOrgs } from "./lib/follow-up-kpi.js";
 import { syncRecoveryNextActionReminders } from "./lib/recovery-next-action-reminders.js";
 import { runAgentStockDriftCheck } from "./lib/agent-stock-drift-check.js";
+import { probeRowCap } from "./lib/row-cap-probe.js";
 import { pruneOldCartJourneyEvents } from "./lib/cart-journey.js";
 import { runStorageRetention } from "./lib/data-retention.js";
 import { dropDueDailySalaryForAllOrgs } from "./lib/salary-spread.js";
@@ -393,6 +394,12 @@ app.listen(PORT, () => {
   } else {
     logger.info("whatsapp runtime disabled by env");
   }
+
+  // ⚠️ Announce at boot whether PostgREST is truncating reads. 112 queries in
+  // this codebase rely on a project setting no code can see; without this, a
+  // wrong setting shows up months later as a number quietly missing from a
+  // report - which is exactly how it showed up this time.
+  void probeRowCap().catch(() => undefined);
 });
 
 // ── Server-side cart auto-submit — every 2 minutes ───────
