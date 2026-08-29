@@ -160,13 +160,13 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, ordersExtraApi, productCostApi, stockApi as _stockApi,
-  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
+  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, targetPeriodsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
   setApiSpyUserId,
   setApiPreviewReadOnly,
   PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid,CartRecoverySummary, CartGridRow, CartLogPenaltiesView, CartLogRangePreset, RecoveryCalendarView, RecoveryFollowUpPairs, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, CostChangeImpact, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView } from "./lib/api";
+import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid,CartRecoverySummary, CartGridRow, CartLogPenaltiesView, CartLogRangePreset, RecoveryCalendarView, RecoveryFollowUpPairs, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, TargetPeriod, TargetProgressView, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, CostChangeImpact, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -296,7 +296,7 @@ type AgentStatus = "All Status" | "Active" | "Order in Progress" | "Inactive";
 type PayrollTab = "Pay Rates" | "Run Payroll" | "History";
 type CustomerSource = "Source: All" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
 type FinanceTab = "Cash Flow" | "Financial Overview" | "Reports" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Delivery Fee Audit" | "Remittance" | "Profit & Loss" | "Product Profitability" | "Package Performance" | "State Performance" | "Profitability";
-type ManagerDashboardTab = "Overview" | "Bonus" | "Upsell Bonus" | "Inventory" | "Needs Attention";
+type ManagerDashboardTab = "Overview" | "Targets" | "Bonus" | "Upsell Bonus" | "Inventory" | "Needs Attention";
 type RecoveryRepDashboardTab = "Overview" | "Work Queue" | "Activity Sheet" | "Customer Retention";
 // One screen of recovery cards. Big enough to be a real batch of calls,
 // small enough that a 618-order tier does not become an endless scroll.
@@ -9255,6 +9255,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [managerNavSpan, setManagerNavSpan] = useState<NavSpan>("1W");
   const [managerRestockThreshold, setManagerRestockThreshold] = useState(7);
   const [managerDashboardTab, setManagerDashboardTab] = useState<ManagerDashboardTab>("Overview");
+  const [targetPeriods, setTargetPeriods] = useState<TargetPeriod[]>([]);
+  const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
+  const [targetProgress, setTargetProgress] = useState<TargetProgressView | null>(null);
+  const [targetsLoading, setTargetsLoading] = useState(false);
+  const [targetsError, setTargetsError] = useState<string | null>(null);
   const [deliveryGoals, setDeliveryGoals] = useState<DeliveryGoalsView | null>(null);
   const [deliveryGoalProductId, setDeliveryGoalProductId] = useState<string | null>(null);
   const [deliveryGoalSaving, setDeliveryGoalSaving] = useState(false);
@@ -9298,6 +9303,50 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // The design asks for "Last updated" and a refresh control, so this re-pulls
   // the three lists the tab is built from, reusing the same shaping the realtime
   // reloads use so a manual refresh and a live update cannot disagree.
+  // Targets & Incentives loads only when its tab is open. The figures are
+  // month-scoped and do NOT follow the dashboard's period control - a monthly
+  // contribution target measured over "Today" would be meaningless.
+  useEffect(() => {
+    if (activePage !== "Manager Dashboard" || managerDashboardTab !== "Targets") return;
+    let cancelled = false;
+    (async () => {
+      setTargetsLoading(true);
+      setTargetsError(null);
+      try {
+        const { targets } = await targetPeriodsApi.list();
+        if (cancelled) return;
+        setTargetPeriods(targets);
+        // Prefer whatever is already selected, else the newest period.
+        const next = targets.find((t) => t.id === selectedTargetId) ?? targets[0] ?? null;
+        setSelectedTargetId(next?.id ?? null);
+        setTargetProgress(next ? await targetPeriodsApi.progress(next.id) : null);
+      } catch (err: any) {
+        if (!cancelled) setTargetsError(err?.message ?? "Could not load targets.");
+      } finally {
+        if (!cancelled) setTargetsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+    // selectedTargetId is deliberately absent: switching target is handled by
+    // the picker's own handler, and including it here would refetch the whole
+    // list on every change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, managerDashboardTab]);
+
+  const selectTargetPeriod = async (id: string) => {
+    setSelectedTargetId(id);
+    setTargetsLoading(true);
+    setTargetsError(null);
+    try {
+      setTargetProgress(await targetPeriodsApi.progress(id));
+    } catch (err: any) {
+      setTargetsError(err?.message ?? "Could not load that target.");
+      setTargetProgress(null);
+    } finally {
+      setTargetsLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (activePage !== "Manager Dashboard" || managerDashboardTab !== "Inventory") return;
     setManagerInventoryNow(Date.now());
@@ -30690,6 +30739,214 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const lines = (order.callOutcome ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     return lines.length > 0 ? lines[lines.length - 1] : "";
   };
+  const renderTargetsPanel = () => {
+    const target = targetPeriods.find((t) => t.id === selectedTargetId) ?? null;
+    const p = targetProgress;
+
+    const periodLabel = (t: TargetPeriod) => {
+      const d = new Date(`${t.periodStart}T00:00:00Z`);
+      return `${d.toLocaleString("en-NG", { month: "long", timeZone: "UTC" })} ${d.getUTCFullYear()}`;
+    };
+
+    const pct = (value: number | null) => (value == null ? "—" : `${value}%`);
+    // A bar can exceed 100% in reality; the fill is clamped so it never
+    // overflows its track, while the number beside it still tells the truth.
+    const barWidth = (value: number | null) => `${Math.max(0, Math.min(100, value ?? 0))}%`;
+
+    const LeverCard = ({ label, actual, target: goal, percent, tone, suffix = "", isCeiling = false, over = false }: {
+      label: string; actual: string; target: string; percent: number | null;
+      tone: string; suffix?: string; isCeiling?: boolean; over?: boolean;
+    }) => (
+      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-bold uppercase tracking-wide text-gray-500">{label}</span>
+          {isCeiling && (
+            <span className={`rounded-full px-2 py-0.5 text-[11px] font-black ${over ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"}`}>
+              {over ? "Over ceiling" : "Under ceiling"}
+            </span>
+          )}
+        </div>
+        <div className="mt-2 flex items-baseline gap-1.5">
+          <span className="text-2xl font-black text-gray-900">{actual}</span>
+          <span className="text-sm font-semibold text-gray-400">/ {goal}{suffix}</span>
+        </div>
+        <div className="mt-1 text-xs font-semibold text-gray-500">
+          {percent == null ? "No target set" : `${percent}% of ${isCeiling ? "ceiling" : "target"}`}
+        </div>
+        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+          <div className={`h-full rounded-full ${tone}`} style={{ width: barWidth(percent) }} />
+        </div>
+      </div>
+    );
+
+    return (
+      <div className="space-y-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-lg font-black text-gray-900">Targets &amp; Incentives</h2>
+            <p className="text-sm text-gray-500">
+              Monthly product contribution targets and the levers behind them.
+            </p>
+          </div>
+          {targetPeriods.length > 0 && (
+            <select
+              className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700"
+              value={selectedTargetId ?? ""}
+              onChange={(event) => void selectTargetPeriod(event.target.value)}
+            >
+              {targetPeriods.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.productName ?? "Product"} — {periodLabel(t)}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        {targetsError && (
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+            {targetsError}
+          </div>
+        )}
+
+        {targetsLoading && !p && (
+          <div className="rounded-2xl border border-gray-200 bg-white px-4 py-8 text-center text-sm font-semibold text-gray-500">
+            Loading targets…
+          </div>
+        )}
+
+        {!targetsLoading && targetPeriods.length === 0 && (
+          <div className="rounded-2xl border border-dashed border-gray-300 bg-white px-6 py-10 text-center">
+            <Target className="mx-auto mb-3 h-8 w-8 text-gray-300" />
+            <p className="text-base font-black text-gray-900">No target period yet</p>
+            <p className="mx-auto mt-1 max-w-md text-sm text-gray-500">
+              The Owner sets a monthly contribution target for a product, along with the orders,
+              deliveries, pieces and delivery-rate levers that support it.
+            </p>
+          </div>
+        )}
+
+        {target && p && (
+          <>
+            {/* Monthly target header — the single destination everything below supports. */}
+            <div className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50 to-transparent p-5">
+              <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <p className="text-sm font-bold text-gray-600">
+                    {target.productName ?? "Product"} — {periodLabel(target)} Target
+                  </p>
+                  <p className="mt-1 text-3xl font-black text-gray-900">{formatMoney(target.contributionTarget)}</p>
+                  <p className="text-sm font-semibold text-gray-500">Net Contribution Target</p>
+                </div>
+                <div className="flex-1 lg:max-w-md">
+                  <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Current Progress</p>
+                  <div className="mt-1 flex items-baseline gap-2">
+                    <span className="text-2xl font-black text-indigo-700">{formatMoney(p.contribution.actual)}</span>
+                    <span className="text-sm font-semibold text-gray-400">/ {formatMoney(p.contribution.target)}</span>
+                    <span className="ml-auto text-sm font-black text-gray-700">{pct(p.contribution.percentAchieved)}</span>
+                  </div>
+                  <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-white/70">
+                    <div className="h-full rounded-full bg-indigo-600" style={{ width: barWidth(p.contribution.percentAchieved) }} />
+                  </div>
+                </div>
+              </div>
+
+              {/* How the figure is built. Shown, not buried: this number is NOT
+                  the P&L's Direct Profit and the difference is the ad line. */}
+              <div className="mt-5 grid grid-cols-2 gap-3 border-t border-indigo-100 pt-4 sm:grid-cols-5">
+                {[
+                  { label: "Delivered revenue", value: p.breakdown.revenue },
+                  { label: "− Product cost", value: -p.breakdown.cogs },
+                  { label: "− Logistics", value: -p.breakdown.logistics },
+                  { label: "− Advertising", value: -p.breakdown.adSpend },
+                  { label: "= Contribution", value: p.breakdown.contribution }
+                ].map((line) => (
+                  <div key={line.label}>
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">{line.label}</p>
+                    <p className={`text-sm font-black ${line.value < 0 ? "text-rose-600" : "text-gray-900"}`}>
+                      {formatMoney(Math.abs(line.value))}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              {!p.commissionsIncluded && (
+                <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                  Before commissions — rep bonuses are not yet deducted, so this figure reads slightly high.
+                  Advertising <em>is</em> deducted, which is why this is not the same as Direct Profit on the P&amp;L.
+                </p>
+              )}
+            </div>
+
+            {/* Supporting levers. These pay no bonus on their own - they are how
+                you find out WHICH lever is behind when contribution is. */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              <LeverCard label="Orders placed" actual={String(p.ordersPlaced.actual)}
+                target={String(p.ordersPlaced.target)} percent={p.ordersPlaced.percentAchieved} tone="bg-indigo-500" />
+              <LeverCard label="Delivered" actual={String(p.delivered.actual)}
+                target={String(p.delivered.target)} percent={p.delivered.percentAchieved} tone="bg-emerald-500" />
+              <LeverCard label="Pieces sold" actual={String(p.pieces.actual)}
+                target={String(p.pieces.target)} percent={p.pieces.percentAchieved} tone="bg-sky-500" />
+              <LeverCard label="Delivery rate" actual={`${p.deliveryRate.actual}%`}
+                target={`${p.deliveryRate.target}`} suffix="%" percent={p.deliveryRate.percentAchieved} tone="bg-amber-500" />
+              <LeverCard label="Ad spend" actual={formatMoney(p.adSpend.actual)}
+                target={formatMoney(p.adSpend.target)} percent={p.adSpend.percentAchieved}
+                tone={p.adSpend.overCeiling ? "bg-rose-500" : "bg-emerald-500"} isCeiling over={p.adSpend.overCeiling} />
+            </div>
+
+            {/* Weekly milestones — pacing controls. The reward settles on the
+                MONTH, never on a single week. */}
+            <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center gap-2">
+                <CalendarDays className="h-4 w-4 text-gray-400" />
+                <h3 className="text-base font-black text-gray-900">Weekly Milestones</h3>
+              </div>
+              <p className="mt-1 text-xs text-gray-500">
+                Sunday-anchored weeks, clipped to the period. Pacing only — the reward settles on the month's final result.
+              </p>
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full min-w-[520px] text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-200 text-left text-xs font-bold uppercase tracking-wide text-gray-500">
+                      <th className="pb-2 pr-3">Week</th>
+                      <th className="pb-2 pr-3">Dates</th>
+                      <th className="pb-2 pr-3 text-right">Target</th>
+                      <th className="pb-2 pr-3 text-right">Actual</th>
+                      <th className="pb-2 text-right">Progress</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {p.weeklyMilestones.map((w) => (
+                      <tr key={w.week} className="border-b border-gray-100 last:border-0">
+                        <td className="py-2.5 pr-3 font-black text-gray-900">Week {w.week}</td>
+                        <td className="py-2.5 pr-3 text-gray-500">{w.startDate} → {w.endDate}</td>
+                        <td className="py-2.5 pr-3 text-right font-semibold text-gray-700">{formatMoney(w.targetContribution)}</td>
+                        <td className="py-2.5 pr-3 text-right font-black text-gray-900">{formatMoney(w.actualContribution)}</td>
+                        <td className="py-2.5 text-right">
+                          <span className={`rounded-full px-2 py-0.5 text-xs font-black ${
+                            w.percentAchieved == null ? "bg-gray-100 text-gray-600"
+                              : w.percentAchieved >= 100 ? "bg-emerald-100 text-emerald-700"
+                              : w.percentAchieved >= 90 ? "bg-amber-100 text-amber-700"
+                              : "bg-rose-100 text-rose-700"}`}>
+                            {pct(w.percentAchieved)}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-400">
+              Forecasting, required daily pace, recovery plans and the incentive panel land in the next slices.
+            </p>
+          </>
+        )}
+      </div>
+    );
+  };
+
   const renderManagerInventoryPanel = () => {
     const rows = managerInventoryStateRows;
     const totals = managerInventoryTotals;
@@ -75570,14 +75827,14 @@ ${waybillLineItems(w).length > 1
                 </header>
 
                 <div className="inline-flex w-full sm:w-auto items-center rounded-2xl bg-gray-100 p-1">
-                  {(["Overview", "Bonus", "Upsell Bonus", "Inventory", "Needs Attention"] as ManagerDashboardTab[]).map((tab) => (
+                  {(["Overview", "Targets", "Bonus", "Upsell Bonus", "Inventory", "Needs Attention"] as ManagerDashboardTab[]).map((tab) => (
                     <button
                       key={tab}
                       className={`!min-h-0 flex-1 sm:flex-none rounded-xl px-4 py-2 text-sm font-black transition-colors ${managerDashboardTab === tab ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
                       onClick={() => setManagerDashboardTab(tab)}
                     >
                       <span className="inline-flex items-center gap-1.5">
-                        {tab === "Bonus" ? "Bonus & Performance" : tab === "Upsell Bonus" ? "Upsell & Cross-Sell Bonus" : tab === "Inventory" ? "Inventory" : tab === "Needs Attention" ? "Needs Attention" : "Overview"}
+                        {tab === "Targets" ? "Targets & Incentives" : tab === "Bonus" ? "Bonus & Performance" : tab === "Upsell Bonus" ? "Upsell & Cross-Sell Bonus" : tab === "Inventory" ? "Inventory" : tab === "Needs Attention" ? "Needs Attention" : "Overview"}
                         {tab === "Needs Attention" && needsAttentionBadgeCount > 0 && (
                           <span
                             className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-rose-600 px-1.5 text-[11px] font-black text-white shadow-[0_0_0_2px_rgba(225,29,72,0.25)] animate-bounce"
@@ -75591,7 +75848,7 @@ ${waybillLineItems(w).length > 1
                   ))}
                 </div>
 
-                {managerDashboardTab === "Bonus" ? renderManagerBonusPanel() : managerDashboardTab === "Upsell Bonus" ? renderUpsellBonusPanel() : managerDashboardTab === "Inventory" ? renderManagerInventoryPanel() : managerDashboardTab === "Needs Attention" ? renderNeedsAttentionPanel() : (
+                {managerDashboardTab === "Targets" ? renderTargetsPanel() : managerDashboardTab === "Bonus" ? renderManagerBonusPanel() : managerDashboardTab === "Upsell Bonus" ? renderUpsellBonusPanel() : managerDashboardTab === "Inventory" ? renderManagerInventoryPanel() : managerDashboardTab === "Needs Attention" ? renderNeedsAttentionPanel() : (
                   <>
 
                 {/* Period control — top of the page, drives every section below. */}
