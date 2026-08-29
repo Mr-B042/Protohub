@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
+import { fetchAllRows } from "../lib/query-limits.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
@@ -12,24 +12,29 @@ router.use(requireAuth);
 // ── GET /api/customers ────────────────────────────────────
 // Customers are derived from orders — one row per unique phone number
 router.get("/", async (req, res) => {
-  let query = supabase
-    .from("orders")
-    .select("phone, customer, city, state, amount, status, created_at, assigned_rep_id")
-    .eq("org_id", req.user!.orgId)
-    .order("created_at", { ascending: false })
-    // ⚠️ The customer list is DERIVED from this scan. Capped at PostgREST's
-    // silent 1000, a customer whose only order is older than that stops
-    // existing - not shown late, absent.
-    .limit(REPORT_ROW_CEILING);
   // Sales Reps only see customers from their own orders (spy mode: use effective role/id)
   const scopeRole = req.user!.effectiveUserRole ?? req.user!.role;
   const scopeId   = req.user!.effectiveUserId   ?? req.user!.id;
-  if (isFrontlineRepRole(scopeRole)) {
-    query = query.eq("assigned_rep_id", scopeId);
-  }
-  const { data, error } = await query;
-
-  if (error) { res.status(500).json({ error: error.message }); return; }
+  // ⚠️ Rebuilt per page. A PostgREST query builder is single-use, so handing
+  // the same one to every .range() call silently returns the first page over
+  // and over - the paging equivalent of the cap it is meant to defeat.
+  const buildCustomerQuery = () => {
+    let query = supabase
+      .from("orders")
+      .select("phone, customer, city, state, amount, status, created_at, assigned_rep_id")
+      .eq("org_id", req.user!.orgId)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false });
+    if (isFrontlineRepRole(scopeRole)) query = query.eq("assigned_rep_id", scopeId);
+    return query;
+  };
+  // ⚠️ PAGED. The customer list is DERIVED from this order scan, so a server
+  // cap does not show customers late - it makes them cease to exist. An
+  // explicit .limit() is not enough: PostgREST's own max-rows wins over it.
+  let data: any[];
+  try { data = await fetchAllRows<any>(buildCustomerQuery); }
+  catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed to load customers." }); return; }
+  const error = null;
 
   // Aggregate by phone
   const map = new Map<string, {
