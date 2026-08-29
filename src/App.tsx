@@ -67430,7 +67430,17 @@ ${waybillLineItems(w).length > 1
           ? `${order.id} claimed for ${targetName}. ${result.remaining} more can be claimed.`
           : `${order.id} claimed for ${targetName}. That is the limit of ${result.cap} open orders.`);
         setClaimCandidateOrder(null);
-        void loadRecoveryCandidates();
+        // A claim changes every one of these views. Awaiting the refresh keeps
+        // the count, calendar cell and queue in sync before the saving state
+        // clears, even when Realtime is delayed or disconnected.
+        recoveryCalendarCache.current.clear();
+        recoveryBonusCache.current.clear();
+        await Promise.all([
+          loadRecoveryCandidates(),
+          loadRecoveryCalendar(),
+          loadRecoveryRepKpi(),
+          loadRecoveryWorklist()
+        ]);
       } catch (err: any) {
         setTrackedOrders((prev) => prev.map((item) => item.id === order.id ? previous : item));
         showToast(err?.message ?? "Could not claim that order.");

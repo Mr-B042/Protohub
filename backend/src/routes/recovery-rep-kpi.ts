@@ -76,6 +76,11 @@ const monthBounds = (month: string | undefined) => {
 
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
+// A Lagos calendar day starts one hour before UTC midnight. Querying
+// timestamptz columns with bare `YYYY-MM-DDT00:00:00` used UTC and silently
+// dropped work done between midnight and 1am WAT from the visible day.
+const lagosDayBoundary = (day: string) => `${day}T00:00:00+01:00`;
+
 // Owner-editable "any date range" filter (replaces the old month-only
 // picker on the Recovery Rep Dashboard's Overview tab). dateFrom/dateTo
 // take precedence when both are present and valid; falls back to the
@@ -500,20 +505,16 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
 // everything.
 const CANDIDATE_STATUSES = ["Failed", "Cancelled"];
 const REJECTION_PATTERN = /reject|refus|not interested|no longer/i;
-// Statuses that still count against a rep's open workload. Taken from the
-// order_status enum (New, Confirmed, In Process, Dispatched, Delivered,
-// Cancelled, Postponed, Failed) - everything except the three that mean the
-// order reached a final outcome. Postponed counts: it is still the rep's to
-// chase, which is exactly the kind of holding the cap exists to limit.
-const OPEN_STATUSES = ["New", "Confirmed", "In Process", "Dispatched", "Postponed"];
-
 async function openClaimCount(orgId: string, repId: string) {
   const { count } = await supabase
     .from("orders")
     .select("id", { count: "exact", head: true })
     .eq("org_id", orgId)
     .eq("assigned_rep_id", repId)
-    .in("status", OPEN_STATUSES);
+    // Recovery claims begin as Failed/Cancelled. They remain active recovery
+    // work until delivery, so filtering to ordinary sales "open" statuses
+    // made every freshly claimed order vanish from the cap immediately.
+    .neq("status", "Delivered");
   return count ?? 0;
 }
 
@@ -537,16 +538,16 @@ router.get("/day-activity", requireRole("Owner", "Admin", "Manager", "Recovery R
       supabase.from("order_contact_attempts")
         .select("order_id, attempted_at, channel, outcome_code, outcome_note, customer_reached, next_action_at")
         .eq("org_id", orgId).eq("rep_id", repId)
-        .gte("attempted_at", `${day}T00:00:00`).lt("attempted_at", `${next}T00:00:00`)
+        .gte("attempted_at", lagosDayBoundary(day)).lt("attempted_at", lagosDayBoundary(next))
         .order("attempted_at", { ascending: true }).limit(REPORT_ROW_CEILING),
       supabase.from("customer_retention_touchpoints")
         .select("order_id, logged_at, stage, satisfaction_outcome, retention_outcome, customer_response, reach_status")
         .eq("org_id", orgId).eq("logged_by", repId)
-        .gte("logged_at", `${day}T00:00:00`).lt("logged_at", `${next}T00:00:00`)
+        .gte("logged_at", lagosDayBoundary(day)).lt("logged_at", lagosDayBoundary(next))
         .order("logged_at", { ascending: true }).limit(REPORT_ROW_CEILING),
-      supabase.from("orders").select("id, customer, phone, status, amount, assigned_at")
-        .eq("org_id", orgId).eq("assigned_rep_id", repId)
-        .gte("assigned_at", `${day}T00:00:00`).lt("assigned_at", `${next}T00:00:00`)
+      supabase.from("recovery_order_claims").select("order_id, claimed_at")
+        .eq("org_id", orgId).eq("rep_id", repId)
+        .gte("claimed_at", lagosDayBoundary(day)).lt("claimed_at", lagosDayBoundary(next))
         .limit(REPORT_ROW_CEILING),
       supabase.from("orders").select("id, customer, amount")
         .eq("org_id", orgId).eq("assigned_rep_id", repId).eq("status", "Delivered")
@@ -556,15 +557,17 @@ router.get("/day-activity", requireRole("Owner", "Admin", "Manager", "Recovery R
     // Names for the order ids that turn up in the logs.
     const orderIds = [...new Set([
       ...((attempts.data ?? []) as any[]).map((row) => row.order_id),
-      ...((touches.data ?? []) as any[]).map((row) => row.order_id)
+      ...((touches.data ?? []) as any[]).map((row) => row.order_id),
+      ...((claimedRows.data ?? []) as any[]).map((row) => row.order_id)
     ].filter(Boolean))] as string[];
-    const nameById = new Map<string, { customer: string; phone: string; status: string }>();
+    const nameById = new Map<string, { customer: string; phone: string; status: string; amount: number }>();
     if (orderIds.length > 0) {
       const { data: orderRows } = await supabase.from("orders")
-        .select("id, customer, phone, status").eq("org_id", orgId).in("id", orderIds)
+        .select("id, customer, phone, status, amount").eq("org_id", orgId).in("id", orderIds)
         .limit(REPORT_ROW_CEILING);
       ((orderRows ?? []) as any[]).forEach((row) => nameById.set(row.id, {
-        customer: row.customer ?? "", phone: row.phone ?? "", status: row.status ?? ""
+        customer: row.customer ?? "", phone: row.phone ?? "", status: row.status ?? "",
+        amount: Number(row.amount ?? 0)
       }));
     }
 
@@ -608,8 +611,12 @@ router.get("/day-activity", requireRole("Owner", "Admin", "Manager", "Recovery R
         response: String(row.customer_response ?? "").trim()
       })),
       claimed: ((claimedRows.data ?? []) as any[]).map((row) => ({
-        orderId: row.id, customer: row.customer ?? "", phone: row.phone ?? "",
-        status: row.status ?? "", amount: Number(row.amount ?? 0)
+        orderId: row.order_id,
+        customer: nameById.get(row.order_id)?.customer ?? "Unknown",
+        phone: nameById.get(row.order_id)?.phone ?? "",
+        status: nameById.get(row.order_id)?.status ?? "",
+        amount: nameById.get(row.order_id)?.amount ?? 0,
+        claimedAt: row.claimed_at
       })),
       delivered: ((deliveredRows.data ?? []) as any[]).map((row) => ({
         orderId: row.id, customer: row.customer ?? "", amount: Number(row.amount ?? 0)
@@ -695,11 +702,11 @@ router.get("/calendar", requireRole("Owner", "Admin", "Manager", "Recovery Rep")
     const [followUps, retentions, deliveries, claims, everHeld] = await Promise.all([
       supabase.from("order_contact_attempts").select("order_id, attempted_at")
         .eq("org_id", orgId).eq("rep_id", repId)
-        .gte("attempted_at", `${start}T00:00:00`).lt("attempted_at", `${exclusiveEnd}T00:00:00`)
+        .gte("attempted_at", lagosDayBoundary(start)).lt("attempted_at", lagosDayBoundary(exclusiveEnd))
         .limit(REPORT_ROW_CEILING),
       supabase.from("customer_retention_touchpoints").select("order_id, logged_at")
         .eq("org_id", orgId).eq("logged_by", repId)
-        .gte("logged_at", `${start}T00:00:00`).lt("logged_at", `${exclusiveEnd}T00:00:00`)
+        .gte("logged_at", lagosDayBoundary(start)).lt("logged_at", lagosDayBoundary(exclusiveEnd))
         .limit(REPORT_ROW_CEILING),
       // ⚠️ Filtered EXACTLY as /summary filters its delivered cohort -
       // assigned_rep_id, Delivered, and review_hold excluded. A calendar whose
@@ -710,15 +717,12 @@ router.get("/calendar", requireRole("Owner", "Admin", "Manager", "Recovery Rep")
         .gte("delivered_date", start).lt("delivered_date", exclusiveEnd)
         .neq("review_hold", true)
         .limit(REPORT_ROW_CEILING),
-      // Orders CLAIMED in the range. assigned_at only exists from migration 186
-      // onward, so orders claimed before that are simply absent rather than
-      // guessed at - a claim date invented from updated_at would be worse than
-      // none, and the rep would be judged on it.
-      supabase.from("orders").select("id, assigned_at")
-        .eq("org_id", orgId).eq("assigned_rep_id", repId)
-        .not("assigned_at", "is", null)
-        .gte("assigned_at", `${start}T00:00:00`)
-        .lt("assigned_at", `${exclusiveEnd}T00:00:00`)
+      // Immutable claim events in the range. Unlike orders.assigned_at, these
+      // survive later reassignment and therefore remain valid historical work.
+      supabase.from("recovery_order_claims").select("order_id, claimed_at")
+        .eq("org_id", orgId).eq("rep_id", repId)
+        .gte("claimed_at", lagosDayBoundary(start))
+        .lt("claimed_at", lagosDayBoundary(exclusiveEnd))
         .limit(REPORT_ROW_CEILING),
       // ⚠️ EVERY order the rep has ever held, not just this range - what they
       // were holding on 20 August depends on orders claimed long before it.
@@ -756,7 +760,7 @@ router.get("/calendar", requireRole("Owner", "Admin", "Manager", "Recovery Rep")
       if (row.id && row.delivered_date) bucket(String(row.delivered_date).slice(0, 10)).delivered.add(row.id);
     });
     ((claims.data ?? []) as any[]).forEach((row) => {
-      if (row.id && row.assigned_at) bucket(lagosDateKey(row.assigned_at)).claimed.add(row.id);
+      if (row.order_id && row.claimed_at) bucket(lagosDateKey(row.claimed_at)).claimed.add(row.order_id);
     });
 
     // What the rep was holding when each day began.
@@ -944,12 +948,16 @@ router.post("/claim", requireRole("Owner", "Admin", "Manager", "Recovery Rep"), 
       return;
     }
 
-    const { error } = await supabase.from("orders")
-      .update({ assigned_rep_id: repId, assigned_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-      .eq("org_id", orgId).eq("id", orderId);
-    if (error) { res.status(500).json({ error: error.message }); return; }
+    const { data, error } = await supabase.rpc("claim_recovery_order", {
+      p_org_id: orgId,
+      p_order_id: orderId,
+      p_rep_id: repId,
+      p_claimed_by: req.user!.id,
+      p_cap: cap
+    });
+    if (error) { res.status(409).json({ error: error.message }); return; }
 
-    res.json({ ok: true, held: held + 1, cap, remaining: Math.max(0, cap - (held + 1)) });
+    res.json(data);
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not claim that order." });
   }

@@ -2164,7 +2164,7 @@ export const recoveryRepKpiApi = {
   worklist: (dormantDays?: number) =>
     get<RecoveryWorklistView>(`/api/recovery-rep-kpi/worklist${dormantDays ? `?dormantDays=${dormantDays}` : ""}`),
   claimCandidate: (orderId: string, repId?: string) =>
-    post<{ ok: boolean; held: number; cap: number; remaining: number }>(
+    post<{ ok: boolean; held: number; cap: number; remaining: number; claimedAt: string }>(
       "/api/recovery-rep-kpi/claim", { orderId, repId }),
   summary: (params: { repId?: string; month?: string; dateFrom?: string; dateTo?: string } = {}) => {
     const qs = new URLSearchParams();
