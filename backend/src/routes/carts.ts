@@ -970,19 +970,6 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
   }
   livePulseCache.delete(cacheKey);
 
-  let rangeQuery = supabase
-    .from("cart_journey_events")
-    .select(LIVE_PULSE_EVENT_SELECT)
-    .eq("org_id", req.user!.orgId)
-    .gte("created_at", selectedRange.startIso)
-    .lt("created_at", selectedRange.endExclusiveIso)
-    .in("event_type", [...LIVE_PULSE_EVENT_TYPES])
-    .order("created_at", { ascending: true })
-    // Explicit ceiling — without this, PostgREST silently caps at 1000 rows
-    // and a busy day (323+ carts × multiple events) gets truncated to the
-    // oldest events, making "viewed today" undercount and "last seen at"
-    // report the latest event in the first 1000 (often ~1h into the day).
-    .limit(10000);
   let rangeFeedQuery = supabase
     .from("cart_journey_events")
     .select(LIVE_PULSE_EVENT_SELECT)
@@ -1002,32 +989,45 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
     .limit(250);
 
   if (productIds.length > 0) {
-    rangeQuery = rangeQuery.in("product_id", productIds);
     rangeFeedQuery = rangeFeedQuery.in("product_id", productIds);
     liveWindowQuery = liveWindowQuery.in("product_id", productIds);
   }
 
-  const loadMetricEvents = async () => {
+  // ⚠️ PAGED, NOT CEILINGED. cart_journey_events holds ~72,800 rows on a
+  // 30-day retention and pulse events run ~1,500/day, so any multi-day
+  // selection passes a single response's cap. A .limit() cannot save it:
+  // PostgREST enforces its OWN max-rows and truncates with no error, which is
+  // how the day view undercounted behind a .limit(10000) that only ever
+  // returned 1,000 - "viewed today" short, "last seen at" stuck ~1h into the
+  // day. Both range reads walk .range() windows instead.
+  const loadPagedRangeEvents = async (eventTypes: Iterable<string>) => {
     const allEvents: any[] = [];
-    // Supabase/PostgREST can enforce a 1,000-row max per request even when
-    // the client asks for a larger range. Keep the page size at that ceiling
-    // so busy days continue past the first 1,000 metric events.
+    // ⚠️ Page size stays 1,000: it is the safe floor under ANY max-rows
+    // setting. A larger page returns short under a lower cap, and the
+    // short-page check below would read that as "last page" and stop early -
+    // reintroducing the same silent truncation this loop exists to prevent.
     const pageSize = 1000;
-    const maxRows = 50000;
+    // 30 days at current volume is ~46,500 pulse events. Headroom above that
+    // rather than clipping the widest range the picker can select.
+    const maxRows = 80000;
     for (let from = 0; from < maxRows; from += pageSize) {
-      let metricQuery = supabase
+      let pageQuery = supabase
         .from("cart_journey_events")
         .select(LIVE_PULSE_EVENT_SELECT)
         .eq("org_id", req.user!.orgId)
         .gte("created_at", selectedRange.startIso)
         .lt("created_at", selectedRange.endExclusiveIso)
-        .in("event_type", [...PULSE_METRIC_EVENT_TYPES])
+        .in("event_type", [...eventTypes])
         .order("created_at", { ascending: true })
+        // ⚠️ Tie-break. created_at alone repeats or skips rows across page
+        // boundaries when events share a timestamp, which turns one silent
+        // truncation into a subtler one.
+        .order("id", { ascending: true })
         .range(from, from + pageSize - 1);
       if (productIds.length > 0) {
-        metricQuery = metricQuery.in("product_id", productIds);
+        pageQuery = pageQuery.in("product_id", productIds);
       }
-      const { data, error } = await metricQuery;
+      const { data, error } = await pageQuery;
       if (error) return { data: allEvents, error };
       const page = data ?? [];
       allEvents.push(...page);
@@ -1041,7 +1041,12 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
     { data: rangeFeedEvents, error: rangeFeedError },
     { data: liveWindowEvents, error: liveWindowError },
     { data: metricEvents, error: metricError }
-  ] = await Promise.all([rangeQuery, rangeFeedQuery, liveWindowQuery, loadMetricEvents()]);
+  ] = await Promise.all([
+    loadPagedRangeEvents(LIVE_PULSE_EVENT_TYPES),
+    rangeFeedQuery,
+    liveWindowQuery,
+    loadPagedRangeEvents(PULSE_METRIC_EVENT_TYPES)
+  ]);
 
   if (rangeError || rangeFeedError || liveWindowError || metricError) {
     res.status(500).json({ error: rangeError?.message ?? rangeFeedError?.message ?? liveWindowError?.message ?? metricError?.message ?? "Could not load live pulse." });
