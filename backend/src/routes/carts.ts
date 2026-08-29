@@ -1650,6 +1650,16 @@ const CART_OUTCOME_STATUS: Record<string, string> = {
   "Rescheduled": "Contacted"
 };
 
+/**
+ * The statuses that mean the cart is finished. Stamping closed_at on these is
+ * what makes the quick-close and bulk-close audit flags possible at all.
+ *
+ * ⚠️ Re-opening CLEARS the stamp. A cart moved back to "Contacted" is not
+ * closed, and leaving a stale closed_at behind would let one genuine close
+ * plus a later reopen read as a suspiciously fast one.
+ */
+const CART_TERMINAL_STATUSES = new Set(["Not interested", "No response", "Converted"]);
+
 const AttemptSchema = z.object({
   channel: z.enum(["Call", "WhatsApp", "SMS", "Email", "Other"]).default("Call"),
   outcomeCode: z.enum([
@@ -1686,7 +1696,7 @@ router.post("/:id/contact-attempts",
     try {
       const orgId = req.user!.orgId;
       const { data: cart } = await supabase.from("abandoned_carts")
-        .select("id, status, assigned_rep_id").eq("org_id", orgId).eq("id", req.params.id).maybeSingle();
+        .select("id, status, assigned_rep_id, closed_at").eq("org_id", orgId).eq("id", req.params.id).maybeSingle();
       if (!cart) { res.status(404).json({ error: "Cart not found." }); return; }
 
       // A rep may only log against their own cart. Otherwise one rep's work
@@ -1716,8 +1726,20 @@ router.post("/:id/contact-attempts",
       // Converted - a sale already made is not undone by a later phone call.
       const nextStatus = CART_OUTCOME_STATUS[parsed.data.outcomeCode];
       if (nextStatus && cart.status !== "Converted") {
+        const nowIso = new Date().toISOString();
+        const closing = CART_TERMINAL_STATUSES.has(nextStatus);
         await supabase.from("abandoned_carts")
-          .update({ status: nextStatus, last_activity: new Date().toISOString() })
+          .update({
+            status: nextStatus,
+            last_activity: nowIso,
+            // Stamp on the way in, clear on the way out. Only set it the FIRST
+            // time a cart closes: re-logging the same outcome must not keep
+            // pushing the timestamp forward, or a cart closed on Monday and
+            // touched again on Friday would look closed on Friday.
+            ...(closing
+              ? (cart.closed_at ? {} : { closed_at: nowIso })
+              : { closed_at: null })
+          })
           .eq("org_id", orgId).eq("id", req.params.id);
       } else {
         await supabase.from("abandoned_carts")
@@ -1760,7 +1782,7 @@ router.get("/follow-up-grid",
       });
 
       let cartQuery = supabase.from("abandoned_carts")
-        .select("id, customer, phone, whatsapp, status, amount, currency, product_name, package_name, source, city, state, assigned_rep_id, assigned_at, created_at, last_activity, left_at, quantity:capture_payload->>packageQuantity")
+        .select("id, customer, phone, whatsapp, status, amount, currency, product_name, package_name, source, city, state, assigned_rep_id, assigned_at, closed_at, created_at, last_activity, left_at, quantity:capture_payload->>packageQuantity")
         .eq("org_id", orgId)
         .not("assigned_rep_id", "is", null);
       if (repFilter) cartQuery = cartQuery.eq("assigned_rep_id", repFilter);
@@ -1893,6 +1915,7 @@ router.get("/follow-up-grid",
             convertedOrderStatus: order?.status ?? null,
             closed: Boolean(closedReason),
             closedReason,
+            closedAt: row.closed_at ?? null,
             neverContacted: !latestEver && !closedReason,
             staleDays,
             nextActionAt,
@@ -1935,7 +1958,7 @@ router.get("/follow-up-overview",
       // details and what was in the cart in front of them; a supervisor
       // deciding whether the follow-up was any good needs the same context.
       let cartQuery = supabase.from("abandoned_carts")
-        .select("id, customer, phone, whatsapp, email, city, state, address, preferred_delivery, status, amount, currency, product_id, product_name, package_name, source, embed_label, assigned_rep_id, assigned_at, created_at, last_activity, left_at, recovery_sent_at, quantity:capture_payload->>packageQuantity")
+        .select("id, customer, phone, whatsapp, email, city, state, address, preferred_delivery, status, amount, currency, product_id, product_name, package_name, source, embed_label, assigned_rep_id, assigned_at, closed_at, created_at, last_activity, left_at, recovery_sent_at, quantity:capture_payload->>packageQuantity")
         .eq("org_id", orgId)
         .not("assigned_rep_id", "is", null);
       if (scopeRepId) cartQuery = cartQuery.eq("assigned_rep_id", scopeRepId);
@@ -2038,6 +2061,7 @@ router.get("/follow-up-overview",
             nextActionAt: latest?.next_action_at ?? null,
             closed: Boolean(closedReason),
             closedReason,
+            closedAt: row.closed_at ?? null,
             neverContacted: !latest && !closedReason,
             staleDays,
             // Nothing logged yet, or nothing for two days.
