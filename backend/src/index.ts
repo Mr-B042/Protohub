@@ -448,6 +448,9 @@ if (ENABLE_BACKGROUND_JOBS) {
 cron.schedule("45 2 * * *", async () => {
   logger.info("cron: running data retention cleanup");
   await runStorageRetention();
+  const { data: removed, error } = await supabase.rpc("cleanup_stale_user_presence_sessions");
+  if (error) logger.error("cron: presence session cleanup failed", { error: error.message });
+  else logger.info("cron: stale presence sessions removed", { removed: Number(removed ?? 0) });
 });
 }
 

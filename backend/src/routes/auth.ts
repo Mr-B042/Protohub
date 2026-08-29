@@ -141,6 +141,10 @@ const touchUserPresence = async (userId: string) => {
   return lastSeenAt;
 };
 
+const PresenceSchema = z.object({
+  sessionId: z.string().uuid()
+}).strict();
+
 // ── POST /api/auth/register ───────────────────────────────
 // Creates the first user (Owner) and their organization.
 //
@@ -481,12 +485,37 @@ router.get("/me", requireAuth, async (req, res) => {
 // Lightweight heartbeat so Owner can see Active / Offline / Last seen.
 router.post("/presence", requireAuth, async (req, res) => {
   try {
+    const parsed = PresenceSchema.safeParse(req.body ?? {});
+    if (!parsed.success) { res.status(400).json({ error: "A valid presence session is required." }); return; }
     const lastSeenAt = await touchUserPresence(req.user!.id);
+    const { error } = await supabase.from("user_presence_sessions").upsert({
+      session_id: parsed.data.sessionId,
+      org_id: req.user!.orgId,
+      user_id: req.user!.id,
+      visible: true,
+      last_seen_at: lastSeenAt,
+      disconnected_at: null
+    }, { onConflict: "session_id" });
+    if (error) throw error;
     res.setHeader("Cache-Control", "private, no-store");
     res.json({ ok: true, lastSeenAt });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Failed to update presence." });
   }
+});
+
+router.post("/presence/offline", requireAuth, async (req, res) => {
+  const parsed = PresenceSchema.safeParse(req.body ?? {});
+  if (!parsed.success) { res.status(400).json({ error: "A valid presence session is required." }); return; }
+  const now = new Date().toISOString();
+  const { error } = await supabase.from("user_presence_sessions")
+    .update({ visible: false, disconnected_at: now, last_seen_at: now })
+    .eq("session_id", parsed.data.sessionId)
+    .eq("org_id", req.user!.orgId)
+    .eq("user_id", req.user!.id);
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.setHeader("Cache-Control", "private, no-store");
+  res.json({ ok: true });
 });
 
 // ── PATCH /api/auth/org-branding ──────────────────────────

@@ -813,6 +813,8 @@ type ManagedUser = {
   phone?: string;
   role: EditableUserRole;
   active: boolean;
+  /** Server-authoritative live presence across all browser/device sessions. */
+  online?: boolean;
   created: string;
   lastSeenAt?: string;
   permissions?: UserPermission[];
@@ -4160,17 +4162,18 @@ const USER_ACTIVE_WINDOW_MS = 2 * 60 * 1000;
 // somebody who shut their laptop an hour ago kept showing as Active until an
 // unrelated render happened to refresh the page.
 const userPresenceState = (
-  user: Pick<ManagedUser, "active" | "lastSeenAt">,
+  user: Pick<ManagedUser, "active" | "lastSeenAt" | "online">,
   now: number = Date.now()
 ): "Active" | "Offline" | "Inactive" => {
   if (!user.active) return "Inactive";
+  if (typeof user.online === "boolean") return user.online ? "Active" : "Offline";
   if (!user.lastSeenAt) return "Offline";
   const seen = new Date(user.lastSeenAt).getTime();
   if (Number.isNaN(seen)) return "Offline";
   return now - seen <= USER_ACTIVE_WINDOW_MS ? "Active" : "Offline";
 };
 const userPresenceMeta = (
-  user: Pick<ManagedUser, "active" | "lastSeenAt">,
+  user: Pick<ManagedUser, "active" | "lastSeenAt" | "online">,
   now: number = Date.now()
 ) => {
   const presence = userPresenceState(user, now);
@@ -7290,8 +7293,8 @@ const CART_DETAIL_FALLBACK_POLL_MS = 60_000;
 // repairs websocket gaps, so it can stay slow and inexpensive.
 const FORM_PULSE_POLL_MS = 2 * 60_000;
 const NOTIFICATION_FALLBACK_POLL_MS = 5 * 60_000;
-const PRESENCE_HEARTBEAT_MS = 45_000;
-const PRESENCE_FALLBACK_POLL_MS = 15_000;
+const PRESENCE_HEARTBEAT_MS = 25_000;
+const PRESENCE_FALLBACK_POLL_MS = 10_000;
 
 // ── isNativePushShell ────────────────────
 const isNativePushShell = (() => {
@@ -10258,6 +10261,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [presenceSyncState, setPresenceSyncState] = useState<"idle" | "live" | "error">("idle");
   const [presenceSyncAt, setPresenceSyncAt] = useState<string | null>(null);
+  const presenceSessionIdRef = useRef<string>(
+    globalThis.crypto?.randomUUID?.() ?? `00000000-0000-4000-8000-${Math.random().toString(16).slice(2).padEnd(12, "0").slice(0, 12)}`
+  );
   const adTrackingLabelScope = authUser?.orgId ?? "default";
 
   useEffect(() => {
@@ -10305,11 +10311,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     let timer: number | null = null;
     const ping = () => {
       if (cancelled || document.visibilityState === "hidden") return;
-      authApi.presence()
+      authApi.presence(presenceSessionIdRef.current)
         .then((result) => {
           if (cancelled || !result.lastSeenAt) return;
           setUsers((current) => current.map((user) => (
-            user.id === authUser.id ? { ...user, lastSeenAt: result.lastSeenAt } : user
+            user.id === authUser.id ? { ...user, online: true, lastSeenAt: result.lastSeenAt } : user
           )));
         })
         .catch(() => undefined);
@@ -10322,21 +10328,34 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (document.visibilityState === "visible") {
         ping();
         schedule();
-      } else if (timer) {
-        window.clearInterval(timer);
-        timer = null;
+      } else {
+        void authApi.presenceOffline(presenceSessionIdRef.current).catch(() => undefined);
+        setUsers((current) => current.map((user) => (
+          user.id === authUser.id ? { ...user, online: false } : user
+        )));
+        if (timer) {
+          window.clearInterval(timer);
+          timer = null;
+        }
       }
+    };
+
+    const handlePageHide = () => {
+      void authApi.presenceOffline(presenceSessionIdRef.current).catch(() => undefined);
     };
 
     ping();
     schedule();
     window.addEventListener("focus", ping);
+    window.addEventListener("pagehide", handlePageHide);
     document.addEventListener("visibilitychange", handleVisible);
     return () => {
       cancelled = true;
       if (timer) window.clearInterval(timer);
       window.removeEventListener("focus", ping);
+      window.removeEventListener("pagehide", handlePageHide);
       document.removeEventListener("visibilitychange", handleVisible);
+      void authApi.presenceOffline(presenceSessionIdRef.current).catch(() => undefined);
     };
   }, [authUser?.id]);
 
@@ -10361,8 +10380,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           const row = byId.get(user.id);
           if (!row) return user;
           const lastSeenAt = row.lastSeenAt ?? undefined;
-          if (user.active === row.active && user.lastSeenAt === lastSeenAt) return user;
-          return { ...user, active: row.active, lastSeenAt };
+          if (user.active === row.active && user.online === row.online && user.lastSeenAt === lastSeenAt) return user;
+          return { ...user, active: row.active, online: row.online, lastSeenAt };
         }));
         setPresenceSyncAt(snapshot.serverTime);
         setPresenceSyncState("live");
@@ -13385,9 +13404,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const ownerCanSeeUserPresence = realRole === "Owner";
   const activeUserCount = operationalUsers.filter((user) => user.active).length;
   // Ticks only while User Management is open, and touches no network - the same
-  // pattern the follow-up countdowns use. The heartbeat is 45s and the active
-  // window 2 minutes, so 20s is fine-grained enough to catch someone dropping
-  // off without being busy work.
+  // pattern the follow-up countdowns use. The server supplies the authoritative
+  // online flag; this tick keeps fallback last-seen labels fresh before the
+  // first compact presence snapshot arrives.
   const [presenceNow, setPresenceNow] = useState(() => Date.now());
   useEffect(() => {
     if (activePage !== "User Management") return;
@@ -89781,13 +89800,13 @@ ${waybillLineItems(w).length > 1
               <section className={`grid grid-cols-1 ${ownerCanSeeUserPresence ? "xl:grid-cols-4 lg:grid-cols-2" : "lg:grid-cols-3"} gap-4`} aria-label="User summary">
                 {[
                   { title: "Total Users", value: String(users.length), helper: "all roles", icon: UserRound, tone: "blue" },
-                  { title: "Active Users", value: String(activeUserCount), helper: `${users.length - activeUserCount} inactive`, icon: CheckCircle2, tone: "green" },
+                  { title: "Enabled Accounts", value: String(activeUserCount), helper: `${operationalUsers.length - activeUserCount} disabled`, icon: CheckCircle2, tone: "green" },
                   ...(ownerCanSeeUserPresence ? [{
                     title: "Online Now",
                     value: String(onlineUserCount),
                     helper: presenceSyncState === "error"
                       ? "presence sync reconnecting"
-                      : `seen within 2 mins${presenceSyncAt ? ` · synced ${relativeMinutesLabel(presenceSyncAt)}` : ""}`,
+                      : `live sessions${presenceSyncAt ? ` · synced ${relativeMinutesLabel(presenceSyncAt)}` : ""}`,
                     icon: Wifi,
                     tone: "emerald" as const
                   }] : []),

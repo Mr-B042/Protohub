@@ -485,7 +485,8 @@ export const authApi = {
       "/api/auth/set-password",
       password === undefined ? { password: passwordOrUserId } : { userId: passwordOrUserId, password }
     ),
-  presence: () => post<{ ok: boolean; lastSeenAt: string }>("/api/auth/presence", {})
+  presence: (sessionId: string) => post<{ ok: boolean; lastSeenAt: string }>("/api/auth/presence", { sessionId }),
+  presenceOffline: (sessionId: string) => post<{ ok: boolean }>("/api/auth/presence/offline", { sessionId })
 };
 
 // ── Users ────────────────────────────────────────────────
@@ -493,7 +494,8 @@ export const usersApi = {
   list: () => get<any[]>("/api/users"),
   presence: () => get<{
     serverTime: string;
-    users: Array<{ id: string; active: boolean; lastSeenAt?: string | null }>;
+    activeWindowSeconds: number;
+    users: Array<{ id: string; active: boolean; online: boolean; lastSeenAt?: string | null }>;
   }>("/api/users/presence"),
   update: (id: string, body: { name?: string; email?: string; phone?: string; active?: boolean }) =>
     patch<any>(`/api/users/${id}`, body)

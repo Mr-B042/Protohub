@@ -41,21 +41,29 @@ router.get("/", async (req, res) => {
 // from GET /api/users avoids repeatedly sending profiles, permissions, and
 // agent assignments just to recover from a missed realtime event.
 router.get("/presence", requireRole("Owner", "Admin", "Manager"), async (req, res) => {
-  const { data, error } = await supabase
-    .from("users")
-    .select("id, active, last_seen_at")
-    .eq("org_id", req.user!.orgId)
-    .order("last_seen_at", { ascending: false, nullsFirst: false });
+  const cutoff = new Date(Date.now() - 70_000).toISOString();
+  const [{ data, error }, { data: sessions, error: sessionsError }] = await Promise.all([
+    supabase.from("users").select("id, active, last_seen_at")
+      .eq("org_id", req.user!.orgId)
+      .order("last_seen_at", { ascending: false, nullsFirst: false }),
+    supabase.from("user_presence_sessions").select("user_id")
+      .eq("org_id", req.user!.orgId)
+      .eq("visible", true)
+      .gte("last_seen_at", cutoff)
+  ]);
 
-  if (error) {
-    res.status(500).json({ error: error.message });
+  if (error || sessionsError) {
+    res.status(500).json({ error: error?.message ?? sessionsError?.message });
     return;
   }
+
+  const onlineIds = new Set((sessions ?? []).map((row) => row.user_id));
 
   res.setHeader("Cache-Control", "private, no-store");
   res.json({
     serverTime: new Date().toISOString(),
-    users: data ?? []
+    activeWindowSeconds: 70,
+    users: (data ?? []).map((row) => ({ ...row, online: row.active && onlineIds.has(row.id) }))
   });
 });
 
