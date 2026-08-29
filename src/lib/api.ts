@@ -1545,6 +1545,58 @@ export const deliveryGoalsApi = {
     put<{ companyDefault: { primaryTarget: number; stretchTarget: number } }>("/api/delivery-goals/company-default", body)
 };
 
+export type TargetLever = { actual: number; target: number; percentAchieved: number | null };
+
+export type TargetWeeklyMilestone = {
+  week: number; startDate: string; endDate: string; days: number;
+  targetContribution: number; actualContribution: number; percentAchieved: number | null;
+};
+
+export type TargetPeriod = {
+  id: string; productId: string; productName: string | null; name: string;
+  periodStart: string; periodEnd: string;
+  contributionMinimum: number; contributionTarget: number; contributionExceptional: number;
+  orderTarget: number; deliveredTarget: number; piecesTarget: number;
+  deliveryRateTarget: number; adSpendCeiling: number;
+  status: "draft" | "active" | "closed" | "settled";
+  incentive: {
+    id: string; managerId: string | null; baseReward: number;
+    minimumMultiplier: number; targetMultiplier: number; exceptionalMultiplier: number;
+    verificationStatus: string; verificationGates: Record<string, boolean>; finalPayout: number | null;
+  } | null;
+};
+
+export type TargetProgressView = {
+  targetId: string; periodStart: string; periodEnd: string;
+  // ⚠️ false until the incentive slice lands: the contribution figure is
+  // BEFORE commissions and therefore reads slightly high. The UI must say so
+  // rather than presenting it as final.
+  commissionsIncluded: boolean;
+  breakdown: {
+    revenue: number; cogs: number; logistics: number; commissions: number;
+    adSpend: number; contributionBeforeAds: number; contribution: number;
+  };
+  contribution: TargetLever;
+  ordersPlaced: TargetLever;
+  delivered: TargetLever;
+  pieces: TargetLever;
+  deliveryRate: TargetLever;
+  adSpend: TargetLever & { overCeiling: boolean };
+  weeklyMilestones: TargetWeeklyMilestone[];
+};
+
+export const targetPeriodsApi = {
+  list: () => get<{ targets: TargetPeriod[] }>("/api/target-periods"),
+  progress: (id: string) => get<TargetProgressView>(`/api/target-periods/${id}/progress`),
+  create: (body: Record<string, unknown>) => post<{ target: TargetPeriod }>("/api/target-periods", body),
+  update: (id: string, body: Record<string, unknown>) =>
+    patch<{ target: TargetPeriod }>(`/api/target-periods/${id}`, body),
+  setStatus: (id: string, status: TargetPeriod["status"]) =>
+    put<{ target: TargetPeriod }>(`/api/target-periods/${id}/status`, { status }),
+  saveIncentive: (id: string, body: Record<string, unknown>) =>
+    put<{ incentive: unknown }>(`/api/target-periods/${id}/incentive`, body)
+};
+
 export const personalDeliveryAgentsApi = {
   detail: (id: string) => get<PdaAgentDetail>(`/api/personal-delivery-agents/${id}`),
   applications: () => get<PdaApplicationsView>("/api/personal-delivery-agents/applications"),

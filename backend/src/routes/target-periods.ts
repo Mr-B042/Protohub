@@ -3,7 +3,8 @@ import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
-import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
+import { REPORT_ROW_CEILING, fetchAllRowsOrThrow } from "../lib/query-limits.js";
+import { computeTargetProgress, type TargetOrder, type DatedAmount } from "../lib/target-progress.js";
 
 /**
  * Monthly product contribution targets and the manager incentive on them.
@@ -274,6 +275,92 @@ router.put("/:id/incentive", requireRole("Owner"), async (req, res) => {
     : await supabase.from("incentive_rules").insert(fields).select("*").single();
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json({ incentive: data });
+});
+
+// ── GET /:id/progress ────────────────────────────────────
+/**
+ * Actuals for one target period.
+ *
+ * ⚠️ COMMISSIONS ARE NOT YET DEDUCTED, and the response says so rather than
+ * quietly rounding them away. Working out a rep's commission means running the
+ * bonus engine per rep per week and then attributing it to one product, which
+ * is the incentive slice's job. Until then this figure is contribution BEFORE
+ * commissions and reads slightly HIGH - it must not be presented as final, and
+ * `commissionsIncluded: false` is on every response so the UI can say so.
+ */
+router.get("/:id/progress", async (req, res) => {
+  const orgId = req.user!.orgId;
+  const { data: target, error: targetError } = await supabase
+    .from("target_periods").select("*").eq("org_id", orgId).eq("id", req.params.id).maybeSingle();
+  if (targetError) { res.status(500).json({ error: targetError.message }); return; }
+  if (!target) { res.status(404).json({ error: "That target does not exist here." }); return; }
+
+  const start = String(target.period_start).slice(0, 10);
+  const end = String(target.period_end).slice(0, 10);
+  // created_at is a timestamp, so the upper bound is exclusive of the day AFTER
+  // the period - `lte end` would drop everything after 00:00:00 on the last day.
+  const endExclusive = new Date(Date.parse(`${end}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+  const ORDER_COLUMNS = "id, status, amount, quantity, cogs_snapshot, logistics_cost, created_at, delivered_date, review_hold";
+
+  try {
+    // ⚠️ TWO QUERIES, NOT ONE. An order created in July and delivered in August
+    // belongs to August's throughput but not its placed cohort, so neither date
+    // alone finds every row that matters. Merged by id below.
+    const [placedRows, deliveredRows, adRows, deliveryExpenseRows] = await Promise.all([
+      fetchAllRowsOrThrow<any>(() => supabase.from("orders").select(ORDER_COLUMNS)
+        .eq("org_id", orgId).eq("product_id", target.product_id)
+        .gte("created_at", `${start}T00:00:00.000Z`).lt("created_at", `${endExclusive}T00:00:00.000Z`)
+        .order("created_at", { ascending: true }).order("id", { ascending: true })),
+      fetchAllRowsOrThrow<any>(() => supabase.from("orders").select(ORDER_COLUMNS)
+        .eq("org_id", orgId).eq("product_id", target.product_id).eq("status", "Delivered")
+        .gte("delivered_date", start).lte("delivered_date", end)
+        .order("delivered_date", { ascending: true }).order("id", { ascending: true })),
+      // expenses.product_id is TEXT while products.id is uuid - the cast is
+      // required or Postgres refuses the comparison outright.
+      fetchAllRowsOrThrow<any>(() => supabase.from("expenses").select("date, amount")
+        .eq("org_id", orgId).eq("product_id", String(target.product_id)).eq("category", "Ad Spend")
+        .gte("date", start).lte("date", end)
+        .order("date", { ascending: true }).order("id", { ascending: true })),
+      fetchAllRowsOrThrow<any>(() => supabase.from("expenses").select("date, amount")
+        .eq("org_id", orgId).eq("product_id", String(target.product_id))
+        .in("category", ["Delivery", "Waybill", "Failed Delivery"])
+        .gte("date", start).lte("date", end)
+        .order("date", { ascending: true }).order("id", { ascending: true }))
+    ]);
+
+    const byId = new Map<string, TargetOrder>();
+    for (const row of [...placedRows, ...deliveredRows]) byId.set(row.id, row as TargetOrder);
+
+    const adSpendRows: DatedAmount[] = adRows.map((r: any) => ({ date: String(r.date), amount: Number(r.amount ?? 0) }));
+    const deliveryExpenseFallback = deliveryExpenseRows.reduce((s: number, r: any) => s + Number(r.amount ?? 0), 0);
+
+    const progress = computeTargetProgress(
+      {
+        periodStart: start,
+        periodEnd: end,
+        contributionTarget: Number(target.contribution_target ?? 0),
+        orderTarget: Number(target.order_target ?? 0),
+        deliveredTarget: Number(target.delivered_target ?? 0),
+        piecesTarget: Number(target.pieces_target ?? 0),
+        deliveryRateTarget: Number(target.delivery_rate_target ?? 0),
+        adSpendCeiling: Number(target.ad_spend_ceiling ?? 0)
+      },
+      Array.from(byId.values()),
+      adSpendRows,
+      0,
+      deliveryExpenseFallback
+    );
+
+    res.json({
+      targetId: target.id,
+      periodStart: start,
+      periodEnd: end,
+      commissionsIncluded: false,
+      ...progress
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load target progress." });
+  }
 });
 
 export default router;
