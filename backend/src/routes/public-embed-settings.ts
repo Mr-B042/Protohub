@@ -19,7 +19,10 @@ const readRateLimit = rateLimit({
 router.get("/:orgId", readRateLimit, async (req, res) => {
   try {
     const settings = await readSettings(req.params.orgId as string);
-    res.setHeader("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=3600");
+    // Same window as public-products: these two are fetched together by the
+    // order form, so caching them differently would leave the page showing a
+    // new price with old branding, or the reverse.
+    res.setHeader("Cache-Control", "public, max-age=30, s-maxage=60, stale-while-revalidate=120");
     res.json(settings);
   } catch (e: any) {
     res.status(500).json({ error: e.message ?? "Failed to load embed settings." });

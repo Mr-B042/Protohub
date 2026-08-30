@@ -646,11 +646,22 @@ router.get("/:id", readRateLimit, async (req, res) => {
     related = (rawRelated ?? []) as unknown as DbProduct[];
   }
 
-  // Product copy/pricing changes are uncommon; live stock is intentionally
-  // served by package-availability and every submission is validated again.
-  // A short shared cache removes duplicate Railway/Supabase reads from bursts
-  // of landing-page traffic without making inventory stale.
-  res.setHeader("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=3600");
+  // ⚠️ stale-while-revalidate WAS 3600, AND THAT MEANT A PRICE CHANGE COULD
+  // TAKE AN HOUR TO APPEAR. The old comment here said "product copy/pricing
+  // changes are uncommon" - they are not. A price edited in admin still showed
+  // the previous figure on the live form, so customers ordered at a price the
+  // business had already moved away from, and there was no way to force it
+  // through short of waiting.
+  //
+  // The cache still exists and still does its job: landing-page bursts are the
+  // reason Railway egress is a standing cost, and this endpoint is the hottest
+  // public read. But the window is now ~1-2 minutes rather than an hour, which
+  // is the difference between "briefly behind" and "wrong".
+  //
+  // Live stock is deliberately NOT served from here - package-availability
+  // handles it - and every submission is re-validated server-side, so a stale
+  // read can never let an order through at a price that no longer exists.
+  res.setHeader("Cache-Control", "public, max-age=30, s-maxage=60, stale-while-revalidate=120");
   const publicProduct = sanitiseProduct(product, companionSocialProofByProductId);
   const publicRelated = related.map((item) => sanitiseProduct(item));
   const media = dedupePublicCompanionMedia([publicProduct, ...publicRelated]);
