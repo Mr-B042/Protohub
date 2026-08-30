@@ -5306,6 +5306,25 @@ const formatTrend = (change: number) => {
 const formatOrderCreatedAt = (order: Pick<TrackedOrder, "createdAt" | "date">) =>
   formatMoment(order.createdAt) || displayDateFromKey(order.date);
 const orderCreatedKey = (order: TrackedOrder) => normalizeDateKey(order.createdAt ?? order.date);
+/**
+ * True when an order carries a business date that is NOT the day it arrived.
+ *
+ * ⚠️ Bright's "backdate": an order that came in on the 3rd but was shifted to
+ * the 5th. Counting those alongside genuinely new orders made a campaign's
+ * order count impossible to trust, because it silently mixed today's demand
+ * with work re-dated into today.
+ *
+ * ⚠️ THIS ONLY SEES ORDERS THAT CARRY A DATE AT ALL. `date` is set on 86% of
+ * manually created orders but only 14% of public-form ones, so a shift on an
+ * order without one is invisible here - and until the audit gap was closed
+ * (orders.ts TRACKED_AUDIT_FIELDS), editing `date` recorded nothing anywhere.
+ * The count is a floor, never a ceiling.
+ */
+const orderDateWasShifted = (order: TrackedOrder) => {
+  const businessDate = normalizeDateKey(order.date);
+  const arrivedOn = normalizeDateKey(order.createdAt);
+  return Boolean(businessDate) && Boolean(arrivedOn) && businessDate !== arrivedOn;
+};
 const orderDeliveredKey = (order: TrackedOrder) =>
   order.deliveredDate ? normalizeDateKey(order.deliveredDate) : (order.status ?? "New") === "Delivered" ? orderCreatedKey(order) : "";
 
@@ -17255,6 +17274,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return {
       ...row,
       orderCount: row.orders.length,
+      shiftedCount: row.orders.filter(orderDateWasShifted).length,
+      newCount: row.orders.filter((order) => !orderDateWasShifted(order)).length,
       topSource: sourceBreakdown[0]?.label ?? "Unknown",
       sourceBreakdown
     };
@@ -17290,6 +17311,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return {
       ...row,
       orderCount: row.orders.length,
+      shiftedCount: row.orders.filter(orderDateWasShifted).length,
+      newCount: row.orders.filter((order) => !orderDateWasShifted(order)).length,
       sourceBreakdown
     };
   }).sort((a, b) => b.orderCount - a.orderCount || b.revenue - a.revenue);
@@ -89267,6 +89290,18 @@ ${waybillLineItems(w).length > 1
                             <div>
                               <div className="text-[10px] uppercase tracking-wider text-gray-400">Orders</div>
                               <div className="font-semibold text-gray-900">{row.orderCount}</div>
+                              {/* Split out so a re-dated order never passes as
+                                  fresh demand. Hidden when there are none, so a
+                                  clean campaign stays uncluttered. */}
+                              {row.shiftedCount > 0 && (
+                                <div className="mt-0.5 text-[10px] font-semibold leading-tight">
+                                  <span className="text-emerald-700">{row.newCount} new</span>
+                                  <span className="text-gray-300"> · </span>
+                                  <span className="text-amber-700" title="Carries an order date different from the day it arrived">
+                                    {row.shiftedCount} re-dated
+                                  </span>
+                                </div>
+                              )}
                             </div>
                             <div>
                               <div className="text-[10px] uppercase tracking-wider text-gray-400">Delivered</div>
@@ -89369,6 +89404,18 @@ ${waybillLineItems(w).length > 1
                             <div>
                               <div className="text-[10px] uppercase tracking-wider text-gray-400">Orders</div>
                               <div className="font-semibold text-gray-900">{row.orderCount}</div>
+                              {/* Split out so a re-dated order never passes as
+                                  fresh demand. Hidden when there are none, so a
+                                  clean campaign stays uncluttered. */}
+                              {row.shiftedCount > 0 && (
+                                <div className="mt-0.5 text-[10px] font-semibold leading-tight">
+                                  <span className="text-emerald-700">{row.newCount} new</span>
+                                  <span className="text-gray-300"> · </span>
+                                  <span className="text-amber-700" title="Carries an order date different from the day it arrived">
+                                    {row.shiftedCount} re-dated
+                                  </span>
+                                </div>
+                              )}
                             </div>
                             <div>
                               <div className="text-[10px] uppercase tracking-wider text-gray-400">Delivered</div>
