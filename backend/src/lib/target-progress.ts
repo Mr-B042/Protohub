@@ -1,4 +1,4 @@
-import { weekStartsForMonth } from "./salary-spread.js";
+import { weekStartsForMonth, lagosTodayKey } from "./salary-spread.js";
 
 /**
  * Actuals for one product target period.
@@ -110,12 +110,21 @@ export type LeverProgress = {
   target: number;
   /** Null when there is no target to measure against, never a misleading 0. */
   percentAchieved: number | null;
+  /** Where linear pacing says this should be by the end of today. */
+  expectedByToday: number;
+  /** actual - expectedByToday. Negative means behind pace. */
+  variance: number;
+  /** Month-end result if the seven-day trend holds. */
+  projected: number;
 };
 
-const lever = (actual: number, target: number): LeverProgress => ({
+const lever = (actual: number, target: number, expected = 0, projected = actual): LeverProgress => ({
   actual,
   target,
-  percentAchieved: target > 0 ? Math.round((actual / target) * 1000) / 10 : null
+  percentAchieved: target > 0 ? Math.round((actual / target) * 1000) / 10 : null,
+  expectedByToday: expected,
+  variance: Math.round((actual - expected) * 10) / 10,
+  projected
 });
 
 export type WeeklyMilestone = {
@@ -204,6 +213,8 @@ export type TargetProgress = {
   /** A CEILING, not a goal - under target is good. Flagged separately. */
   adSpend: LeverProgress & { overCeiling: boolean };
   weeklyMilestones: WeeklyMilestone[];
+  forecast: TargetForecast;
+  requiredPace: RequiredPace;
 };
 
 export function computeTargetProgress(
@@ -212,7 +223,8 @@ export function computeTargetProgress(
   adSpendRows: DatedAmount[],
   commissions = 0,
   deliveryExpenseFallback = 0,
-  commissionsByDay?: Map<string, number>
+  commissionsByDay?: Map<string, number>,
+  today: string = lagosTodayKey()
 ): TargetProgress {
   const { periodStart: start, periodEnd: end } = target;
   const placed = placedOrdersIn(orders, start, end);
@@ -225,17 +237,202 @@ export function computeTargetProgress(
   // mixed basis is the app's own convention, not an oversight here.
   const ratePct = placed.length > 0 ? Math.round((delivered.length / placed.length) * 1000) / 10 : 0;
 
+  const actual = {
+    contribution: breakdown.contribution,
+    orders: placed.length,
+    delivered: delivered.length,
+    pieces
+  };
+  const forecast = computeForecast(target, orders, adSpendRows, actual, today, commissions);
+  const requiredPace = computeRequiredPace(target, actual, forecast.daysRemainingInclusive);
+  const totalDays = daysInclusive(start, end);
+  const expected = (goal: number) => expectedByToday(goal, forecast.daysElapsed, totalDays);
+
   return {
     breakdown,
-    contribution: lever(breakdown.contribution, target.contributionTarget),
-    ordersPlaced: lever(placed.length, target.orderTarget),
-    delivered: lever(delivered.length, target.deliveredTarget),
-    pieces: lever(pieces, target.piecesTarget),
-    deliveryRate: lever(ratePct, target.deliveryRateTarget),
+    contribution: lever(breakdown.contribution, target.contributionTarget,
+      expected(target.contributionTarget), forecast.projectedContribution),
+    ordersPlaced: lever(placed.length, target.orderTarget,
+      expected(target.orderTarget), forecast.projectedOrders),
+    delivered: lever(delivered.length, target.deliveredTarget,
+      expected(target.deliveredTarget), forecast.projectedDelivered),
+    pieces: lever(pieces, target.piecesTarget,
+      expected(target.piecesTarget), forecast.projectedPieces),
+    // A RATE is not cumulative: it does not build up over the month, so linear
+    // pacing is meaningless for it. Expected is the target itself from day one,
+    // and the projection is simply where the rate stands.
+    deliveryRate: lever(ratePct, target.deliveryRateTarget, target.deliveryRateTarget, ratePct),
     adSpend: {
-      ...lever(adSpend, target.adSpendCeiling),
+      // A ceiling is also not something to "pace towards" - expected is the
+      // straight-line spend allowance so far, and over/under is what matters.
+      ...lever(adSpend, target.adSpendCeiling, expected(target.adSpendCeiling), adSpend),
       overCeiling: target.adSpendCeiling > 0 && adSpend > target.adSpendCeiling
     },
-    weeklyMilestones: buildWeeklyMilestones(target, orders, adSpendRows, commissionsByDay)
+    weeklyMilestones: buildWeeklyMilestones(target, orders, adSpendRows, commissionsByDay),
+    forecast,
+    requiredPace
   };
+}
+
+// ── Forecasting and pace ─────────────────────────────────
+
+const addDays = (day: string, delta: number) =>
+  new Date(Date.parse(`${day}T00:00:00Z`) + delta * 86_400_000).toISOString().slice(0, 10);
+
+const daysInclusive = (start: string, end: string) =>
+  end < start ? 0 : Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86_400_000) + 1;
+
+/** Contribution earned inside an arbitrary window, on the same basis as the whole period. */
+export function contributionInRange(
+  orders: TargetOrder[], adSpendRows: DatedAmount[], start: string, end: string, commissions = 0
+): number {
+  return computeContribution(deliveredOrdersIn(orders, start, end), sumIn(adSpendRows, start, end), commissions).contribution;
+}
+
+export type TargetForecast = {
+  /** The seven COMPLETE days used, so the figure can be checked by hand. */
+  trendStart: string;
+  trendEnd: string;
+  dailyAverageContribution: number;
+  dailyAverageOrders: number;
+  dailyAverageDelivered: number;
+  dailyAveragePieces: number;
+  projectedContribution: number;
+  projectedOrders: number;
+  projectedDelivered: number;
+  projectedPieces: number;
+  projectedPercent: number | null;
+  status: "on_track" | "at_risk" | "behind" | "achieved";
+  daysElapsed: number;
+  /** Days left to ACT, today included - what the required pace divides by. */
+  daysRemainingInclusive: number;
+  /** Days strictly after today - what the projection extrapolates over. */
+  daysAfterToday: number;
+};
+
+export type RequiredPace = {
+  remainingContribution: number;
+  remainingOrders: number;
+  remainingDelivered: number;
+  remainingPieces: number;
+  contributionPerDay: number;
+  ordersPerDay: number;
+  deliveredPerDay: number;
+  piecesPerDay: number;
+  daysRemainingInclusive: number;
+};
+
+/**
+ * ⚠️ THE PROJECTION AND THE REQUIRED PACE DIVIDE BY DIFFERENT DAY COUNTS, and
+ * conflating them double-counts today.
+ *
+ * The actual already contains whatever today has produced so far. Extrapolating
+ * over a window that still includes today would add a second, full day on top
+ * of the partial one already banked - so the PROJECTION runs over the days
+ * strictly AFTER today.
+ *
+ * The REQUIRED PACE is the opposite: today is still a day you can act on, so
+ * "what must I do per day from here" divides by the days remaining INCLUDING
+ * today. The spec's own example does this - ₦2,250,000 over 20 remaining days
+ * is ₦112,500/day.
+ *
+ * ⚠️ THE TREND USES SEVEN COMPLETE DAYS AND SO EXCLUDES TODAY. A half-finished
+ * day would drag the average down for no reason other than the clock, which is
+ * exactly the "one bad day" distortion the spec asks us to avoid.
+ */
+export function computeForecast(
+  target: TargetDefinition,
+  orders: TargetOrder[],
+  adSpendRows: DatedAmount[],
+  actual: { contribution: number; orders: number; delivered: number; pieces: number },
+  today: string = lagosTodayKey(),
+  commissions = 0
+): TargetForecast {
+  const start = target.periodStart;
+  const end = target.periodEnd;
+  // A finished period forecasts nothing - it reports what happened.
+  const effectiveToday = today > end ? end : today < start ? start : today;
+  const periodOver = today > end;
+
+  const daysElapsed = daysInclusive(start, effectiveToday);
+  const daysRemainingInclusive = periodOver ? 0 : daysInclusive(effectiveToday, end);
+  const daysAfterToday = periodOver ? 0 : Math.max(0, daysRemainingInclusive - 1);
+
+  // Seven complete days ending yesterday, clipped to the period's start.
+  const trendEnd = addDays(effectiveToday, periodOver ? 0 : -1);
+  const rawTrendStart = addDays(trendEnd, -6);
+  const trendStart = rawTrendStart < start ? start : rawTrendStart;
+  const trendDays = Math.max(1, daysInclusive(trendStart, trendEnd));
+
+  const trendDelivered = deliveredOrdersIn(orders, trendStart, trendEnd);
+  const trendPlaced = placedOrdersIn(orders, trendStart, trendEnd);
+  const trendContribution = contributionInRange(orders, adSpendRows, trendStart, trendEnd, commissions);
+
+  const dailyAverageContribution = trendContribution / trendDays;
+  const dailyAverageOrders = trendPlaced.length / trendDays;
+  const dailyAverageDelivered = trendDelivered.length / trendDays;
+  const dailyAveragePieces = trendDelivered.reduce((s, o) => s + num(o.quantity), 0) / trendDays;
+
+  const project = (current: number, perDay: number) => Math.round(current + perDay * daysAfterToday);
+  const projectedContribution = project(actual.contribution, dailyAverageContribution);
+  const projectedPercent = target.contributionTarget > 0
+    ? Math.round((projectedContribution / target.contributionTarget) * 1000) / 10
+    : null;
+
+  // Achieved is checked FIRST: a target already met is not "on track" to be
+  // met, and a late slump must not downgrade a result already banked.
+  const status: TargetForecast["status"] =
+    actual.contribution >= target.contributionTarget && target.contributionTarget > 0 ? "achieved"
+      : projectedPercent == null ? "on_track"
+      : projectedPercent >= 100 ? "on_track"
+      : projectedPercent >= 90 ? "at_risk"
+      : "behind";
+
+  return {
+    trendStart, trendEnd,
+    dailyAverageContribution: Math.round(dailyAverageContribution),
+    dailyAverageOrders: Math.round(dailyAverageOrders * 10) / 10,
+    dailyAverageDelivered: Math.round(dailyAverageDelivered * 10) / 10,
+    dailyAveragePieces: Math.round(dailyAveragePieces * 10) / 10,
+    projectedContribution,
+    projectedOrders: project(actual.orders, dailyAverageOrders),
+    projectedDelivered: project(actual.delivered, dailyAverageDelivered),
+    projectedPieces: project(actual.pieces, dailyAveragePieces),
+    projectedPercent,
+    status,
+    daysElapsed,
+    daysRemainingInclusive,
+    daysAfterToday
+  };
+}
+
+export function computeRequiredPace(
+  target: TargetDefinition,
+  actual: { contribution: number; orders: number; delivered: number; pieces: number },
+  daysRemainingInclusive: number
+): RequiredPace {
+  const remaining = (goal: number, done: number) => Math.max(0, goal - done);
+  const perDay = (left: number) => (daysRemainingInclusive > 0 ? left / daysRemainingInclusive : 0);
+
+  const remainingContribution = remaining(target.contributionTarget, actual.contribution);
+  const remainingOrders = remaining(target.orderTarget, actual.orders);
+  const remainingDelivered = remaining(target.deliveredTarget, actual.delivered);
+  const remainingPieces = remaining(target.piecesTarget, actual.pieces);
+
+  return {
+    remainingContribution, remainingOrders, remainingDelivered, remainingPieces,
+    contributionPerDay: Math.round(perDay(remainingContribution)),
+    // Rounded UP: 24.2 orders a day means doing 25, because you cannot place
+    // a fifth of an order and rounding down quietly misses the target.
+    ordersPerDay: Math.ceil(perDay(remainingOrders)),
+    deliveredPerDay: Math.ceil(perDay(remainingDelivered)),
+    piecesPerDay: Math.ceil(perDay(remainingPieces)),
+    daysRemainingInclusive
+  };
+}
+
+/** Linear pacing: where the period should be by the end of today. */
+export function expectedByToday(target: number, daysElapsed: number, totalDays: number): number {
+  if (totalDays <= 0) return 0;
+  return Math.round((target * Math.min(daysElapsed, totalDays)) / totalDays);
 }

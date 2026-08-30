@@ -30749,13 +30749,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     };
 
     const pct = (value: number | null) => (value == null ? "—" : `${value}%`);
+
+    const statusLabel = (status: TargetProgressView["forecast"]["status"]) =>
+      status === "achieved" ? "Achieved" : status === "on_track" ? "On Track"
+        : status === "at_risk" ? "At Risk" : "Behind";
+    const statusTone = (status: TargetProgressView["forecast"]["status"]) =>
+      status === "achieved" ? "bg-emerald-600 text-white"
+        : status === "on_track" ? "bg-emerald-100 text-emerald-700"
+        : status === "at_risk" ? "bg-amber-100 text-amber-700"
+        : "bg-rose-100 text-rose-700";
+    const daysBetweenLabel = (start: string, end: string) => {
+      const days = Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86_400_000) + 1;
+      return `${days} day${days === 1 ? "" : "s"}'`;
+    };
     // A bar can exceed 100% in reality; the fill is clamped so it never
     // overflows its track, while the number beside it still tells the truth.
     const barWidth = (value: number | null) => `${Math.max(0, Math.min(100, value ?? 0))}%`;
 
-    const LeverCard = ({ label, actual, target: goal, percent, tone, suffix = "", isCeiling = false, over = false }: {
+    const LeverCard = ({ label, actual, target: goal, percent, tone, suffix = "", isCeiling = false, over = false, lever, fmt = (n: number) => String(Math.round(n)) }: {
       label: string; actual: string; target: string; percent: number | null;
       tone: string; suffix?: string; isCeiling?: boolean; over?: boolean;
+      lever?: TargetProgressView["contribution"]; fmt?: (value: number) => string;
     }) => (
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
         <div className="flex items-center justify-between gap-2">
@@ -30776,6 +30790,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
           <div className={`h-full rounded-full ${tone}`} style={{ width: barWidth(percent) }} />
         </div>
+        {lever && (
+          <div className="mt-3 space-y-1 border-t border-gray-100 pt-2 text-[11px]">
+            <div className="flex justify-between">
+              <span className="font-semibold text-gray-500">Expected by today</span>
+              <span className="font-bold text-gray-700">{fmt(lever.expectedByToday)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="font-semibold text-gray-500">Variance</span>
+              {/* On a CEILING, spending less than expected is good - so the
+                  colours invert. Green never means "under" on its own. */}
+              <span className={`font-black ${
+                (isCeiling ? -lever.variance : lever.variance) >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                {lever.variance > 0 ? "+" : ""}{fmt(lever.variance)}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="font-semibold text-gray-500">Projected</span>
+              <span className="font-bold text-gray-700">{fmt(lever.projected)}</span>
+            </div>
+          </div>
+        )}
       </div>
     );
 
@@ -30848,6 +30883,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-white/70">
                     <div className="h-full rounded-full bg-indigo-600" style={{ width: barWidth(p.contribution.percentAchieved) }} />
                   </div>
+                  <span className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-black ${statusTone(p.forecast.status)}`}>
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-current" />
+                    {statusLabel(p.forecast.status)}
+                  </span>
+                </div>
+
+                <div className="lg:border-l lg:border-indigo-100 lg:pl-6">
+                  <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Projected Finish</p>
+                  <p className="mt-1 text-2xl font-black text-gray-900">{formatMoney(p.forecast.projectedContribution)}</p>
+                  <p className="text-xs text-gray-500">
+                    {p.forecast.daysAfterToday > 0
+                      ? `If the last ${daysBetweenLabel(p.forecast.trendStart, p.forecast.trendEnd)} pace holds`
+                      : "Period complete — this is the result"}
+                  </p>
+                  {p.forecast.projectedPercent != null && (
+                    <p className="text-xs font-bold text-gray-600">{p.forecast.projectedPercent}% of target</p>
+                  )}
                 </div>
               </div>
 
@@ -30882,17 +30934,58 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 you find out WHICH lever is behind when contribution is. */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
               <LeverCard label="Orders placed" actual={String(p.ordersPlaced.actual)}
-                target={String(p.ordersPlaced.target)} percent={p.ordersPlaced.percentAchieved} tone="bg-indigo-500" />
+                target={String(p.ordersPlaced.target)} percent={p.ordersPlaced.percentAchieved}
+                tone="bg-indigo-500" lever={p.ordersPlaced} />
               <LeverCard label="Delivered" actual={String(p.delivered.actual)}
-                target={String(p.delivered.target)} percent={p.delivered.percentAchieved} tone="bg-emerald-500" />
+                target={String(p.delivered.target)} percent={p.delivered.percentAchieved}
+                tone="bg-emerald-500" lever={p.delivered} />
               <LeverCard label="Pieces sold" actual={String(p.pieces.actual)}
-                target={String(p.pieces.target)} percent={p.pieces.percentAchieved} tone="bg-sky-500" />
+                target={String(p.pieces.target)} percent={p.pieces.percentAchieved}
+                tone="bg-sky-500" lever={p.pieces} />
               <LeverCard label="Delivery rate" actual={`${p.deliveryRate.actual}%`}
-                target={`${p.deliveryRate.target}`} suffix="%" percent={p.deliveryRate.percentAchieved} tone="bg-amber-500" />
+                target={`${p.deliveryRate.target}`} suffix="%" percent={p.deliveryRate.percentAchieved}
+                tone="bg-amber-500" lever={p.deliveryRate} fmt={(n) => `${Math.round(n * 10) / 10}%`} />
               <LeverCard label="Ad spend" actual={formatMoney(p.adSpend.actual)}
                 target={formatMoney(p.adSpend.target)} percent={p.adSpend.percentAchieved}
-                tone={p.adSpend.overCeiling ? "bg-rose-500" : "bg-emerald-500"} isCeiling over={p.adSpend.overCeiling} />
+                tone={p.adSpend.overCeiling ? "bg-rose-500" : "bg-emerald-500"} isCeiling over={p.adSpend.overCeiling}
+                lever={p.adSpend} fmt={formatMoney} />
             </div>
+
+            {/* Required pace — recalculated every day from what is LEFT, so the
+                original daily target rises as soon as a day is missed. */}
+            {p.forecast.daysRemainingInclusive > 0 && (
+              <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Gauge className="h-4 w-4 text-gray-400" />
+                    <h3 className="text-base font-black text-gray-900">Today&apos;s Required Pace</h3>
+                  </div>
+                  <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-bold text-gray-600">
+                    {p.forecast.daysRemainingInclusive} day{p.forecast.daysRemainingInclusive === 1 ? "" : "s"} left, today included
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  What remains, divided by the days left to do it in. This rises automatically the moment a day is missed.
+                </p>
+                <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+                  {[
+                    { label: "Orders", value: String(p.requiredPace.ordersPerDay), tone: "text-indigo-700" },
+                    { label: "Delivered", value: String(p.requiredPace.deliveredPerDay), tone: "text-emerald-700" },
+                    { label: "Pieces", value: String(p.requiredPace.piecesPerDay), tone: "text-sky-700" },
+                    { label: "Contribution", value: formatMoney(p.requiredPace.contributionPerDay), tone: "text-gray-900" }
+                  ].map((cell) => (
+                    <div key={cell.label}>
+                      <p className={`text-2xl font-black ${cell.tone}`}>{cell.value}</p>
+                      <p className="text-xs font-semibold text-gray-500">{cell.label} / day</p>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-3 text-xs text-gray-400">
+                  Trend measured over {p.forecast.trendStart} → {p.forecast.trendEnd} (complete days only, so today&apos;s
+                  part-finished total cannot drag the average down).
+                </p>
+              </div>
+            )}
 
             {/* Weekly milestones — pacing controls. The reward settles on the
                 MONTH, never on a single week. */}
@@ -30939,7 +31032,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             </div>
 
             <p className="text-xs text-gray-400">
-              Forecasting, required daily pace, recovery plans and the incentive panel land in the next slices.
+              Recovery plans and the incentive panel land in the next slice.
             </p>
           </>
         )}

@@ -1545,7 +1545,29 @@ export const deliveryGoalsApi = {
     put<{ companyDefault: { primaryTarget: number; stretchTarget: number } }>("/api/delivery-goals/company-default", body)
 };
 
-export type TargetLever = { actual: number; target: number; percentAchieved: number | null };
+export type TargetLever = {
+  actual: number; target: number; percentAchieved: number | null;
+  expectedByToday: number; variance: number; projected: number;
+};
+
+export type TargetForecast = {
+  trendStart: string; trendEnd: string;
+  dailyAverageContribution: number; dailyAverageOrders: number;
+  dailyAverageDelivered: number; dailyAveragePieces: number;
+  projectedContribution: number; projectedOrders: number;
+  projectedDelivered: number; projectedPieces: number;
+  projectedPercent: number | null;
+  status: "on_track" | "at_risk" | "behind" | "achieved";
+  daysElapsed: number; daysRemainingInclusive: number; daysAfterToday: number;
+};
+
+export type TargetRequiredPace = {
+  remainingContribution: number; remainingOrders: number;
+  remainingDelivered: number; remainingPieces: number;
+  contributionPerDay: number; ordersPerDay: number;
+  deliveredPerDay: number; piecesPerDay: number;
+  daysRemainingInclusive: number;
+};
 
 export type TargetWeeklyMilestone = {
   week: number; startDate: string; endDate: string; days: number;
@@ -1583,6 +1605,8 @@ export type TargetProgressView = {
   deliveryRate: TargetLever;
   adSpend: TargetLever & { overCeiling: boolean };
   weeklyMilestones: TargetWeeklyMilestone[];
+  forecast: TargetForecast;
+  requiredPace: TargetRequiredPace;
 };
 
 export const targetPeriodsApi = {
