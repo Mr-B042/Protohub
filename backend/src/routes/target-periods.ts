@@ -7,6 +7,7 @@ import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 import { loadTargetProgress, loadTargetActuals } from "../lib/target-progress-loader.js";
 import { suggestTargets, completeMonthsBefore, daysInWindow } from "../lib/target-suggestion.js";
 import { lagosTodayKey } from "../lib/salary-spread.js";
+import { SALES_BONUS_LAUNCH_WEEK_START } from "../lib/sales-bonus-engine.js";
 
 /**
  * Monthly product contribution targets and the manager incentive on them.
@@ -189,7 +190,7 @@ router.get("/suggest", requireRole("Owner"), async (req, res) => {
     res.json({
       productId,
       productName: product.name,
-      ...suggestTargets(actuals, periodStart, periodEnd, stretch)
+      ...suggestTargets(actuals, periodStart, periodEnd, stretch, 10, SALES_BONUS_LAUNCH_WEEK_START)
     });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not build a suggestion." });

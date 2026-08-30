@@ -136,3 +136,31 @@ test("a longer lookback still drops only the unfinished month", () => {
   const windows = completeMonthsBefore("2026-09-01", 3, "2026-08-30");
   assert.deepEqual(windows.map((w) => w.monthKey), ["2026-05", "2026-06", "2026-07"]);
 });
+
+test("a baseline month predating commission settlement is flagged, not silently averaged", () => {
+  // Contribution deducts commissions, and the engine settles nothing before its
+  // launch week. June carries none at all and July only part of one, so their
+  // contribution reads high against a September that bears a full month's.
+  const june = month({ monthKey: "2026-06", days: 30, periodStart: "2026-06-01", periodEnd: "2026-06-30",
+    ordersPlaced: 656, delivered: 463, contribution: 2_047_886 });
+  const july = month({ monthKey: "2026-07", days: 31, periodStart: "2026-07-01", periodEnd: "2026-07-31",
+    ordersPlaced: 742, delivered: 534, contribution: 2_542_710 });
+
+  const out = suggestTargets([june, july], "2026-09-01", "2026-09-30", 10, 10, "2026-07-05");
+  const warning = out.notes.find((n) => n.includes("Commission settlement began"));
+
+  assert.ok(warning, "expected a commission-basis warning");
+  assert.match(warning!, /2026-06 carries no commission at all/);
+  assert.match(warning!, /2026-07 only from 2026-07-05/);
+  assert.match(warning!, /optimistic/);
+});
+
+test("no warning once every baseline month is after settlement began", () => {
+  const aug = month({ monthKey: "2026-08", days: 31, periodStart: "2026-08-01", periodEnd: "2026-08-31",
+    ordersPlaced: 638, delivered: 481, contribution: 2_650_600 });
+  const sep = month({ monthKey: "2026-09", days: 30, periodStart: "2026-09-01", periodEnd: "2026-09-30",
+    ordersPlaced: 700, delivered: 520, contribution: 2_700_000 });
+
+  const out = suggestTargets([aug, sep], "2026-10-01", "2026-10-31", 10, 10, "2026-07-05");
+  assert.equal(out.notes.some((n) => n.includes("Commission settlement began")), false);
+});
