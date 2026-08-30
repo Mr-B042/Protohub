@@ -4,7 +4,10 @@ import { supabase } from "../lib/supabase.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { REPORT_ROW_CEILING, fetchAllRowsOrThrow } from "../lib/query-limits.js";
-import { computeTargetProgress, type TargetOrder, type DatedAmount } from "../lib/target-progress.js";
+import { computeTargetProgress, deliveredOrdersIn, type TargetOrder, type DatedAmount } from "../lib/target-progress.js";
+import { perOrderBonusMapForDeliveredRange } from "../lib/sales-bonus-engine.js";
+import { buildRecoveryPlan } from "../lib/recovery-plan.js";
+import { computeIncentive } from "../lib/manager-incentive.js";
 
 /**
  * Monthly product contribution targets and the manager incentive on them.
@@ -281,12 +284,12 @@ router.put("/:id/incentive", requireRole("Owner"), async (req, res) => {
 /**
  * Actuals for one target period.
  *
- * ⚠️ COMMISSIONS ARE NOT YET DEDUCTED, and the response says so rather than
- * quietly rounding them away. Working out a rep's commission means running the
- * bonus engine per rep per week and then attributing it to one product, which
- * is the incentive slice's job. Until then this figure is contribution BEFORE
- * commissions and reads slightly HIGH - it must not be presented as final, and
- * `commissionsIncluded: false` is on every response so the UI can say so.
+ * ⚠️ COMMISSIONS ARE ATTRIBUTED PER ORDER, NOT PER REP. A rep's bonus is earned
+ * across every product they sell, so a rep-level total cannot be charged to one
+ * product's target. perOrderBonusSettlementMapForDeliveredRange already splits
+ * the settled bonus down to the order that earned it, so only the orders for
+ * THIS product in THIS period are counted. Anything else would load one
+ * product's contribution with another product's commission.
  */
 router.get("/:id/progress", async (req, res) => {
   const orgId = req.user!.orgId;
@@ -331,6 +334,20 @@ router.get("/:id/progress", async (req, res) => {
     const byId = new Map<string, TargetOrder>();
     for (const row of [...placedRows, ...deliveredRows]) byId.set(row.id, row as TargetOrder);
 
+    // Bonus settled per order across the whole org for this delivered range,
+    // then narrowed to this product's delivered orders only.
+    const bonusByOrderId = await perOrderBonusMapForDeliveredRange(orgId, start, end);
+    const productDelivered = deliveredOrdersIn(Array.from(byId.values()), start, end);
+    let commissions = 0;
+    const commissionsByDay = new Map<string, number>();
+    for (const order of productDelivered) {
+      const payable = Number(bonusByOrderId[String(order.id)] ?? 0);
+      if (!payable) continue;
+      commissions += payable;
+      const day = String(order.delivered_date ?? "").slice(0, 10);
+      if (day) commissionsByDay.set(day, (commissionsByDay.get(day) ?? 0) + payable);
+    }
+
     const adSpendRows: DatedAmount[] = adRows.map((r: any) => ({ date: String(r.date), amount: Number(r.amount ?? 0) }));
     const deliveryExpenseFallback = deliveryExpenseRows.reduce((s: number, r: any) => s + Number(r.amount ?? 0), 0);
 
@@ -347,16 +364,56 @@ router.get("/:id/progress", async (req, res) => {
       },
       Array.from(byId.values()),
       adSpendRows,
-      0,
-      deliveryExpenseFallback
+      commissions,
+      deliveryExpenseFallback,
+      commissionsByDay
     );
+
+    const definition = {
+      periodStart: start,
+      periodEnd: end,
+      contributionTarget: Number(target.contribution_target ?? 0),
+      orderTarget: Number(target.order_target ?? 0),
+      deliveredTarget: Number(target.delivered_target ?? 0),
+      piecesTarget: Number(target.pieces_target ?? 0),
+      deliveryRateTarget: Number(target.delivery_rate_target ?? 0),
+      adSpendCeiling: Number(target.ad_spend_ceiling ?? 0)
+    };
+    const recoveryPlan = buildRecoveryPlan(definition, progress);
+
+    // The incentive is optional: a target can exist before anyone is put on it.
+    const { data: rule } = await supabase.from("incentive_rules")
+      .select("*").eq("target_period_id", target.id).limit(1).maybeSingle();
+    const incentive = rule
+      ? computeIncentive(
+          progress.breakdown.contribution,
+          progress.forecast.projectedContribution,
+          {
+            minimum: Number(target.contribution_minimum ?? 0),
+            target: Number(target.contribution_target ?? 0),
+            exceptional: Number(target.contribution_exceptional ?? 0)
+          },
+          {
+            baseReward: Number(rule.base_reward ?? 0),
+            minimumMultiplier: Number(rule.minimum_multiplier ?? 50),
+            targetMultiplier: Number(rule.target_multiplier ?? 100),
+            exceptionalMultiplier: Number(rule.exceptional_multiplier ?? 125),
+            verificationGates: rule.verification_gates ?? {},
+            verificationStatus: rule.verification_status ?? "provisional"
+          },
+          progress.forecast.daysRemainingInclusive
+        )
+      : null;
 
     res.json({
       targetId: target.id,
       periodStart: start,
       periodEnd: end,
-      commissionsIncluded: false,
-      ...progress
+      commissionsIncluded: true,
+      ...progress,
+      recoveryPlan,
+      incentive,
+      incentiveStatus: rule?.verification_status ?? null
     });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not load target progress." });

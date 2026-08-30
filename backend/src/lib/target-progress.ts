@@ -22,6 +22,7 @@ import { weekStartsForMonth, lagosTodayKey } from "./salary-spread.js";
  */
 
 export type TargetOrder = {
+  id?: string | null;
   status?: string | null;
   amount?: number | null;
   quantity?: number | null;

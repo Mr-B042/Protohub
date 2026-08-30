@@ -1607,6 +1607,29 @@ export type TargetProgressView = {
   weeklyMilestones: TargetWeeklyMilestone[];
   forecast: TargetForecast;
   requiredPace: TargetRequiredPace;
+  recoveryPlan: TargetRecoveryPlan;
+  incentive: TargetIncentive | null;
+  incentiveStatus: string | null;
+};
+
+export type TargetRecoveryPlan = {
+  planCode: "A" | "B" | "C" | "D" | "E";
+  problem: "none" | "orders" | "delivery_rate" | "pieces" | "contribution";
+  headline: string;
+  actions: { label: string; detail: string; impact: number }[];
+};
+
+export type TargetIncentive = {
+  tier: "none" | "minimum" | "target" | "exceptional";
+  tierLabel: string;
+  multiplier: number;
+  amount: number;
+  projectedTier: "none" | "minimum" | "target" | "exceptional";
+  projectedAmount: number;
+  nextTier: { name: string; threshold: number; shortfall: number; perDay: number } | null;
+  gatesMet: string[];
+  gatesOutstanding: string[];
+  settleable: boolean;
 };
 
 export const targetPeriodsApi = {
