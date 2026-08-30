@@ -9260,6 +9260,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [targetProgress, setTargetProgress] = useState<TargetProgressView | null>(null);
   const [targetsLoading, setTargetsLoading] = useState(false);
   const [targetsError, setTargetsError] = useState<string | null>(null);
+  const [targetEditorOpen, setTargetEditorOpen] = useState(false);
+  const [targetSaving, setTargetSaving] = useState(false);
+  const [targetDraft, setTargetDraft] = useState({
+    productId: "", periodStart: "", periodEnd: "",
+    contributionMinimum: "", contributionTarget: "", contributionExceptional: "",
+    orderTarget: "", deliveredTarget: "", piecesTarget: "", deliveryRateTarget: "", adSpendCeiling: "",
+    baseReward: ""
+  });
   const [deliveryGoals, setDeliveryGoals] = useState<DeliveryGoalsView | null>(null);
   const [deliveryGoalProductId, setDeliveryGoalProductId] = useState<string | null>(null);
   const [deliveryGoalSaving, setDeliveryGoalSaving] = useState(false);
@@ -9332,6 +9340,47 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // list on every change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, managerDashboardTab]);
+
+  const saveTargetPeriod = async () => {
+    setTargetSaving(true);
+    setTargetsError(null);
+    try {
+      const numeric = (value: string) => (value.trim() === "" ? 0 : Number(value));
+      const { target } = await targetPeriodsApi.create({
+        productId: targetDraft.productId,
+        periodStart: targetDraft.periodStart,
+        periodEnd: targetDraft.periodEnd,
+        contributionMinimum: numeric(targetDraft.contributionMinimum),
+        contributionTarget: numeric(targetDraft.contributionTarget),
+        contributionExceptional: numeric(targetDraft.contributionExceptional),
+        orderTarget: numeric(targetDraft.orderTarget),
+        deliveredTarget: numeric(targetDraft.deliveredTarget),
+        piecesTarget: numeric(targetDraft.piecesTarget),
+        deliveryRateTarget: numeric(targetDraft.deliveryRateTarget),
+        adSpendCeiling: numeric(targetDraft.adSpendCeiling)
+      });
+      // The base reward lives on incentive_rules, so it is a second call. Only
+      // sent when the Owner actually entered one - a zero-reward incentive row
+      // would read as "configured with no reward" rather than "not set up".
+      if (numeric(targetDraft.baseReward) > 0) {
+        await targetPeriodsApi.saveIncentive(target.id, {
+          managerId: null,
+          baseReward: numeric(targetDraft.baseReward),
+          minimumMultiplier: 50, targetMultiplier: 100, exceptionalMultiplier: 125
+        });
+      }
+      const { targets } = await targetPeriodsApi.list();
+      setTargetPeriods(targets);
+      setSelectedTargetId(target.id);
+      setTargetProgress(await targetPeriodsApi.progress(target.id));
+      setTargetEditorOpen(false);
+      showToast("Target period created.");
+    } catch (err: any) {
+      setTargetsError(err?.message ?? "Could not save that target.");
+    } finally {
+      setTargetSaving(false);
+    }
+  };
 
   const selectTargetPeriod = async (id: string) => {
     setSelectedTargetId(id);
@@ -30823,20 +30872,103 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               Monthly product contribution targets and the levers behind them.
             </p>
           </div>
-          {targetPeriods.length > 0 && (
-            <select
-              className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700"
-              value={selectedTargetId ?? ""}
-              onChange={(event) => void selectTargetPeriod(event.target.value)}
-            >
-              {targetPeriods.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.productName ?? "Product"} — {periodLabel(t)}
-                </option>
-              ))}
-            </select>
-          )}
+          <div className="flex items-center gap-2">
+            {targetPeriods.length > 0 && (
+              <select
+                className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700"
+                value={selectedTargetId ?? ""}
+                onChange={(event) => void selectTargetPeriod(event.target.value)}
+              >
+                {targetPeriods.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.productName ?? "Product"} — {periodLabel(t)}
+                  </option>
+                ))}
+              </select>
+            )}
+            {/* Owner only. A target is what the team is judged against and the
+                incentive is someone's pay, so setting it is never delegated -
+                the backend enforces this too, this only hides the button. */}
+            {currentRole === "Owner" && (
+              <button
+                className="rounded-xl bg-gray-900 px-3 py-2 text-sm font-black text-white hover:bg-gray-800"
+                onClick={() => {
+                  const now = new Date();
+                  const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+                  const last = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0));
+                  setTargetDraft((draft) => ({
+                    ...draft,
+                    productId: draft.productId || (products[0]?.id ?? ""),
+                    periodStart: first.toISOString().slice(0, 10),
+                    periodEnd: last.toISOString().slice(0, 10)
+                  }));
+                  setTargetEditorOpen((open) => !open);
+                }}
+              >
+                {targetEditorOpen ? "Cancel" : "Configure Targets"}
+              </button>
+            )}
+          </div>
         </div>
+
+        {targetEditorOpen && currentRole === "Owner" && (
+          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+            <h3 className="text-base font-black text-gray-900">New target period</h3>
+            <p className="mt-1 text-xs text-gray-500">
+              Contribution here is delivered revenue less product cost, logistics, commissions and advertising.
+              It is deliberately <em>not</em> the P&amp;L&apos;s Direct Profit, which excludes advertising.
+            </p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <label className="text-xs font-bold text-gray-600">
+                Product
+                <select
+                  className="mt-1 w-full rounded-lg border border-gray-200 px-2.5 py-2 text-sm font-semibold text-gray-800"
+                  value={targetDraft.productId}
+                  onChange={(e) => setTargetDraft((d) => ({ ...d, productId: e.target.value }))}
+                >
+                  {products.map((product) => (
+                    <option key={product.id} value={product.id}>{product.name}</option>
+                  ))}
+                </select>
+              </label>
+              {([
+                ["periodStart", "Period start", "date"],
+                ["periodEnd", "Period end", "date"],
+                ["contributionMinimum", "Minimum contribution", "number"],
+                ["contributionTarget", "Target contribution", "number"],
+                ["contributionExceptional", "Exceptional contribution", "number"],
+                ["orderTarget", "Orders placed target", "number"],
+                ["deliveredTarget", "Delivered target", "number"],
+                ["piecesTarget", "Pieces target", "number"],
+                ["deliveryRateTarget", "Delivery rate target (%)", "number"],
+                ["adSpendCeiling", "Ad spend ceiling", "number"],
+                ["baseReward", "Manager base reward", "number"]
+              ] as const).map(([key, label, type]) => (
+                <label key={key} className="text-xs font-bold text-gray-600">
+                  {label}
+                  <input
+                    type={type}
+                    className="mt-1 w-full rounded-lg border border-gray-200 px-2.5 py-2 text-sm font-semibold text-gray-800"
+                    value={targetDraft[key]}
+                    onChange={(e) => setTargetDraft((d) => ({ ...d, [key]: e.target.value }))}
+                  />
+                </label>
+              ))}
+            </div>
+            <div className="mt-4 flex items-center gap-2">
+              <button
+                className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-black text-white disabled:opacity-50"
+                disabled={targetSaving || !targetDraft.productId || !targetDraft.contributionTarget}
+                onClick={() => void saveTargetPeriod()}
+              >
+                {targetSaving ? "Saving…" : "Create target"}
+              </button>
+              <span className="text-xs text-gray-500">
+                Multipliers default to 50% / 100% / 125% of the base reward.
+              </span>
+            </div>
+          </div>
+        )}
 
         {targetsError && (
           <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
@@ -30951,6 +31083,103 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 lever={p.adSpend} fmt={formatMoney} />
             </div>
 
+            {/* Recovery plan — the difference between a report and a
+                management system. Every action carries a number. */}
+            <div className={`rounded-2xl border p-5 ${
+              p.recoveryPlan.planCode === "A"
+                ? "border-emerald-200 bg-emerald-50/60"
+                : "border-amber-200 bg-amber-50/60"}`}>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Lightbulb className={`h-4 w-4 ${p.recoveryPlan.planCode === "A" ? "text-emerald-600" : "text-amber-600"}`} />
+                  <h3 className="text-base font-black text-gray-900">
+                    {p.recoveryPlan.planCode === "A" ? "On Plan" : "Recovery Plan"}
+                  </h3>
+                </div>
+                <span className="rounded-full bg-white/70 px-2.5 py-1 text-xs font-black text-gray-600">
+                  Plan {p.recoveryPlan.planCode}
+                </span>
+              </div>
+              <p className="mt-2 text-sm font-semibold text-gray-700">{p.recoveryPlan.headline}</p>
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                {p.recoveryPlan.actions.map((action, index) => (
+                  <div key={index} className="rounded-xl border border-white bg-white p-3 shadow-sm">
+                    <p className="text-sm font-black text-gray-900">{action.label}</p>
+                    <p className="mt-1 text-xs text-gray-600">{action.detail}</p>
+                    {action.impact > 0 && (
+                      <p className="mt-2 text-xs font-black text-emerald-700">
+                        Worth ~{formatMoney(action.impact)}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Manager incentive. Provisional until every gate is true - the
+                figure is an estimate, never an instruction to pay. */}
+            {p.incentive && (
+              <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Gift className="h-4 w-4 text-gray-400" />
+                    <h3 className="text-base font-black text-gray-900">Manager Incentive</h3>
+                  </div>
+                  <span className={`rounded-full px-2.5 py-1 text-xs font-black ${
+                    p.incentive.settleable ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
+                    {p.incentive.settleable ? "Ready to settle" : "Provisional"}
+                  </span>
+                </div>
+
+                <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Earned now</p>
+                    <p className="text-2xl font-black text-gray-900">{formatMoney(p.incentive.amount)}</p>
+                    <p className="text-xs font-semibold text-gray-500">{p.incentive.tierLabel}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Projected</p>
+                    <p className="text-2xl font-black text-indigo-700">{formatMoney(p.incentive.projectedAmount)}</p>
+                    <p className="text-xs font-semibold text-gray-500">If the current pace holds</p>
+                  </div>
+                  {p.incentive.nextTier && (
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-gray-500">
+                        To reach {p.incentive.nextTier.name}
+                      </p>
+                      <p className="text-2xl font-black text-gray-900">{formatMoney(p.incentive.nextTier.shortfall)}</p>
+                      <p className="text-xs font-semibold text-gray-500">
+                        {p.incentive.nextTier.perDay > 0
+                          ? `${formatMoney(p.incentive.nextTier.perDay)} a day from here`
+                          : "No days left in the period"}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* The gates. Shown even when they all pass, because "why is
+                    this still provisional" is the first question asked. */}
+                <div className="mt-4 border-t border-gray-100 pt-3">
+                  <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Verification</p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {[...p.incentive.gatesMet.map((g) => ({ gate: g, met: true })),
+                      ...p.incentive.gatesOutstanding.map((g) => ({ gate: g, met: false }))].map(({ gate, met }) => (
+                      <span key={gate} className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                        met ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
+                        {met ? "✓" : "○"} {gate.replace(/_/g, " ")}
+                      </span>
+                    ))}
+                  </div>
+                  {!p.incentive.settleable && (
+                    <p className="mt-2 text-xs text-gray-500">
+                      Contribution keeps moving after month end — late ad invoices, returns, unreconciled agent cash.
+                      This figure is an estimate until every check above is ticked.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Required pace — recalculated every day from what is LEFT, so the
                 original daily target rises as soon as a day is missed. */}
             {p.forecast.daysRemainingInclusive > 0 && (
@@ -31031,9 +31260,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </div>
             </div>
 
-            <p className="text-xs text-gray-400">
-              Recovery plans and the incentive panel land in the next slice.
-            </p>
+
           </>
         )}
       </div>
