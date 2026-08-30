@@ -5,7 +5,7 @@ import { humanFieldErrors } from "../lib/validation-message.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 import { loadTargetProgress, loadTargetActuals } from "../lib/target-progress-loader.js";
-import { suggestTargets } from "../lib/target-suggestion.js";
+import { suggestTargets, completeMonthsBefore, daysInWindow } from "../lib/target-suggestion.js";
 import { lagosTodayKey } from "../lib/salary-spread.js";
 
 /**
@@ -159,25 +159,7 @@ router.get("/suggest", requireRole("Owner"), async (req, res) => {
     // The COMPLETE months immediately before the period being planned. The
     // current, part-finished month is never used - a half month masquerading
     // as a full one would drag every suggestion down.
-    const anchorDate = new Date(`${periodStart}T00:00:00Z`);
-    const today = lagosTodayKey();
-    const windows = Array.from({ length: months + 1 }, (_, index) => {
-      const monthStart = new Date(Date.UTC(anchorDate.getUTCFullYear(), anchorDate.getUTCMonth() - (index + 1), 1));
-      const monthEnd = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 0));
-      return {
-        monthKey: monthStart.toISOString().slice(0, 7),
-        start: monthStart.toISOString().slice(0, 10),
-        end: monthEnd.toISOString().slice(0, 10)
-      };
-    })
-      // ⚠️ A MONTH THAT HAS NOT FINISHED IS NOT A COMPLETE MONTH, even when it
-      // sits before the period being planned. Planning September on 30 August
-      // would otherwise average in an August that is a day short and quietly
-      // depress every suggested target. One extra candidate is generated above
-      // so dropping the unfinished one still leaves the requested count.
-      .filter((window) => window.end < today)
-      .slice(0, months)
-      .reverse();
+    const windows = completeMonthsBefore(periodStart, months, lagosTodayKey());
 
     const actuals = await Promise.all(windows.map(async (window) => {
       const progress = await loadTargetActuals(
@@ -195,7 +177,7 @@ router.get("/suggest", requireRole("Owner"), async (req, res) => {
         monthKey: window.monthKey,
         periodStart: window.start,
         periodEnd: window.end,
-        days: Math.round((Date.parse(`${window.end}T00:00:00Z`) - Date.parse(`${window.start}T00:00:00Z`)) / 86_400_000) + 1,
+        days: daysInWindow(window),
         contribution: progress.breakdown.contribution,
         ordersPlaced: progress.ordersPlaced.actual,
         delivered: progress.delivered.actual,

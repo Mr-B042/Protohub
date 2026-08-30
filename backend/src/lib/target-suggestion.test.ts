@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { suggestTargets, type MonthActual } from "./target-suggestion.js";
+import { suggestTargets, completeMonthsBefore, daysInWindow, type MonthActual } from "./target-suggestion.js";
 
 const month = (over: Partial<MonthActual> & { monthKey: string; days: number }): MonthActual => ({
   periodStart: `${over.monthKey}-01`, periodEnd: `${over.monthKey}-28`,
@@ -85,4 +85,54 @@ test("money figures are rounded to readable steps, not false precision", () => {
   const out = suggestTargets([m], "2026-08-01", "2026-08-31", 0);
   // A target of ₦2,650,617 invites a precision nobody has; round to 50k steps.
   assert.equal(out.suggested.contributionTarget % 50_000, 0);
+});
+
+// ── Which months a suggestion is allowed to look at ──────
+// Bright's question: "i hope august and next month like sept and rest will show
+// their real history when necessary?" These assert it rolls forward on its own.
+
+test("planning September DURING August does not use the unfinished August", () => {
+  // 30 August: August sits before September but is a day short. Using it would
+  // depress every suggested target by roughly a day's trading.
+  const windows = completeMonthsBefore("2026-09-01", 2, "2026-08-30");
+  assert.deepEqual(windows.map((w) => w.monthKey), ["2026-06", "2026-07"]);
+});
+
+test("planning September AFTER August closes uses August's real history", () => {
+  // 1 September: August has finished, so it becomes the most recent evidence
+  // and June drops out of the window. Nothing has to be changed by hand.
+  const windows = completeMonthsBefore("2026-09-01", 2, "2026-09-01");
+  assert.deepEqual(windows.map((w) => w.monthKey), ["2026-07", "2026-08"]);
+});
+
+test("the window rolls forward on its own, month after month", () => {
+  assert.deepEqual(
+    completeMonthsBefore("2026-10-01", 2, "2026-10-01").map((w) => w.monthKey),
+    ["2026-08", "2026-09"]
+  );
+  assert.deepEqual(
+    completeMonthsBefore("2026-11-01", 2, "2026-11-05").map((w) => w.monthKey),
+    ["2026-09", "2026-10"]
+  );
+});
+
+test("the lookback crosses a year boundary correctly", () => {
+  const windows = completeMonthsBefore("2027-01-01", 3, "2027-01-02");
+  assert.deepEqual(windows.map((w) => w.monthKey), ["2026-10", "2026-11", "2026-12"]);
+});
+
+test("each window spans its whole month, including a leap February", () => {
+  const feb = completeMonthsBefore("2028-03-01", 1, "2028-03-01")[0];
+  assert.equal(feb.start, "2028-02-01");
+  assert.equal(feb.end, "2028-02-29");
+  assert.equal(daysInWindow(feb), 29);
+
+  const jan = completeMonthsBefore("2026-02-01", 1, "2026-02-01")[0];
+  assert.equal(daysInWindow(jan), 31);
+});
+
+test("a longer lookback still drops only the unfinished month", () => {
+  // Asking for 3 months mid-August returns the 3 complete ones, not 2.
+  const windows = completeMonthsBefore("2026-09-01", 3, "2026-08-30");
+  assert.deepEqual(windows.map((w) => w.monthKey), ["2026-05", "2026-06", "2026-07"]);
 });
