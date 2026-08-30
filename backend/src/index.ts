@@ -21,6 +21,7 @@ import { runCartAutoSubmit } from "./lib/cart-auto-submit.js";
 import { runFollowUpCloseAllOrgs } from "./lib/follow-up-kpi.js";
 import { syncRecoveryNextActionReminders } from "./lib/recovery-next-action-reminders.js";
 import { runAgentStockDriftCheck } from "./lib/agent-stock-drift-check.js";
+import { runDailyTargetSnapshots } from "./lib/target-snapshots.js";
 import { logRowCapAtBoot } from "./lib/row-cap-probe.js";
 import systemRoutes from "./routes/system.js";
 import targetPeriodRoutes from "./routes/target-periods.js";
@@ -438,6 +439,22 @@ cron.schedule("0 21 * * *", async () => {
   logger.info("cron: follow-up KPI nightly close");
   try { await runFollowUpCloseAllOrgs(); }
   catch (e) { logger.error("cron: follow-up KPI close crashed", { error: (e as Error).message }); }
+});
+}
+
+// ── Target period daily snapshot — 22:30 UTC (23:30 Lagos) ──
+// Late enough that the Lagos day is essentially complete, early enough that it
+// still lands on the day it is recording. The tab never reads this table - it
+// computes live - so a missed night costs the trend a row, not the screen its
+// numbers.
+if (ENABLE_BACKGROUND_JOBS) {
+cron.schedule("30 22 * * *", async () => {
+  logger.info("cron: target period snapshots");
+  try {
+    const result = await runDailyTargetSnapshots();
+    if (result.failed > 0) logger.warn("cron: target snapshots finished with failures", result);
+    else if (result.targets > 0) logger.info("cron: target snapshots written", result);
+  } catch (e) { logger.error("cron: target snapshots crashed", { error: (e as Error).message }); }
 });
 }
 
