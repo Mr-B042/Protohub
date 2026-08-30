@@ -67,7 +67,16 @@ export function suggestTargets(
   periodStart: string,
   periodEnd: string,
   stretchPct = 10,
-  levelSpreadPct = 10
+  levelSpreadPct = 10,
+  /**
+   * ⚠️ THE DATE THE COMMISSION ENGINE STARTED SETTLING. Contribution deducts
+   * commissions, and the engine returns nothing before its launch week - so a
+   * month that predates it carries a contribution figure with NO commission in
+   * it, while the month being planned will bear a full one. Averaging the two
+   * silently inflates the baseline and proposes a target nobody can hit. The
+   * suggestion cannot fix that, but it must not stay quiet about it.
+   */
+  commissionsLiveFrom?: string
 ): TargetSuggestion {
   const days = daysInclusive(periodStart, periodEnd);
   const notes: string[] = [];
@@ -128,6 +137,23 @@ export function suggestTargets(
     + `then scaled to the ${days} days in this period.`
   );
   notes.push(`Stretch of ${stretchPct}% applied to every volume lever; delivery rate held at the historical ${deliveryRate}%.`);
+
+  if (commissionsLiveFrom) {
+    const affected = usable.filter((m) => m.periodStart < commissionsLiveFrom);
+    if (affected.length > 0) {
+      const partial = affected.filter((m) => m.periodEnd >= commissionsLiveFrom).map((m) => m.monthKey);
+      const none = affected.filter((m) => m.periodEnd < commissionsLiveFrom).map((m) => m.monthKey);
+      const which = [
+        none.length > 0 ? `${none.join(", ")} carr${none.length === 1 ? "ies" : "y"} no commission at all` : null,
+        partial.length > 0 ? `${partial.join(", ")} only from ${commissionsLiveFrom}` : null
+      ].filter(Boolean).join(", and ");
+      notes.push(
+        `⚠️ Commission settlement began ${commissionsLiveFrom}: ${which}. Their contribution therefore reads HIGH `
+        + "against a month that will bear a full one, so this suggestion is optimistic — trim it, or look back "
+        + "only at months after that date once you have them."
+      );
+    }
+  }
   if (usable.length === 1) {
     notes.push("Only one month of history — treat this as a starting point rather than a trend.");
   }
