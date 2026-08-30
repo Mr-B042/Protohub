@@ -511,7 +511,10 @@ export const productsApi = {
   // Raw fetch so embed forms never inherit stale auth headers or 401 refresh logic.
   public: async (id: string) => {
     const res = await fetchWithApiFailover(`/api/public/products/${encodeURIComponent(id)}`, {
-      cache: "no-store"
+      // Stable form configuration may use the browser/proxy's short HTTP
+      // cache. State-specific stock is fetched separately and submit is always
+      // validated by the server, so this does not permit stale orders.
+      cache: "default"
     });
     if (!res.ok) {
       const payload = await res.json().catch(() => ({ error: res.statusText }));
@@ -3138,7 +3141,7 @@ export const embedSettingsApi = {
   patch:  (body: unknown)     => patch<any>("/api/embed-settings", body),
   // Public: read settings unauthenticated (used by the customer-facing embed form)
   public: async (orgId: string) => {
-    const res = await fetchWithApiFailover(`/api/public/embed-settings/${orgId}`);
+    const res = await fetchWithApiFailover(`/api/public/embed-settings/${orgId}`, { cache: "default" });
     if (!res.ok) throw new ApiError(res.status, await res.text().catch(() => res.statusText));
     return snakeToCamel<any>(await res.json());
   }

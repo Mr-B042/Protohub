@@ -590,6 +590,11 @@ router.get("/:id", readRateLimit, async (req, res) => {
     related = (rawRelated ?? []) as unknown as DbProduct[];
   }
 
+  // Product copy/pricing changes are uncommon; live stock is intentionally
+  // served by package-availability and every submission is validated again.
+  // A short shared cache removes duplicate Railway/Supabase reads from bursts
+  // of landing-page traffic without making inventory stale.
+  res.setHeader("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=3600");
   res.json({
     product: sanitiseProduct(product, companionSocialProofByProductId),
     related: related.map((item) => sanitiseProduct(item))

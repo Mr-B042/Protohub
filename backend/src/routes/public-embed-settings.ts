@@ -19,6 +19,7 @@ const readRateLimit = rateLimit({
 router.get("/:orgId", readRateLimit, async (req, res) => {
   try {
     const settings = await readSettings(req.params.orgId as string);
+    res.setHeader("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=3600");
     res.json(settings);
   } catch (e: any) {
     res.status(500).json({ error: e.message ?? "Failed to load embed settings." });

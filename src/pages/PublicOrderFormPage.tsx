@@ -2212,6 +2212,27 @@ export default function PublicOrderFormPage() {
     lastExpandedCardGroupKeyRef.current = null;
     exitTrackedRef.current = false;
 
+    // A fresh snapshot is already safe to render for ten minutes. Do not hit
+    // Railway again on every repeat landing-page visit; stock-dependent
+    // packages still use the separate live availability endpoint, and order
+    // submission performs authoritative server validation.
+    if (freshBundle) {
+      setLoading(false);
+      if (cachedOrgId && !freshOrgSettings) {
+        embedSettingsApi.public(cachedOrgId)
+          .then((next) => {
+            if (cancelled || !next) return;
+            setSettings((prev) => ({ ...prev, ...next }));
+            setSettingsCacheStatus("live");
+            writeCachedValue(publicSettingsCacheKey(cachedOrgId), next as PublicEmbedSettings);
+          })
+          .catch(() => undefined);
+      }
+      return () => {
+        cancelled = true;
+      };
+    }
+
     (async () => {
       let resolvedProduct: PublicProduct | null = null;
       let relatedProducts: PublicProduct[] = [];

@@ -1,16 +1,19 @@
-import React, { useState, useEffect } from "react";
+import React, { Suspense, lazy, useState, useEffect } from "react";
 import ReactDOM from "react-dom/client";
 import * as Sentry from "@sentry/react";
-import { App } from "./App";
 import { auth } from "./lib/auth";
 import { ensureFreshAuthSession } from "./lib/api";
 import { ensureServiceWorkerRegistration } from "./lib/push-client";
-import { LoginScreen } from "./components/LoginScreen";
-import { ResetPasswordScreen } from "./components/ResetPasswordScreen";
 import PublicOrderFormPage from "./pages/PublicOrderFormPage";
-import PublicAgentApplicationPage from "./PublicAgentApplicationPage";
-import PublicAgentStatusPage from "./PublicAgentStatusPage";
 import "./styles.css";
+
+// Keep the customer order-form entry independent from the much larger admin
+// workspace. These chunks are downloaded only when their route is opened.
+const AdminApp = lazy(() => import("./App").then((module) => ({ default: module.App })));
+const LoginScreen = lazy(() => import("./components/LoginScreen").then((module) => ({ default: module.LoginScreen })));
+const ResetPasswordScreen = lazy(() => import("./components/ResetPasswordScreen").then((module) => ({ default: module.ResetPasswordScreen })));
+const PublicAgentApplicationPage = lazy(() => import("./PublicAgentApplicationPage"));
+const PublicAgentStatusPage = lazy(() => import("./PublicAgentStatusPage"));
 
 function RouteFallback({ message }: { message: string }) {
   return (
@@ -236,7 +239,11 @@ function Root() {
     return <LoginScreen onLogin={handleLogin} />;
   }
 
-  return <App onLogout={handleLogout} />;
+  return (
+    <Suspense fallback={<RouteFallback message="Loading workspace…" />}>
+      <AdminApp onLogout={handleLogout} />
+    </Suspense>
+  );
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -269,7 +276,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         );
       }}
     >
-      <Root />
+      <Suspense fallback={<RouteFallback message="Loading…" />}>
+        <Root />
+      </Suspense>
     </Sentry.ErrorBoundary>
   </React.StrictMode>
 );
