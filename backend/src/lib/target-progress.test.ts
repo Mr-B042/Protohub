@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  computeContribution, computeTargetProgress, placedOrdersIn, deliveredOrdersIn, buildWeeklyMilestones
+  computeContribution, computeTargetProgress, placedOrdersIn, deliveredOrdersIn, buildWeeklyMilestones,
+  computeForecast, computeRequiredPace, expectedByToday
 } from "./target-progress.js";
 
 const order = (over: Partial<Parameters<typeof computeContribution>[0][number]> = {}) => ({
@@ -110,4 +111,118 @@ test("delivery rate is delivered-by-date over orders created in the period", () 
   assert.equal(progress.ordersPlaced.actual, 4);
   assert.equal(progress.delivered.actual, 1);
   assert.equal(progress.deliveryRate.actual, 25);
+});
+
+// ── Forecasting and required pace ────────────────────────
+
+const deliveredOn = (day: string, amount = 10_000) => ({
+  status: "Delivered", amount, quantity: 2, cogs_snapshot: 0, logistics_cost: 0,
+  created_at: `${day}T09:00:00Z`, delivered_date: day, review_hold: false
+});
+
+test("required pace divides by days remaining INCLUDING today", () => {
+  // The spec's own worked example: ₦2,250,000 left across 20 remaining days
+  // is ₦112,500 a day. Today is still a day you can act on.
+  const pace = computeRequiredPace(
+    { ...TARGET, contributionTarget: 3_000_000 },
+    { contribution: 750_000, orders: 0, delivered: 0, pieces: 0 },
+    20
+  );
+  assert.equal(pace.remainingContribution, 2_250_000);
+  assert.equal(pace.contributionPerDay, 112_500);
+});
+
+test("required pace rounds order counts UP, never down", () => {
+  // 121 orders over 5 days is 24.2/day. Doing 24 misses the target; the
+  // instruction has to be 25.
+  const pace = computeRequiredPace(
+    { ...TARGET, orderTarget: 121 },
+    { contribution: 0, orders: 0, delivered: 0, pieces: 0 },
+    5
+  );
+  assert.equal(pace.ordersPerDay, 25);
+});
+
+test("projection extrapolates over days AFTER today, so today is not counted twice", () => {
+  // Seven complete days (Aug 10-16) at ₦10,000 a day, today is Aug 17.
+  // Actual already includes anything banked today.
+  const orders = ["2026-08-10","2026-08-11","2026-08-12","2026-08-13","2026-08-14","2026-08-15","2026-08-16"]
+    .map((d) => deliveredOn(d));
+  const actual = { contribution: 70_000, orders: 7, delivered: 7, pieces: 14 };
+
+  const forecast = computeForecast(TARGET, orders, [], actual, "2026-08-17");
+
+  assert.equal(forecast.trendStart, "2026-08-10");
+  assert.equal(forecast.trendEnd, "2026-08-16");   // yesterday, never today
+  assert.equal(forecast.dailyAverageContribution, 10_000);
+
+  // Aug 17..31 inclusive is 15 days to act on; only 14 of them come AFTER today.
+  assert.equal(forecast.daysRemainingInclusive, 15);
+  assert.equal(forecast.daysAfterToday, 14);
+  // 70,000 banked + 14 further days at 10,000. Using 15 here would invent a
+  // whole extra day on top of the partial one already in `actual`.
+  assert.equal(forecast.projectedContribution, 210_000);
+});
+
+test("status bands follow the projection, not today's position", () => {
+  const actual = { contribution: 0, orders: 0, delivered: 0, pieces: 0 };
+  const at = (projected: number) => computeForecast(
+    { ...TARGET, contributionTarget: 1000 }, [], [],
+    { ...actual, contribution: projected }, "2026-08-31"
+  ).status;
+
+  assert.equal(at(1000), "achieved");   // target met outright
+  assert.equal(at(950), "at_risk");     // 95%
+  assert.equal(at(800), "behind");      // 80%
+});
+
+test("a target already met stays achieved even if the trend has collapsed", () => {
+  // Banked the target early, then stopped selling entirely. A late slump must
+  // not downgrade a result already in the bank.
+  const forecast = computeForecast(
+    { ...TARGET, contributionTarget: 100_000 }, [], [],
+    { contribution: 120_000, orders: 0, delivered: 0, pieces: 0 },
+    "2026-08-20"
+  );
+  assert.equal(forecast.dailyAverageContribution, 0);
+  assert.equal(forecast.status, "achieved");
+});
+
+test("a finished period reports rather than forecasts", () => {
+  const forecast = computeForecast(
+    TARGET, [], [], { contribution: 500, orders: 0, delivered: 0, pieces: 0 }, "2026-09-15"
+  );
+  assert.equal(forecast.daysRemainingInclusive, 0);
+  assert.equal(forecast.daysAfterToday, 0);
+  // Nothing left to extrapolate over: the projection is simply the result.
+  assert.equal(forecast.projectedContribution, 500);
+});
+
+test("the trend window is clipped to the start of the period", () => {
+  // Three days into the month there are not seven complete days to average.
+  const forecast = computeForecast(TARGET, [deliveredOn("2026-08-01", 30_000)], [],
+    { contribution: 30_000, orders: 1, delivered: 1, pieces: 2 }, "2026-08-03");
+  assert.equal(forecast.trendStart, "2026-08-01");
+  assert.equal(forecast.trendEnd, "2026-08-02");
+  // Averaged over the 2 days that exist, not over a phantom 7.
+  assert.equal(forecast.dailyAverageContribution, 15_000);
+});
+
+test("expected-by-today paces linearly and variance signs correctly", () => {
+  // Half way through a 31-day month, half the target should be banked.
+  assert.equal(expectedByToday(3_100_000, 16, 31), 1_600_000);
+
+  const progress = computeTargetProgress(
+    TARGET, [deliveredOn("2026-08-05", 100_000)], [], 0, 0, undefined, "2026-08-16"
+  );
+  assert.ok(progress.contribution.variance < 0, "behind pace should read negative");
+});
+
+test("a rate is not paced linearly - it is compared to its target from day one", () => {
+  const progress = computeTargetProgress(
+    TARGET, [deliveredOn("2026-08-02")], [], 0, 0, undefined, "2026-08-03"
+  );
+  // Expecting "3/31ths of 75%" on the 3rd would be nonsense: a delivery rate
+  // does not accumulate.
+  assert.equal(progress.deliveryRate.expectedByToday, TARGET.deliveryRateTarget);
 });
