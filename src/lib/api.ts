@@ -1665,8 +1665,10 @@ export type TargetSuggestion = {
   basedOn: Array<{
     monthKey: string; periodStart: string; periodEnd: string; days: number;
     contribution: number; ordersPlaced: number; delivered: number; pieces: number; adSpend: number;
+    isPartial?: boolean;
   }>;
   skipped: string[];
+  excludedMonths: Array<{ monthKey: string; reason: string }>;
   daysInTargetPeriod: number;
   stretchPct: number;
   baseline: SuggestedTargetValues;

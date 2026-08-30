@@ -160,7 +160,7 @@ router.get("/suggest", requireRole("Owner"), async (req, res) => {
     // The COMPLETE months immediately before the period being planned. The
     // current, part-finished month is never used - a half month masquerading
     // as a full one would drag every suggestion down.
-    const windows = completeMonthsBefore(periodStart, months, lagosTodayKey());
+    const { windows, excluded } = completeMonthsBefore(periodStart, months, lagosTodayKey());
 
     const actuals = await Promise.all(windows.map(async (window) => {
       const progress = await loadTargetActuals(
@@ -179,6 +179,7 @@ router.get("/suggest", requireRole("Owner"), async (req, res) => {
         periodStart: window.start,
         periodEnd: window.end,
         days: daysInWindow(window),
+        isPartial: window.isPartial,
         contribution: progress.breakdown.contribution,
         ordersPlaced: progress.ordersPlaced.actual,
         delivered: progress.delivered.actual,
@@ -190,7 +191,9 @@ router.get("/suggest", requireRole("Owner"), async (req, res) => {
     res.json({
       productId,
       productName: product.name,
-      ...suggestTargets(actuals, periodStart, periodEnd, stretch, 10, SALES_BONUS_LAUNCH_WEEK_START)
+      ...suggestTargets(actuals, periodStart, periodEnd, stretch, 10, SALES_BONUS_LAUNCH_WEEK_START),
+      // Surfaced so a month missing from the evidence always says why.
+      excludedMonths: excluded
     });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not build a suggestion." });

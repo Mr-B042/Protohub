@@ -31084,7 +31084,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <tbody>
                       {targetSuggestion.basedOn.map((m) => (
                         <tr key={m.monthKey} className="border-t border-gray-100">
-                          <td className="py-1.5 pr-3 font-bold text-gray-800">{m.monthKey}</td>
+                          <td className="py-1.5 pr-3 font-bold text-gray-800">
+                            {m.monthKey}
+                            {m.isPartial && (
+                              <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-700">
+                                still running
+                              </span>
+                            )}
+                          </td>
                           <td className="py-1.5 pr-3 text-gray-500">{m.days}</td>
                           <td className="py-1.5 pr-3 text-right font-semibold">{formatMoney(m.contribution)}</td>
                           <td className="py-1.5 pr-3 text-right">{m.ordersPlaced}</td>
@@ -31098,6 +31105,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <ul className="mt-2 space-y-0.5">
                   {targetSuggestion.notes.map((note, i) => (
                     <li key={i} className="text-xs text-gray-500">• {note}</li>
+                  ))}
+                  {targetSuggestion.excludedMonths?.map((m) => (
+                    <li key={m.monthKey} className="text-xs text-gray-500">
+                      • <span className="font-bold">{m.monthKey}</span> left out — {m.reason}.
+                    </li>
                   ))}
                 </ul>
               </div>
