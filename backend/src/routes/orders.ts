@@ -3045,7 +3045,13 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Reco
       "quantity", "amount", "currency",
       "logistics_cost", "amount_remitted", "remittance_status",
       "assigned_rep_id", "agent_id", "agent_location_id",
-      "delivered_date", "scheduled_date", "scheduled_at",
+      // ⚠️ "date" IS THE ORDER DATE AND IT WAS NOT AUDITED. It is editable
+      // through this very route, so an order that arrived on the 3rd could be
+      // shifted to the 5th and NOTHING recorded that it happened - not
+      // order_audit (status only), not here. Campaign counts then move with no
+      // trace of why. delivered_date and scheduled_date were both already
+      // tracked; this one was simply missed.
+      "date", "delivered_date", "scheduled_date", "scheduled_at",
       "cross_sell_lines", "additional_lines", "free_gift_lines",
       "upsell_from_qty", "upsell_to_qty", "upsell_note"
     ] as const;
