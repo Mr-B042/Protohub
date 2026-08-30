@@ -86,15 +86,32 @@ export async function fetchWithApiFailover(
   options: FetchWithFailoverOptions = {}
 ): Promise<Response> {
   const retryableStatuses = options.retryableStatuses ?? DEFAULT_FAILOVER_STATUSES;
-  const bases = getApiBaseCandidates();
+  const configuredBases = getApiBaseCandidates();
+  const sameOriginPublicBase = typeof window !== "undefined" && path.startsWith("/api/public/")
+    ? normalizeBase(window.location.origin)
+    : null;
+  // Public customer traffic goes through Vercel's same-origin rewrite first.
+  // That removes CORS preflights and lets Vercel share cacheable GET responses;
+  // the configured Railway origins remain automatic failovers.
+  const bases = Array.from(new Set([sameOriginPublicBase, ...configuredBases].filter((base): base is string => Boolean(base))));
   let lastError: unknown = null;
 
   for (let index = 0; index < bases.length; index += 1) {
     const base = bases[index];
     try {
       const response = await fetch(`${base}${path}`, init);
+      const isSameOriginPublicAttempt = Boolean(sameOriginPublicBase && base === sameOriginPublicBase);
+      const contentType = response.headers.get("content-type") ?? "";
+      // Local Vite/static hosts may answer an unknown /api URL with index.html.
+      // Treat that as "rewrite unavailable" and continue to Railway.
+      if (isSameOriginPublicAttempt && contentType.includes("text/html")) {
+        lastError = new Error("Same-origin public API rewrite is unavailable");
+        continue;
+      }
       if (response.ok) {
-        rememberHealthyApiBase(base);
+        // Never persist the Vercel proxy as the global API origin; authenticated
+        // endpoints intentionally continue to use the configured backend.
+        if (!isSameOriginPublicAttempt) rememberHealthyApiBase(base);
         return response;
       }
       const canTryAnother = index < bases.length - 1 && retryableStatuses.has(response.status);

@@ -543,6 +543,28 @@ router.post("/:id/left", captureRateLimit, async (req, res) => {
 // Tracks the customer's journey through the public order form. Works even
 // before the abandoned cart row has been fully captured, as long as the
 // frontend uses the same cart id later for draft capture / submit.
+const PRODUCT_ORG_CACHE_TTL_MS = 10 * 60 * 1000;
+const publicProductOrgCache = new Map<string, { orgId: string; expiresAt: number }>();
+
+async function publicProductOrgId(productId: string) {
+  const cached = publicProductOrgCache.get(productId);
+  if (cached && cached.expiresAt > Date.now()) return cached.orgId;
+  if (cached) publicProductOrgCache.delete(productId);
+
+  const { data: product } = await supabase
+    .from("products")
+    .select("id, org_id")
+    .eq("id", productId)
+    .eq("active", true)
+    .maybeSingle();
+  if (!product) return null;
+  publicProductOrgCache.set(productId, {
+    orgId: product.org_id,
+    expiresAt: Date.now() + PRODUCT_ORG_CACHE_TTL_MS
+  });
+  return product.org_id as string;
+}
+
 router.post("/:id/events", captureRateLimit, async (req, res) => {
   const rawCartId = req.params.id;
   const cartId = typeof rawCartId === "string" ? rawCartId.trim() : "";
@@ -558,32 +580,16 @@ router.post("/:id/events", captureRateLimit, async (req, res) => {
   }
   const event = parsed.data;
 
-  const { data: product } = await supabase
-    .from("products")
-    .select("id, org_id")
-    .eq("id", event.productId)
-    .maybeSingle();
-
-  if (!product) {
+  const orgId = await publicProductOrgId(event.productId);
+  if (!orgId) {
     res.status(404).json({ error: "Product not found." });
-    return;
-  }
-
-  const { data: existingCart } = await supabase
-    .from("abandoned_carts")
-    .select("id, org_id")
-    .eq("id", cartId)
-    .maybeSingle();
-
-  if (existingCart && existingCart.org_id !== product.org_id) {
-    res.status(409).json({ error: "Cart id collision." });
     return;
   }
 
   const { data, error } = await supabase
     .from("cart_journey_events")
     .insert({
-      org_id: product.org_id,
+      org_id: orgId,
       cart_id: cartId,
       product_id: event.productId,
       package_id: event.packageId ?? null,
@@ -603,13 +609,14 @@ router.post("/:id/events", captureRateLimit, async (req, res) => {
 
   // Keep last_activity fresh so the server-side auto-submit cron uses
   // the real last moment the customer was active, not just the last cart capture.
-  if (existingCart) {
-    supabase.from("abandoned_carts")
-      .update({ last_activity: new Date().toISOString() })
-      .eq("id", cartId)
-      .eq("org_id", product.org_id)
-      .then(() => {});
-  }
+  // One scoped update covers both cases: it refreshes a real cart and is a
+  // harmless no-op for a pre-capture journey id. The org predicate means a
+  // guessed/colliding id can never touch another organisation's cart.
+  supabase.from("abandoned_carts")
+    .update({ last_activity: new Date().toISOString() })
+    .eq("id", cartId)
+    .eq("org_id", orgId)
+    .then(() => {});
 
   res.status(201).json({ id: data.id });
 });

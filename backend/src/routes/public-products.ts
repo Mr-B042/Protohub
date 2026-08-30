@@ -228,6 +228,12 @@ type DbCrossSellLine = {
 
 const LAGOS_OFFSET_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const COMPANION_PROOF_CACHE_TTL_MS = 5 * 60 * 1000;
+const COMPANION_PROOF_CACHE_MAX_ENTRIES = 500;
+const companionProofCache = new Map<string, {
+  expiresAt: number;
+  value: Record<string, CompanionSocialProof>;
+}>();
 
 const lagosDayStartUtcIso = (date: Date) => {
   const lagosNow = new Date(date.getTime() + LAGOS_OFFSET_MS);
@@ -262,6 +268,11 @@ const buildCompanionSocialProof = async (product: DbProduct) => {
     )
   );
   if (companionProductIds.length === 0) return {};
+
+  const cacheKey = `${product.org_id}:${product.id}`;
+  const cached = companionProofCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  if (cached) companionProofCache.delete(cacheKey);
 
   const todayStartIso = lagosDayStartUtcIso(new Date());
   const last24HoursStartIso = new Date(Date.now() - DAY_MS).toISOString();
@@ -311,13 +322,58 @@ const buildCompanionSocialProof = async (product: DbProduct) => {
     });
   });
 
-  const mostAddedRecentCount = Math.max(...Object.values(proofByProductId).map((entry) => entry.allTimeBuyerCount), 0);
+  const mostAddedRecentCount = Math.max(...Object.values(proofByProductId).map((entry) => entry.recentBuyerCount), 0);
   if (mostAddedRecentCount > 0) {
     Object.values(proofByProductId).forEach((entry) => {
       entry.isMostAdded = entry.recentBuyerCount === mostAddedRecentCount;
     });
   }
+  if (companionProofCache.size >= COMPANION_PROOF_CACHE_MAX_ENTRIES) {
+    const oldestKey = companionProofCache.keys().next().value;
+    if (oldestKey) companionProofCache.delete(oldestKey);
+  }
+  companionProofCache.set(cacheKey, {
+    expiresAt: Date.now() + COMPANION_PROOF_CACHE_TTL_MS,
+    value: proofByProductId
+  });
   return proofByProductId;
+};
+
+type PublicMediaField = "imageUrl" | "videoUrl" | "embedHtml";
+type PublicMediaPayload = Record<string, string>;
+
+// Companion artwork is commonly reused across tiers. Data URLs can be tens of
+// kilobytes, so repeating them inside every package made some product payloads
+// exceed 1 MB. Send each unique value once and hydrate it in the API client.
+const dedupePublicCompanionMedia = (products: Array<ReturnType<typeof sanitiseProduct>>) => {
+  const media: PublicMediaPayload = {};
+  const referenceByValue = new Map<string, string>();
+  const fields: PublicMediaField[] = ["imageUrl", "videoUrl", "embedHtml"];
+
+  products.forEach((product) => {
+    product.packages.forEach((pkg) => {
+      pkg.companionProducts.forEach((companion) => {
+        const mediaRefs: Partial<Record<PublicMediaField, string>> = {};
+        fields.forEach((field) => {
+          const value = companion[field];
+          if (typeof value !== "string" || value.length === 0) return;
+          let reference = referenceByValue.get(value);
+          if (!reference) {
+            reference = `m${referenceByValue.size + 1}`;
+            referenceByValue.set(value, reference);
+            media[reference] = value;
+          }
+          mediaRefs[field] = reference;
+          delete companion[field];
+        });
+        if (Object.keys(mediaRefs).length > 0) {
+          (companion as typeof companion & { mediaRefs: typeof mediaRefs }).mediaRefs = mediaRefs;
+        }
+      });
+    });
+  });
+
+  return media;
 };
 
 const PUBLIC_PRODUCT_SELECT = `
@@ -595,10 +651,10 @@ router.get("/:id", readRateLimit, async (req, res) => {
   // A short shared cache removes duplicate Railway/Supabase reads from bursts
   // of landing-page traffic without making inventory stale.
   res.setHeader("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=3600");
-  res.json({
-    product: sanitiseProduct(product, companionSocialProofByProductId),
-    related: related.map((item) => sanitiseProduct(item))
-  });
+  const publicProduct = sanitiseProduct(product, companionSocialProofByProductId);
+  const publicRelated = related.map((item) => sanitiseProduct(item));
+  const media = dedupePublicCompanionMedia([publicProduct, ...publicRelated]);
+  res.json({ product: publicProduct, related: publicRelated, media });
 });
 
 export default router;

@@ -2703,22 +2703,11 @@ export default function PublicOrderFormPage() {
   useEffect(() => {
     if (!chosenPackage) return;
     const previousPackageId = lastTrackedPackageIdRef.current;
-    const firePackageSelected = () => {
-      trackCartJourney("package_selected", {
-        dedupeKey: `package_selected:${chosenPackage.id}`,
-        packageId: chosenPackage.id,
-        metadata: {
-          packageName: chosenPackage.name,
-          packageAmount: chosenPackagePrice,
-          source: orderSourceFromUtm(publicUtmSource)
-        }
-      });
-    };
     if (!previousPackageId) {
-      // First package selection - keep the package_selected signal so even
-      // single-tier customers produce a journey breadcrumb.
+      // The first package is selected by the form, not the customer. The
+      // form_opened event already records it, so writing package_selected here
+      // doubled analytics and Railway traffic for every untouched visit.
       lastTrackedPackageIdRef.current = chosenPackage.id;
-      firePackageSelected();
       return;
     }
     if (previousPackageId === chosenPackage.id) return;
@@ -2746,8 +2735,6 @@ export default function PublicOrderFormPage() {
         source: orderSourceFromUtm(publicUtmSource)
       }
     });
-    // Also stamp a package_selected for the new package (deduped by packageId).
-    firePackageSelected();
   }, [chosenPackage, publicUtmSource, publicPackages, chosenPackagePrice]);
 
   useEffect(() => {

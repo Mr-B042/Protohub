@@ -520,7 +520,21 @@ export const productsApi = {
       const payload = await res.json().catch(() => ({ error: res.statusText }));
       throw new ApiError(res.status, typeof payload?.error === "string" ? payload.error : res.statusText);
     }
-    return snakeToCamel<{ product: any; related: any[] }>(await res.json());
+    const payload = snakeToCamel<{ product: any; related: any[]; media?: Record<string, string> }>(await res.json());
+    const hydrateCompanionMedia = (product: any) => {
+      for (const pkg of product?.packages ?? []) {
+        for (const companion of pkg?.companionProducts ?? []) {
+          for (const field of ["imageUrl", "videoUrl", "embedHtml"] as const) {
+            const reference = companion?.mediaRefs?.[field];
+            if (reference && payload.media?.[reference]) companion[field] = payload.media[reference];
+          }
+          delete companion.mediaRefs;
+        }
+      }
+    };
+    hydrateCompanionMedia(payload.product);
+    payload.related.forEach(hydrateCompanionMedia);
+    return { product: payload.product, related: payload.related };
   },
   publicPackageAvailability: async (id: string, state: string, packageSet?: string, forceStockCheck = false) => {
     const qs = new URLSearchParams({ state });
