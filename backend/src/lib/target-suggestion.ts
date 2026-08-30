@@ -134,3 +134,38 @@ export function suggestTargets(
 
   return { basedOn: usable, skipped, daysInTargetPeriod: days, stretchPct, baseline, suggested, notes };
 }
+
+export type LookbackWindow = { monthKey: string; start: string; end: string };
+
+/**
+ * The N most recent COMPLETE calendar months before a period being planned,
+ * oldest first.
+ *
+ * ⚠️ "BEFORE THE PERIOD" AND "FINISHED" ARE TWO DIFFERENT TESTS, and only
+ * applying the first is the bug this exists to prevent. Planning September on
+ * 30 August: August sits before September, but it is a day short, and averaging
+ * it in would quietly depress every suggested target. Both tests are applied,
+ * and one extra candidate is generated so dropping an unfinished month still
+ * leaves the requested count.
+ *
+ * Pure and `today`-injected precisely so this is testable - the calendar
+ * arithmetic here decides what every future month's targets are based on.
+ */
+export function completeMonthsBefore(periodStart: string, months: number, today: string): LookbackWindow[] {
+  const anchor = new Date(`${periodStart}T00:00:00Z`);
+  return Array.from({ length: months + 1 }, (_, index) => {
+    const monthStart = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() - (index + 1), 1));
+    const monthEnd = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 0));
+    return {
+      monthKey: monthStart.toISOString().slice(0, 7),
+      start: monthStart.toISOString().slice(0, 10),
+      end: monthEnd.toISOString().slice(0, 10)
+    };
+  })
+    .filter((window) => window.end < today)
+    .slice(0, months)
+    .reverse();
+}
+
+export const daysInWindow = (window: LookbackWindow) =>
+  Math.round((Date.parse(`${window.end}T00:00:00Z`) - Date.parse(`${window.start}T00:00:00Z`)) / 86_400_000) + 1;
