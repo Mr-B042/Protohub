@@ -27,6 +27,8 @@ export type MonthActual = {
   delivered: number;
   pieces: number;
   adSpend: number;
+  /** True when the month is still running and `days` counts only what has data. */
+  isPartial?: boolean;
 };
 
 export type SuggestedTargets = {
@@ -136,6 +138,15 @@ export function suggestTargets(
     `Averaged ${usable.length} month${usable.length === 1 ? "" : "s"} (${totalDays} trading days) as a daily rate, `
     + `then scaled to the ${days} days in this period.`
   );
+
+  const partial = usable.filter((m) => m.isPartial);
+  if (partial.length > 0) {
+    notes.push(
+      `${partial.map((m) => `${m.monthKey} (${m.days} days so far)`).join(", ")} `
+      + `${partial.length === 1 ? "is" : "are"} still running. Counted as a daily rate over the days that have data, `
+      + "so a part-month neither inflates nor depresses the result."
+    );
+  }
   notes.push(`Stretch of ${stretchPct}% applied to every volume lever; delivery rate held at the historical ${deliveryRate}%.`);
 
   if (commissionsLiveFrom) {
@@ -161,37 +172,81 @@ export function suggestTargets(
   return { basedOn: usable, skipped, daysInTargetPeriod: days, stretchPct, baseline, suggested, notes };
 }
 
-export type LookbackWindow = { monthKey: string; start: string; end: string };
+export type LookbackWindow = {
+  monthKey: string;
+  start: string;
+  /** Last day with COMPLETE data - the calendar end, or yesterday if the month is still running. */
+  end: string;
+  calendarEnd: string;
+  /** Complete days of data in this window; the divisor for every daily rate. */
+  days: number;
+  isPartial: boolean;
+};
+
+export type LookbackSelection = {
+  windows: LookbackWindow[];
+  excluded: Array<{ monthKey: string; reason: string }>;
+};
+
+/** A part-month shorter than this is too small a sample to set a target from. */
+export const MIN_PARTIAL_LOOKBACK_DAYS = 14;
 
 /**
- * The N most recent COMPLETE calendar months before a period being planned,
- * oldest first.
+ * The N most recent months before a period being planned, oldest first.
  *
- * ⚠️ "BEFORE THE PERIOD" AND "FINISHED" ARE TWO DIFFERENT TESTS, and only
- * applying the first is the bug this exists to prevent. Planning September on
- * 30 August: August sits before September, but it is a day short, and averaging
- * it in would quietly depress every suggested target. Both tests are applied,
- * and one extra candidate is generated so dropping an unfinished month still
- * leaves the requested count.
+ * ⚠️ A PART-FINISHED MONTH IS USABLE, BECAUSE EVERYTHING IS NORMALISED PER DAY.
+ * The obvious rule - "only complete months" - is wrong here and was the first
+ * thing I built. Planning September on 30 August then fell back to July and
+ * ignored the 29 days of August already on the books, which are far more
+ * relevant to September than July is. What actually matters is dividing by the
+ * days that HAVE data, not by the length of the calendar month.
  *
- * Pure and `today`-injected precisely so this is testable - the calendar
- * arithmetic here decides what every future month's targets are based on.
+ * ⚠️ TODAY IS NEVER INCLUDED. It is itself part-finished, so the window stops
+ * at yesterday; counting a few hours as a day would depress the daily rate.
+ *
+ * Anything shorter than MIN_PARTIAL_LOOKBACK_DAYS is dropped WITH A REASON -
+ * a fortnight is a sample, three days is noise - and the caller surfaces it,
+ * because a month vanishing from the evidence with no explanation is what
+ * prompted this change.
  */
-export function completeMonthsBefore(periodStart: string, months: number, today: string): LookbackWindow[] {
+export function completeMonthsBefore(
+  periodStart: string,
+  months: number,
+  today: string,
+  minPartialDays = MIN_PARTIAL_LOOKBACK_DAYS
+): LookbackSelection {
   const anchor = new Date(`${periodStart}T00:00:00Z`);
-  return Array.from({ length: months + 1 }, (_, index) => {
+  const yesterday = new Date(Date.parse(`${today}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+  const excluded: Array<{ monthKey: string; reason: string }> = [];
+
+  const candidates = Array.from({ length: months + 1 }, (_, index) => {
     const monthStart = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() - (index + 1), 1));
     const monthEnd = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 0));
-    return {
-      monthKey: monthStart.toISOString().slice(0, 7),
-      start: monthStart.toISOString().slice(0, 10),
-      end: monthEnd.toISOString().slice(0, 10)
-    };
-  })
-    .filter((window) => window.end < today)
-    .slice(0, months)
-    .reverse();
+    const calendarEnd = monthEnd.toISOString().slice(0, 10);
+    const start = monthStart.toISOString().slice(0, 10);
+    const end = calendarEnd <= yesterday ? calendarEnd : yesterday;
+    const days = end < start
+      ? 0
+      : Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86_400_000) + 1;
+    return { monthKey: monthStart.toISOString().slice(0, 7), start, end, calendarEnd, days, isPartial: end < calendarEnd };
+  });
+
+  const usable = candidates.filter((window) => {
+    if (window.days <= 0) {
+      excluded.push({ monthKey: window.monthKey, reason: "has not started yet" });
+      return false;
+    }
+    if (window.days < minPartialDays) {
+      excluded.push({
+        monthKey: window.monthKey,
+        reason: `only ${window.days} day${window.days === 1 ? "" : "s"} of data so far — too short to set a target from`
+      });
+      return false;
+    }
+    return true;
+  });
+
+  return { windows: usable.slice(0, months).reverse(), excluded };
 }
 
-export const daysInWindow = (window: LookbackWindow) =>
-  Math.round((Date.parse(`${window.end}T00:00:00Z`) - Date.parse(`${window.start}T00:00:00Z`)) / 86_400_000) + 1;
+export const daysInWindow = (window: LookbackWindow) => window.days;
