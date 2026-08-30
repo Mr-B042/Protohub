@@ -1641,7 +1641,37 @@ export const targetPeriodsApi = {
   setStatus: (id: string, status: TargetPeriod["status"]) =>
     put<{ target: TargetPeriod }>(`/api/target-periods/${id}/status`, { status }),
   saveIncentive: (id: string, body: Record<string, unknown>) =>
-    put<{ incentive: unknown }>(`/api/target-periods/${id}/incentive`, body)
+    put<{ incentive: unknown }>(`/api/target-periods/${id}/incentive`, body),
+  remove: (id: string) => del<{ deleted: boolean; snapshotsRemoved: number }>(`/api/target-periods/${id}`),
+  suggest: (params: { productId: string; periodStart: string; periodEnd: string; months?: number; stretch?: number }) =>
+    get<TargetSuggestion>(`/api/target-periods/suggest?${new URLSearchParams({
+      productId: params.productId,
+      periodStart: params.periodStart,
+      periodEnd: params.periodEnd,
+      months: String(params.months ?? 2),
+      stretch: String(params.stretch ?? 10)
+    }).toString()}`)
+};
+
+export type SuggestedTargetValues = {
+  contributionTarget: number; contributionMinimum: number; contributionExceptional: number;
+  orderTarget: number; deliveredTarget: number; piecesTarget: number;
+  deliveryRateTarget: number; adSpendCeiling: number;
+};
+
+export type TargetSuggestion = {
+  productId: string;
+  productName: string;
+  basedOn: Array<{
+    monthKey: string; periodStart: string; periodEnd: string; days: number;
+    contribution: number; ordersPlaced: number; delivered: number; pieces: number; adSpend: number;
+  }>;
+  skipped: string[];
+  daysInTargetPeriod: number;
+  stretchPct: number;
+  baseline: SuggestedTargetValues;
+  suggested: SuggestedTargetValues;
+  notes: string[];
 };
 
 export const personalDeliveryAgentsApi = {

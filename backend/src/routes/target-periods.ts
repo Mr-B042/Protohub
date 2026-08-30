@@ -4,7 +4,9 @@ import { supabase } from "../lib/supabase.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
-import { loadTargetProgress } from "../lib/target-progress-loader.js";
+import { loadTargetProgress, loadTargetActuals } from "../lib/target-progress-loader.js";
+import { suggestTargets } from "../lib/target-suggestion.js";
+import { lagosTodayKey } from "../lib/salary-spread.js";
 
 /**
  * Monthly product contribution targets and the manager incentive on them.
@@ -125,6 +127,91 @@ router.get("/", async (req, res) => {
     .order("id", { ascending: false });
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json({ targets: (data ?? []).map(rowToTarget) });
+});
+
+// ── GET /suggest ── Owner only ───────────────────────────
+/**
+ * Proposes a period's targets from the product's own recent months.
+ *
+ * ⚠️ MUST BE DECLARED BEFORE ANY "/:id" ROUTE. Express matches in order, so a
+ * later "/:id" would happily treat "suggest" as an id.
+ *
+ * ⚠️ MEASURED THROUGH loadTargetActuals, THE SAME PATH THE TAB USES. A bespoke
+ * history query here would be a second definition of contribution, and the
+ * suggested target would then be built on numbers that never appear on screen.
+ */
+router.get("/suggest", requireRole("Owner"), async (req, res) => {
+  const parsed = z.object({
+    productId: z.string().uuid(),
+    periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    months: z.coerce.number().int().min(1).max(12).default(2),
+    stretch: z.coerce.number().min(-50).max(200).default(10)
+  }).safeParse(req.query ?? {});
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+  const { productId, periodStart, periodEnd, months, stretch } = parsed.data;
+
+  const { data: product } = await supabase.from("products")
+    .select("id, name").eq("org_id", req.user!.orgId).eq("id", productId).maybeSingle();
+  if (!product) { res.status(404).json({ error: "That product does not exist here." }); return; }
+
+  try {
+    // The COMPLETE months immediately before the period being planned. The
+    // current, part-finished month is never used - a half month masquerading
+    // as a full one would drag every suggestion down.
+    const anchorDate = new Date(`${periodStart}T00:00:00Z`);
+    const today = lagosTodayKey();
+    const windows = Array.from({ length: months + 1 }, (_, index) => {
+      const monthStart = new Date(Date.UTC(anchorDate.getUTCFullYear(), anchorDate.getUTCMonth() - (index + 1), 1));
+      const monthEnd = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 0));
+      return {
+        monthKey: monthStart.toISOString().slice(0, 7),
+        start: monthStart.toISOString().slice(0, 10),
+        end: monthEnd.toISOString().slice(0, 10)
+      };
+    })
+      // ⚠️ A MONTH THAT HAS NOT FINISHED IS NOT A COMPLETE MONTH, even when it
+      // sits before the period being planned. Planning September on 30 August
+      // would otherwise average in an August that is a day short and quietly
+      // depress every suggested target. One extra candidate is generated above
+      // so dropping the unfinished one still leaves the requested count.
+      .filter((window) => window.end < today)
+      .slice(0, months)
+      .reverse();
+
+    const actuals = await Promise.all(windows.map(async (window) => {
+      const progress = await loadTargetActuals(
+        req.user!.orgId,
+        productId,
+        {
+          periodStart: window.start, periodEnd: window.end,
+          contributionTarget: 0, orderTarget: 0, deliveredTarget: 0,
+          piecesTarget: 0, deliveryRateTarget: 0, adSpendCeiling: 0
+        },
+        // Treat the month as finished, so nothing is forecast forward.
+        window.end
+      );
+      return {
+        monthKey: window.monthKey,
+        periodStart: window.start,
+        periodEnd: window.end,
+        days: Math.round((Date.parse(`${window.end}T00:00:00Z`) - Date.parse(`${window.start}T00:00:00Z`)) / 86_400_000) + 1,
+        contribution: progress.breakdown.contribution,
+        ordersPlaced: progress.ordersPlaced.actual,
+        delivered: progress.delivered.actual,
+        pieces: progress.pieces.actual,
+        adSpend: progress.breakdown.adSpend
+      };
+    }));
+
+    res.json({
+      productId,
+      productName: product.name,
+      ...suggestTargets(actuals, periodStart, periodEnd, stretch)
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not build a suggestion." });
+  }
 });
 
 // ── POST / ── Owner only ─────────────────────────────────
@@ -288,6 +375,47 @@ router.put("/:id/incentive", requireRole("Owner"), async (req, res) => {
  * THIS product in THIS period are counted. Anything else would load one
  * product's contribution with another product's commission.
  */
+// ── DELETE /:id ── Owner only ────────────────────────────
+/**
+ * ⚠️ THIS CASCADES. incentive_rules, daily_target_snapshots and
+ * recovery_actions all reference target_periods ON DELETE CASCADE, so removing
+ * a target takes its whole daily trail and any assigned recovery work with it.
+ * That is right for a mistyped target and wrong for a month someone was paid
+ * against, which is why both settled states below refuse.
+ */
+router.delete("/:id", requireRole("Owner"), async (req, res) => {
+  const orgId = req.user!.orgId;
+  const { data: target } = await supabase.from("target_periods")
+    .select("id, status").eq("org_id", orgId).eq("id", req.params.id).maybeSingle();
+  if (!target) { res.status(404).json({ error: "That target does not exist here." }); return; }
+
+  if (target.status === "settled") {
+    res.status(409).json({
+      error: "This period is settled - it is the record of what was paid. Reopen it first if it really must go."
+    });
+    return;
+  }
+
+  // A settled incentive can exist under an unsettled period, and final_payout
+  // is the only record of what was actually paid.
+  const { data: settledIncentive } = await supabase.from("incentive_rules")
+    .select("id").eq("target_period_id", req.params.id).eq("verification_status", "settled").limit(1).maybeSingle();
+  if (settledIncentive) {
+    res.status(409).json({
+      error: "An incentive on this target is already settled, so deleting it would erase a paid record."
+    });
+    return;
+  }
+
+  const { count } = await supabase.from("daily_target_snapshots")
+    .select("id", { count: "exact", head: true }).eq("target_period_id", req.params.id);
+
+  const { error } = await supabase.from("target_periods")
+    .delete().eq("org_id", orgId).eq("id", req.params.id);
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ deleted: true, snapshotsRemoved: count ?? 0 });
+});
+
 router.get("/:id/progress", async (req, res) => {
   const orgId = req.user!.orgId;
   const { data: target, error: targetError } = await supabase

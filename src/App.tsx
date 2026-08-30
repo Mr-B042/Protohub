@@ -166,7 +166,7 @@ import {
   PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid,CartRecoverySummary, CartGridRow, CartLogPenaltiesView, CartLogRangePreset, RecoveryCalendarView, RecoveryFollowUpPairs, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, TargetPeriod, TargetProgressView, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, CostChangeImpact, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView } from "./lib/api";
+import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid,CartRecoverySummary, CartGridRow, CartLogPenaltiesView, CartLogRangePreset, RecoveryCalendarView, RecoveryFollowUpPairs, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, TargetPeriod, TargetProgressView, TargetSuggestion, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, CostChangeImpact, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -9262,6 +9262,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [targetsError, setTargetsError] = useState<string | null>(null);
   const [targetEditorOpen, setTargetEditorOpen] = useState(false);
   const [targetSaving, setTargetSaving] = useState(false);
+  const [targetEditingId, setTargetEditingId] = useState<string | null>(null);
+  const [targetSuggestion, setTargetSuggestion] = useState<TargetSuggestion | null>(null);
+  const [targetSuggesting, setTargetSuggesting] = useState(false);
+  const [targetLookbackMonths, setTargetLookbackMonths] = useState(2);
+  const [targetStretchPct, setTargetStretchPct] = useState(10);
   const [targetDraft, setTargetDraft] = useState({
     productId: "", periodStart: "", periodEnd: "",
     contributionMinimum: "", contributionTarget: "", contributionExceptional: "",
@@ -9346,7 +9351,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setTargetsError(null);
     try {
       const numeric = (value: string) => (value.trim() === "" ? 0 : Number(value));
-      const { target } = await targetPeriodsApi.create({
+      const payload = {
         productId: targetDraft.productId,
         periodStart: targetDraft.periodStart,
         periodEnd: targetDraft.periodEnd,
@@ -9358,7 +9363,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         piecesTarget: numeric(targetDraft.piecesTarget),
         deliveryRateTarget: numeric(targetDraft.deliveryRateTarget),
         adSpendCeiling: numeric(targetDraft.adSpendCeiling)
-      });
+      };
+      // ⚠️ productId and the period are NOT sent on an edit. They are the
+      // identity of the row (unique on org+product+period), so changing them
+      // is creating a different target, not editing this one.
+      const { target } = targetEditingId
+        ? await targetPeriodsApi.update(targetEditingId, (({ productId, periodStart, periodEnd, ...rest }) => rest)(payload))
+        : await targetPeriodsApi.create(payload);
       // The base reward lives on incentive_rules, so it is a second call. Only
       // sent when the Owner actually entered one - a zero-reward incentive row
       // would read as "configured with no reward" rather than "not set up".
@@ -9374,11 +9385,102 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setSelectedTargetId(target.id);
       setTargetProgress(await targetPeriodsApi.progress(target.id));
       setTargetEditorOpen(false);
-      showToast("Target period created.");
+      setTargetSuggestion(null);
+      showToast(targetEditingId ? "Target updated." : "Target period created.");
+      setTargetEditingId(null);
     } catch (err: any) {
       setTargetsError(err?.message ?? "Could not save that target.");
     } finally {
       setTargetSaving(false);
+    }
+  };
+
+  const openTargetEditor = (target: TargetPeriod | null) => {
+    setTargetSuggestion(null);
+    if (!target) {
+      const now = new Date();
+      const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+      const last = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0));
+      setTargetEditingId(null);
+      setTargetDraft({
+        productId: products[0]?.id ?? "",
+        periodStart: first.toISOString().slice(0, 10),
+        periodEnd: last.toISOString().slice(0, 10),
+        contributionMinimum: "", contributionTarget: "", contributionExceptional: "",
+        orderTarget: "", deliveredTarget: "", piecesTarget: "", deliveryRateTarget: "",
+        adSpendCeiling: "", baseReward: ""
+      });
+    } else {
+      setTargetEditingId(target.id);
+      setTargetDraft({
+        productId: target.productId,
+        periodStart: target.periodStart,
+        periodEnd: target.periodEnd,
+        contributionMinimum: String(target.contributionMinimum || ""),
+        contributionTarget: String(target.contributionTarget || ""),
+        contributionExceptional: String(target.contributionExceptional || ""),
+        orderTarget: String(target.orderTarget || ""),
+        deliveredTarget: String(target.deliveredTarget || ""),
+        piecesTarget: String(target.piecesTarget || ""),
+        deliveryRateTarget: String(target.deliveryRateTarget || ""),
+        adSpendCeiling: String(target.adSpendCeiling || ""),
+        baseReward: String(target.incentive?.baseReward || "")
+      });
+    }
+    setTargetEditorOpen(true);
+  };
+
+  const deleteTargetPeriod = async (target: TargetPeriod) => {
+    // Deleting cascades to the daily trail, the incentive and any assigned
+    // recovery work, so this asks before it does it.
+    if (!window.confirm(
+      `Delete the ${target.productName ?? "product"} target for ${target.periodStart.slice(0, 7)}?\n\n`
+      + "Its daily snapshot trail, incentive and recovery actions go with it. This cannot be undone."
+    )) return;
+    try {
+      const result = await targetPeriodsApi.remove(target.id);
+      const { targets } = await targetPeriodsApi.list();
+      setTargetPeriods(targets);
+      const next = targets[0] ?? null;
+      setSelectedTargetId(next?.id ?? null);
+      setTargetProgress(next ? await targetPeriodsApi.progress(next.id) : null);
+      showToast(`Target deleted${result.snapshotsRemoved > 0 ? ` with ${result.snapshotsRemoved} daily snapshot(s)` : ""}.`);
+    } catch (err: any) {
+      setTargetsError(err?.message ?? "Could not delete that target.");
+    }
+  };
+
+  const suggestTargetsFromHistory = async () => {
+    if (!targetDraft.productId || !targetDraft.periodStart || !targetDraft.periodEnd) return;
+    setTargetSuggesting(true);
+    setTargetsError(null);
+    try {
+      const suggestion = await targetPeriodsApi.suggest({
+        productId: targetDraft.productId,
+        periodStart: targetDraft.periodStart,
+        periodEnd: targetDraft.periodEnd,
+        months: targetLookbackMonths,
+        stretch: targetStretchPct
+      });
+      setTargetSuggestion(suggestion);
+      // Suggest and confirm: the fields are filled in, but nothing is saved
+      // until the Owner presses the button.
+      const s = suggestion.suggested;
+      setTargetDraft((draft) => ({
+        ...draft,
+        contributionMinimum: String(s.contributionMinimum),
+        contributionTarget: String(s.contributionTarget),
+        contributionExceptional: String(s.contributionExceptional),
+        orderTarget: String(s.orderTarget),
+        deliveredTarget: String(s.deliveredTarget),
+        piecesTarget: String(s.piecesTarget),
+        deliveryRateTarget: String(s.deliveryRateTarget),
+        adSpendCeiling: String(s.adSpendCeiling)
+      }));
+    } catch (err: any) {
+      setTargetsError(err?.message ?? "Could not build a suggestion.");
+    } finally {
+      setTargetSuggesting(false);
     }
   };
 
@@ -30890,40 +30992,123 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 incentive is someone's pay, so setting it is never delegated -
                 the backend enforces this too, this only hides the button. */}
             {currentRole === "Owner" && (
-              <button
-                className="rounded-xl bg-gray-900 px-3 py-2 text-sm font-black text-white hover:bg-gray-800"
-                onClick={() => {
-                  const now = new Date();
-                  const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-                  const last = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0));
-                  setTargetDraft((draft) => ({
-                    ...draft,
-                    productId: draft.productId || (products[0]?.id ?? ""),
-                    periodStart: first.toISOString().slice(0, 10),
-                    periodEnd: last.toISOString().slice(0, 10)
-                  }));
-                  setTargetEditorOpen((open) => !open);
-                }}
-              >
-                {targetEditorOpen ? "Cancel" : "Configure Targets"}
-              </button>
+              <>
+                {target && !targetEditorOpen && (
+                  <>
+                    <button
+                      className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-black text-gray-700 hover:bg-gray-50"
+                      onClick={() => openTargetEditor(target)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      className="rounded-xl border border-rose-200 bg-white px-3 py-2 text-sm font-black text-rose-600 hover:bg-rose-50"
+                      onClick={() => void deleteTargetPeriod(target)}
+                    >
+                      Delete
+                    </button>
+                  </>
+                )}
+                <button
+                  className="rounded-xl bg-gray-900 px-3 py-2 text-sm font-black text-white hover:bg-gray-800"
+                  onClick={() => (targetEditorOpen ? setTargetEditorOpen(false) : openTargetEditor(null))}
+                >
+                  {targetEditorOpen ? "Cancel" : "New target"}
+                </button>
+              </>
             )}
           </div>
         </div>
 
         {targetEditorOpen && currentRole === "Owner" && (
           <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-            <h3 className="text-base font-black text-gray-900">New target period</h3>
+            <h3 className="text-base font-black text-gray-900">
+              {targetEditingId ? "Edit target period" : "New target period"}
+            </h3>
             <p className="mt-1 text-xs text-gray-500">
               Contribution here is delivered revenue less product cost, logistics, commissions and advertising.
               It is deliberately <em>not</em> the P&amp;L&apos;s Direct Profit, which excludes advertising.
             </p>
+
+            {/* Suggest from history — so the numbers come from what the product
+                actually did, not from guesswork. Suggest and confirm: this fills
+                the fields in and saves nothing. */}
+            <div className="mt-4 flex flex-wrap items-end gap-3 rounded-xl border border-indigo-100 bg-indigo-50/50 p-3">
+              <label className="text-xs font-bold text-gray-600">
+                Look back
+                <select
+                  className="mt-1 block rounded-lg border border-gray-200 px-2 py-1.5 text-sm font-semibold"
+                  value={targetLookbackMonths}
+                  onChange={(e) => setTargetLookbackMonths(Number(e.target.value))}
+                >
+                  {[1, 2, 3, 6].map((n) => <option key={n} value={n}>{n} month{n === 1 ? "" : "s"}</option>)}
+                </select>
+              </label>
+              <label className="text-xs font-bold text-gray-600">
+                Stretch
+                <select
+                  className="mt-1 block rounded-lg border border-gray-200 px-2 py-1.5 text-sm font-semibold"
+                  value={targetStretchPct}
+                  onChange={(e) => setTargetStretchPct(Number(e.target.value))}
+                >
+                  {[0, 5, 10, 15, 20, 30].map((n) => <option key={n} value={n}>+{n}%</option>)}
+                </select>
+              </label>
+              <button
+                className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-black text-white disabled:opacity-50"
+                disabled={targetSuggesting || !targetDraft.productId}
+                onClick={() => void suggestTargetsFromHistory()}
+              >
+                {targetSuggesting ? "Reading history…" : "Suggest from history"}
+              </button>
+              <span className="text-xs text-gray-500">
+                Fills the fields below from this product&apos;s completed months. Nothing saves until you press create.
+              </span>
+            </div>
+
+            {targetSuggestion && (
+              <div className="mt-3 rounded-xl border border-gray-200 bg-white p-3">
+                <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Based on</p>
+                <div className="mt-2 overflow-x-auto">
+                  <table className="w-full min-w-[520px] text-xs">
+                    <thead>
+                      <tr className="text-left text-gray-500">
+                        <th className="pb-1 pr-3">Month</th>
+                        <th className="pb-1 pr-3">Days</th>
+                        <th className="pb-1 pr-3 text-right">Contribution</th>
+                        <th className="pb-1 pr-3 text-right">Orders</th>
+                        <th className="pb-1 pr-3 text-right">Delivered</th>
+                        <th className="pb-1 text-right">Ad spend</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {targetSuggestion.basedOn.map((m) => (
+                        <tr key={m.monthKey} className="border-t border-gray-100">
+                          <td className="py-1.5 pr-3 font-bold text-gray-800">{m.monthKey}</td>
+                          <td className="py-1.5 pr-3 text-gray-500">{m.days}</td>
+                          <td className="py-1.5 pr-3 text-right font-semibold">{formatMoney(m.contribution)}</td>
+                          <td className="py-1.5 pr-3 text-right">{m.ordersPlaced}</td>
+                          <td className="py-1.5 pr-3 text-right">{m.delivered}</td>
+                          <td className="py-1.5 text-right">{formatMoney(m.adSpend)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <ul className="mt-2 space-y-0.5">
+                  {targetSuggestion.notes.map((note, i) => (
+                    <li key={i} className="text-xs text-gray-500">• {note}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <label className="text-xs font-bold text-gray-600">
                 Product
                 <select
-                  className="mt-1 w-full rounded-lg border border-gray-200 px-2.5 py-2 text-sm font-semibold text-gray-800"
+                  className="mt-1 w-full rounded-lg border border-gray-200 px-2.5 py-2 text-sm font-semibold text-gray-800 disabled:bg-gray-100"
                   value={targetDraft.productId}
+                  disabled={Boolean(targetEditingId)}
                   onChange={(e) => setTargetDraft((d) => ({ ...d, productId: e.target.value }))}
                 >
                   {products.map((product) => (
@@ -30948,7 +31133,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   {label}
                   <input
                     type={type}
-                    className="mt-1 w-full rounded-lg border border-gray-200 px-2.5 py-2 text-sm font-semibold text-gray-800"
+                    className="mt-1 w-full rounded-lg border border-gray-200 px-2.5 py-2 text-sm font-semibold text-gray-800 disabled:bg-gray-100"
+                    disabled={Boolean(targetEditingId) && (key === "periodStart" || key === "periodEnd")}
                     value={targetDraft[key]}
                     onChange={(e) => setTargetDraft((d) => ({ ...d, [key]: e.target.value }))}
                   />
@@ -30961,7 +31147,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 disabled={targetSaving || !targetDraft.productId || !targetDraft.contributionTarget}
                 onClick={() => void saveTargetPeriod()}
               >
-                {targetSaving ? "Saving…" : "Create target"}
+                {targetSaving ? "Saving…" : targetEditingId ? "Save changes" : "Create target"}
               </button>
               <span className="text-xs text-gray-500">
                 Multipliers default to 50% / 100% / 125% of the base reward.

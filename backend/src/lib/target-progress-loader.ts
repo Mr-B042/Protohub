@@ -1,6 +1,6 @@
 import { supabase } from "./supabase.js";
 import { REPORT_ROW_CEILING, fetchAllRowsOrThrow } from "./query-limits.js";
-import { computeTargetProgress, deliveredOrdersIn, type TargetOrder, type DatedAmount, type TargetProgress } from "./target-progress.js";
+import { computeTargetProgress, deliveredOrdersIn, type TargetOrder, type DatedAmount, type TargetProgress, type TargetDefinition } from "./target-progress.js";
 import { perOrderBonusMapForDeliveredRange } from "./sales-bonus-engine.js";
 import { buildRecoveryPlan, type RecoveryPlan } from "./recovery-plan.js";
 import { computeIncentive, type IncentiveOutcome } from "./manager-incentive.js";
@@ -29,9 +29,23 @@ export type LoadedTargetProgress = TargetProgress & {
   incentiveStatus: string | null;
 };
 
-export async function loadTargetProgress(orgId: string, target: any, today: string = lagosTodayKey()): Promise<LoadedTargetProgress> {
-  const start = String(target.period_start).slice(0, 10);
-  const end = String(target.period_end).slice(0, 10);
+/**
+ * Actuals for ANY product and window, with no target row required.
+ *
+ * Split out from loadTargetProgress so a PAST month can be measured on exactly
+ * the same basis when suggesting next month's target. A separate query for that
+ * would be a second definition of contribution, and the suggestion would then
+ * be built on numbers the tab never shows.
+ */
+export async function loadTargetActuals(
+  orgId: string,
+  productId: string,
+  definition: TargetDefinition,
+  today: string = lagosTodayKey()
+): Promise<TargetProgress> {
+  const target = { product_id: productId };
+  const start = definition.periodStart;
+  const end = definition.periodEnd;
   // created_at is a timestamp, so the upper bound is exclusive of the day AFTER
   // the period - `lte end` would drop everything after 00:00:00 on the last day.
   const endExclusive = new Date(Date.parse(`${end}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
@@ -83,16 +97,7 @@ export async function loadTargetProgress(orgId: string, target: any, today: stri
     const deliveryExpenseFallback = deliveryExpenseRows.reduce((s: number, r: any) => s + Number(r.amount ?? 0), 0);
 
     const progress = computeTargetProgress(
-      {
-        periodStart: start,
-        periodEnd: end,
-        contributionTarget: Number(target.contribution_target ?? 0),
-        orderTarget: Number(target.order_target ?? 0),
-        deliveredTarget: Number(target.delivered_target ?? 0),
-        piecesTarget: Number(target.pieces_target ?? 0),
-        deliveryRateTarget: Number(target.delivery_rate_target ?? 0),
-        adSpendCeiling: Number(target.ad_spend_ceiling ?? 0)
-      },
+      definition,
       Array.from(byId.values()),
       adSpendRows,
       commissions,
@@ -101,17 +106,24 @@ export async function loadTargetProgress(orgId: string, target: any, today: stri
       today
     );
 
-    const definition = {
-      periodStart: start,
-      periodEnd: end,
-      contributionTarget: Number(target.contribution_target ?? 0),
-      orderTarget: Number(target.order_target ?? 0),
-      deliveredTarget: Number(target.delivered_target ?? 0),
-      piecesTarget: Number(target.pieces_target ?? 0),
-      deliveryRateTarget: Number(target.delivery_rate_target ?? 0),
-      adSpendCeiling: Number(target.ad_spend_ceiling ?? 0)
-    };
-    const recoveryPlan = buildRecoveryPlan(definition, progress);
+    return progress;
+}
+
+export async function loadTargetProgress(orgId: string, target: any, today: string = lagosTodayKey()): Promise<LoadedTargetProgress> {
+  const start = String(target.period_start).slice(0, 10);
+  const end = String(target.period_end).slice(0, 10);
+  const definition: TargetDefinition = {
+    periodStart: start,
+    periodEnd: end,
+    contributionTarget: Number(target.contribution_target ?? 0),
+    orderTarget: Number(target.order_target ?? 0),
+    deliveredTarget: Number(target.delivered_target ?? 0),
+    piecesTarget: Number(target.pieces_target ?? 0),
+    deliveryRateTarget: Number(target.delivery_rate_target ?? 0),
+    adSpendCeiling: Number(target.ad_spend_ceiling ?? 0)
+  };
+  const progress = await loadTargetActuals(orgId, String(target.product_id), definition, today);
+  const recoveryPlan = buildRecoveryPlan(definition, progress);
 
     // The incentive is optional: a target can exist before anyone is put on it.
     const { data: rule } = await supabase.from("incentive_rules")
