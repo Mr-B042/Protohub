@@ -9709,6 +9709,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [heatmapGroup, setHeatmapGroup] = useState<"hour" | "3h">(() =>
     readPref("protohub.heatmap.group", "hour" as "hour"|"3h", (r) => ["hour","3h"].includes(r) ? r as any : null)
   );
+  // Which of the four detail panels the dashboard is showing. Purely a view
+  // preference - every panel reads the same period filter as the rest of the page.
+  const [dashboardTab, setDashboardTab] = useState<"timing" | "revenue" | "transactions" | "math">("timing");
   // Target-profit planner: a net-profit goal for the period; the break-even panel
   // goal-seeks the deliveries + delivery rate needed to hit it.
   const [profitTargetInput, setProfitTargetInput] = useState<string>(() =>
@@ -19294,6 +19297,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     heatmapMetric === "revenue" ? formatMoney(v) : `${v} order${v === 1 ? "" : "s"}`;
   const heatmapWindowLabel = heatmapWindow === "dashboard" ? "dashboard date filter" : heatmapWindow === "all" ? "all time" : `last ${heatmapWindow} days`;
   const heatmapMetricLabel = heatmapMetric === "orders" ? "Orders" : heatmapMetric === "delivered" ? "Delivered" : "Revenue";
+  const heatmapDayFullLabels = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  // Summary read-outs for the Order timing panel, taken from the same grid the
+  // heatmap draws so the headline numbers can never disagree with the cells.
+  const orderTimingSummary = (() => {
+    const rankedCols = Array.from({ length: orderHeatmap.cols }, (_, c) => ({ c, value: orderHeatmap.colTotals[c] }))
+      .sort((a, b) => b.value - a.value);
+    // "Morning" is 7a-12p, matched on each column's START hour so the figure
+    // holds for the 3-hour grouping as well as the hourly one.
+    const morning = orderHeatmap.colTotals.reduce((sum, value, c) => {
+      const startHour = c * orderHeatmap.colSpan;
+      return startHour >= 7 && startHour < 12 ? sum + value : sum;
+    }, 0);
+    const quietCols = orderHeatmap.colTotals.reduce<number[]>((acc, value, c) => (value === 0 ? [...acc, c] : acc), []);
+    const share = (part: number) => (orderHeatmap.total > 0 ? Math.round((part / orderHeatmap.total) * 100) : 0);
+    return { rankedCols, morning, quietCols, share };
+  })();
   // Average order value for the simulator. Prefer revenue per delivered
   // order; if no deliveries yet, fall back to AOV across all orders that
   // have an amount, so the projection still produces a sensible number.
@@ -74094,23 +74113,65 @@ ${waybillLineItems(w).length > 1
           <div className="flex flex-col gap-4 sm:gap-6 pb-4 sm:pb-6 lg:pb-8">
           {activePage === "Dashboard" ? (
             <>
-              <header className="dashboard-hero flex flex-col gap-1">
-                <div className="flex flex-col gap-1">
-                  <div className="flex items-center gap-2">
-                    <span className="relative inline-flex w-2 h-2 shrink-0">
-                      <span className="absolute inset-0 rounded-full bg-[#1F8FE0] opacity-60 animate-ping" />
-                      <span className="relative inline-block w-2 h-2 rounded-full bg-[#1F8FE0]" />
-                    </span>
-                    <span className="admin-overview-badge text-xs font-semibold text-[#1F8FE0] uppercase tracking-widest">Admin Overview <span className="opacity-40">·</span> Live</span>
+              <div className="dashboard-sticky sticky top-16 lg:top-[5.5rem] z-20 -mx-4 px-4 lg:-mx-8 lg:px-8 pt-1 pb-4 flex flex-col gap-4 bg-white border-b border-gray-100">
+                <header className="dashboard-hero flex flex-col gap-1">
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <span className="relative inline-flex w-2 h-2 shrink-0">
+                        <span className="absolute inset-0 rounded-full bg-[#1F8FE0] opacity-60 animate-ping" />
+                        <span className="relative inline-block w-2 h-2 rounded-full bg-[#1F8FE0]" />
+                      </span>
+                      <span className="admin-overview-badge text-xs font-semibold text-[#1F8FE0] uppercase tracking-widest">Admin Overview <span className="opacity-40">·</span> Live</span>
+                    </div>
+                    <h1 className="text-2xl font-bold text-gray-900">Administrator Dashboard</h1>
+                    <p className="text-sm text-gray-500">Monitor your business performance in real-time</p>
                   </div>
-                  <h1 className="text-2xl font-bold text-gray-900">Administrator Dashboard</h1>
-                  <p className="text-sm text-gray-500">Monitor your business performance in real-time</p>
+                </header>
+                <div className="flex flex-col gap-2">
+                  <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                    {/* Period pills - 4-column grid on mobile, inline strip on desktop */}
+                    <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
+                      {periods.map((item) => (
+                        <button
+                          className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${period === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                          onClick={() => handlePeriodChange(item)}
+                          key={item}
+                        >
+                          {item}
+                        </button>
+                      ))}
+                    </div>
+                    {/* Date range - arrows step the window, the label opens the picker */}
+                    <div className="relative w-full sm:w-auto">
+                      {renderWeekNav(dashboardNavStart, setDashboardNavStart, dashboardNavSpan, setDashboardNavSpan, setPeriod, setDateRange, period, dateRange, { compact: true, onPickRange: () => setShowDateRange((value) => !value) })}
+                      {showDateRange && renderDateRangeCalendar("date-range-panel", dateRange, setDateRange, applyDateRange, () => setShowDateRange(false))}
+                    </div>
+                    {/* Currency - full width on mobile */}
+                    <select
+                      className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors"
+                      aria-label="Currency"
+                      value={currency}
+                      onChange={(event) => {
+                        const nextCurrency = event.target.value as CurrencyCode;
+                        setCurrency(nextCurrency);
+                        showToast(`Currency changed to ${currencies[nextCurrency].label}.`);
+                      }}
+                    >
+                      <option value="NGN">₦ NGN</option>
+                      <option value="USD">$ USD</option>
+                      <option value="GBP">£ GBP</option>
+                    </select>
+                    {renderProductFilter(dashboardProductIds, setDashboardProductIds, showDashboardProductFilter, setShowDashboardProductFilter)}
+                  <button className="!min-h-0 w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 sm:py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm" onClick={exportReport}>
+                    <Download className="w-4 h-4" /> Export Report
+                  </button>
+                  </div>
                 </div>
-              </header>
+              </div>
 
               <DataErrorBanner />
               {workspacePageBlockingLoad && <TableSkeleton cols={4} rows={4} />}
-              <div className={workspacePageBlockingLoad ? "hidden" : "space-y-6 lg:space-y-8"}>
+              <div className={workspacePageBlockingLoad ? "hidden" : "dashboard-ground -mx-4 px-4 lg:-mx-8 lg:px-8 pt-6 pb-8 space-y-6 lg:space-y-8"}>
               {/* Getting-started checklist - shown only for new accounts with no data */}
               {products.length === 0 && trackedOrders.length === 0 && (
                 <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 flex flex-col gap-4">
@@ -74140,714 +74201,767 @@ ${waybillLineItems(w).length > 1
                 </div>
               )}
 
-              <div className="flex flex-col gap-2">
-                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
-                  {/* Period pills - 4-column grid on mobile, inline strip on desktop */}
-                  <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
-                    {periods.map((item) => (
-                      <button
-                        className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${period === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
-                        onClick={() => handlePeriodChange(item)}
-                        key={item}
-                      >
-                        {item}
-                      </button>
-                    ))}
-                  </div>
-                  {/* Date range - arrows step the window, the label opens the picker */}
-                  <div className="relative w-full sm:w-auto">
-                    {renderWeekNav(dashboardNavStart, setDashboardNavStart, dashboardNavSpan, setDashboardNavSpan, setPeriod, setDateRange, period, dateRange, { compact: true, onPickRange: () => setShowDateRange((value) => !value) })}
-                    {showDateRange && renderDateRangeCalendar("date-range-panel", dateRange, setDateRange, applyDateRange, () => setShowDateRange(false))}
-                  </div>
-                  {/* Currency - full width on mobile */}
-                  <select
-                    className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors"
-                    aria-label="Currency"
-                    value={currency}
-                    onChange={(event) => {
-                      const nextCurrency = event.target.value as CurrencyCode;
-                      setCurrency(nextCurrency);
-                      showToast(`Currency changed to ${currencies[nextCurrency].label}.`);
-                    }}
-                  >
-                    <option value="NGN">₦ NGN</option>
-                    <option value="USD">$ USD</option>
-                    <option value="GBP">£ GBP</option>
-                  </select>
-                  {renderProductFilter(dashboardProductIds, setDashboardProductIds, showDashboardProductFilter, setShowDashboardProductFilter)}
-                </div>
-              </div>
-
-              <div>
-                <button className="!min-h-0 w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm" onClick={exportReport}>
-                  <Download className="w-4 h-4" /> Export Report
-                </button>
-              </div>
-
-              {(() => {
-                const netCard = dashboardCards.find((card) => card.label === "Net Profit");
-                const netTrend = netCard?.trend ?? "";
-                const netTrendPositive = netTrend.startsWith("+") || netTrend === "New";
-                const netIsLoss = dashboardNetProfit < 0;
-                // Bars are scaled by magnitude on one shared axis, so a loss
-                // still draws a bar rather than collapsing to nothing.
-                const flowRows = [
-                  { label: "Revenue",    value: dashboardRevenue,          color: "bg-blue-500" },
-                  { label: "COGS",       value: dashboardCogs,             color: "bg-orange-500" },
-                  { label: "Logistics",  value: dashboardLogistics,        color: "bg-amber-500" },
-                  { label: "Operating",  value: dashboardOperatingExpense, color: "bg-violet-500" },
-                  { label: "Net Profit", value: dashboardNetProfit,        color: netIsLoss ? "bg-red-500" : "bg-emerald-500" },
-                ];
-                const flowScale = Math.max(...flowRows.map((row) => Math.abs(row.value)), 1);
-                return (
-                  <section className="dashboard-banner-card bg-white rounded-xl border border-gray-200 shadow-sm p-5 sm:p-6 flex flex-col gap-5" aria-label="Net profit and money flow">
-                    <div className="flex flex-col gap-1">
-                      <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Net Profit · {selectedPeriodLabel}</span>
-                      <div className="flex items-center gap-3 flex-wrap">
-                        <strong className={`text-4xl sm:text-5xl font-bold leading-none ${netIsLoss ? "text-red-600" : "text-gray-900"}`}>{formatMoney(dashboardNetProfit)}</strong>
-                        {netTrend && (
-                          <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold ${netTrendPositive ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-red-50 text-red-700 border border-red-200"}`}>{netTrend}</span>
-                        )}
-                      </div>
-                      <p className="text-sm text-gray-500 m-0 mt-1">{netCard?.helper} · {dashboardNetMargin}% net margin</p>
-                    </div>
-
-                    <div className="flex flex-col gap-3 pt-5 border-t border-gray-100">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Money flow</span>
-                        <span className="text-xs text-gray-400">delivered-date recognition</span>
-                      </div>
-                      {flowRows.map((row) => (
-                        <div className="flex items-center gap-2 sm:gap-3" key={row.label}>
-                          <span className={`w-2 h-2 rounded-full shrink-0 ${row.color}`} />
-                          <span className="text-[11px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wide w-16 sm:w-24 shrink-0">{row.label}</span>
-                          <span className="flex-1 h-2 rounded-full bg-gray-100 dark:bg-white/10 overflow-hidden min-w-0">
-                            <span className={`block h-full rounded-full ${row.color}`} style={{ width: `${Math.max(2, (Math.abs(row.value) / flowScale) * 100)}%` }} />
-                          </span>
-                          <strong className={`text-xs sm:text-sm font-bold tabular-nums text-right shrink-0 min-w-[4.5rem] sm:min-w-[6rem] ${row.label === "Net Profit" && netIsLoss ? "text-red-600" : "text-gray-900"}`}>{formatMoney(row.value)}</strong>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="flex items-center gap-2 flex-wrap text-xs font-medium text-gray-500 pt-5 border-t border-gray-100">
-                      <span className="font-semibold text-gray-700">Customer pays</span><ArrowRight className="w-3 h-3" />
-                      <span>Revenue</span><ArrowRight className="w-3 h-3" />
-                      <span>− COGS ({dashboardCogsRate}%)</span><ArrowRight className="w-3 h-3" />
-                      <span>− Logistics</span><ArrowRight className="w-3 h-3" />
-                      <span>− Operating ({dashboardExpenseRate}%)</span><ArrowRight className="w-3 h-3" />
-                      <strong className="text-gray-900">Net Profit</strong>
-                    </div>
-                  </section>
-                );
-              })()}
-
-              <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4" aria-label="Business summary">
-                {dashboardCards.filter((card) => card.label !== "Net Profit").map((card) => {
-                  const toneMap: Record<string, string> = {
-                    blue:     "bg-blue-50 text-blue-600",
-                    emerald:  "bg-emerald-50 text-emerald-600",
-                    violet:   "bg-violet-50 text-violet-600",
-                    orange:   "bg-orange-50 text-orange-600",
-                    teal:     "bg-teal-50 text-teal-600",
-                    positive: "bg-emerald-50 text-emerald-600",
-                    negative: "bg-red-50 text-red-600",
-                  };
-                  const iconClass = toneMap[card.tone] ?? toneMap.blue;
-                  const trendIsPositive = card.trend?.startsWith("+") || card.trend === "New";
-                  const trendClass = trendIsPositive
-                    ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                    : "bg-red-50 text-red-700 border border-red-200";
+              {/* Top band: the headline figure, the supporting KPIs, and the
+                  two health readouts, side by side on a wide screen. */}
+              <div className="grid grid-cols-1 xl:grid-cols-[1.5fr_1fr_1fr] gap-4 items-start">
+                {(() => {
+                  const netCard = dashboardCards.find((card) => card.label === "Net Profit");
+                  const netTrend = netCard?.trend ?? "";
+                  const netTrendPositive = netTrend.startsWith("+") || netTrend === "New";
+                  const netIsLoss = dashboardNetProfit < 0;
+                  // Bars are scaled by magnitude on one shared axis, so a loss
+                  // still draws a bar rather than collapsing to nothing.
+                  const flowRows = [
+                    { label: "Revenue",    value: dashboardRevenue,          color: "bg-blue-500" },
+                    { label: "COGS",       value: dashboardCogs,             color: "bg-orange-500" },
+                    { label: "Logistics",  value: dashboardLogistics,        color: "bg-amber-500" },
+                    { label: "Operating",  value: dashboardOperatingExpense, color: "bg-violet-500" },
+                    { label: "Net Profit", value: dashboardNetProfit,        color: netIsLoss ? "bg-red-500" : "bg-emerald-500" },
+                  ];
+                  const flowScale = Math.max(...flowRows.map((row) => Math.abs(row.value)), 1);
                   return (
-                    <article className="dashboard-summary-card bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex items-start gap-4" key={card.label}>
-                      <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${iconClass}`}>
-                        <card.icon className="w-5 h-5" />
-                      </div>
-                      <div className="flex flex-col gap-1 min-w-0 flex-1">
-                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{card.label}</span>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <strong className="text-2xl font-bold text-gray-900 leading-tight">{card.value}</strong>
-                          {card.trend && (
-                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-bold ${trendClass}`}>{card.trend}</span>
+                    <section className="dashboard-banner-card bg-white rounded-xl border border-gray-200 shadow-sm p-5 sm:p-6 flex flex-col gap-5" aria-label="Net profit and money flow">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Net Profit · {selectedPeriodLabel}</span>
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <strong className={`text-4xl sm:text-5xl font-bold leading-none ${netIsLoss ? "text-red-600" : "text-gray-900"}`}>{formatMoney(dashboardNetProfit)}</strong>
+                          {netTrend && (
+                            <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold ${netTrendPositive ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-red-50 text-red-700 border border-red-200"}`}>{netTrend}</span>
                           )}
                         </div>
-                        <span className="text-xs text-gray-400">{card.helper}</span>
+                        <p className="text-sm text-gray-500 m-0 mt-1">{netCard?.helper} · {dashboardNetMargin}% net margin</p>
                       </div>
-                    </article>
-                  );
-                })}
-              </section>
 
-              {(() => {
-                const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-                const stockNotifications = systemNotifications
-                  .filter((n) => n.type === "low_stock" && typeof n.link === "string" && n.link.includes("/state-stock") && new Date(n.createdAt).getTime() >= cutoff);
-                const uniquePairs = Array.from(new Map(stockNotifications.map((n) => [n.link ?? n.id, n])).values());
-                const hasAlerts = uniquePairs.length > 0;
-                const accentClass = hasAlerts ? "border-amber-200" : "border-gray-200";
-                const iconBgClass = hasAlerts ? "bg-amber-50 text-amber-600" : "bg-emerald-50 text-emerald-600";
-                return (
-                  <section className={`bg-white rounded-xl border ${accentClass} shadow-sm p-5 flex flex-col gap-4`} aria-label="Smart stock health">
-                    <div className="flex items-start justify-between gap-3 flex-wrap">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${iconBgClass}`}>
-                          {hasAlerts ? <AlertTriangle className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
+                      <div className="flex flex-col gap-3 pt-5 border-t border-gray-100">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Money flow</span>
+                          <span className="text-xs text-gray-400">delivered-date recognition</span>
                         </div>
-                        <div>
-                          <h2 className="text-base font-bold text-gray-900 m-0">Smart stock health</h2>
-                          <p className="text-xs text-gray-500 m-0 mt-0.5">
-                            {hasAlerts
-                              ? `${uniquePairs.length} agent-hub state${uniquePairs.length === 1 ? "" : "s"} at risk based on the last 7 days of sales.`
-                              : "No agent-hub stock at risk based on the last 7 days of sales."}
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        disabled={smartStockScanLoading}
-                        onClick={runSmartStockScan}
-                        className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                      >
-                        {smartStockScanLoading ? "Scanning..." : "Scan now"}
-                      </button>
-                    </div>
-                    {hasAlerts && (
-                      <ul className="flex flex-col gap-2 m-0 p-0 list-none">
-                        {uniquePairs.slice(0, 6).map((n) => (
-                          <li key={n.id} className="flex items-start justify-between gap-3 px-3 py-2 rounded-lg bg-amber-50/60 border border-amber-100">
-                            <div className="min-w-0">
-                              <p className="text-sm font-semibold text-amber-900 m-0 truncate">{n.title ?? "Low stock alert"}</p>
-                              <p className="text-xs text-amber-800/80 m-0 mt-0.5 truncate">{n.message}</p>
-                            </div>
-                            {n.link && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setActivePage("Inventory");
-                                  window.location.hash = n.link!;
-                                }}
-                                className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-amber-900 hover:underline shrink-0"
-                              >
-                                Open <ArrowRight className="w-3 h-3" />
-                              </button>
-                            )}
-                          </li>
-                        ))}
-                        {uniquePairs.length > 6 && (
-                          <li className="text-xs text-gray-500 px-3 py-1">+ {uniquePairs.length - 6} more in the notifications bell</li>
-                        )}
-                      </ul>
-                    )}
-                  </section>
-                );
-              })()}
-
-              <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex flex-col">
-                <div className="p-5 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div className="flex flex-col gap-0.5">
-                    <h2 className="text-base font-bold text-gray-900 m-0">Abandoned Cart Follow-up</h2>
-                    <p className="text-xs text-gray-400 m-0">Track captured carts and how fast the team is converting them.</p>
-                  </div>
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-sm font-semibold text-emerald-700 whitespace-nowrap">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />{dashboardConvertedCartCount} converted
-                  </span>
-                </div>
-                <div className="p-5 grid grid-cols-2 lg:grid-cols-4 gap-4">
-                  {dashboardCartStats.map((stat) => {
-                    const cartToneMap: Record<string, { icon: string; dot: string }> = {
-                      blue:   { icon: "bg-blue-50 text-blue-600",   dot: "bg-blue-500" },
-                      orange: { icon: "bg-orange-50 text-orange-600", dot: "bg-orange-500" },
-                      emerald:{ icon: "bg-emerald-50 text-emerald-600", dot: "bg-emerald-500" },
-                      rose:   { icon: "bg-rose-50 text-rose-600",   dot: "bg-rose-500" },
-                    };
-                    const ct = cartToneMap[stat.tone ?? "blue"] ?? cartToneMap.blue;
-                    return (
-                      <div className="flex flex-col gap-3 p-4 rounded-xl bg-gray-50 border border-gray-100" key={stat.label}>
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{stat.label}</span>
-                          <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${ct.icon}`}>
-                            <stat.icon className="w-3.5 h-3.5" />
+                        {flowRows.map((row) => (
+                          <div className="flex items-center gap-2 sm:gap-3" key={row.label}>
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${row.color}`} />
+                            <span className="text-[11px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wide w-16 sm:w-24 shrink-0">{row.label}</span>
+                            <span className="flex-1 h-2 rounded-full bg-gray-100 dark:bg-white/10 overflow-hidden min-w-0">
+                              <span className={`block h-full rounded-full ${row.color}`} style={{ width: `${Math.max(2, (Math.abs(row.value) / flowScale) * 100)}%` }} />
+                            </span>
+                            <strong className={`text-xs sm:text-sm font-bold tabular-nums text-right shrink-0 min-w-[4.5rem] sm:min-w-[6rem] ${row.label === "Net Profit" && netIsLoss ? "text-red-600" : "text-gray-900"}`}>{formatMoney(row.value)}</strong>
                           </div>
-                        </div>
-                        <strong className="text-2xl font-bold text-gray-900">{stat.value}</strong>
+                        ))}
                       </div>
+
+                      <div className="flex items-center gap-2 flex-wrap text-xs font-medium text-gray-500 pt-5 border-t border-gray-100">
+                        <span className="font-semibold text-gray-700">Customer pays</span><ArrowRight className="w-3 h-3" />
+                        <span>Revenue</span><ArrowRight className="w-3 h-3" />
+                        <span>− COGS ({dashboardCogsRate}%)</span><ArrowRight className="w-3 h-3" />
+                        <span>− Logistics</span><ArrowRight className="w-3 h-3" />
+                        <span>− Operating ({dashboardExpenseRate}%)</span><ArrowRight className="w-3 h-3" />
+                        <strong className="text-gray-900">Net Profit</strong>
+                      </div>
+                    </section>
+                  );
+                })()}
+                <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-3 sm:gap-4 content-start" aria-label="Business summary">
+                  {dashboardCards.filter((card) => card.label !== "Net Profit").map((card) => {
+                    const toneMap: Record<string, string> = {
+                      blue:     "bg-blue-50 text-blue-600",
+                      emerald:  "bg-emerald-50 text-emerald-600",
+                      violet:   "bg-violet-50 text-violet-600",
+                      orange:   "bg-orange-50 text-orange-600",
+                      teal:     "bg-teal-50 text-teal-600",
+                      positive: "bg-emerald-50 text-emerald-600",
+                      negative: "bg-red-50 text-red-600",
+                    };
+                    const iconClass = toneMap[card.tone] ?? toneMap.blue;
+                    const trendIsPositive = card.trend?.startsWith("+") || card.trend === "New";
+                    const trendClass = trendIsPositive
+                      ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                      : "bg-red-50 text-red-700 border border-red-200";
+                    return (
+                      <article className="dashboard-summary-card bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex items-start gap-4" key={card.label}>
+                        <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${iconClass}`}>
+                          <card.icon className="w-5 h-5" />
+                        </div>
+                        <div className="flex flex-col gap-1 min-w-0 flex-1">
+                          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{card.label}</span>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <strong className="text-2xl font-bold text-gray-900 leading-tight">{card.value}</strong>
+                            {card.trend && (
+                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-bold ${trendClass}`}>{card.trend}</span>
+                            )}
+                          </div>
+                          <span className="text-xs text-gray-400">{card.helper}</span>
+                        </div>
+                      </article>
                     );
                   })}
+                </section>
+                <div className="flex flex-col gap-4">
+                  {(() => {
+                    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+                    const stockNotifications = systemNotifications
+                      .filter((n) => n.type === "low_stock" && typeof n.link === "string" && n.link.includes("/state-stock") && new Date(n.createdAt).getTime() >= cutoff);
+                    const uniquePairs = Array.from(new Map(stockNotifications.map((n) => [n.link ?? n.id, n])).values());
+                    const hasAlerts = uniquePairs.length > 0;
+                    const accentClass = hasAlerts ? "border-amber-200" : "border-gray-200";
+                    const iconBgClass = hasAlerts ? "bg-amber-50 text-amber-600" : "bg-emerald-50 text-emerald-600";
+                    return (
+                      <section className={`bg-white rounded-xl border ${accentClass} shadow-sm p-5 flex flex-col gap-4`} aria-label="Smart stock health">
+                        <div className="flex items-start justify-between gap-3 flex-wrap">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${iconBgClass}`}>
+                              {hasAlerts ? <AlertTriangle className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
+                            </div>
+                            <div>
+                              <h2 className="text-base font-bold text-gray-900 m-0">Smart stock health</h2>
+                              <p className="text-xs text-gray-500 m-0 mt-0.5">
+                                {hasAlerts
+                                  ? `${uniquePairs.length} agent-hub state${uniquePairs.length === 1 ? "" : "s"} at risk based on the last 7 days of sales.`
+                                  : "No agent-hub stock at risk based on the last 7 days of sales."}
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={smartStockScanLoading}
+                            onClick={runSmartStockScan}
+                            className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                          >
+                            {smartStockScanLoading ? "Scanning..." : "Scan now"}
+                          </button>
+                        </div>
+                        {hasAlerts && (
+                          <ul className="flex flex-col gap-2 m-0 p-0 list-none">
+                            {uniquePairs.slice(0, 6).map((n) => (
+                              <li key={n.id} className="flex items-start justify-between gap-3 px-3 py-2 rounded-lg bg-amber-50/60 border border-amber-100">
+                                <div className="min-w-0">
+                                  <p className="text-sm font-semibold text-amber-900 m-0 truncate">{n.title ?? "Low stock alert"}</p>
+                                  <p className="text-xs text-amber-800/80 m-0 mt-0.5 truncate">{n.message}</p>
+                                </div>
+                                {n.link && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setActivePage("Inventory");
+                                      window.location.hash = n.link!;
+                                    }}
+                                    className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-amber-900 hover:underline shrink-0"
+                                  >
+                                    Open <ArrowRight className="w-3 h-3" />
+                                  </button>
+                                )}
+                              </li>
+                            ))}
+                            {uniquePairs.length > 6 && (
+                              <li className="text-xs text-gray-500 px-3 py-1">+ {uniquePairs.length - 6} more in the notifications bell</li>
+                            )}
+                          </ul>
+                        )}
+                      </section>
+                    );
+                  })()}
+                  {renderBreakEvenPanel(dashboardBreakEven, String(period), true)}
                 </div>
-                <div className="px-5 pb-4">
-                  <button className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#1F8FE0] hover:text-blue-700 transition-colors" onClick={() => setModal("carts")}>
+              </div>
+
+
+
+
+
+
+              {/* Cart recovery and the conversion model, side by side. */}
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+
+                <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-5" aria-label="Abandoned cart follow-up">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="flex flex-col gap-0.5">
+                      <h2 className="text-base font-bold text-gray-900 m-0">Abandoned Cart Follow-up</h2>
+                      <p className="text-xs text-gray-400 m-0">Captured carts and conversion pace</p>
+                    </div>
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-xs font-semibold text-emerald-700 whitespace-nowrap">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />{dashboardConvertedCartCount} converted
+                    </span>
+                  </div>
+                  {(() => {
+                    // Every bar is measured against the largest count, so the rows
+                    // read as shares of the same captured population.
+                    const counts = dashboardCartStats.map((stat) => Number(stat.value) || 0);
+                    const scale = Math.max(...counts, 1);
+                    const barMap: Record<string, string> = {
+                      blue: "bg-blue-300", orange: "bg-amber-400", emerald: "bg-emerald-400", rose: "bg-rose-300",
+                    };
+                    return (
+                      <div className="flex flex-col gap-3">
+                        {dashboardCartStats.map((stat, index) => (
+                          <div className="flex items-center gap-3" key={stat.label}>
+                            <stat.icon className="w-4 h-4 text-gray-400 shrink-0" />
+                            <span className="text-[11px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wide w-20 sm:w-28 shrink-0 leading-tight">{stat.label}</span>
+                            <span className="flex-1 h-7 rounded-md bg-gray-100 dark:bg-white/10 overflow-hidden min-w-0">
+                              <span className={`block h-full rounded-md ${barMap[stat.tone ?? "blue"] ?? barMap.blue}`} style={{ width: `${Math.max(2, (counts[index] / scale) * 100)}%` }} />
+                            </span>
+                            <strong className="text-lg font-bold text-gray-900 tabular-nums text-right shrink-0 min-w-[2.5rem]">{stat.value}</strong>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                  <button className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#1F8FE0] hover:text-blue-700 transition-colors self-start" onClick={() => setModal("carts")}>
                     Open abandoned carts <ArrowRight className="w-4 h-4" />
                   </button>
-                </div>
-              </section>
+                </section>
 
-              <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-5">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-violet-50 text-violet-600 flex items-center justify-center shrink-0">
-                    <Zap className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h2 className="text-base font-bold text-gray-900 m-0">Revenue Opportunity Simulator</h2>
-                    <p className="text-xs text-gray-400 m-0">Drag the slider to model conversion lift impact on revenue</p>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="flex flex-col gap-1 p-4 bg-blue-50 rounded-xl border border-blue-100">
-                    <span className="text-xs font-semibold text-blue-500 uppercase tracking-wide">Conversion rate</span>
-                    <strong className="text-2xl font-bold text-blue-900">{dashboardDeliveryRateExact.toFixed(1)}%</strong>
-                  </div>
-                  <div className="flex flex-col gap-1 p-4 bg-emerald-50 rounded-xl border border-emerald-100">
-                    <span className="text-xs font-semibold text-emerald-600 uppercase tracking-wide">Current revenue</span>
-                    <strong className="text-2xl font-bold text-emerald-900">{formatMoney(dashboardRevenue)}</strong>
-                  </div>
-                </div>
-                <label className="flex flex-col gap-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-medium text-gray-600">Lift slider</span>
-                    <span className="font-bold text-[#1F8FE0]">+{conversion}pp → {dashboardTargetConversion.toFixed(1)}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    className="w-full accent-[#1F8FE0]"
-                    min="0"
-                    max={dashboardConversionLiftMax}
-                    value={conversion}
-                    onChange={(event) => setConversion(Number(event.target.value))}
-                  />
-                </label>
-                <div className="flex items-center gap-2 flex-wrap">
-                  {[10, 20, 30, 100].map((rate) => (
-                    <button key={rate} className="!min-h-0 px-3 py-1 text-xs font-semibold border border-gray-200 bg-white text-gray-600 rounded-lg hover:border-[#1F8FE0] hover:text-[#1F8FE0] transition-colors" onClick={() => setConversion(Math.min(rate, dashboardConversionLiftMax))}>
-                      {rate === 100 ? "Max" : `+${rate}pp`}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex flex-col gap-2 pt-3 border-t border-gray-100">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-500">Projected revenue</span>
-                    <strong className="text-sm font-bold text-[#1F8FE0]">{projectedRevenue}</strong>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-500">Upside opportunity</span>
-                    <strong className="text-sm font-bold text-emerald-600">{formatMoney(dashboardOpportunity)}</strong>
-                  </div>
-                  <p className="text-xs text-gray-400 m-0">{Math.max(0, dashboardProjectedDelivered - dashboardDeliveredOrders.length).toFixed(1)} additional orders delivered at target rate.</p>
-                  {dashboardAOVFallback && (
-                    <p className="text-[11px] text-amber-600 m-0">No deliveries yet - projection uses average order value across captured orders.</p>
-                  )}
-                </div>
-              </section>
-
-              <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4" aria-label="Dashboard math rules">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-orange-50 text-orange-600 flex items-center justify-center shrink-0">
-                    <ChevronRight className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h2 className="text-base font-bold text-gray-900 m-0">Dashboard Math Rules</h2>
-                    <p className="text-xs text-gray-400 m-0">Revenue and profit use delivered-date recognition. Total orders and fulfillment still track the orders created in this period.</p>
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {[
-                    { label: "Revenue",       color: "blue",    formula: "SUM(grand total) for orders delivered in this period" },
-                    { label: "COGS",          color: "orange",  formula: "Unit cost × delivered quantity" },
-                    { label: "Logistics",     color: "amber",   formula: `${formatMoney(dashboardLogistics)} recognized delivery cost${dashboardLogistics > 0 && dashboardProfitSummary.recordedDeliveryExpense > 0 && dashboardLogistics === dashboardProfitSummary.recordedDeliveryExpense ? " (expense fallback)" : ""}` },
-                    { label: "Gross Profit",  color: "emerald", formula: `${formatMoney(dashboardRevenue)} − ${formatMoney(dashboardCogs)} − ${formatMoney(dashboardLogistics)} = ${formatMoney(dashboardGrossProfit)}` },
-                    { label: "Operating",     color: "violet",  formula: `${formatMoney(dashboardOperatingExpense)} expenses${dashboardSalesBonusEstimate > 0 ? ` incl. ${formatMoney(dashboardSalesBonusEstimate)} sales bonus est.` : ""}${dashboardManagerBonusExpense > 0 ? `${dashboardSalesBonusEstimate > 0 ? " + " : " incl. "}${formatMoney(dashboardManagerBonusExpense)} manager bonus` : ""}${dashboardNewEngineBonusEstimate > 0 ? ` (${formatMoney(dashboardNewEngineBonusEstimate)} of sales bonus is the engine)` : ""}` },
-                    { label: "Net Profit",    color: "rose",    formula: `${formatMoney(dashboardGrossProfit)} − ${formatMoney(dashboardOperatingExpense)} = ${formatMoney(dashboardNetProfit)}` },
-                    { label: "Fulfillment",   color: "teal",    formula: `${dashboardDeliveredCohortOrders.length} delivered / ${dashboardOrders.length} orders = ${dashboardDeliveryRateExact.toFixed(1)}%` },
-                    { label: "Net Margin",    color: "rose",    formula: `Net profit / revenue = ${dashboardNetMargin}%` },
-                  ].map(({ label, formula, color }) => {
-                    const dotMap: Record<string, string> = {
-                      blue: "bg-blue-500", orange: "bg-orange-500", emerald: "bg-emerald-500",
-                      violet: "bg-violet-500", teal: "bg-teal-500", rose: "bg-rose-500", amber: "bg-amber-500"
-                    };
-                    const labelMap: Record<string, string> = {
-                      blue: "text-blue-700", orange: "text-orange-700", emerald: "text-emerald-700",
-                      violet: "text-violet-700", teal: "text-teal-700", rose: "text-rose-700", amber: "text-amber-700"
-                    };
-                    return (
-                      <div key={label} className="flex flex-col gap-1.5 p-3.5 bg-gray-50 rounded-xl border border-gray-100">
-                        <div className="flex items-center gap-1.5">
-                          <span className={`w-2 h-2 rounded-full shrink-0 ${dotMap[color]}`} />
-                          <span className={`text-xs font-bold uppercase tracking-wide ${labelMap[color]}`}>{label}</span>
-                        </div>
-                        <span className="text-sm text-gray-600 leading-snug">{formula}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </section>
-
-              {renderBreakEvenPanel(dashboardBreakEven, String(period), true)}
-
-              <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4">
-                <div className="flex items-start justify-between flex-wrap gap-3">
-                  <div>
-                    <h2 className="text-base font-bold text-gray-900 m-0">When orders come in</h2>
-                    <p className="text-xs text-gray-400 m-0">{heatmapMetricLabel} by day &amp; hour · {heatmapWindowLabel} · Nigerian time (WAT)</p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
-                      {([["orders", "Orders"], ["delivered", "Delivered"], ["revenue", "Revenue"]] as const).map(([id, label]) => (
-                        <button key={id} onClick={() => setHeatmapMetric(id)} className={`!min-h-0 px-2.5 py-1 rounded transition-colors font-semibold ${heatmapMetric === id ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>{label}</button>
-                      ))}
+                <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-5" aria-label="Revenue simulator">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center shrink-0">
+                      <Zap className="w-5 h-5" />
                     </div>
-                    <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
-                      {([["dashboard", "Dashboard"], ["30", "30d"], ["90", "90d"], ["all", "All"]] as const).map(([id, label]) => (
-                        <button key={id} onClick={() => setHeatmapWindow(id)} className={`!min-h-0 px-2.5 py-1 rounded transition-colors font-semibold ${heatmapWindow === id ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>{label}</button>
-                      ))}
-                    </div>
-                    <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
-                      {([["hour", "Hourly"], ["3h", "3-hr"]] as const).map(([id, label]) => (
-                        <button key={id} onClick={() => setHeatmapGroup(id)} className={`!min-h-0 px-2.5 py-1 rounded transition-colors font-semibold ${heatmapGroup === id ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>{label}</button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                {orderHeatmap.total > 0 && (
-                  <div className="flex flex-col gap-2">
-                    <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold">
-                      {orderHeatmap.peak.value > 0 && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-orange-50 text-orange-700 px-2.5 py-1">🔥 Busiest: {heatmapDayLabels[orderHeatmap.peak.day]} {heatmapColLabel(orderHeatmap.peak.col)} ({formatHeatValue(orderHeatmap.peak.value)})</span>
-                      )}
-                    </div>
-                    {/* Full day ranking: busiest (green) → slowest (rose), with 2nd/3rd/… in between. */}
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-[11px] font-bold text-gray-500 mr-0.5">Days, busiest → slowest:</span>
-                      {heatmapDayLabels
-                        .map((label, i) => ({ label, value: orderHeatmap.dayTotals[i] }))
-                        .sort((a, b) => b.value - a.value)
-                        .map((d, rank, arr) => {
-                          const isTop = rank === 0 && d.value > 0;
-                          const isWorst = rank === arr.length - 1 && arr.length > 1;
-                          return (
-                            <span key={d.label} className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${isTop ? "bg-emerald-100 text-emerald-800" : isWorst ? "bg-rose-100 text-rose-700" : "bg-gray-100 text-gray-600"}`}>
-                              <span className="opacity-50">{rank + 1}.</span> {d.label} · {formatHeatValue(d.value)}{isWorst ? " · slowest" : ""}
-                            </span>
-                          );
-                        })}
-                    </div>
-                    {/* Time ranking: busiest → slowest. Hourly is capped (top 6 … slowest); 3-hr shows all 8. */}
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-[11px] font-bold text-gray-500 mr-0.5">Times, busiest → slowest:</span>
-                      {(() => {
-                        const ranked = Array.from({ length: orderHeatmap.cols }, (_, c) => ({ c, value: orderHeatmap.colTotals[c] }))
-                          .sort((a, b) => b.value - a.value);
-                        return ranked.map((item, rank) => {
-                          const isTop = rank === 0 && item.value > 0;
-                          const isWorst = rank === ranked.length - 1 && ranked.length > 1;
-                          return (
-                            <span key={item.c} className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${isTop ? "bg-emerald-100 text-emerald-800" : isWorst ? "bg-rose-100 text-rose-700" : "bg-gray-100 text-gray-600"}`}>
-                              <span className="opacity-50">{rank + 1}.</span> {heatmapColLabel(item.c)} · {formatHeatValue(item.value)}{isWorst ? " · slowest" : ""}
-                            </span>
-                          );
-                        });
-                      })()}
-                    </div>
-                  </div>
-                )}
-                {orderHeatmap.total === 0 ? (
-                  <p className="text-sm text-gray-400 m-0">No {heatmapMetric === "revenue" ? "delivered revenue" : heatmapMetric === "delivered" ? "delivered orders" : "orders"} in this window yet - widen the window or switch the metric.</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <div className={heatmapGroup === "3h" ? "min-w-[360px]" : "min-w-[640px]"}>
-                      <div className="flex items-center gap-1 mb-1 pl-10">
-                        {Array.from({ length: orderHeatmap.cols }, (_, c) => (
-                          <div key={c} className="flex-1 text-center text-[9px] text-gray-400">{(orderHeatmap.colSpan === 3 || c % 3 === 0) ? heatmapColLabel(c) : ""}</div>
-                        ))}
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        {orderHeatmap.grid.map((row, d) => (
-                          <div key={d} className="flex items-center gap-1">
-                            <div className="w-9 shrink-0 text-[11px] font-bold text-gray-500">{heatmapDayLabels[d]}</div>
-                            {row.map((value, c) => {
-                              const intensity = orderHeatmap.max > 0 ? value / orderHeatmap.max : 0;
-                              return (
-                                <div
-                                  key={c}
-                                  className="flex-1 aspect-square rounded-[3px] min-w-[14px]"
-                                  style={{ backgroundColor: value === 0 ? "rgba(148,163,184,0.12)" : `rgba(31,143,224,${0.18 + intensity * 0.82})` }}
-                                  title={`${heatmapDayLabels[d]} ${heatmapColLabel(c)} - ${formatHeatValue(value)}`}
-                                />
-                              );
-                            })}
-                          </div>
-                        ))}
-                      </div>
-                      <div className="flex items-center justify-end gap-1.5 mt-2 text-[10px] text-gray-400">
-                        <span>Fewer</span>
-                        {[0, 0.4, 0.65, 0.85, 1].map((a, i) => (
-                          <span key={i} className="w-3.5 h-3.5 rounded-[3px]" style={{ backgroundColor: i === 0 ? "rgba(148,163,184,0.12)" : `rgba(31,143,224,${a})` }} />
-                        ))}
-                        <span>More</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </section>
-
-              <section className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-                <article className="lg:col-span-3 bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4">
-                  <div className="flex items-center justify-between flex-wrap gap-2">
                     <div>
-                      <h2 className="text-base font-bold text-gray-900 m-0">Revenue Performance</h2>
-                      <p className="text-xs text-gray-400 m-0">
-                        {revPerfCompareMode === "periods" ? "Current vs previous" : "Status breakdown"} · {revPerfMode === "Cumulative" ? "Cumulative" : "Per-bucket"} · {effectiveGranularity} ·{" "}
-                        {revPerfStatuses.size === 1 ? Array.from(revPerfStatuses)[0] : `${revPerfStatuses.size} statuses`}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-x-4 gap-y-2 flex-wrap text-xs font-semibold text-gray-500">
-                      {revPerfSeries.map((series) => (
-                        <span key={series.key} className="flex items-center gap-1.5">
-                          <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ backgroundColor: series.color }} />
-                          {series.label}
-                        </span>
-                      ))}
+                      <h2 className="text-base font-bold text-gray-900 m-0">Revenue simulator</h2>
+                      <p className="text-xs text-gray-400 m-0">Model conversion lift</p>
                     </div>
                   </div>
-
-                  <div className="flex flex-wrap items-center gap-2 text-xs">
-                    {/* Compare mode */}
-                    <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
-                      {([
-                        { id: "periods", label: "Compare Periods" },
-                        { id: "statuses", label: "Break Down by Status" }
-                      ] as const).map((option) => (
-                        <button
-                          key={option.id}
-                          onClick={() => setRevPerfCompareMode(option.id)}
-                          className={`!min-h-0 px-2.5 py-1 rounded transition-colors font-semibold ${revPerfCompareMode === option.id ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
-                        >
-                          {option.label}
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Conversion lift</span>
+                      <span className="text-sm font-bold text-[#1F8FE0]">+{conversion}pp</span>
+                    </div>
+                    <div className="flex items-baseline gap-2 flex-wrap">
+                      <strong className="text-4xl font-bold text-gray-900 leading-none tabular-nums">{dashboardTargetConversion.toFixed(1)}%</strong>
+                      <span className="text-sm text-gray-400">current {dashboardDeliveryRateExact.toFixed(1)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      className="w-full accent-[#1F8FE0]"
+                      aria-label="Conversion lift"
+                      min="0"
+                      max={dashboardConversionLiftMax}
+                      value={conversion}
+                      onChange={(event) => setConversion(Number(event.target.value))}
+                    />
+                    <div className="grid grid-cols-4 gap-2">
+                      {[10, 20, 30, 100].map((rate) => (
+                        <button key={rate} className="!min-h-0 px-2 py-1.5 text-xs font-semibold border border-gray-200 bg-white text-gray-600 rounded-lg hover:border-[#1F8FE0] hover:text-[#1F8FE0] transition-colors" onClick={() => setConversion(Math.min(rate, dashboardConversionLiftMax))}>
+                          {rate === 100 ? "Max" : `+${rate}pp`}
                         </button>
                       ))}
                     </div>
-                    {/* Mode */}
-                    <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
-                      {(["Cumulative", "Daily"] as const).map((m) => (
-                        <button
-                          key={m}
-                          onClick={() => setRevPerfMode(m)}
-                          className={`!min-h-0 px-2.5 py-1 rounded transition-colors font-semibold ${revPerfMode === m ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
-                        >{m}</button>
-                      ))}
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg border border-gray-200">
+                      <span className="text-sm text-gray-500">Projected revenue</span>
+                      <strong className="text-sm font-bold text-gray-900 tabular-nums">{projectedRevenue}</strong>
                     </div>
-                    {/* Granularity */}
-                    <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
-                      {(["Day", "Week", "Month"] as const).map((g) => {
-                        const disabled = !dashboardChartUsesDays;
-                        return (
-                          <button
-                            key={g}
-                            disabled={disabled}
-                            onClick={() => setRevPerfGranularity(g)}
-                            className={`!min-h-0 px-2.5 py-1 rounded transition-colors font-semibold ${effectiveGranularity === g ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"} ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
-                            title={disabled ? "Available for multi-day periods" : undefined}
-                          >{g}</button>
-                        );
-                      })}
+                    <div className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg border border-emerald-200 bg-emerald-50/60">
+                      <span className="text-sm text-emerald-800">Upside opportunity</span>
+                      <strong className="text-sm font-bold text-emerald-700 tabular-nums">+{formatMoney(dashboardOpportunity)}</strong>
                     </div>
-                    {/* Status multi-select */}
-                    <div className="relative" ref={revPerfStatusRef}>
-                      <button
-                        onClick={() => setRevPerfStatusOpen((v) => !v)}
-                        className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-gray-200 bg-white text-gray-700 font-semibold hover:border-[#1F8FE0] transition-colors"
-                      >
-                        Statuses ({revPerfStatuses.size}) <ChevronDown className="w-3 h-3" />
-                      </button>
-                      {revPerfStatusOpen && (
-                        <div className="absolute left-0 top-full mt-1 z-20 w-56 max-w-[calc(100vw-2rem)] max-h-64 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg p-2 sm:left-auto sm:right-0">
-                          {orderStatuses.filter((s) => s !== "All Orders").map((s) => {
-                            const checked = revPerfStatuses.has(s);
-                            return (
-                              <label key={s} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-50 cursor-pointer">
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  onChange={() => {
-                                    const next = new Set(revPerfStatuses);
-                                    if (checked) next.delete(s); else next.add(s);
-                                    if (next.size === 0) return; // keep at least one
-                                    setRevPerfStatuses(next);
-                                  }}
-                                  className="accent-[#1F8FE0]"
-                                />
-                                <span className="text-xs text-gray-700">{s}</span>
-                              </label>
-                            );
-                          })}
-                          <div className="flex items-center justify-between gap-2 mt-1 pt-2 border-t border-gray-100 px-2">
-                            <button onClick={() => setRevPerfStatuses(new Set(["Delivered"]))} className="!min-h-0 text-xs font-semibold text-[#1F8FE0] hover:underline">Reset</button>
-                            <button onClick={() => setRevPerfStatusOpen(false)} className="!min-h-0 text-xs font-semibold text-gray-600 hover:underline">Done</button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                    {/* Previous line toggle */}
-                    {revPerfCompareMode === "periods" && (
-                      <label className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-gray-200 bg-white text-gray-700 font-semibold cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={revPerfShowPrevious}
-                          onChange={(e) => setRevPerfShowPrevious(e.target.checked)}
-                          className="accent-[#1F8FE0]"
-                        />
-                        Show previous
-                      </label>
+                    <p className="text-xs text-gray-400 m-0">{Math.max(0, dashboardProjectedDelivered - dashboardDeliveredOrders.length).toFixed(1)} additional orders delivered at target rate.</p>
+                    {dashboardAOVFallback && (
+                      <p className="flex items-start gap-1.5 text-[11px] text-amber-600 m-0">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
+                        No deliveries yet - projection uses average order value across captured orders.
+                      </p>
                     )}
                   </div>
+                </section>
 
-                  <ResponsiveContainer width="100%" height={260}>
-                    <LineChart data={dashboardRevenueChartData} margin={{ left: -24, right: 16, top: 8, bottom: 0 }}>
-                      <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "#9ca3af" }} />
-                      <YAxis hide domain={[0, dashboardRevenueChartMax]} />
-                      <Tooltip
-                        contentStyle={{ borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12 }}
-                        formatter={(value: number | string, name: string) => [
-                          formatMoney(typeof value === "number" ? value : Number(value)),
-                          name
-                        ]}
-                      />
-                      {revPerfSeries.map((series) => (
-                        <Line
-                          key={series.key}
-                          type="monotone"
-                          dataKey={series.key}
-                          name={series.label}
-                          stroke={series.color}
-                          strokeWidth={series.key === "current" ? 2.5 : 2}
-                          strokeDasharray={series.dash}
-                          dot={false}
-                        />
-                      ))}
-                    </LineChart>
-                  </ResponsiveContainer>
-                </article>
+              </div>
 
-                <article className="lg:col-span-2 bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4">
-                  <div>
-                    <h2 className="text-base font-bold text-gray-900 m-0">Top Selling Products</h2>
-                    <p className="text-xs text-gray-400 m-0">By delivered revenue this period</p>
+
+              {/* Detail panels. Each reads the same period filter as the rest of
+                  the page; the tabs only choose which one is on screen. */}
+              <div className="flex flex-col gap-4">
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-3 flex flex-col sm:flex-row sm:items-center gap-3 flex-wrap">
+                  <div className="grid grid-cols-2 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg gap-1">
+                    {([["timing", "Order timing"], ["revenue", "Revenue & products"], ["transactions", "Recent transactions"], ["math", "Dashboard math"]] as const).map(([id, label]) => (
+                      <button
+                        key={id}
+                        onClick={() => setDashboardTab(id)}
+                        aria-pressed={dashboardTab === id}
+                        className={`!min-h-0 px-3 py-1.5 text-xs sm:text-sm font-semibold rounded-md transition-colors whitespace-nowrap ${dashboardTab === id ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                      >{label}</button>
+                    ))}
                   </div>
-                  {dashboardOrdersByProduct.length === 0 ? (
-                    <div className="flex-1 flex flex-col items-center justify-center gap-3 py-8 text-gray-300">
-                      <EmptyProductsIcon />
-                      <p className="text-sm font-medium m-0 text-gray-400">No product sales in this period</p>
+                  <span className="text-xs text-gray-400">
+                    {dashboardTab === "timing" ? `Orders by day & hour · ${heatmapWindowLabel}`
+                      : dashboardTab === "revenue" ? "Revenue performance and best sellers"
+                      : dashboardTab === "transactions" ? "Latest orders in this period"
+                      : "How every figure on this page is calculated"}
+                  </span>
+                  {dashboardTab === "timing" && (
+                    <div className="flex flex-wrap items-center gap-2 text-xs sm:ml-auto">
+                      <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
+                        {([["orders", "Orders"], ["delivered", "Delivered"], ["revenue", "Revenue"]] as const).map(([id, label]) => (
+                          <button key={id} onClick={() => setHeatmapMetric(id)} className={`!min-h-0 px-2.5 py-1 rounded transition-colors font-semibold ${heatmapMetric === id ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>{label}</button>
+                        ))}
+                      </div>
+                      <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
+                        {([["dashboard", "Dashboard"], ["30", "30d"], ["90", "90d"], ["all", "All"]] as const).map(([id, label]) => (
+                          <button key={id} onClick={() => setHeatmapWindow(id)} className={`!min-h-0 px-2.5 py-1 rounded transition-colors font-semibold ${heatmapWindow === id ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>{label}</button>
+                        ))}
+                      </div>
+                      <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
+                        {([["hour", "Hourly"], ["3h", "3-hr"]] as const).map(([id, label]) => (
+                          <button key={id} onClick={() => setHeatmapGroup(id)} className={`!min-h-0 px-2.5 py-1 rounded transition-colors font-semibold ${heatmapGroup === id ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>{label}</button>
+                        ))}
+                      </div>
                     </div>
-                  ) : (
-                    <div className="flex flex-col gap-2">
-                      {dashboardOrdersByProduct.slice(0, 5).map((item, idx) => {
-                        const rankColors = ["bg-[#1F8FE0] text-white", "bg-emerald-500 text-white", "bg-orange-400 text-white", "bg-violet-400 text-white", "bg-teal-400 text-white"];
-                        return (
-                          <div className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0" key={item.productId}>
-                            <span className={`w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center shrink-0 ${rankColors[idx] ?? "bg-gray-200 text-gray-600"}`}>{idx + 1}</span>
-                            <span className="text-sm font-medium text-gray-700 truncate flex-1">{item.name}</span>
-                            <div className="flex flex-col items-end shrink-0">
-                              <em className="font-bold text-gray-900 not-italic text-sm">{formatMoney(item.revenue)}</em>
-                              <span className="text-xs text-gray-400">{item.count} delivered</span>
+                  )}
+                </div>
+
+                {dashboardTab === "timing" && (
+                  <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-6" aria-label="Order timing">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      {[
+                        {
+                          label: "Busiest hour",
+                          tone: "bg-blue-50 text-blue-600",
+                          icon: TrendingUp,
+                          value: orderHeatmap.peak.value > 0 ? `${heatmapDayLabels[orderHeatmap.peak.day]} ${heatmapColLabel(orderHeatmap.peak.col)}` : "-",
+                          helper: orderHeatmap.peak.value > 0 ? `${formatHeatValue(orderHeatmap.peak.value)} · peak of the week` : "No orders in this window",
+                        },
+                        {
+                          label: "Busiest day",
+                          tone: "bg-emerald-50 text-emerald-600",
+                          icon: CalendarDays,
+                          value: orderHeatmap.topDay.i >= 0 && orderHeatmap.topDay.n > 0 ? heatmapDayFullLabels[orderHeatmap.topDay.i] : "-",
+                          helper: orderHeatmap.topDay.n > 0 ? `${formatHeatValue(orderHeatmap.topDay.n)} · ${orderTimingSummary.share(orderHeatmap.topDay.n)}% of volume` : "No orders in this window",
+                        },
+                        {
+                          label: "Morning share",
+                          tone: "bg-amber-50 text-amber-600",
+                          icon: Clock,
+                          value: `${orderTimingSummary.share(orderTimingSummary.morning)}%`,
+                          helper: `${formatHeatValue(orderTimingSummary.morning)} of ${formatHeatValue(orderHeatmap.total)} land 7a-12p`,
+                        },
+                      ].map((stat) => (
+                        <div className="flex items-center gap-3 p-4 rounded-xl border border-gray-200" key={stat.label}>
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${stat.tone}`}>
+                            <stat.icon className="w-5 h-5" />
+                          </div>
+                          <div className="flex flex-col gap-0.5 min-w-0">
+                            <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">{stat.label}</span>
+                            <strong className="text-lg font-bold text-gray-900 leading-tight truncate">{stat.value}</strong>
+                            <span className="text-xs text-gray-400 truncate">{stat.helper}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {orderHeatmap.total === 0 ? (
+                      <p className="text-sm text-gray-400 m-0">No {heatmapMetric === "revenue" ? "delivered revenue" : heatmapMetric === "delivered" ? "delivered orders" : "orders"} in this window yet - widen the window or switch the metric.</p>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                          <div className="flex flex-col gap-3 min-w-0">
+                            <div className="flex items-center justify-between gap-3">
+                              <h3 className="text-sm font-bold text-gray-900 m-0">Order density</h3>
+                              <span className="text-xs text-gray-400">Nigerian time (WAT)</span>
                             </div>
+                            <div className="overflow-x-auto">
+                              <div className={heatmapGroup === "3h" ? "min-w-[360px]" : "min-w-[640px]"}>
+                                <div className="flex items-center gap-1 mb-1 pl-10">
+                                  {Array.from({ length: orderHeatmap.cols }, (_, c) => (
+                                    <div key={c} className="flex-1 text-center text-[9px] text-gray-400">{(orderHeatmap.colSpan === 3 || c % 3 === 0) ? heatmapColLabel(c) : ""}</div>
+                                  ))}
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  {orderHeatmap.grid.map((row, d) => (
+                                    <div key={d} className="flex items-center gap-1">
+                                      <div className="w-9 shrink-0 text-[11px] font-bold text-gray-500">{heatmapDayLabels[d]}</div>
+                                      {row.map((value, c) => {
+                                        const intensity = orderHeatmap.max > 0 ? value / orderHeatmap.max : 0;
+                                        return (
+                                          <div
+                                            key={c}
+                                            className="flex-1 aspect-square rounded-[3px] min-w-[14px]"
+                                            style={{ backgroundColor: value === 0 ? "rgba(148,163,184,0.12)" : `rgba(31,143,224,${0.18 + intensity * 0.82})` }}
+                                            title={`${heatmapDayLabels[d]} ${heatmapColLabel(c)} - ${formatHeatValue(value)}`}
+                                          />
+                                        );
+                                      })}
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="flex items-center justify-end gap-1.5 mt-2 text-[10px] text-gray-400">
+                                  <span>Fewer</span>
+                                  {[0, 0.4, 0.65, 0.85, 1].map((a, i) => (
+                                    <span key={i} className="w-3.5 h-3.5 rounded-[3px]" style={{ backgroundColor: i === 0 ? "rgba(148,163,184,0.12)" : `rgba(31,143,224,${a})` }} />
+                                  ))}
+                                  <span>More</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col gap-3 min-w-0">
+                            <div className="flex items-center justify-between gap-3">
+                              <h3 className="text-sm font-bold text-gray-900 m-0">Peak hours</h3>
+                              <span className="text-xs text-gray-400">top {Math.min(8, orderHeatmap.cols)} of {orderHeatmap.cols}</span>
+                            </div>
+                            <div className="flex flex-col gap-2">
+                              {orderTimingSummary.rankedCols.slice(0, 8).map((item, rank) => (
+                                <div className="flex items-center gap-3" key={item.c}>
+                                  <span className="text-[11px] font-bold text-gray-300 tabular-nums shrink-0">{String(rank + 1).padStart(2, "0")}</span>
+                                  <span className="text-xs font-bold text-gray-700 tabular-nums w-9 shrink-0">{heatmapColLabel(item.c)}</span>
+                                  <span className="flex-1 h-2 rounded-full bg-gray-100 dark:bg-white/10 overflow-hidden min-w-0">
+                                    <span className={`block h-full rounded-full ${rank === 0 ? "bg-emerald-500" : "bg-[#1F8FE0]"}`} style={{ width: `${Math.max(2, orderTimingSummary.rankedCols[0].value > 0 ? (item.value / orderTimingSummary.rankedCols[0].value) * 100 : 0)}%` }} />
+                                  </span>
+                                  <span className="text-xs text-gray-500 tabular-nums text-right shrink-0 min-w-[4.5rem]">{formatHeatValue(item.value)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                          <div className="flex flex-col gap-2 min-w-0">
+                            <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">By day</span>
+                            {orderHeatmap.dayTotals.map((value, d) => (
+                              <div className="flex items-center gap-3" key={d}>
+                                <span className="text-xs font-bold text-gray-500 w-8 shrink-0">{heatmapDayLabels[d]}</span>
+                                <span className="flex-1 h-2 rounded-full bg-gray-100 dark:bg-white/10 overflow-hidden min-w-0">
+                                  <span className="block h-full rounded-full bg-[#1F8FE0]" style={{ width: `${orderHeatmap.topDay.n > 0 ? (value / orderHeatmap.topDay.n) * 100 : 0}%` }} />
+                                </span>
+                                <span className="text-xs text-gray-500 tabular-nums text-right shrink-0 min-w-[4.5rem]">{value > 0 ? formatHeatValue(value) : "-"}</span>
+                              </div>
+                            ))}
+                          </div>
+
+                          {orderTimingSummary.quietCols.length > 0 && (
+                            <div className="flex flex-col gap-1.5 p-4 rounded-xl border border-gray-200 self-start">
+                              <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Quiet window</span>
+                              <p className="text-sm text-gray-600 m-0">
+                                {orderTimingSummary.quietCols.length} of {orderHeatmap.cols} {orderHeatmap.colSpan === 3 ? "blocks" : "hours"} saw no {heatmapMetric === "revenue" ? "revenue" : "orders"}
+                                {orderTimingSummary.quietCols.length <= 6 ? ` - ${orderTimingSummary.quietCols.map((c) => heatmapColLabel(c)).join(", ")} ${orderTimingSummary.quietCols.length === 1 ? "is" : "are"} fully dead this window.` : "."}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </section>
+                )}
+
+                {dashboardTab === "revenue" && (
+                  <>
+                  <section className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+                    <article className="lg:col-span-3 bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div>
+                          <h2 className="text-base font-bold text-gray-900 m-0">Revenue Performance</h2>
+                          <p className="text-xs text-gray-400 m-0">
+                            {revPerfCompareMode === "periods" ? "Current vs previous" : "Status breakdown"} · {revPerfMode === "Cumulative" ? "Cumulative" : "Per-bucket"} · {effectiveGranularity} ·{" "}
+                            {revPerfStatuses.size === 1 ? Array.from(revPerfStatuses)[0] : `${revPerfStatuses.size} statuses`}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-x-4 gap-y-2 flex-wrap text-xs font-semibold text-gray-500">
+                          {revPerfSeries.map((series) => (
+                            <span key={series.key} className="flex items-center gap-1.5">
+                              <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ backgroundColor: series.color }} />
+                              {series.label}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        {/* Compare mode */}
+                        <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
+                          {([
+                            { id: "periods", label: "Compare Periods" },
+                            { id: "statuses", label: "Break Down by Status" }
+                          ] as const).map((option) => (
+                            <button
+                              key={option.id}
+                              onClick={() => setRevPerfCompareMode(option.id)}
+                              className={`!min-h-0 px-2.5 py-1 rounded transition-colors font-semibold ${revPerfCompareMode === option.id ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+                        {/* Mode */}
+                        <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
+                          {(["Cumulative", "Daily"] as const).map((m) => (
+                            <button
+                              key={m}
+                              onClick={() => setRevPerfMode(m)}
+                              className={`!min-h-0 px-2.5 py-1 rounded transition-colors font-semibold ${revPerfMode === m ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                            >{m}</button>
+                          ))}
+                        </div>
+                        {/* Granularity */}
+                        <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
+                          {(["Day", "Week", "Month"] as const).map((g) => {
+                            const disabled = !dashboardChartUsesDays;
+                            return (
+                              <button
+                                key={g}
+                                disabled={disabled}
+                                onClick={() => setRevPerfGranularity(g)}
+                                className={`!min-h-0 px-2.5 py-1 rounded transition-colors font-semibold ${effectiveGranularity === g ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"} ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+                                title={disabled ? "Available for multi-day periods" : undefined}
+                              >{g}</button>
+                            );
+                          })}
+                        </div>
+                        {/* Status multi-select */}
+                        <div className="relative" ref={revPerfStatusRef}>
+                          <button
+                            onClick={() => setRevPerfStatusOpen((v) => !v)}
+                            className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-gray-200 bg-white text-gray-700 font-semibold hover:border-[#1F8FE0] transition-colors"
+                          >
+                            Statuses ({revPerfStatuses.size}) <ChevronDown className="w-3 h-3" />
+                          </button>
+                          {revPerfStatusOpen && (
+                            <div className="absolute left-0 top-full mt-1 z-20 w-56 max-w-[calc(100vw-2rem)] max-h-64 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg p-2 sm:left-auto sm:right-0">
+                              {orderStatuses.filter((s) => s !== "All Orders").map((s) => {
+                                const checked = revPerfStatuses.has(s);
+                                return (
+                                  <label key={s} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-50 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => {
+                                        const next = new Set(revPerfStatuses);
+                                        if (checked) next.delete(s); else next.add(s);
+                                        if (next.size === 0) return; // keep at least one
+                                        setRevPerfStatuses(next);
+                                      }}
+                                      className="accent-[#1F8FE0]"
+                                    />
+                                    <span className="text-xs text-gray-700">{s}</span>
+                                  </label>
+                                );
+                              })}
+                              <div className="flex items-center justify-between gap-2 mt-1 pt-2 border-t border-gray-100 px-2">
+                                <button onClick={() => setRevPerfStatuses(new Set(["Delivered"]))} className="!min-h-0 text-xs font-semibold text-[#1F8FE0] hover:underline">Reset</button>
+                                <button onClick={() => setRevPerfStatusOpen(false)} className="!min-h-0 text-xs font-semibold text-gray-600 hover:underline">Done</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        {/* Previous line toggle */}
+                        {revPerfCompareMode === "periods" && (
+                          <label className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-gray-200 bg-white text-gray-700 font-semibold cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={revPerfShowPrevious}
+                              onChange={(e) => setRevPerfShowPrevious(e.target.checked)}
+                              className="accent-[#1F8FE0]"
+                            />
+                            Show previous
+                          </label>
+                        )}
+                      </div>
+
+                      <ResponsiveContainer width="100%" height={260}>
+                        <LineChart data={dashboardRevenueChartData} margin={{ left: -24, right: 16, top: 8, bottom: 0 }}>
+                          <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "#9ca3af" }} />
+                          <YAxis hide domain={[0, dashboardRevenueChartMax]} />
+                          <Tooltip
+                            contentStyle={{ borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12 }}
+                            formatter={(value: number | string, name: string) => [
+                              formatMoney(typeof value === "number" ? value : Number(value)),
+                              name
+                            ]}
+                          />
+                          {revPerfSeries.map((series) => (
+                            <Line
+                              key={series.key}
+                              type="monotone"
+                              dataKey={series.key}
+                              name={series.label}
+                              stroke={series.color}
+                              strokeWidth={series.key === "current" ? 2.5 : 2}
+                              strokeDasharray={series.dash}
+                              dot={false}
+                            />
+                          ))}
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </article>
+
+                    <article className="lg:col-span-2 bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4">
+                      <div>
+                        <h2 className="text-base font-bold text-gray-900 m-0">Top Selling Products</h2>
+                        <p className="text-xs text-gray-400 m-0">By delivered revenue this period</p>
+                      </div>
+                      {dashboardOrdersByProduct.length === 0 ? (
+                        <div className="flex-1 flex flex-col items-center justify-center gap-3 py-8 text-gray-300">
+                          <EmptyProductsIcon />
+                          <p className="text-sm font-medium m-0 text-gray-400">No product sales in this period</p>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-2">
+                          {dashboardOrdersByProduct.slice(0, 5).map((item, idx) => {
+                            const rankColors = ["bg-[#1F8FE0] text-white", "bg-emerald-500 text-white", "bg-orange-400 text-white", "bg-violet-400 text-white", "bg-teal-400 text-white"];
+                            return (
+                              <div className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0" key={item.productId}>
+                                <span className={`w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center shrink-0 ${rankColors[idx] ?? "bg-gray-200 text-gray-600"}`}>{idx + 1}</span>
+                                <span className="text-sm font-medium text-gray-700 truncate flex-1">{item.name}</span>
+                                <div className="flex flex-col items-end shrink-0">
+                                  <em className="font-bold text-gray-900 not-italic text-sm">{formatMoney(item.revenue)}</em>
+                                  <span className="text-xs text-gray-400">{item.count} delivered</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </article>
+                  </section>
+                  </>
+                )}
+
+                {dashboardTab === "transactions" && (
+                  <>
+                  <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                    <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-gray-100 gap-3">
+                      <h3 className="text-base font-bold text-gray-900 m-0">Recent Transactions</h3>
+                      <button className="!min-h-0 text-[#1F8FE0] text-xs font-bold hover:underline whitespace-nowrap" onClick={() => setActivePage("Orders")}>View All Orders</button>
+                    </div>
+                    {dashboardOrders.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center gap-3 py-14">
+                        <ShoppingCart className="w-10 h-10 text-gray-300" />
+                        <p className="text-sm font-medium m-0 text-gray-400">No orders in this period</p>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="sm:hidden divide-y divide-gray-100">
+                          {[...dashboardOrders]
+                            .sort((a, b) => normalizeDateKey(b.createdAt ?? b.date).localeCompare(normalizeDateKey(a.createdAt ?? a.date)))
+                            .slice(0, 5)
+                            .map((order) => (
+                            <article key={order.id} className="px-4 py-4 flex flex-col gap-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="flex flex-col min-w-0">
+                                  <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Order</span>
+                                  <span className="text-base font-bold text-[#1F8FE0] truncate">{order.id}</span>
+                                </div>
+                                {renderOrderStatusSummary(order, "right")}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="font-semibold text-sm text-gray-900 m-0 truncate">{order.customer}</p>
+                                <p className="text-xs text-gray-400 m-0 mt-0.5">{order.phone}</p>
+                              </div>
+                              <div className="grid grid-cols-2 gap-3 text-xs">
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="font-semibold uppercase tracking-wide text-gray-400">Date</span>
+                                  <span className="text-gray-600">{formatOrderCreatedAt(order)}</span>
+                                </div>
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="font-semibold uppercase tracking-wide text-gray-400">Amount</span>
+                                  <span className="font-semibold text-gray-900">{formatProductMoney(order.amount, order.currency)}</span>
+                                </div>
+                                <div className="flex flex-col gap-0.5 col-span-2">
+                                  <span className="font-semibold uppercase tracking-wide text-gray-400">Delivery fee</span>
+                                  <span className="text-gray-600">{renderDeliveryFeeCell(order)}</span>
+                                </div>
+                              </div>
+                              <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={() => openOrderDetailPopup(order.id)}>
+                                <Eye className="w-4 h-4" /> View details
+                              </button>
+                            </article>
+                          ))}
+                        </div>
+
+                        <div className="hidden sm:block overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr>
+                              <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-medium text-gray-400">Order ID</th>
+                              <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-medium text-gray-400">Customer</th>
+                              <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-medium text-gray-400">Date</th>
+                              <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-medium text-gray-400">Amount</th>
+                              <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-medium text-gray-400">Delivery fee</th>
+                              <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-medium text-gray-400">Status</th>
+                              <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-medium text-gray-400">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {[...dashboardOrders]
+                              .sort((a, b) => normalizeDateKey(b.createdAt ?? b.date).localeCompare(normalizeDateKey(a.createdAt ?? a.date)))
+                              .slice(0, 5)
+                              .map((order) => (
+                              <tr key={order.id} className="border-t border-gray-100 hover:bg-gray-50/60 transition-colors cursor-pointer">
+                                <td className="px-3 sm:px-6 py-3 sm:py-4 font-semibold text-gray-500">{order.id}</td>
+                                <td className="px-3 sm:px-6 py-3 sm:py-4">
+                                  <p className="font-medium text-sm text-gray-900 m-0">{order.customer}</p>
+                                  <p className="text-xs text-gray-400 m-0 mt-0.5">{order.phone}</p>
+                                </td>
+                                <td className="px-3 sm:px-6 py-3 sm:py-4 text-xs text-gray-400 whitespace-nowrap">{formatOrderCreatedAt(order)}</td>
+                                <td className="px-3 sm:px-6 py-3 sm:py-4 font-semibold text-gray-900 whitespace-nowrap">{formatProductMoney(order.amount, order.currency)}</td>
+                                <td className="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap">{renderDeliveryFeeCell(order)}</td>
+                                <td className="px-3 sm:px-6 py-3 sm:py-4">
+                                  {renderOrderStatusSummary(order)}
+                                </td>
+                                <td className="px-3 sm:px-6 py-3 sm:py-4">
+                                  <button className="!min-h-0 w-8 h-8 flex items-center justify-center rounded-md hover:bg-gray-100 transition-colors text-gray-500" onClick={() => openOrderDetailPopup(order.id)}>
+                                    <Eye className="w-4 h-4" />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      </>
+                    )}
+                  </section>
+                  </>
+                )}
+
+                {dashboardTab === "math" && (
+                  <>
+                  <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4" aria-label="Dashboard math rules">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-orange-50 text-orange-600 flex items-center justify-center shrink-0">
+                        <ChevronRight className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h2 className="text-base font-bold text-gray-900 m-0">Dashboard Math Rules</h2>
+                        <p className="text-xs text-gray-400 m-0">Revenue and profit use delivered-date recognition. Total orders and fulfillment still track the orders created in this period.</p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {[
+                        { label: "Revenue",       color: "blue",    formula: "SUM(grand total) for orders delivered in this period" },
+                        { label: "COGS",          color: "orange",  formula: "Unit cost × delivered quantity" },
+                        { label: "Logistics",     color: "amber",   formula: `${formatMoney(dashboardLogistics)} recognized delivery cost${dashboardLogistics > 0 && dashboardProfitSummary.recordedDeliveryExpense > 0 && dashboardLogistics === dashboardProfitSummary.recordedDeliveryExpense ? " (expense fallback)" : ""}` },
+                        { label: "Gross Profit",  color: "emerald", formula: `${formatMoney(dashboardRevenue)} − ${formatMoney(dashboardCogs)} − ${formatMoney(dashboardLogistics)} = ${formatMoney(dashboardGrossProfit)}` },
+                        { label: "Operating",     color: "violet",  formula: `${formatMoney(dashboardOperatingExpense)} expenses${dashboardSalesBonusEstimate > 0 ? ` incl. ${formatMoney(dashboardSalesBonusEstimate)} sales bonus est.` : ""}${dashboardManagerBonusExpense > 0 ? `${dashboardSalesBonusEstimate > 0 ? " + " : " incl. "}${formatMoney(dashboardManagerBonusExpense)} manager bonus` : ""}${dashboardNewEngineBonusEstimate > 0 ? ` (${formatMoney(dashboardNewEngineBonusEstimate)} of sales bonus is the engine)` : ""}` },
+                        { label: "Net Profit",    color: "rose",    formula: `${formatMoney(dashboardGrossProfit)} − ${formatMoney(dashboardOperatingExpense)} = ${formatMoney(dashboardNetProfit)}` },
+                        { label: "Fulfillment",   color: "teal",    formula: `${dashboardDeliveredCohortOrders.length} delivered / ${dashboardOrders.length} orders = ${dashboardDeliveryRateExact.toFixed(1)}%` },
+                        { label: "Net Margin",    color: "rose",    formula: `Net profit / revenue = ${dashboardNetMargin}%` },
+                      ].map(({ label, formula, color }) => {
+                        const dotMap: Record<string, string> = {
+                          blue: "bg-blue-500", orange: "bg-orange-500", emerald: "bg-emerald-500",
+                          violet: "bg-violet-500", teal: "bg-teal-500", rose: "bg-rose-500", amber: "bg-amber-500"
+                        };
+                        const labelMap: Record<string, string> = {
+                          blue: "text-blue-700", orange: "text-orange-700", emerald: "text-emerald-700",
+                          violet: "text-violet-700", teal: "text-teal-700", rose: "text-rose-700", amber: "text-amber-700"
+                        };
+                        return (
+                          <div key={label} className="flex flex-col gap-1.5 p-3.5 bg-gray-50 rounded-xl border border-gray-100">
+                            <div className="flex items-center gap-1.5">
+                              <span className={`w-2 h-2 rounded-full shrink-0 ${dotMap[color]}`} />
+                              <span className={`text-xs font-bold uppercase tracking-wide ${labelMap[color]}`}>{label}</span>
+                            </div>
+                            <span className="text-sm text-gray-600 leading-snug">{formula}</span>
                           </div>
                         );
                       })}
                     </div>
-                  )}
-                </article>
-              </section>
-
-              <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-gray-100 gap-3">
-                  <h3 className="text-base font-bold text-gray-900 m-0">Recent Transactions</h3>
-                  <button className="!min-h-0 text-[#1F8FE0] text-xs font-bold hover:underline whitespace-nowrap" onClick={() => setActivePage("Orders")}>View All Orders</button>
-                </div>
-                {dashboardOrders.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center gap-3 py-14">
-                    <ShoppingCart className="w-10 h-10 text-gray-300" />
-                    <p className="text-sm font-medium m-0 text-gray-400">No orders in this period</p>
-                  </div>
-                ) : (
-                  <>
-                    <div className="sm:hidden divide-y divide-gray-100">
-                      {[...dashboardOrders]
-                        .sort((a, b) => normalizeDateKey(b.createdAt ?? b.date).localeCompare(normalizeDateKey(a.createdAt ?? a.date)))
-                        .slice(0, 5)
-                        .map((order) => (
-                        <article key={order.id} className="px-4 py-4 flex flex-col gap-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex flex-col min-w-0">
-                              <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Order</span>
-                              <span className="text-base font-bold text-[#1F8FE0] truncate">{order.id}</span>
-                            </div>
-                            {renderOrderStatusSummary(order, "right")}
-                          </div>
-                          <div className="min-w-0">
-                            <p className="font-semibold text-sm text-gray-900 m-0 truncate">{order.customer}</p>
-                            <p className="text-xs text-gray-400 m-0 mt-0.5">{order.phone}</p>
-                          </div>
-                          <div className="grid grid-cols-2 gap-3 text-xs">
-                            <div className="flex flex-col gap-0.5">
-                              <span className="font-semibold uppercase tracking-wide text-gray-400">Date</span>
-                              <span className="text-gray-600">{formatOrderCreatedAt(order)}</span>
-                            </div>
-                            <div className="flex flex-col gap-0.5">
-                              <span className="font-semibold uppercase tracking-wide text-gray-400">Amount</span>
-                              <span className="font-semibold text-gray-900">{formatProductMoney(order.amount, order.currency)}</span>
-                            </div>
-                            <div className="flex flex-col gap-0.5 col-span-2">
-                              <span className="font-semibold uppercase tracking-wide text-gray-400">Delivery fee</span>
-                              <span className="text-gray-600">{renderDeliveryFeeCell(order)}</span>
-                            </div>
-                          </div>
-                          <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={() => openOrderDetailPopup(order.id)}>
-                            <Eye className="w-4 h-4" /> View details
-                          </button>
-                        </article>
-                      ))}
-                    </div>
-
-                    <div className="hidden sm:block overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr>
-                          <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-medium text-gray-400">Order ID</th>
-                          <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-medium text-gray-400">Customer</th>
-                          <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-medium text-gray-400">Date</th>
-                          <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-medium text-gray-400">Amount</th>
-                          <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-medium text-gray-400">Delivery fee</th>
-                          <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-medium text-gray-400">Status</th>
-                          <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-medium text-gray-400">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {[...dashboardOrders]
-                          .sort((a, b) => normalizeDateKey(b.createdAt ?? b.date).localeCompare(normalizeDateKey(a.createdAt ?? a.date)))
-                          .slice(0, 5)
-                          .map((order) => (
-                          <tr key={order.id} className="border-t border-gray-100 hover:bg-gray-50/60 transition-colors cursor-pointer">
-                            <td className="px-3 sm:px-6 py-3 sm:py-4 font-semibold text-gray-500">{order.id}</td>
-                            <td className="px-3 sm:px-6 py-3 sm:py-4">
-                              <p className="font-medium text-sm text-gray-900 m-0">{order.customer}</p>
-                              <p className="text-xs text-gray-400 m-0 mt-0.5">{order.phone}</p>
-                            </td>
-                            <td className="px-3 sm:px-6 py-3 sm:py-4 text-xs text-gray-400 whitespace-nowrap">{formatOrderCreatedAt(order)}</td>
-                            <td className="px-3 sm:px-6 py-3 sm:py-4 font-semibold text-gray-900 whitespace-nowrap">{formatProductMoney(order.amount, order.currency)}</td>
-                            <td className="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap">{renderDeliveryFeeCell(order)}</td>
-                            <td className="px-3 sm:px-6 py-3 sm:py-4">
-                              {renderOrderStatusSummary(order)}
-                            </td>
-                            <td className="px-3 sm:px-6 py-3 sm:py-4">
-                              <button className="!min-h-0 w-8 h-8 flex items-center justify-center rounded-md hover:bg-gray-100 transition-colors text-gray-500" onClick={() => openOrderDetailPopup(order.id)}>
-                                <Eye className="w-4 h-4" />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  </section>
                   </>
                 )}
-              </section>
+              </div>
+
+
+
+
 
               </div>
             </>
