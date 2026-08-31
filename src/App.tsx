@@ -9772,6 +9772,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Which of the four detail panels the dashboard is showing. Purely a view
   // preference - every panel reads the same period filter as the rest of the page.
   const [dashboardTab, setDashboardTab] = useState<"timing" | "revenue" | "transactions" | "math">("timing");
+  const [dashboardTransactionSearch, setDashboardTransactionSearch] = useState("");
+  const [dashboardTransactionStatus, setDashboardTransactionStatus] = useState<"All" | "New" | "Delivered" | "Failed">("All");
+  const [dashboardTransactionPage, setDashboardTransactionPage] = useState(1);
   // Target-profit planner: a net-profit goal for the period; the break-even panel
   // goal-seeks the deliveries + delivery rate needed to hit it.
   const [profitTargetInput, setProfitTargetInput] = useState<string>(() =>
@@ -18984,6 +18987,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     .filter(o => !o.reviewHold)
     .filter(o => matchesProductFilter(o.productId, o.productName, dashboardProductIds))
     .filter(o => isInPeriod(orderCreatedKey(o), period, dateRange));
+  const dashboardTransactionMatches = dashboardOrders.filter((order) => {
+    const status = order.status ?? "New";
+    if (dashboardTransactionStatus !== "All" && status !== dashboardTransactionStatus) return false;
+    const query = dashboardTransactionSearch.trim().toLowerCase();
+    if (!query) return true;
+    return String(order.id).toLowerCase().includes(query) || order.customer.toLowerCase().includes(query) || order.phone.includes(query);
+  });
+  const dashboardTransactionPageSize = 5;
+  const dashboardTransactionPages = Math.max(1, Math.ceil(dashboardTransactionMatches.length / dashboardTransactionPageSize));
+  const dashboardTransactionCurrentPage = Math.min(dashboardTransactionPage, dashboardTransactionPages);
+  const dashboardTransactionRows = [...dashboardTransactionMatches]
+    .sort((a, b) => normalizeDateKey(b.createdAt ?? b.date).localeCompare(normalizeDateKey(a.createdAt ?? a.date)))
+    .slice((dashboardTransactionCurrentPage - 1) * dashboardTransactionPageSize, dashboardTransactionCurrentPage * dashboardTransactionPageSize);
   const deliveredOrderRows = trackedOrders.filter((order) => (order.status ?? "New") === "Delivered");
   const deliveredInPeriodRows = deliveredOrderRows.filter((order) => isInPeriod(orderDeliveredKey(order), deliveriesPeriod, deliveriesDateRange));
   // Per-delivered-order economics for the Deliveries list, as TWO figures:
@@ -74890,6 +74906,17 @@ ${waybillLineItems(w).length > 1
 
                 {dashboardTab === "transactions" && (
                   <>
+                  <div className="flex flex-wrap items-center gap-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
+                    <div className="relative min-w-[240px] flex-1">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                      <input className="w-full rounded-lg border border-gray-200 bg-gray-50 py-2 pl-9 pr-3 text-sm" placeholder="Filter by order, name or phone..." value={dashboardTransactionSearch} onChange={(e) => { setDashboardTransactionSearch(e.target.value); setDashboardTransactionPage(1); }} />
+                    </div>
+                    <div className="inline-flex items-center gap-1 rounded-lg bg-gray-100 p-1">
+                      {(["All", "New", "Delivered", "Failed"] as const).map((status) => <button key={status} type="button" className={`!min-h-0 rounded-md px-3 py-2 text-xs font-semibold ${dashboardTransactionStatus === status ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"}`} onClick={() => { setDashboardTransactionStatus(status); setDashboardTransactionPage(1); }}>{status} <span className="ml-1 text-gray-400">{status === "All" ? dashboardOrders.length : dashboardOrders.filter((o) => (o.status ?? "New") === status).length}</span></button>)}
+                    </div>
+                    <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700">Sort</button>
+                    <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700" onClick={() => exportReport()}>Export</button>
+                  </div>
                   <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                     <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-gray-100 gap-3">
                       <h3 className="text-base font-bold text-gray-900 m-0">Recent Transactions</h3>
@@ -74903,10 +74930,7 @@ ${waybillLineItems(w).length > 1
                     ) : (
                       <>
                         <div className="sm:hidden divide-y divide-gray-100">
-                          {[...dashboardOrders]
-                            .sort((a, b) => normalizeDateKey(b.createdAt ?? b.date).localeCompare(normalizeDateKey(a.createdAt ?? a.date)))
-                            .slice(0, 5)
-                            .map((order) => (
+                          {dashboardTransactionRows.map((order) => (
                             <article key={order.id} className="px-4 py-4 flex flex-col gap-3">
                               <div className="flex items-start justify-between gap-3">
                                 <div className="flex flex-col min-w-0">
@@ -74954,10 +74978,7 @@ ${waybillLineItems(w).length > 1
                             </tr>
                           </thead>
                           <tbody>
-                            {[...dashboardOrders]
-                              .sort((a, b) => normalizeDateKey(b.createdAt ?? b.date).localeCompare(normalizeDateKey(a.createdAt ?? a.date)))
-                              .slice(0, 5)
-                              .map((order) => (
+                            {dashboardTransactionRows.map((order) => (
                               <tr key={order.id} className="border-t border-gray-100 hover:bg-gray-50/60 transition-colors cursor-pointer">
                                 <td className="px-3 sm:px-6 py-3 sm:py-4 font-semibold text-gray-500">{order.id}</td>
                                 <td className="px-3 sm:px-6 py-3 sm:py-4">
@@ -74979,6 +75000,14 @@ ${waybillLineItems(w).length > 1
                             ))}
                           </tbody>
                         </table>
+                      </div>
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 px-4 py-3 text-xs text-gray-400 sm:px-6">
+                        <span>Showing {dashboardTransactionRows.length} of {dashboardTransactionMatches.length} orders · {formatMoney(dashboardTransactionRows.reduce((sum, order) => sum + order.amount, 0))} captured on this page</span>
+                        <div className="flex items-center gap-1">
+                          <button type="button" disabled={dashboardTransactionCurrentPage <= 1} onClick={() => setDashboardTransactionPage((page) => Math.max(1, page - 1))} className="!min-h-0 rounded-lg border border-gray-200 px-3 py-1.5 disabled:opacity-40">‹</button>
+                          <span className="px-2 font-semibold text-gray-600">{dashboardTransactionCurrentPage} / {dashboardTransactionPages}</span>
+                          <button type="button" disabled={dashboardTransactionCurrentPage >= dashboardTransactionPages} onClick={() => setDashboardTransactionPage((page) => Math.min(dashboardTransactionPages, page + 1))} className="!min-h-0 rounded-lg border border-gray-200 px-3 py-1.5 disabled:opacity-40">›</button>
+                        </div>
                       </div>
                       </>
                     )}
