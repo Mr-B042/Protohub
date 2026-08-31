@@ -74055,7 +74055,7 @@ ${waybillLineItems(w).length > 1
                       content; modals (z-[70]) still win. */}
                   <div className="fixed inset-0 z-[59]" onClick={() => setShowNotifPanel(false)} />
                   {/* Panel */}
-                  <div className="fixed left-2 right-2 top-[60px] z-[60] bg-white rounded-2xl shadow-2xl border border-gray-100 flex flex-col overflow-hidden sm:left-auto sm:right-4 sm:top-16 sm:w-[380px]" style={{ maxHeight: "480px" }}>
+                  <div className="fixed left-auto right-2 top-[60px] z-[60] w-[calc(100vw-1rem)] max-w-[380px] bg-white rounded-2xl shadow-2xl border border-gray-100 flex flex-col overflow-hidden sm:right-4 sm:top-16" style={{ maxHeight: "min(480px, calc(100dvh - 5rem))" }}>
                     {/* Header */}
                     <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
                       <div>
@@ -74277,7 +74277,7 @@ ${waybillLineItems(w).length > 1
 
               {/* Top band: the headline figure, the supporting KPIs, and the
                   two health readouts, side by side on a wide screen. */}
-              <div className="grid grid-cols-1 xl:grid-cols-[1.5fr_1fr_1fr] gap-4 items-start">
+              <div className="grid min-w-0 grid-cols-1 xl:grid-cols-[1.5fr_1fr_1fr] gap-4 items-start">
                 {(() => {
                   const netCard = dashboardCards.find((card) => card.label === "Net Profit");
                   const netTrend = netCard?.trend ?? "";
@@ -74294,7 +74294,7 @@ ${waybillLineItems(w).length > 1
                   ];
                   const flowScale = Math.max(...flowRows.map((row) => Math.abs(row.value)), 1);
                   return (
-                    <section className="dashboard-banner-card bg-white rounded-xl border border-gray-200 shadow-sm p-5 sm:p-6 flex flex-col gap-5" aria-label="Net profit and money flow">
+                    <section className="dashboard-banner-card min-w-0 bg-white rounded-xl border border-gray-200 shadow-sm p-5 sm:p-6 flex flex-col gap-5" aria-label="Net profit and money flow">
                       <div className="flex flex-col gap-1">
                         <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Net Profit · {selectedPeriodLabel}</span>
                         <div className="flex items-center gap-3 flex-wrap">
@@ -74334,7 +74334,7 @@ ${waybillLineItems(w).length > 1
                     </section>
                   );
                 })()}
-                <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-3 sm:gap-4 content-start" aria-label="Business summary">
+                <section className="grid min-w-0 grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-3 sm:gap-4 content-start" aria-label="Business summary">
                   {dashboardCards.filter((card) => card.label !== "Net Profit").map((card) => {
                     const toneMap: Record<string, string> = {
                       blue:     "bg-blue-50 text-blue-600",
@@ -74369,7 +74369,7 @@ ${waybillLineItems(w).length > 1
                     );
                   })}
                 </section>
-                <div className="flex flex-col gap-4">
+                <div className="min-w-0 flex flex-col gap-4">
                   {(() => {
                     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
                     const stockNotifications = systemNotifications
@@ -74379,7 +74379,7 @@ ${waybillLineItems(w).length > 1
                     const accentClass = hasAlerts ? "border-amber-200" : "border-gray-200";
                     const iconBgClass = hasAlerts ? "bg-amber-50 text-amber-600" : "bg-emerald-50 text-emerald-600";
                     return (
-                      <section className={`bg-white rounded-xl border ${accentClass} shadow-sm p-5 flex flex-col gap-4`} aria-label="Smart stock health">
+                      <section className={`min-w-0 bg-white rounded-xl border ${accentClass} shadow-sm p-5 flex flex-col gap-4`} aria-label="Smart stock health">
                         <div className="flex items-start justify-between gap-3 flex-wrap">
                           <div className="flex items-center gap-3">
                             <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${iconBgClass}`}>
@@ -74409,7 +74409,7 @@ ${waybillLineItems(w).length > 1
                               <li key={n.id} className="flex items-start justify-between gap-3 px-3 py-2 rounded-lg bg-amber-50/60 border border-amber-100">
                                 <div className="min-w-0">
                                   <p className="text-sm font-semibold text-amber-900 m-0 truncate">{n.title ?? "Low stock alert"}</p>
-                                  <p className="text-xs text-amber-800/80 m-0 mt-0.5 truncate">{n.message}</p>
+                                  <p className="text-xs text-amber-800/80 m-0 mt-0.5 break-words line-clamp-2">{n.message}</p>
                                 </div>
                                 {n.link && (
                                   <button
