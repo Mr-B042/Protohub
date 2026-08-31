@@ -8390,6 +8390,27 @@ html.dark,
   backdrop-filter: blur(10px);
 }
 
+/* Admin dashboard: the title and its controls ride as one sticky band, and the
+   scrolling content below sits on a tinted ground so the band reads as chrome
+   rather than as one more card. */
+.dashboard-ground {
+  background: #f4f6f9;
+}
+
+.dashboard-sticky {
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(8px);
+}
+
+.dark .dashboard-ground {
+  background: hsl(210 34% 8%);
+}
+
+.dark .dashboard-sticky {
+  background: rgba(4, 12, 20, 0.94);
+  border-bottom-color: hsl(var(--border));
+}
+
 .dark .dashboard-hero {
   background: transparent;
   border: 0;
