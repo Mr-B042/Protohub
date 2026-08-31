@@ -9292,6 +9292,63 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     orderTarget: "", deliveredTarget: "", piecesTarget: "", deliveryRateTarget: "", adSpendCeiling: "",
     baseReward: ""
   });
+  type TargetDraft = typeof targetDraft;
+  type LinkedTargetKey = "orderTarget" | "deliveredTarget" | "deliveryRateTarget";
+  const targetNumber = (value: string) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+  };
+  const roundTargetMoney = (value: number) => {
+    if (value <= 0) return 0;
+    const step = value >= 1_000_000 ? 50_000 : value >= 100_000 ? 10_000 : 1_000;
+    return Math.round(value / step) * step;
+  };
+  const linkedTargetDraft = (draft: TargetDraft, key: LinkedTargetKey, value: string): TargetDraft => {
+    const next = { ...draft, [key]: value };
+    const orders = targetNumber(next.orderTarget);
+    const delivered = targetNumber(next.deliveredTarget);
+    const rate = targetNumber(next.deliveryRateTarget);
+    if (key === "deliveredTarget" && orders > 0) {
+      next.deliveryRateTarget = String(Math.round((delivered / orders) * 1000) / 10);
+    } else if (key === "deliveryRateTarget" && orders > 0) {
+      next.deliveredTarget = String(Math.round(orders * rate / 100));
+    } else if (key === "orderTarget" && orders > 0) {
+      // Rate is the planning intent when the order volume changes; recompute
+      // the whole-number deliveries required to achieve it.
+      next.deliveredTarget = String(Math.round(orders * rate / 100));
+      next.deliveryRateTarget = String(Math.round((targetNumber(next.deliveredTarget) / orders) * 1000) / 10);
+    }
+
+    // Once history has supplied a planning model, preserve its economics when
+    // the Owner asks for more volume. Contribution and pieces move with the
+    // delivery goal; advertising ceiling moves with placed orders. These are
+    // still editable fields, so the Owner can override the recalculated values
+    // after choosing the desired delivery/order target.
+    const model = targetSuggestion?.suggested;
+    if (model) {
+      const nextDelivered = targetNumber(next.deliveredTarget);
+      if (model.orderTarget > 0 && key === "orderTarget") {
+        const orderFactor = orders / model.orderTarget;
+        next.adSpendCeiling = String(roundTargetMoney(model.adSpendCeiling * orderFactor));
+      }
+      if (model.deliveredTarget > 0 && (key === "deliveredTarget" || key === "deliveryRateTarget" || key === "orderTarget")) {
+        const deliveryFactor = nextDelivered / model.deliveredTarget;
+        // Contribution is AFTER advertising. Scale the delivery-driven amount
+        // before ads, then deduct the (possibly newly scaled) ad ceiling once;
+        // scaling after-ad contribution directly would incorrectly multiply a
+        // fixed advertising budget when only the delivery rate changed.
+        const contributionBeforeAds = model.contributionTarget + model.adSpendCeiling;
+        const nextContribution = Math.max(0, contributionBeforeAds * deliveryFactor - targetNumber(next.adSpendCeiling));
+        const minimumRatio = model.contributionTarget > 0 ? model.contributionMinimum / model.contributionTarget : 0.9;
+        const exceptionalRatio = model.contributionTarget > 0 ? model.contributionExceptional / model.contributionTarget : 1.1;
+        next.contributionTarget = String(roundTargetMoney(nextContribution));
+        next.contributionMinimum = String(roundTargetMoney(nextContribution * minimumRatio));
+        next.contributionExceptional = String(roundTargetMoney(nextContribution * exceptionalRatio));
+        next.piecesTarget = String(Math.round(model.piecesTarget * deliveryFactor));
+      }
+    }
+    return next;
+  };
   const [deliveryGoals, setDeliveryGoals] = useState<DeliveryGoalsView | null>(null);
   const [deliveryGoalProductId, setDeliveryGoalProductId] = useState<string | null>(null);
   const [deliveryGoalSaving, setDeliveryGoalSaving] = useState(false);
@@ -9430,6 +9487,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         adSpendCeiling: "", baseReward: ""
       });
     } else {
+      const effectiveDeliveryRate = target.orderTarget > 0
+        ? Math.round((target.deliveredTarget / target.orderTarget) * 1000) / 10
+        : target.deliveryRateTarget;
       setTargetEditingId(target.id);
       setTargetDraft({
         productId: target.productId,
@@ -9441,7 +9501,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         orderTarget: String(target.orderTarget || ""),
         deliveredTarget: String(target.deliveredTarget || ""),
         piecesTarget: String(target.piecesTarget || ""),
-        deliveryRateTarget: String(target.deliveryRateTarget || ""),
+        deliveryRateTarget: String(effectiveDeliveryRate || ""),
         adSpendCeiling: String(target.adSpendCeiling || ""),
         baseReward: String(target.incentive?.baseReward || "")
       });
@@ -31187,14 +31247,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   {label}
                   <input
                     type={type}
+                    min={type === "number" ? 0 : undefined}
+                    max={key === "deliveryRateTarget" ? 100 : undefined}
+                    step={key === "deliveryRateTarget" ? 0.1 : key === "orderTarget" || key === "deliveredTarget" || key === "piecesTarget" ? 1 : undefined}
                     className="mt-1 w-full rounded-lg border border-gray-200 px-2.5 py-2 text-sm font-semibold text-gray-800 disabled:bg-gray-100"
                     disabled={Boolean(targetEditingId) && (key === "periodStart" || key === "periodEnd")}
                     value={targetDraft[key]}
-                    onChange={(e) => setTargetDraft((d) => ({ ...d, [key]: e.target.value }))}
+                    onChange={(e) => setTargetDraft((d) => (
+                      key === "orderTarget" || key === "deliveredTarget" || key === "deliveryRateTarget"
+                        ? linkedTargetDraft(d, key, e.target.value)
+                        : { ...d, [key]: e.target.value }
+                    ))}
                   />
                 </label>
               ))}
             </div>
+            {targetNumber(targetDraft.orderTarget) > 0 && (
+              <div className={`mt-3 rounded-xl border px-3 py-2 text-xs font-semibold ${targetNumber(targetDraft.deliveredTarget) > targetNumber(targetDraft.orderTarget) ? "border-rose-200 bg-rose-50 text-rose-700" : "border-blue-100 bg-blue-50/60 text-blue-700"}`}>
+                {targetNumber(targetDraft.deliveredTarget) > targetNumber(targetDraft.orderTarget)
+                  ? "Delivered target cannot exceed orders placed."
+                  : `${targetDraft.deliveredTarget || 0} delivered ÷ ${targetDraft.orderTarget} orders = ${targetDraft.deliveryRateTarget || 0}%. Delivery changes also revise contribution and pieces from the history model; order changes revise the ad ceiling. Every result remains editable.`}
+              </div>
+            )}
             <div className="mt-4 flex items-center gap-2">
               <button
                 className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-black text-white disabled:opacity-50"

@@ -112,19 +112,28 @@ export function suggestTargets(
 
   const build = (uplift: number): SuggestedTargets => {
     const contribution = roundMoney(scale(perDay((m) => m.contribution), uplift));
+    const orderTarget = Math.round(scale(perDay((m) => m.ordersPlaced), uplift));
+    // Keep the three delivery fields mathematically coherent. Orders and
+    // deliveries used to be rounded independently while the rate retained the
+    // unrounded historical ratio, producing combinations such as 118 / 75 /
+    // 64.1% even though 75 ÷ 118 is 63.6%.
+    const deliveredTarget = Math.round(orderTarget * deliveryRate / 100);
+    const effectiveDeliveryRate = orderTarget > 0
+      ? Math.round((deliveredTarget / orderTarget) * 1000) / 10
+      : 0;
     return {
       contributionTarget: contribution,
       // The bands sit either side of the target by the same spread, so the
       // ladder stays symmetrical whatever the Owner sets the target to.
       contributionMinimum: roundMoney(contribution * (1 - levelSpreadPct / 100)),
       contributionExceptional: roundMoney(contribution * (1 + levelSpreadPct / 100)),
-      orderTarget: Math.round(scale(perDay((m) => m.ordersPlaced), uplift)),
-      deliveredTarget: Math.round(scale(perDay((m) => m.delivered), uplift)),
+      orderTarget,
+      deliveredTarget,
       piecesTarget: Math.round(scale(perDay((m) => m.pieces), uplift)),
       // Held at the historical rate: orders and deliveries are both lifted by
       // the same uplift, so the RATIO between them does not move. Stretching
       // the rate as well would be a second, hidden stretch on top.
-      deliveryRateTarget: deliveryRate,
+      deliveryRateTarget: effectiveDeliveryRate,
       // Scales with volume: more orders genuinely need more advertising, and a
       // ceiling frozen while volume grows is one nobody can work inside.
       adSpendCeiling: roundMoney(scale(perDay((m) => m.adSpend), uplift))
@@ -147,7 +156,10 @@ export function suggestTargets(
       + "so a part-month neither inflates nor depresses the result."
     );
   }
-  notes.push(`Stretch of ${stretchPct}% applied to every volume lever; delivery rate held at the historical ${deliveryRate}%.`);
+  notes.push(
+    `Stretch of ${stretchPct}% applied to every volume lever; delivery rate held near the historical ${deliveryRate}%. `
+    + `The displayed rate is recalculated from the whole-number order and delivery targets.`
+  );
 
   if (commissionsLiveFrom) {
     const affected = usable.filter((m) => m.periodStart < commissionsLiveFrom);

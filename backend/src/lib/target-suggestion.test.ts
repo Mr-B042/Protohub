@@ -49,6 +49,20 @@ test("delivery rate is NOT stretched a second time", () => {
   assert.equal(out.baseline.deliveryRateTarget, 75);
 });
 
+test("suggested orders, deliveries and rate always reconcile after rounding", () => {
+  const july = month({ monthKey: "2026-07", days: 31, ordersPlaced: 81, delivered: 60 });
+  const august = month({ monthKey: "2026-08", days: 30, ordersPlaced: 103, delivered: 58 });
+  const out = suggestTargets([july, august], "2026-09-01", "2026-09-30", 30);
+
+  assert.equal(out.suggested.orderTarget, 118);
+  assert.equal(out.suggested.deliveredTarget, 76);
+  assert.equal(out.suggested.deliveryRateTarget, 64.4);
+  assert.equal(
+    out.suggested.deliveryRateTarget,
+    Math.round((out.suggested.deliveredTarget / out.suggested.orderTarget) * 1000) / 10
+  );
+});
+
 test("the incentive bands sit symmetrically around whatever target is proposed", () => {
   const m = month({ monthKey: "2026-07", days: 31, ordersPlaced: 620, delivered: 465, contribution: 3_100_000 });
   const out = suggestTargets([m], "2026-08-01", "2026-08-31", 0, 10);

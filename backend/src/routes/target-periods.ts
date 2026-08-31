@@ -68,6 +68,19 @@ const refineTargetLevels = (
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["contributionExceptional"],
       message: "The exceptional level cannot be below the target." });
   }
+  if (value.orderTarget != null && value.deliveredTarget != null
+      && value.orderTarget > 0 && value.deliveredTarget > value.orderTarget) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["deliveredTarget"],
+      message: "Delivered target cannot be higher than the orders placed target." });
+  }
+  if (value.orderTarget != null && value.deliveredTarget != null && value.deliveryRateTarget != null
+      && value.orderTarget > 0 && value.deliveredTarget <= value.orderTarget) {
+    const expectedRate = Math.round((value.deliveredTarget / value.orderTarget) * 1000) / 10;
+    if (Math.abs(expectedRate - value.deliveryRateTarget) > 0.05) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["deliveryRateTarget"],
+        message: `Delivery rate must match delivered ÷ orders (${expectedRate}%).` });
+    }
+  }
 };
 
 const TargetSchema = TargetFields.superRefine(refineTargetLevels);
