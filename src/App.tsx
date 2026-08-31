@@ -34299,7 +34299,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPeriod: (p: Period) => void,
     setDateRange: (r: DateRange) => void,
     period: Period,
-    dateRange: DateRange
+    dateRange: DateRange,
+    opts?: { compact?: boolean; onPickRange?: () => void }
   ) => {
     void navSpan; void setNavSpan; // intentionally unused; period defines the window now
     type Unit = "day" | "week" | "month" | "year" | "custom";
@@ -34381,6 +34382,34 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return resolved.start; // day
     })();
     const sameDay = displayStart === displayEnd;
+    // "Aug 30 - Sep 5, 2026": the year is stated once unless the window
+    // straddles two of them.
+    const compactRangeLabel = (() => {
+      const a = new Date(`${displayStart}T00:00:00`);
+      const b = new Date(`${displayEnd}T00:00:00`);
+      const md = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      if (sameDay) return `${md(a)}, ${a.getFullYear()}`;
+      if (a.getFullYear() !== b.getFullYear()) return `${md(a)}, ${a.getFullYear()} – ${md(b)}, ${b.getFullYear()}`;
+      return `${md(a)} – ${md(b)}, ${b.getFullYear()}`;
+    })();
+    // Compact form: arrows step the window, the centre label opens the picker.
+    // Used where the toolbar already carries the period pills, so the band's
+    // "jump to now" pill and window read-out would be redundant.
+    if (opts?.compact) {
+      return (
+        <div className="period-nav-band period-nav-compact inline-flex items-center gap-1 w-full sm:w-auto rounded-lg border border-gray-200 bg-white p-1">
+          <button onClick={prev} aria-label="Previous period" title="Previous period" className="period-nav-button period-nav-icon !min-h-0 p-1.5 rounded-md text-gray-500 hover:bg-gray-100 transition-colors shrink-0"><ChevronLeft className="w-4 h-4" /></button>
+          <button
+            onClick={opts.onPickRange ?? goNow}
+            title={opts.onPickRange ? "Pick a date range" : navTitle}
+            className="period-nav-button period-nav-range !min-h-0 flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-2.5 py-1 text-sm font-medium text-gray-700 rounded-md hover:bg-gray-100 transition-colors whitespace-nowrap"
+          >
+            <CalendarDays className="w-4 h-4 text-gray-400 shrink-0" /> {compactRangeLabel}
+          </button>
+          <button onClick={next} aria-label="Next period" title="Next period" className="period-nav-button period-nav-icon !min-h-0 p-1.5 rounded-md text-gray-500 hover:bg-gray-100 transition-colors shrink-0"><ChevronRight className="w-4 h-4" /></button>
+        </div>
+      );
+    }
     return (
       <div className="period-nav-band flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 sm:gap-2 w-full overflow-x-hidden">
         {/* Row 1: Navigation arrows + period label */}
@@ -74068,8 +74097,11 @@ ${waybillLineItems(w).length > 1
               <header className="dashboard-hero flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6 px-5 py-4 bg-gradient-to-r from-blue-50 to-transparent rounded-2xl border border-blue-100">
                 <div className="flex flex-col gap-1">
                   <div className="flex items-center gap-2">
-                    <span className="inline-block w-2 h-2 rounded-full bg-[#1F8FE0]" />
-                    <span className="admin-overview-badge text-xs font-semibold text-[#1F8FE0] uppercase tracking-widest">Admin Overview</span>
+                    <span className="relative inline-flex w-2 h-2 shrink-0">
+                      <span className="absolute inset-0 rounded-full bg-[#1F8FE0] opacity-60 animate-ping" />
+                      <span className="relative inline-block w-2 h-2 rounded-full bg-[#1F8FE0]" />
+                    </span>
+                    <span className="admin-overview-badge text-xs font-semibold text-[#1F8FE0] uppercase tracking-widest">Admin Overview <span className="opacity-40">·</span> Live</span>
                   </div>
                   <h1 className="text-2xl font-bold text-gray-900">Administrator Dashboard</h1>
                   <p className="text-sm text-gray-500">Monitor your business performance in real-time</p>
@@ -74128,11 +74160,9 @@ ${waybillLineItems(w).length > 1
                       </button>
                     ))}
                   </div>
-                  {/* Date range - full width on mobile */}
+                  {/* Date range - arrows step the window, the label opens the picker */}
                   <div className="relative w-full sm:w-auto">
-                    <button className="!min-h-0 w-full sm:w-auto inline-flex items-center justify-center sm:justify-start gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowDateRange((value) => !value)}>
-                      <CalendarDays className="w-4 h-4" /> {period === "Custom" ? "Edit date range" : "Pick a date range"}
-                    </button>
+                    {renderWeekNav(dashboardNavStart, setDashboardNavStart, dashboardNavSpan, setDashboardNavSpan, setPeriod, setDateRange, period, dateRange, { compact: true, onPickRange: () => setShowDateRange((value) => !value) })}
                     {showDateRange && renderDateRangeCalendar("date-range-panel", dateRange, setDateRange, applyDateRange, () => setShowDateRange(false))}
                   </div>
                   {/* Currency - full width on mobile */}
@@ -74146,9 +74176,9 @@ ${waybillLineItems(w).length > 1
                       showToast(`Currency changed to ${currencies[nextCurrency].label}.`);
                     }}
                   >
-                    <option value="NGN">₦ Nigerian Naira</option>
-                    <option value="USD">$ US Dollar</option>
-                    <option value="GBP">£ British Pound</option>
+                    <option value="NGN">₦ NGN</option>
+                    <option value="USD">$ USD</option>
+                    <option value="GBP">£ GBP</option>
                   </select>
                   {renderProductFilter(dashboardProductIds, setDashboardProductIds, showDashboardProductFilter, setShowDashboardProductFilter)}
                   {/* Mobile-only: Export Report stacked full-width */}
@@ -74158,7 +74188,6 @@ ${waybillLineItems(w).length > 1
                     </button>
                   </div>
                 </div>
-                {renderWeekNav(dashboardNavStart, setDashboardNavStart, dashboardNavSpan, setDashboardNavSpan, setPeriod, setDateRange, period, dateRange)}
               </div>
 
               <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 w-full overflow-x-hidden">
@@ -74245,39 +74274,91 @@ ${waybillLineItems(w).length > 1
                 );
               })()}
 
-              <section className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4" aria-label="Business summary">
-                {dashboardCards.map((card) => {
-                  const toneMap: Record<string, { bar: string; icon: string }> = {
-                    blue:    { bar: "bg-blue-500",    icon: "bg-blue-50 text-blue-600" },
-                    emerald: { bar: "bg-emerald-500", icon: "bg-emerald-50 text-emerald-600" },
-                    violet:  { bar: "bg-violet-500",  icon: "bg-violet-50 text-violet-600" },
-                    orange:  { bar: "bg-orange-500",  icon: "bg-orange-50 text-orange-600" },
-                    teal:    { bar: "bg-teal-500",    icon: "bg-teal-50 text-teal-600" },
-                    positive:{ bar: "bg-emerald-500", icon: "bg-emerald-50 text-emerald-600" },
-                    negative:{ bar: "bg-red-500",     icon: "bg-red-50 text-red-600" },
+              {(() => {
+                const netCard = dashboardCards.find((card) => card.label === "Net Profit");
+                const netTrend = netCard?.trend ?? "";
+                const netTrendPositive = netTrend.startsWith("+") || netTrend === "New";
+                const netIsLoss = dashboardNetProfit < 0;
+                // Bars are scaled by magnitude on one shared axis, so a loss
+                // still draws a bar rather than collapsing to nothing.
+                const flowRows = [
+                  { label: "Revenue",    value: dashboardRevenue,          color: "bg-blue-500" },
+                  { label: "COGS",       value: dashboardCogs,             color: "bg-orange-500" },
+                  { label: "Logistics",  value: dashboardLogistics,        color: "bg-amber-500" },
+                  { label: "Operating",  value: dashboardOperatingExpense, color: "bg-violet-500" },
+                  { label: "Net Profit", value: dashboardNetProfit,        color: netIsLoss ? "bg-red-500" : "bg-emerald-500" },
+                ];
+                const flowScale = Math.max(...flowRows.map((row) => Math.abs(row.value)), 1);
+                return (
+                  <section className="dashboard-banner-card bg-white rounded-xl border border-gray-200 shadow-sm p-5 sm:p-6 flex flex-col gap-5" aria-label="Net profit and money flow">
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Net Profit · {selectedPeriodLabel}</span>
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <strong className={`text-4xl sm:text-5xl font-bold leading-none ${netIsLoss ? "text-red-600" : "text-gray-900"}`}>{formatMoney(dashboardNetProfit)}</strong>
+                        {netTrend && (
+                          <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold ${netTrendPositive ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-red-50 text-red-700 border border-red-200"}`}>{netTrend}</span>
+                        )}
+                      </div>
+                      <p className="text-sm text-gray-500 m-0 mt-1">{netCard?.helper} · {dashboardNetMargin}% net margin</p>
+                    </div>
+
+                    <div className="flex flex-col gap-3 pt-5 border-t border-gray-100">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Money flow</span>
+                        <span className="text-xs text-gray-400">delivered-date recognition</span>
+                      </div>
+                      {flowRows.map((row) => (
+                        <div className="flex items-center gap-2 sm:gap-3" key={row.label}>
+                          <span className={`w-2 h-2 rounded-full shrink-0 ${row.color}`} />
+                          <span className="text-[11px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wide w-16 sm:w-24 shrink-0">{row.label}</span>
+                          <span className="flex-1 h-2 rounded-full bg-gray-100 dark:bg-white/10 overflow-hidden min-w-0">
+                            <span className={`block h-full rounded-full ${row.color}`} style={{ width: `${Math.max(2, (Math.abs(row.value) / flowScale) * 100)}%` }} />
+                          </span>
+                          <strong className={`text-xs sm:text-sm font-bold tabular-nums text-right shrink-0 min-w-[4.5rem] sm:min-w-[6rem] ${row.label === "Net Profit" && netIsLoss ? "text-red-600" : "text-gray-900"}`}>{formatMoney(row.value)}</strong>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap text-xs font-medium text-gray-500 pt-5 border-t border-gray-100">
+                      <span className="font-semibold text-gray-700">Customer pays</span><ArrowRight className="w-3 h-3" />
+                      <span>Revenue</span><ArrowRight className="w-3 h-3" />
+                      <span>− COGS ({dashboardCogsRate}%)</span><ArrowRight className="w-3 h-3" />
+                      <span>− Logistics</span><ArrowRight className="w-3 h-3" />
+                      <span>− Operating ({dashboardExpenseRate}%)</span><ArrowRight className="w-3 h-3" />
+                      <strong className="text-gray-900">Net Profit</strong>
+                    </div>
+                  </section>
+                );
+              })()}
+
+              <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4" aria-label="Business summary">
+                {dashboardCards.filter((card) => card.label !== "Net Profit").map((card) => {
+                  const toneMap: Record<string, string> = {
+                    blue:     "bg-blue-50 text-blue-600",
+                    emerald:  "bg-emerald-50 text-emerald-600",
+                    violet:   "bg-violet-50 text-violet-600",
+                    orange:   "bg-orange-50 text-orange-600",
+                    teal:     "bg-teal-50 text-teal-600",
+                    positive: "bg-emerald-50 text-emerald-600",
+                    negative: "bg-red-50 text-red-600",
                   };
-                  const t = toneMap[card.tone] ?? toneMap.blue;
+                  const iconClass = toneMap[card.tone] ?? toneMap.blue;
                   const trendIsPositive = card.trend?.startsWith("+") || card.trend === "New";
                   const trendClass = trendIsPositive
                     ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
                     : "bg-red-50 text-red-700 border border-red-200";
                   return (
-                    <article className="dashboard-summary-card bg-white rounded-xl border border-gray-200 overflow-hidden flex flex-col shadow-sm" key={card.label}>
-                      <div className={`dashboard-summary-accent h-1 ${t.bar}`} />
-                      <div className="p-5 flex flex-col gap-4 flex-1">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${t.icon}`}>
-                            <card.icon className="w-5 h-5" />
-                          </div>
-                          {card.trend && (
-                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-bold ${trendClass}`}>
-                              {card.trend}
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{card.label}</span>
+                    <article className="dashboard-summary-card bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex items-start gap-4" key={card.label}>
+                      <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${iconClass}`}>
+                        <card.icon className="w-5 h-5" />
+                      </div>
+                      <div className="flex flex-col gap-1 min-w-0 flex-1">
+                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{card.label}</span>
+                        <div className="flex items-center gap-2 flex-wrap">
                           <strong className="text-2xl font-bold text-gray-900 leading-tight">{card.value}</strong>
+                          {card.trend && (
+                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-bold ${trendClass}`}>{card.trend}</span>
+                          )}
                         </div>
                         <span className="text-xs text-gray-400">{card.helper}</span>
                       </div>
@@ -74421,14 +74502,6 @@ ${waybillLineItems(w).length > 1
                       </div>
                     );
                   })}
-                </div>
-                <div className="flex items-center gap-2 flex-wrap text-xs font-medium text-gray-500 pt-3 border-t border-gray-100">
-                  <span className="font-semibold text-gray-700">Customer pays</span><ArrowRight className="w-3 h-3" />
-                  <span>Revenue</span><ArrowRight className="w-3 h-3" />
-                  <span>− COGS ({dashboardCogsRate}%)</span><ArrowRight className="w-3 h-3" />
-                  <span>− Logistics</span><ArrowRight className="w-3 h-3" />
-                  <span>− Operating ({dashboardExpenseRate}%)</span><ArrowRight className="w-3 h-3" />
-                  <strong className="text-gray-900">Net Profit</strong>
                 </div>
               </section>
 
