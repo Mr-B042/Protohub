@@ -29,6 +29,7 @@ import {
   Settings,
   ShoppingBag,
   ShoppingCart,
+  Target,
   TrendingUp,
   Trophy,
   Truck,
@@ -41,6 +42,10 @@ export const navItems = [
   // Keep the primary workspaces together. The list is filtered by role, so
   // this single canonical order also keeps the Sales Rep mobile menu sane.
   { label: "Sales Rep Workspace", icon: Headphones },
+  // ⚠️ The sidebar renders navItems FILTERED BY currentAllowedPages, so a page
+  // missing here can never appear no matter what the role allowlist permits.
+  // This row is what makes My Targets & Incentives reachable as its own page.
+  { label: "My Targets & Incentives", icon: Target },
   { label: "Products & Stock", icon: Package },
   { label: "Manager Dashboard", icon: LayoutPanelTop },
   { label: "Orders", icon: ShoppingBag },
