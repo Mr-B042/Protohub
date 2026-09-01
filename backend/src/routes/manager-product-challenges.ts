@@ -169,7 +169,10 @@ router.get("/", async (req, res) => {
       .select("id, product_id, quantity, status, created_at, delivered_date, assigned_rep_id, review_hold")
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", req.user!.orgId)
-      .ilike("status", "delivered")
+      // ⚠️ status is the order_status ENUM, not text. ilike compiles to ~~*,
+      // which Postgres defines for text only, so it errors instead of matching.
+      // Case is normalised in JS below, where the real matching happens.
+      .eq("status", "Delivered")
       .gte("delivered_date", earliest)
       .lte("delivered_date", latest)
       .or("review_hold.is.null,review_hold.eq.false");
