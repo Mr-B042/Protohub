@@ -67,6 +67,15 @@ const lagosDateKeyFromIso = (value: string) => {
 };
 const toWatUtcIso = (dateKey: string, edge: "start" | "end") =>
   new Date(`${dateKey}T${edge === "start" ? "00:00:00.000" : "23:59:59.999"}+01:00`).toISOString();
+const distributeWholeNumber = (total: number, count: number) => {
+  const base = Math.floor(Math.max(0, total) / Math.max(1, count));
+  const remainder = Math.max(0, total) - base * Math.max(1, count);
+  return Array.from({ length: Math.max(1, count) }, (_, index) => base + (index < remainder ? 1 : 0));
+};
+const distributeMoney = (total: number, count: number) => {
+  const cents = Math.round(Math.max(0, total) * 100);
+  return distributeWholeNumber(cents, count).map((value) => value / 100);
+};
 
 const rowToApi = (
   row: any,
@@ -155,7 +164,16 @@ router.get("/", async (req, res) => {
 
     const earliest = rows.reduce((value, row) => row.start_date < value ? row.start_date : value, rows[0].start_date);
     const latest = rows.reduce((value, row) => row.end_date > value ? row.end_date : value, rows[0].end_date);
-    let ordersQuery = supabase
+    const deliveredOrdersQuery = supabase
+      .from("orders")
+      .select("id, product_id, quantity, status, created_at, delivered_date, assigned_rep_id, review_hold")
+      .limit(REPORT_ROW_CEILING)
+      .eq("org_id", req.user!.orgId)
+      .ilike("status", "delivered")
+      .gte("delivered_date", earliest)
+      .lte("delivered_date", latest)
+      .or("review_hold.is.null,review_hold.eq.false");
+    const activityOrdersQuery = supabase
       .from("orders")
       .select("id, product_id, quantity, status, created_at, delivered_date, assigned_rep_id, review_hold")
       .limit(REPORT_ROW_CEILING)
@@ -163,9 +181,12 @@ router.get("/", async (req, res) => {
       .gte("created_at", toWatUtcIso(earliest, "start"))
       .lte("created_at", toWatUtcIso(latest, "end"))
       .or("review_hold.is.null,review_hold.eq.false");
-    if (req.user!.role === "Sales Rep") ordersQuery = ordersQuery.eq("assigned_rep_id", req.user!.id);
-    const { data: orders, error: ordersError } = await ordersQuery;
-    if (ordersError) throw ordersError;
+    const [{ data: deliveredOrders, error: deliveredOrdersError }, { data: activityOrders, error: activityOrdersError }] = await Promise.all([deliveredOrdersQuery, activityOrdersQuery]);
+    if (deliveredOrdersError) throw deliveredOrdersError;
+    if (activityOrdersError) throw activityOrdersError;
+    // A delivery can be created before the target period and completed inside it.
+    // Merge by id so delivered-date recognition never loses backdated orders.
+    const orders = Array.from(new Map([...(activityOrders ?? []), ...(deliveredOrders ?? [])].map((order) => [order.id, order])).values());
 
     const today = todayInLagos();
     const challengeIds = rows.map((row) => row.id);
@@ -178,15 +199,15 @@ router.get("/", async (req, res) => {
     // migration rolls through environments. Equal split is explicitly marked
     // as a fallback; it is never persisted or treated as manager allocation.
     if (allocationError && !/relation .*manager_product_challenge_allocations.*does not exist/i.test(allocationError.message ?? "")) throw allocationError;
-    let fallbackRepCount = 1;
-    if (req.user!.role === "Sales Rep" && (!allocationRows || allocationRows.length === 0)) {
-      const { count, error: repCountError } = await supabase.from("users").select("id", { count: "exact", head: true }).eq("org_id", req.user!.orgId).eq("role", "Sales Rep").eq("active", true);
-      if (repCountError) throw repCountError;
-      fallbackRepCount = Math.max(1, count ?? 1);
-    }
+    const { data: activeReps, error: repsError } = await supabase.from("users")
+      .select("id, name, email")
+      .eq("org_id", req.user!.orgId).eq("role", "Sales Rep").eq("active", true)
+      .order("name", { ascending: true });
+    if (repsError) throw repsError;
+    const fallbackRepCount = Math.max(1, activeReps?.length ?? 0);
     const challenges = rows.map((row) => {
-      const productOrders = (orders ?? []).filter((order) => order.product_id === row.product_id);
-      const matching = (orders ?? []).filter((order) => {
+      const teamProductOrders = (orders ?? []).filter((order) => order.product_id === row.product_id);
+      const teamMatching = (orders ?? []).filter((order) => {
         const deliveredDate = String(order.delivered_date ?? "").slice(0, 10);
         const status = String(order.status ?? "").trim().toLowerCase();
         return order.product_id === row.product_id
@@ -196,7 +217,16 @@ router.get("/", async (req, res) => {
       });
       const teamTargetUnits = Number(row.target_units ?? 0);
       const teamRewardAmount = Number(row.reward_amount ?? 0);
-      const allocations = (allocationRows ?? []).filter((allocation) => allocation.challenge_id === row.id);
+      const storedAllocations = (allocationRows ?? []).filter((allocation) => allocation.challenge_id === row.id);
+      const targetShares = distributeWholeNumber(teamTargetUnits, fallbackRepCount);
+      const rewardShares = distributeMoney(teamRewardAmount, fallbackRepCount);
+      const allocations = storedAllocations.length > 0 ? storedAllocations : (activeReps ?? []).map((rep, index) => ({
+        challenge_id: row.id,
+        rep_id: rep.id,
+        target_units: targetShares[index] ?? 0,
+        reward_amount: rewardShares[index] ?? 0,
+        milestone_targets: []
+      }));
       const ownAllocation = allocations.find((allocation) => allocation.rep_id === req.user!.id);
       const targetUnits = req.user!.role === "Sales Rep"
         ? Number(ownAllocation?.target_units ?? Math.ceil(teamTargetUnits / Math.max(1, allocations.length || fallbackRepCount)))
@@ -204,6 +234,8 @@ router.get("/", async (req, res) => {
       const rewardAmount = req.user!.role === "Sales Rep"
         ? Number(ownAllocation?.reward_amount ?? (teamRewardAmount / Math.max(1, allocations.length || fallbackRepCount)))
         : teamRewardAmount;
+      const matching = req.user!.role === "Sales Rep" ? teamMatching.filter((order) => order.assigned_rep_id === req.user!.id) : teamMatching;
+      const productOrders = req.user!.role === "Sales Rep" ? teamProductOrders.filter((order) => order.assigned_rep_id === req.user!.id) : teamProductOrders;
       const progressUnits = matching.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0);
       const progress = evaluateChallengeProgress({
         startDate: row.start_date,
@@ -229,20 +261,70 @@ router.get("/", async (req, res) => {
           units: Number(order.quantity ?? 0)
         }))
       });
-      const confirmedPieces = productOrders.filter((order) => ["Confirmed", "In Process", "Dispatched"].includes(String(order.status))).reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0);
+      const confirmedPieces = productOrders.filter((order) => ["confirmed", "in process", "dispatched"].includes(String(order.status ?? "").trim().toLowerCase())).reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0);
       const deliveredPieces = matching.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0);
-      return rowToApi({ ...row, target_units: targetUnits, reward_amount: rewardAmount }, progress, matching.length, milestoneResult, req.user!.role === "Sales Rep" ? {
+      const currentMilestone = milestoneResult.milestones.find((milestone) => milestone.status === "In Progress") ?? milestoneResult.milestones.find((milestone) => today >= milestone.startDate && today <= milestone.endDate);
+      const allocationDetails = allocations.map((allocation) => {
+        const rep = (activeReps ?? []).find((item) => item.id === allocation.rep_id);
+        const repDeliveredOrders = teamMatching.filter((order) => order.assigned_rep_id === allocation.rep_id);
+        const repDeliveredPieces = repDeliveredOrders.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0);
+        const repConfirmedPieces = teamProductOrders.filter((order) => order.assigned_rep_id === allocation.rep_id && ["confirmed", "in process", "dispatched"].includes(String(order.status ?? "").trim().toLowerCase())).reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0);
+        const allocationTarget = Number(allocation.target_units ?? 0);
+        const currentWeekTarget = currentMilestone && teamTargetUnits > 0
+          ? Math.ceil((allocationTarget * currentMilestone.targetUnits) / teamTargetUnits)
+          : 0;
+        const currentWeekDelivered = currentMilestone
+          ? repDeliveredOrders.filter((order) => {
+            const deliveredDate = String(order.delivered_date ?? "").slice(0, 10);
+            return deliveredDate >= currentMilestone.startDate && deliveredDate <= currentMilestone.endDate;
+          }).reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0)
+          : 0;
+        return {
+          repId: allocation.rep_id,
+          repName: rep?.name ?? rep?.email ?? "Sales rep",
+          targetUnits: allocationTarget,
+          rewardAmount: Number(allocation.reward_amount ?? 0),
+          milestoneTargets: Array.isArray(allocation.milestone_targets) ? allocation.milestone_targets.map(Number) : [],
+          deliveredPieces: repDeliveredPieces,
+          confirmedPieces: repConfirmedPieces,
+          awaitingDeliveryPieces: repConfirmedPieces,
+          qualifiedOrders: repDeliveredOrders.length,
+          progressPercent: allocationTarget > 0 ? Math.min(100, Math.round((repDeliveredPieces / allocationTarget) * 100)) : 0,
+          requiredPace: row.end_date >= today ? Math.ceil(Math.max(0, allocationTarget - repDeliveredPieces) / Math.max(1, progress.daysLeft)) : 0,
+          currentWeekTarget,
+          currentWeekDelivered,
+          currentWeekRemaining: Math.max(0, currentWeekTarget - currentWeekDelivered),
+          currentWeekDaysLeft: currentMilestone ? Math.max(0, Math.round((new Date(`${currentMilestone.endDate}T12:00:00`).getTime() - new Date(`${today}T12:00:00`).getTime()) / 86_400_000) + 1) : 0,
+          todayDeliveredPieces: repDeliveredOrders.filter((order) => String(order.delivered_date ?? "").slice(0, 10) === today).reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0),
+          persisted: storedAllocations.length > 0
+        };
+      });
+      const ownAllocationDetails = allocationDetails.find((allocation) => allocation.repId === req.user!.id);
+      return rowToApi({ ...row, target_units: targetUnits, reward_amount: rewardAmount }, progress, matching.length, milestoneResult, {
+        allocations: req.user!.role === "Sales Rep" ? [] : allocationDetails,
+        allocationMode: storedAllocations.length > 0 ? "manager_allocated" : "equal_split_fallback",
+        teamProgressUnits: teamMatching.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0),
+        teamQualifiedOrders: teamMatching.length,
         teamTargetUnits,
         teamRewardAmount,
-        allocationMode: ownAllocation ? "manager_allocated" : "equal_split_fallback",
+        ...(req.user!.role === "Sales Rep" ? {
+        teamTargetUnits,
+        teamRewardAmount,
+        allocationMode: storedAllocations.length > 0 && ownAllocation ? "manager_allocated" : "equal_split_fallback",
         allocationTargetUnits: ownAllocation?.target_units ?? null,
         allocationRewardAmount: ownAllocation?.reward_amount ?? null,
         confirmedPieces,
         deliveredPieces,
-        awaitingDeliveryPieces: Math.max(0, confirmedPieces + deliveredPieces - deliveredPieces)
-      } : {});
+        awaitingDeliveryPieces: confirmedPieces
+        ,currentWeekTarget: ownAllocationDetails?.currentWeekTarget ?? 0
+        ,currentWeekDelivered: ownAllocationDetails?.currentWeekDelivered ?? 0
+        ,currentWeekRemaining: ownAllocationDetails?.currentWeekRemaining ?? 0
+        ,currentWeekDaysLeft: ownAllocationDetails?.currentWeekDaysLeft ?? 0
+        ,todayDeliveredPieces: ownAllocationDetails?.todayDeliveredPieces ?? 0
+        } : {})
+      });
     });
-    res.json({ challenges, canEdit: req.user!.role === "Owner", allocations: req.user!.role === "Sales Rep" ? [] : (allocationRows ?? []) });
+    res.json({ challenges, canEdit: req.user!.role === "Owner", reps: req.user!.role === "Sales Rep" ? [] : (activeReps ?? []) });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not load product challenges." });
   }
@@ -262,10 +344,13 @@ router.put("/:id/allocations", requireRole("Owner"), async (req, res) => {
     if (targetTotal !== Number(challenge.target_units)) { res.status(400).json({ error: `Rep allocations must total ${challenge.target_units} pieces.` }); return; }
     if (Math.abs(rewardTotal - Number(challenge.reward_amount)) > 0.01) { res.status(400).json({ error: `Rep rewards must total ${challenge.reward_amount}.` }); return; }
     const repIds = parsed.data.allocations.map((item) => item.repId);
+    if (new Set(repIds).size !== repIds.length) { res.status(400).json({ error: "Each sales rep can only have one allocation." }); return; }
     const { data: reps, error: repsError } = await supabase.from("users").select("id").eq("org_id", req.user!.orgId).eq("role", "Sales Rep").eq("active", true).in("id", repIds);
     if (repsError) throw repsError;
     if ((reps ?? []).length !== new Set(repIds).size) { res.status(400).json({ error: "Every allocation must belong to an active sales rep in this organization." }); return; }
     const payload = parsed.data.allocations.map((item) => ({ org_id: req.user!.orgId, challenge_id: req.params.id, rep_id: item.repId, target_units: item.targetUnits, reward_amount: item.rewardAmount, milestone_targets: item.milestoneTargets }));
+    const { error: pruneError } = await supabase.from("manager_product_challenge_allocations").delete().eq("org_id", req.user!.orgId).eq("challenge_id", req.params.id).not("rep_id", "in", `(${repIds.join(",")})`);
+    if (pruneError) throw pruneError;
     const { data, error } = await supabase.from("manager_product_challenge_allocations").upsert(payload, { onConflict: "challenge_id,rep_id" }).select("*");
     if (error) throw error;
     res.json({ allocations: data ?? [] });

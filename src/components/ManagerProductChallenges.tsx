@@ -62,6 +62,36 @@ export type ManagerProductChallenge = {
   confirmedPieces?: number;
   deliveredPieces?: number;
   awaitingDeliveryPieces?: number;
+  teamProgressUnits?: number;
+  teamQualifiedOrders?: number;
+  teamRewardAmount?: number;
+  allocationMode?: "manager_allocated" | "equal_split_fallback";
+  allocations?: ChallengeAllocation[];
+  currentWeekTarget?: number;
+  currentWeekDelivered?: number;
+  currentWeekRemaining?: number;
+  currentWeekDaysLeft?: number;
+  todayDeliveredPieces?: number;
+};
+
+export type ChallengeAllocation = {
+  repId: string;
+  repName: string;
+  targetUnits: number;
+  rewardAmount: number;
+  milestoneTargets: number[];
+  deliveredPieces: number;
+  confirmedPieces: number;
+  awaitingDeliveryPieces: number;
+  qualifiedOrders: number;
+  progressPercent: number;
+  requiredPace: number;
+  currentWeekTarget: number;
+  currentWeekDelivered: number;
+  currentWeekRemaining: number;
+  currentWeekDaysLeft: number;
+  todayDeliveredPieces: number;
+  persisted: boolean;
 };
 
 export type ManagerChallengeDraft = Pick<
@@ -92,6 +122,7 @@ type Props = {
   formatMoney: (amount: number, currency: string) => string;
   onSave: (draft: ManagerChallengeDraft, id?: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onSaveAllocations?: (challengeId: string, allocations: Array<Pick<ChallengeAllocation, "repId" | "targetUnits" | "rewardAmount" | "milestoneTargets">>) => Promise<void>;
   onOpenBonusRules: () => void;
 };
 
@@ -201,6 +232,7 @@ export function ManagerProductChallenges({
   formatMoney,
   onSave,
   onDelete,
+  onSaveAllocations,
   onOpenBonusRules
 }: Props) {
   const canEdit = role === "Owner";
@@ -573,7 +605,7 @@ export function ManagerProductChallenges({
                   <button type="button" className="!min-h-0 hidden shrink-0 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-black text-blue-700 xl:block" onClick={() => setShowAllProducts(true)}>View all products</button>
                 </div>
               </div>
-              {(() => { const selected = challenges.find((challenge) => challenge.id === selectedChallengeId) ?? orderedChallenges[0]; return selected ? <ChallengeCard key={selected.id} challenge={selected} product={productMap.get(selected.productId)} canEdit={canEdit} formatMoney={formatMoney} onEdit={() => openEdit(selected)} onDelete={() => void onDelete(selected.id)} onToggleStatus={() => void onSave({ ...selected, status: selected.status === "active" ? "paused" : "active" }, selected.id)} /> : null; })()}
+              {(() => { const selected = challenges.find((challenge) => challenge.id === selectedChallengeId) ?? orderedChallenges[0]; return selected ? <ChallengeCard key={selected.id} challenge={selected} product={productMap.get(selected.productId)} canEdit={canEdit} repMode={role === "Sales Rep"} formatMoney={formatMoney} onEdit={() => openEdit(selected)} onDelete={() => void onDelete(selected.id)} onToggleStatus={() => void onSave({ ...selected, status: selected.status === "active" ? "paused" : "active" }, selected.id)} onSaveAllocations={onSaveAllocations} /> : null; })()}
             </>
           ) : (
             challenges.map((challenge) => (
@@ -582,10 +614,12 @@ export function ManagerProductChallenges({
                 challenge={challenge}
                 product={productMap.get(challenge.productId)}
                 canEdit={canEdit}
+                repMode={role === "Sales Rep"}
                 formatMoney={formatMoney}
                 onEdit={() => openEdit(challenge)}
                 onDelete={() => void onDelete(challenge.id)}
                 onToggleStatus={() => void onSave({ ...challenge, status: challenge.status === "active" ? "paused" : "active" }, challenge.id)}
+                onSaveAllocations={onSaveAllocations}
               />
             ))
           )}
@@ -601,18 +635,22 @@ function ChallengeCard({
   challenge,
   product,
   canEdit,
+  repMode,
   formatMoney,
   onEdit,
   onDelete,
-  onToggleStatus
+  onToggleStatus,
+  onSaveAllocations
 }: {
   challenge: ManagerProductChallenge;
   product?: ChallengeProduct;
   canEdit: boolean;
+  repMode: boolean;
   formatMoney: Props["formatMoney"];
   onEdit: () => void;
   onDelete: () => void;
   onToggleStatus: () => void;
+  onSaveAllocations?: Props["onSaveAllocations"];
 }) {
   const hasMilestones = challenge.milestoneMode === "weekly" && challenge.milestones?.length > 0;
   const [menuOpen, setMenuOpen] = useState(false);
@@ -626,7 +664,7 @@ function ChallengeCard({
               ? <img src={product.imageUrl} alt="" className="h-16 w-16 shrink-0 rounded-lg border border-gray-100 object-cover sm:h-20 sm:w-20" />
               : <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg bg-violet-50 text-violet-500 sm:h-20 sm:w-20"><Package className="h-7 w-7" /></span>}
             <div className="min-w-0">
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-violet-600">{challenge.cadence} challenge</p>
+              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-violet-600">{repMode ? "My product target" : "Sales team challenge"}</p>
               <h3 className="mt-2 break-words text-xl font-black leading-tight text-gray-950">{product?.name ?? challenge.name}</h3>
               <p className="mt-1 text-sm font-semibold text-gray-500">{challenge.name}</p>
               <p className="mt-2 text-xs font-semibold text-gray-400">{challenge.qualifiedOrders} delivered order{challenge.qualifiedOrders === 1 ? "" : "s"}{challenge.confirmedPieces !== undefined ? ` · ${challenge.confirmedPieces} pcs awaiting delivery` : ""}</p>
@@ -634,7 +672,7 @@ function ChallengeCard({
           </div>
           <div className="flex items-start gap-2">
             <div className="min-w-[180px] rounded-lg border border-violet-100 bg-violet-50/70 px-5 py-4 text-center">
-              <p className="text-[10px] font-black uppercase tracking-[0.12em] text-violet-600">Challenge reward</p>
+              <p className="text-[10px] font-black uppercase tracking-[0.12em] text-violet-600">{repMode ? "My maximum reward" : "Monthly team reward"}</p>
               <p className="mt-2 text-2xl font-black text-violet-700">{formatMoney(challenge.rewardAmount, challenge.currency)}</p>
               <p className="mt-1 text-[10px] font-semibold text-gray-500">{hasMilestones ? "Paid through weekly milestones" : "Paid when the full target is met"}</p>
             </div>
@@ -659,6 +697,20 @@ function ChallengeCard({
           <span className="shrink-0 text-xs font-black text-gray-500">{challenge.progressUnits.toLocaleString()} / {challenge.targetUnits.toLocaleString()} pcs</span>
         </div>
 
+        {repMode && challenge.teamTargetUnits !== undefined && (
+          <div className="mt-4 grid gap-3 rounded-lg border border-violet-100 bg-violet-50/60 px-4 py-3 sm:grid-cols-3">
+            <Metric label="Shared team target" value={`${(challenge.teamProgressUnits ?? 0).toLocaleString()} / ${challenge.teamTargetUnits.toLocaleString()} pcs`} detail={`${challenge.teamQualifiedOrders ?? 0} team deliveries`} />
+            <Metric label="My delivered pieces" value={`${(challenge.deliveredPieces ?? challenge.progressUnits).toLocaleString()} pcs`} detail="Delivered and verified only" />
+            <Metric label="Awaiting delivery" value={`${(challenge.awaitingDeliveryPieces ?? 0).toLocaleString()} pcs`} detail="Does not count yet" />
+          </div>
+        )}
+
+        {repMode && <RepFocusPanel challenge={challenge} formatMoney={formatMoney} />}
+
+        {!repMode && challenge.allocations && challenge.allocations.length > 0 && (
+          <AllocationPanel challenge={challenge} canEdit={canEdit} formatMoney={formatMoney} onSave={onSaveAllocations} />
+        )}
+
         {hasMilestones ? (
           <div className="mt-5">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -682,6 +734,97 @@ function ChallengeCard({
       </div>
     </article>
   );
+}
+
+function AllocationPanel({ challenge, canEdit, formatMoney, onSave }: {
+  challenge: ManagerProductChallenge;
+  canEdit: boolean;
+  formatMoney: Props["formatMoney"];
+  onSave?: Props["onSaveAllocations"];
+}) {
+  const [editing, setEditing] = useState(false);
+  const [rows, setRows] = useState<ChallengeAllocation[]>(challenge.allocations ?? []);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [selectedRepId, setSelectedRepId] = useState(challenge.allocations?.[0]?.repId ?? "");
+  useEffect(() => setRows(challenge.allocations ?? []), [challenge.id, challenge.allocations]);
+  useEffect(() => setSelectedRepId(challenge.allocations?.[0]?.repId ?? ""), [challenge.id, challenge.allocations]);
+  const targetTotal = rows.reduce((sum, row) => sum + Number(row.targetUnits || 0), 0);
+  const rewardTotal = rows.reduce((sum, row) => sum + Number(row.rewardAmount || 0), 0);
+  const balanced = targetTotal === challenge.targetUnits && Math.abs(rewardTotal - challenge.rewardAmount) < 0.01;
+  const save = async () => {
+    if (!onSave || !balanced) return;
+    setSaving(true); setMessage("");
+    try {
+      await onSave(challenge.id, rows.map(({ repId, targetUnits, rewardAmount, milestoneTargets }) => ({ repId, targetUnits, rewardAmount, milestoneTargets })));
+      setEditing(false); setMessage("Rep allocations saved.");
+    } catch (error: any) { setMessage(error?.message ?? "Could not save allocations."); }
+    finally { setSaving(false); }
+  };
+  return (
+    <section className="mt-5 rounded-xl border border-violet-100 bg-gradient-to-br from-violet-50/70 to-white p-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div><p className="text-xs font-black uppercase tracking-[0.12em] text-violet-700">Target allocation — {rows.length} sales reps</p><p className="mt-1 text-xs font-semibold text-gray-500">One shared manager target, divided into personal rep targets.</p></div>
+        {canEdit && <button type="button" className="!min-h-0 rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs font-black text-violet-700" onClick={() => { setEditing((value) => !value); setMessage(""); }}>{editing ? "Cancel changes" : "Manage allocations"}</button>}
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {rows.map((allocation, index) => (
+          <article key={allocation.repId} onClick={() => !editing && setSelectedRepId(allocation.repId)} className={`rounded-lg border bg-white p-3 shadow-sm transition ${selectedRepId === allocation.repId ? "border-violet-500 ring-2 ring-violet-100" : "border-gray-200"} ${editing ? "" : "cursor-pointer hover:border-violet-300"}`}>
+            <div className="flex items-center justify-between gap-2"><div className="flex min-w-0 items-center gap-2"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-black text-violet-700">{allocation.repName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2)}</span><div className="min-w-0"><p className="truncate text-sm font-black text-gray-950">{allocation.repName}</p><p className="text-[10px] font-bold text-violet-600">Individual share</p></div></div><span className="text-xs font-black text-gray-500">{allocation.progressPercent}%</span></div>
+            {editing ? <div className="mt-3 grid grid-cols-2 gap-2"><label className="text-[9px] font-black uppercase text-gray-400">Pieces<input type="number" min="1" value={allocation.targetUnits} onChange={(event) => setRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, targetUnits: Number(event.target.value) } : row))} className="mt-1 w-full rounded-md border border-gray-200 px-2 py-1.5 text-sm font-black text-gray-900" /></label><label className="text-[9px] font-black uppercase text-gray-400">Reward<input type="number" min="0" value={allocation.rewardAmount} onChange={(event) => setRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, rewardAmount: Number(event.target.value) } : row))} className="mt-1 w-full rounded-md border border-gray-200 px-2 py-1.5 text-sm font-black text-gray-900" /></label></div> : <p className="mt-3 text-lg font-black text-violet-700">{allocation.deliveredPieces.toLocaleString()} <span className="text-xs text-gray-400">/ {allocation.targetUnits.toLocaleString()} pcs</span></p>}
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-gray-100"><div className="h-full rounded-full bg-violet-600" style={{ width: `${Math.min(100, allocation.progressPercent)}%` }} /></div>
+            <div className="mt-2 flex items-center justify-between text-[10px] font-bold text-gray-500"><span>Needs {allocation.requiredPace.toLocaleString()} pcs/day</span><span className="text-emerald-700">{formatMoney(allocation.rewardAmount, challenge.currency)}</span></div>
+          </article>
+        ))}
+      </div>
+      {!editing && (() => {
+        const selected = rows.find((row) => row.repId === selectedRepId) ?? rows[0];
+        if (!selected) return null;
+        const daily = selected.currentWeekDaysLeft > 0 ? Math.ceil(selected.currentWeekRemaining / selected.currentWeekDaysLeft) : 0;
+        return <div className="mt-4 grid gap-3 border-t border-violet-100 pt-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(260px,.6fr)]">
+          <div className="rounded-lg border border-violet-200 bg-white p-4">
+            <p className="text-[10px] font-black uppercase tracking-[0.12em] text-violet-700">{selected.repName}&apos;s target this week</p>
+            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <Metric label="Personal milestone" value={`${selected.currentWeekTarget.toLocaleString()} pcs`} detail="This week" />
+              <Metric label="Delivered" value={`${selected.currentWeekDelivered.toLocaleString()} pcs`} detail="Qualified only" />
+              <Metric label="Remaining" value={`${selected.currentWeekRemaining.toLocaleString()} pcs`} detail={`${selected.currentWeekDaysLeft} days left`} />
+              <Metric label="Required pace" value={`${daily.toLocaleString()} pcs/day`} detail={`${selected.todayDeliveredPieces} delivered today`} />
+            </div>
+          </div>
+          <div className="rounded-lg border border-gray-200 bg-white p-4">
+            <p className="text-[10px] font-black uppercase tracking-[0.12em] text-violet-700">How the rep qualifies</p>
+            <ol className="mt-3 space-y-2 text-xs font-semibold text-gray-700"><li>1. Team reaches the weekly milestone</li><li>2. Rep reaches this personal share</li><li>3. Orders are delivered and verified</li></ol>
+            <p className="mt-3 rounded-md bg-violet-50 px-3 py-2 text-sm font-black text-violet-700">Projected reward: {formatMoney(selected.rewardAmount / Math.max(1, challenge.milestones.length || 1), challenge.currency)}</p>
+          </div>
+        </div>;
+      })()}
+      <div className="mt-3 flex flex-col gap-2 border-t border-violet-100 pt-3 sm:flex-row sm:items-center sm:justify-between"><p className={`text-xs font-bold ${balanced ? "text-emerald-700" : "text-rose-600"}`}>Allocated: {targetTotal.toLocaleString()} / {challenge.targetUnits.toLocaleString()} pcs · {formatMoney(rewardTotal, challenge.currency)} / {formatMoney(challenge.rewardAmount, challenge.currency)}</p>{editing && <button type="button" disabled={!balanced || saving} onClick={() => void save()} className="!min-h-0 rounded-lg bg-violet-600 px-4 py-2 text-xs font-black text-white disabled:opacity-40">{saving ? "Saving..." : "Save rep targets"}</button>}</div>
+      {message && <p className={`mt-2 text-xs font-bold ${message.includes("saved") ? "text-emerald-700" : "text-rose-600"}`}>{message}</p>}
+    </section>
+  );
+}
+
+function RepFocusPanel({ challenge, formatMoney }: { challenge: ManagerProductChallenge; formatMoney: Props["formatMoney"] }) {
+  const weeklyTarget = challenge.currentWeekTarget ?? 0;
+  const weeklyDelivered = challenge.currentWeekDelivered ?? 0;
+  const remaining = challenge.currentWeekRemaining ?? Math.max(0, weeklyTarget - weeklyDelivered);
+  const daysLeft = challenge.currentWeekDaysLeft ?? 0;
+  const neededDaily = daysLeft > 0 ? Math.ceil(remaining / daysLeft) : 0;
+  const average = challenge.qualifiedOrders > 0 ? (challenge.progressUnits / challenge.qualifiedOrders).toFixed(1) : "0";
+  const milestoneReward = challenge.rewardAmount / Math.max(1, challenge.milestones.length || 1);
+  return <section className="mt-4 grid gap-3 lg:grid-cols-2">
+    <div className="rounded-xl border border-violet-100 bg-white p-4">
+      <p className="text-xs font-black uppercase tracking-[0.12em] text-violet-700">This week</p>
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4"><Metric label="Target" value={`${weeklyTarget.toLocaleString()} pcs`} detail="Personal milestone" /><Metric label="Qualified" value={`${weeklyDelivered.toLocaleString()} pcs`} detail="Delivered only" /><Metric label="Remaining" value={`${remaining.toLocaleString()} pcs`} detail="To meet this week" /><Metric label="Days left" value={daysLeft.toLocaleString()} detail="Today included" /></div>
+      <div className="mt-3 flex items-center gap-3"><span className="text-xs font-black text-gray-700">Needed daily {neededDaily.toLocaleString()} pcs/day</span><div className="h-2 flex-1 overflow-hidden rounded-full bg-gray-100"><div className="h-full rounded-full bg-violet-600" style={{ width: `${weeklyTarget > 0 ? Math.min(100, Math.round((weeklyDelivered / weeklyTarget) * 100)) : 0}%` }} /></div></div>
+      {(challenge.awaitingDeliveryPieces ?? 0) > 0 && <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">{challenge.awaitingDeliveryPieces?.toLocaleString()} pieces are awaiting delivery and do not count yet.</p>}
+    </div>
+    <div className="rounded-xl border border-violet-100 bg-violet-50/50 p-4">
+      <p className="text-xs font-black uppercase tracking-[0.12em] text-violet-700">Today&apos;s focus</p>
+      <ul className="mt-3 space-y-2 text-sm font-semibold text-gray-700"><li>Sell and deliver {neededDaily.toLocaleString()} pieces to maintain pace</li><li>Follow up {(challenge.awaitingDeliveryPieces ?? 0).toLocaleString()} pieces awaiting delivery</li><li>Current average: {average} pcs per delivered order</li></ul>
+      <div className="mt-4 grid grid-cols-2 gap-2 border-t border-violet-100 pt-3"><Metric label="Delivered today" value={`${(challenge.todayDeliveredPieces ?? 0).toLocaleString()} pcs`} detail="Verified today" /><Metric label="Projected weekly reward" value={formatMoney(milestoneReward, challenge.currency)} detail="If both milestones are met" /></div>
+    </div>
+  </section>;
 }
 
 function MilestoneCard({ milestone, currency, formatMoney }: { milestone: ManagerChallengeMilestone; currency: string; formatMoney: Props["formatMoney"] }) {

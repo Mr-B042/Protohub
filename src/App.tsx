@@ -29053,6 +29053,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     showToast("Product challenge removed.");
   };
 
+  const saveManagerProductChallengeAllocations = async (challengeId: string, allocations: Array<{ repId: string; targetUnits: number; rewardAmount: number; milestoneTargets: number[] }>) => {
+    await managerProductChallengesApi.saveAllocations(challengeId, allocations);
+    await loadManagerProductChallenges({ quiet: true });
+    showToast("Sales rep targets allocated successfully.");
+  };
+
   const managerBonusWeekEnd = (weekStart: string) => {
     const date = new Date(`${weekStart}T00:00:00`);
     date.setDate(date.getDate() + 6);
@@ -70671,6 +70677,7 @@ ${waybillLineItems(w).length > 1
             formatMoney={(amount, currency) => formatManagerBonusMoney(amount, currency as CurrencyCode)}
             onSave={saveManagerProductChallenge}
             onDelete={deleteManagerProductChallenge}
+            onSaveAllocations={saveManagerProductChallengeAllocations}
             onOpenBonusRules={() => setActivePage("Sales Rep Bonuses")}
           />
         ) : repConsoleTab === "Dashboard" ? (
@@ -76732,6 +76739,7 @@ ${waybillLineItems(w).length > 1
                   formatMoney={(amount, currency) => formatManagerBonusMoney(amount, currency as CurrencyCode)}
                   onSave={saveManagerProductChallenge}
                   onDelete={deleteManagerProductChallenge}
+                  onSaveAllocations={saveManagerProductChallengeAllocations}
                   onOpenBonusRules={() => setManagerDashboardTab("Bonus")}
                 />
 
