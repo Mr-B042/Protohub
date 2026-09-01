@@ -94,7 +94,12 @@ export function buildChallengeMilestones(input: ChallengeMilestoneInput) {
     const milestoneEnd = index === count - 1 ? end : Math.min(end, milestoneStart + baseWindowDays - 1);
     const sliceTargetUnits = Math.max(1, targets[index] ?? 1);
     cumulativeTarget += sliceTargetUnits;
-    const progressUnits = Math.min(totalProgressToDate, cumulativeTarget);
+    // Do not carry today's progress into a future milestone. The challenge
+    // total is cumulative, but an upcoming week must remain at zero until its
+    // window starts.
+    const progressUnits = today < dateKeyFromDayNumber(milestoneStart)
+      ? 0
+      : Math.min(totalProgressToDate, cumulativeTarget);
     const progressPercent = Math.max(0, Math.round((progressUnits / cumulativeTarget) * 100));
     let status: ChallengeMilestoneStatus;
     if (input.status === "draft") status = "Draft";
