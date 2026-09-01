@@ -146,7 +146,7 @@ router.get("/", async (req, res) => {
     const latest = rows.reduce((value, row) => row.end_date > value ? row.end_date : value, rows[0].end_date);
     const { data: orders, error: ordersError } = await supabase
       .from("orders")
-      .select("id, product_id, quantity, status, created_at, review_hold")
+      .select("id, product_id, quantity, status, created_at, delivered_at, review_hold")
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", req.user!.orgId)
       .gte("created_at", toWatUtcIso(earliest, "start"))
@@ -157,11 +157,11 @@ router.get("/", async (req, res) => {
     const today = todayInLagos();
     const challenges = rows.map((row) => {
       const matching = (orders ?? []).filter((order) => {
-        const createdDate = lagosDateKeyFromIso(String(order.created_at ?? ""));
+        const deliveredDate = lagosDateKeyFromIso(String(order.delivered_at ?? ""));
         return order.product_id === row.product_id
-          && createdDate >= row.start_date
-          && createdDate <= row.end_date
-          && !["Cancelled", "Failed"].includes(order.status ?? "");
+          && order.status === "Delivered"
+          && deliveredDate >= row.start_date
+          && deliveredDate <= row.end_date;
       });
       const progressUnits = matching.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0);
       const progress = evaluateChallengeProgress({
@@ -184,7 +184,7 @@ router.get("/", async (req, res) => {
         status: row.status as ChallengeLifecycleStatus,
         today,
         orders: matching.map((order) => ({
-          dateKey: lagosDateKeyFromIso(String(order.created_at ?? "")),
+          dateKey: lagosDateKeyFromIso(String(order.delivered_at ?? "")),
           units: Number(order.quantity ?? 0)
         }))
       });
