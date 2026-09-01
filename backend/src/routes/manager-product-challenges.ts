@@ -158,8 +158,9 @@ router.get("/", async (req, res) => {
     const challenges = rows.map((row) => {
       const matching = (orders ?? []).filter((order) => {
         const deliveredDate = String(order.delivered_date ?? "").slice(0, 10);
+        const status = String(order.status ?? "").trim().toLowerCase();
         return order.product_id === row.product_id
-          && order.status === "Delivered"
+          && status === "delivered"
           && deliveredDate >= row.start_date
           && deliveredDate <= row.end_date;
       });
