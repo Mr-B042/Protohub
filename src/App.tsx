@@ -276,7 +276,7 @@ type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" |
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addExtraItems" | "addFreeGift" | "salesBonusFullReport" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | "pdaPortalCredentials" | null;
-type ActivePage = "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers";
+type ActivePage = "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type PendingSalesExpansionAction =
@@ -2766,7 +2766,7 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   // currentAllowedPages), the same way extraPages layers on top of this
   // static list. Most Sales Reps must never see the page in their sidebar.
   "Sales Rep": [
-    "Sales Rep Workspace", "Products & Stock", "Bonuses", "Call Rep Console", "Weekend Stock Summary", "Personal Delivery Agents", "Notifications", "Settings", "WhatsApp"
+    "Sales Rep Workspace", "My Targets & Incentives", "Products & Stock", "Bonuses", "Call Rep Console", "Weekend Stock Summary", "Personal Delivery Agents", "Notifications", "Settings", "WhatsApp"
   ],
   "Inventory Manager": [
     "Inventory & Logistics Operations", "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Expenses", "Notifications", "Settings", "WhatsApp"
@@ -2831,6 +2831,7 @@ const dashboardHashByPage: Record<ActivePage, string> = {
   "Sales Teams": "#/dashboard/admin/sales-teams",
   "Sales Rep Bonuses": "#/dashboard/admin/sales-reps/bonuses",
   "Sales Rep Workspace": "#/dashboard/sales-rep",
+  "My Targets & Incentives": "#/dashboard/sales-rep/my-targets",
   "Recovery Rep Dashboard": "#/dashboard/recovery-rep",
   "Head of Sales Rep": "#/dashboard/admin/head-of-sales-rep",
   "Sales Closers": "#/dashboard/admin/sales-closers",
@@ -35297,6 +35298,17 @@ ${waybillLineItems(w).length > 1
       setRepConsoleTab("Bonuses");
       setRepOrderDetailId("");
       const nextHash = repTabRoute("Bonuses");
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
+      setHashRoute(nextHash);
+      setActivePage("Sales Rep Workspace");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+
+    if (label === "My Targets & Incentives") {
+      setRepConsoleTab("My Targets & Incentives");
+      setRepOrderDetailId("");
+      const nextHash = repTabRoute("My Targets & Incentives");
       window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
       setHashRoute(nextHash);
       setActivePage("Sales Rep Workspace");
