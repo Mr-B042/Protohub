@@ -559,11 +559,15 @@ export function ManagerProductChallenges({
           ) : challenges.length >= 2 ? (
             <>
               <ChallengeSummaryStrip challenges={challenges} formatMoney={formatMoney} />
-              <div className="relative rounded-xl border border-gray-100 bg-gray-50/60 p-3">
-                <div className="flex gap-3 overflow-x-auto pb-1">
+              <div className="relative rounded-xl border border-gray-100 bg-white p-3 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <button type="button" aria-label="Previous products" className="!min-h-0 hidden h-9 w-9 shrink-0 items-center justify-center rounded-full border border-gray-200 text-gray-500 sm:flex" onClick={() => document.querySelector('.challenge-selector-track')?.scrollBy({ left: -320, behavior: 'smooth' })}>‹</button>
+                  <div className="challenge-selector-track flex min-w-0 flex-1 gap-3 overflow-x-auto pb-1">
                   {orderedChallenges.map((challenge, index) => <ChallengeSelector key={challenge.id} challenge={challenge} product={productMap.get(challenge.productId)} selected={selectedChallengeId === challenge.id} onClick={() => setSelectedChallengeId(challenge.id)} accent={CARD_ACCENTS[index % CARD_ACCENTS.length]} />)}
+                  </div>
+                  <button type="button" aria-label="Next products" className="!min-h-0 hidden h-9 w-9 shrink-0 items-center justify-center rounded-full border border-gray-200 text-gray-500 sm:flex" onClick={() => document.querySelector('.challenge-selector-track')?.scrollBy({ left: 320, behavior: 'smooth' })}>›</button>
+                  <button type="button" className="!min-h-0 hidden shrink-0 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-black text-blue-700 xl:block" onClick={() => setShowAllProducts(true)}>View all products</button>
                 </div>
-                <p className="m-0 mt-2 text-[10px] font-semibold text-gray-400">Prioritized by attention needed: Behind, At Risk, On Track, then Completed.</p>
               </div>
               {(() => { const selected = challenges.find((challenge) => challenge.id === selectedChallengeId) ?? orderedChallenges[0]; return selected ? <ChallengeCard key={selected.id} challenge={selected} product={productMap.get(selected.productId)} canEdit={canEdit} formatMoney={formatMoney} onEdit={() => openEdit(selected)} onDelete={() => void onDelete(selected.id)} onToggleStatus={() => void onSave({ ...selected, status: selected.status === "active" ? "paused" : "active" }, selected.id)} /> : null; })()}
             </>
@@ -584,6 +588,7 @@ export function ManagerProductChallenges({
         </div>
       </section>
       {drawer}
+      {showAllProducts && typeof document !== "undefined" && createPortal(<div className="fixed inset-0 z-[125] flex justify-end bg-slate-950/30" onMouseDown={(event) => { if (event.currentTarget === event.target) setShowAllProducts(false); }}><aside className="h-full w-full max-w-md overflow-y-auto bg-white p-5 shadow-2xl"><div className="flex items-center justify-between"><div><h2 className="text-lg font-black text-gray-900">All product challenges</h2><p className="text-xs text-gray-500">Prioritized by attention needed.</p></div><button type="button" className="!min-h-0 rounded-lg p-2 text-gray-500 hover:bg-gray-100" onClick={() => setShowAllProducts(false)}><X className="h-5 w-5" /></button></div><div className="mt-5 space-y-3">{orderedChallenges.map((challenge, index) => <ChallengeSelector key={challenge.id} challenge={challenge} product={productMap.get(challenge.productId)} selected={selectedChallengeId === challenge.id} onClick={() => { setSelectedChallengeId(challenge.id); setShowAllProducts(false); }} accent={CARD_ACCENTS[index % CARD_ACCENTS.length]} />)}</div></aside></div>, document.body)}
     </>
   );
 }
@@ -708,7 +713,7 @@ function ChallengeSelector({ challenge, product, selected, onClick, accent }: { 
   const expected = (elapsed / totalDays) * challenge.targetUnits;
   const ratio = expected > 0 ? challenge.progressUnits / expected : 1;
   const status = completed ? "Completed" : elapsed <= 1 && challenge.progressUnits === 0 ? "Just Started" : ratio < 0.8 ? "Behind" : ratio < 0.95 ? "At Risk" : "On Track";
-  return <button type="button" onClick={onClick} className={`min-w-[230px] flex-1 rounded-xl border p-3 text-left transition ${selected ? "border-violet-500 bg-violet-50/70 ring-2 ring-violet-200" : "border-gray-200 bg-white hover:border-violet-300"}`}><div className="flex items-center gap-2"><span className={`h-2 w-2 rounded-full ${accent.bar}`} /><span className="truncate text-sm font-black text-gray-900">{product?.name ?? challenge.name}</span></div><div className="mt-2 flex items-baseline justify-between gap-2"><span className="text-sm font-black text-violet-700">{challenge.progressUnits.toLocaleString()} <span className="text-[10px] text-gray-400">/ {challenge.targetUnits.toLocaleString()} pcs</span></span><span className="text-xs font-black text-gray-500">{challenge.progressPercent}%</span></div><div className="mt-1 h-1.5 overflow-hidden rounded-full bg-gray-200"><div className={`h-full rounded-full ${accent.bar}`} style={{ width: `${Math.min(100, challenge.progressPercent)}%` }} /></div><div className="mt-2 flex items-center justify-between text-[10px] font-bold text-gray-400"><span>{challenge.daysLeft} days left</span><span className={`rounded-full border px-2 py-0.5 ${statusStyle(status)}`}>{status}</span></div></button>;
+  return <button type="button" onClick={onClick} className={`min-w-[270px] flex-1 rounded-xl border p-2.5 text-left transition ${selected ? "border-violet-500 bg-violet-50/70 ring-2 ring-violet-200" : "border-gray-200 bg-white hover:border-violet-300"}`}><div className="flex items-center gap-3">{product?.imageUrl ? <img src={product.imageUrl} alt="" className="h-14 w-14 shrink-0 rounded-lg border border-gray-100 object-cover" /> : <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-violet-50 text-violet-500"><Package className="h-5 w-5" /></span>}<div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><span className={`truncate text-sm ${selected ? "font-black text-gray-950" : "font-bold text-gray-800"}`}>{product?.name ?? challenge.name}</span><span className="text-xs font-black text-gray-500">{challenge.progressPercent}%</span></div><p className="mt-1 text-xs font-black text-violet-700">{challenge.progressUnits.toLocaleString()} <span className="font-semibold text-gray-400">/ {challenge.targetUnits.toLocaleString()} pcs</span></p><div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-gray-200"><div className={`h-full rounded-full ${accent.bar}`} style={{ width: `${Math.min(100, challenge.progressPercent)}%` }} /></div><div className="mt-1.5 flex justify-end"><span className={`rounded-full border px-2 py-0.5 text-[9px] font-black ${statusStyle(status)}`}>{status}</span></div></div></div></button>;
 }
 
 function CompactChallengeCard({
@@ -738,7 +743,7 @@ function CompactChallengeCard({
             <h4 className="mt-1 truncate text-sm font-black text-gray-950">{product?.name ?? challenge.name}</h4>
           </div>
           {canEdit && (
-            <div className="relative shrink-0"><button type="button" className="!min-h-0 flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 hover:text-violet-700" onClick={() => setMenuOpen((open) => !open)} title="Challenge options"><MoreVertical className="h-3.5 w-3.5" /></button>{menuOpen && <div className="absolute right-0 top-8 z-10 w-32 rounded-lg border border-gray-200 bg-white p-1 text-left shadow-lg"><button type="button" className="w-full rounded px-2 py-1.5 text-left text-xs font-bold text-gray-700 hover:bg-gray-50" onClick={() => { setMenuOpen(false); onEdit(); }}>Edit</button><button type="button" className="w-full rounded px-2 py-1.5 text-left text-xs font-bold text-amber-700 hover:bg-amber-50" onClick={() => { setMenuOpen(false); onToggleStatus(); }}>{challenge.status === "active" ? "Pause" : "Resume"}</button><button type="button" className="w-full rounded px-2 py-1.5 text-left text-xs font-bold text-rose-600 hover:bg-rose-50" onClick={() => { setMenuOpen(false); onDelete(); }}>Delete</button></div>}</div>
+            <button type="button" className="!min-h-0 flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400" onClick={onEdit}><Pencil className="h-3.5 w-3.5" /></button>
           )}
         </div>
 
@@ -832,22 +837,18 @@ function ChallengeSummaryStrip({ challenges, formatMoney }: { challenges: Manage
   }, [challenges]);
 
   const items = [
-    { icon: Target, label: "Total Target", value: `${stats.totalTarget.toLocaleString()} pcs`, detail: "All challenges" },
-    { icon: TrendingUp, label: "Total Progress", value: `${stats.totalProgress.toLocaleString()} pcs`, detail: `${stats.totalProgressPercent}% overall progress` },
-    { icon: Wallet, label: "Total Earned", value: formatMoney(stats.totalEarned, stats.currency), detail: "From weekly milestones" },
-    { icon: Gift, label: "Monthly Bonus Potential", value: formatMoney(stats.totalPotential, stats.currency), detail: "If all targets are met" },
-    { icon: CalendarDays, label: "Days Remaining", value: `${stats.daysRemaining} day${stats.daysRemaining === 1 ? "" : "s"}`, detail: "Until nearest deadline" },
+    { icon: Target, label: "Active Targets", value: String(challenges.filter((item) => item.status === "active").length), detail: "Active challenges" },
+    { icon: TrendingUp, label: "Total Progress", value: `${stats.totalProgress.toLocaleString()} / ${stats.totalTarget.toLocaleString()} pcs`, detail: "Across all challenges" },
+    { icon: Gift, label: "Total Earned", value: `${formatMoney(stats.totalEarned, stats.currency)} / ${formatMoney(stats.totalPotential, stats.currency)}`, detail: "Across all challenges" },
     { icon: Gauge, label: "Required Pace", value: `${stats.requiredPace.toLocaleString()} pcs/day`, detail: "To hit all targets" }
   ];
 
   return (
-    <div className="grid grid-cols-2 gap-3 rounded-lg border border-indigo-100 bg-white/80 p-3.5 sm:grid-cols-3 xl:grid-cols-6">
+    <div className="grid grid-cols-1 gap-0 rounded-xl border border-indigo-100 bg-white p-4 sm:grid-cols-2 xl:grid-cols-4">
       {items.map((item) => (
-        <div key={item.label} className="flex flex-col gap-1.5">
+        <div key={item.label} className="flex items-center gap-3 border-b border-gray-100 p-3 last:border-0 sm:border-b-0 sm:border-r sm:last:border-r-0">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600"><item.icon className="h-3.5 w-3.5" /></span>
-          <p className="text-[9px] font-black uppercase tracking-[0.08em] text-gray-400">{item.label}</p>
-          <p className="text-sm font-black text-gray-950">{item.value}</p>
-          <p className="text-[9px] font-semibold text-gray-400">{item.detail}</p>
+          <div><p className="text-[9px] font-black uppercase tracking-[0.08em] text-gray-400">{item.label}</p><p className="mt-1 text-sm font-black text-gray-950">{item.value}</p><p className="mt-0.5 text-[9px] font-semibold text-gray-400">{item.detail}</p></div>
         </div>
       ))}
     </div>
