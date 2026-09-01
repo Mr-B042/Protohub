@@ -146,7 +146,7 @@ router.get("/", async (req, res) => {
     const latest = rows.reduce((value, row) => row.end_date > value ? row.end_date : value, rows[0].end_date);
     const { data: orders, error: ordersError } = await supabase
       .from("orders")
-      .select("id, product_id, quantity, status, created_at, delivered_at, review_hold")
+      .select("id, product_id, quantity, status, created_at, delivered_date, review_hold")
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", req.user!.orgId)
       .gte("created_at", toWatUtcIso(earliest, "start"))
@@ -157,7 +157,7 @@ router.get("/", async (req, res) => {
     const today = todayInLagos();
     const challenges = rows.map((row) => {
       const matching = (orders ?? []).filter((order) => {
-        const deliveredDate = lagosDateKeyFromIso(String(order.delivered_at ?? ""));
+        const deliveredDate = String(order.delivered_date ?? "").slice(0, 10);
         return order.product_id === row.product_id
           && order.status === "Delivered"
           && deliveredDate >= row.start_date
@@ -184,7 +184,7 @@ router.get("/", async (req, res) => {
         status: row.status as ChallengeLifecycleStatus,
         today,
         orders: matching.map((order) => ({
-          dateKey: lagosDateKeyFromIso(String(order.delivered_at ?? "")),
+          dateKey: String(order.delivered_date ?? "").slice(0, 10),
           units: Number(order.quantity ?? 0)
         }))
       });
