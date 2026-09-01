@@ -694,10 +694,10 @@ function MilestoneCard({ milestone, currency, formatMoney }: { milestone: Manage
   const elapsedDays = Math.max(0, Math.min(totalDays, Math.ceil((new Date(today.getFullYear(), today.getMonth(), today.getDate(), 12).getTime() - start.getTime()) / DAY_MS) + 1));
   const dailyTarget = Math.ceil(milestone.targetUnits / totalDays);
   const expectedByToday = dailyTarget * elapsedDays;
+  const requiredPace = daysRemaining > 0 ? Math.ceil(remainingUnits / daysRemaining) : remainingUnits;
   const paceVariance = milestone.progressUnits - expectedByToday;
   const dailyPaceStatus = milestone.status === "Upcoming" ? `Starts ${formatDateShort(milestone.startDate)}` : paceVariance > 0 ? `Ahead by ${paceVariance.toLocaleString()} pcs` : paceVariance === 0 ? "On pace" : `${Math.abs(paceVariance).toLocaleString()} pcs to catch up`;
   const paceGuidance = milestone.status === "Upcoming" ? "Prepare for this week" : paceVariance >= 0 ? "Keep this pace" : `Need ${Math.max(requiredPace, dailyTarget).toLocaleString()} pcs/day`;
-  const requiredPace = daysRemaining > 0 ? Math.ceil(remainingUnits / daysRemaining) : remainingUnits;
   return (
     <div className={`rounded-lg border p-3 ${tone.card}`}>
       <div className="flex items-start justify-between gap-2">
