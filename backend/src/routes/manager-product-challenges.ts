@@ -52,6 +52,14 @@ const ChallengeSchema = ChallengeFields.superRefine((value, context) => {
 
 const PatchSchema = ChallengeFields.partial().strict();
 
+const AllocationSchema = z.object({
+  repId: z.string().uuid(),
+  targetUnits: z.coerce.number().int().min(1).max(10_000_000),
+  rewardAmount: z.coerce.number().min(0).max(1_000_000_000),
+  milestoneTargets: z.array(z.coerce.number().int().min(1).max(10_000_000)).max(24).default([])
+}).strict();
+const AllocationsSchema = z.object({ allocations: z.array(AllocationSchema).min(1).max(500) }).strict();
+
 const todayInLagos = () => new Date(Date.now() + 3_600_000).toISOString().slice(0, 10);
 const lagosDateKeyFromIso = (value: string) => {
   const timestamp = new Date(value).getTime();
@@ -160,10 +168,21 @@ router.get("/", async (req, res) => {
     if (ordersError) throw ordersError;
 
     const today = todayInLagos();
-    let repCount = 1;
-    if (req.user!.role === "Sales Rep") {
-      const { count } = await supabase.from("users").select("id", { count: "exact", head: true }).eq("org_id", req.user!.orgId).eq("role", "Sales Rep").eq("active", true);
-      repCount = Math.max(1, count ?? 1);
+    const challengeIds = rows.map((row) => row.id);
+    const { data: allocationRows, error: allocationError } = await supabase
+      .from("manager_product_challenge_allocations")
+      .select("challenge_id, rep_id, target_units, reward_amount, milestone_targets")
+      .eq("org_id", req.user!.orgId)
+      .in("challenge_id", challengeIds);
+    // Keep the existing challenge view available while the additive allocation
+    // migration rolls through environments. Equal split is explicitly marked
+    // as a fallback; it is never persisted or treated as manager allocation.
+    if (allocationError && !/relation .*manager_product_challenge_allocations.*does not exist/i.test(allocationError.message ?? "")) throw allocationError;
+    let fallbackRepCount = 1;
+    if (req.user!.role === "Sales Rep" && (!allocationRows || allocationRows.length === 0)) {
+      const { count, error: repCountError } = await supabase.from("users").select("id", { count: "exact", head: true }).eq("org_id", req.user!.orgId).eq("role", "Sales Rep").eq("active", true);
+      if (repCountError) throw repCountError;
+      fallbackRepCount = Math.max(1, count ?? 1);
     }
     const challenges = rows.map((row) => {
       const productOrders = (orders ?? []).filter((order) => order.product_id === row.product_id);
@@ -176,8 +195,15 @@ router.get("/", async (req, res) => {
           && deliveredDate <= row.end_date;
       });
       const teamTargetUnits = Number(row.target_units ?? 0);
-      const targetUnits = req.user!.role === "Sales Rep" ? Math.ceil(teamTargetUnits / repCount) : teamTargetUnits;
-      const rewardAmount = req.user!.role === "Sales Rep" ? Number(row.reward_amount ?? 0) / repCount : Number(row.reward_amount ?? 0);
+      const teamRewardAmount = Number(row.reward_amount ?? 0);
+      const allocations = (allocationRows ?? []).filter((allocation) => allocation.challenge_id === row.id);
+      const ownAllocation = allocations.find((allocation) => allocation.rep_id === req.user!.id);
+      const targetUnits = req.user!.role === "Sales Rep"
+        ? Number(ownAllocation?.target_units ?? Math.ceil(teamTargetUnits / Math.max(1, allocations.length || fallbackRepCount)))
+        : teamTargetUnits;
+      const rewardAmount = req.user!.role === "Sales Rep"
+        ? Number(ownAllocation?.reward_amount ?? (teamRewardAmount / Math.max(1, allocations.length || fallbackRepCount)))
+        : teamRewardAmount;
       const progressUnits = matching.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0);
       const progress = evaluateChallengeProgress({
         startDate: row.start_date,
@@ -207,16 +233,43 @@ router.get("/", async (req, res) => {
       const deliveredPieces = matching.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0);
       return rowToApi({ ...row, target_units: targetUnits, reward_amount: rewardAmount }, progress, matching.length, milestoneResult, req.user!.role === "Sales Rep" ? {
         teamTargetUnits,
-        teamRewardAmount: Number(row.reward_amount ?? 0),
+        teamRewardAmount,
+        allocationMode: ownAllocation ? "manager_allocated" : "equal_split_fallback",
+        allocationTargetUnits: ownAllocation?.target_units ?? null,
+        allocationRewardAmount: ownAllocation?.reward_amount ?? null,
         confirmedPieces,
         deliveredPieces,
         awaitingDeliveryPieces: Math.max(0, confirmedPieces + deliveredPieces - deliveredPieces)
       } : {});
     });
-    res.json({ challenges, canEdit: req.user!.role === "Owner" });
+    res.json({ challenges, canEdit: req.user!.role === "Owner", allocations: req.user!.role === "Sales Rep" ? [] : (allocationRows ?? []) });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not load product challenges." });
   }
+});
+
+router.put("/:id/allocations", requireRole("Owner"), async (req, res) => {
+  const parsed = AllocationsSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+  try {
+    const { data: challenge, error: challengeError } = await supabase.from("manager_product_challenges")
+      .select("id, target_units, reward_amount, milestone_mode, cadence")
+      .eq("id", req.params.id).eq("org_id", req.user!.orgId).maybeSingle();
+    if (challengeError) throw challengeError;
+    if (!challenge) { res.status(404).json({ error: "Challenge not found." }); return; }
+    const targetTotal = parsed.data.allocations.reduce((sum, item) => sum + item.targetUnits, 0);
+    const rewardTotal = parsed.data.allocations.reduce((sum, item) => sum + item.rewardAmount, 0);
+    if (targetTotal !== Number(challenge.target_units)) { res.status(400).json({ error: `Rep allocations must total ${challenge.target_units} pieces.` }); return; }
+    if (Math.abs(rewardTotal - Number(challenge.reward_amount)) > 0.01) { res.status(400).json({ error: `Rep rewards must total ${challenge.reward_amount}.` }); return; }
+    const repIds = parsed.data.allocations.map((item) => item.repId);
+    const { data: reps, error: repsError } = await supabase.from("users").select("id").eq("org_id", req.user!.orgId).eq("role", "Sales Rep").eq("active", true).in("id", repIds);
+    if (repsError) throw repsError;
+    if ((reps ?? []).length !== new Set(repIds).size) { res.status(400).json({ error: "Every allocation must belong to an active sales rep in this organization." }); return; }
+    const payload = parsed.data.allocations.map((item) => ({ org_id: req.user!.orgId, challenge_id: req.params.id, rep_id: item.repId, target_units: item.targetUnits, reward_amount: item.rewardAmount, milestone_targets: item.milestoneTargets }));
+    const { data, error } = await supabase.from("manager_product_challenge_allocations").upsert(payload, { onConflict: "challenge_id,rep_id" }).select("*");
+    if (error) throw error;
+    res.json({ allocations: data ?? [] });
+  } catch (error: any) { res.status(500).json({ error: error?.message ?? "Could not save rep allocations." }); }
 });
 
 router.post("/", requireRole("Owner"), async (req, res) => {
