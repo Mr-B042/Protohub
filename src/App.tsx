@@ -9277,6 +9277,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [targetPeriods, setTargetPeriods] = useState<TargetPeriod[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   const [targetProgress, setTargetProgress] = useState<TargetProgressView | null>(null);
+  const [targetProgressOverview, setTargetProgressOverview] = useState<Record<string, TargetProgressView>>({});
   const [targetsLoading, setTargetsLoading] = useState(false);
   const [targetsError, setTargetsError] = useState<string | null>(null);
   const [targetEditorOpen, setTargetEditorOpen] = useState(false);
@@ -9408,7 +9409,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         // Prefer whatever is already selected, else the newest period.
         const next = targets.find((t) => t.id === selectedTargetId) ?? targets[0] ?? null;
         setSelectedTargetId(next?.id ?? null);
-        setTargetProgress(next ? await targetPeriodsApi.progress(next.id) : null);
+        const progressRows = await Promise.all(targets.map(async (target) => [target.id, await targetPeriodsApi.progress(target.id)] as const));
+        if (cancelled) return;
+        setTargetProgressOverview(Object.fromEntries(progressRows));
+        setTargetProgress(next ? (Object.fromEntries(progressRows)[next.id] ?? null) : null);
       } catch (err: any) {
         if (!cancelled) setTargetsError(err?.message ?? "Could not load targets.");
       } finally {
@@ -31137,6 +31141,29 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             )}
           </div>
         </div>
+
+        {targetPeriods.length > 0 && !targetEditorOpen && (
+          <section className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-emerald-50/40 p-5 shadow-sm" aria-label="All target progress overview">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div><p className="m-0 text-xs font-black uppercase tracking-[0.16em] text-indigo-600">Target overview</p><h3 className="mt-1 text-lg font-black text-gray-900">Every milestone at a glance</h3><p className="m-0 text-sm text-gray-500">See contribution, orders, deliveries, pieces, rate and ad spend without opening each target.</p></div>
+              <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-gray-500 shadow-sm">{targetPeriods.length} active target{targetPeriods.length === 1 ? "" : "s"}</span>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {targetPeriods.map((item) => {
+                const progress = targetProgressOverview[item.id];
+                const contribution = progress?.contribution.percentAchieved ?? 0;
+                const delivery = progress?.deliveryRate.percentAchieved ?? 0;
+                const status = progress?.forecast.status ?? "at_risk";
+                return <button key={item.id} type="button" onClick={() => void selectTargetPeriod(item.id)} className="rounded-xl border border-white bg-white/90 p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+                  <div className="flex items-start justify-between gap-2"><div><p className="m-0 text-sm font-black text-gray-900">{item.productName ?? item.name}</p><p className="m-0 mt-0.5 text-xs text-gray-400">{periodLabel(item)}</p></div><span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${statusTone(status)}`}>{statusLabel(status)}</span></div>
+                  <div className="mt-3 flex items-end justify-between gap-2"><span className="text-xs font-bold text-gray-500">Contribution</span><span className="text-sm font-black text-gray-900">{formatMoney(progress?.contribution.actual ?? 0)} <span className="font-semibold text-gray-400">/ {formatMoney(item.contributionTarget)}</span></span></div>
+                  <div className="mt-1 h-2 overflow-hidden rounded-full bg-gray-100"><div className="h-full rounded-full bg-indigo-500" style={{ width: `${Math.min(100, Math.max(0, contribution))}%` }} /></div>
+                  <div className="mt-3 grid grid-cols-4 gap-2 text-[10px]"><div><span className="block font-bold uppercase text-gray-400">Orders</span><b className="text-gray-800">{progress?.ordersPlaced.actual ?? 0}/{item.orderTarget}</b></div><div><span className="block font-bold uppercase text-gray-400">Delivered</span><b className="text-gray-800">{progress?.delivered.actual ?? 0}/{item.deliveredTarget}</b></div><div><span className="block font-bold uppercase text-gray-400">Pieces</span><b className="text-gray-800">{progress?.pieces.actual ?? 0}/{item.piecesTarget}</b></div><div><span className="block font-bold uppercase text-gray-400">Rate</span><b className="text-gray-800">{progress?.deliveryRate.actual ?? 0}%/{item.deliveryRateTarget}%</b></div></div>
+                </button>;
+              })}
+            </div>
+          </section>
+        )}
 
         {targetEditorOpen && currentRole === "Owner" && (
           <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
