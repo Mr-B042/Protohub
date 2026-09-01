@@ -58,6 +58,10 @@ export type ManagerProductChallenge = {
   daysLeft: number;
   computedStatus: string;
   qualifiedOrders: number;
+  teamTargetUnits?: number;
+  confirmedPieces?: number;
+  deliveredPieces?: number;
+  awaitingDeliveryPieces?: number;
 };
 
 export type ManagerChallengeDraft = Pick<
@@ -625,7 +629,7 @@ function ChallengeCard({
               <p className="text-[10px] font-black uppercase tracking-[0.14em] text-violet-600">{challenge.cadence} challenge</p>
               <h3 className="mt-2 break-words text-xl font-black leading-tight text-gray-950">{product?.name ?? challenge.name}</h3>
               <p className="mt-1 text-sm font-semibold text-gray-500">{challenge.name}</p>
-              <p className="mt-2 text-xs font-semibold text-gray-400">{challenge.qualifiedOrders} qualified order{challenge.qualifiedOrders === 1 ? "" : "s"}</p>
+              <p className="mt-2 text-xs font-semibold text-gray-400">{challenge.qualifiedOrders} delivered order{challenge.qualifiedOrders === 1 ? "" : "s"}{challenge.confirmedPieces !== undefined ? ` · ${challenge.confirmedPieces} pcs awaiting delivery` : ""}</p>
             </div>
           </div>
           <div className="flex items-start gap-2">

@@ -64,7 +64,8 @@ const rowToApi = (
   row: any,
   progress: ReturnType<typeof evaluateChallengeProgress>,
   qualifiedOrders: number,
-  milestoneResult: ReturnType<typeof buildChallengeMilestones>
+  milestoneResult: ReturnType<typeof buildChallengeMilestones>,
+  overrides: Record<string, unknown> = {}
 ) => ({
   id: row.id,
   productId: row.product_id,
@@ -86,6 +87,7 @@ const rowToApi = (
   updatedAt: row.updated_at,
   qualifiedOrders,
   ...progress
+  ,...overrides
 });
 
 const rowPayload = (value: z.infer<typeof ChallengeSchema>, req: any) => ({
@@ -158,7 +160,13 @@ router.get("/", async (req, res) => {
     if (ordersError) throw ordersError;
 
     const today = todayInLagos();
+    let repCount = 1;
+    if (req.user!.role === "Sales Rep") {
+      const { count } = await supabase.from("users").select("id", { count: "exact", head: true }).eq("org_id", req.user!.orgId).eq("role", "Sales Rep").eq("active", true);
+      repCount = Math.max(1, count ?? 1);
+    }
     const challenges = rows.map((row) => {
+      const productOrders = (orders ?? []).filter((order) => order.product_id === row.product_id);
       const matching = (orders ?? []).filter((order) => {
         const deliveredDate = String(order.delivered_date ?? "").slice(0, 10);
         const status = String(order.status ?? "").trim().toLowerCase();
@@ -167,11 +175,14 @@ router.get("/", async (req, res) => {
           && deliveredDate >= row.start_date
           && deliveredDate <= row.end_date;
       });
+      const teamTargetUnits = Number(row.target_units ?? 0);
+      const targetUnits = req.user!.role === "Sales Rep" ? Math.ceil(teamTargetUnits / repCount) : teamTargetUnits;
+      const rewardAmount = req.user!.role === "Sales Rep" ? Number(row.reward_amount ?? 0) / repCount : Number(row.reward_amount ?? 0);
       const progressUnits = matching.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0);
       const progress = evaluateChallengeProgress({
         startDate: row.start_date,
         endDate: row.end_date,
-        targetUnits: Number(row.target_units),
+        targetUnits,
         progressUnits,
         status: row.status as ChallengeLifecycleStatus,
         today
@@ -180,8 +191,8 @@ router.get("/", async (req, res) => {
         cadence: row.cadence,
         startDate: row.start_date,
         endDate: row.end_date,
-        targetUnits: Number(row.target_units),
-        rewardAmount: Number(row.reward_amount ?? 0),
+        targetUnits,
+        rewardAmount,
         milestoneMode: row.milestone_mode ?? "none",
         milestoneDistribution: row.milestone_distribution ?? "even",
         milestoneTargets: Array.isArray(row.milestone_targets) ? row.milestone_targets.map(Number) : [],
@@ -192,7 +203,15 @@ router.get("/", async (req, res) => {
           units: Number(order.quantity ?? 0)
         }))
       });
-      return rowToApi(row, progress, matching.length, milestoneResult);
+      const confirmedPieces = productOrders.filter((order) => ["Confirmed", "In Process", "Dispatched"].includes(String(order.status))).reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0);
+      const deliveredPieces = matching.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0);
+      return rowToApi({ ...row, target_units: targetUnits, reward_amount: rewardAmount }, progress, matching.length, milestoneResult, req.user!.role === "Sales Rep" ? {
+        teamTargetUnits,
+        teamRewardAmount: Number(row.reward_amount ?? 0),
+        confirmedPieces,
+        deliveredPieces,
+        awaitingDeliveryPieces: Math.max(0, confirmedPieces + deliveredPieces - deliveredPieces)
+      } : {});
     });
     res.json({ challenges, canEdit: req.user!.role === "Owner" });
   } catch (error: any) {
