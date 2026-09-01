@@ -97,7 +97,7 @@ export function buildChallengeMilestones(input: ChallengeMilestoneInput) {
     // Do not carry today's progress into a future milestone. The challenge
     // total is cumulative, but an upcoming week must remain at zero until its
     // window starts.
-    const progressUnits = today < dateKeyFromDayNumber(milestoneStart)
+    const progressUnits = today < milestoneStart
       ? 0
       : Math.min(totalProgressToDate, cumulativeTarget);
     const progressPercent = Math.max(0, Math.round((progressUnits / cumulativeTarget) * 100));
