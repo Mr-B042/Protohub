@@ -72,6 +72,12 @@ export type ManagerProductChallenge = {
   currentWeekRemaining?: number;
   currentWeekDaysLeft?: number;
   todayDeliveredPieces?: number;
+  // The dashboard's period filter. Additive only - target, progress and pace
+  // stay challenge-to-date so a one-day window never reads as "Behind".
+  windowFrom?: string | null;
+  windowTo?: string | null;
+  windowDeliveredPieces?: number;
+  windowQualifiedOrders?: number;
 };
 
 export type ChallengeAllocation = {
@@ -222,6 +228,11 @@ const CARD_ACCENTS = [
   { bar: "bg-blue-500", label: "text-blue-600" },
   { bar: "bg-amber-500", label: "text-amber-600" }
 ];
+
+function windowLabel(from?: string | null, to?: string | null) {
+  if (!from || !to) return "";
+  return from === to ? formatDateShort(from) : `${formatDateShort(from)} - ${formatDateShort(to)}`;
+}
 
 export function ManagerProductChallenges({
   role,
@@ -683,6 +694,13 @@ function ChallengeCard({
         <div className="mt-5 grid grid-cols-1 gap-4 border-y border-gray-100 py-4 sm:grid-cols-3">
           <Metric label={`${challenge.cadence} target`} value={`${challenge.targetUnits.toLocaleString()} pcs`} detail="Total for this challenge" />
           <Metric label="Overall progress" value={`${challenge.progressUnits.toLocaleString()} pcs`} detail={`${challenge.progressPercent}% complete`} />
+          {challenge.windowFrom && challenge.windowTo ? (
+            <Metric
+              label="In this window"
+              value={`${(challenge.windowDeliveredPieces ?? 0).toLocaleString()} pcs`}
+              detail={`${windowLabel(challenge.windowFrom, challenge.windowTo)} · ${(challenge.windowQualifiedOrders ?? 0).toLocaleString()} order${(challenge.windowQualifiedOrders ?? 0) === 1 ? "" : "s"}`}
+            />
+          ) : null}
           <div>
             <p className="text-[10px] font-black uppercase tracking-[0.12em] text-gray-400">Time remaining</p>
             <p className="mt-2 flex items-center gap-2 text-xl font-black text-gray-900"><CalendarDays className="h-5 w-5 text-gray-400" /> {challenge.daysLeft} day{challenge.daysLeft === 1 ? "" : "s"}</p>
@@ -881,7 +899,7 @@ function ChallengeSelector({ challenge, product, selected, onClick, accent }: { 
   const expected = (elapsed / totalDays) * challenge.targetUnits;
   const ratio = expected > 0 ? challenge.progressUnits / expected : 1;
   const status = completed ? "Completed" : elapsed <= 1 && challenge.progressUnits === 0 ? "Just Started" : ratio < 0.8 ? "Behind" : ratio < 0.95 ? "At Risk" : "On Track";
-  return <button type="button" onClick={onClick} className={`min-w-[270px] flex-1 rounded-xl border p-2.5 text-left transition ${selected ? "border-violet-500 bg-violet-50/70 ring-2 ring-violet-200" : "border-gray-200 bg-white hover:border-violet-300"}`}><div className="flex items-center gap-3">{product?.imageUrl ? <img src={product.imageUrl} alt="" className="h-14 w-14 shrink-0 rounded-lg border border-gray-100 object-cover" /> : <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-violet-50 text-violet-500"><Package className="h-5 w-5" /></span>}<div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><span className={`truncate text-sm ${selected ? "font-black text-gray-950" : "font-bold text-gray-800"}`}>{product?.name ?? challenge.name}</span><span className="text-xs font-black text-gray-500">{challenge.progressPercent}%</span></div><p className="mt-1 text-xs font-black text-violet-700">{challenge.progressUnits.toLocaleString()} <span className="font-semibold text-gray-400">/ {challenge.targetUnits.toLocaleString()} pcs</span></p><div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-gray-200"><div className={`h-full rounded-full ${accent.bar}`} style={{ width: `${Math.min(100, challenge.progressPercent)}%` }} /></div><div className="mt-1.5 flex justify-end"><span className={`rounded-full border px-2 py-0.5 text-[9px] font-black ${statusStyle(status)}`}>{status}</span></div></div></div></button>;
+  return <button type="button" onClick={onClick} className={`min-w-[270px] flex-1 rounded-xl border p-2.5 text-left transition ${selected ? "border-violet-500 bg-violet-50/70 ring-2 ring-violet-200" : "border-gray-200 bg-white hover:border-violet-300"}`}><div className="flex items-center gap-3">{product?.imageUrl ? <img src={product.imageUrl} alt="" className="h-14 w-14 shrink-0 rounded-lg border border-gray-100 object-cover" /> : <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-violet-50 text-violet-500"><Package className="h-5 w-5" /></span>}<div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><span className={`truncate text-sm ${selected ? "font-black text-gray-950" : "font-bold text-gray-800"}`}>{product?.name ?? challenge.name}</span><span className="text-xs font-black text-gray-500">{challenge.progressPercent}%</span></div><p className="mt-1 text-xs font-black text-violet-700">{challenge.progressUnits.toLocaleString()} <span className="font-semibold text-gray-400">/ {challenge.targetUnits.toLocaleString()} pcs</span></p><div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-gray-200"><div className={`h-full rounded-full ${accent.bar}`} style={{ width: `${Math.min(100, challenge.progressPercent)}%` }} /></div><div className="mt-1.5 flex items-center justify-between gap-2">{challenge.windowFrom && challenge.windowTo ? <span className="truncate text-[9px] font-bold text-gray-500">{(challenge.windowDeliveredPieces ?? 0).toLocaleString()} pcs in window</span> : <span />}<span className={`rounded-full border px-2 py-0.5 text-[9px] font-black ${statusStyle(status)}`}>{status}</span></div></div></div></button>;
 }
 
 function CompactChallengeCard({
@@ -984,6 +1002,8 @@ function ChallengeSummaryStrip({ challenges, formatMoney }: { challenges: Manage
   const stats = useMemo(() => {
     const totalTarget = challenges.reduce((sum, item) => sum + item.targetUnits, 0);
     const totalProgress = challenges.reduce((sum, item) => sum + item.progressUnits, 0);
+    const hasWindow = challenges.some((item) => Boolean(item.windowFrom && item.windowTo));
+    const windowProgress = challenges.reduce((sum, item) => sum + (item.windowDeliveredPieces ?? 0), 0);
     const totalProgressPercent = totalTarget > 0 ? Math.round((totalProgress / totalTarget) * 100) : 0;
     const totalEarned = challenges.reduce((sum, item) => sum + item.earnedRewardAmount, 0);
     const totalPotential = challenges.reduce((sum, item) => sum + item.rewardAmount, 0);
@@ -993,6 +1013,9 @@ function ChallengeSummaryStrip({ challenges, formatMoney }: { challenges: Manage
       return sum + (item.daysLeft > 0 ? remaining / item.daysLeft : 0);
     }, 0);
     return {
+      hasWindow,
+      windowProgress,
+      windowLabelText: windowLabel(challenges[0]?.windowFrom, challenges[0]?.windowTo),
       totalTarget,
       totalProgress,
       totalProgressPercent,
@@ -1006,7 +1029,7 @@ function ChallengeSummaryStrip({ challenges, formatMoney }: { challenges: Manage
 
   const items = [
     { icon: Target, label: "Active Targets", value: String(challenges.filter((item) => item.status === "active").length), detail: "Active challenges" },
-    { icon: TrendingUp, label: "Total Progress", value: `${stats.totalProgress.toLocaleString()} / ${stats.totalTarget.toLocaleString()} pcs`, detail: "Across all challenges" },
+    { icon: TrendingUp, label: "Total Progress", value: `${stats.totalProgress.toLocaleString()} / ${stats.totalTarget.toLocaleString()} pcs`, detail: stats.hasWindow ? `${stats.windowProgress.toLocaleString()} pcs in ${stats.windowLabelText}` : "Across all challenges" },
     { icon: Gift, label: "Total Earned", value: `${formatMoney(stats.totalEarned, stats.currency)} / ${formatMoney(stats.totalPotential, stats.currency)}`, detail: "Across all challenges" },
     { icon: Gauge, label: "Required Pace", value: `${stats.requiredPace.toLocaleString()} pcs/day`, detail: "To hit all targets" }
   ];
