@@ -888,14 +888,17 @@ router.get("/candidates", requireRole("Owner", "Admin", "Manager", "Recovery Rep
           : "Product Unavailable"
       }));
 
+    // ⚠️ cap <= 0 means UNLIMITED, not "off" - the same reading atClaimCap()
+    // has always used. A rep with no ceiling can always claim.
     const cap = Math.max(0, Number(settings.maxOpenClaims ?? 0));
+    const uncapped = cap <= 0;
     res.json({
       rows,
       cap,
       held,
       // Said plainly so the UI never has to guess why the button is off.
-      remaining: cap === 0 ? 0 : Math.max(0, cap - held),
-      canClaim: cap > 0 && held < cap
+      remaining: uncapped ? 0 : Math.max(0, cap - held),
+      canClaim: uncapped || held < cap
     });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not load recovery candidates." });
@@ -938,10 +941,12 @@ router.post("/claim", requireRole("Owner", "Admin", "Manager", "Recovery Rep"), 
     }
 
     const settings = await loadKpiSettings(orgId);
+    // ⚠️ cap <= 0 means UNLIMITED. It used to mean "claiming switched off",
+    // which contradicted atClaimCap() and left no way to run without a ceiling.
+    // Set a positive max_open_claims to reinstate a limit.
     const cap = Math.max(0, Number(settings.maxOpenClaims ?? 0));
     const held = await openClaimCount(orgId, repId);
-    if (cap === 0) { res.status(409).json({ error: "Claiming is switched off. Set an open-order limit in Recovery settings." }); return; }
-    if (held >= cap) {
+    if (cap > 0 && held >= cap) {
       res.status(409).json({
         error: `${rep.name} already holds ${held} open orders, the limit is ${cap}. Close some before claiming more.`
       });
