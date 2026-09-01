@@ -689,6 +689,14 @@ function MilestoneCard({ milestone, currency, formatMoney }: { milestone: Manage
   const today = new Date();
   const end = parseDateKey(milestone.endDate);
   const daysRemaining = Math.max(0, Math.ceil((end.getTime() - new Date(today.getFullYear(), today.getMonth(), today.getDate(), 12).getTime()) / DAY_MS) + 1);
+  const start = parseDateKey(milestone.startDate);
+  const totalDays = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / DAY_MS) + 1);
+  const elapsedDays = Math.max(0, Math.min(totalDays, Math.ceil((new Date(today.getFullYear(), today.getMonth(), today.getDate(), 12).getTime() - start.getTime()) / DAY_MS) + 1));
+  const dailyTarget = Math.ceil(milestone.targetUnits / totalDays);
+  const expectedByToday = dailyTarget * elapsedDays;
+  const paceVariance = milestone.progressUnits - expectedByToday;
+  const dailyPaceStatus = milestone.status === "Upcoming" ? `Starts ${formatDateShort(milestone.startDate)}` : paceVariance > 0 ? `Ahead by ${paceVariance.toLocaleString()} pcs` : paceVariance === 0 ? "On pace" : `${Math.abs(paceVariance).toLocaleString()} pcs to catch up`;
+  const paceGuidance = milestone.status === "Upcoming" ? "Prepare for this week" : paceVariance >= 0 ? "Keep this pace" : `Need ${Math.max(requiredPace, dailyTarget).toLocaleString()} pcs/day`;
   const requiredPace = daysRemaining > 0 ? Math.ceil(remainingUnits / daysRemaining) : remainingUnits;
   return (
     <div className={`rounded-lg border p-3 ${tone.card}`}>
@@ -706,6 +714,10 @@ function MilestoneCard({ milestone, currency, formatMoney }: { milestone: Manage
       <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
         <div className="rounded-md bg-white/70 px-2 py-1.5"><p className="font-bold uppercase text-gray-400">Remaining</p><p className="mt-0.5 text-sm font-black text-gray-900">{remainingUnits.toLocaleString()} pcs</p></div>
         <div className="rounded-md bg-white/70 px-2 py-1.5"><p className="font-bold uppercase text-gray-400">Needed daily</p><p className="mt-0.5 text-sm font-black text-gray-900">{requiredPace.toLocaleString()} pcs</p></div>
+      </div>
+      <div className="mt-2 flex items-center justify-between rounded-md border border-blue-100 bg-blue-50/60 px-2 py-1.5 text-[10px]">
+        <span><span className="font-bold uppercase text-gray-400">Daily target</span> <b className="ml-1 text-gray-900">{dailyTarget.toLocaleString()} pcs/day</b></span>
+        <span className={`text-right font-black ${paceVariance > 0 ? "text-emerald-600" : paceVariance < 0 ? "text-rose-600" : "text-gray-500"}`}>{dailyPaceStatus}<span className="ml-1 font-semibold text-gray-500">· {paceGuidance}</span></span>
       </div>
       <p className={`mt-2 text-[10px] font-black ${milestone.status === "Missed" ? "text-rose-600" : milestone.status === "Earned" ? "text-emerald-600" : "text-blue-600"}`}>{milestone.status === "Earned" ? "Target met" : milestone.status === "Missed" ? "Target missed" : milestone.status}</p>
       <div className={`mt-3 flex items-center justify-between rounded-lg border px-3 py-2 text-xs font-black ${tone.footer}`}>
