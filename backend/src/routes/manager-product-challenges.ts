@@ -156,6 +156,13 @@ router.get("/", async (req, res) => {
   // personal field, so the preview rendered zeros for a rep who had deliveries.
   const scopeRole = req.user!.effectiveUserRole ?? req.user!.role;
   const scopeId = req.user!.effectiveUserId ?? req.user!.id;
+  // The dashboard's period filter. It NEVER changes target, progress or pace -
+  // a monthly challenge scoped to "Today" would read 0/2,727 and "Behind",
+  // which is a false alarm, not information. It only adds "delivered in this
+  // window" alongside the running total.
+  const dateKey = (value: unknown) => (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null);
+  const windowFrom = dateKey(req.query.from);
+  const windowTo = dateKey(req.query.to);
   try {
     const { data: rows, error } = await supabase
       .from("manager_product_challenges")
@@ -246,6 +253,13 @@ router.get("/", async (req, res) => {
       const matching = scopeRole === "Sales Rep" ? teamMatching.filter((order) => order.assigned_rep_id === scopeId) : teamMatching;
       const productOrders = scopeRole === "Sales Rep" ? teamProductOrders.filter((order) => order.assigned_rep_id === scopeId) : teamProductOrders;
       const progressUnits = matching.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0);
+      const inWindow = (order: { delivered_date?: string | null }) => {
+        if (!windowFrom || !windowTo) return false;
+        const deliveredDate = String(order.delivered_date ?? "").slice(0, 10);
+        return deliveredDate >= windowFrom && deliveredDate <= windowTo;
+      };
+      const windowOrders = windowFrom && windowTo ? matching.filter(inWindow) : [];
+      const windowDeliveredPieces = windowOrders.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0);
       const progress = evaluateChallengeProgress({
         startDate: row.start_date,
         endDate: row.end_date,
@@ -316,6 +330,10 @@ router.get("/", async (req, res) => {
         teamQualifiedOrders: teamMatching.length,
         teamTargetUnits,
         teamRewardAmount,
+        windowFrom,
+        windowTo,
+        windowDeliveredPieces,
+        windowQualifiedOrders: windowOrders.length,
         ...(scopeRole === "Sales Rep" ? {
         teamTargetUnits,
         teamRewardAmount,

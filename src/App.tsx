@@ -29020,13 +29020,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     } finally { setDeliveryGoalSaving(false); }
   };
 
-  const loadManagerProductChallenges = useCallback(async (options?: { quiet?: boolean }) => {
+  const loadManagerProductChallenges = useCallback(async (options?: { quiet?: boolean; from?: string; to?: string }) => {
     const canView = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager" || currentRole === "Sales Rep";
     if (!canView || (activePage !== "Manager Dashboard" && activePage !== "Sales Rep Workspace")) return;
     setManagerProductChallengesLoading(true);
     setManagerProductChallengesError("");
     try {
-      const result = await managerProductChallengesApi.list();
+      const result = await managerProductChallengesApi.list({ from: options?.from, to: options?.to });
       setManagerProductChallenges(Array.isArray(result?.challenges) ? result.challenges : []);
     } catch (error: any) {
       const message = error?.message ?? "Could not load product challenges.";
@@ -29040,9 +29040,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   useEffect(() => {
     if ((activePage !== "Manager Dashboard" || managerDashboardTab !== "Overview") && (activePage !== "Sales Rep Workspace" || repConsoleTab !== "My Targets & Incentives")) return;
-    void loadManagerProductChallenges({ quiet: true });
+    const onManagerDashboard = activePage === "Manager Dashboard";
+    void loadManagerProductChallenges({
+      quiet: true,
+      from: onManagerDashboard ? managerPeriodRange.start : undefined,
+      to: onManagerDashboard ? managerPeriodRange.end : undefined
+    });
     void loadDeliveryGoals();
-  }, [activePage, managerDashboardTab, loadManagerProductChallenges, loadDeliveryGoals]);
+  }, [activePage, managerDashboardTab, repConsoleTab, managerPeriodRange.start, managerPeriodRange.end, loadManagerProductChallenges, loadDeliveryGoals]);
 
   const saveManagerProductChallenge = async (draft: ManagerChallengeDraft, id?: string) => {
     if (id) await managerProductChallengesApi.update(id, draft);

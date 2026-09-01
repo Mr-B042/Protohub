@@ -2062,7 +2062,13 @@ export const managerBonusApi = {
 };
 
 export const managerProductChallengesApi = {
-  list: () => get<any>("/api/manager-product-challenges"),
+  list: (window?: { from?: string; to?: string }) => {
+    const params = new URLSearchParams();
+    if (window?.from) params.set("from", window.from);
+    if (window?.to) params.set("to", window.to);
+    const query = params.toString();
+    return get<any>(`/api/manager-product-challenges${query ? `?${query}` : ""}`);
+  },
   create: (body: unknown) => post<any>("/api/manager-product-challenges", body),
   update: (id: string, body: unknown) => patch<any>(`/api/manager-product-challenges/${id}`, body),
   remove: (id: string) => del<void>(`/api/manager-product-challenges/${id}`),
