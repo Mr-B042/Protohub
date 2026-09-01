@@ -130,6 +130,7 @@ async function hasOverlap(orgId: string, productId: string, startDate: string, e
 }
 
 router.get("/", async (req, res) => {
+  res.set("Cache-Control", "no-store, max-age=0");
   try {
     const { data: rows, error } = await supabase
       .from("manager_product_challenges")
