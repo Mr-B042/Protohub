@@ -150,6 +150,12 @@ async function hasOverlap(orgId: string, productId: string, startDate: string, e
 
 router.get("/", async (req, res) => {
   res.set("Cache-Control", "no-store, max-age=0");
+  // ⚠️ VIEW-AS. An Owner previewing a rep sends X-Spy-User-Id and the middleware
+  // sets effectiveUserRole/effectiveUserId; req.user.role stays "Owner". Reading
+  // req.user directly here showed the Owner the TEAM figures and dropped every
+  // personal field, so the preview rendered zeros for a rep who had deliveries.
+  const scopeRole = req.user!.effectiveUserRole ?? req.user!.role;
+  const scopeId = req.user!.effectiveUserId ?? req.user!.id;
   try {
     const { data: rows, error } = await supabase
       .from("manager_product_challenges")
@@ -158,7 +164,7 @@ router.get("/", async (req, res) => {
       .order("start_date", { ascending: false });
     if (error) throw error;
     if (!rows?.length) {
-      res.json({ challenges: [], canEdit: req.user!.role === "Owner" });
+      res.json({ challenges: [], canEdit: scopeRole === "Owner" });
       return;
     }
 
@@ -230,15 +236,15 @@ router.get("/", async (req, res) => {
         reward_amount: rewardShares[index] ?? 0,
         milestone_targets: []
       }));
-      const ownAllocation = allocations.find((allocation) => allocation.rep_id === req.user!.id);
-      const targetUnits = req.user!.role === "Sales Rep"
+      const ownAllocation = allocations.find((allocation) => allocation.rep_id === scopeId);
+      const targetUnits = scopeRole === "Sales Rep"
         ? Number(ownAllocation?.target_units ?? Math.ceil(teamTargetUnits / Math.max(1, allocations.length || fallbackRepCount)))
         : teamTargetUnits;
-      const rewardAmount = req.user!.role === "Sales Rep"
+      const rewardAmount = scopeRole === "Sales Rep"
         ? Number(ownAllocation?.reward_amount ?? (teamRewardAmount / Math.max(1, allocations.length || fallbackRepCount)))
         : teamRewardAmount;
-      const matching = req.user!.role === "Sales Rep" ? teamMatching.filter((order) => order.assigned_rep_id === req.user!.id) : teamMatching;
-      const productOrders = req.user!.role === "Sales Rep" ? teamProductOrders.filter((order) => order.assigned_rep_id === req.user!.id) : teamProductOrders;
+      const matching = scopeRole === "Sales Rep" ? teamMatching.filter((order) => order.assigned_rep_id === scopeId) : teamMatching;
+      const productOrders = scopeRole === "Sales Rep" ? teamProductOrders.filter((order) => order.assigned_rep_id === scopeId) : teamProductOrders;
       const progressUnits = matching.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0);
       const progress = evaluateChallengeProgress({
         startDate: row.start_date,
@@ -302,15 +308,15 @@ router.get("/", async (req, res) => {
           persisted: storedAllocations.length > 0
         };
       });
-      const ownAllocationDetails = allocationDetails.find((allocation) => allocation.repId === req.user!.id);
+      const ownAllocationDetails = allocationDetails.find((allocation) => allocation.repId === scopeId);
       return rowToApi({ ...row, target_units: targetUnits, reward_amount: rewardAmount }, progress, matching.length, milestoneResult, {
-        allocations: req.user!.role === "Sales Rep" ? [] : allocationDetails,
+        allocations: scopeRole === "Sales Rep" ? [] : allocationDetails,
         allocationMode: storedAllocations.length > 0 ? "manager_allocated" : "equal_split_fallback",
         teamProgressUnits: teamMatching.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0),
         teamQualifiedOrders: teamMatching.length,
         teamTargetUnits,
         teamRewardAmount,
-        ...(req.user!.role === "Sales Rep" ? {
+        ...(scopeRole === "Sales Rep" ? {
         teamTargetUnits,
         teamRewardAmount,
         allocationMode: storedAllocations.length > 0 && ownAllocation ? "manager_allocated" : "equal_split_fallback",
@@ -327,7 +333,7 @@ router.get("/", async (req, res) => {
         } : {})
       });
     });
-    res.json({ challenges, canEdit: req.user!.role === "Owner", reps: req.user!.role === "Sales Rep" ? [] : (activeReps ?? []) });
+    res.json({ challenges, canEdit: scopeRole === "Owner", reps: scopeRole === "Sales Rep" ? [] : (activeReps ?? []) });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not load product challenges." });
   }
