@@ -14,6 +14,7 @@ import {
   Pencil,
   Plus,
   Target,
+  MoreVertical,
   Trash2,
   TrendingUp,
   Wallet,
@@ -550,6 +551,8 @@ export function ManagerProductChallenges({
                     formatMoney={formatMoney}
                     accent={CARD_ACCENTS[index % CARD_ACCENTS.length]}
                     onEdit={() => openEdit(challenge)}
+                    onDelete={() => void onDelete(challenge.id)}
+                    onToggleStatus={() => void onSave({ ...challenge, status: challenge.status === "active" ? "paused" : "active" }, challenge.id)}
                   />
                 ))}
               </div>
@@ -564,6 +567,8 @@ export function ManagerProductChallenges({
                 canEdit={canEdit}
                 formatMoney={formatMoney}
                 onEdit={() => openEdit(challenge)}
+                onDelete={() => void onDelete(challenge.id)}
+                onToggleStatus={() => void onSave({ ...challenge, status: challenge.status === "active" ? "paused" : "active" }, challenge.id)}
               />
             ))
           )}
@@ -579,15 +584,20 @@ function ChallengeCard({
   product,
   canEdit,
   formatMoney,
-  onEdit
+  onEdit,
+  onDelete,
+  onToggleStatus
 }: {
   challenge: ManagerProductChallenge;
   product?: ChallengeProduct;
   canEdit: boolean;
   formatMoney: Props["formatMoney"];
   onEdit: () => void;
+  onDelete: () => void;
+  onToggleStatus: () => void;
 }) {
   const hasMilestones = challenge.milestoneMode === "weekly" && challenge.milestones?.length > 0;
+  const [menuOpen, setMenuOpen] = useState(false);
   return (
     <article className="relative overflow-hidden rounded-lg border border-violet-200 bg-white shadow-sm">
       <div className="h-1 bg-violet-500" />
@@ -610,7 +620,7 @@ function ChallengeCard({
               <p className="mt-2 text-2xl font-black text-violet-700">{formatMoney(challenge.rewardAmount, challenge.currency)}</p>
               <p className="mt-1 text-[10px] font-semibold text-gray-500">{hasMilestones ? "Paid through weekly milestones" : "Paid when the full target is met"}</p>
             </div>
-            {canEdit && <button type="button" className="!min-h-0 flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 hover:text-violet-700" onClick={onEdit} title="Edit challenge"><Pencil className="h-4 w-4" /></button>}
+            {canEdit && <div className="relative"><button type="button" className="!min-h-0 flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 hover:text-violet-700" onClick={() => setMenuOpen((open) => !open)} title="Challenge options"><MoreVertical className="h-4 w-4" /></button>{menuOpen && <div className="absolute right-0 top-10 z-10 w-32 rounded-lg border border-gray-200 bg-white p-1 text-left shadow-lg"><button type="button" className="w-full rounded px-2 py-1.5 text-left text-xs font-bold text-gray-700 hover:bg-gray-50" onClick={() => { setMenuOpen(false); onEdit(); }}>Edit</button><button type="button" className="w-full rounded px-2 py-1.5 text-left text-xs font-bold text-amber-700 hover:bg-amber-50" onClick={() => { setMenuOpen(false); onToggleStatus(); }}>{challenge.status === "active" ? "Pause" : "Resume"}</button><button type="button" className="w-full rounded px-2 py-1.5 text-left text-xs font-bold text-rose-600 hover:bg-rose-50" onClick={() => { setMenuOpen(false); onDelete(); }}>Delete</button></div>}</div>}
           </div>
         </div>
 
@@ -709,9 +719,7 @@ function CompactChallengeCard({
             <h4 className="mt-1 truncate text-sm font-black text-gray-950">{product?.name ?? challenge.name}</h4>
           </div>
           {canEdit && (
-            <button type="button" className="!min-h-0 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 hover:text-violet-700" onClick={onEdit} title="Edit challenge">
-              <Pencil className="h-3.5 w-3.5" />
-            </button>
+            <div className="relative shrink-0"><button type="button" className="!min-h-0 flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 hover:text-violet-700" onClick={() => setMenuOpen((open) => !open)} title="Challenge options"><MoreVertical className="h-3.5 w-3.5" /></button>{menuOpen && <div className="absolute right-0 top-8 z-10 w-32 rounded-lg border border-gray-200 bg-white p-1 text-left shadow-lg"><button type="button" className="w-full rounded px-2 py-1.5 text-left text-xs font-bold text-gray-700 hover:bg-gray-50" onClick={() => { setMenuOpen(false); onEdit(); }}>Edit</button><button type="button" className="w-full rounded px-2 py-1.5 text-left text-xs font-bold text-amber-700 hover:bg-amber-50" onClick={() => { setMenuOpen(false); onToggleStatus(); }}>{challenge.status === "active" ? "Pause" : "Resume"}</button><button type="button" className="w-full rounded px-2 py-1.5 text-left text-xs font-bold text-rose-600 hover:bg-rose-50" onClick={() => { setMenuOpen(false); onDelete(); }}>Delete</button></div>}</div>
           )}
         </div>
 
