@@ -12,7 +12,7 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 
 const router = Router();
-router.use(requireAuth, requireRole("Owner", "Admin", "Manager"));
+router.use(requireAuth, requireRole("Owner", "Admin", "Manager", "Sales Rep"));
 
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const ChallengeFields = z.object({
@@ -145,14 +145,16 @@ router.get("/", async (req, res) => {
 
     const earliest = rows.reduce((value, row) => row.start_date < value ? row.start_date : value, rows[0].start_date);
     const latest = rows.reduce((value, row) => row.end_date > value ? row.end_date : value, rows[0].end_date);
-    const { data: orders, error: ordersError } = await supabase
+    let ordersQuery = supabase
       .from("orders")
-      .select("id, product_id, quantity, status, created_at, delivered_date, review_hold")
+      .select("id, product_id, quantity, status, created_at, delivered_date, assigned_rep_id, review_hold")
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", req.user!.orgId)
       .gte("created_at", toWatUtcIso(earliest, "start"))
       .lte("created_at", toWatUtcIso(latest, "end"))
       .or("review_hold.is.null,review_hold.eq.false");
+    if (req.user!.role === "Sales Rep") ordersQuery = ordersQuery.eq("assigned_rep_id", req.user!.id);
+    const { data: orders, error: ordersError } = await ordersQuery;
     if (ordersError) throw ordersError;
 
     const today = todayInLagos();

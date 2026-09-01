@@ -675,7 +675,7 @@ function waybillLineItems(w: WaybillRecord): WaybillItem[] {
   }
   return [{ productId: w.productId, productName: w.productName, quantity: w.quantity }];
 }
-type RepConsoleTab = "Dashboard" | "Bonuses" | "Upsell & Cross-sell Log" | "Products & Stock" | "Orders" | "Scheduled Deliveries" | "Abandoned Carts" | "Customers" | "Leaderboard" | "Notifications" | "Settings";
+type RepConsoleTab = "Dashboard" | "My Targets & Incentives" | "Bonuses" | "Upsell & Cross-sell Log" | "Products & Stock" | "Orders" | "Scheduled Deliveries" | "Abandoned Carts" | "Customers" | "Leaderboard" | "Notifications" | "Settings";
 type SalesRepsPageTab = "Overview" | "Bonuses";
 type CustomerFlag = { flagged: boolean; reason: string; flaggedAt: string };
 type CallOutcome = string;
@@ -2438,7 +2438,7 @@ const embedMetaTrackingModeOptions: Array<{ value: EmbedMetaTrackingMode; label:
   { value: "off", label: "Off", hint: "Do not fire Protohub Meta browser/CAPI tracking from this link." }
 ];
 const stockMovementTypes: ("All Types" | StockMovementType)[] = ["All Types", "Stock Added", "Distributed to Agent", "Order Fulfilled", "Return", "Correction", "Waybill Out", "Waybill In", "Status Reversal"];
-const repConsoleTabs: RepConsoleTab[] = ["Dashboard", "Products & Stock", "Bonuses", "Upsell & Cross-sell Log", "Orders", "Scheduled Deliveries", "Abandoned Carts", "Customers", "Leaderboard", "Notifications", "Settings"];
+const repConsoleTabs: RepConsoleTab[] = ["Dashboard", "My Targets & Incentives", "Products & Stock", "Bonuses", "Upsell & Cross-sell Log", "Orders", "Scheduled Deliveries", "Abandoned Carts", "Customers", "Leaderboard", "Notifications", "Settings"];
 const repOrderStatusTabs: RepOrderStatusTab[] = ["All Orders", "Pending", "Confirmed", "Follow-up"];
 const repChangeStatuses: Exclude<OrderStatus, "All Orders" | "New">[] = ["Confirmed", "In Process", "Dispatched", "Delivered", "Cancelled", "Postponed", "Failed"];
 const statusChangeActions: OrderStatusAction[] = [...repChangeStatuses, "Reschedule"];
@@ -29016,8 +29016,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const loadManagerProductChallenges = useCallback(async (options?: { quiet?: boolean }) => {
-    const canView = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager";
-    if (!canView || activePage !== "Manager Dashboard") return;
+    const canView = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager" || currentRole === "Sales Rep";
+    if (!canView || (activePage !== "Manager Dashboard" && activePage !== "Sales Rep Workspace")) return;
     setManagerProductChallengesLoading(true);
     setManagerProductChallengesError("");
     try {
@@ -29034,7 +29034,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   }, [activePage, currentRole]);
 
   useEffect(() => {
-    if (activePage !== "Manager Dashboard" || managerDashboardTab !== "Overview") return;
+    if ((activePage !== "Manager Dashboard" || managerDashboardTab !== "Overview") && (activePage !== "Sales Rep Workspace" || repConsoleTab !== "My Targets & Incentives")) return;
     void loadManagerProductChallenges({ quiet: true });
     void loadDeliveryGoals();
   }, [activePage, managerDashboardTab, loadManagerProductChallenges, loadDeliveryGoals]);
@@ -70649,7 +70649,19 @@ ${waybillLineItems(w).length > 1
           ))}
         </nav>}
 
-        {repConsoleTab === "Dashboard" ? (
+        {repConsoleTab === "My Targets & Incentives" ? (
+          <ManagerProductChallenges
+            role={currentRole}
+            products={readyEmbedProducts.map((product) => ({ id: product.id, name: product.name, active: product.active, imageUrl: product.packages.find((pkg) => Boolean(pkg.imageUrl))?.imageUrl }))}
+            challenges={managerProductChallenges}
+            loading={managerProductChallengesLoading}
+            error={managerProductChallengesError}
+            formatMoney={(amount, currency) => formatManagerBonusMoney(amount, currency as CurrencyCode)}
+            onSave={saveManagerProductChallenge}
+            onDelete={deleteManagerProductChallenge}
+            onOpenBonusRules={() => setActivePage("Sales Rep Bonuses")}
+          />
+        ) : repConsoleTab === "Dashboard" ? (
           <div className="space-y-6">
             {renderRepWorkspaceFilters()}
 
