@@ -685,6 +685,11 @@ function MilestoneCard({ milestone, currency, formatMoney }: { milestone: Manage
   const Icon = tone.Icon;
   const shownReward = milestone.status === "Missed" ? 0 : milestone.rewardAmount;
   const rewardState = milestone.status === "Earned" ? "Earned" : milestone.status === "Missed" ? "Missed" : "Available";
+  const remainingUnits = Math.max(0, milestone.targetUnits - milestone.progressUnits);
+  const today = new Date();
+  const end = parseDateKey(milestone.endDate);
+  const daysRemaining = Math.max(0, Math.ceil((end.getTime() - new Date(today.getFullYear(), today.getMonth(), today.getDate(), 12).getTime()) / DAY_MS) + 1);
+  const requiredPace = daysRemaining > 0 ? Math.ceil(remainingUnits / daysRemaining) : remainingUnits;
   return (
     <div className={`rounded-lg border p-3 ${tone.card}`}>
       <div className="flex items-start justify-between gap-2">
@@ -697,6 +702,10 @@ function MilestoneCard({ milestone, currency, formatMoney }: { milestone: Manage
       <p className={`mt-4 text-xl font-black ${tone.value}`}>{milestone.progressUnits.toLocaleString()} <span className="text-sm text-gray-400">/ {milestone.targetUnits.toLocaleString()} pcs</span></p>
       <div className="mt-2 h-2 overflow-hidden rounded-full bg-white">
         <div className={`h-full rounded-full ${tone.bar}`} style={{ width: `${Math.min(100, milestone.progressPercent)}%` }} />
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
+        <div className="rounded-md bg-white/70 px-2 py-1.5"><p className="font-bold uppercase text-gray-400">Remaining</p><p className="mt-0.5 text-sm font-black text-gray-900">{remainingUnits.toLocaleString()} pcs</p></div>
+        <div className="rounded-md bg-white/70 px-2 py-1.5"><p className="font-bold uppercase text-gray-400">Needed daily</p><p className="mt-0.5 text-sm font-black text-gray-900">{requiredPace.toLocaleString()} pcs</p></div>
       </div>
       <p className={`mt-2 text-[10px] font-black ${milestone.status === "Missed" ? "text-rose-600" : milestone.status === "Earned" ? "text-emerald-600" : "text-blue-600"}`}>{milestone.status === "Earned" ? "Target met" : milestone.status === "Missed" ? "Target missed" : milestone.status}</p>
       <div className={`mt-3 flex items-center justify-between rounded-lg border px-3 py-2 text-xs font-black ${tone.footer}`}>
