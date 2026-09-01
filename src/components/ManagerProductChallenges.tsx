@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   CalendarDays,
   Check,
@@ -206,8 +206,25 @@ export function ManagerProductChallenges({
   const [draft, setDraft] = useState<ManagerChallengeDraft>(() => defaultDraft(products));
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
+  const [selectedChallengeId, setSelectedChallengeId] = useState<string | null>(null);
+  const [showAllProducts, setShowAllProducts] = useState(false);
 
   const productMap = useMemo(() => new Map(products.map((product) => [product.id, product])), [products]);
+  useEffect(() => {
+    if (!challenges.some((challenge) => challenge.id === selectedChallengeId)) setSelectedChallengeId(challenges[0]?.id ?? null);
+  }, [challenges, selectedChallengeId]);
+  const orderedChallenges = useMemo(() => [...challenges].sort((a, b) => {
+    const rank = (challenge: ManagerProductChallenge) => {
+      if (challenge.progressUnits >= challenge.targetUnits) return 3;
+      const totalDays = Math.max(1, Math.ceil((parseDateKey(challenge.endDate).getTime() - parseDateKey(challenge.startDate).getTime()) / DAY_MS) + 1);
+      const elapsed = Math.max(0, totalDays - Math.max(0, challenge.daysLeft));
+      if (elapsed <= 1 && challenge.progressUnits === 0) return 2;
+      const expected = (elapsed / totalDays) * challenge.targetUnits;
+      const pace = expected > 0 ? challenge.progressUnits / expected : 1;
+      return pace < 0.8 ? 0 : pace < 0.95 ? 1 : 2;
+    };
+    return rank(a) - rank(b);
+  }), [challenges]);
   const previewProduct = productMap.get(draft.productId);
   const draftCount = milestoneCount(draft.cadence);
   const visibleTargets = draft.milestoneDistribution === "custom"
@@ -541,22 +558,14 @@ export function ManagerProductChallenges({
             </div>
           ) : challenges.length >= 2 ? (
             <>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {challenges.map((challenge, index) => (
-                  <CompactChallengeCard
-                    key={challenge.id}
-                    challenge={challenge}
-                    product={productMap.get(challenge.productId)}
-                    canEdit={canEdit}
-                    formatMoney={formatMoney}
-                    accent={CARD_ACCENTS[index % CARD_ACCENTS.length]}
-                    onEdit={() => openEdit(challenge)}
-                    onDelete={() => void onDelete(challenge.id)}
-                    onToggleStatus={() => void onSave({ ...challenge, status: challenge.status === "active" ? "paused" : "active" }, challenge.id)}
-                  />
-                ))}
-              </div>
               <ChallengeSummaryStrip challenges={challenges} formatMoney={formatMoney} />
+              <div className="relative rounded-xl border border-gray-100 bg-gray-50/60 p-3">
+                <div className="flex gap-3 overflow-x-auto pb-1">
+                  {orderedChallenges.map((challenge, index) => <ChallengeSelector key={challenge.id} challenge={challenge} product={productMap.get(challenge.productId)} selected={selectedChallengeId === challenge.id} onClick={() => setSelectedChallengeId(challenge.id)} accent={CARD_ACCENTS[index % CARD_ACCENTS.length]} />)}
+                </div>
+                <p className="m-0 mt-2 text-[10px] font-semibold text-gray-400">Prioritized by attention needed: Behind, At Risk, On Track, then Completed.</p>
+              </div>
+              {(() => { const selected = challenges.find((challenge) => challenge.id === selectedChallengeId) ?? orderedChallenges[0]; return selected ? <ChallengeCard key={selected.id} challenge={selected} product={productMap.get(selected.productId)} canEdit={canEdit} formatMoney={formatMoney} onEdit={() => openEdit(selected)} onDelete={() => void onDelete(selected.id)} onToggleStatus={() => void onSave({ ...selected, status: selected.status === "active" ? "paused" : "active" }, selected.id)} /> : null; })()}
             </>
           ) : (
             challenges.map((challenge) => (
@@ -690,6 +699,16 @@ function MilestoneCard({ milestone, currency, formatMoney }: { milestone: Manage
       </div>
     </div>
   );
+}
+
+function ChallengeSelector({ challenge, product, selected, onClick, accent }: { challenge: ManagerProductChallenge; product?: ChallengeProduct; selected: boolean; onClick: () => void; accent: (typeof CARD_ACCENTS)[number] }) {
+  const completed = challenge.progressUnits >= challenge.targetUnits;
+  const totalDays = Math.max(1, Math.ceil((parseDateKey(challenge.endDate).getTime() - parseDateKey(challenge.startDate).getTime()) / DAY_MS) + 1);
+  const elapsed = Math.max(0, totalDays - Math.max(0, challenge.daysLeft));
+  const expected = (elapsed / totalDays) * challenge.targetUnits;
+  const ratio = expected > 0 ? challenge.progressUnits / expected : 1;
+  const status = completed ? "Completed" : elapsed <= 1 && challenge.progressUnits === 0 ? "Just Started" : ratio < 0.8 ? "Behind" : ratio < 0.95 ? "At Risk" : "On Track";
+  return <button type="button" onClick={onClick} className={`min-w-[230px] flex-1 rounded-xl border p-3 text-left transition ${selected ? "border-violet-500 bg-violet-50/70 ring-2 ring-violet-200" : "border-gray-200 bg-white hover:border-violet-300"}`}><div className="flex items-center gap-2"><span className={`h-2 w-2 rounded-full ${accent.bar}`} /><span className="truncate text-sm font-black text-gray-900">{product?.name ?? challenge.name}</span></div><div className="mt-2 flex items-baseline justify-between gap-2"><span className="text-sm font-black text-violet-700">{challenge.progressUnits.toLocaleString()} <span className="text-[10px] text-gray-400">/ {challenge.targetUnits.toLocaleString()} pcs</span></span><span className="text-xs font-black text-gray-500">{challenge.progressPercent}%</span></div><div className="mt-1 h-1.5 overflow-hidden rounded-full bg-gray-200"><div className={`h-full rounded-full ${accent.bar}`} style={{ width: `${Math.min(100, challenge.progressPercent)}%` }} /></div><div className="mt-2 flex items-center justify-between text-[10px] font-bold text-gray-400"><span>{challenge.daysLeft} days left</span><span className={`rounded-full border px-2 py-0.5 ${statusStyle(status)}`}>{status}</span></div></button>;
 }
 
 function CompactChallengeCard({
