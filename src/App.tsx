@@ -74918,10 +74918,6 @@ ${waybillLineItems(w).length > 1
                     <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700" onClick={() => exportReport()}>Export</button>
                   </div>
                   <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                    <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-gray-100 gap-3">
-                      <h3 className="text-base font-bold text-gray-900 m-0">Recent Transactions</h3>
-                      <button className="!min-h-0 text-[#1F8FE0] text-xs font-bold hover:underline whitespace-nowrap" onClick={() => setActivePage("Orders")}>View All Orders</button>
-                    </div>
                     {dashboardOrders.length === 0 ? (
                       <div className="flex flex-col items-center justify-center gap-3 py-14">
                         <ShoppingCart className="w-10 h-10 text-gray-300" />
@@ -74968,18 +74964,20 @@ ${waybillLineItems(w).length > 1
                         <table className="w-full text-sm">
                           <thead>
                             <tr>
+                              <th className="px-3 sm:px-6 py-3 sm:py-4 text-left"><input type="checkbox" aria-label="Select all visible orders" className="h-4 w-4 rounded border-gray-300" /></th>
                               <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-medium text-gray-400">Order ID</th>
                               <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-medium text-gray-400">Customer</th>
                               <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-medium text-gray-400">Date</th>
                               <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-medium text-gray-400">Amount</th>
                               <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-medium text-gray-400">Delivery fee</th>
                               <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-medium text-gray-400">Status</th>
-                              <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-medium text-gray-400">Action</th>
+                              <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-medium text-gray-400">Actions</th>
                             </tr>
                           </thead>
                           <tbody>
                             {dashboardTransactionRows.map((order) => (
                               <tr key={order.id} className="border-t border-gray-100 hover:bg-gray-50/60 transition-colors cursor-pointer">
+                                <td className="px-3 sm:px-6 py-3 sm:py-4"><input type="checkbox" aria-label={`Select order ${order.id}`} className="h-4 w-4 rounded border-gray-300" /></td>
                                 <td className="px-3 sm:px-6 py-3 sm:py-4 font-semibold text-gray-500">{order.id}</td>
                                 <td className="px-3 sm:px-6 py-3 sm:py-4">
                                   <p className="font-medium text-sm text-gray-900 m-0">{order.customer}</p>
@@ -74992,9 +74990,7 @@ ${waybillLineItems(w).length > 1
                                   {renderOrderStatusSummary(order)}
                                 </td>
                                 <td className="px-3 sm:px-6 py-3 sm:py-4">
-                                  <button className="!min-h-0 w-8 h-8 flex items-center justify-center rounded-md hover:bg-gray-100 transition-colors text-gray-500" onClick={() => openOrderDetailPopup(order.id)}>
-                                    <Eye className="w-4 h-4" />
-                                  </button>
+                                  <div className="flex items-center gap-2"><button className="!min-h-0 w-8 h-8 flex items-center justify-center rounded-md hover:bg-gray-100 transition-colors text-gray-500" onClick={() => openOrderDetailPopup(order.id)}><Eye className="w-4 h-4" /></button><button className="!min-h-0 w-8 h-8 flex items-center justify-center rounded-md hover:bg-gray-100 transition-colors text-gray-500" onClick={() => openOrderDetailPopup(order.id)} aria-label={`Comment on order ${order.id}`}><MessageCircle className="w-4 h-4" /></button></div>
                                 </td>
                               </tr>
                             ))}
