@@ -769,7 +769,25 @@ function AllocationPanel({ challenge, canEdit, formatMoney, onSave }: {
   useEffect(() => setSelectedRepId(challenge.allocations?.[0]?.repId ?? ""), [challenge.id, challenge.allocations]);
   const targetTotal = rows.reduce((sum, row) => sum + Number(row.targetUnits || 0), 0);
   const rewardTotal = rows.reduce((sum, row) => sum + Number(row.rewardAmount || 0), 0);
-  const balanced = targetTotal === challenge.targetUnits && Math.abs(rewardTotal - challenge.rewardAmount) < 0.01;
+  const piecesBalanced = targetTotal === challenge.targetUnits;
+  const rewardBalanced = Math.abs(rewardTotal - challenge.rewardAmount) < 0.01;
+  const balanced = piecesBalanced && rewardBalanced;
+  // Name the half that blocks the save and by how much. The line used to print
+  // both totals and leave the manager to work out which one was wrong - pieces
+  // can balance exactly while a reward is 1,000 short, and the button just sat
+  // there greyed with no reason given.
+  const gapNote = (() => {
+    const notes: string[] = [];
+    if (!piecesBalanced) {
+      const diff = targetTotal - challenge.targetUnits;
+      notes.push(`${Math.abs(diff).toLocaleString()} pcs ${diff > 0 ? "over" : "short"}`);
+    }
+    if (!rewardBalanced) {
+      const diff = rewardTotal - challenge.rewardAmount;
+      notes.push(`${formatMoney(Math.abs(diff), challenge.currency)} ${diff > 0 ? "over" : "short"}`);
+    }
+    return notes.join(" · ");
+  })();
   const save = async () => {
     if (!onSave || !balanced) return;
     setSaving(true); setMessage("");
@@ -816,7 +834,7 @@ function AllocationPanel({ challenge, canEdit, formatMoney, onSave }: {
           </div>
         </div>;
       })()}
-      <div className="mt-3 flex flex-col gap-2 border-t border-violet-100 pt-3 sm:flex-row sm:items-center sm:justify-between"><p className={`text-xs font-bold ${balanced ? "text-emerald-700" : "text-rose-600"}`}>Allocated: {targetTotal.toLocaleString()} / {challenge.targetUnits.toLocaleString()} pcs · {formatMoney(rewardTotal, challenge.currency)} / {formatMoney(challenge.rewardAmount, challenge.currency)}</p>{editing && <button type="button" disabled={!balanced || saving} onClick={() => void save()} className="!min-h-0 rounded-lg bg-violet-600 px-4 py-2 text-xs font-black text-white disabled:opacity-40">{saving ? "Saving..." : "Save rep targets"}</button>}</div>
+      <div className="mt-3 flex flex-col gap-2 border-t border-violet-100 pt-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex flex-col gap-0.5"><p className={`text-xs font-bold ${balanced ? "text-emerald-700" : "text-rose-600"}`}>Allocated: <span className={piecesBalanced ? "text-emerald-700" : "text-rose-600"}>{targetTotal.toLocaleString()} / {challenge.targetUnits.toLocaleString()} pcs</span> · <span className={rewardBalanced ? "text-emerald-700" : "text-rose-600"}>{formatMoney(rewardTotal, challenge.currency)} / {formatMoney(challenge.rewardAmount, challenge.currency)}</span></p>{editing && !balanced && <p className="text-[11px] font-semibold text-rose-600">{gapNote} - the whole target and the whole reward must be shared out before you can save.</p>}</div>{editing && <button type="button" disabled={!balanced || saving} title={balanced ? undefined : `Cannot save: ${gapNote}.`} onClick={() => void save()} className="!min-h-0 rounded-lg bg-violet-600 px-4 py-2 text-xs font-black text-white disabled:opacity-40 disabled:cursor-not-allowed">{saving ? "Saving..." : "Save rep targets"}</button>}</div>
       {message && <p className={`mt-2 text-xs font-bold ${message.includes("saved") ? "text-emerald-700" : "text-rose-600"}`}>{message}</p>}
     </section>
   );
