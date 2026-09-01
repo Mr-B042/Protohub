@@ -26704,8 +26704,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const cartId = isRepCartSection ? parts[3] ?? "" : "";
     const repOrderAction = isRepOrderSection ? parts[4] ?? "" : "";
     const repCartAction = isRepCartSection ? parts[4] ?? "" : "";
+    // ⚠️ This is the REVERSE of repTabRoute and the two must stay in step. A tab
+    // missing here resolves to "Dashboard" below, which silently overrides
+    // whatever handleNavClick just set - the tab looks like it never opens.
     const routeToTab: Record<string, RepConsoleTab> = {
       bonuses: "Bonuses",
+      "my-targets": "My Targets & Incentives",
       "upsell-cross-sell-log": "Upsell & Cross-sell Log",
       products: "Products & Stock",
       orders: "Orders",
