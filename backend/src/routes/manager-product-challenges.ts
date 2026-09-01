@@ -10,6 +10,7 @@ import { supabase } from "../lib/supabase.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
+import { logger } from "../lib/logger.js";
 
 const router = Router();
 router.use(requireAuth, requireRole("Owner", "Admin", "Manager", "Sales Rep"));
@@ -163,6 +164,16 @@ router.get("/", async (req, res) => {
   const dateKey = (value: unknown) => (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null);
   const windowFrom = dateKey(req.query.from);
   const windowTo = dateKey(req.query.to);
+  if (req.headers["x-spy-user-id"]) {
+    logger.info("challenge_view_as_scope", {
+      realRole: req.user!.role,
+      effectiveRole: req.user!.effectiveUserRole ?? null,
+      scopeRole,
+      spiedAsRep: scopeRole === "Sales Rep",
+      scopeIdTail: scopeId.slice(-6),
+      realIdTail: req.user!.id.slice(-6)
+    });
+  }
   try {
     const { data: rows, error } = await supabase
       .from("manager_product_challenges")
