@@ -313,9 +313,38 @@ router.get("/", async (req, res) => {
             return deliveredDate >= currentMilestone.startDate && deliveredDate <= currentMilestone.endDate;
           }).reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0)
           : 0;
+        // ── Day-by-day, for the calendar behind each rep card ──
+        //
+        // ⚠️ THE PACE HERE IS THE ORIGINAL FLAT ONE, NOT requiredPace.
+        // requiredPace is forward-looking - remaining ÷ days left - so it RISES
+        // every time a day is missed. Judging Monday against a pace that only
+        // became that high because Monday was missed marks a rep behind twice
+        // for one miss. A calendar of past days needs the pace that was true
+        // when the day happened, which is the flat target ÷ window.
+        const windowDayCount = Math.max(1, Math.round(
+          (new Date(`${row.end_date}T12:00:00Z`).getTime() - new Date(`${row.start_date}T12:00:00Z`).getTime()) / 86_400_000) + 1);
+        const dailyTargetPace = allocationTarget > 0 ? allocationTarget / windowDayCount : 0;
+        const piecesByDay = new Map<string, number>();
+        repDeliveredOrders.forEach((order) => {
+          const key = String(order.delivered_date ?? "").slice(0, 10);
+          if (!key) return;
+          piecesByDay.set(key, (piecesByDay.get(key) ?? 0) + Math.max(0, Number(order.quantity ?? 0)));
+        });
+        // Every day in the window, including the empty ones - a calendar that
+        // omits blank days hides exactly the days worth looking at.
+        const dailyProgress: Array<{ dateKey: string; pieces: number }> = [];
+        for (let offset = 0; offset < windowDayCount; offset += 1) {
+          const cursor = new Date(`${row.start_date}T12:00:00Z`);
+          cursor.setUTCDate(cursor.getUTCDate() + offset);
+          const key = cursor.toISOString().slice(0, 10);
+          dailyProgress.push({ dateKey: key, pieces: piecesByDay.get(key) ?? 0 });
+        }
+
         return {
           repId: allocation.rep_id,
           repName: rep?.name ?? rep?.email ?? "Sales rep",
+          dailyTargetPace: Math.round(dailyTargetPace * 100) / 100,
+          dailyProgress,
           targetUnits: allocationTarget,
           rewardAmount: Number(allocation.reward_amount ?? 0),
           milestoneTargets: Array.isArray(allocation.milestone_targets) ? allocation.milestone_targets.map(Number) : [],

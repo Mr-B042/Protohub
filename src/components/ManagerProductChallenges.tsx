@@ -2,6 +2,7 @@ import { createPortal } from "react-dom";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   CalendarDays,
+  Eye,
   Check,
   CheckCircle2,
   ChevronRight,
@@ -78,6 +79,8 @@ export type ManagerProductChallenge = {
   windowTo?: string | null;
   windowDeliveredPieces?: number;
   windowQualifiedOrders?: number;
+  /** Server's today, so the calendar marks the same day the progress maths did. */
+  today?: string;
 };
 
 export type ChallengeAllocation = {
@@ -97,6 +100,12 @@ export type ChallengeAllocation = {
   currentWeekRemaining: number;
   currentWeekDaysLeft: number;
   todayDeliveredPieces: number;
+  /** The flat pace the challenge was set at: target ÷ days in the window.
+   *  NOT requiredPace, which rises as days are missed and so cannot be used to
+   *  judge a day that has already happened. */
+  dailyTargetPace?: number;
+  /** Every day of the challenge window, including days with nothing. */
+  dailyProgress?: Array<{ dateKey: string; pieces: number }>;
   persisted: boolean;
 };
 
@@ -228,6 +237,131 @@ const CARD_ACCENTS = [
   { bar: "bg-blue-500", label: "text-blue-600" },
   { bar: "bg-amber-500", label: "text-amber-600" }
 ];
+
+
+/**
+ * Day-by-day view of one rep's challenge.
+ *
+ * ⚠️ EVERY DAY IS JUDGED AGAINST THE PACE THAT WAS TRUE THAT DAY - the flat
+ * target ÷ window - not against requiredPace, which rises each time a day is
+ * missed. Using the live pace would mark Monday behind because Monday was
+ * missed, then mark Tuesday behind harder for the same miss.
+ *
+ * The running total is the honest headline: a rep can miss a Tuesday and still
+ * be ahead, and a calendar of green squares that never says so is decoration.
+ */
+function RepChallengeCalendar({
+  allocation, currency, today, onClose, formatMoney
+}: {
+  allocation: ChallengeAllocation;
+  currency: string;
+  today: string;
+  onClose: () => void;
+  formatMoney: (amount: number, currency: string) => string;
+}) {
+  const days = allocation.dailyProgress ?? [];
+  const pace = allocation.dailyTargetPace ?? 0;
+
+  const rows = useMemo(() => {
+    let running = 0;
+    return days.map((day, index) => {
+      running += day.pieces;
+      const expected = pace * (index + 1);
+      const future = day.dateKey > today;
+      const status = future ? "upcoming"
+        : pace <= 0 ? "none"
+        : day.pieces >= pace * 1.5 ? "over"
+        : day.pieces >= pace ? "met"
+        : day.pieces > 0 ? "short"
+        : "missed";
+      return { ...day, running, expected, status, future };
+    });
+  }, [days, pace, today]);
+
+  const done = rows.filter((row) => !row.future);
+  const last = done[done.length - 1];
+  const aheadBy = last ? Math.round((last.running - last.expected) * 10) / 10 : 0;
+
+  const TONE: Record<string, { cell: string; label: string }> = {
+    over: { cell: "border-emerald-300 bg-emerald-100 text-emerald-900", label: "Over target" },
+    met: { cell: "border-emerald-200 bg-emerald-50 text-emerald-800", label: "Met target" },
+    short: { cell: "border-amber-200 bg-amber-50 text-amber-800", label: "Short" },
+    missed: { cell: "border-rose-200 bg-rose-50 text-rose-700", label: "Nothing delivered" },
+    upcoming: { cell: "border-dashed border-gray-200 bg-white text-gray-300", label: "Still to come" },
+    none: { cell: "border-gray-200 bg-gray-50 text-gray-500", label: "No target set" }
+  };
+
+  // Lead the grid with blanks so day 1 sits under its real weekday.
+  const lead = days.length > 0 ? new Date(`${days[0].dateKey}T12:00:00Z`).getUTCDay() : 0;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[220] flex items-end justify-center bg-slate-950/50 p-2 sm:items-center sm:p-6" onClick={onClose}>
+      <section className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="m-0 text-[10px] font-black uppercase tracking-widest text-violet-600">Day by day</p>
+            <h2 className="m-0 mt-1 text-xl font-black text-gray-950">{allocation.repName}</h2>
+            <p className="m-0 mt-1 text-xs font-semibold text-gray-500">
+              {allocation.deliveredPieces.toLocaleString()} of {allocation.targetUnits.toLocaleString()} pcs
+              {pace > 0 && <> · pace {Math.round(pace * 10) / 10} pcs/day</>}
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="!min-h-0 rounded-lg border border-gray-200 p-2 text-gray-500 hover:bg-gray-50">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* The headline: ahead or behind overall, in pieces. */}
+        {done.length > 0 && pace > 0 && (
+          <div className={`mt-4 rounded-xl border px-4 py-3 ${aheadBy >= 0 ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>
+            <p className={`m-0 text-[13px] font-black ${aheadBy >= 0 ? "text-emerald-900" : "text-rose-900"}`}>
+              {aheadBy >= 0 ? `${aheadBy} pcs ahead of pace` : `${Math.abs(aheadBy)} pcs behind pace`}
+            </p>
+            <p className="m-0 mt-0.5 text-[11px] font-medium text-gray-600">
+              {last!.running.toLocaleString()} delivered by {new Date(`${last!.dateKey}T12:00:00Z`).toLocaleDateString("en-NG", { day: "numeric", month: "short" })},
+              against {Math.round(last!.expected)} expected by then.
+            </p>
+          </div>
+        )}
+
+        <div className="mt-4 grid grid-cols-7 gap-1.5">
+          {["S", "M", "T", "W", "T", "F", "S"].map((label, index) => (
+            <span key={index} className="text-center text-[10px] font-black uppercase text-gray-400">{label}</span>
+          ))}
+          {Array.from({ length: lead }, (_, index) => <span key={`lead-${index}`} />)}
+          {rows.map((row) => {
+            const tone = TONE[row.status];
+            const date = new Date(`${row.dateKey}T12:00:00Z`);
+            return (
+              <div key={row.dateKey}
+                title={`${date.toLocaleDateString("en-NG", { weekday: "long", day: "numeric", month: "long" })} — ${row.pieces} pcs · ${tone.label}`}
+                className={`rounded-lg border p-1.5 text-center ${tone.cell} ${row.dateKey === today ? "ring-2 ring-violet-400" : ""}`}>
+                <span className="block text-[9px] font-bold opacity-70">{date.getUTCDate()}</span>
+                <strong className="block text-[13px] font-black leading-tight">{row.future ? "·" : row.pieces}</strong>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-3 border-t border-gray-100 pt-3">
+          {(["over", "met", "short", "missed", "upcoming"] as const).map((key) => (
+            <span key={key} className="inline-flex items-center gap-1.5 text-[10px] font-bold text-gray-500">
+              <span className={`h-3 w-3 rounded border ${TONE[key].cell}`} />{TONE[key].label}
+            </span>
+          ))}
+        </div>
+
+        <p className="m-0 mt-3 text-[10px] font-medium leading-relaxed text-gray-400">
+          Each day is measured against the pace the challenge was set at
+          {pace > 0 ? ` (${Math.round(pace * 10) / 10} pcs/day)` : ""}, not against the
+          catch-up pace shown on the card — that one rises every time a day is missed,
+          so it would mark the same miss twice. Reward at target: {formatMoney(allocation.rewardAmount, currency)}.
+        </p>
+      </section>
+    </div>,
+    document.body
+  );
+}
 
 function windowLabel(from?: string | null, to?: string | null) {
   if (!from || !to) return "";
@@ -765,6 +899,8 @@ function AllocationPanel({ challenge, canEdit, formatMoney, onSave }: {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [selectedRepId, setSelectedRepId] = useState(challenge.allocations?.[0]?.repId ?? "");
+  // Which rep's day-by-day calendar is open. Null = none.
+  const [calendarRepId, setCalendarRepId] = useState<string | null>(null);
   useEffect(() => setRows(challenge.allocations ?? []), [challenge.id, challenge.allocations]);
   useEffect(() => setSelectedRepId(challenge.allocations?.[0]?.repId ?? ""), [challenge.id, challenge.allocations]);
   const targetTotal = rows.reduce((sum, row) => sum + Number(row.targetUnits || 0), 0);
@@ -806,13 +942,33 @@ function AllocationPanel({ challenge, canEdit, formatMoney, onSave }: {
       <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {rows.map((allocation, index) => (
           <article key={allocation.repId} onClick={() => !editing && setSelectedRepId(allocation.repId)} className={`rounded-lg border bg-white p-3 shadow-sm transition ${selectedRepId === allocation.repId ? "border-violet-500 ring-2 ring-violet-100" : "border-gray-200"} ${editing ? "" : "cursor-pointer hover:border-violet-300"}`}>
-            <div className="flex items-center justify-between gap-2"><div className="flex min-w-0 items-center gap-2"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-black text-violet-700">{allocation.repName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2)}</span><div className="min-w-0"><p className="truncate text-sm font-black text-gray-950">{allocation.repName}</p><p className="text-[10px] font-bold text-violet-600">Individual share</p></div></div><span className="text-xs font-black text-gray-500">{allocation.progressPercent}%</span></div>
+            <div className="flex items-center justify-between gap-2"><div className="flex min-w-0 items-center gap-2"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-black text-violet-700">{allocation.repName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2)}</span><div className="min-w-0"><p className="truncate text-sm font-black text-gray-950">{allocation.repName}</p><p className="text-[10px] font-bold text-violet-600">Individual share</p></div></div><div className="flex shrink-0 items-center gap-1.5"><span className="text-xs font-black text-gray-500">{allocation.progressPercent}%</span>{!editing && (allocation.dailyProgress?.length ?? 0) > 0 && (
+              <button type="button" title={`Day-by-day for ${allocation.repName}`} aria-label={`Day-by-day for ${allocation.repName}`}
+                onClick={(event) => { event.stopPropagation(); setCalendarRepId(allocation.repId); }}
+                className="!min-h-0 rounded-lg border border-gray-200 bg-white p-1.5 text-violet-600 transition-colors hover:border-violet-300 hover:bg-violet-50">
+                <Eye className="h-3.5 w-3.5" />
+              </button>
+            )}</div></div>
             {editing ? <div className="mt-3 grid grid-cols-2 gap-2"><label className="text-[9px] font-black uppercase text-gray-400">Pieces<input type="number" min="1" value={allocation.targetUnits} onChange={(event) => setRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, targetUnits: Number(event.target.value) } : row))} className="mt-1 w-full rounded-md border border-gray-200 px-2 py-1.5 text-sm font-black text-gray-900" /></label><label className="text-[9px] font-black uppercase text-gray-400">Reward<input type="number" min="0" value={allocation.rewardAmount} onChange={(event) => setRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, rewardAmount: Number(event.target.value) } : row))} className="mt-1 w-full rounded-md border border-gray-200 px-2 py-1.5 text-sm font-black text-gray-900" /></label></div> : <p className="mt-3 text-lg font-black text-violet-700">{allocation.deliveredPieces.toLocaleString()} <span className="text-xs text-gray-400">/ {allocation.targetUnits.toLocaleString()} pcs</span></p>}
             <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-gray-100"><div className="h-full rounded-full bg-violet-600" style={{ width: `${Math.min(100, allocation.progressPercent)}%` }} /></div>
             <div className="mt-2 flex items-center justify-between text-[10px] font-bold text-gray-500"><span>Needs {allocation.requiredPace.toLocaleString()} pcs/day</span><span className="text-emerald-700">{formatMoney(allocation.rewardAmount, challenge.currency)}</span></div>
           </article>
         ))}
       </div>
+
+      {calendarRepId && (() => {
+        const target = rows.find((row) => row.repId === calendarRepId);
+        if (!target) return null;
+        return (
+          <RepChallengeCalendar
+            allocation={target}
+            currency={challenge.currency}
+            today={challenge.today ?? new Date().toISOString().slice(0, 10)}
+            formatMoney={formatMoney}
+            onClose={() => setCalendarRepId(null)}
+          />
+        );
+      })()}
       {!editing && (() => {
         const selected = rows.find((row) => row.repId === selectedRepId) ?? rows[0];
         if (!selected) return null;
