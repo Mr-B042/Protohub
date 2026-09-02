@@ -340,11 +340,28 @@ router.get("/", async (req, res) => {
           dailyProgress.push({ dateKey: key, pieces: piecesByDay.get(key) ?? 0 });
         }
 
+        // ⚠️ ADDITIVE, exactly like the challenge-level window figures: the
+        // period filter reports what this rep did INSIDE it and never rescopes
+        // targetUnits, progressPercent or requiredPace. Scoping a monthly
+        // challenge to "Today" would read 0 / 2,727 and "Behind", which is a
+        // false alarm rather than information.
+        //
+        // Without these the filter had no visible effect on the rep cards at
+        // all - the challenge tile changed and the rep cards below it did not,
+        // which is why it looked like the filter was being ignored.
+        const repWindowOrders = windowFrom && windowTo
+          ? repDeliveredOrders.filter((order) => {
+            const deliveredDate = String(order.delivered_date ?? "").slice(0, 10);
+            return deliveredDate >= windowFrom && deliveredDate <= windowTo;
+          })
+          : [];
         return {
           repId: allocation.rep_id,
           repName: rep?.name ?? rep?.email ?? "Sales rep",
           dailyTargetPace: Math.round(dailyTargetPace * 100) / 100,
           dailyProgress,
+          windowDeliveredPieces: repWindowOrders.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0),
+          windowQualifiedOrders: repWindowOrders.length,
           targetUnits: allocationTarget,
           rewardAmount: Number(allocation.reward_amount ?? 0),
           milestoneTargets: Array.isArray(allocation.milestone_targets) ? allocation.milestone_targets.map(Number) : [],

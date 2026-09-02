@@ -106,6 +106,10 @@ export type ChallengeAllocation = {
   dailyTargetPace?: number;
   /** Every day of the challenge window, including days with nothing. */
   dailyProgress?: Array<{ dateKey: string; pieces: number }>;
+  /** What this rep did inside the dashboard's period filter. Additive only -
+   *  it never rescopes targetUnits, progressPercent or requiredPace. */
+  windowDeliveredPieces?: number;
+  windowQualifiedOrders?: number;
   persisted: boolean;
 };
 
@@ -952,6 +956,21 @@ function AllocationPanel({ challenge, canEdit, formatMoney, onSave }: {
             {editing ? <div className="mt-3 grid grid-cols-2 gap-2"><label className="text-[9px] font-black uppercase text-gray-400">Pieces<input type="number" min="1" value={allocation.targetUnits} onChange={(event) => setRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, targetUnits: Number(event.target.value) } : row))} className="mt-1 w-full rounded-md border border-gray-200 px-2 py-1.5 text-sm font-black text-gray-900" /></label><label className="text-[9px] font-black uppercase text-gray-400">Reward<input type="number" min="0" value={allocation.rewardAmount} onChange={(event) => setRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, rewardAmount: Number(event.target.value) } : row))} className="mt-1 w-full rounded-md border border-gray-200 px-2 py-1.5 text-sm font-black text-gray-900" /></label></div> : <p className="mt-3 text-lg font-black text-violet-700">{allocation.deliveredPieces.toLocaleString()} <span className="text-xs text-gray-400">/ {allocation.targetUnits.toLocaleString()} pcs</span></p>}
             <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-gray-100"><div className="h-full rounded-full bg-violet-600" style={{ width: `${Math.min(100, allocation.progressPercent)}%` }} /></div>
             <div className="mt-2 flex items-center justify-between text-[10px] font-bold text-gray-500"><span>Needs {allocation.requiredPace.toLocaleString()} pcs/day</span><span className="text-emerald-700">{formatMoney(allocation.rewardAmount, challenge.currency)}</span></div>
+            {/* ⚠️ The period filter's only effect on this card. It is stated as
+                a separate line rather than replacing the numbers above, because
+                scoping a month-long target to "Today" would read 0 / N and
+                "Behind" - a false alarm, not information. */}
+            {challenge.windowFrom && challenge.windowTo && (
+              <div className="mt-1.5 flex items-center justify-between rounded-md bg-violet-50/70 px-2 py-1 text-[10px] font-bold text-violet-800">
+                <span className="truncate">{windowLabel(challenge.windowFrom, challenge.windowTo)}</span>
+                <span className="shrink-0 tabular-nums">
+                  {(allocation.windowDeliveredPieces ?? 0).toLocaleString()} pcs
+                  <span className="ml-1 font-semibold text-violet-500">
+                    · {(allocation.windowQualifiedOrders ?? 0).toLocaleString()} order{(allocation.windowQualifiedOrders ?? 0) === 1 ? "" : "s"}
+                  </span>
+                </span>
+              </div>
+            )}
           </article>
         ))}
       </div>
