@@ -26709,6 +26709,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // whatever handleNavClick just set - the tab looks like it never opens.
     const routeToTab: Record<string, RepConsoleTab> = {
       bonuses: "Bonuses",
+      // ⚠️ BOTH SLUGS. repTabRoute builds this from slugify(tab), which yields
+      // "my-targets-incentives"; the map only knew "my-targets", so the lookup
+      // missed and fell through to "Dashboard" - silently undoing the click.
+      // The tab then opened only on the SECOND click, because by then the hash
+      // already matched and this effect no longer re-ran. "my-targets" stays
+      // for links already issued against the page route in navRoutes.
+      "my-targets-incentives": "My Targets & Incentives",
       "my-targets": "My Targets & Incentives",
       "upsell-cross-sell-log": "Upsell & Cross-sell Log",
       products: "Products & Stock",
@@ -70659,8 +70666,11 @@ ${waybillLineItems(w).length > 1
           );
         })()}
 
-        {repConsoleTab !== "Products & Stock" && <nav className="grid grid-cols-2 sm:flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-full sm:w-fit overflow-x-auto no-scrollbar max-w-full" aria-label="Sales rep workspace sections">
-          {repConsoleTabs.filter((tab) => tab !== "Products & Stock" && (tab !== "Upsell & Cross-sell Log" || (currentRole === "Sales Rep" && salesExpansionFeatureEnabled))).map((tab) => (
+        {/* ⚠️ Two tabs render as standalone pages and hide this bar: they carry
+            their own headers, and a console tab strip above them reads as a
+            second, competing navigation. */}
+        {repConsoleTab !== "Products & Stock" && repConsoleTab !== "My Targets & Incentives" && <nav className="grid grid-cols-2 sm:flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-full sm:w-fit overflow-x-auto no-scrollbar max-w-full" aria-label="Sales rep workspace sections">
+          {repConsoleTabs.filter((tab) => tab !== "Products & Stock" && tab !== "My Targets & Incentives" && (tab !== "Upsell & Cross-sell Log" || (currentRole === "Sales Rep" && salesExpansionFeatureEnabled))).map((tab) => (
             <button
               key={tab}
               className={`relative px-4 py-2 sm:py-1.5 rounded-md text-sm font-bold transition-all duration-200 whitespace-nowrap text-center ${repConsoleTab === tab ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200"}`}
