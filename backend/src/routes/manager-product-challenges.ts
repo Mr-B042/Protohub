@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import {
   buildChallengeMilestones,
+  repCheckpoint,
   challengeMilestoneCount,
   evaluateChallengeProgress,
   type ChallengeLifecycleStatus
@@ -297,22 +298,48 @@ router.get("/", async (req, res) => {
       });
       const confirmedPieces = productOrders.filter((order) => ["confirmed", "in process", "dispatched"].includes(String(order.status ?? "").trim().toLowerCase())).reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0);
       const deliveredPieces = matching.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0);
-      const currentMilestone = milestoneResult.milestones.find((milestone) => milestone.status === "In Progress") ?? milestoneResult.milestones.find((milestone) => today >= milestone.startDate && today <= milestone.endDate);
+      // ⚠️ THE CHECKPOINT TODAY FALLS IN, then the first one still open.
+      //
+      // The order used to be the other way round, and "In Progress" is a REWARD
+      // state here, not a date: buildChallengeMilestones keeps a checkpoint
+      // "In Progress" until the cumulative total clears it, and only calls it
+      // "Missed" once the whole challenge has ended. So an uncleared week 1
+      // stayed "the current milestone" for the rest of the month - and once its
+      // own end date passed, days-left floored at 0, which made "needed daily"
+      // 0 pcs/day and told the rep to deliver nothing while they were behind.
+      //
+      // Nothing is lost by preferring the date: while week 1 is genuinely live
+      // both lookups return it, and after it closes the honest question is what
+      // is owed by the NEXT checkpoint - which, being cumulative, already
+      // carries week 1's shortfall.
+      const currentMilestone = milestoneResult.milestones.find((milestone) => today >= milestone.startDate && today <= milestone.endDate)
+        ?? milestoneResult.milestones.find((milestone) => milestone.status === "In Progress");
       const allocationDetails = allocations.map((allocation) => {
         const rep = (activeReps ?? []).find((item) => item.id === allocation.rep_id);
         const repDeliveredOrders = teamMatching.filter((order) => order.assigned_rep_id === allocation.rep_id);
         const repDeliveredPieces = repDeliveredOrders.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0);
         const repConfirmedPieces = teamProductOrders.filter((order) => order.assigned_rep_id === allocation.rep_id && ["confirmed", "in process", "dispatched"].includes(String(order.status ?? "").trim().toLowerCase())).reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0);
         const allocationTarget = Number(allocation.target_units ?? 0);
-        const currentWeekTarget = currentMilestone && teamTargetUnits > 0
-          ? Math.ceil((allocationTarget * currentMilestone.targetUnits) / teamTargetUnits)
-          : 0;
-        const currentWeekDelivered = currentMilestone
-          ? repDeliveredOrders.filter((order) => {
-            const deliveredDate = String(order.delivered_date ?? "").slice(0, 10);
-            return deliveredDate >= currentMilestone.startDate && deliveredDate <= currentMilestone.endDate;
-          }).reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0)
-          : 0;
+        // ⚠️ SCALE AGAINST THE BASE THE MILESTONE LADDER WAS BUILT FROM, which
+        // is `targetUnits` - the team total for a manager, this rep's own total
+        // when a rep (or an Owner previewing one) is the scope. See repCheckpoint
+        // for what dividing by teamTargetUnits regardless of scope did to the
+        // rep's own dashboard.
+        //
+        // In rep scope only the scope rep's own row is returned (`allocations`
+        // is emptied below), so no other rep is measured against a base that is
+        // not theirs.
+        const checkpoint = repCheckpoint({
+          milestone: currentMilestone,
+          milestoneScaleBase: targetUnits,
+          allocationTarget,
+          challengeStartDate: row.start_date,
+          today,
+          orders: repDeliveredOrders.map((order) => ({
+            dateKey: String(order.delivered_date ?? "").slice(0, 10),
+            units: Number(order.quantity ?? 0)
+          }))
+        });
         // ── Day-by-day, for the calendar behind each rep card ──
         //
         // ⚠️ THE PACE HERE IS THE ORIGINAL FLAT ONE, NOT requiredPace.
@@ -371,10 +398,14 @@ router.get("/", async (req, res) => {
           qualifiedOrders: repDeliveredOrders.length,
           progressPercent: allocationTarget > 0 ? Math.min(100, Math.round((repDeliveredPieces / allocationTarget) * 100)) : 0,
           requiredPace: row.end_date >= today ? Math.ceil(Math.max(0, allocationTarget - repDeliveredPieces) / Math.max(1, progress.daysLeft)) : 0,
-          currentWeekTarget,
-          currentWeekDelivered,
-          currentWeekRemaining: Math.max(0, currentWeekTarget - currentWeekDelivered),
-          currentWeekDaysLeft: currentMilestone ? Math.max(0, Math.round((new Date(`${currentMilestone.endDate}T12:00:00`).getTime() - new Date(`${today}T12:00:00`).getTime()) / 86_400_000) + 1) : 0,
+          currentWeekTarget: checkpoint.targetUnits,
+          currentWeekDelivered: checkpoint.deliveredUnits,
+          // The checkpoint being counted, so the panel can name it instead of
+          // saying "this week" over a figure that runs from the challenge start.
+          currentWeekIndex: checkpoint.index,
+          currentWeekEndDate: checkpoint.endDate,
+          currentWeekRemaining: checkpoint.remainingUnits,
+          currentWeekDaysLeft: checkpoint.daysLeft,
           todayDeliveredPieces: repDeliveredOrders.filter((order) => String(order.delivered_date ?? "").slice(0, 10) === today).reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0),
           persisted: storedAllocations.length > 0
         };
@@ -391,6 +422,9 @@ router.get("/", async (req, res) => {
         windowTo,
         windowDeliveredPieces,
         windowQualifiedOrders: windowOrders.length,
+        // Lagos' today, not the browser's. The calendar rings the same day the
+        // progress maths above counted up to.
+        today,
         ...(scopeRole === "Sales Rep" ? {
         teamTargetUnits,
         teamRewardAmount,
@@ -404,7 +438,15 @@ router.get("/", async (req, res) => {
         ,currentWeekDelivered: ownAllocationDetails?.currentWeekDelivered ?? 0
         ,currentWeekRemaining: ownAllocationDetails?.currentWeekRemaining ?? 0
         ,currentWeekDaysLeft: ownAllocationDetails?.currentWeekDaysLeft ?? 0
+        ,currentWeekIndex: ownAllocationDetails?.currentWeekIndex ?? 0
+        ,currentWeekEndDate: ownAllocationDetails?.currentWeekEndDate ?? null
         ,todayDeliveredPieces: ownAllocationDetails?.todayDeliveredPieces ?? 0
+        // The rep's own day-by-day. It was computed for every allocation
+        // already but only ever reached a manager, because `allocations` is
+        // emptied for a rep - so the rep could not see the calendar of their
+        // own days that their manager could.
+        ,dailyTargetPace: ownAllocationDetails?.dailyTargetPace ?? 0
+        ,dailyProgress: ownAllocationDetails?.dailyProgress ?? []
         } : {})
       });
     });

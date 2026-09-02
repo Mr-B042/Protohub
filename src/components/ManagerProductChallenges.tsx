@@ -72,7 +72,15 @@ export type ManagerProductChallenge = {
   currentWeekDelivered?: number;
   currentWeekRemaining?: number;
   currentWeekDaysLeft?: number;
+  /** Which checkpoint the figures above belong to, and when it closes.
+   *  Milestones are cumulative, so these are month-to-date against a running
+   *  total - not one week measured on its own. */
+  currentWeekIndex?: number;
+  currentWeekEndDate?: string | null;
   todayDeliveredPieces?: number;
+  /** The rep's own day-by-day, for the calendar under their target. */
+  dailyTargetPace?: number;
+  dailyProgress?: Array<{ dateKey: string; pieces: number }>;
   // The dashboard's period filter. Additive only - target, progress and pace
   // stay challenge-to-date so a one-day window never reads as "Behind".
   windowFrom?: string | null;
@@ -99,6 +107,8 @@ export type ChallengeAllocation = {
   currentWeekDelivered: number;
   currentWeekRemaining: number;
   currentWeekDaysLeft: number;
+  currentWeekIndex?: number;
+  currentWeekEndDate?: string | null;
   todayDeliveredPieces: number;
   /** The flat pace the challenge was set at: target ÷ days in the window.
    *  NOT requiredPace, which rises as days are missed and so cannot be used to
@@ -244,7 +254,7 @@ const CARD_ACCENTS = [
 
 
 /**
- * Day-by-day view of one rep's challenge.
+ * Day-by-day view of one challenge, as a month calendar.
  *
  * ⚠️ EVERY DAY IS JUDGED AGAINST THE PACE THAT WAS TRUE THAT DAY - the flat
  * target ÷ window - not against requiredPace, which rises each time a day is
@@ -254,6 +264,195 @@ const CARD_ACCENTS = [
  * The running total is the honest headline: a rep can miss a Tuesday and still
  * be ahead, and a calendar of green squares that never says so is decoration.
  */
+
+const CHALLENGE_DAY_TONE = {
+  over: { cell: "border-emerald-200 bg-emerald-50/80", dot: "bg-emerald-500", bar: "bg-emerald-500", value: "text-emerald-700", label: "Over target" },
+  met: { cell: "border-sky-200 bg-sky-50/80", dot: "bg-sky-500", bar: "bg-sky-500", value: "text-sky-700", label: "Target met" },
+  short: { cell: "border-amber-200 bg-amber-50/80", dot: "bg-amber-500", bar: "bg-amber-500", value: "text-amber-700", label: "Behind target" },
+  missed: { cell: "border-rose-200 bg-rose-50/70", dot: "bg-rose-500", bar: "bg-rose-300", value: "text-rose-600", label: "Nothing delivered" },
+  upcoming: { cell: "border-dashed border-gray-200 bg-white", dot: "bg-gray-200", bar: "bg-gray-200", value: "text-gray-300", label: "Still to come" },
+  none: { cell: "border-gray-200 bg-gray-50", dot: "bg-gray-300", bar: "bg-gray-300", value: "text-gray-500", label: "No target set" }
+} as const;
+
+type ChallengeDayStatus = keyof typeof CHALLENGE_DAY_TONE;
+
+type ChallengeDayRow = {
+  dateKey: string;
+  pieces: number;
+  running: number;
+  expected: number;
+  status: ChallengeDayStatus;
+  future: boolean;
+};
+
+const utcDay = (dateKey: string) => new Date(`${dateKey}T12:00:00Z`);
+
+const buildChallengeDays = (
+  days: Array<{ dateKey: string; pieces: number }>,
+  pace: number,
+  today: string
+): ChallengeDayRow[] => {
+  let running = 0;
+  return days.map((day, index) => {
+    running += day.pieces;
+    const expected = pace * (index + 1);
+    const future = day.dateKey > today;
+    const status: ChallengeDayStatus = future ? "upcoming"
+      : pace <= 0 ? "none"
+      : day.pieces >= pace * 1.5 ? "over"
+      : day.pieces >= pace ? "met"
+      : day.pieces > 0 ? "short"
+      : "missed";
+    return { ...day, running, expected, status, future };
+  });
+};
+
+/**
+ * The calendar itself. Rendered inline under a rep's own target and inside the
+ * manager's per-rep modal, so both are reading the same grid rather than two
+ * drifting copies of it.
+ */
+function ChallengeDayCalendar({
+  days, pace, today, target, delivered, heading
+}: {
+  days: Array<{ dateKey: string; pieces: number }>;
+  pace: number;
+  today: string;
+  target: number;
+  delivered: number;
+  heading?: string;
+}) {
+  const rows = useMemo(() => buildChallengeDays(days, pace, today), [days, pace, today]);
+
+  const done = rows.filter((row) => !row.future);
+  const last = done[done.length - 1];
+  const aheadBy = last ? Math.round((last.running - last.expected) * 10) / 10 : 0;
+  const judged = done.filter((row) => row.status !== "none").length;
+  const onTarget = done.filter((row) => row.status === "over" || row.status === "met").length;
+
+  // A challenge can start in one month and end in the next (this one runs
+  // 30 Aug - 30 Sept), so the grid is drawn per month. One grid spanning the
+  // boundary would put a September date under an August weekday.
+  const months = useMemo(() => {
+    const groups = new Map<string, ChallengeDayRow[]>();
+    rows.forEach((row) => {
+      const key = row.dateKey.slice(0, 7);
+      const bucket = groups.get(key);
+      if (bucket) bucket.push(row); else groups.set(key, [row]);
+    });
+    return Array.from(groups.entries());
+  }, [rows]);
+
+  if (rows.length === 0) {
+    return (
+      <div className="rounded-2xl border border-gray-200 bg-white p-5 text-center text-xs font-bold text-gray-400">
+        No days to show for this challenge yet.
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h4 className="m-0 text-lg font-black tracking-tight text-gray-950">
+            {heading ?? utcDay(rows[0].dateKey).toLocaleDateString("en-NG", { month: "long", year: "numeric", timeZone: "UTC" })}
+          </h4>
+          <p className="m-0 mt-0.5 text-[11px] font-bold text-gray-500">
+            {delivered.toLocaleString()} of {target.toLocaleString()} pcs
+            {pace > 0 && <> · pace {Math.round(pace * 10) / 10} pcs/day</>}
+            {judged > 0 && <> · {onTarget} of {judged} days on target</>}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] font-bold text-gray-500">
+          {(["over", "met", "short", "missed", "upcoming"] as const).map((key) => (
+            <span key={key} className="inline-flex items-center gap-1.5">
+              <span className={`h-2 w-2 rounded-full ${CHALLENGE_DAY_TONE[key].dot}`} />{CHALLENGE_DAY_TONE[key].label}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Ahead or behind overall, in pieces. A month of mixed squares does not
+          answer "am I winning" on its own. */}
+      {done.length > 0 && pace > 0 && last && (
+        <div className={`mt-4 rounded-xl border px-4 py-3 ${aheadBy >= 0 ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>
+          <p className={`m-0 text-[13px] font-black ${aheadBy >= 0 ? "text-emerald-900" : "text-rose-900"}`}>
+            {aheadBy >= 0 ? `${aheadBy} pcs ahead of pace` : `${Math.abs(aheadBy)} pcs behind pace`}
+          </p>
+          <p className="m-0 mt-0.5 text-[11px] font-medium text-gray-600">
+            {last.running.toLocaleString()} delivered by {utcDay(last.dateKey).toLocaleDateString("en-NG", { day: "numeric", month: "short", timeZone: "UTC" })}, against {Math.round(last.expected).toLocaleString()} expected by then.
+          </p>
+        </div>
+      )}
+
+      <div className="mt-4 space-y-5 overflow-x-auto">
+        {months.map(([monthKey, monthRows]) => (
+          <div key={monthKey} className="min-w-[560px]">
+            {months.length > 1 && (
+              <p className="m-0 mb-2 text-xs font-black tracking-tight text-gray-700">
+                {utcDay(monthRows[0].dateKey).toLocaleDateString("en-NG", { month: "long", year: "numeric", timeZone: "UTC" })}
+              </p>
+            )}
+            <div className="grid grid-cols-7 gap-1.5">
+              {["S", "M", "T", "W", "T", "F", "S"].map((initial, index) => (
+                <div key={`${monthKey}-${index}`} className="pb-1 text-center text-[10px] font-black uppercase tracking-wider text-gray-400">{initial}</div>
+              ))}
+              {/* Lead blanks so the first day sits under its real weekday. */}
+              {Array.from({ length: utcDay(monthRows[0].dateKey).getUTCDay() }, (_, index) => (
+                <div key={`lead-${monthKey}-${index}`} />
+              ))}
+              {monthRows.map((row) => {
+                const tone = CHALLENGE_DAY_TONE[row.status];
+                const isToday = row.dateKey === today;
+                const fill = pace > 0 ? Math.min(100, Math.round((row.pieces / pace) * 100)) : 0;
+                return (
+                  <div
+                    key={row.dateKey}
+                    title={`${utcDay(row.dateKey).toLocaleDateString("en-NG", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" })} — ${row.future ? "still to come" : `${row.pieces} pcs · ${tone.label}`}`}
+                    className={`flex flex-col gap-1.5 rounded-xl border p-2 ${tone.cell} ${isToday ? "ring-2 ring-violet-400" : ""}`}
+                  >
+                    <span className="flex items-center justify-between">
+                      <span className={`text-[13px] font-black tabular-nums ${row.future ? "text-gray-300" : isToday ? "text-violet-700" : "text-gray-700"}`}>
+                        {utcDay(row.dateKey).getUTCDate()}
+                      </span>
+                      {isToday
+                        ? <span className="h-2 w-2 rounded-full bg-violet-500 ring-2 ring-violet-200" title="Today" />
+                        : <span className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} />}
+                    </span>
+                    {/* One bar against the daily pace. Empty days draw an empty
+                        track rather than nothing, so a missed day is visible
+                        instead of merely blank. */}
+                    <span className="block h-1.5 overflow-hidden rounded-full bg-white/70">
+                      <span className={`block h-full rounded-full ${tone.bar}`} style={{ width: `${row.future ? 0 : Math.max(row.pieces > 0 ? 8 : 0, fill)}%` }} />
+                    </span>
+                    <span className="flex items-baseline justify-between">
+                      <strong className={`text-[13px] font-black leading-none tabular-nums ${tone.value}`}>{row.future ? "—" : row.pieces}</strong>
+                      {!row.future && pace > 0 && (
+                        <span className="text-[10px] font-bold tabular-nums text-gray-400">/ {Math.round(pace)}</span>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <p className="m-0 mt-3 text-[10px] font-medium leading-relaxed text-gray-400">
+        Each day is measured against the pace the challenge was set at
+        {pace > 0 ? ` (${Math.round(pace * 10) / 10} pcs/day)` : ""}, not against the
+        catch-up pace on the card above — that one rises every time a day is missed,
+        so it would mark the same miss twice. Only delivered and verified pieces count.
+      </p>
+      <p className="m-0 mt-1 text-[10px] font-bold text-gray-400">
+        Range: {rows[0].dateKey} to {rows[rows.length - 1].dateKey}
+      </p>
+    </div>
+  );
+}
+
 function RepChallengeCalendar({
   allocation, currency, today, onClose, formatMoney
 }: {
@@ -263,104 +462,30 @@ function RepChallengeCalendar({
   onClose: () => void;
   formatMoney: (amount: number, currency: string) => string;
 }) {
-  const days = allocation.dailyProgress ?? [];
-  const pace = allocation.dailyTargetPace ?? 0;
-
-  const rows = useMemo(() => {
-    let running = 0;
-    return days.map((day, index) => {
-      running += day.pieces;
-      const expected = pace * (index + 1);
-      const future = day.dateKey > today;
-      const status = future ? "upcoming"
-        : pace <= 0 ? "none"
-        : day.pieces >= pace * 1.5 ? "over"
-        : day.pieces >= pace ? "met"
-        : day.pieces > 0 ? "short"
-        : "missed";
-      return { ...day, running, expected, status, future };
-    });
-  }, [days, pace, today]);
-
-  const done = rows.filter((row) => !row.future);
-  const last = done[done.length - 1];
-  const aheadBy = last ? Math.round((last.running - last.expected) * 10) / 10 : 0;
-
-  const TONE: Record<string, { cell: string; label: string }> = {
-    over: { cell: "border-emerald-300 bg-emerald-100 text-emerald-900", label: "Over target" },
-    met: { cell: "border-emerald-200 bg-emerald-50 text-emerald-800", label: "Met target" },
-    short: { cell: "border-amber-200 bg-amber-50 text-amber-800", label: "Short" },
-    missed: { cell: "border-rose-200 bg-rose-50 text-rose-700", label: "Nothing delivered" },
-    upcoming: { cell: "border-dashed border-gray-200 bg-white text-gray-300", label: "Still to come" },
-    none: { cell: "border-gray-200 bg-gray-50 text-gray-500", label: "No target set" }
-  };
-
-  // Lead the grid with blanks so day 1 sits under its real weekday.
-  const lead = days.length > 0 ? new Date(`${days[0].dateKey}T12:00:00Z`).getUTCDay() : 0;
-
   return createPortal(
     <div className="fixed inset-0 z-[220] flex items-end justify-center bg-slate-950/50 p-2 sm:items-center sm:p-6" onClick={onClose}>
-      <section className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+      <section className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="m-0 text-[10px] font-black uppercase tracking-widest text-violet-600">Day by day</p>
             <h2 className="m-0 mt-1 text-xl font-black text-gray-950">{allocation.repName}</h2>
             <p className="m-0 mt-1 text-xs font-semibold text-gray-500">
-              {allocation.deliveredPieces.toLocaleString()} of {allocation.targetUnits.toLocaleString()} pcs
-              {pace > 0 && <> · pace {Math.round(pace * 10) / 10} pcs/day</>}
+              Reward at target: {formatMoney(allocation.rewardAmount, currency)}
             </p>
           </div>
           <button type="button" onClick={onClose} className="!min-h-0 rounded-lg border border-gray-200 p-2 text-gray-500 hover:bg-gray-50">
             <X className="h-4 w-4" />
           </button>
         </div>
-
-        {/* The headline: ahead or behind overall, in pieces. */}
-        {done.length > 0 && pace > 0 && (
-          <div className={`mt-4 rounded-xl border px-4 py-3 ${aheadBy >= 0 ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>
-            <p className={`m-0 text-[13px] font-black ${aheadBy >= 0 ? "text-emerald-900" : "text-rose-900"}`}>
-              {aheadBy >= 0 ? `${aheadBy} pcs ahead of pace` : `${Math.abs(aheadBy)} pcs behind pace`}
-            </p>
-            <p className="m-0 mt-0.5 text-[11px] font-medium text-gray-600">
-              {last!.running.toLocaleString()} delivered by {new Date(`${last!.dateKey}T12:00:00Z`).toLocaleDateString("en-NG", { day: "numeric", month: "short" })},
-              against {Math.round(last!.expected)} expected by then.
-            </p>
-          </div>
-        )}
-
-        <div className="mt-4 grid grid-cols-7 gap-1.5">
-          {["S", "M", "T", "W", "T", "F", "S"].map((label, index) => (
-            <span key={index} className="text-center text-[10px] font-black uppercase text-gray-400">{label}</span>
-          ))}
-          {Array.from({ length: lead }, (_, index) => <span key={`lead-${index}`} />)}
-          {rows.map((row) => {
-            const tone = TONE[row.status];
-            const date = new Date(`${row.dateKey}T12:00:00Z`);
-            return (
-              <div key={row.dateKey}
-                title={`${date.toLocaleDateString("en-NG", { weekday: "long", day: "numeric", month: "long" })} — ${row.pieces} pcs · ${tone.label}`}
-                className={`rounded-lg border p-1.5 text-center ${tone.cell} ${row.dateKey === today ? "ring-2 ring-violet-400" : ""}`}>
-                <span className="block text-[9px] font-bold opacity-70">{date.getUTCDate()}</span>
-                <strong className="block text-[13px] font-black leading-tight">{row.future ? "·" : row.pieces}</strong>
-              </div>
-            );
-          })}
+        <div className="mt-4">
+          <ChallengeDayCalendar
+            days={allocation.dailyProgress ?? []}
+            pace={allocation.dailyTargetPace ?? 0}
+            today={today}
+            target={allocation.targetUnits}
+            delivered={allocation.deliveredPieces}
+          />
         </div>
-
-        <div className="mt-4 flex flex-wrap gap-3 border-t border-gray-100 pt-3">
-          {(["over", "met", "short", "missed", "upcoming"] as const).map((key) => (
-            <span key={key} className="inline-flex items-center gap-1.5 text-[10px] font-bold text-gray-500">
-              <span className={`h-3 w-3 rounded border ${TONE[key].cell}`} />{TONE[key].label}
-            </span>
-          ))}
-        </div>
-
-        <p className="m-0 mt-3 text-[10px] font-medium leading-relaxed text-gray-400">
-          Each day is measured against the pace the challenge was set at
-          {pace > 0 ? ` (${Math.round(pace * 10) / 10} pcs/day)` : ""}, not against the
-          catch-up pace shown on the card — that one rises every time a day is missed,
-          so it would mark the same miss twice. Reward at target: {formatMoney(allocation.rewardAmount, currency)}.
-        </p>
       </section>
     </div>,
     document.body
@@ -863,6 +988,20 @@ function ChallengeCard({
 
         {repMode && <RepFocusPanel challenge={challenge} formatMoney={formatMoney} />}
 
+        {/* The rep's own day-by-day. The manager has had this behind the eye
+            icon on each rep card; the rep it describes could not see it. */}
+        {repMode && (challenge.dailyProgress?.length ?? 0) > 0 && (
+          <div className="mt-4">
+            <ChallengeDayCalendar
+              days={challenge.dailyProgress ?? []}
+              pace={challenge.dailyTargetPace ?? 0}
+              today={challenge.today ?? dateKey(new Date())}
+              target={challenge.targetUnits}
+              delivered={challenge.deliveredPieces ?? challenge.progressUnits}
+            />
+          </div>
+        )}
+
         {!repMode && challenge.allocations && challenge.allocations.length > 0 && (
           <AllocationPanel challenge={challenge} canEdit={canEdit} formatMoney={formatMoney} onSave={onSaveAllocations} />
         )}
@@ -994,11 +1133,11 @@ function AllocationPanel({ challenge, canEdit, formatMoney, onSave }: {
         const daily = selected.currentWeekDaysLeft > 0 ? Math.ceil(selected.currentWeekRemaining / selected.currentWeekDaysLeft) : 0;
         return <div className="mt-4 grid gap-3 border-t border-violet-100 pt-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(260px,.6fr)]">
           <div className="rounded-lg border border-violet-200 bg-white p-4">
-            <p className="text-[10px] font-black uppercase tracking-[0.12em] text-violet-700">{selected.repName}&apos;s target this week</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.12em] text-violet-700">{selected.repName}&apos;s {selected.currentWeekIndex ? `week ${selected.currentWeekIndex} checkpoint` : "target this week"}</p>
             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Metric label="Personal milestone" value={`${selected.currentWeekTarget.toLocaleString()} pcs`} detail="This week" />
-              <Metric label="Delivered" value={`${selected.currentWeekDelivered.toLocaleString()} pcs`} detail="Qualified only" />
-              <Metric label="Remaining" value={`${selected.currentWeekRemaining.toLocaleString()} pcs`} detail={`${selected.currentWeekDaysLeft} days left`} />
+              <Metric label="Checkpoint target" value={`${selected.currentWeekTarget.toLocaleString()} pcs`} detail={selected.currentWeekEndDate ? `Total by ${formatDateShort(selected.currentWeekEndDate)}` : "Total by this date"} />
+              <Metric label="Counted so far" value={`${selected.currentWeekDelivered.toLocaleString()} pcs`} detail="Delivered and verified" />
+              <Metric label="Still needed" value={`${selected.currentWeekRemaining.toLocaleString()} pcs`} detail={`${selected.currentWeekDaysLeft} days left`} />
               <Metric label="Required pace" value={`${daily.toLocaleString()} pcs/day`} detail={`${selected.todayDeliveredPieces} delivered today`} />
             </div>
           </div>
@@ -1023,11 +1162,22 @@ function RepFocusPanel({ challenge, formatMoney }: { challenge: ManagerProductCh
   const neededDaily = daysLeft > 0 ? Math.ceil(remaining / daysLeft) : 0;
   const average = challenge.qualifiedOrders > 0 ? (challenge.progressUnits / challenge.qualifiedOrders).toFixed(1) : "0";
   const milestoneReward = challenge.rewardAmount / Math.max(1, challenge.milestones.length || 1);
+  // ⚠️ THESE FIGURES ARE CUMULATIVE, and the labels have to say so. A milestone
+  // is a running checkpoint, not a self-contained week: it is Earned when
+  // everything delivered since the challenge began clears it. Calling the
+  // target "this week" while the number covers the whole month to date is how
+  // a rep reads a catch-up figure as a fresh weekly quota.
+  const checkpointIndex = challenge.currentWeekIndex ?? 0;
+  const checkpointEnds = challenge.currentWeekEndDate ?? "";
   return <section className="mt-4 grid gap-3 lg:grid-cols-2">
     <div className="rounded-xl border border-violet-100 bg-white p-4">
-      <p className="text-xs font-black uppercase tracking-[0.12em] text-violet-700">This week</p>
-      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4"><Metric label="Target" value={`${weeklyTarget.toLocaleString()} pcs`} detail="Personal milestone" /><Metric label="Qualified" value={`${weeklyDelivered.toLocaleString()} pcs`} detail="Delivered only" /><Metric label="Remaining" value={`${remaining.toLocaleString()} pcs`} detail="To meet this week" /><Metric label="Days left" value={daysLeft.toLocaleString()} detail="Today included" /></div>
+      <p className="text-xs font-black uppercase tracking-[0.12em] text-violet-700">
+        {checkpointIndex > 0 ? `Week ${checkpointIndex} checkpoint` : "This week"}
+        {checkpointEnds && <span className="ml-1.5 normal-case tracking-normal text-gray-500">closes {formatDateShort(checkpointEnds)}</span>}
+      </p>
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4"><Metric label="Checkpoint target" value={`${weeklyTarget.toLocaleString()} pcs`} detail="Total by this date" /><Metric label="Counted so far" value={`${weeklyDelivered.toLocaleString()} pcs`} detail="Delivered and verified" /><Metric label="Still needed" value={`${remaining.toLocaleString()} pcs`} detail="To clear this checkpoint" /><Metric label="Days left" value={daysLeft.toLocaleString()} detail="Today included" /></div>
       <div className="mt-3 flex items-center gap-3"><span className="text-xs font-black text-gray-700">Needed daily {neededDaily.toLocaleString()} pcs/day</span><div className="h-2 flex-1 overflow-hidden rounded-full bg-gray-100"><div className="h-full rounded-full bg-violet-600" style={{ width: `${weeklyTarget > 0 ? Math.min(100, Math.round((weeklyDelivered / weeklyTarget) * 100)) : 0}%` }} /></div></div>
+      <p className="mt-2 text-[11px] font-semibold leading-relaxed text-gray-500">Checkpoints run on from each other: a shortfall from an earlier week is still owed here, and anything extra you delivered already counts towards it.</p>
       {(challenge.awaitingDeliveryPieces ?? 0) > 0 && <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">{challenge.awaitingDeliveryPieces?.toLocaleString()} pieces are awaiting delivery and do not count yet.</p>}
     </div>
     <div className="rounded-xl border border-violet-100 bg-violet-50/50 p-4">
