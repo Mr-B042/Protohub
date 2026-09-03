@@ -1014,9 +1014,7 @@ function ChallengeCard({
         </div>
 
         <div className="mt-4 flex items-center gap-3">
-          <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-gray-100">
-            <div className="h-full rounded-full bg-gradient-to-r from-violet-700 to-violet-400" style={{ width: `${Math.min(100, challenge.progressPercent)}%` }} />
-          </div>
+          <AnimatedProgress percent={challenge.progressPercent} track="h-2.5" fill="bg-gradient-to-r from-violet-700 to-violet-400" />
           <span className="shrink-0 text-xs font-black text-gray-500">{challenge.progressUnits.toLocaleString()} / {challenge.targetUnits.toLocaleString()} pcs</span>
         </div>
 
@@ -1218,7 +1216,7 @@ function RepFocusPanel({ challenge, formatMoney }: { challenge: ManagerProductCh
         {checkpointEnds && <span className="ml-1.5 normal-case tracking-normal text-gray-500">closes {formatDateShort(checkpointEnds)}</span>}
       </p>
       <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4"><Metric label="Checkpoint target" value={`${weeklyTarget.toLocaleString()} pcs`} detail="Total by this date" /><Metric label="Counted so far" value={`${weeklyDelivered.toLocaleString()} pcs`} detail="Delivered and verified" /><Metric label="Still needed" value={`${remaining.toLocaleString()} pcs`} detail="To clear this checkpoint" /><Metric label="Days left" value={daysLeft.toLocaleString()} detail="Today included" /></div>
-      <div className="mt-3 flex items-center gap-3"><span className="text-xs font-black text-gray-700">Needed daily {neededDaily.toLocaleString()} pcs/day</span><div className="h-2 flex-1 overflow-hidden rounded-full bg-gray-100"><div className="h-full rounded-full bg-violet-600" style={{ width: `${weeklyTarget > 0 ? Math.min(100, Math.round((weeklyDelivered / weeklyTarget) * 100)) : 0}%` }} /></div></div>
+      <div className="mt-3 flex items-center gap-3"><span className="text-xs font-black text-gray-700">Needed daily {neededDaily.toLocaleString()} pcs/day</span><AnimatedProgress percent={weeklyTarget > 0 ? Math.round((weeklyDelivered / weeklyTarget) * 100) : 0} track="h-2" fill="bg-violet-600" /></div>
       <p className="mt-2 text-[11px] font-semibold leading-relaxed text-gray-500">Checkpoints run on from each other: a shortfall from an earlier week is still owed here, and anything extra you delivered already counts towards it.</p>
       {(challenge.awaitingDeliveryPieces ?? 0) > 0 && <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">{challenge.awaitingDeliveryPieces?.toLocaleString()} pieces are awaiting delivery and do not count yet.</p>}
     </div>
@@ -1427,6 +1425,34 @@ function ChallengeSummaryStrip({ challenges, formatMoney }: { challenges: Manage
           <div><p className="text-[9px] font-black uppercase tracking-[0.08em] text-gray-400">{item.label}</p><p className="mt-1 text-sm font-black text-gray-950">{item.value}</p><p className="mt-0.5 text-[9px] font-semibold text-gray-400">{item.detail}</p></div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * A progress bar that travels to its value instead of appearing at it.
+ *
+ * ⚠️ IT STARTS AT ZERO ON PURPOSE. The width is rendered as 0 on the first
+ * paint and set to the real figure on the next frame, so the CSS transition
+ * has something to animate from. Rendering the final width immediately would
+ * show a bar that was simply always there - Bright's point was that a rep
+ * should SEE the ground they have covered, and see that there is more of it
+ * to take. The same effect re-runs when the number changes, so a fresh
+ * delivery slides the bar forward rather than teleporting it.
+ *
+ * Motion is disabled wholesale under prefers-reduced-motion in styles.css;
+ * the bar still shows the right width, it just arrives there.
+ */
+function AnimatedProgress({ percent, track, fill }: { percent: number; track: string; fill: string }) {
+  const target = Math.max(0, Math.min(100, percent));
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setWidth(target));
+    return () => cancelAnimationFrame(frame);
+  }, [target]);
+  return (
+    <div className={`flex-1 overflow-hidden rounded-full bg-gray-100 ${track}`}>
+      <div className={`challenge-progress-fill h-full rounded-full ${fill}`} style={{ width: `${width}%` }} />
     </div>
   );
 }
