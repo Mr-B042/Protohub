@@ -80,7 +80,11 @@ export type ManagerProductChallenge = {
   currentWeekIndex?: number;
   currentWeekEndDate?: string | null;
   todayDeliveredPieces?: number;
-  /** The rep's own day-by-day, for the calendar under their target. */
+  /** The rep's own day-by-day, for the calendar under their target.
+   *  ⚠️ dailyTargetPace is the server's flat target ÷ days and is a DECIMAL.
+   *  The calendar no longer reads it - it splits the target into whole pieces
+   *  per day itself (see dailyQuotas), because a cell cannot ask for 1.3 pcs.
+   *  Still sent, still correct, just not what the days are judged against. */
   dailyTargetPace?: number;
   dailyProgress?: Array<{ dateKey: string; pieces: number }>;
   // The dashboard's period filter. Additive only - target, progress and pace
@@ -114,7 +118,9 @@ export type ChallengeAllocation = {
   todayDeliveredPieces: number;
   /** The flat pace the challenge was set at: target ÷ days in the window.
    *  NOT requiredPace, which rises as days are missed and so cannot be used to
-   *  judge a day that has already happened. */
+   *  judge a day that has already happened.
+   *  ⚠️ A DECIMAL, and so no longer what the calendar judges a day by - see
+   *  dailyQuotas, which splits the same target into whole pieces per day. */
   dailyTargetPace?: number;
   /** Every day of the challenge window, including days with nothing. */
   dailyProgress?: Array<{ dateKey: string; pieces: number }>;
@@ -283,7 +289,10 @@ type ChallengeDayStatus = keyof typeof CHALLENGE_DAY_TONE;
 type ChallengeDayRow = {
   dateKey: string;
   pieces: number;
+  /** Whole pieces this day asks for. The quotas sum to the target exactly. */
+  quota: number;
   running: number;
+  /** Cumulative quota to this day - a whole number, like everything else here. */
   expected: number;
   status: ChallengeDayStatus;
   future: boolean;
@@ -292,51 +301,59 @@ type ChallengeDayRow = {
 const utcDay = (dateKey: string) => new Date(`${dateKey}T12:00:00Z`);
 
 /**
- * ⚠️ THE PACE A CELL PRINTS MUST BE THE PACE THE CELL IS JUDGED BY.
+ * The target broken into WHOLE PIECES PER DAY that add up to the target exactly.
  *
- * The day cells used to print Math.round(pace) while the status test compared
- * against the raw pace. On the Storage Shelf challenge - 41 pcs over 32 days,
- * pace 1.28 - a cell asked for "/ 1", the rep delivered 1, and the same cell
- * coloured her "Behind target" because 1 >= 1.28 is false. The number shown
- * and the number judged have to be one number.
+ * ⚠️ NO DECIMAL DAILY TARGET. A flat target ÷ days gives 41 / 32 = 1.28, and a
+ * day cell asking for "1.3 pcs" is asking for something nobody can deliver -
+ * Bright: "1.3 is not right, it is neither 1 nor 2 nor 3". Worse, one piece
+ * against 1.28 coloured itself Behind target, so a rep who did exactly what the
+ * cell asked was marked short.
  *
- * One decimal, because a whole number cannot express 1.28 and rounding it to 1
- * is exactly what caused this.
+ * Each day gets the whole number that keeps the RUNNING total on the line:
+ *
+ *   quota[i] = floor(target x (i+1) / days) - floor(target x i / days)
+ *
+ * For 41 over 32 days that is nine 2s and twenty-three 1s, spread evenly rather
+ * than stacked at the front, and they sum to exactly 41 by construction - the
+ * last cumulative term is floor(target x days / days) = target. Every figure the
+ * calendar shows is now a whole number a rep can actually deliver, and the
+ * cumulative expectation behind the ahead/behind headline is a whole number too.
  */
-const paceFigure = (pace: number) => Math.round(pace * 10) / 10;
+const dailyQuotas = (target: number, dayCount: number) => {
+  const total = Math.max(0, Math.round(target));
+  const count = Math.max(1, dayCount);
+  let previous = 0;
+  return Array.from({ length: count }, (_, index) => {
+    const cumulative = Math.floor((total * (index + 1)) / count);
+    const quota = cumulative - previous;
+    previous = cumulative;
+    return quota;
+  });
+};
 
 const buildChallengeDays = (
   days: Array<{ dateKey: string; pieces: number }>,
-  pace: number,
+  target: number,
   today: string
 ): ChallengeDayRow[] => {
-  // ⚠️ JUDGE AGAINST THE FIGURE THE CELL PRINTS, not the raw pace. Printing a
-  // rounded pace beside a raw-pace comparison is what made a day showing "1 / 1"
-  // colour itself "Behind target": the real pace was 1.28. Rounding only the
-  // label would leave the same trap for any pace just above a whole number -
-  // 2.04 would print "/ 2" and still fail 2 >= 2.04.
-  //
-  // `expected` stays on the raw pace: it feeds the cumulative ahead/behind
-  // headline, where the fractions are the whole point and must not be lost.
-  const shown = paceFigure(pace);
-  // ⚠️ "OVER" MUST NOT SWALLOW "MET" ON A SMALL PACE. At 1.3 pcs/day the old
-  // 1.5x threshold was 1.95, so 2 pieces - the very least a rep can deliver to
-  // clear 1.3 - registered as Over target and "Target met" could never occur at
-  // all. Requiring a whole piece more than the day asked for restores it, and
-  // on a normal pace 1.5x is still the higher bar, so nothing else moves.
-  const overAt = Math.max(shown * 1.5, Math.ceil(shown) + 1);
+  const quotas = dailyQuotas(target, days.length);
   let running = 0;
+  let expected = 0;
   return days.map((day, index) => {
+    const quota = quotas[index] ?? 0;
     running += day.pieces;
-    const expected = pace * (index + 1);
+    expected += quota;
     const future = day.dateKey > today;
+    // Whole numbers on both sides, so the comparison needs no tolerance band
+    // and no multiplier to explain: you cleared the day's pieces, you matched
+    // them, you fell short, or you delivered nothing.
     const status: ChallengeDayStatus = future ? "upcoming"
-      : shown <= 0 ? "none"
-      : day.pieces >= overAt ? "over"
-      : day.pieces >= shown ? "met"
+      : quota <= 0 ? "none"
+      : day.pieces > quota ? "over"
+      : day.pieces === quota ? "met"
       : day.pieces > 0 ? "short"
       : "missed";
-    return { ...day, running, expected, status, future };
+    return { ...day, quota, running, expected, status, future };
   });
 };
 
@@ -346,20 +363,32 @@ const buildChallengeDays = (
  * drifting copies of it.
  */
 function ChallengeDayCalendar({
-  days, pace, today, target, delivered, heading
+  days, today, target, delivered, heading
 }: {
   days: Array<{ dateKey: string; pieces: number }>;
-  pace: number;
   today: string;
   target: number;
   delivered: number;
   heading?: string;
 }) {
-  const rows = useMemo(() => buildChallengeDays(days, pace, today), [days, pace, today]);
+  const rows = useMemo(() => buildChallengeDays(days, target, today), [days, target, today]);
 
   const done = rows.filter((row) => !row.future);
   const last = done[done.length - 1];
-  const aheadBy = last ? Math.round((last.running - last.expected) * 10) / 10 : 0;
+  // Both sides are whole numbers now, so the gap is one too - no more "4.4 pcs
+  // behind pace" against a target measured in pieces.
+  const aheadBy = last ? last.running - last.expected : 0;
+  const spread = useMemo(() => {
+    const quotas = rows.map((row) => row.quota);
+    const min = quotas.length > 0 ? Math.min(...quotas) : 0;
+    const max = quotas.length > 0 ? Math.max(...quotas) : 0;
+    return { min, max, heavier: quotas.filter((quota) => quota === max).length };
+  }, [rows]);
+  const quotaLabel = spread.max <= 0
+    ? ""
+    : spread.min === spread.max
+      ? `${spread.min.toLocaleString()} pcs/day`
+      : `${spread.min.toLocaleString()}-${spread.max.toLocaleString()} pcs/day`;
   const judged = done.filter((row) => row.status !== "none").length;
   const onTarget = done.filter((row) => row.status === "over" || row.status === "met").length;
 
@@ -393,7 +422,7 @@ function ChallengeDayCalendar({
           </h4>
           <p className="m-0 mt-0.5 text-[11px] font-bold text-gray-500">
             {delivered.toLocaleString()} of {target.toLocaleString()} pcs
-            {pace > 0 && <> · pace {paceFigure(pace)} pcs/day</>}
+            {quotaLabel && <> · {quotaLabel}</>}
             {judged > 0 && <> · {onTarget} of {judged} days on target</>}
           </p>
         </div>
@@ -408,7 +437,7 @@ function ChallengeDayCalendar({
 
       {/* Ahead or behind overall, in pieces. A month of mixed squares does not
           answer "am I winning" on its own. */}
-      {done.length > 0 && pace > 0 && last && (
+      {done.length > 0 && target > 0 && last && (
         <div className={`mt-4 rounded-xl border px-4 py-3 ${aheadBy >= 0 ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>
           <p className={`m-0 text-[13px] font-black ${aheadBy >= 0 ? "text-emerald-900" : "text-rose-900"}`}>
             {aheadBy >= 0 ? `${aheadBy} pcs ahead of pace` : `${Math.abs(aheadBy)} pcs behind pace`}
@@ -438,11 +467,11 @@ function ChallengeDayCalendar({
               {monthRows.map((row) => {
                 const tone = CHALLENGE_DAY_TONE[row.status];
                 const isToday = row.dateKey === today;
-                const fill = pace > 0 ? Math.min(100, Math.round((row.pieces / pace) * 100)) : 0;
+                const fill = row.quota > 0 ? Math.min(100, Math.round((row.pieces / row.quota) * 100)) : 0;
                 return (
                   <div
                     key={row.dateKey}
-                    title={`${utcDay(row.dateKey).toLocaleDateString("en-NG", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" })} — ${row.future ? "still to come" : `${row.pieces} of ${paceFigure(pace)} pcs · ${tone.label}`}`}
+                    title={`${utcDay(row.dateKey).toLocaleDateString("en-NG", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" })} — ${row.future ? "still to come" : `${row.pieces} of ${row.quota} pcs · ${tone.label}`}`}
                     className={`flex flex-col gap-1.5 rounded-xl border p-2 ${tone.cell} ${isToday ? "ring-2 ring-violet-400" : ""}`}
                   >
                     <span className="flex items-center justify-between">
@@ -461,8 +490,8 @@ function ChallengeDayCalendar({
                     </span>
                     <span className="flex items-baseline justify-between">
                       <strong className={`text-[13px] font-black leading-none tabular-nums ${tone.value}`}>{row.future ? "—" : row.pieces}</strong>
-                      {!row.future && pace > 0 && (
-                        <span className="text-[10px] font-bold tabular-nums text-gray-400">/ {paceFigure(pace)}</span>
+                      {!row.future && row.quota > 0 && (
+                        <span className="text-[10px] font-bold tabular-nums text-gray-400">/ {row.quota}</span>
                       )}
                     </span>
                   </div>
@@ -474,16 +503,12 @@ function ChallengeDayCalendar({
       </div>
 
       <p className="m-0 mt-3 text-[10px] font-medium leading-relaxed text-gray-400">
-        Each day is measured against the pace the challenge was set at
-        {pace > 0 ? ` (${paceFigure(pace)} pcs/day)` : ""}, not against the
-        catch-up pace on the card above — that one rises every time a day is missed,
-        so it would mark the same miss twice. Only delivered and verified pieces count.
-        {pace > 0 && pace % 1 !== 0 && (
-          <> A pace with a decimal cannot be met by the same number of pieces every
-          day — at {paceFigure(pace)} a day, {Math.floor(pace).toLocaleString()} keeps you
-          just short and {Math.ceil(pace).toLocaleString()} puts you ahead, so the target
-          needs {Math.ceil(pace).toLocaleString()} on some days.</>
-        )}
+        The {target.toLocaleString()} pcs are split into whole pieces per day that add
+        up to exactly {target.toLocaleString()}
+        {spread.min !== spread.max ? <> — most days ask for {spread.min.toLocaleString()}, and {spread.heavier.toLocaleString()} of them ask for {spread.max.toLocaleString()}</> : null}.
+        Each day is measured against its own number, not against the catch-up pace on
+        the card above — that one rises every time a day is missed, so it would mark the
+        same miss twice. Only delivered and verified pieces count.
       </p>
       <p className="m-0 mt-1 text-[10px] font-bold text-gray-400">
         Range: {rows[0].dateKey} to {rows[rows.length - 1].dateKey}
@@ -519,7 +544,6 @@ function RepChallengeCalendar({
         <div className="mt-4">
           <ChallengeDayCalendar
             days={allocation.dailyProgress ?? []}
-            pace={allocation.dailyTargetPace ?? 0}
             today={today}
             target={allocation.targetUnits}
             delivered={allocation.deliveredPieces}
@@ -1034,7 +1058,6 @@ function ChallengeCard({
           <div className="mt-4">
             <ChallengeDayCalendar
               days={challenge.dailyProgress ?? []}
-              pace={challenge.dailyTargetPace ?? 0}
               today={challenge.today ?? dateKey(new Date())}
               target={challenge.targetUnits}
               delivered={challenge.deliveredPieces ?? challenge.progressUnits}
