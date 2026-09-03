@@ -53,6 +53,8 @@ export type ManagerProductChallenge = {
   earnedRewardAmount: number;
   status: "draft" | "active" | "paused" | "completed";
   description: string;
+  managerRewardAmount?: number;
+  managerEarnedRewardAmount?: number;
   progressUnits: number;
   progressPercent: number;
   expectedPercent: number;
@@ -138,6 +140,7 @@ export type ManagerChallengeDraft = Pick<
   | "milestoneTargets"
   | "status"
   | "description"
+  | "managerRewardAmount"
 >;
 
 type ChallengeProduct = { id: string; name: string; imageUrl?: string; active?: boolean };
@@ -228,7 +231,8 @@ const defaultDraft = (products: ChallengeProduct[]): ManagerChallengeDraft => {
     milestoneDistribution: "even",
     milestoneTargets: [],
     status: "active",
-    description: "Complete each weekly milestone to earn that portion of the monthly product reward."
+    description: "Complete each weekly milestone to earn that portion of the monthly product reward.",
+    managerRewardAmount: 0
   };
 };
 
@@ -565,7 +569,8 @@ export function ManagerProductChallenges({
       milestoneDistribution: challenge.milestoneDistribution ?? "even",
       milestoneTargets: challenge.milestoneTargets ?? [],
       status: challenge.status,
-      description: challenge.description
+      description: challenge.description,
+      managerRewardAmount: challenge.managerRewardAmount ?? 0
     });
     setFormError("");
     setDrawerTab("Challenges");
@@ -753,12 +758,12 @@ export function ManagerProductChallenges({
               )}
 
               <div className="rounded-lg border border-gray-100 bg-gray-50/70 p-3">
-                <p className="text-xs font-black text-gray-700">Reward structure</p>
+                <p className="text-xs font-black text-gray-700">Independent bonus allocations</p>
                 <div className="mt-2 grid grid-cols-2 gap-3">
-                  <MoneyField label={`Total ${draft.cadence} reward`} value={draft.rewardAmount} onChange={(value) => setDraft((current) => ({ ...current, rewardAmount: value }))} />
-                  <MoneyField label="Per milestone reward" value={draft.rewardAmount / (draft.milestoneMode === "weekly" ? draftCount : 1)} readOnly />
+                  <MoneyField label="Manager / team reward" value={draft.managerRewardAmount ?? 0} onChange={(value) => setDraft((current) => ({ ...current, managerRewardAmount: value }))} />
+                  <MoneyField label="Sales-rep bonus pool" value={draft.rewardAmount} onChange={(value) => setDraft((current) => ({ ...current, rewardAmount: value }))} />
                 </div>
-                <p className="mt-2 text-[10px] font-semibold leading-4 text-gray-500">A week pays only when its own target is met. Rewards are tracked here and are not posted into payroll twice.</p>
+                <p className="mt-2 text-[10px] font-semibold leading-4 text-gray-500">The manager reward follows team progress. The sales-rep pool is divided into editable personal rewards under Manage allocations.</p>
               </div>
 
               <div>
@@ -843,11 +848,7 @@ export function ManagerProductChallenges({
               <p className="mt-1 text-sm font-medium text-gray-500">Complete weekly milestones to earn the full monthly reward. Each successful milestone is earned independently.</p>
             </div>
           </div>
-          {canEdit && (
-            <button type="button" className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-black text-white shadow-lg shadow-violet-200" onClick={openNew}>
-              <Plus className="h-4 w-4" /> Add Challenge
-            </button>
-          )}
+          {canEdit && <button type="button" className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-black text-white shadow-lg shadow-violet-200" onClick={openNew}><Plus className="h-4 w-4" /> Add Challenge</button>}
         </header>
 
         <div className="space-y-4 p-3 sm:p-4">
@@ -946,9 +947,10 @@ function ChallengeCard({
           </div>
           <div className="flex items-start gap-2">
             <div className="min-w-[180px] rounded-lg border border-violet-100 bg-violet-50/70 px-5 py-4 text-center">
-              <p className="text-[10px] font-black uppercase tracking-[0.12em] text-violet-600">{repMode ? "My maximum reward" : "Monthly team reward"}</p>
-              <p className="mt-2 text-2xl font-black text-violet-700">{formatMoney(challenge.rewardAmount, challenge.currency)}</p>
+              <p className="text-[10px] font-black uppercase tracking-[0.12em] text-violet-600">{repMode ? "My maximum reward" : "Manager reward"}</p>
+              <p className="mt-2 text-2xl font-black text-violet-700">{formatMoney(repMode ? challenge.rewardAmount : (challenge.managerRewardAmount ?? 0), challenge.currency)}</p>
               <p className="mt-1 text-[10px] font-semibold text-gray-500">{hasMilestones ? "Paid through weekly milestones" : "Paid when the full target is met"}</p>
+              {!repMode && <p className="mt-2 text-[10px] font-bold text-emerald-700">Sales-rep pool: {formatMoney(challenge.rewardAmount, challenge.currency)}</p>}
             </div>
             {canEdit && <div className="relative"><button type="button" className="!min-h-0 flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 hover:text-violet-700" onClick={() => setMenuOpen((open) => !open)} title="Challenge options"><MoreVertical className="h-4 w-4" /></button>{menuOpen && <div className="absolute right-0 top-10 z-10 w-32 rounded-lg border border-gray-200 bg-white p-1 text-left shadow-lg"><button type="button" className="w-full rounded px-2 py-1.5 text-left text-xs font-bold text-gray-700 hover:bg-gray-50" onClick={() => { setMenuOpen(false); onEdit(); }}>Edit</button><button type="button" className="w-full rounded px-2 py-1.5 text-left text-xs font-bold text-amber-700 hover:bg-amber-50" onClick={() => { setMenuOpen(false); onToggleStatus(); }}>{challenge.status === "active" ? "Pause" : "Resume"}</button><button type="button" className="w-full rounded px-2 py-1.5 text-left text-xs font-bold text-rose-600 hover:bg-rose-50" onClick={() => { setMenuOpen(false); onDelete(); }}>Delete</button></div>}</div>}
           </div>

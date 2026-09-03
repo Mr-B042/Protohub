@@ -30,7 +30,8 @@ const ChallengeFields = z.object({
   milestoneDistribution: z.enum(["even", "custom"]).default("even"),
   milestoneTargets: z.array(z.coerce.number().int().min(1).max(10_000_000)).max(24).default([]),
   status: z.enum(["draft", "active", "paused", "completed"]).default("active"),
-  description: z.string().trim().max(1000).default("")
+  description: z.string().trim().max(1000).default(""),
+  managerRewardAmount: z.coerce.number().min(0).max(1_000_000_000).default(0)
 }).strict();
 
 const ChallengeSchema = ChallengeFields.superRefine((value, context) => {
@@ -102,6 +103,7 @@ const rowToApi = (
   earnedRewardAmount: milestoneResult.earnedRewardAmount,
   status: row.status,
   description: row.description ?? "",
+  managerRewardAmount: Number(row.manager_reward_amount ?? 0),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
   qualifiedOrders,
@@ -124,6 +126,7 @@ const rowPayload = (value: z.infer<typeof ChallengeSchema>, req: any) => ({
   milestone_targets: value.milestoneMode === "weekly" && value.milestoneDistribution === "custom" ? value.milestoneTargets : [],
   status: value.status,
   description: value.description,
+  manager_reward_amount: value.managerRewardAmount,
   updated_by: req.user.id,
   updated_at: new Date().toISOString()
 });
@@ -296,6 +299,22 @@ router.get("/", async (req, res) => {
           units: Number(order.quantity ?? 0)
         }))
       });
+      const managerMilestoneResult = buildChallengeMilestones({
+        cadence: row.cadence,
+        startDate: row.start_date,
+        endDate: row.end_date,
+        targetUnits: teamTargetUnits,
+        rewardAmount: Number(row.manager_reward_amount ?? 0),
+        milestoneMode: row.milestone_mode ?? "none",
+        milestoneDistribution: row.milestone_distribution ?? "even",
+        milestoneTargets: Array.isArray(row.milestone_targets) ? row.milestone_targets.map(Number) : [],
+        status: row.status as ChallengeLifecycleStatus,
+        today,
+        orders: teamMatching.map((order) => ({
+          dateKey: String(order.delivered_date ?? "").slice(0, 10),
+          units: Number(order.quantity ?? 0)
+        }))
+      });
       const confirmedPieces = productOrders.filter((order) => ["confirmed", "in process", "dispatched"].includes(String(order.status ?? "").trim().toLowerCase())).reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0);
       const deliveredPieces = matching.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0);
       // ⚠️ THE CHECKPOINT TODAY FALLS IN, then the first one still open.
@@ -418,6 +437,8 @@ router.get("/", async (req, res) => {
         teamQualifiedOrders: teamMatching.length,
         teamTargetUnits,
         teamRewardAmount,
+        managerRewardAmount: Number(row.manager_reward_amount ?? 0),
+        managerEarnedRewardAmount: managerMilestoneResult.earnedRewardAmount,
         windowFrom,
         windowTo,
         windowDeliveredPieces,
@@ -544,6 +565,7 @@ router.patch("/:id", requireRole("Owner"), async (req, res) => {
       milestoneTargets: Array.isArray(existing.milestone_targets) ? existing.milestone_targets.map(Number) : [],
       status: existing.status,
       description: existing.description ?? "",
+      managerRewardAmount: existing.manager_reward_amount ?? 0,
       ...parsed.data
     });
     if (!mergedResult.success) {

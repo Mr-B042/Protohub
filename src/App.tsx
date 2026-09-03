@@ -26693,7 +26693,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
-    setActivePage("Sales Rep Workspace");
     const [, rawPath = ""] = hashRoute.split("#");
     const queryParams = new URLSearchParams(rawPath.split("?")[1] ?? "");
     const parts = rawPath.split("?")[0].split("/").filter(Boolean);
@@ -26744,7 +26743,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
-    setRepConsoleTab(routeToTab[section ?? ""] ?? "Dashboard");
+    const resolvedTab = routeToTab[section ?? ""] ?? "Dashboard";
+    setActivePage(resolvedTab === "My Targets & Incentives" ? "My Targets & Incentives" : "Sales Rep Workspace");
+    setRepConsoleTab(resolvedTab);
     if (currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager") {
       if (repConsoleRepId !== resolvedRepId) {
         setRepConsoleRepId(resolvedRepId);
@@ -29046,7 +29047,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   }, [activePage, currentRole]);
 
   useEffect(() => {
-    if ((activePage !== "Manager Dashboard" || managerDashboardTab !== "Overview") && (activePage !== "Sales Rep Workspace" || repConsoleTab !== "My Targets & Incentives")) return;
+    if ((activePage !== "Manager Dashboard" || managerDashboardTab !== "Overview")
+      && activePage !== "My Targets & Incentives"
+      && (activePage !== "Sales Rep Workspace" || repConsoleTab !== "My Targets & Incentives")) return;
     const onManagerDashboard = activePage === "Manager Dashboard";
     void loadManagerProductChallenges({
       quiet: true,
@@ -35333,7 +35336,7 @@ ${waybillLineItems(w).length > 1
       const nextHash = repTabRoute("My Targets & Incentives");
       window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
       setHashRoute(nextHash);
-      setActivePage("Sales Rep Workspace");
+      setActivePage("My Targets & Incentives");
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
@@ -73752,7 +73755,7 @@ ${waybillLineItems(w).length > 1
             // "Sales Rep Workspace" while the entry the user actually clicked
             // stays grey - which is exactly what it looks like when a click did
             // nothing, whatever the page is really showing.
-            const isWorkspaceMyTargetsTab = activePage === "Sales Rep Workspace" && repConsoleTab === "My Targets & Incentives";
+            const isWorkspaceMyTargetsTab = (activePage === "Sales Rep Workspace" || activePage === "My Targets & Incentives") && repConsoleTab === "My Targets & Incentives";
             const isActive = isBonusShortcut
               ? isWorkspaceBonusTab
               : targetPage === "Products & Stock"
@@ -80485,6 +80488,8 @@ ${waybillLineItems(w).length > 1
             renderCallRepConsole()
           ) : activePage === "Upsell & Cross-sell Log" ? (
             renderSalesExpansionTab(true)
+          ) : activePage === "My Targets & Incentives" ? (
+            renderRepConsole()
           ) : activePage === "Sales Rep Workspace" ? (
             renderRepConsole()
           ) : activePage === "Recovery Rep Dashboard" ? (
