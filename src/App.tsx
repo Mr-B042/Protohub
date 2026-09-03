@@ -2815,6 +2815,22 @@ const defaultLandingByRole: Record<EditableUserRole, AccessiblePage> = {
   "Sales Closer":      "Sales Closer Workspace"
 };
 
+/**
+ * The pages that load product challenges.
+ *
+ * ⚠️ ONE LIST, BECAUSE TWO GUARDS DECIDE THIS. The loading effect and
+ * loadManagerProductChallenges itself both gate on the page, and when
+ * "My Targets & Incentives" became a page of its own the effect was taught
+ * about it and the loader was not. The effect then fired on that page and the
+ * loader returned immediately without fetching, so the panel kept whatever the
+ * Manager Dashboard had last put in state - a TEAM payload. It showed the team
+ * target of 2,727 in place of the rep's 682, and carried none of the
+ * currentWeek* fields, which exist only in the rep-scoped response. Every one
+ * of them fell back to 0, so "This week" read 0 pcs needed, 0 days left, on a
+ * challenge that was visibly behind.
+ */
+const CHALLENGE_PAGES: ActivePage[] = ["Manager Dashboard", "Sales Rep Workspace", "My Targets & Incentives"];
+
 const dashboardHashByPage: Record<ActivePage, string> = {
   Dashboard: "#/dashboard/admin",
   "Products & Stock": "#/dashboard/sales-rep/products",
@@ -29030,7 +29046,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const loadManagerProductChallenges = useCallback(async (options?: { quiet?: boolean; from?: string; to?: string }) => {
     const canView = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager" || currentRole === "Sales Rep";
-    if (!canView || (activePage !== "Manager Dashboard" && activePage !== "Sales Rep Workspace")) return;
+    if (!canView || !CHALLENGE_PAGES.includes(activePage)) return;
     setManagerProductChallengesLoading(true);
     setManagerProductChallengesError("");
     try {
@@ -29047,9 +29063,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   }, [activePage, currentRole]);
 
   useEffect(() => {
-    if ((activePage !== "Manager Dashboard" || managerDashboardTab !== "Overview")
-      && activePage !== "My Targets & Incentives"
-      && (activePage !== "Sales Rep Workspace" || repConsoleTab !== "My Targets & Incentives")) return;
+    if (!CHALLENGE_PAGES.includes(activePage)) return;
+    // Within a page that can load them, only the surfaces that show them do.
+    if (activePage === "Manager Dashboard" && managerDashboardTab !== "Overview") return;
+    if (activePage === "Sales Rep Workspace" && repConsoleTab !== "My Targets & Incentives") return;
     const onManagerDashboard = activePage === "Manager Dashboard";
     void loadManagerProductChallenges({
       quiet: true,
