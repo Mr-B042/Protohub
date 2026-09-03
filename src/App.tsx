@@ -3570,6 +3570,14 @@ const orderSourceFromUtm = (source: string): Exclude<OrderSource, "All Sources">
   // Recognise the Meta/ad ecosystem codes + full names so orders aren't all
   // collapsed into "Website". Mirrors the Ad Tracking source codes
   // (fb/ig/an/th/ms/wa/tt). Exact short codes are matched first, then names.
+  //
+  // ⚠️ THE BACKEND DOES ONE MORE THING THIS DOES NOT. At write time
+  // resolveOrderSource (backend/src/lib/order-source.ts) falls back to the
+  // captured click IDs when a link carried no utm_source, so an untagged ad no
+  // longer stores "Direct". This stays utm-only on purpose: it is a display
+  // fallback for rows whose stored source is missing, and it has no form
+  // context to read. Orders stored before that fix keep the source they were
+  // written with.
   if (normalized === "tt" || normalized.includes("tiktok")) return "TikTok";
   if (normalized === "ig" || normalized.includes("instagram") || normalized.includes("insta")) return "Instagram";
   if (normalized === "an" || normalized.includes("audience network")) return "Audience Network";
