@@ -951,6 +951,11 @@ function ChallengeCard({
               <p className="mt-2 text-2xl font-black text-violet-700">{formatMoney(repMode ? challenge.rewardAmount : (challenge.managerRewardAmount ?? 0), challenge.currency)}</p>
               <p className="mt-1 text-[10px] font-semibold text-gray-500">{hasMilestones ? "Paid through weekly milestones" : "Paid when the full target is met"}</p>
               {!repMode && <p className="mt-2 text-[10px] font-bold text-emerald-700">Sales-rep pool: {formatMoney(challenge.rewardAmount, challenge.currency)}</p>}
+              {!repMode && canEdit && (
+                <button type="button" className="!min-h-0 mt-3 w-full rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs font-black text-violet-700 hover:bg-violet-100" onClick={onEdit}>
+                  {(challenge.managerRewardAmount ?? 0) > 0 ? "Edit manager bonus" : "Set manager bonus"}
+                </button>
+              )}
             </div>
             {canEdit && <div className="relative"><button type="button" className="!min-h-0 flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 hover:text-violet-700" onClick={() => setMenuOpen((open) => !open)} title="Challenge options"><MoreVertical className="h-4 w-4" /></button>{menuOpen && <div className="absolute right-0 top-10 z-10 w-32 rounded-lg border border-gray-200 bg-white p-1 text-left shadow-lg"><button type="button" className="w-full rounded px-2 py-1.5 text-left text-xs font-bold text-gray-700 hover:bg-gray-50" onClick={() => { setMenuOpen(false); onEdit(); }}>Edit</button><button type="button" className="w-full rounded px-2 py-1.5 text-left text-xs font-bold text-amber-700 hover:bg-amber-50" onClick={() => { setMenuOpen(false); onToggleStatus(); }}>{challenge.status === "active" ? "Pause" : "Resume"}</button><button type="button" className="w-full rounded px-2 py-1.5 text-left text-xs font-bold text-rose-600 hover:bg-rose-50" onClick={() => { setMenuOpen(false); onDelete(); }}>Delete</button></div>}</div>}
           </div>
