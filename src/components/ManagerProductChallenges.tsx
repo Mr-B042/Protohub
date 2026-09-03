@@ -95,6 +95,9 @@ export type ManagerProductChallenge = {
   windowQualifiedOrders?: number;
   /** Server's today, so the calendar marks the same day the progress maths did. */
   today?: string;
+  /** Whose figures these are. A "team" payload has no currentWeek* fields at
+   *  all, so a rep panel rendering one shows zeros that look like a maths bug. */
+  scope?: "rep" | "team";
 };
 
 export type ChallengeAllocation = {
@@ -1232,6 +1235,17 @@ function RepFocusPanel({ challenge, formatMoney }: { challenge: ManagerProductCh
   // a rep reads a catch-up figure as a fresh weekly quota.
   const checkpointIndex = challenge.currentWeekIndex ?? 0;
   const checkpointEnds = challenge.currentWeekEndDate ?? "";
+  // ⚠️ NEVER PRINT A TEAM PAYLOAD AS THIS REP'S WEEK. The checkpoint fields
+  // are only in the rep-scoped response; a team payload has none, so every
+  // figure here would read 0 and look like the checkpoint maths had broken
+  // again. Say what is actually happening instead.
+  if (challenge.scope === "team") {
+    return <section className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 p-4">
+      <p className="m-0 text-xs font-black uppercase tracking-[0.12em] text-amber-800">This week</p>
+      <p className="m-0 mt-1.5 text-sm font-bold text-amber-900">Your personal figures are still loading.</p>
+      <p className="m-0 mt-1 text-xs font-semibold text-amber-700">The numbers above are the team&apos;s totals for this challenge, not yours. Reopen this page if it does not refresh on its own.</p>
+    </section>;
+  }
   return <section className="mt-4 grid gap-3 lg:grid-cols-2">
     <div className="rounded-xl border border-violet-100 bg-white p-4">
       <p className="text-xs font-black uppercase tracking-[0.12em] text-violet-700">

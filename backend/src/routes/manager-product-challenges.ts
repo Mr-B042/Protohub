@@ -446,6 +446,13 @@ router.get("/", async (req, res) => {
         // Lagos' today, not the browser's. The calendar rings the same day the
         // progress maths above counted up to.
         today,
+        // ⚠️ WHICH FIGURES THESE ARE. The rep-only fields (currentWeek*,
+        // dailyProgress) exist ONLY in the Sales Rep branch below, so a team
+        // payload reaching a rep's panel makes every one of them fall back to
+        // 0 - "This week: 0 pcs, 0 needed, 0 days left" on a challenge that is
+        // behind. That is indistinguishable from a maths bug unless the payload
+        // says what it is, which is what this field is for.
+        scope: scopeRole === "Sales Rep" ? "rep" : "team",
         ...(scopeRole === "Sales Rep" ? {
         teamTargetUnits,
         teamRewardAmount,
