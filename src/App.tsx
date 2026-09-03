@@ -101051,9 +101051,27 @@ ${waybillLineItems(w).length > 1
 	                        <p className={`text-sm font-semibold m-0 mt-0.5 ${orderTitleTextClass}`}>{selectedOrder.preferredDelivery ?? selectedOrder.deliveryWindow}</p>
 	                      </div>
 	                    )}
-	                    {/* Delivery fee - Call Rep / Admin / Owner can set this so the
-	                        cost is tracked and auto-booked to the Expense board. */}
-	                    {(currentRole === "Owner" || currentRole === "Admin" || currentRole === "Sales Rep") && (
+	                    {/* Delivery fee - set here so the cost is tracked and
+	                        auto-booked to the Expense board.
+
+	                        ⚠️ A RECOVERY REP REACHES AN ORDER ONLY THROUGH THIS
+	                        MODAL. Her Work Queue and Activity Sheet both open
+	                        orders with setModal("orderDetails"); the fuller
+	                        Delivery Fee panel lives in renderRepOrderDetail,
+	                        which is the Sales Rep Workspace's own page and not
+	                        somewhere her dashboard leads. Leaving her off this
+	                        list meant that when an order she had chased finally
+	                        delivered, she had no way to log what the courier
+	                        charged - someone else had to enter it for her, which
+	                        is what had happened to all nine of her delivered
+	                        orders.
+
+	                        The server was never the blocker: PATCH /orders/:id
+	                        already accepts "Recovery Rep", and a logistics_cost
+	                        edit on its own skips the remittance-variance branch
+	                        entirely. The settled-remittance lock still applies to
+	                        her exactly as it does to a Sales Rep. */}
+	                    {(currentRole === "Owner" || currentRole === "Admin" || currentRole === "Sales Rep" || currentRole === "Recovery Rep") && (
 	                      <div className="col-span-2">
 	                        {(selectedOrder.status === "Failed" || selectedOrder.status === "Cancelled") ? (
 	                          <p className="text-xs font-bold uppercase tracking-wide m-0 text-rose-600 dark:text-rose-400">Failed delivery charge</p>
