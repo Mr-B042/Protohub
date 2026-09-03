@@ -70599,7 +70599,13 @@ ${waybillLineItems(w).length > 1
 
     return (
       <div className="space-y-6">
-        {repConsoleTab !== "Products & Stock" && <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+        {/* ⚠️ A STANDALONE TAB HIDES ALL THREE PIECES OF WORKSPACE CHROME -
+            this header, the cart banner below it, and the tab strip. Hiding
+            only the strip (PR #594) left the page still titled "Sales Rep
+            Workspace", still described as the sales-rep workflow, and still
+            carrying the workspace's cart banner - so it read as the workspace
+            with its tabs missing rather than as its own page. */}
+        {repConsoleTab !== "Products & Stock" && repConsoleTab !== "My Targets & Incentives" && <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
           <div className="space-y-1">
             <nav className="flex items-center gap-2 text-sm font-medium text-gray-500 mb-1">
               <span>Dashboard</span>
@@ -70636,7 +70642,7 @@ ${waybillLineItems(w).length > 1
         {/* Carts assigned to this rep are work they would otherwise never know
             about - the cart list is a different page. Surfacing the count here,
             on the page they actually land on, is the whole point. */}
-        {repConsoleTab !== "Products & Stock" && (() => {
+        {repConsoleTab !== "Products & Stock" && repConsoleTab !== "My Targets & Incentives" && (() => {
           if (!cartFollowUpIsOwnWork || cartFollowUps.length === 0) return null;
           const open = cartFollowUps.filter((row) => !row.convertedOrderId).length;
           const uncalled = cartFollowUps.filter((row) => row.attempts === 0).length;
@@ -70687,6 +70693,11 @@ ${waybillLineItems(w).length > 1
         </nav>}
 
         {repConsoleTab === "My Targets & Incentives" ? (
+          <div className="space-y-6">
+          <header>
+            <h1 className="m-0 text-2xl font-black text-gray-900 dark:text-slate-100">My Targets &amp; Incentives</h1>
+            <p className="mt-1 text-sm font-medium text-gray-500 dark:text-slate-400">Your product challenges, the checkpoint you are working to right now, and the reward riding on each one.</p>
+          </header>
           <ManagerProductChallenges
             role={currentRole}
             products={readyEmbedProducts.map((product) => ({ id: product.id, name: product.name, active: product.active, imageUrl: product.packages.find((pkg) => Boolean(pkg.imageUrl))?.imageUrl }))}
@@ -70699,6 +70710,7 @@ ${waybillLineItems(w).length > 1
             onSaveAllocations={saveManagerProductChallengeAllocations}
             onOpenBonusRules={() => setActivePage("Sales Rep Bonuses")}
           />
+          </div>
         ) : repConsoleTab === "Dashboard" ? (
           <div className="space-y-6">
             {renderRepWorkspaceFilters()}
@@ -73735,13 +73747,22 @@ ${waybillLineItems(w).length > 1
             const isWorkspaceBonusTab = activePage === "Sales Rep Workspace" && repConsoleTab === "Bonuses";
             const isWorkspaceSalesExpansionTab = activePage === "Sales Rep Workspace" && repConsoleTab === "Upsell & Cross-sell Log";
             const isWorkspaceProductsTab = activePage === "Sales Rep Workspace" && repConsoleTab === "Products & Stock";
+            // ⚠️ EVERY WORKSPACE TAB THAT IS ALSO A SIDEBAR ENTRY NEEDS A LINE
+            // HERE AND A SUPPRESSION BELOW. Without them the sidebar lights
+            // "Sales Rep Workspace" while the entry the user actually clicked
+            // stays grey - which is exactly what it looks like when a click did
+            // nothing, whatever the page is really showing.
+            const isWorkspaceMyTargetsTab = activePage === "Sales Rep Workspace" && repConsoleTab === "My Targets & Incentives";
             const isActive = isBonusShortcut
               ? isWorkspaceBonusTab
               : targetPage === "Products & Stock"
                 ? isWorkspaceProductsTab
+              : targetPage === "My Targets & Incentives"
+                ? isWorkspaceMyTargetsTab
               : activePage === targetPage
                   && !(targetPage === "Sales Rep Workspace" && isWorkspaceBonusTab && currentAllowedPages.includes("Bonuses"))
                   && !(targetPage === "Sales Rep Workspace" && isWorkspaceProductsTab && currentAllowedPages.includes("Products & Stock"))
+                  && !(targetPage === "Sales Rep Workspace" && isWorkspaceMyTargetsTab && currentAllowedPages.includes("My Targets & Incentives"))
                   && !(targetPage === "Sales Rep Workspace" && isWorkspaceSalesExpansionTab && currentAllowedPages.includes("Upsell & Cross-sell Log"));
             // Customer Retention's own pages render as a contextual
             // sub-section right under Recovery Rep Dashboard - not a second
