@@ -30,7 +30,7 @@ test("inventory operations uses exact components, date windows, reservations and
     },
   ];
   const waybills: OpsWaybill[] = [{
-    id: "WB-1", productId: "brush", productName: "Brush", quantity: 4, fee: 0,
+    id: "WB-1", productId: "brush", productName: "Brush", quantity: 4,
     carrier: "Carrier", from: "Warehouse", to: "Lagos", toState: "Lagos", dateSent: recent(0), status: "In Transit",
   }];
 
@@ -75,7 +75,7 @@ test("state restock need is product-specific and subtracts stock already in tran
     inventoryItems: [{ productId: "p", quantity: 1 }],
   }];
   const waybills: OpsWaybill[] = [{
-    id: "WB-2", productId: "p", productName: "Product", quantity: 2, fee: 0,
+    id: "WB-2", productId: "p", productName: "Product", quantity: 2,
     carrier: "Carrier", from: "Warehouse", to: "Edo", toState: "Edo", dateSent: recent(0), status: "Shipped",
   }];
   const states = buildStateRows(hubs, orders, waybills, 7, 3, 7);
