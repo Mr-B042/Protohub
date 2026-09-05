@@ -3,10 +3,10 @@ import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { fetchAllRows } from "../lib/paginated-query.js";
-import { requireAuth, scopeOf } from "../middleware/auth.js";
+import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireRole("Owner", "Admin", "Manager", "Viewer"));
 
 const QuerySchema = z.object({
   dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),

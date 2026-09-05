@@ -69,6 +69,19 @@ const productForMarketer = (product: any) => ({
     }))
 });
 
+// Inventory/logistics staff need quantities, SKUs and package composition to
+// move stock, but not costs, selling prices or sales-routing assignments.
+const productForInventoryOperations = (product: any) => {
+  const { pricings: _pricings, dedicated_handlers: _handlers, ...operational } = product;
+  return {
+    ...operational,
+    packages: (Array.isArray(product.packages) ? product.packages : []).map((pkg: any) => {
+      const { price: _price, ...packageOperational } = pkg;
+      return packageOperational;
+    })
+  };
+};
+
 // ── GET /api/products ─────────────────────────────────────
 router.get("/", async (req, res) => {
   const { data, error } = await supabase
@@ -83,7 +96,14 @@ router.get("/", async (req, res) => {
     .order("created_at", { ascending: false });
 
   if (error) { res.status(500).json({ error: error.message }); return; }
-  res.json(req.user!.role === "Marketer" ? (data ?? []).map(productForMarketer) : data);
+  const rows = data ?? [];
+  res.json(
+    req.user!.role === "Marketer"
+      ? rows.map(productForMarketer)
+      : req.user!.role === "Inventory Manager & Logistics Operations"
+        ? rows.map(productForInventoryOperations)
+        : rows
+  );
 });
 
 // ── POST /api/products ────────────────────────────────────
@@ -97,7 +117,7 @@ const ProductSchema = z.object({
 });
 
 router.post("/",
-  requireRole("Owner", "Admin", "Inventory Manager"),
+  requireRole("Owner", "Admin"),
   async (req, res) => {
     const parsed = ProductSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -134,7 +154,7 @@ const DedicatedHandlerWeightSchema = z.object({
 
 // ── PATCH /api/products/:id ───────────────────────────────
 router.patch("/:id",
-  requireRole("Owner", "Admin", "Inventory Manager"),
+  requireRole("Owner", "Admin"),
   async (req, res) => {
     const { id } = req.params;
 
@@ -259,7 +279,7 @@ router.patch("/:id",
 // after editing weights, rather than resetting on every minor tweak (which
 // would be a surprising side effect of a routine edit).
 router.post("/:id/dedicated-handlers/reset-counts",
-  requireRole("Owner", "Admin", "Inventory Manager"),
+  requireRole("Owner", "Admin"),
   async (req, res) => {
     const { id } = req.params;
     const { data: owned } = await supabase.from("products").select("id").eq("id", id).eq("org_id", req.user!.orgId).maybeSingle();
@@ -315,7 +335,7 @@ const cleanPackageSetLabel = (value: unknown) =>
   String(value ?? "").trim().replace(/\s+/g, " ").slice(0, 80) || "Default";
 
 // ── GET /api/products/:id/pricings ────────────────────────
-router.get("/:id/pricings", async (req, res) => {
+router.get("/:id/pricings", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Viewer", "Recovery Rep", "Sales Closer"), async (req, res) => {
   if (!await checkProductOrg(req.params.id, req.user!.orgId, res)) return;
   if (req.user!.role === "Marketer") {
     res.json([]);
@@ -338,7 +358,7 @@ const PricingSchema = z.object({
 });
 
 router.post("/:id/pricings",
-  requireRole("Owner", "Admin", "Inventory Manager"),
+  requireRole("Owner", "Admin"),
   async (req, res) => {
     if (!await checkProductOrg(req.params.id, req.user!.orgId, res)) return;
     const parsed = PricingSchema.safeParse(req.body);
@@ -393,6 +413,13 @@ router.get("/:id/packages", async (req, res) => {
     res.json((data ?? []).filter((pkg: any) => pkg?.active !== false).map((pkg: any) => productForMarketer({ packages: [pkg] }).packages[0]));
     return;
   }
+  if (req.user!.role === "Inventory Manager & Logistics Operations") {
+    res.json((data ?? []).map((pkg: any) => {
+      const { price: _price, ...operational } = pkg;
+      return operational;
+    }));
+    return;
+  }
   res.json(data);
 });
 
@@ -412,7 +439,7 @@ const MIME_EXT: Record<string, string> = {
   "image/svg+xml": "svg"
 };
 router.post("/package-images/upload",
-  requireRole("Owner", "Admin", "Inventory Manager"),
+  requireRole("Owner", "Admin"),
   async (req, res) => {
     const parsed = PackageImageUploadSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -455,7 +482,7 @@ router.post("/package-images/upload",
 // `product-videos` bucket; returns the CDN URL to store on the offer.
 const VIDEO_MIME_EXT: Record<string, string> = { "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov" };
 router.post("/product-videos/upload",
-  requireRole("Owner", "Admin", "Inventory Manager"),
+  requireRole("Owner", "Admin"),
   async (req, res) => {
     const dataUrl = typeof req.body?.dataUrl === "string" ? req.body.dataUrl : "";
     const match = dataUrl.match(/^data:(video\/[a-z0-9.+-]+);base64,([\s\S]+)$/i);
@@ -554,7 +581,7 @@ const PackageSchema = z.object({
 });
 
 router.post("/:id/packages",
-  requireRole("Owner", "Admin", "Inventory Manager"),
+  requireRole("Owner", "Admin"),
   async (req, res) => {
     if (!await checkProductOrg(req.params.id, req.user!.orgId, res)) return;
     const parsed = PackageSchema.safeParse(req.body);
@@ -658,7 +685,7 @@ const PackageUpdateSchema = z.object({
 });
 
 router.patch("/:id/packages/:pkgId",
-  requireRole("Owner", "Admin", "Inventory Manager"),
+  requireRole("Owner", "Admin"),
   async (req, res) => {
     if (!await checkProductOrg(req.params.id, req.user!.orgId, res)) return;
     const parsed = PackageUpdateSchema.safeParse(req.body);
@@ -737,7 +764,7 @@ router.patch("/:id/packages/:pkgId",
 
 // ── DELETE /api/products/:id/packages/:pkgId ────────────
 router.delete("/:id/packages/:pkgId",
-  requireRole("Owner", "Admin", "Inventory Manager"),
+  requireRole("Owner", "Admin"),
   async (req, res) => {
     if (!await checkProductOrg(req.params.id, req.user!.orgId, res)) return;
     const { error } = await supabase
@@ -752,7 +779,7 @@ router.delete("/:id/packages/:pkgId",
 
 // ── DELETE /api/products/:id/pricings/:currency ─────────
 router.delete("/:id/pricings/:currency",
-  requireRole("Owner", "Admin", "Inventory Manager"),
+  requireRole("Owner", "Admin"),
   async (req, res) => {
     if (!await checkProductOrg(req.params.id, req.user!.orgId, res)) return;
     const { error } = await supabase

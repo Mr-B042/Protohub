@@ -7,7 +7,7 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 import { isFrontlineRepRole } from "../lib/roles.js";
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireRole("Owner", "Admin", "Manager", "Sales Rep", "Viewer", "Recovery Rep", "Sales Closer"));
 
 // ── GET /api/customers ────────────────────────────────────
 // Customers are derived from orders — one row per unique phone number

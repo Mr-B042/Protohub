@@ -1,0 +1,22 @@
+export const inventoryOperationsOrder = (row: any) => ({
+  id: row.id,
+  product_id: row.product_id,
+  product_name: row.product_name,
+  package_id: row.package_id,
+  package_name: row.package_name,
+  quantity: row.quantity,
+  status: row.status,
+  state: row.state,
+  city: row.city,
+  agent_id: row.agent_id,
+  agent_location_id: row.agent_location_id,
+  created_at: row.created_at,
+  updated_at: row.updated_at,
+  delivered_date: row.delivered_date,
+  scheduled_date: row.scheduled_date,
+  review_hold: row.review_hold,
+  additional_lines: row.additional_lines,
+  cross_sell_lines: row.cross_sell_lines,
+  free_gift_lines: row.free_gift_lines,
+  package_components_snapshot: row.package_components_snapshot
+});

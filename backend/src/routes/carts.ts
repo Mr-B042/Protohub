@@ -17,7 +17,7 @@ import {
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireRole("Owner", "Admin", "Manager", "Sales Rep", "Marketer", "Viewer", "Recovery Rep", "Sales Closer"));
 
 // ── GET /api/carts ───────────────────────────────────────
 // Returns ALL carts for the org. Supabase caps a single select at 1000 rows, so we

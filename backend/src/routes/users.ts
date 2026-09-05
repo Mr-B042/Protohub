@@ -20,6 +20,10 @@ router.get("/", async (req, res) => {
 
   if (req.user!.role === "Marketer") {
     query = query.eq("id", req.user!.id);
+  } else if (req.user!.role === "Inventory Manager & Logistics Operations") {
+    // The operations workspace needs the signed-in profile, not the staff
+    // directory, salaries, roles, presence or marketing assignments.
+    query = query.eq("id", req.user!.id);
   }
 
   const { data, error } = await query;

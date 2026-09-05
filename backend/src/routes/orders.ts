@@ -34,6 +34,7 @@ import { applyOrderMarketingScope } from "../lib/marketing-attribution.js";
 import { generateOrderReceiptPdf, fetchReceiptBranding } from "../lib/order-receipt-pdf.js";
 import { sendConnectedUserWhatsAppToJid } from "../lib/whatsapp-runtime.js";
 import { confirmationNeedsSalesExpansionLog } from "../lib/sales-expansion.js";
+import { inventoryOperationsOrder } from "../lib/inventory-operations-access.js";
 
 import {
   checkAgentStock, normalizeAdditionalLines, orderMoneyBreakdown, stockShortfallMessage
@@ -730,7 +731,14 @@ router.get("/", async (req, res) => {
     rows.push(...batch);
     if (batch.length < SUPA_MAX) break; // last page reached
   }
-  res.json({ data: rows, total, page: pageNum, pageSize });
+  res.json({
+    data: scopeRole === "Inventory Manager & Logistics Operations"
+      ? rows.map(inventoryOperationsOrder)
+      : rows,
+    total,
+    page: pageNum,
+    pageSize
+  });
 });
 
 // ── POST /api/orders ──────────────────────────────────────
@@ -2163,7 +2171,7 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
 // closed" list that was nothing of the sort. order_audit records the real
 // status transition, so the date is derived from there instead of stored and
 // kept in sync - one source of truth, nothing to drift.
-router.get("/closure-dates", async (req, res) => {
+router.get("/closure-dates", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
   const { data, error } = await supabase
     .from("order_audit")
     .select("order_id, created_at")
@@ -2182,7 +2190,7 @@ router.get("/closure-dates", async (req, res) => {
 });
 
 // ── GET /api/orders/:id/audit ─────────────────────────────
-router.get("/:id/audit", async (req, res) => {
+router.get("/:id/audit", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
   const { data, error } = await supabase
     .from("order_audit")
     .select("id, from_status, to_status, note, created_at, changed_by")
@@ -2232,7 +2240,7 @@ router.get("/:id/audit", async (req, res) => {
 // Surfaces who manually edited what on an order — product/package/
 // customer/amount/etc. — so changes like the unrecorded #379 + #387
 // rewrites are traceable going forward.
-router.get("/:id/field-edits", async (req, res) => {
+router.get("/:id/field-edits", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
   const { data, error } = await supabase
     .from("order_field_edits")
     .select("id, field_name, from_value, to_value, changed_by, changed_by_name, created_at")
@@ -3187,7 +3195,7 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Reco
   res.json(data);
 });
 
-router.get("/:id/follow-up-tasks", async (req, res) => {
+router.get("/:id/follow-up-tasks", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
   const { data: order, error: orderError } = await supabase
     .from("orders")
     .select("id, assigned_rep_id")
@@ -3216,7 +3224,7 @@ router.get("/:id/follow-up-tasks", async (req, res) => {
   })));
 });
 
-router.get("/:id/contact-attempts", async (req, res) => {
+router.get("/:id/contact-attempts", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
   const { data: order, error: orderError } = await supabase
     .from("orders")
     .select("id, assigned_rep_id")

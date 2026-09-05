@@ -2,12 +2,12 @@ import { Router } from "express";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendConnectedWhatsApp, ensureWhatsAppReady } from "../lib/whatsapp-runtime.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep", "Sales Closer"));
 
 const normalizeDigits = (v: string) => v.replace(/\D/g, "");
 
