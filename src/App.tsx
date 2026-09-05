@@ -10813,16 +10813,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const canManageMetaCapiSettings = currentRole === "Owner";
   const canViewSmsHealth = currentRole === "Owner" || currentRole === "Admin";
   const canManageProductCatalog = currentRole === "Owner" || currentRole === "Admin";
+  const canManageAgentDirectory = currentRole === "Owner" || currentRole === "Admin";
   const canViewInventoryFinancials = !isInventoryOperationsRole;
   useEffect(() => {
     if (!isInventoryOperationsRole) return;
     if (["pricing", "packages", "combos"].includes(inventoryView)) {
       setInventoryView("dashboard");
     }
-    if (["addPricing", "editPricing", "addPackage", "editPackage", "deletePackage", "editProduct", "deleteProduct"].includes(modal ?? "")) {
-      setModal(null);
-    }
-  }, [isInventoryOperationsRole, inventoryView, modal]);
+  }, [isInventoryOperationsRole, inventoryView]);
   const canManageAdTrackingLabels = ["Owner", "Admin", "Manager"].includes(currentRole);
   const emailActivityPageSize = 10;
   const smsActivityPageSize = 10;
@@ -12628,6 +12626,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     try { window.localStorage.setItem("protohub.density", density); } catch (_) { /* private mode */ }
   }, [density]);
   const [modal, setModal] = useState<ModalType>(null);
+  useEffect(() => {
+    if (!isInventoryOperationsRole) return;
+    if (["addPricing", "editPricing", "addPackage", "editPackage", "deletePackage", "editProduct", "deleteProduct", "addAgent", "editAgent", "deleteAgent"].includes(modal ?? "")) {
+      setModal(null);
+    }
+  }, [isInventoryOperationsRole, modal]);
   useEffect(() => {
     if (!["Owner", "Admin", "Manager"].includes(currentRole)) { setCartRecovery(null); return; }
     let cancelled = false;
@@ -27251,7 +27255,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (section === "agents" && parts[3] === "new") {
       setActivePage("Agents");
       setAgentView("list");
-      openAddAgentModal();
+      if (canManageAgentDirectory) {
+        openAddAgentModal();
+      } else {
+        showToast("Only Owner/Admin can add delivery agents.");
+        syncHashRoute("#/dashboard/admin/agents");
+      }
       return;
     }
 
@@ -27278,7 +27287,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setSelectedAgentId(parts[3]);
       setAgentView("detail");
       setAgentDetailShowAll(false);
-      setModal("editAgent");
+      if (canManageAgentDirectory) {
+        setModal("editAgent");
+      } else {
+        setModal(null);
+        showToast("Only Owner/Admin can edit delivery agents.");
+        syncHashRoute(`#/dashboard/admin/agents/${parts[3]}`);
+      }
       return;
     }
 
@@ -27287,7 +27302,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setSelectedAgentId(parts[3]);
       setAgentView("detail");
       setAgentDetailShowAll(false);
-      setModal("deleteAgent");
+      if (canManageAgentDirectory) {
+        setModal("deleteAgent");
+      } else {
+        setModal(null);
+        showToast("Only Owner/Admin can delete delivery agents.");
+        syncHashRoute(`#/dashboard/admin/agents/${parts[3]}`);
+      }
       return;
     }
 
@@ -34987,6 +35008,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const exportAgentsCsv = () => {
+    if (!canViewInventoryFinancials) {
+      showToast("Agent financial exports are restricted to Owner/Admin/Manager roles.");
+      return;
+    }
     const productFilterLabel = agentProductIds.size === 0 ? "All" : [...agentProductIds].map((id) => products.find((p) => p.id === id)?.name ?? id).join(", ");
     const rows: (string | number)[][] = [
       ["Agents Report"],
@@ -40957,6 +40982,10 @@ ${waybillLineItems(w).length > 1
   };
 
   const createAgent = () => {
+    if (!canManageAgentDirectory) {
+      showToast("Only Owner/Admin can add delivery agents.");
+      return;
+    }
     if (!agentName.trim() || !agentPhone.trim() || !agentZoneInput.trim()) {
       showToast("Agent name, phone number, and primary base state are required.");
       return;
@@ -41038,6 +41067,10 @@ ${waybillLineItems(w).length > 1
   };
 
   const openAgentModal = (agent: DeliveryAgentRecord, nextModal: ModalType) => {
+    if ((nextModal === "editAgent" || nextModal === "deleteAgent") && !canManageAgentDirectory) {
+      showToast("Only Owner/Admin can manage delivery agent profiles.");
+      return;
+    }
     const primaryLocation = primaryAgentLocation(agent);
     const primaryLocationId = primaryLocation?.id ?? "";
     const reconcileLocation = preferredReconcileLocation(agent);
@@ -41376,6 +41409,10 @@ ${waybillLineItems(w).length > 1
   };
 
   const updateSelectedAgent = () => {
+    if (!canManageAgentDirectory) {
+      showToast("Only Owner/Admin can edit delivery agents.");
+      return;
+    }
     if (!selectedAgent || !agentName.trim() || !agentPhone.trim() || !agentZoneInput.trim()) {
       showToast("Agent name, phone, and zone are required.");
       return;
@@ -41451,6 +41488,10 @@ ${waybillLineItems(w).length > 1
   };
 
   const deleteSelectedAgent = () => {
+    if (!canManageAgentDirectory) {
+      showToast("Only Owner/Admin can delete delivery agents.");
+      return;
+    }
     if (!selectedAgent) return;
     if (isTemporaryAgentId(selectedAgent.id)) {
       showToast("This agent is still syncing. Try again in a moment.");
@@ -44012,6 +44053,10 @@ ${waybillLineItems(w).length > 1
   };
 
   const openAdminAgentCreateRoute = () => {
+    if (!canManageAgentDirectory) {
+      showToast("Only Owner/Admin can add delivery agents.");
+      return;
+    }
     setActivePage("Agents");
     setAgentView("list");
     openAddAgentModal();
@@ -44049,6 +44094,10 @@ ${waybillLineItems(w).length > 1
   };
 
   const openAdminAgentEditRoute = (agentId: string) => {
+    if (!canManageAgentDirectory) {
+      showToast("Only Owner/Admin can edit delivery agents.");
+      return;
+    }
     const agent = agents.find((item) => item.id === agentId);
     setActivePage("Agents");
     setSelectedAgentId(agentId);
@@ -44063,6 +44112,10 @@ ${waybillLineItems(w).length > 1
   };
 
   const openAdminAgentDeleteRoute = (agentId: string) => {
+    if (!canManageAgentDirectory) {
+      showToast("Only Owner/Admin can delete delivery agents.");
+      return;
+    }
     const agent = agents.find((item) => item.id === agentId);
     setActivePage("Agents");
     setSelectedAgentId(agentId);
@@ -81175,7 +81228,7 @@ ${waybillLineItems(w).length > 1
                       </div>
                     </div>
                     <div className="flex items-center gap-2 flex-wrap shrink-0">
-                      <select
+                      {canViewInventoryFinancials && <select
                         className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                         value={currency}
                         onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
@@ -81183,19 +81236,19 @@ ${waybillLineItems(w).length > 1
                         <option value="NGN">₦ Nigerian Naira</option>
                         <option value="USD">$ US Dollar</option>
                         <option value="GBP">£ British Pound</option>
-                      </select>
+                      </select>}
                       <button
                         className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
                         onClick={() => openAdminAgentAssignStockRoute(agent.id)}
                       >
                         <PackagePlus className="w-4 h-4" /> Assign Stock
                       </button>
-                      <button
+                      {canManageAgentDirectory && <button
                         className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors"
                         onClick={() => openAdminAgentEditRoute(agent.id)}
                       >
                         <Pencil className="w-4 h-4" /> Edit
-                      </button>
+                      </button>}
                     </div>
                   </section>
 
@@ -81244,11 +81297,11 @@ ${waybillLineItems(w).length > 1
                       <p className="text-3xl font-extrabold text-gray-900 m-0 mt-1">{successRate}%</p>
                       <p className="text-[11px] text-gray-400 mt-2">{cancelled.length} cancelled / failed</p>
                     </article>
-                    <article className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+                    {canViewInventoryFinancials && <article className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
                       <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 m-0">Stock Value</p>
                       <p className="text-3xl font-extrabold text-gray-900 m-0 mt-1">{formatMoney(stockValue)}</p>
                       <p className="text-[11px] text-gray-400 mt-2">Inventory in hand · {stockRecords.reduce((s, r) => s + r.quantity, 0)} units</p>
-                    </article>
+                    </article>}
                     <article className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
                       <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 m-0">Active Orders</p>
                       <p className="text-3xl font-extrabold text-gray-900 m-0 mt-1">{active.length}</p>
@@ -81456,7 +81509,7 @@ ${waybillLineItems(w).length > 1
                           <section className="rounded-xl border border-gray-200 bg-gradient-to-r from-blue-50 to-emerald-50 p-4">
                             <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-500 m-0">Leaderboard rank (this period)</p>
                             <div className="flex items-center gap-6 mt-2 flex-wrap text-sm">
-                              <span className="font-bold text-gray-900">#{revenueRank} of {totalAgents} <span className="text-gray-500 font-medium">by revenue</span></span>
+                              {canViewInventoryFinancials && <span className="font-bold text-gray-900">#{revenueRank} of {totalAgents} <span className="text-gray-500 font-medium">by revenue</span></span>}
                               <span className="font-bold text-gray-900">#{deliveriesRank} of {totalAgents} <span className="text-gray-500 font-medium">by deliveries</span></span>
                               <span className="font-bold text-gray-900">#{successRank} of {totalAgents} <span className="text-gray-500 font-medium">by success rate</span></span>
                             </div>
@@ -81489,17 +81542,17 @@ ${waybillLineItems(w).length > 1
                               sub={streak > 0 ? "successful in a row" : "ended"}
                               tone={streak >= 5 ? "good" : "default"}
                             />
-                            <Tile
+                            {canViewInventoryFinancials && <Tile
                               label="Avg order value"
                               value={formatMoney(aov)}
                               sub={`${delivered.length} delivered`}
-                            />
-                            <Tile
+                            />}
+                            {canViewInventoryFinancials && <Tile
                               label="Net contribution"
                               value={formatMoney(netContribution)}
                               sub={`Revenue − shrinkage`}
                               tone={netContribution < 0 ? "bad" : "default"}
-                            />
+                            />}
                             <Tile
                               label="Late deliveries"
                               value={lateCount}
@@ -81545,13 +81598,13 @@ ${waybillLineItems(w).length > 1
                             <Tile
                               label="Defective"
                               value={defectiveUnits}
-                              sub={formatMoney(defectiveValue)}
+                              sub={canViewInventoryFinancials ? formatMoney(defectiveValue) : undefined}
                               tone={defectiveUnits > 0 ? "warn" : "default"}
                             />
                             <Tile
                               label="Missing"
                               value={missingUnits}
-                              sub={formatMoney(missingValue)}
+                              sub={canViewInventoryFinancials ? formatMoney(missingValue) : undefined}
                               tone={missingUnits > 0 ? "bad" : "default"}
                             />
                             <Tile
@@ -81572,7 +81625,7 @@ ${waybillLineItems(w).length > 1
                           <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-gray-500 mb-2">Lifetime totals</h3>
                           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                             <Tile label="Lifetime delivered" value={lifetimeDelivered.length} sub={`${lifetimeUnits} units`} />
-                            <Tile label="Lifetime revenue" value={formatMoney(lifetimeRevenue)} />
+                            {canViewInventoryFinancials && <Tile label="Lifetime revenue" value={formatMoney(lifetimeRevenue)} />}
                             <Tile label="Lifetime success" value={`${lifetimeSuccessRate}%`} sub={`${allAgentOrders.length} total orders`} />
                             <Tile
                               label="Days onboarded"
@@ -81735,7 +81788,7 @@ ${waybillLineItems(w).length > 1
                             <section>
                               <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-gray-500 mb-2">Geographic breakdown</h3>
                               <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-                                {mostProfitable ? (
+                                {canViewInventoryFinancials && mostProfitable ? (
                                   <Tile
                                     label="Most profitable state"
                                     value={mostProfitable.state}
@@ -81773,7 +81826,7 @@ ${waybillLineItems(w).length > 1
                                         <th className="text-right px-4 py-2 font-semibold">Total</th>
                                         <th className="text-right px-4 py-2 font-semibold">Delivered</th>
                                         <th className="text-right px-4 py-2 font-semibold">Success</th>
-                                        <th className="text-right px-4 py-2 font-semibold">Revenue</th>
+                                        {canViewInventoryFinancials && <th className="text-right px-4 py-2 font-semibold">Revenue</th>}
                                       </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-100">
@@ -81783,7 +81836,7 @@ ${waybillLineItems(w).length > 1
                                           <td className="px-4 py-2 text-right text-gray-700">{row.total}</td>
                                           <td className="px-4 py-2 text-right text-gray-700">{row.delivered}</td>
                                           <td className={`px-4 py-2 text-right font-semibold ${row.successRate >= 80 ? "text-emerald-600" : row.successRate < 60 ? "text-rose-600" : "text-gray-700"}`}>{row.successRate}%</td>
-                                          <td className="px-4 py-2 text-right font-bold text-gray-900">{formatMoney(row.revenue)}</td>
+                                          {canViewInventoryFinancials && <td className="px-4 py-2 text-right font-bold text-gray-900">{formatMoney(row.revenue)}</td>}
                                         </tr>
                                       ))}
                                     </tbody>
@@ -81805,7 +81858,7 @@ ${waybillLineItems(w).length > 1
                                             <span className="text-sm font-semibold text-gray-900 truncate">{c.key}</span>
                                           </span>
                                           <span className="text-xs text-gray-500 shrink-0 ml-2">
-                                            <span className="font-bold text-gray-900">{c.delivered}</span> / {c.total} · {formatMoney(c.revenue)}
+                                            <span className="font-bold text-gray-900">{c.delivered}</span> / {c.total}{canViewInventoryFinancials ? ` · ${formatMoney(c.revenue)}` : ""}
                                           </span>
                                         </li>
                                       ))}
@@ -81966,12 +82019,12 @@ ${waybillLineItems(w).length > 1
                               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                                 {hadPreviousActivity ? (
                                   <>
-                                    <Tile
+                                    {canViewInventoryFinancials && <Tile
                                       label="Rank Δ - revenue"
                                       value={currentRevRank != null ? `#${currentRevRank}` : "-"}
                                       sub={`Prev period #${previousRevRank ?? "-"} · ${formatRankDelta(revRankDelta)}`}
                                       tone={rankDeltaTone(revRankDelta)}
-                                    />
+                                    />}
                                     <Tile
                                       label="Rank Δ - deliveries"
                                       value={currentDelivRank != null ? `#${currentDelivRank}` : "-"}
@@ -81988,22 +82041,22 @@ ${waybillLineItems(w).length > 1
                                       sub={`Peers avg ${Math.round(peerAvg("successRate") ?? 0)}% (${stateRows.length} peer${stateRows.length === 1 ? "" : "s"})`}
                                       tone={renderDeltaTone(mineRow.successRate, peerAvg("successRate"))}
                                     />
-                                    <Tile
+                                    {canViewInventoryFinancials && <Tile
                                       label={`vs ${myState} peers - revenue`}
                                       value={formatMoney(mineRow.revenue)}
                                       sub={`Peers avg ${formatMoney(peerAvg("revenue") ?? 0)}`}
                                       tone={renderDeltaTone(mineRow.revenue, peerAvg("revenue"))}
-                                    />
+                                    />}
                                   </>
                                 ) : null}
                                 {cohortRows.length > 0 && mineRow ? (
                                   <>
-                                    <Tile
+                                    {canViewInventoryFinancials && <Tile
                                       label="vs onboarding cohort - revenue"
                                       value={formatMoney(mineRow.revenue)}
                                       sub={`Cohort avg ${formatMoney(cohortAvgRevenue ?? 0)} (${cohortRows.length} joined ${onboardYM})`}
                                       tone={renderDeltaTone(mineRow.revenue, cohortAvgRevenue)}
-                                    />
+                                    />}
                                     <Tile
                                       label="vs onboarding cohort - success"
                                       value={`${mineRow.successRate}%`}
@@ -82016,10 +82069,10 @@ ${waybillLineItems(w).length > 1
                                   <Tile
                                     label="Best delivery week ever"
                                     value={bestWeek.delivered}
-                                    sub={`${bestWeek.wk} · ${formatMoney(bestWeek.revenue)}`}
+                                    sub={canViewInventoryFinancials ? `${bestWeek.wk} · ${formatMoney(bestWeek.revenue)}` : bestWeek.wk}
                                   />
                                 ) : null}
-                                {bestRevenueWeek && bestRevenueWeek.wk !== bestWeek?.wk ? (
+                                {canViewInventoryFinancials && bestRevenueWeek && bestRevenueWeek.wk !== bestWeek?.wk ? (
                                   <Tile
                                     label="Best revenue week ever"
                                     value={formatMoney(bestRevenueWeek.revenue)}
@@ -82033,19 +82086,19 @@ ${waybillLineItems(w).length > 1
                                 <article className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 mt-3">
                                   <div className="flex items-baseline justify-between flex-wrap gap-2 mb-2">
                                     <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-500 m-0">Weekly trend - last {sparkData.length} weeks</p>
-                                    <p className="text-[11px] text-gray-400 m-0">Solid = deliveries · dashed = revenue (scaled)</p>
+                                    <p className="text-[11px] text-gray-400 m-0">{canViewInventoryFinancials ? "Solid = deliveries · dashed = revenue (scaled)" : "Delivered orders by week"}</p>
                                   </div>
                                   <ResponsiveContainer width="100%" height={140}>
                                     <LineChart data={sparkData} margin={{ left: -20, right: 8, top: 8, bottom: 0 }}>
                                       <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: "#9ca3af" }} />
                                       <YAxis yAxisId="left" allowDecimals={false} tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: "#9ca3af" }} />
-                                      <YAxis yAxisId="right" orientation="right" hide />
+                                      {canViewInventoryFinancials && <YAxis yAxisId="right" orientation="right" hide />}
                                       <Tooltip
                                         contentStyle={{ borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 11 }}
                                         formatter={(value: any, name: string) => name === "Revenue" ? [formatMoney(Number(value)), name] : [value, name]}
                                       />
                                       <Line yAxisId="left" type="monotone" dataKey="Delivered" stroke="#10b981" strokeWidth={2.2} dot={{ r: 2.5, fill: "#10b981" }} />
-                                      <Line yAxisId="right" type="monotone" dataKey="Revenue" stroke="#1F8FE0" strokeWidth={1.6} strokeDasharray="4 3" dot={false} />
+                                      {canViewInventoryFinancials && <Line yAxisId="right" type="monotone" dataKey="Revenue" stroke="#1F8FE0" strokeWidth={1.6} strokeDasharray="4 3" dot={false} />}
                                     </LineChart>
                                   </ResponsiveContainer>
                                 </article>
@@ -82117,7 +82170,7 @@ ${waybillLineItems(w).length > 1
                               <p className="text-sm font-semibold text-gray-900 m-0 truncate">{product?.name ?? "Unknown product"}</p>
                               <div className="flex items-baseline justify-between mt-1">
                                 <span className="text-2xl font-extrabold text-gray-900">{s.quantity}</span>
-                                <span className="text-xs text-gray-500">{formatMoney(value)}</span>
+                                {canViewInventoryFinancials && <span className="text-xs text-gray-500">{formatMoney(value)}</span>}
                               </div>
                             </div>
                           );
@@ -82682,11 +82735,11 @@ ${waybillLineItems(w).length > 1
                               {linkedOrder ? (
                                 <>
                                   <Field label="Order" value={linkedOrder.id} />
-                                  <Field label="Customer" value={linkedOrder.customer} />
-                                  <Field label="Phone" value={linkedOrder.phone} />
+                                  {!isInventoryOperationsRole && <Field label="Customer" value={linkedOrder.customer} />}
+                                  {!isInventoryOperationsRole && <Field label="Phone" value={linkedOrder.phone} />}
                                   <Field label="City / State" value={`${linkedOrder.city ?? "-"}${linkedOrder.state ? ", " + linkedOrder.state : ""}`} />
                                   <Field label="Product" value={`${linkedOrder.productName} · ${linkedOrder.packageName}`} />
-                                  <Field label="Amount" value={`${linkedOrder.currency} ${linkedOrder.amount.toLocaleString()}`} />
+                                  {!isInventoryOperationsRole && <Field label="Amount" value={`${linkedOrder.currency} ${linkedOrder.amount.toLocaleString()}`} />}
                                   <Field label="Status" value={linkedOrder.status ?? "Pending"} />
                                 </>
                               ) : (
@@ -82709,7 +82762,7 @@ ${waybillLineItems(w).length > 1
                                   <Field label="Route" value={`${linkedWaybill.sendingState} → ${linkedWaybill.receivingState}`} />
                                   <Field label="Logistics partner" value={linkedWaybill.logisticsPartner} />
                                   <Field label="Quantity" value={linkedWaybill.quantity} />
-                                  <Field label="Fee" value={naira(linkedWaybill.waybillFee)} />
+                                  {!isInventoryOperationsRole && <Field label="Fee" value={naira(linkedWaybill.waybillFee)} />}
                                   <Field label="Sent" value={formatMoment(linkedWaybill.createdAt) || formatDateOnly(linkedWaybill.dateSent)} />
                                   <Field label="Received" value={(() => {
                                     const receivedMoment = getWaybillStatusMoment(linkedWaybill, stockMovements);
@@ -82796,12 +82849,12 @@ ${waybillLineItems(w).length > 1
                           </thead>
                           <tbody className="divide-y divide-gray-100">
                             {scopedVisibleOrders.map((o) => (
-                              <tr key={o.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => openOrderDetailPopup(o.id)}>
+                              <tr key={o.id} className={`hover:bg-gray-50 transition-colors ${!isInventoryOperationsRole ? "cursor-pointer" : ""}`} onClick={!isInventoryOperationsRole ? () => openOrderDetailPopup(o.id) : undefined}>
                                 <td className="px-5 py-3 font-bold text-[#1F8FE0]">{o.id}</td>
-                                <td className="px-5 py-3 text-gray-900">{o.customer}</td>
+                                {!isInventoryOperationsRole && <td className="px-5 py-3 text-gray-900">{o.customer}</td>}
                                 <td className="px-5 py-3 text-gray-700">{o.productName}</td>
                                 <td className="px-5 py-3 text-gray-600 whitespace-nowrap">{displayDateFromKey(o.createdAt ?? o.date)}</td>
-                                <td className="px-5 py-3 font-semibold text-gray-900 whitespace-nowrap">{formatProductMoney(o.amount, o.currency)}</td>
+                                {!isInventoryOperationsRole && <td className="px-5 py-3 font-semibold text-gray-900 whitespace-nowrap">{formatProductMoney(o.amount, o.currency)}</td>}
                                 <td className="px-5 py-3">{renderOrderStatusSummary(o)}</td>
                               </tr>
                             ))}
@@ -82826,12 +82879,12 @@ ${waybillLineItems(w).length > 1
                 </div>
                 {/* Desktop-only action buttons - on mobile these appear below the controls */}
                 <div className="hidden sm:flex flex-wrap items-center gap-2">
-                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={exportAgentsCsv}>
+                  {canViewInventoryFinancials && <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={exportAgentsCsv}>
                     <Download className="w-4 h-4" /> Export CSV
-                  </button>
-                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={openAdminAgentCreateRoute}>
+                  </button>}
+                  {canManageAgentDirectory ? <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={openAdminAgentCreateRoute}>
                     <Plus className="w-4 h-4" /> Add Agent
-                  </button>
+                  </button> : null}
                 </div>
               </header>
 
@@ -82861,7 +82914,8 @@ ${waybillLineItems(w).length > 1
                     {showAgentsDateRange && renderDateRangeCalendar("agent-list-date-range-panel", agentsDateRange, setAgentsDateRange, applyAgentsDateRange, () => setShowAgentsDateRange(false))}
                   </div>
                   {renderProductFilter(agentProductIds, setAgentProductIds, showAgentProductFilter, setShowAgentProductFilter)}
-                  {/* Currency - full width on mobile */}
+                  {/* Currency - only shown where financial metrics are visible */}
+                  {canViewInventoryFinancials && <>
                   <select
                     className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors"
                     aria-label="Currency"
@@ -82873,14 +82927,15 @@ ${waybillLineItems(w).length > 1
                     <option value="GBP">£ British Pound</option>
                   </select>
                   <span className="text-xs font-medium text-gray-500 hidden sm:inline">All amounts in {selectedCurrency.label}</span>
+                  </>}
                   {/* Mobile-only: Add Agent + Export CSV stacked full-width */}
                   <div className="flex flex-col gap-2 w-full sm:hidden">
-                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={openAdminAgentCreateRoute}>
+                    {canManageAgentDirectory && <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={openAdminAgentCreateRoute}>
                       <Plus className="w-4 h-4" /> Add Agent
-                    </button>
-                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={exportAgentsCsv}>
+                    </button>}
+                    {canViewInventoryFinancials && <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={exportAgentsCsv}>
                       <Download className="w-4 h-4" /> Export CSV
-                    </button>
+                    </button>}
                   </div>
                 </div>
                 {renderWeekNav(agentsNavStart, setAgentsNavStart, agentsNavSpan, setAgentsNavSpan, setAgentsPeriod, setAgentsDateRange, agentsPeriod, agentsDateRange)}
@@ -82902,11 +82957,13 @@ ${waybillLineItems(w).length > 1
                     warning: true,
                     onClick: worstPerformingAgent ? () => openAdminAgentDetail(worstPerformingAgent.agent.id) : undefined
                   },
-                  { title: "Total Revenue", value: formatMoney(totalAgentRevenue), icon: CircleDollarSign, tone: "blue", warning: false },
-                  { title: "Stock with Agents", value: formatMoney(totalAgentStockValue), icon: EmptyProductsIcon, tone: "orange", warning: false },
                   { title: "Pending Deliveries", value: String(pendingAgentDeliveries), icon: Truck, tone: "purple", warning: false },
-                  { title: "Defective Stock Value", value: formatMoney(totalAgentDefectiveValue), icon: CircleX, tone: "red", warning: true },
-                  { title: "Missing Stock Value", value: formatMoney(totalAgentMissingValue), icon: AlertTriangle, tone: "amber", warning: true }
+                  ...(canViewInventoryFinancials ? [
+                    { title: "Total Revenue", value: formatMoney(totalAgentRevenue), icon: CircleDollarSign, tone: "blue", warning: false },
+                    { title: "Stock with Agents", value: formatMoney(totalAgentStockValue), icon: EmptyProductsIcon, tone: "orange", warning: false },
+                    { title: "Defective Stock Value", value: formatMoney(totalAgentDefectiveValue), icon: CircleX, tone: "red", warning: true },
+                    { title: "Missing Stock Value", value: formatMoney(totalAgentMissingValue), icon: AlertTriangle, tone: "amber", warning: true }
+                  ] : [])
                 ].map((metric) => {
                   const Icon = metric.icon;
                   return (
@@ -83051,7 +83108,7 @@ ${waybillLineItems(w).length > 1
                         <p className="text-xs text-gray-500 m-0">Best in the selected period. Click any name for the full breakdown.</p>
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                        <LeaderColumn
+                        {!isInventoryOperationsRole && <LeaderColumn
                           title="By revenue"
                           hint="Delivered order amount"
                           rows={sortRevDesc.filter((r) => r.revenue > 0)}
@@ -83059,7 +83116,7 @@ ${waybillLineItems(w).length > 1
                           emptyText="No revenue yet in this period."
                           tone="good"
                           direction="top"
-                        />
+                        />}
                         <LeaderColumn
                           title="By deliveries"
                           hint="Successfully delivered orders"
@@ -83088,7 +83145,7 @@ ${waybillLineItems(w).length > 1
                         <p className="text-xs text-gray-500 m-0">Agents who had orders to work on but underperformed in the period.</p>
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-                        <LeaderColumn
+                        {!isInventoryOperationsRole && <LeaderColumn
                           title="Lowest revenue"
                           hint="Had orders, brought in least"
                           rows={sortRevDesc}
@@ -83096,7 +83153,7 @@ ${waybillLineItems(w).length > 1
                           emptyText="No agents handled orders this period."
                           tone="bad"
                           direction="bottom"
-                        />
+                        />}
                         <LeaderColumn
                           title="Fewest deliveries"
                           hint="Had orders, delivered fewest"
@@ -83115,7 +83172,7 @@ ${waybillLineItems(w).length > 1
                           tone="bad"
                           direction="bottom"
                         />
-                        <LeaderColumn
+                        {!isInventoryOperationsRole && <LeaderColumn
                           title="Highest shrinkage"
                           hint="Defective + missing value"
                           rows={sortShrinkageDesc}
@@ -83123,7 +83180,7 @@ ${waybillLineItems(w).length > 1
                           emptyText="All clean - no shrinkage flagged."
                           tone="bad"
                           direction="top"
-                        />
+                        />}
                       </div>
                     </div>
                   </section>
@@ -83183,16 +83240,16 @@ ${waybillLineItems(w).length > 1
                               <span className={`font-bold ${row.successRate >= 70 ? "text-green-700" : row.successRate >= 50 ? "text-amber-700" : row.totalOrders === 0 ? "text-gray-400" : "text-red-700"}`}>{row.successRate}%</span>
                               <span className="text-gray-500">{row.deliveredUnits} units delivered</span>
                             </div>
-                            <div className="flex flex-col gap-0.5">
+                            {canViewInventoryFinancials && <div className="flex flex-col gap-0.5">
                               <span className="font-semibold uppercase tracking-wide text-gray-400">Revenue</span>
                               <span className="font-semibold text-gray-900">{formatMoney(row.revenue)}</span>
                               <span className="text-gray-500">{row.pending} pending</span>
-                            </div>
-                            <div className="flex flex-col gap-0.5">
+                            </div>}
+                            {canViewInventoryFinancials && <div className="flex flex-col gap-0.5">
                               <span className="font-semibold uppercase tracking-wide text-gray-400">Stock value</span>
                               <span className="font-semibold text-gray-900">{formatMoney(row.stockValue)}</span>
                               <span className="text-gray-500">Def {formatMoney(row.defectiveValue)} · Miss {formatMoney(row.missingValue)}</span>
-                            </div>
+                            </div>}
                           </div>
                           <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
                             <div className="flex items-center justify-between gap-2 mb-2">
@@ -83238,12 +83295,12 @@ ${waybillLineItems(w).length > 1
                             <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => openAdminAgentReconcileRoute(row.agent.id)}>
                               <RefreshCw className="w-4 h-4" /> Reconcile
                             </button>
-                            <button className="!min-h-0 w-10 h-10 inline-flex items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Edit" aria-label="Edit" onClick={() => openAdminAgentEditRoute(row.agent.id)}>
+                            {canManageAgentDirectory && <button className="!min-h-0 w-10 h-10 inline-flex items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Edit" aria-label="Edit" onClick={() => openAdminAgentEditRoute(row.agent.id)}>
                               <Pencil className="w-4 h-4" />
-                            </button>
-                            <button className="!min-h-0 w-10 h-10 inline-flex items-center justify-center rounded-lg border border-red-200 text-red-500 hover:bg-red-50 transition-colors" title="Delete" aria-label="Delete" onClick={() => openAdminAgentDeleteRoute(row.agent.id)}>
+                            </button>}
+                            {canManageAgentDirectory && <button className="!min-h-0 w-10 h-10 inline-flex items-center justify-center rounded-lg border border-red-200 text-red-500 hover:bg-red-50 transition-colors" title="Delete" aria-label="Delete" onClick={() => openAdminAgentDeleteRoute(row.agent.id)}>
                               <Trash2 className="w-4 h-4" />
-                            </button>
+                            </button>}
                           </div>
                         </article>
                       );
@@ -83255,14 +83312,14 @@ ${waybillLineItems(w).length > 1
                   <table className="w-full text-sm sticky-col-first">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                        {["Agent Details", "Coverage", "State Stock", "Status", "Orders", "Qty Delivered", "Delivery Rate", "Revenue", "Stock Value", "Actions"].map((h) => (
+                        {["Agent Details", "Coverage", "State Stock", "Status", "Orders", "Qty Delivered", "Delivery Rate", ...(canViewInventoryFinancials ? ["Revenue", "Stock Value"] : []), "Actions"].map((h) => (
                           <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {pagedAgentRows.length === 0 ? (
-                        <tr><td colSpan={10} className="px-4 py-12 text-center text-gray-400 font-medium italic">No agents found</td></tr>
+                        <tr><td colSpan={canViewInventoryFinancials ? 10 : 8} className="px-4 py-12 text-center text-gray-400 font-medium italic">No agents found</td></tr>
                       ) : (
                         pagedAgentRows.map((row) => (
                           <tr key={row.agent.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => { openAdminAgentDetail(row.agent.id); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
@@ -83320,21 +83377,21 @@ ${waybillLineItems(w).length > 1
                                 <div className={`h-full rounded-full ${row.successRate >= 70 ? "bg-green-500" : row.successRate >= 50 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${row.successRate}%` }} />
                               </div>
                             </td>
-                            <td className="px-4 py-4">
+                            {canViewInventoryFinancials && <td className="px-4 py-4">
                               <div className="font-semibold text-gray-900">{formatMoney(row.revenue)}</div>
                               <div className="text-xs text-gray-500">{row.pending} pending</div>
-                            </td>
-                            <td className="px-4 py-4">
+                            </td>}
+                            {canViewInventoryFinancials && <td className="px-4 py-4">
                               <div className="font-semibold text-gray-900">{formatMoney(row.stockValue)}</div>
                               <div className="text-xs text-gray-400">Def {formatMoney(row.defectiveValue)} · Miss {formatMoney(row.missingValue)}</div>
-                            </td>
+                            </td>}
                             <td className="px-4 py-4" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center gap-1">
                                 <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Profile" aria-label="Profile" onClick={() => { openAdminAgentDetail(row.agent.id); window.scrollTo({ top: 0, behavior: "smooth" }); }}><Eye className="w-4 h-4" /></button>
                                 <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Assign stock" aria-label="Assign stock" onClick={() => openAdminAgentAssignStockRoute(row.agent.id)}><PackagePlus className="w-4 h-4" /></button>
                                 <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Reconcile" aria-label="Reconcile" onClick={() => openAdminAgentReconcileRoute(row.agent.id)}><RefreshCw className="w-4 h-4" /></button>
-                                <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Edit" aria-label="Edit" onClick={() => openAdminAgentEditRoute(row.agent.id)}><Pencil className="w-4 h-4" /></button>
-                                <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-red-400 hover:bg-red-50 transition-colors" title="Delete" aria-label="Delete" onClick={() => openAdminAgentDeleteRoute(row.agent.id)}><Trash2 className="w-4 h-4" /></button>
+                                {canManageAgentDirectory && <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Edit" aria-label="Edit" onClick={() => openAdminAgentEditRoute(row.agent.id)}><Pencil className="w-4 h-4" /></button>}
+                                {canManageAgentDirectory && <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-red-400 hover:bg-red-50 transition-colors" title="Delete" aria-label="Delete" onClick={() => openAdminAgentDeleteRoute(row.agent.id)}><Trash2 className="w-4 h-4" /></button>}
                               </div>
                             </td>
                           </tr>
@@ -107125,8 +107182,8 @@ ${waybillLineItems(w).length > 1
 	                  </div>
 	                </div>
 
-	                {/* Revenue & Financial */}
-	                <div>
+                {/* Revenue & Financial - hidden from logistics operations role */}
+                {canViewInventoryFinancials && <div>
 	                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Revenue</h4>
 	                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
 	                    <div className="bg-gray-50 border border-gray-200 rounded-xl p-3">
@@ -107142,9 +107199,9 @@ ${waybillLineItems(w).length > 1
 	                      <p className="text-lg font-extrabold text-gray-900 mt-0.5">{formatMoney(agentStockValueFor(selectedAgent.id))}</p>
 	                    </div>
 	                  </div>
-	                </div>
+                </div>}
 
-	                {/* This Month snapshot */}
+                {/* This Month snapshot */}
 	                <div>
 	                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">This Month</h4>
 	                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -107194,9 +107251,9 @@ ${waybillLineItems(w).length > 1
                                 {location.totalMissing > 0 ? ` · Missing ${location.totalMissing}` : ""}
                               </p>
                             </div>
-                            <span className="text-xs font-bold text-gray-700">
+                            {canViewInventoryFinancials && <span className="text-xs font-bold text-gray-700">
                               {formatMoney(location.totalValue)}
-                            </span>
+                            </span>}
                           </div>
                           <div className="flex flex-wrap gap-1.5 mt-2">
                             {location.items.length === 0 ? (
