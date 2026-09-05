@@ -68013,7 +68013,7 @@ ${waybillLineItems(w).length > 1
       switch (key) {
         case "newest": return sorted.sort((a, b) => b.anchorMs - a.anchorMs);
         case "value": return sorted.sort((a, b) => b.amount - a.amount);
-        case "name": return sorted.sort((a, b) => a.customer.localeCompare(b.customer));
+        case "name": return sorted.sort((a, b) => String(a.customer ?? "").localeCompare(String(b.customer ?? "")));
         // Oldest first, and an order with no date anywhere is the most
         // neglected of all, so it leads rather than being parked at the end.
         default: return sorted.sort((a, b) => a.anchorMs - b.anchorMs);
