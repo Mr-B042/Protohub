@@ -22289,7 +22289,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return bNeedsAttention - aNeedsAttention
         || bOutstanding - aOutstanding
         || remittanceOrderSortValue(b) - remittanceOrderSortValue(a)
-        || a.customer.localeCompare(b.customer);
+        || String(a.customer ?? "").localeCompare(String(b.customer ?? ""));
     })
     .filter((order) => {
       if (!normalizedRemittanceOrderSearch) return true;
