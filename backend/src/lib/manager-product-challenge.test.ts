@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildChallengeMilestones,
   repCheckpoint,
+  countWorkingDays,
   distributeWholeNumber,
   evaluateChallengeProgress
 } from "./manager-product-challenge.js";
@@ -229,4 +230,28 @@ test("checkpoint progress is cumulative, so an earlier shortfall stays owed", ()
   // 90 delivered in total, not the 30 that landed inside week 2's own window.
   assert.equal(checkpoint.deliveredUnits, 90);
   assert.equal(checkpoint.remainingUnits, 252);
+});
+
+// ── Sundays are not working days ────────────────────────────────────────────
+test("working days exclude Sundays", () => {
+  // 30 Aug 2026 is a Sunday, and the Edge Brusher window opens on it.
+  assert.equal(countWorkingDays("2026-08-30", "2026-08-30"), 0);
+  assert.equal(countWorkingDays("2026-08-31", "2026-09-06"), 6); // Mon-Sat, Sunday out
+  assert.equal(countWorkingDays("2026-08-30", "2026-09-30"), 27); // 32 days, 5 Sundays
+  assert.equal(countWorkingDays("2026-09-30", "2026-09-01"), 0); // end before start
+});
+
+test("a checkpoint counts only the working days still left", () => {
+  const milestone = { index: 1, targetUnits: 171, endDate: "2026-09-06" };
+  // Thursday 3 Sept -> 6 Sept is four calendar days, but the 6th is a Sunday.
+  const checkpoint = repCheckpoint({
+    milestone,
+    milestoneScaleBase: 682,
+    allocationTarget: 682,
+    challengeStartDate: "2026-08-30",
+    today: "2026-09-03",
+    orders: []
+  });
+  assert.equal(checkpoint.daysLeft, 4);
+  assert.equal(checkpoint.workingDaysLeft, 3);
 });

@@ -425,6 +425,7 @@ router.get("/", async (req, res) => {
           currentWeekEndDate: checkpoint.endDate,
           currentWeekRemaining: checkpoint.remainingUnits,
           currentWeekDaysLeft: checkpoint.daysLeft,
+          currentWeekWorkingDaysLeft: checkpoint.workingDaysLeft,
           todayDeliveredPieces: repDeliveredOrders.filter((order) => String(order.delivered_date ?? "").slice(0, 10) === today).reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0),
           persisted: storedAllocations.length > 0
         };
@@ -466,6 +467,7 @@ router.get("/", async (req, res) => {
         ,currentWeekDelivered: ownAllocationDetails?.currentWeekDelivered ?? 0
         ,currentWeekRemaining: ownAllocationDetails?.currentWeekRemaining ?? 0
         ,currentWeekDaysLeft: ownAllocationDetails?.currentWeekDaysLeft ?? 0
+        ,currentWeekWorkingDaysLeft: ownAllocationDetails?.currentWeekWorkingDaysLeft ?? 0
         ,currentWeekIndex: ownAllocationDetails?.currentWeekIndex ?? 0
         ,currentWeekEndDate: ownAllocationDetails?.currentWeekEndDate ?? null
         ,todayDeliveredPieces: ownAllocationDetails?.todayDeliveredPieces ?? 0

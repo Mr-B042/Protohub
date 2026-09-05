@@ -79,6 +79,9 @@ export type ManagerProductChallenge = {
    *  total - not one week measured on its own. */
   currentWeekIndex?: number;
   currentWeekEndDate?: string | null;
+  /** Days left to the checkpoint with Sundays taken out - what "needed daily"
+   *  must divide by, since nobody is working those. */
+  currentWeekWorkingDaysLeft?: number;
   todayDeliveredPieces?: number;
   /** The rep's own day-by-day, for the calendar under their target.
    *  ⚠️ dailyTargetPace is the server's flat target ÷ days and is a DECIMAL.
@@ -284,7 +287,11 @@ const CHALLENGE_DAY_TONE = {
   short: { cell: "border-amber-200 bg-amber-50/80", dot: "bg-amber-500", bar: "bg-amber-500", value: "text-amber-700", label: "Behind target" },
   missed: { cell: "border-rose-200 bg-rose-50/70", dot: "bg-rose-500", bar: "bg-rose-300", value: "text-rose-600", label: "Nothing delivered" },
   upcoming: { cell: "border-dashed border-gray-200 bg-white", dot: "bg-gray-200", bar: "bg-gray-200", value: "text-gray-300", label: "Still to come" },
-  none: { cell: "border-gray-200 bg-gray-50", dot: "bg-gray-300", bar: "bg-gray-300", value: "text-gray-500", label: "No target set" }
+  none: { cell: "border-gray-200 bg-gray-50", dot: "bg-gray-300", bar: "bg-gray-300", value: "text-gray-500", label: "No target set" },
+  // ⚠️ NEUTRAL, NEVER A FAILURE. Sundays are off across this business, exactly
+  // as the Recovery calendar and the follow-up KPI already treat them. A rest
+  // day carries no target and counts against nothing.
+  rest: { cell: "calendar-rest border-gray-200 bg-gray-50/70", dot: "bg-gray-300", bar: "bg-gray-300", value: "text-gray-400", label: "Sunday - rest day" }
 } as const;
 
 type ChallengeDayStatus = keyof typeof CHALLENGE_DAY_TONE;
@@ -322,12 +329,26 @@ const utcDay = (dateKey: string) => new Date(`${dateKey}T12:00:00Z`);
  * calendar shows is now a whole number a rep can actually deliver, and the
  * cumulative expectation behind the ahead/behind headline is a whole number too.
  */
-const dailyQuotas = (target: number, dayCount: number) => {
+const isSundayKey = (dateKey: string) => utcDay(dateKey).getUTCDay() === 0;
+
+const dailyQuotas = (target: number, dayKeys: string[]) => {
   const total = Math.max(0, Math.round(target));
-  const count = Math.max(1, dayCount);
+  // ⚠️ SUNDAYS CARRY NO QUOTA. Bright: "sundays aint among days our work".
+  // Spreading a monthly target over all 32 days handed every Sunday a target
+  // nobody was working to meet, and the cell then coloured itself "Nothing
+  // delivered" - a red square for a day off. The whole target is shared out
+  // across the working days instead, so the month still adds up to exactly the
+  // target and no day asks for work on a rest day.
+  const workingDays = dayKeys.filter((key) => !isSundayKey(key)).length;
+  // A window with no working day at all would divide by zero; fall back to
+  // every day rather than silently zero the target.
+  const count = Math.max(1, workingDays || dayKeys.length);
   let previous = 0;
-  return Array.from({ length: count }, (_, index) => {
-    const cumulative = Math.floor((total * (index + 1)) / count);
+  let workingIndex = 0;
+  return dayKeys.map((key) => {
+    if (workingDays > 0 && isSundayKey(key)) return 0;
+    workingIndex += 1;
+    const cumulative = Math.floor((total * workingIndex) / count);
     const quota = cumulative - previous;
     previous = cumulative;
     return quota;
@@ -339,18 +360,25 @@ const buildChallengeDays = (
   target: number,
   today: string
 ): ChallengeDayRow[] => {
-  const quotas = dailyQuotas(target, days.length);
+  const quotas = dailyQuotas(target, days.map((day) => day.dateKey));
   let running = 0;
   let expected = 0;
   return days.map((day, index) => {
     const quota = quotas[index] ?? 0;
+    // ⚠️ A SUNDAY DELIVERY STILL COUNTS. `running` takes every piece whenever it
+    // landed - an order can be marked delivered on a Sunday and that is real
+    // stock out of the door. `expected` only takes working-day quotas, so those
+    // pieces push the rep AHEAD of pace rather than merely filling a target
+    // that was never set. Rest days help; they never hurt.
     running += day.pieces;
     expected += quota;
     const future = day.dateKey > today;
+    const sunday = isSundayKey(day.dateKey);
     // Whole numbers on both sides, so the comparison needs no tolerance band
     // and no multiplier to explain: you cleared the day's pieces, you matched
     // them, you fell short, or you delivered nothing.
     const status: ChallengeDayStatus = future ? "upcoming"
+      : sunday ? "rest"
       : quota <= 0 ? "none"
       : day.pieces > quota ? "over"
       : day.pieces === quota ? "met"
@@ -381,19 +409,25 @@ function ChallengeDayCalendar({
   // Both sides are whole numbers now, so the gap is one too - no more "4.4 pcs
   // behind pace" against a target measured in pieces.
   const aheadBy = last ? last.running - last.expected : 0;
+  // ⚠️ REST DAYS ARE EXCLUDED FROM EVERY SUMMARY. A Sunday quota of 0 would drag
+  // the "1-2 pcs/day" range down to "0-2", and counting Sundays in the
+  // days-on-target denominator would score a rep against days nobody worked.
   const spread = useMemo(() => {
-    const quotas = rows.map((row) => row.quota);
+    const quotas = rows.filter((row) => row.status !== "rest").map((row) => row.quota);
     const min = quotas.length > 0 ? Math.min(...quotas) : 0;
     const max = quotas.length > 0 ? Math.max(...quotas) : 0;
     return { min, max, heavier: quotas.filter((quota) => quota === max).length };
   }, [rows]);
+  const restDays = rows.filter((row) => row.status === "rest").length;
   const quotaLabel = spread.max <= 0
     ? ""
     : spread.min === spread.max
       ? `${spread.min.toLocaleString()} pcs/day`
       : `${spread.min.toLocaleString()}-${spread.max.toLocaleString()} pcs/day`;
-  const judged = done.filter((row) => row.status !== "none").length;
+  const judged = done.filter((row) => row.status !== "none" && row.status !== "rest").length;
   const onTarget = done.filter((row) => row.status === "over" || row.status === "met").length;
+  // Pieces that arrived on a day carrying no target at all.
+  const restDelivered = done.filter((row) => row.status === "rest").reduce((sum, row) => sum + row.pieces, 0);
 
   // A challenge can start in one month and end in the next (this one runs
   // 30 Aug - 30 Sept), so the grid is drawn per month. One grid spanning the
@@ -425,12 +459,12 @@ function ChallengeDayCalendar({
           </h4>
           <p className="m-0 mt-0.5 text-[11px] font-bold text-gray-500">
             {delivered.toLocaleString()} of {target.toLocaleString()} pcs
-            {quotaLabel && <> · {quotaLabel}</>}
+            {quotaLabel && <> · {quotaLabel}{restDays > 0 && <span className="font-semibold text-gray-400"> (Sundays off)</span>}</>}
             {judged > 0 && <> · {onTarget} of {judged} days on target</>}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] font-bold text-gray-500">
-          {(["over", "met", "short", "missed", "upcoming"] as const).map((key) => (
+          {(["over", "met", "short", "missed", "rest", "upcoming"] as const).map((key) => (
             <span key={key} className="inline-flex items-center gap-1.5">
               <span className={`h-2 w-2 rounded-full ${CHALLENGE_DAY_TONE[key].dot}`} />{CHALLENGE_DAY_TONE[key].label}
             </span>
@@ -447,6 +481,7 @@ function ChallengeDayCalendar({
           </p>
           <p className="m-0 mt-0.5 text-[11px] font-medium text-gray-600">
             {last.running.toLocaleString()} delivered by {utcDay(last.dateKey).toLocaleDateString("en-NG", { day: "numeric", month: "short", timeZone: "UTC" })}, against {Math.round(last.expected).toLocaleString()} expected by then.
+            {restDelivered > 0 && <> {restDelivered.toLocaleString()} of those arrived on a Sunday, which carried no target — they count, and they put you further ahead.</>}
           </p>
         </div>
       )}
@@ -474,7 +509,13 @@ function ChallengeDayCalendar({
                 return (
                   <div
                     key={row.dateKey}
-                    title={`${utcDay(row.dateKey).toLocaleDateString("en-NG", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" })} — ${row.future ? "still to come" : `${row.pieces} of ${row.quota} pcs · ${tone.label}`}`}
+                    title={`${utcDay(row.dateKey).toLocaleDateString("en-NG", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" })} — ${
+                      row.future ? "still to come"
+                        : row.status === "rest"
+                          ? (row.pieces > 0
+                            ? `${row.pieces} pcs delivered on a rest day — no target applied, counted as a bonus`
+                            : "Sunday — a rest day. No target applied, and it counts against nothing.")
+                          : `${row.pieces} of ${row.quota} pcs · ${tone.label}`}`}
                     className={`flex flex-col gap-1.5 rounded-xl border p-2 ${tone.cell} ${isToday ? "ring-2 ring-violet-400" : ""}`}
                   >
                     <span className="flex items-center justify-between">
@@ -485,18 +526,39 @@ function ChallengeDayCalendar({
                         ? <span className="h-2 w-2 rounded-full bg-violet-500 ring-2 ring-violet-200" title="Today" />
                         : <span className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} />}
                     </span>
-                    {/* One bar against the daily pace. Empty days draw an empty
-                        track rather than nothing, so a missed day is visible
-                        instead of merely blank. */}
-                    <span className="block h-1.5 overflow-hidden rounded-full bg-white/70">
-                      <span className={`block h-full rounded-full ${tone.bar}`} style={{ width: `${row.future ? 0 : Math.max(row.pieces > 0 ? 8 : 0, fill)}%` }} />
-                    </span>
-                    <span className="flex items-baseline justify-between">
-                      <strong className={`text-[13px] font-black leading-none tabular-nums ${tone.value}`}>{row.future ? "—" : row.pieces}</strong>
-                      {!row.future && row.quota > 0 && (
-                        <span className="text-[10px] font-bold tabular-nums text-gray-400">/ {row.quota}</span>
-                      )}
-                    </span>
+                    {/* ⚠️ A REST DAY DRAWS NO BAR AND NO "0 / 0". Rendering a
+                        Sunday in the same shape as a worked day is exactly what
+                        made a day off read as a failure. It says Rest instead -
+                        and if pieces did arrive, it shows them as the bonus they
+                        are, never measured against a target that was not set. */}
+                    {row.status === "rest" ? (
+                      <span className="flex h-[30px] items-center justify-center">
+                        {row.pieces > 0 ? (
+                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700">
+                            +{row.pieces.toLocaleString()} bonus
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-gray-400">
+                            Rest
+                          </span>
+                        )}
+                      </span>
+                    ) : (
+                      <>
+                      {/* One bar against the daily pace. Empty days draw an empty
+                          track rather than nothing, so a missed day is visible
+                          instead of merely blank. */}
+                      <span className="block h-1.5 overflow-hidden rounded-full bg-white/70">
+                        <span className={`block h-full rounded-full ${tone.bar}`} style={{ width: `${row.future ? 0 : Math.max(row.pieces > 0 ? 8 : 0, fill)}%` }} />
+                      </span>
+                      <span className="flex items-baseline justify-between">
+                        <strong className={`text-[13px] font-black leading-none tabular-nums ${tone.value}`}>{row.future ? "—" : row.pieces}</strong>
+                        {!row.future && row.quota > 0 && (
+                          <span className="text-[10px] font-bold tabular-nums text-gray-400">/ {row.quota}</span>
+                        )}
+                      </span>
+                      </>
+                    )}
                   </div>
                 );
               })}
@@ -512,6 +574,9 @@ function ChallengeDayCalendar({
         Each day is measured against its own number, not against the catch-up pace on
         the card above — that one rises every time a day is missed, so it would mark the
         same miss twice. Only delivered and verified pieces count.
+        {restDays > 0 && <> Sundays are rest days: they carry no target and count against
+        nothing, so the {target.toLocaleString()} pcs are shared across the {rows.length - restDays} working
+        days instead. Anything delivered on a Sunday still counts and puts you ahead.</>}
       </p>
       <p className="m-0 mt-1 text-[10px] font-bold text-gray-400">
         Range: {rows[0].dateKey} to {rows[rows.length - 1].dateKey}
@@ -1225,7 +1290,13 @@ function RepFocusPanel({ challenge, formatMoney }: { challenge: ManagerProductCh
   const weeklyDelivered = challenge.currentWeekDelivered ?? 0;
   const remaining = challenge.currentWeekRemaining ?? Math.max(0, weeklyTarget - weeklyDelivered);
   const daysLeft = challenge.currentWeekDaysLeft ?? 0;
-  const neededDaily = daysLeft > 0 ? Math.ceil(remaining / daysLeft) : 0;
+  // ⚠️ DIVIDE BY WORKING DAYS, NOT CALENDAR DAYS. Sundays are off, so spreading
+  // what is owed across them understates every day's real requirement.
+  const workingDaysLeft = challenge.currentWeekWorkingDaysLeft ?? daysLeft;
+  // ⚠️ AND NEVER PRINT 0 WHILE PIECES ARE STILL OWED. That is the exact shape of
+  // the bug Bright reported twice: a rep who is behind being told to deliver
+  // nothing. With no working day left, everything outstanding is due now.
+  const neededDaily = remaining <= 0 ? 0 : workingDaysLeft > 0 ? Math.ceil(remaining / workingDaysLeft) : remaining;
   const average = challenge.qualifiedOrders > 0 ? (challenge.progressUnits / challenge.qualifiedOrders).toFixed(1) : "0";
   const milestoneReward = challenge.rewardAmount / Math.max(1, challenge.milestones.length || 1);
   // ⚠️ THESE FIGURES ARE CUMULATIVE, and the labels have to say so. A milestone
@@ -1252,7 +1323,7 @@ function RepFocusPanel({ challenge, formatMoney }: { challenge: ManagerProductCh
         {checkpointIndex > 0 ? `Week ${checkpointIndex} checkpoint` : "This week"}
         {checkpointEnds && <span className="ml-1.5 normal-case tracking-normal text-gray-500">closes {formatDateShort(checkpointEnds)}</span>}
       </p>
-      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4"><Metric label="Checkpoint target" value={`${weeklyTarget.toLocaleString()} pcs`} detail="Total by this date" /><Metric label="Counted so far" value={`${weeklyDelivered.toLocaleString()} pcs`} detail="Delivered and verified" /><Metric label="Still needed" value={`${remaining.toLocaleString()} pcs`} detail="To clear this checkpoint" /><Metric label="Days left" value={daysLeft.toLocaleString()} detail="Today included" /></div>
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4"><Metric label="Checkpoint target" value={`${weeklyTarget.toLocaleString()} pcs`} detail="Total by this date" /><Metric label="Counted so far" value={`${weeklyDelivered.toLocaleString()} pcs`} detail="Delivered and verified" /><Metric label="Still needed" value={`${remaining.toLocaleString()} pcs`} detail="To clear this checkpoint" /><Metric label="Working days left" value={workingDaysLeft.toLocaleString()} detail={daysLeft > workingDaysLeft ? `Today included · ${(daysLeft - workingDaysLeft).toLocaleString()} Sunday${daysLeft - workingDaysLeft === 1 ? "" : "s"} off` : "Today included"} /></div>
       <div className="mt-3 flex items-center gap-3"><span className="text-xs font-black text-gray-700">Needed daily {neededDaily.toLocaleString()} pcs/day</span><AnimatedProgress percent={weeklyTarget > 0 ? Math.round((weeklyDelivered / weeklyTarget) * 100) : 0} track="h-2" fill="bg-violet-600" /></div>
       <p className="mt-2 text-[11px] font-semibold leading-relaxed text-gray-500">Checkpoints run on from each other: a shortfall from an earlier week is still owed here, and anything extra you delivered already counts towards it.</p>
       {(challenge.awaitingDeliveryPieces ?? 0) > 0 && <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">{challenge.awaitingDeliveryPieces?.toLocaleString()} pieces are awaiting delivery and do not count yet.</p>}
