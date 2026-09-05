@@ -128,6 +128,25 @@ export function buildChallengeMilestones(input: ChallengeMilestoneInput) {
   };
 }
 
+/**
+ * Working days from `from` to `to` inclusive, Sundays excluded.
+ *
+ * Sundays are off across this business - scheduling, follow-up KPI and the
+ * recovery calendar all already treat them that way.
+ */
+export function countWorkingDays(from: string, to: string): number {
+  const start = dayNumber(from);
+  const end = dayNumber(to);
+  if (end < start) return 0;
+  let count = 0;
+  for (let day = start; day <= end; day += 1) {
+    // dayNumber is days since the epoch, and 1970-01-01 was a Thursday, so
+    // Sunday is 3 places on: (day + 4) % 7 === 0.
+    if ((day + 4) % 7 !== 0) count += 1;
+  }
+  return count;
+}
+
 export type RepCheckpointInput = {
   /** The checkpoint currently open, from buildChallengeMilestones. */
   milestone: Pick<ChallengeMilestone, "index" | "targetUnits" | "endDate"> | undefined;
@@ -167,7 +186,7 @@ export type RepCheckpointInput = {
 export function repCheckpoint(input: RepCheckpointInput) {
   const { milestone } = input;
   if (!milestone || input.milestoneScaleBase <= 0) {
-    return { index: 0, endDate: null as string | null, targetUnits: 0, deliveredUnits: 0, remainingUnits: 0, daysLeft: 0 };
+    return { index: 0, endDate: null as string | null, targetUnits: 0, deliveredUnits: 0, remainingUnits: 0, daysLeft: 0, workingDaysLeft: 0 };
   }
   const targetUnits = Math.ceil((input.allocationTarget * milestone.targetUnits) / input.milestoneScaleBase);
   const deliveredUnits = input.orders.reduce((sum, order) => (
@@ -181,7 +200,13 @@ export function repCheckpoint(input: RepCheckpointInput) {
     targetUnits,
     deliveredUnits,
     remainingUnits: Math.max(0, targetUnits - deliveredUnits),
-    daysLeft: Math.max(0, dayNumber(milestone.endDate) - dayNumber(input.today) + 1)
+    daysLeft: Math.max(0, dayNumber(milestone.endDate) - dayNumber(input.today) + 1),
+    // ⚠️ SUNDAYS ARE NOT WORKING DAYS. Dividing what is still owed by every
+    // remaining calendar day assumes a seven-day week and quietly understates
+    // the daily need - Bright: "sundays aint among days our work". Deliveries
+    // that do land on a Sunday still count towards the total; the rep is simply
+    // never asked to plan for one.
+    workingDaysLeft: countWorkingDays(input.today, milestone.endDate)
   };
 }
 
