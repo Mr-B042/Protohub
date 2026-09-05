@@ -10814,6 +10814,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const canViewSmsHealth = currentRole === "Owner" || currentRole === "Admin";
   const canManageProductCatalog = currentRole === "Owner" || currentRole === "Admin";
   const canViewInventoryFinancials = !isInventoryOperationsRole;
+  useEffect(() => {
+    if (!isInventoryOperationsRole) return;
+    if (["pricing", "packages", "combos"].includes(inventoryView)) {
+      setInventoryView("dashboard");
+    }
+    if (["addPricing", "editPricing", "addPackage", "editPackage", "deletePackage", "editProduct", "deleteProduct"].includes(modal ?? "")) {
+      setModal(null);
+    }
+  }, [isInventoryOperationsRole, inventoryView, modal]);
   const canManageAdTrackingLabels = ["Owner", "Admin", "Manager"].includes(currentRole);
   const emailActivityPageSize = 10;
   const smsActivityPageSize = 10;
@@ -44585,6 +44594,10 @@ ${waybillLineItems(w).length > 1
   };
 
   const openInventoryEditProductRoute = (productId: string) => {
+    if (!canManageProductCatalog) {
+      showToast("Product catalog editing is restricted to Owner and Admin.");
+      return;
+    }
     setActivePage("Inventory");
     setSelectedProductId(productId);
     setInventoryView("dashboard");
@@ -44593,6 +44606,10 @@ ${waybillLineItems(w).length > 1
   };
 
   const openInventoryDeleteProductRoute = (productId: string) => {
+    if (!canManageProductCatalog) {
+      showToast("Product deletion is restricted to Owner and Admin.");
+      return;
+    }
     setActivePage("Inventory");
     setSelectedProductId(productId);
     setInventoryView("dashboard");
@@ -44601,6 +44618,10 @@ ${waybillLineItems(w).length > 1
   };
 
   const openInventoryPricingRoute = (productId: string) => {
+    if (!canManageProductCatalog) {
+      showToast("Pricing is restricted to Owner and Admin.");
+      return;
+    }
     setActivePage("Inventory");
     setSelectedProductId(productId);
     setInventoryView("pricing");
@@ -44609,6 +44630,10 @@ ${waybillLineItems(w).length > 1
   };
 
   const openInventoryAddPricingRoute = (productId: string) => {
+    if (!canManageProductCatalog) {
+      showToast("Pricing is restricted to Owner and Admin.");
+      return;
+    }
     setActivePage("Inventory");
     setSelectedProductId(productId);
     setInventoryView("pricing");
@@ -44617,6 +44642,10 @@ ${waybillLineItems(w).length > 1
   };
 
   const openInventoryEditPricingRoute = (productId: string, currencyCode: ProductCurrencyCode) => {
+    if (!canManageProductCatalog) {
+      showToast("Pricing is restricted to Owner and Admin.");
+      return;
+    }
     setActivePage("Inventory");
     setSelectedProductId(productId);
     setSelectedPricingCurrency(currencyCode);
@@ -44626,6 +44655,10 @@ ${waybillLineItems(w).length > 1
   };
 
   const openInventoryPackagesRoute = (productId: string) => {
+    if (!canManageProductCatalog) {
+      showToast("Packages are restricted to Owner and Admin.");
+      return;
+    }
     setActivePage("Inventory");
     setSelectedProductId(productId);
     setInventoryView("packages");
@@ -44634,6 +44667,10 @@ ${waybillLineItems(w).length > 1
   };
 
   const openInventoryAddPackageRoute = (productId: string) => {
+    if (!canManageProductCatalog) {
+      showToast("Packages are restricted to Owner and Admin.");
+      return;
+    }
     setActivePage("Inventory");
     setSelectedProductId(productId);
     setInventoryView("packages");
@@ -44675,6 +44712,10 @@ ${waybillLineItems(w).length > 1
   };
 
   const openInventoryEditPackageRoute = (productId: string, packageId: string) => {
+    if (!canManageProductCatalog) {
+      showToast("Packages are restricted to Owner and Admin.");
+      return;
+    }
     setActivePage("Inventory");
     setSelectedProductId(productId);
     setSelectedPackageId(packageId);
@@ -44684,6 +44725,10 @@ ${waybillLineItems(w).length > 1
   };
 
   const openInventoryDeletePackageRoute = (productId: string, packageId: string) => {
+    if (!canManageProductCatalog) {
+      showToast("Packages are restricted to Owner and Admin.");
+      return;
+    }
     setActivePage("Inventory");
     setSelectedProductId(productId);
     setSelectedPackageId(packageId);
@@ -103936,8 +103981,8 @@ ${waybillLineItems(w).length > 1
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Product Name</span><strong className="text-sm font-semibold text-gray-900">{selectedProduct.name}</strong></article>
                   <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">SKU</span><strong className="text-sm font-semibold text-gray-900">{selectedProduct.sku}</strong></article>
-                  <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5 relative group cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => { const pp = primaryPricing(selectedProduct); if (pp) openEditPricing(pp); else openAddPricing(); }}><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Unit Cost</span><strong className="text-sm font-semibold text-gray-900">{formatProductMoney(primaryPricing(selectedProduct)?.unitCost ?? 0, primaryPricing(selectedProduct)?.currency ?? "NGN")}</strong><Pencil className="w-3.5 h-3.5 text-[#1F8FE0] absolute top-2 right-2" /></article>
-                  <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5 relative group cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => { const pp = primaryPricing(selectedProduct); if (pp) openEditPricing(pp); else openAddPricing(); }}><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Selling Price</span><strong className="text-sm font-semibold text-gray-900">{formatProductMoney(primaryPricing(selectedProduct)?.sellingPrice ?? 0, primaryPricing(selectedProduct)?.currency ?? "NGN")}</strong><Pencil className="w-3.5 h-3.5 text-[#1F8FE0] absolute top-2 right-2" /></article>
+                  {canViewInventoryFinancials && <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5 relative group cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => { const pp = primaryPricing(selectedProduct); if (pp) openEditPricing(pp); else openAddPricing(); }}><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Unit Cost</span><strong className="text-sm font-semibold text-gray-900">{formatProductMoney(primaryPricing(selectedProduct)?.unitCost ?? 0, primaryPricing(selectedProduct)?.currency ?? "NGN")}</strong><Pencil className="w-3.5 h-3.5 text-[#1F8FE0] absolute top-2 right-2" /></article>}
+                  {canViewInventoryFinancials && <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5 relative group cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => { const pp = primaryPricing(selectedProduct); if (pp) openEditPricing(pp); else openAddPricing(); }}><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Selling Price</span><strong className="text-sm font-semibold text-gray-900">{formatProductMoney(primaryPricing(selectedProduct)?.sellingPrice ?? 0, primaryPricing(selectedProduct)?.currency ?? "NGN")}</strong><Pencil className="w-3.5 h-3.5 text-[#1F8FE0] absolute top-2 right-2" /></article>}
                   <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5 relative group cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => openInventoryUpdateStockRoute(selectedProduct.id)}>
                     <span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Warehouse Stock</span>
                     <strong className="text-sm font-semibold text-gray-900">{selectedProduct.warehouseStock}</strong>
@@ -103952,7 +103997,7 @@ ${waybillLineItems(w).length > 1
                   ) : (
                     <div className="overflow-x-auto rounded-xl border border-gray-200">
                       <table className="w-full text-sm">
-                        <thead className="bg-gray-50 text-xs text-gray-500 uppercase"><tr><th className="px-3 py-2 text-left">Agent</th><th className="px-3 py-2 text-left">Zone</th><th className="px-3 py-2 text-left">Available</th><th className="px-3 py-2 text-left">Defective</th><th className="px-3 py-2 text-left">Missing</th><th className="px-3 py-2 text-left">Stock Value</th></tr></thead>
+                        <thead className="bg-gray-50 text-xs text-gray-500 uppercase"><tr><th className="px-3 py-2 text-left">Agent</th><th className="px-3 py-2 text-left">Zone</th><th className="px-3 py-2 text-left">Available</th><th className="px-3 py-2 text-left">Defective</th><th className="px-3 py-2 text-left">Missing</th>{canViewInventoryFinancials && <th className="px-3 py-2 text-left">Stock Value</th>}</tr></thead>
                         <tbody>
                           {agentStock.filter((stock) => stock.productId === selectedProduct.id).map((stock) => {
                             const agent = agents.find((item) => item.id === stock.agentId);
@@ -103964,7 +104009,7 @@ ${waybillLineItems(w).length > 1
                                 <td>{stock.quantity}</td>
                                 <td>{stock.defective}</td>
                                 <td>{stock.missing}</td>
-                                <td>{formatProductMoney(stock.quantity * (pricing?.sellingPrice ?? 0), pricing?.currency ?? "NGN")}</td>
+                                {canViewInventoryFinancials && <td>{formatProductMoney(stock.quantity * (pricing?.sellingPrice ?? 0), pricing?.currency ?? "NGN")}</td>}
                               </tr>
                             );
                           })}
@@ -103973,7 +104018,7 @@ ${waybillLineItems(w).length > 1
                     </div>
                   )}
                 </section>
-                <section className="flex flex-col gap-2 border border-blue-100 bg-blue-50 rounded-xl p-3">
+                {canManageProductCatalog && <section className="flex flex-col gap-2 border border-blue-100 bg-blue-50 rounded-xl p-3">
                   <div className="flex items-center justify-between">
                     <div>
                       <h3 className="text-sm font-semibold text-blue-900">Order Form Configuration</h3>
@@ -103999,18 +104044,18 @@ ${waybillLineItems(w).length > 1
                     <button className="!min-h-0 inline-flex items-center gap-1 px-3 py-2 rounded-lg bg-white border border-blue-300 text-blue-700 text-xs font-semibold hover:bg-blue-100 transition-colors" onClick={() => previewProductForm(selectedProduct)}>Configure Order Form</button>
                   </div>
                   <p className="text-[11px] text-gray-500 italic">State availability and form labels are now configured on the <strong>Embed Form</strong> page so the same settings live next to the form preview.</p>
-                </section>
+                </section>}
                 <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <button className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-xs font-semibold hover:bg-gray-50 transition-colors" onClick={() => { openEditProduct(selectedProduct); }}><Pencil className="w-3.5 h-3.5" /> Edit Details</button>
+                    {canManageProductCatalog && <button className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-xs font-semibold hover:bg-gray-50 transition-colors" onClick={() => { openEditProduct(selectedProduct); }}><Pencil className="w-3.5 h-3.5" /> Edit Details</button>}
                     <button className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-blue-300 text-blue-700 text-xs font-semibold hover:bg-blue-50 transition-colors" onClick={() => { previewProductForm(selectedProduct); }}><Globe className="w-3.5 h-3.5" /> Preview Form</button>
-                    <button className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-blue-300 text-blue-700 text-xs font-semibold hover:bg-blue-50 transition-colors" onClick={() => { closeModal(); duplicateProduct(selectedProduct); }}><Copy className="w-3.5 h-3.5" /> Duplicate</button>
-                    <button className={`!min-h-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-semibold transition-colors ${selectedProduct.active ? "border-amber-300 text-amber-700 hover:bg-amber-50" : "border-emerald-300 text-emerald-700 hover:bg-emerald-50"}`} onClick={() => toggleProductActive(selectedProduct)}>{selectedProduct.active ? <><ToggleRight className="w-3.5 h-3.5" /> Deactivate</> : <><ToggleLeft className="w-3.5 h-3.5" /> Activate</>}</button>
-                    <button className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-red-300 text-red-700 text-xs font-semibold hover:bg-red-50 transition-colors" onClick={() => { closeModal(); openDeleteProduct(selectedProduct); }}><Trash2 className="w-3.5 h-3.5" /> Delete</button>
+                    {canManageProductCatalog && <button className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-blue-300 text-blue-700 text-xs font-semibold hover:bg-blue-50 transition-colors" onClick={() => { closeModal(); duplicateProduct(selectedProduct); }}><Copy className="w-3.5 h-3.5" /> Duplicate</button>}
+                    {canManageProductCatalog && <button className={`!min-h-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-semibold transition-colors ${selectedProduct.active ? "border-amber-300 text-amber-700 hover:bg-amber-50" : "border-emerald-300 text-emerald-700 hover:bg-emerald-50"}`} onClick={() => toggleProductActive(selectedProduct)}>{selectedProduct.active ? <><ToggleRight className="w-3.5 h-3.5" /> Deactivate</> : <><ToggleLeft className="w-3.5 h-3.5" /> Activate</>}</button>}
+                    {canManageProductCatalog && <button className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-red-300 text-red-700 text-xs font-semibold hover:bg-red-50 transition-colors" onClick={() => { closeModal(); openDeleteProduct(selectedProduct); }}><Trash2 className="w-3.5 h-3.5" /> Delete</button>}
                   </div>
                   <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
                     <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Close</button>
-                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => { closeModal(); openPackagesView(selectedProduct); }}>Manage Packages</button>
+                    {canManageProductCatalog && <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => { closeModal(); openPackagesView(selectedProduct); }}>Manage Packages</button>}
                   </div>
                 </div>
               </div>
