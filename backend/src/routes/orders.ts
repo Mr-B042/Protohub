@@ -3,11 +3,11 @@ import { humanFieldErrors } from "../lib/validation-message.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { buildAgentAssignmentSnapshot } from "../lib/agent-coverage.js";
-import { buildAgentLocationSnapshot, resolveAgentLocationForOrder, syncAgentStockAggregate } from "../lib/agent-locations.js";
+import { buildAgentLocationSnapshot, resolveAgentLocationForOrder } from "../lib/agent-locations.js";
 import { appendCartJourneyEvent } from "../lib/cart-journey.js";
 import { cancelActiveFollowUpTasksForOrder, recordContactAttemptAndNextAction, refreshOrderFollowUpSummary, syncOrderFollowUpTask, taskStatusFor } from "../lib/follow-up-workflow.js";
 import { classifyFollowUpOutcome, FOLLOW_UP_RECOVERY_BUCKETS } from "../lib/follow-up-outcomes.js";
-import { buildPackageComponentSnapshot, orderInventoryLinesFromRow, primaryInventoryProductId, type OrderInventoryLine } from "../lib/order-inventory.js";
+import { buildPackageComponentSnapshot, normalizeSnapshotLines, orderInventoryLinesFromRow, primaryInventoryProductId, scalePackageComponentLines, type OrderInventoryLine } from "../lib/order-inventory.js";
 import { describeOrderItemChanges } from "../lib/order-item-audit.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 import { formatOrderForWhatsAppDispatch, type WhatsAppDispatchOrderRow } from "../lib/order-whatsapp-dispatch.js";
@@ -35,6 +35,7 @@ import { generateOrderReceiptPdf, fetchReceiptBranding } from "../lib/order-rece
 import { sendConnectedUserWhatsAppToJid } from "../lib/whatsapp-runtime.js";
 import { confirmationNeedsSalesExpansionLog } from "../lib/sales-expansion.js";
 import { inventoryOperationsOrder } from "../lib/inventory-operations-access.js";
+import { applyInventoryMovements } from "../lib/inventory-movements.js";
 
 import {
   checkAgentStock, normalizeAdditionalLines, orderMoneyBreakdown, stockShortfallMessage
@@ -533,26 +534,6 @@ const inventoryAvailabilityMap = async (
   );
 };
 
-const applyLocationInventoryDelta = async (
-  orgId: string,
-  agentId: string,
-  agentLocationId: string,
-  line: OrderInventoryLine,
-  nextQuantity: number
-) => {
-  const { error } = await supabase
-    .from("agent_location_stock")
-    .upsert({
-      org_id: orgId,
-      agent_id: agentId,
-      agent_location_id: agentLocationId,
-      product_id: line.productId,
-      quantity: nextQuantity
-    }, { onConflict: "agent_location_id,product_id" });
-  if (error) throw error;
-  await syncAgentStockAggregate(orgId, agentId, line.productId);
-};
-
 type DeliveryStockMovementRow = {
   product_id: string | null;
   type: string | null;
@@ -566,7 +547,7 @@ const REVERSAL_STOCK_MOVEMENT_TYPES = new Set(["Status Reversal", "Delete Revers
 const isReversalMovementFallback = (row: DeliveryStockMovementRow) =>
   row.type === "Correction" && /^(Status Reversal|Delete Reversal):/.test(String(row.note ?? ""));
 
-const activeDeliveredProductIdsForOrder = async (orgId: string, orderId: string) => {
+const deliveryStockHistoryForOrder = async (orgId: string, orderId: string) => {
   const { data, error } = await supabase
     .from("stock_movements")
     .select("product_id, type, created_at, note")
@@ -584,76 +565,20 @@ const activeDeliveredProductIdsForOrder = async (orgId: string, orderId: string)
   }
 
   const active = new Set<string>();
+  const fulfillmentCount = new Map<string, number>();
+  const reversalCount = new Map<string, number>();
+  for (const row of (data ?? []) as DeliveryStockMovementRow[]) {
+    if (!row.product_id) continue;
+    if (row.type === "Order Fulfilled") {
+      fulfillmentCount.set(row.product_id, (fulfillmentCount.get(row.product_id) ?? 0) + 1);
+    } else if (REVERSAL_STOCK_MOVEMENT_TYPES.has(String(row.type)) || isReversalMovementFallback(row)) {
+      reversalCount.set(row.product_id, (reversalCount.get(row.product_id) ?? 0) + 1);
+    }
+  }
   for (const [productId, row] of latestByProduct) {
     if (row.type === "Order Fulfilled") active.add(productId);
   }
-  return active;
-};
-
-const isStockMovementEnumValueError = (error: { message?: string } | null | undefined) => {
-  const message = String(error?.message ?? "").toLowerCase();
-  return message.includes("invalid input value for enum") || message.includes("stock_movement_type");
-};
-
-const insertStockMovementOrThrow = async (payload: Record<string, unknown>) => {
-  const { error } = await supabase.from("stock_movements").insert(payload);
-  if (error) throw error;
-};
-
-const insertReversalStockMovementOrThrow = async (payload: Record<string, unknown>) => {
-  const desiredType = String(payload.type ?? "");
-  const { error } = await supabase.from("stock_movements").insert(payload);
-  if (!error) return;
-
-  if (REVERSAL_STOCK_MOVEMENT_TYPES.has(desiredType) && isStockMovementEnumValueError(error)) {
-    const fallback = {
-      ...payload,
-      type: "Correction",
-      note: `${desiredType}: ${String(payload.note ?? "")}`
-    };
-    const { error: fallbackError } = await supabase.from("stock_movements").insert(fallback);
-    if (!fallbackError) return;
-    throw fallbackError;
-  }
-
-  throw error;
-};
-
-const applyLocationInventoryDeltaWithMovement = async (args: {
-  orgId: string;
-  agentId: string;
-  agentLocationId: string;
-  line: OrderInventoryLine;
-  previousQuantity: number;
-  nextQuantity: number;
-  movement: Record<string, unknown>;
-  allowReversalFallback?: boolean;
-}) => {
-  await applyLocationInventoryDelta(args.orgId, args.agentId, args.agentLocationId, args.line, args.nextQuantity);
-  try {
-    if (args.allowReversalFallback) {
-      await insertReversalStockMovementOrThrow(args.movement);
-    } else {
-      await insertStockMovementOrThrow(args.movement);
-    }
-  } catch (error: any) {
-    try {
-      await applyLocationInventoryDelta(args.orgId, args.agentId, args.agentLocationId, args.line, args.previousQuantity);
-    } catch (rollbackError: any) {
-      logger.error("inventory: failed to roll back stock quantity after movement insert failure", {
-        orgId: args.orgId,
-        agentId: args.agentId,
-        agentLocationId: args.agentLocationId,
-        productId: args.line.productId,
-        attemptedQuantity: args.nextQuantity,
-        rollbackQuantity: args.previousQuantity,
-        movementType: args.movement.type,
-        movementError: error?.message,
-        rollbackError: rollbackError?.message
-      });
-    }
-    throw error;
-  }
+  return { active, fulfillmentCount, reversalCount };
 };
 
 // ── GET /api/orders ───────────────────────────────────────
@@ -797,6 +722,7 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery
   }
   const d = parsed.data;
   let packageComponentsSource: unknown = [];
+  let packageQuantity = 1;
 
   // Validate productId belongs to this org
   if (d.productId) {
@@ -812,7 +738,7 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery
   if (d.packageId) {
     const { data: pkgCheck } = await supabase
       .from("product_packages")
-      .select("id, product_id, package_components, attribution_product_id")
+      .select("id, product_id, quantity, package_components, attribution_product_id")
       .eq("id", d.packageId)
       .single();
     if (!pkgCheck) {
@@ -827,6 +753,7 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery
       return;
     }
     packageComponentsSource = pkgCheck.package_components ?? [];
+    packageQuantity = Number(pkgCheck.quantity ?? 1);
 
     // Attribution override: if the package points at a different product for
     // attribution (combo bundle sitting under a single-tool parent), stamp the
@@ -907,7 +834,11 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery
         agent_location_state_snapshot: null,
         agent_location_city_snapshot: null
       };
-  const packageComponentsSnapshot = await buildPackageComponentSnapshot(req.user!.orgId, packageComponentsSource);
+  const packageComponentsSnapshot = scalePackageComponentLines(
+    await buildPackageComponentSnapshot(req.user!.orgId, packageComponentsSource),
+    packageQuantity,
+    d.quantity
+  );
 
   const timelineNotes = d.timelineNotes ?? d.notes ?? [];
   const legacyNotes = serializePlannedOrderMetadata(null, {
@@ -1725,7 +1656,7 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
     // Per-line idempotency: only lines whose latest delivery stock movement is
     // still active need no stock right now. If a prior delivery was reversed,
     // the next real delivery must be allowed to deduct again.
-    const alreadyDeducted = await activeDeliveredProductIdsForOrder(req.user!.orgId, String(req.params.id));
+    const alreadyDeducted = (await deliveryStockHistoryForOrder(req.user!.orgId, String(req.params.id))).active;
     const linesNeedingStock = inventoryLines.filter((line) => !alreadyDeducted.has(line.productId));
 
     if (linesNeedingStock.length > 0) {
@@ -1915,12 +1846,6 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
       return;
     }
 
-    const stockMap = await inventoryAvailabilityMap(
-      effectiveAgentId,
-      resolvedLocation.id,
-      inventoryLines.map((line) => line.productId)
-    );
-
     const agentName = data.agent_name_snapshot ?? existing.agent_name_snapshot ?? "Agent";
     const agentBaseState = data.agent_base_state_snapshot ?? existing.agent_base_state_snapshot ?? "";
     const agentCoverageState = data.agent_coverage_state_snapshot ?? existing.agent_coverage_state_snapshot ?? "";
@@ -1955,37 +1880,28 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
     // movement is still Order Fulfilled. This guards against double-deduction on
     // re-saves / partial-failure retries while allowing a legitimately reversed
     // order to deduct again if it is delivered again later.
-    const alreadyDeductedProductIds = await activeDeliveredProductIdsForOrder(req.user!.orgId, String(req.params.id));
-
-    for (const line of inventoryLines) {
-      if (alreadyDeductedProductIds.has(line.productId)) continue;
-      const currentQty = stockMap.get(line.productId) ?? 0;
-      const nextQty = Math.max(0, currentQty - line.quantity);
-      await applyLocationInventoryDeltaWithMovement({
+    const deliveryHistory = await deliveryStockHistoryForOrder(req.user!.orgId, String(req.params.id));
+    const linesToDeduct = inventoryLines.filter((line) => !deliveryHistory.active.has(line.productId));
+    if (linesToDeduct.length > 0) {
+      await applyInventoryMovements({
         orgId: req.user!.orgId,
-        agentId: effectiveAgentId,
-        agentLocationId: resolvedLocation.id,
-        line,
-        previousQuantity: currentQty,
-        nextQuantity: nextQty,
-        movement: {
-          id:            `MOV-${randomUUID()}`,
-          org_id:        req.user!.orgId,
-          product_id:    line.productId,
-          product_name:  line.productName,
-          type:          "Order Fulfilled",
-          qty:           line.quantity,
-          balance_after: nextQty,
-          agent_id:      effectiveAgentId,
-          order_id:      req.params.id,
-          by_name:       req.user!.name,
-          by_user_id:    req.user!.id,
-          waybill_id:    waybillId,
-          from_location: agentLocationName || originState,
-          to_location:   customerLocation,
-          from_agent_location_id: resolvedLocation.id,
-          note:          `Delivered to ${existing.customer} — ${line.productName}${line.isFreeGift ? " (gift)" : ""} deducted ${currentQty} → ${nextQty} by agent ${agentName}${serviceStateNote}`
-        }
+        actorUserId: req.user!.id,
+        actorName: req.user!.name,
+        lines: linesToDeduct.map((line) => ({
+          productId: line.productId,
+          productName: line.productName,
+          type: "Order Fulfilled",
+          quantity: line.quantity,
+          sourceScope: "agent_location",
+          sourceAgentLocationId: resolvedLocation.id,
+          agentId: effectiveAgentId,
+          orderId: String(req.params.id),
+          waybillId,
+          fromLocation: agentLocationName || originState,
+          toLocation: customerLocation,
+          note: `Delivered to ${existing.customer} — ${line.productName}${line.isFreeGift ? " (gift)" : ""} deducted by agent ${agentName}${serviceStateNote}`,
+          idempotencyKey: `order:${req.params.id}:fulfill:${line.productId}:${(deliveryHistory.fulfillmentCount.get(line.productId) ?? 0) + 1}`
+        }))
       });
     }
    } catch (deductionError: any) {
@@ -2016,42 +1932,27 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
         });
 
     if (reversalLocation) {
-      const stockMap = await inventoryAvailabilityMap(
-        existing.agent_id,
-        reversalLocation.id,
-        inventoryLines.map((line) => line.productId)
-      );
       const { data: agentInfo } = await supabase
         .from("agents").select("name").eq("id", existing.agent_id).single();
-      for (const line of inventoryLines) {
-        const currentQty = stockMap.get(line.productId) ?? 0;
-        const restoredQty = currentQty + line.quantity;
-        await applyLocationInventoryDeltaWithMovement({
-          orgId: req.user!.orgId,
+      const history = await deliveryStockHistoryForOrder(req.user!.orgId, String(req.params.id));
+      await applyInventoryMovements({
+        orgId: req.user!.orgId,
+        actorUserId: req.user!.id,
+        actorName: req.user!.name,
+        lines: inventoryLines.map((line) => ({
+          productId: line.productId,
+          productName: line.productName,
+          type: "Status Reversal",
+          quantity: line.quantity,
+          destinationScope: "agent_location",
+          destinationAgentLocationId: reversalLocation.id,
           agentId: existing.agent_id,
-          agentLocationId: reversalLocation.id,
-          line,
-          previousQuantity: currentQty,
-          nextQuantity: restoredQty,
-          allowReversalFallback: true,
-          movement: {
-            id:            `MOV-${randomUUID()}`,
-            org_id:        req.user!.orgId,
-            product_id:    line.productId,
-            product_name:  line.productName,
-            type:          "Status Reversal",
-            qty:           line.quantity,
-            balance_after: restoredQty,
-            agent_id:      existing.agent_id,
-            order_id:      req.params.id,
-            by_name:       req.user!.name,
-            by_user_id:    req.user!.id,
-            to_agent_location_id: reversalLocation.id,
-            to_location:   reversalLocation.name,
-            note:          `Delivery reversed — ${line.productName}${line.isFreeGift ? " (gift)" : ""} restored ${currentQty} → ${restoredQty} for order ${req.params.id} (agent ${agentInfo?.name ?? existing.agent_id})`
-          }
-        });
-      }
+          orderId: String(req.params.id),
+          toLocation: reversalLocation.name,
+          note: `Delivery reversed — ${line.productName}${line.isFreeGift ? " (gift)" : ""} restored for order ${req.params.id} (agent ${agentInfo?.name ?? existing.agent_id})`,
+          idempotencyKey: `order:${req.params.id}:status-reversal:${line.productId}:${(history.reversalCount.get(line.productId) ?? 0) + 1}`
+        }))
+      });
     }
 
     await supabase.from("waybill_records")
@@ -2885,10 +2786,14 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Reco
     const { data: productCheck } = await supabase.from("products").select("id").eq("id", updates.product_id).eq("org_id", req.user!.orgId).single();
     if (!productCheck) { res.status(400).json({ error: "Product not found in your organization." }); return; }
   }
-  if (updates.package_id) {
+  if (hasOwn(updates, "package_id") && !updates.package_id) {
+    // Switching an order back to a manual product/quantity must not leave the
+    // old package components attached to it.
+    updates.package_components_snapshot = [];
+  } else if (updates.package_id) {
     const { data: packageCheck } = await supabase
       .from("product_packages")
-      .select("id, product_id, package_components")
+      .select("id, product_id, quantity, package_components")
       .eq("id", updates.package_id)
       .single();
     if (!packageCheck) { res.status(400).json({ error: "Package not found." }); return; }
@@ -2899,8 +2804,21 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Reco
       .eq("org_id", req.user!.orgId)
       .single();
     if (!pkgProductCheck) { res.status(400).json({ error: "Package does not belong to your organization." }); return; }
-    updates.package_components_snapshot = await buildPackageComponentSnapshot(req.user!.orgId, packageCheck.package_components ?? []);
+    const orderedQuantity = hasOwn(updates, "quantity") ? updates.quantity : current.quantity;
+    updates.package_components_snapshot = scalePackageComponentLines(
+      await buildPackageComponentSnapshot(req.user!.orgId, packageCheck.package_components ?? []),
+      packageCheck.quantity,
+      orderedQuantity
+    );
     if (updates.product_id === undefined) updates.product_id = packageCheck.product_id;
+  } else if (hasOwn(updates, "quantity") && current.package_components_snapshot) {
+    // Rep/customer edits often update quantity without posting package_id. Keep
+    // the already-snapshotted component recipe in step with the new order size.
+    updates.package_components_snapshot = scalePackageComponentLines(
+      normalizeSnapshotLines(current.package_components_snapshot),
+      current.quantity,
+      updates.quantity
+    );
   }
   if (updates.agent_id !== undefined || updates.agent_location_id !== undefined || updates.city !== undefined || updates.state !== undefined || updates.product_id !== undefined) {
     const effectiveAgentId = updates.agent_id === undefined
@@ -3369,42 +3287,26 @@ router.delete("/:id", requireRole("Owner", "Admin"), async (req, res) => {
         });
 
     if (reversalLocation) {
-      const stockMap = await inventoryAvailabilityMap(
-        existing.agent_id,
-        reversalLocation.id,
-        inventoryLines.map((line) => line.productId)
-      );
       const { data: agentInfo } = await supabase
         .from("agents").select("name").eq("id", existing.agent_id).single();
-      for (const line of inventoryLines) {
-        const currentQty = stockMap.get(line.productId) ?? 0;
-        const restoredQty = currentQty + line.quantity;
-        await applyLocationInventoryDeltaWithMovement({
-          orgId: req.user!.orgId,
+      await applyInventoryMovements({
+        orgId: req.user!.orgId,
+        actorUserId: req.user!.id,
+        actorName: req.user!.name,
+        lines: inventoryLines.map((line) => ({
+          productId: line.productId,
+          productName: line.productName,
+          type: "Delete Reversal",
+          quantity: line.quantity,
+          destinationScope: "agent_location",
+          destinationAgentLocationId: reversalLocation.id,
           agentId: existing.agent_id,
-          agentLocationId: reversalLocation.id,
-          line,
-          previousQuantity: currentQty,
-          nextQuantity: restoredQty,
-          allowReversalFallback: true,
-          movement: {
-            id:            `MOV-${randomUUID()}`,
-            org_id:        req.user!.orgId,
-            product_id:    line.productId,
-            product_name:  line.productName,
-            type:          "Delete Reversal",
-            qty:           line.quantity,
-            balance_after: restoredQty,
-            agent_id:      existing.agent_id,
-            order_id:      req.params.id,
-            by_name:       req.user!.name,
-            by_user_id:    req.user!.id,
-            to_agent_location_id: reversalLocation.id,
-            to_location:   reversalLocation.name,
-            note:          `Stock restored — ${line.productName}${line.isFreeGift ? " (gift)" : ""} returned because order ${req.params.id} was deleted (${currentQty} → ${restoredQty}, agent ${agentInfo?.name ?? existing.agent_id})`
-          }
-        });
-      }
+          orderId: String(req.params.id),
+          toLocation: reversalLocation.name,
+          note: `Stock restored — ${line.productName}${line.isFreeGift ? " (gift)" : ""} returned because order ${req.params.id} was deleted (agent ${agentInfo?.name ?? existing.agent_id})`,
+          idempotencyKey: `order:${req.params.id}:delete-reversal:${line.productId}`
+        }))
+      });
     }
 
     // Remove the auto-created waybill for this order

@@ -64,7 +64,7 @@ export const normalizePackageComponents = (value: unknown): PackageComponent[] =
   return out;
 };
 
-const normalizeSnapshotLines = (value: unknown): OrderInventoryLine[] => {
+export const normalizeSnapshotLines = (value: unknown): OrderInventoryLine[] => {
   if (!Array.isArray(value)) return [];
   const out: OrderInventoryLine[] = [];
   for (const entry of value) {
@@ -180,6 +180,30 @@ const normalizedFreeGiftLines = (value: unknown): OrderInventoryLine[] => {
     });
   }
   return out;
+};
+
+/**
+ * Package component quantities are configured for the package's base quantity
+ * (for example, the 1-piece tier). When an order is upgraded/edited to a
+ * different quantity, carry every physical component along with it. This is
+ * deliberately a ratio rather than a raw multiplication: a 4-piece package
+ * already configured with four hooks must stay at four hooks, while a 1-piece
+ * package edited to four pieces becomes four hooks.
+ */
+export const scalePackageComponentLines = (
+  lines: OrderInventoryLine[],
+  packageQuantity: unknown,
+  orderedQuantity: unknown
+) => {
+  const baseQuantity = Math.max(1, normalizePositiveInt(packageQuantity, 1));
+  const orderQuantity = Math.max(1, normalizePositiveInt(orderedQuantity, baseQuantity));
+  if (baseQuantity === orderQuantity) return lines.map((line) => ({ ...line }));
+
+  const multiplier = orderQuantity / baseQuantity;
+  return lines.map((line) => ({
+    ...line,
+    quantity: Math.max(1, Math.round(line.quantity * multiplier))
+  }));
 };
 
 export async function buildPackageComponentSnapshot(orgId: string, value: unknown) {

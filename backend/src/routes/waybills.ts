@@ -1,9 +1,8 @@
 import { Router } from "express";
 import { fetchAllRowsOrThrow, REPORT_ROW_CEILING } from "../lib/query-limits.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
-import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { syncAgentStockAggregate } from "../lib/agent-locations.js";
+import { applyInventoryMovements, InventoryMovementError } from "../lib/inventory-movements.js";
 import { notifyWaybillEvent } from "../lib/waybill-notifications.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
@@ -106,40 +105,31 @@ async function restoreWaybillSourceStock(
     from_agent_id?: string | null;
     from_agent_location_id?: string | null;
   },
-  items: WaybillItem[]
+  items: WaybillItem[],
+  actor: { id: string; name: string },
+  waybillId: string
 ) {
-  let restoredUnits = 0;
-  for (const item of items) {
-    if (item.quantity <= 0) continue;
-    restoredUnits += item.quantity;
-    if (waybill.from_agent_location_id && waybill.from_agent_id) {
-      const { data: sourceStock } = await supabase
-        .from("agent_location_stock")
-        .select("quantity")
-        .eq("agent_location_id", waybill.from_agent_location_id)
-        .eq("product_id", item.product_id)
-        .single();
-      const balanceAfter = (sourceStock?.quantity ?? 0) + item.quantity;
-      await supabase.from("agent_location_stock").upsert({
-        org_id: orgId,
-        agent_id: waybill.from_agent_id,
-        agent_location_id: waybill.from_agent_location_id,
-        product_id: item.product_id,
-        quantity: balanceAfter
-      }, { onConflict: "agent_location_id,product_id" });
-      await syncAgentStockAggregate(orgId, waybill.from_agent_id, item.product_id);
-    } else {
-      const { data: product } = await supabase
-        .from("products")
-        .select("warehouse_stock")
-        .eq("id", item.product_id)
-        .single();
-      await supabase.from("products").update({
-        warehouse_stock: Number(product?.warehouse_stock ?? 0) + item.quantity
-      }).eq("id", item.product_id);
-    }
-  }
-  return restoredUnits;
+  const validItems = items.filter((item) => item.quantity > 0);
+  if (validItems.length === 0) return 0;
+  await applyInventoryMovements({
+    orgId,
+    actorUserId: actor.id,
+    actorName: actor.name,
+    lines: validItems.map((item) => ({
+      productId: item.product_id,
+      productName: item.product_name,
+      type: "Waybill In",
+      quantity: item.quantity,
+      destinationScope: waybill.from_agent_location_id ? "agent_location" : "warehouse",
+      destinationAgentLocationId: waybill.from_agent_location_id ?? null,
+      agentId: waybill.from_agent_id ?? null,
+      waybillId,
+      toLocation: waybill.from_agent_location_id ? "Original sending hub" : "Warehouse",
+      note: `Waybill ${waybillId} deleted while in transit — stock restored to its source`,
+      idempotencyKey: `waybill:${waybillId}:delete-restore:${item.product_id}`
+    }))
+  });
+  return validItems.reduce((sum, item) => sum + item.quantity, 0);
 }
 
 router.get("/", async (req, res) => {
@@ -278,21 +268,6 @@ router.post("/",
       planned.push({ item, balanceAfter: Math.max(0, available - item.quantity) });
     }
 
-    // Deduct each item from the source.
-    for (const { item, balanceAfter } of planned) {
-      if (d.fromAgentLocationId) {
-        const { error: stockError } = await supabase
-          .from("agent_location_stock")
-          .update({ quantity: balanceAfter })
-          .eq("agent_location_id", d.fromAgentLocationId)
-          .eq("product_id", item.product_id);
-        if (stockError) { res.status(500).json({ error: stockError.message }); return; }
-        if (fromAgentId) await syncAgentStockAggregate(req.user!.orgId, fromAgentId, item.product_id);
-      } else {
-        await supabase.from("products").update({ warehouse_stock: balanceAfter }).eq("id", item.product_id);
-      }
-    }
-
     const firstItem = items[0];
     const totalQty = items.reduce((sum, i) => sum + i.quantity, 0);
     const label = waybillItemsLabel(items);
@@ -327,26 +302,39 @@ router.post("/",
       });
     }
 
-    // Auto-log a "Waybill Out" stock movement per item.
-    for (const { item, balanceAfter } of planned) {
-      await supabase.from("stock_movements").insert({
-        id:            `MOV-${randomUUID()}`,
-        org_id:        req.user!.orgId,
-        product_id:    item.product_id,
-        product_name:  item.product_name,
-        type:          "Waybill Out",
-        qty:           item.quantity,
-        balance_after: balanceAfter,
-        agent_id:      toAgentId ?? fromAgentId ?? null,
-        by_name:       req.user!.name,
-        by_user_id:    req.user!.id,
-        waybill_id:    d.id,
-        from_agent_location_id: d.fromAgentLocationId ?? null,
-        to_agent_location_id: d.toAgentLocationId ?? null,
-        from_location: d.fromLocation ?? null,
-        to_location:   d.toLocation ?? null,
-        note:          `Waybill ${d.id} dispatched${d.carrier ? ` via ${d.carrier}` : ""}`
+    // Deduct every line and write every Waybill Out row in one transaction.
+    // If any product is short at commit time, none of the lines move.
+    try {
+      await applyInventoryMovements({
+        orgId: req.user!.orgId,
+        actorUserId: req.user!.id,
+        actorName: req.user!.name,
+        lines: planned.map(({ item }) => ({
+          productId: item.product_id,
+          productName: item.product_name,
+          type: "Waybill Out",
+          quantity: item.quantity,
+          sourceScope: d.fromAgentLocationId ? "agent_location" : "warehouse",
+          sourceAgentLocationId: d.fromAgentLocationId ?? null,
+          agentId: toAgentId ?? fromAgentId ?? null,
+          waybillId: d.id,
+          fromLocation: d.fromLocation ?? null,
+          toLocation: d.toLocation ?? null,
+          note: `Waybill ${d.id} dispatched${d.carrier ? ` via ${d.carrier}` : ""}`,
+          idempotencyKey: `waybill:${d.id}:dispatch:${item.product_id}`
+        }))
       });
+    } catch (movementError: any) {
+      // The record was inserted first so the retry key is stable. Remove that
+      // empty shell when the atomic stock transaction is rejected.
+      await supabase.from("waybill_records").delete().eq("id", d.id).eq("org_id", req.user!.orgId);
+      await deleteLinkedWaybillExpenses(req.user!.orgId, d.id);
+      const known = movementError instanceof InventoryMovementError ? movementError : null;
+      res.status(known?.status ?? 500).json({
+        error: known?.message ?? "Waybill stock could not be dispatched.",
+        code: known?.code ?? "INVENTORY_MOVEMENT_FAILED"
+      });
+      return;
     }
 
     await notifyWaybillEvent(req.user!.orgId, {
@@ -466,41 +454,44 @@ router.patch("/:id",
         planned.push({ ...change, balanceAfter: available - change.delta });
       }
 
-      // Apply the incremental source-stock changes. Positive delta means more
-      // units left the source; negative delta returns the reduced amount.
-      for (const change of planned) {
-        if (current.from_agent_location_id) {
-          await supabase.from("agent_location_stock").upsert({
-            org_id: req.user!.orgId,
-            agent_id: current.from_agent_id,
-            agent_location_id: current.from_agent_location_id,
-            product_id: change.productId,
-            quantity: change.balanceAfter
-          }, { onConflict: "agent_location_id,product_id" });
-          if (current.from_agent_id) await syncAgentStockAggregate(req.user!.orgId, current.from_agent_id, change.productId);
-        } else {
-          await supabase.from("products").update({ warehouse_stock: change.balanceAfter }).eq("id", change.productId);
-        }
-        await supabase.from("stock_movements").insert({
-          id: `MOV-${randomUUID()}`,
-          org_id: req.user!.orgId,
-          product_id: change.productId,
-          product_name: change.item.product_name,
-          type: change.delta > 0 ? "Waybill Out" : "Waybill In",
-          qty: Math.abs(change.delta),
-          balance_after: change.balanceAfter,
-          agent_id: current.to_agent_id ?? current.from_agent_id ?? current.agent_id ?? null,
-          by_name: req.user!.name,
-          by_user_id: req.user!.id,
-          waybill_id: current.id,
-          from_agent_location_id: current.from_agent_location_id ?? null,
-          to_agent_location_id: current.to_agent_location_id ?? null,
-          from_location: current.from_location ?? null,
-          to_location: current.to_location ?? null,
-          note: change.delta > 0
-            ? `Waybill ${current.id} edited — ${change.delta} additional unit${change.delta === 1 ? "" : "s"} dispatched`
-            : `Waybill ${current.id} edited — ${Math.abs(change.delta)} unit${Math.abs(change.delta) === 1 ? "" : "s"} returned to sender`
+      // Apply all item differences atomically. The current row timestamp is the
+      // edit generation, so a retry after an uncertain response cannot repeat it.
+      const editGeneration = current.updated_at ?? current.created_at ?? "initial";
+      try {
+        await applyInventoryMovements({
+          orgId: req.user!.orgId,
+          actorUserId: req.user!.id,
+          actorName: req.user!.name,
+          lines: planned.map((change) => ({
+            productId: change.productId,
+            productName: change.item.product_name,
+            type: change.delta > 0 ? "Waybill Out" : "Waybill In",
+            quantity: Math.abs(change.delta),
+            sourceScope: change.delta > 0
+              ? (current.from_agent_location_id ? "agent_location" : "warehouse")
+              : null,
+            sourceAgentLocationId: change.delta > 0 ? current.from_agent_location_id : null,
+            destinationScope: change.delta < 0
+              ? (current.from_agent_location_id ? "agent_location" : "warehouse")
+              : null,
+            destinationAgentLocationId: change.delta < 0 ? current.from_agent_location_id : null,
+            agentId: current.to_agent_id ?? current.from_agent_id ?? current.agent_id ?? null,
+            waybillId: current.id,
+            fromLocation: current.from_location ?? null,
+            toLocation: current.to_location ?? null,
+            note: change.delta > 0
+              ? `Waybill ${current.id} edited — ${change.delta} additional unit${change.delta === 1 ? "" : "s"} dispatched`
+              : `Waybill ${current.id} edited — ${Math.abs(change.delta)} unit${Math.abs(change.delta) === 1 ? "" : "s"} returned to sender`,
+            idempotencyKey: `waybill:${current.id}:edit:${editGeneration}:${change.productId}`
+          }))
         });
+      } catch (movementError: any) {
+        const known = movementError instanceof InventoryMovementError ? movementError : null;
+        res.status(known?.status ?? 500).json({
+          error: known?.message ?? "Waybill item stock could not be updated.",
+          code: known?.code ?? "INVENTORY_MOVEMENT_FAILED"
+        });
+        return;
       }
     }
     const nextFromLocationId = Object.prototype.hasOwnProperty.call(updates, "from_agent_location_id")
@@ -571,13 +562,55 @@ router.patch("/:id/status",
       .eq("id", req.params.id).eq("org_id", req.user!.orgId)
       .single();
     if (currentError || !current) { res.status(404).json({ error: "Waybill not found." }); return; }
-    if (current.status !== status && WAYBILL_TERMINAL_STATUSES.has(current.status) && WAYBILL_TERMINAL_STATUSES.has(status)) {
+    if (current.status !== status && WAYBILL_TERMINAL_STATUSES.has(current.status)) {
       res.status(409).json({
         error: `Waybill is already ${current.status}. Create an inventory correction instead of changing it to ${status}, so stock is not counted twice.`,
         code: "WAYBILL_TERMINAL_STATUS_LOCKED"
       });
       return;
     }
+
+    // Dispatch already removed the units from the sender. A successful receipt
+    // moves them into the destination; a return/cancellation restores them to
+    // the sender. Defective/missing stock stays out of available inventory, so
+    // those statuses do not apply a second quantity change.
+    if (["Received", "Returned", "Cancelled"].includes(status)) {
+      const destinationIsReceiver = status === "Received";
+      const destinationLocationId = destinationIsReceiver
+        ? current.to_agent_location_id
+        : current.from_agent_location_id;
+      try {
+        await applyInventoryMovements({
+          orgId: req.user!.orgId,
+          actorUserId: req.user!.id,
+          actorName: req.user!.name,
+          lines: waybillItemsOf(current).map((item) => ({
+            productId: item.product_id,
+            productName: item.product_name,
+            type: "Waybill In",
+            quantity: item.quantity,
+            destinationScope: destinationLocationId ? "agent_location" : "warehouse",
+            destinationAgentLocationId: destinationLocationId ?? null,
+            agentId: destinationIsReceiver
+              ? (current.to_agent_id ?? current.agent_id ?? null)
+              : (current.from_agent_id ?? null),
+            waybillId: current.id,
+            fromLocation: current.from_location ?? null,
+            toLocation: current.to_location ?? null,
+            note: `Waybill ${current.id} marked ${status}${notes ? ` — ${notes}` : ""}`,
+            idempotencyKey: `waybill:${current.id}:status:${status}:${item.product_id}`
+          }))
+        });
+      } catch (movementError: any) {
+        const known = movementError instanceof InventoryMovementError ? movementError : null;
+        res.status(known?.status ?? 500).json({
+          error: known?.message ?? "Waybill stock could not be completed.",
+          code: known?.code ?? "INVENTORY_MOVEMENT_FAILED"
+        });
+        return;
+      }
+    }
+
     const updates: Record<string, unknown> = { status };
     if (status === "Received" && receivedDate) updates.received_date = receivedDate;
     if (notes !== undefined) updates.notes = notes;
@@ -587,101 +620,6 @@ router.patch("/:id/status",
       .eq("id", req.params.id).eq("org_id", req.user!.orgId)
       .select().single();
     if (error) { res.status(500).json({ error: error.message }); return; }
-
-    // Auto-log stock movements for terminal statuses — once per line item.
-    if (data && ["Received", "Returned", "Cancelled", "Defective", "Missing"].includes(status)) {
-      const statusItems = waybillItemsOf(data);
-      const movType = status === "Received" ? "Waybill In"
-        : status === "Returned" || status === "Cancelled" ? "Waybill In"
-        : "Correction";
-      // "In" movements add stock back; "Correction" (Defective/Missing) removes it.
-      const isInbound = movType === "Waybill In";
-      for (const item of statusItems) {
-        // Idempotency guard: re-saving the same terminal status must not add or
-        // remove stock again. If a prior attempt set the status but failed before
-        // writing its movement, this check lets the retry repair only the missing
-        // product line.
-        const { data: existingMovement } = await supabase
-          .from("stock_movements")
-          .select("id")
-          .eq("org_id", req.user!.orgId)
-          .eq("waybill_id", data.id)
-          .eq("product_id", item.product_id)
-          .eq("type", movType)
-          .ilike("note", `Waybill ${data.id} marked ${status}%`)
-          .limit(1);
-        if (existingMovement && existingMovement.length > 0) continue;
-
-        const { data: product } = await supabase
-          .from("products").select("warehouse_stock, agent_stock").eq("id", item.product_id).single();
-        let balanceAfter = 0;
-        if (status === "Received") {
-          if (data.to_agent_location_id && data.to_agent_id) {
-            const { data: destStock } = await supabase
-              .from("agent_location_stock")
-              .select("quantity")
-              .eq("agent_location_id", data.to_agent_location_id)
-              .eq("product_id", item.product_id)
-              .single();
-            balanceAfter = (destStock?.quantity ?? 0) + item.quantity;
-            await supabase.from("agent_location_stock").upsert({
-              org_id: req.user!.orgId,
-              agent_id: data.to_agent_id,
-              agent_location_id: data.to_agent_location_id,
-              product_id: item.product_id,
-              quantity: balanceAfter
-            }, { onConflict: "agent_location_id,product_id" });
-            await syncAgentStockAggregate(req.user!.orgId, data.to_agent_id, item.product_id);
-          } else {
-            balanceAfter = (product?.warehouse_stock ?? 0) + item.quantity;
-            await supabase.from("products").update({ warehouse_stock: balanceAfter }).eq("id", item.product_id);
-          }
-        } else if (status === "Cancelled") {
-          if (data.from_agent_location_id && data.from_agent_id) {
-            const { data: sourceStock } = await supabase
-              .from("agent_location_stock")
-              .select("quantity")
-              .eq("agent_location_id", data.from_agent_location_id)
-              .eq("product_id", item.product_id)
-              .single();
-            balanceAfter = (sourceStock?.quantity ?? 0) + item.quantity;
-            await supabase.from("agent_location_stock").upsert({
-              org_id: req.user!.orgId,
-              agent_id: data.from_agent_id,
-              agent_location_id: data.from_agent_location_id,
-              product_id: item.product_id,
-              quantity: balanceAfter
-            }, { onConflict: "agent_location_id,product_id" });
-            await syncAgentStockAggregate(req.user!.orgId, data.from_agent_id, item.product_id);
-          } else {
-            balanceAfter = (product?.warehouse_stock ?? 0) + item.quantity;
-            await supabase.from("products").update({ warehouse_stock: balanceAfter }).eq("id", item.product_id);
-          }
-        } else {
-          balanceAfter = isInbound
-            ? (product?.warehouse_stock ?? 0) + item.quantity
-            : Math.max(0, (product?.warehouse_stock ?? 0) - item.quantity);
-        }
-        await supabase.from("stock_movements").insert({
-          id:            `MOV-${randomUUID()}`,
-          org_id:        req.user!.orgId,
-          product_id:    item.product_id,
-          product_name:  item.product_name,
-          type:          movType,
-          qty:           item.quantity,
-          balance_after: balanceAfter,
-          agent_id:      data.to_agent_id ?? data.from_agent_id ?? data.agent_id ?? null,
-          by_name:       req.user!.name,
-          by_user_id:    req.user!.id,
-          waybill_id:    data.id,
-          from_agent_location_id: data.from_agent_location_id ?? null,
-          to_agent_location_id: data.to_agent_location_id ?? null,
-          from_location: data.from_location ?? null,
-          to_location:   data.to_location ?? null,
-          note:          `Waybill ${data.id} marked ${status}${notes ? ` — ${notes}` : ""}`
-        });
-      }
-    }
 
     if (data && status === "Cancelled") {
       await deleteLinkedWaybillExpenses(req.user!.orgId, data.id);
@@ -720,12 +658,27 @@ router.delete("/:id",
     }
 
     const items = waybillItemsOf(data);
-    const restoredUnits = data.status === "In Transit"
-      ? await restoreWaybillSourceStock(req.user!.orgId, data, items)
-      : 0;
+    let restoredUnits = 0;
+    if (data.status === "In Transit") {
+      try {
+        restoredUnits = await restoreWaybillSourceStock(
+          req.user!.orgId,
+          data,
+          items,
+          { id: req.user!.id, name: req.user!.name },
+          data.id
+        );
+      } catch (movementError: any) {
+        const known = movementError instanceof InventoryMovementError ? movementError : null;
+        res.status(known?.status ?? 500).json({
+          error: known?.message ?? "Waybill stock could not be restored.",
+          code: known?.code ?? "INVENTORY_MOVEMENT_FAILED"
+        });
+        return;
+      }
+    }
 
     await deleteLinkedWaybillExpenses(req.user!.orgId, data.id);
-    await supabase.from("stock_movements").delete().eq("org_id", req.user!.orgId).eq("waybill_id", data.id);
     const { error: deleteError } = await supabase
       .from("waybill_records")
       .delete()

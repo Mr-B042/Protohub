@@ -249,7 +249,7 @@ export async function resolveAgentLocationForOrder(
     const aCityMatch = wantedCity && normalizeCity(a.city).toLowerCase() === wantedCity ? 1 : 0;
     const bCityMatch = wantedCity && normalizeCity(b.city).toLowerCase() === wantedCity ? 1 : 0;
     if (aCityMatch !== bCityMatch) return bCityMatch - aCityMatch;
-    return a.name.localeCompare(b.name);
+    return String(a.name ?? "").localeCompare(String(b.name ?? ""));
   });
 
   return sorted[0] ?? null;
@@ -257,58 +257,25 @@ export async function resolveAgentLocationForOrder(
 
 export async function syncAgentStockAggregate(orgId: string | string[], agentId: string, productId: string) {
   const safeOrgId = normalizeOrgId(orgId);
-  const { data: rows, error } = await supabase
-    .from("agent_location_stock")
-    .select("quantity, defective, missing")
-    .eq("org_id", safeOrgId)
-    .eq("agent_id", agentId)
-    .eq("product_id", productId);
+  const { error } = await supabase.rpc("sync_inventory_aggregates", {
+    p_org_id: safeOrgId,
+    p_agent_id: agentId,
+    p_product_id: productId
+  });
   if (error) throw error;
 
-  const totals = (rows ?? []).reduce((acc, row) => ({
-    quantity: acc.quantity + Math.max(0, Number(row.quantity ?? 0)),
-    defective: acc.defective + Math.max(0, Number(row.defective ?? 0)),
-    missing: acc.missing + Math.max(0, Number(row.missing ?? 0))
-  }), { quantity: 0, defective: 0, missing: 0 });
-
-  if (totals.quantity <= 0 && totals.defective <= 0 && totals.missing <= 0) {
-    const { error: deleteError } = await supabase
-      .from("agent_stock")
-      .delete()
-      .eq("agent_id", agentId)
-      .eq("product_id", productId);
-    if (deleteError) throw deleteError;
-  } else {
-    const { error: upsertError } = await supabase
-      .from("agent_stock")
-      .upsert({
-        agent_id: agentId,
-        product_id: productId,
-        quantity: totals.quantity,
-        defective: totals.defective,
-        missing: totals.missing
-      }, { onConflict: "agent_id,product_id" });
-    if (upsertError) throw upsertError;
-  }
-
-  // Keep the denormalized products.agent_stock rollup in sync with the live sum
-  // of agent_stock for this product. Order deliveries deduct agent_stock through
-  // this function but historically left products.agent_stock untouched, so that
-  // product-level total drifted chronically overstated (it's read by waybill and
-  // agent stock checks). Re-summing here keeps it correct on every inventory delta.
-  const { data: productRows, error: productSumError } = await supabase
+  const { data, error: readError } = await supabase
     .from("agent_stock")
-    .select("quantity")
-    .eq("product_id", productId);
-  if (productSumError) throw productSumError;
-  const productAgentTotal = (productRows ?? []).reduce((sum, row) => sum + Math.max(0, Number(row.quantity ?? 0)), 0);
-  const { error: productUpdateError } = await supabase
-    .from("products")
-    .update({ agent_stock: productAgentTotal })
-    .eq("id", productId);
-  if (productUpdateError) throw productUpdateError;
-
-  return totals;
+    .select("quantity, defective, missing")
+    .eq("agent_id", agentId)
+    .eq("product_id", productId)
+    .maybeSingle();
+  if (readError) throw readError;
+  return {
+    quantity: Math.max(0, Number(data?.quantity ?? 0)),
+    defective: Math.max(0, Number(data?.defective ?? 0)),
+    missing: Math.max(0, Number(data?.missing ?? 0))
+  };
 }
 
 export async function buildAgentLocationSnapshot(

@@ -40363,24 +40363,10 @@ ${waybillLineItems(w).length > 1
     if (!selectedOrder) {
       return;
     }
-    // Snapshot full state needed to undo if the server rejects the delete:
-    // the order itself, the warehouse-stock restore, the audit movement.
+    // The API owns the stock reversal. The browser only removes the order
+    // optimistically; writing warehouse stock here as well used to restore a
+    // delivered order twice (once here, once to the original hub in the API).
     const orderSnapshot = selectedOrder;
-    const productSnapshot = selectedOrder.stockDeducted && selectedOrder.productId
-      ? products.find((p) => p.id === selectedOrder.productId)
-      : null;
-    let restoreMovementId: string | null = null;
-    if (selectedOrder.stockDeducted && selectedOrder.productId) {
-      const product = products.find((p) => p.id === selectedOrder.productId);
-      const qty = quantityForOrder(selectedOrder);
-      if (product) {
-        const movId = makeMovementId();
-        restoreMovementId = movId;
-        setProducts((prev) => prev.map((p) => p.id === product.id ? { ...p, warehouseStock: p.warehouseStock + qty, unitsSold: Math.max(0, p.unitsSold - qty) } : p));
-        setStockMovements((prev) => [{ id: movId, date: new Date().toISOString(), productId: product.id, productName: product.name, type: "Return", qty, balanceAfter: product.warehouseStock + qty, order: selectedOrder.id, by: ownerName, note: `Stock restored: order ${selectedOrder.id} deleted` }, ...prev]);
-        stockApi.update({ productId: product.id, change: qty, note: `Stock restored: order ${selectedOrder.id} deleted` }).catch(() => { /* movement reconciles on next stockApi.movements load */ });
-      }
-    }
     const _doId = selectedOrder.id;
     const _doStockDeducted = selectedOrder.stockDeducted;
     setTrackedOrders((value) => value.filter((order) => order.id !== selectedOrder.id));
@@ -40394,10 +40380,9 @@ ${waybillLineItems(w).length > 1
     }
     showToast(`${_doId} deleted${_doStockDeducted ? " and stock restored" : ""}.`);
     ordersApi.delete(_doId).catch((err: any) => {
-      // Restore the order; restore stock + units_sold; remove the audit movement we synthesized.
+      // Restore only the optimistic order row. Inventory was never written by
+      // the browser, so there is no second balance to compensate.
       setTrackedOrders((value) => [orderSnapshot, ...value]);
-      if (productSnapshot) setProducts((prev) => prev.map((p) => p.id === productSnapshot.id ? productSnapshot : p));
-      if (restoreMovementId) setStockMovements((prev) => prev.filter((m) => m.id !== restoreMovementId));
       showToast(`Failed to delete ${_doId}: ${err?.message ?? "please retry"}.`);
     });
   };
@@ -41548,15 +41533,9 @@ ${waybillLineItems(w).length > 1
         })
       );
       setStockMovements((prev) => [...newMovements, ...prev]);
-      Promise.allSettled(
-        [...productUpdates].map(([productId, qty]) =>
-          stockApi.update({ productId, change: qty, note: `Stock returned: agent "${selectedAgent.name}" deleted` })
-        )
-      ).then((results) => {
-        if (results.some((r) => r.status === "rejected")) {
-          showToast("Warehouse stock sync failed for some products - please reload to verify counts.");
-        }
-      });
+      // The delete endpoint returns every hub row and writes its ledger entry
+      // before deleting the agent. A second stockApi.update here used to credit
+      // the warehouse independently and could survive even when deletion failed.
     }
 
     // Unassign this agent from historical (non-active) orders so they don't show a ghost agent name

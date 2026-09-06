@@ -1,132 +1,156 @@
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 
-// Nightly check: does each hub's stored balance still match the balance its
-// ledger explains?
-//
-// ⚠️ WHY THIS EXISTS. On 2026-08-26 nine units vanished from four products at
-// one hub inside four seconds, with no stock movement, no order, no waybill and
-// no HTTP request that mutates stock. Nobody noticed until a shelf count came
-// up short days later, and reconstructing it by hand took dozens of queries.
-//
-// This is the fifth drift incident on this system. The check below is the one
-// query that would have caught every one of them the following morning.
-//
-// ⚠️ IT ALERTS ON *CHANGE*, NOT ON DRIFT. Hubs stocked before location-level
-// ledgering existed carry permanent positive drift - their opening balances
-// have no movements behind them. 26 pairs were in that state at install.
-// Alerting on those nightly would train everyone to ignore the alert, which is
-// exactly how a real shortfall goes unseen. Migration 238 seeded those into
-// agent_stock_drift_baseline; this compares against it and reports only what
-// moved.
-
+// Migration 247 establishes opening balances and records every later balance
+// delta with its ledger row in the same transaction. These views therefore
+// report exact post-migration drift across all inventory stores and caches.
 const DRIFT_TYPE = "agent_stock_drift";
 
-type DriftRow = {
-  org_id: string;
-  agent_id: string;
-  agent_location_id: string;
-  product_id: string;
-  stored_quantity: number;
-  ledger_quantity: number;
-  drift: number;
+type Finding = {
+  orgId: string;
+  key: string;
+  signature: string;
+  title: string;
+  message: string;
 };
 
-type Baseline = { agent_location_id: string; product_id: string; drift: number };
-
-const key = (locationId: string, productId: string) => `${locationId}|${productId}`;
-
-/**
- * One notification per hub/product per drift value.
- *
- * ⚠️ Keyed on the DRIFT, not just the pair. A shortfall that gets worse must be
- * able to raise a fresh alarm, while a nightly job must not re-send the same
- * unresolved figure every single night until someone mutes it.
- */
-async function alreadyReported(orgId: string, locationId: string, productId: string, drift: number) {
+async function alreadyReported(finding: Finding) {
+  const marker = `[inventory:${finding.key}@${finding.signature}]`;
   const { data } = await supabase
     .from("system_notifications")
     .select("id")
-    .eq("org_id", orgId)
+    .eq("org_id", finding.orgId)
     .eq("type", DRIFT_TYPE)
-    .ilike("message", `%[${key(locationId, productId)}@${drift}]%`)
+    .ilike("message", `%${marker}%`)
     .limit(1);
-  return Boolean(data && data.length > 0);
+  return Boolean(data?.length);
 }
 
-export async function runAgentStockDriftCheck() {
-  const [{ data: rows, error }, { data: baselineRows, error: baselineError }] = await Promise.all([
-    supabase.from("agent_stock_reconciliation")
-      .select("org_id, agent_id, agent_location_id, product_id, stored_quantity, ledger_quantity, drift"),
-    supabase.from("agent_stock_drift_baseline").select("agent_location_id, product_id, drift")
-  ]);
-  if (error) throw error;
-  if (baselineError) throw baselineError;
+const signed = (value: unknown) => {
+  const number = Number(value ?? 0);
+  return `${number > 0 ? "+" : ""}${number}`;
+};
 
-  const baseline = new Map<string, number>();
-  for (const row of (baselineRows ?? []) as Baseline[]) {
-    baseline.set(key(row.agent_location_id, row.product_id), Number(row.drift ?? 0));
+export async function runAgentStockDriftCheck() {
+  const [balanceResult, aggregateResult, pdaResult] = await Promise.all([
+    supabase.from("inventory_balance_reconciliation").select("*"),
+    supabase.from("inventory_aggregate_reconciliation").select("*"),
+    supabase.from("pda_inventory_reconciliation").select("*")
+  ]);
+  if (balanceResult.error) throw balanceResult.error;
+  if (aggregateResult.error) throw aggregateResult.error;
+  if (pdaResult.error) throw pdaResult.error;
+
+  const balanceRows = (balanceResult.data ?? []).filter((row: any) => Number(row.drift ?? 0) !== 0);
+  const aggregateRows = (aggregateResult.data ?? []).filter((row: any) =>
+    [row.quantity_drift, row.defective_drift, row.missing_drift, row.product_cache_drift]
+      .some((value) => Number(value ?? 0) !== 0)
+  );
+  const pdaRows = (pdaResult.data ?? []).filter((row: any) =>
+    [row.available_drift, row.reserved_drift, row.out_for_delivery_drift,
+      row.damaged_drift, row.missing_drift, row.awaiting_investigation_drift]
+      .some((value) => Number(value ?? 0) !== 0)
+  );
+
+  const productIds = [...new Set([
+    ...balanceRows.map((row: any) => row.product_id),
+    ...aggregateRows.map((row: any) => row.product_id),
+    ...pdaRows.map((row: any) => row.product_id)
+  ].filter((id): id is string => typeof id === "string" && /^[0-9a-f-]{36}$/i.test(id)))];
+  const locationIds = [...new Set(balanceRows.map((row: any) => row.agent_location_id).filter(Boolean))];
+  const agentIds = [...new Set(aggregateRows.map((row: any) => row.agent_id).filter(Boolean))];
+  const pdaAgentIds = [...new Set(pdaRows.map((row: any) => row.agent_id).filter(Boolean))];
+
+  const [products, locations, agents, pdaAgents] = await Promise.all([
+    productIds.length ? supabase.from("products").select("id, name").in("id", productIds) : Promise.resolve({ data: [] }),
+    locationIds.length ? supabase.from("agent_locations").select("id, name").in("id", locationIds) : Promise.resolve({ data: [] }),
+    agentIds.length ? supabase.from("agents").select("id, name").in("id", agentIds) : Promise.resolve({ data: [] }),
+    pdaAgentIds.length ? supabase.from("personal_delivery_agents").select("id, full_name").in("id", pdaAgentIds) : Promise.resolve({ data: [] })
+  ]);
+  const productName = new Map((products.data ?? []).map((row: any) => [row.id, String(row.name ?? row.id)]));
+  const locationName = new Map((locations.data ?? []).map((row: any) => [row.id, String(row.name ?? row.id)]));
+  const agentName = new Map((agents.data ?? []).map((row: any) => [row.id, String(row.name ?? row.id)]));
+  const pdaAgentName = new Map((pdaAgents.data ?? []).map((row: any) => [row.id, String(row.full_name ?? row.id)]));
+
+  const findings: Finding[] = [];
+  for (const row of balanceRows as any[]) {
+    const place = row.scope === "warehouse"
+      ? "Warehouse"
+      : (locationName.get(row.agent_location_id) ?? "Unknown hub");
+    const product = productName.get(row.product_id) ?? row.product_id;
+    const drift = Number(row.drift ?? 0);
+    findings.push({
+      orgId: row.org_id,
+      key: `balance:${row.scope}:${row.agent_location_id ?? "warehouse"}:${row.product_id}`,
+      signature: String(drift),
+      title: `Inventory and ledger differ — ${place}`,
+      message: `${product} at ${place} stores ${row.stored_quantity}, while its atomic ledger explains ${row.ledger_quantity} (${signed(drift)}).`
+    });
+  }
+  for (const row of aggregateRows as any[]) {
+    const product = productName.get(row.product_id) ?? row.product_id;
+    const agent = agentName.get(row.agent_id) ?? "Unknown agent";
+    const values = [row.quantity_drift, row.defective_drift, row.missing_drift, row.product_cache_drift].map(Number);
+    findings.push({
+      orgId: row.org_id,
+      key: `aggregate:${row.agent_id}:${row.product_id}`,
+      signature: values.join(","),
+      title: `Inventory cache differs — ${agent}`,
+      message: `${product} cache differences for ${agent}: available ${signed(values[0])}, defective ${signed(values[1])}, missing ${signed(values[2])}, product total ${signed(values[3])}.`
+    });
+  }
+  for (const row of pdaRows as any[]) {
+    const agent = pdaAgentName.get(row.agent_id) ?? "Unknown delivery agent";
+    const product = productName.get(row.product_id) ?? row.product_id;
+    const values = [row.available_drift, row.reserved_drift, row.out_for_delivery_drift,
+      row.damaged_drift, row.missing_drift, row.awaiting_investigation_drift].map(Number);
+    findings.push({
+      orgId: row.org_id,
+      key: `pda:${row.agent_id}:${row.product_id}`,
+      signature: values.join(","),
+      title: `Delivery-agent inventory differs — ${agent}`,
+      message: `${product} bucket differences for ${agent}: available ${signed(values[0])}, reserved ${signed(values[1])}, out ${signed(values[2])}, damaged ${signed(values[3])}, missing ${signed(values[4])}, investigation ${signed(values[5])}.`
+    });
   }
 
-  const changed = ((rows ?? []) as DriftRow[]).filter(
-    (row) => Number(row.drift ?? 0) !== (baseline.get(key(row.agent_location_id, row.product_id)) ?? 0)
-  );
-  if (changed.length === 0) return { checked: (rows ?? []).length, flagged: 0, alerted: 0 };
+  if (findings.length === 0) {
+    return {
+      checked: (balanceResult.data?.length ?? 0) + (aggregateResult.data?.length ?? 0) + (pdaResult.data?.length ?? 0),
+      flagged: 0,
+      alerted: 0
+    };
+  }
 
-  // Names, so an alert reads as a place and a product rather than two UUIDs.
-  const locationIds = [...new Set(changed.map((row) => row.agent_location_id))];
-  const productIds = [...new Set(changed.map((row) => row.product_id))];
-  const [{ data: locations }, { data: products }] = await Promise.all([
-    supabase.from("agent_locations").select("id, name").in("id", locationIds),
-    supabase.from("products").select("id, name").in("id", productIds)
-  ]);
-  const locationName = new Map((locations ?? []).map((row: any) => [row.id, row.name as string]));
-  const productName = new Map((products ?? []).map((row: any) => [row.id, row.name as string]));
-
-  // Owners and Admins - this is a money question, not a rep's task.
-  const { data: recipients } = await supabase
+  const { data: recipients, error: recipientError } = await supabase
     .from("users").select("id, org_id, role, active")
     .in("role", ["Owner", "Admin", "Inventory Manager"]).eq("active", true);
+  if (recipientError) throw recipientError;
 
   let alerted = 0;
-  for (const row of changed) {
-    const orgId = row.org_id;
-    const drift = Number(row.drift ?? 0);
-    if (await alreadyReported(orgId, row.agent_location_id, row.product_id, drift)) continue;
-
-    const hub = locationName.get(row.agent_location_id) ?? "a hub";
-    const product = productName.get(row.product_id) ?? "a product";
-    // Short is the dangerous direction: stock left the books with nothing
-    // recording where it went. Over is usually a missing inbound movement.
-    const short = drift < 0;
-    const title = short
-      ? `Stock short of its ledger — ${hub}`
-      : `Stock above its ledger — ${hub}`;
-    const message =
-      `${product} at ${hub} shows ${row.stored_quantity}, but its movements only account for `
-      + `${row.ledger_quantity} (${drift > 0 ? "+" : ""}${drift}). `
-      + (short
-        ? "Units have left the books with no movement recording it. Check agent_stock_audit for who changed the row."
-        : "There is more stock on the books than inbound movements explain.")
-      + ` [${key(row.agent_location_id, row.product_id)}@${drift}]`;
-
-    for (const user of (recipients ?? []).filter((u: any) => u.org_id === orgId)) {
-      const { error: insertError } = await supabase.from("system_notifications").insert({
-        org_id: orgId,
+  for (const finding of findings) {
+    if (await alreadyReported(finding)) continue;
+    const marker = `[inventory:${finding.key}@${finding.signature}]`;
+    for (const user of (recipients ?? []).filter((row: any) => row.org_id === finding.orgId)) {
+      const { error } = await supabase.from("system_notifications").insert({
+        org_id: finding.orgId,
         recipient_id: (user as any).id,
         type: DRIFT_TYPE,
-        title,
-        message,
+        title: finding.title,
+        message: `${finding.message} Direct stock writes are blocked; investigate this immediately. ${marker}`,
         link: "#/inventory",
         read: false
       });
-      if (insertError) {
-        logger.warn("agent stock drift insert failed", { orgId, hub, product, error: insertError.message });
-        continue;
+      if (error) {
+        logger.warn("inventory drift notification failed", { key: finding.key, error: error.message });
+      } else {
+        alerted += 1;
       }
-      alerted += 1;
     }
   }
 
-  return { checked: (rows ?? []).length, flagged: changed.length, alerted };
+  return {
+    checked: (balanceResult.data?.length ?? 0) + (aggregateResult.data?.length ?? 0) + (pdaResult.data?.length ?? 0),
+    flagged: findings.length,
+    alerted
+  };
 }
