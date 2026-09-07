@@ -298,6 +298,29 @@ router.post("/:id/dedicated-handlers/reset-counts",
 router.delete("/:id",
   requireRole("Owner", "Admin"),
   async (req, res) => {
+    // ⚠️ REFUSE BEFORE THE DATABASE DOES. Migration 248 guards products against
+    // any write that changes a stock figure outside the atomic writers, and a
+    // DELETE of a product still holding stock is exactly that. Without this
+    // check the guard fires and the officer gets a 500 carrying
+    // "Use the inventory action API so the balance and ledger are committed
+    // together" - true of a deduction, meaningless as an answer to "delete this
+    // product". 23 of the 25 products currently hold stock, so this is the
+    // normal case, not an edge one.
+    const { data: existing } = await supabase
+      .from("products")
+      .select("name, warehouse_stock, agent_stock")
+      .eq("id", req.params.id)
+      .eq("org_id", req.user!.orgId)
+      .maybeSingle();
+    if (!existing) { res.status(404).json({ error: "Product not found." }); return; }
+    const held = Math.max(0, Number(existing.warehouse_stock ?? 0)) + Math.max(0, Number(existing.agent_stock ?? 0));
+    if (held > 0) {
+      res.status(409).json({
+        error: `${existing.name} still holds ${held.toLocaleString()} unit${held === 1 ? "" : "s"} of stock. Move or write off the stock first - deleting it here would leave the balance and the ledger disagreeing.`
+      });
+      return;
+    }
+
     const { error } = await supabase
       .from("products")
       .delete()
