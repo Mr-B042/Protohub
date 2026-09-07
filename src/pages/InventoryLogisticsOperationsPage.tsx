@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import InventoryOpsStockByProduct from "./InventoryOpsStockByProduct";
 import InventoryOpsStockByState from "./InventoryOpsStockByState";
+import InventoryOpsProductAvailability from "./InventoryOpsProductAvailability";
 import InventoryOpsStockByAgent from "./InventoryOpsStockByAgent";
 import InventoryOpsCoverage from "./InventoryOpsCoverage";
 import InventoryOpsRestockForecast from "./InventoryOpsRestockForecast";
@@ -33,6 +34,7 @@ export type InventoryOperationsAction =
   | "stock-products"
   | "stock-states"
   | "stock-agents"
+  | "product-availability"
   | "delivered-reconciliation"
   | "coverage"
   | "forecast"
@@ -342,6 +344,7 @@ export function InventoryLogisticsOperationsPage({
   if (section === "stock-products") return <InventoryOpsStockByProduct {...shared} onOpenProduct={onOpenProduct} />;
   if (section === "delivered-reconciliation") return <DeliveredStockReconciliationPage />;
   if (section === "stock-states") return <InventoryOpsStockByState {...shared} onOpenForecast={() => onAction("forecast")} />;
+  if (section === "product-availability") return <InventoryOpsProductAvailability products={products} stateHubs={stateHubs} orders={orders} waybills={waybills} onOpenAgent={onOpenAgent} />;
   if (section === "stock-agents") {
     return (
       <InventoryOpsStockByAgent
