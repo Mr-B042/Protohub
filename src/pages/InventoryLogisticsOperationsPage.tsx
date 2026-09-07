@@ -4,6 +4,7 @@ import InventoryOpsStockByState from "./InventoryOpsStockByState";
 import InventoryOpsStockByAgent from "./InventoryOpsStockByAgent";
 import InventoryOpsCoverage from "./InventoryOpsCoverage";
 import InventoryOpsRestockForecast from "./InventoryOpsRestockForecast";
+import DeliveredStockReconciliationPage from "./DeliveredStockReconciliationPage";
 import { buildProductRows, buildStateRows, coverText, isInTransitWaybill, waybillInventoryLines } from "./inventory-ops-model";
 import {
   AlertTriangle,
@@ -32,6 +33,7 @@ export type InventoryOperationsAction =
   | "stock-products"
   | "stock-states"
   | "stock-agents"
+  | "delivered-reconciliation"
   | "coverage"
   | "forecast"
   | "recommended-transfers"
@@ -338,6 +340,7 @@ export function InventoryLogisticsOperationsPage({
 
   const shared = { products, stateHubs, orders, waybills, lookbackDays, criticalDays, watchDays };
   if (section === "stock-products") return <InventoryOpsStockByProduct {...shared} onOpenProduct={onOpenProduct} />;
+  if (section === "delivered-reconciliation") return <DeliveredStockReconciliationPage />;
   if (section === "stock-states") return <InventoryOpsStockByState {...shared} onOpenForecast={() => onAction("forecast")} />;
   if (section === "stock-agents") {
     return (

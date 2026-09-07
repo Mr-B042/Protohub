@@ -442,6 +442,7 @@ const INVENTORY_OPERATIONS_NAV: InventoryOperationsNavGroup[] = [
     { action: "expenses", label: "Expenses", icon: WalletCards },
   ] },
   { label: "Control & Reconciliation", items: [
+    { action: "delivered-reconciliation", label: "Delivered Stock Reconciliation", icon: PackageCheck },
     { action: "movements", label: "Stock Movements", icon: History },
     { action: "counts", label: "Stock Counts & Reconciliation", icon: ClipboardCheck },
     { action: "discrepancies", label: "Discrepancies / Incidents", icon: AlertTriangle },
@@ -1312,6 +1313,7 @@ type TrackedOrder = {
   agentLocationCitySnapshot?: string | null;
   agentCoverageStateSnapshot?: string | null;
   stockDeducted?: boolean;
+  stockReconciliationStatus?: "not_applicable" | "pending" | "partial" | "exception" | "reconciled" | "voided";
   logisticsCost?: number;
   amountRemitted?: number;
   remittanceStatus?: "Pending" | "Partial" | "Paid";
@@ -6800,6 +6802,7 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
     agentLocationStateSnapshot: value?.agentLocationStateSnapshot ?? value?.agent_location_state_snapshot ?? null,
     agentLocationCitySnapshot: value?.agentLocationCitySnapshot ?? value?.agent_location_city_snapshot ?? null,
     agentCoverageStateSnapshot: value?.agentCoverageStateSnapshot ?? value?.agent_coverage_state_snapshot ?? null,
+    stockReconciliationStatus: value?.stockReconciliationStatus ?? value?.stock_reconciliation_status ?? "not_applicable",
     latitude: typeof (value?.latitude ?? value?.lat) === "number" ? (value?.latitude ?? value?.lat) : value?.latitude === null ? null : undefined,
     longitude: typeof (value?.longitude ?? value?.lng) === "number" ? (value?.longitude ?? value?.lng) : value?.longitude === null ? null : undefined,
     geoAccuracy: value?.geoAccuracy ?? value?.geo_accuracy ?? null,
@@ -32545,7 +32548,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       })
       .sort((a, b) => new Date(a.createdAt ?? "").getTime() - new Date(b.createdAt ?? "").getTime());
 
-    const skippedDeductionRows = trackedOrders.filter((order) => order.status === "Delivered" && !order.stockDeducted && needsAttentionInScope(order.deliveredDate, order.createdAt));
+    const skippedDeductionRows = trackedOrders.filter((order) => order.status === "Delivered" && order.stockReconciliationStatus === "exception" && needsAttentionInScope(order.deliveredDate, order.createdAt));
     const stockRetryRows: Array<{ order: TrackedOrder; reason: string; detail: string }> = [
       ...skippedDeductionRows.map((order) => ({
         order,
@@ -38565,7 +38568,6 @@ ${waybillLineItems(w).length > 1
     }
 
     if (!isDeliveryDateOnly && nextStatus === "Delivered") {
-      deductProductStockForOrder(order);
       // Auto-create waybill record (agent → customer) for audit trail
       if (order.agentId) {
         const agent = agents.find((a) => a.id === order.agentId);
@@ -38620,7 +38622,8 @@ ${waybillLineItems(w).length > 1
               response,
               callOutcome: nextStatus === "Delivered" ? undefined : callOutcome === undefined ? item.callOutcome : callOutcome || undefined,
               deliveredDate: nextStatus === "Delivered" ? effectiveDeliveredDate : order.status === "Delivered" ? undefined : item.deliveredDate,
-              stockDeducted: isDeliveryDateOnly ? item.stockDeducted : nextStatus === "Delivered" ? true : order.status === "Delivered" ? false : item.stockDeducted,
+              stockDeducted: isDeliveryDateOnly ? item.stockDeducted : nextStatus === "Delivered" ? false : order.status === "Delivered" ? false : item.stockDeducted,
+              stockReconciliationStatus: isDeliveryDateOnly ? item.stockReconciliationStatus : nextStatus === "Delivered" ? "pending" : order.status === "Delivered" ? "voided" : item.stockReconciliationStatus,
               notes: [
                 orderTimelineNote(
                   isDeliveryDateOnly
@@ -44312,6 +44315,7 @@ ${waybillLineItems(w).length > 1
       case "coverage":
       case "forecast":
       case "stock-agents":
+      case "delivered-reconciliation":
         openInventoryOperationsRoute(action);
         return;
       case "movements":
@@ -73722,7 +73726,7 @@ ${waybillLineItems(w).length > 1
     // showing 194 against a card showing 46.
     const inScope = needsAttentionInScope;
     const reviewHold = trackedOrders.filter((order) => order.reviewHold && inScope(order.createdAt)).length;
-    const skippedDeduction = trackedOrders.filter((order) => order.status === "Delivered" && !order.stockDeducted && inScope(order.deliveredDate, order.createdAt)).length;
+    const skippedDeduction = trackedOrders.filter((order) => order.status === "Delivered" && order.stockReconciliationStatus === "exception" && inScope(order.deliveredDate, order.createdAt)).length;
     const stockMismatch = new Set(stockMismatchRows.filter((row) => inScope(row.deliveredDate)).map((row) => row.orderId)).size;
     const unassigned = trackedOrders.filter((order) => {
       const status = (order.status ?? "New") as Exclude<OrderStatus, "All Orders">;

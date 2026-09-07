@@ -36,6 +36,7 @@ import { sendConnectedUserWhatsAppToJid } from "../lib/whatsapp-runtime.js";
 import { confirmationNeedsSalesExpansionLog } from "../lib/sales-expansion.js";
 import { inventoryOperationsOrder } from "../lib/inventory-operations-access.js";
 import { applyInventoryMovements } from "../lib/inventory-movements.js";
+import { availableAfterDeliveredReservations } from "../lib/delivered-stock-reservations.js";
 
 import {
   checkAgentStock, normalizeAdditionalLines, orderMoneyBreakdown, stockShortfallMessage
@@ -512,6 +513,7 @@ const logRemittanceDelta = async (args: {
 };
 
 const inventoryAvailabilityMap = async (
+  orgId: string,
   agentId: string,
   locationId: string | null | undefined,
   productIds: string[]
@@ -529,9 +531,21 @@ const inventoryAvailabilityMap = async (
         .eq("agent_id", agentId)
         .in("product_id", productIds);
   const { data } = await query;
-  return new Map<string, number>(
-    (data ?? []).map((row: any) => [String(row.product_id), Number(row.quantity ?? 0)])
-  );
+  let pending: any[] = [];
+  // Delivered orders awaiting an Inventory Officer are still physically in
+  // the balance, but they are already committed. Reserve them here so a delay
+  // in human reconciliation cannot promise the same units to another order.
+  if (locationId) {
+    const { data: pendingRows } = await supabase
+      .from("delivered_stock_reconciliation_lines")
+      .select("product_id, quantity")
+      .eq("org_id", orgId)
+      .eq("agent_location_id", locationId)
+      .in("status", ["pending", "exception"])
+      .in("product_id", productIds);
+    pending = pendingRows ?? [];
+  }
+  return availableAfterDeliveredReservations(data ?? [], pending);
 };
 
 type DeliveryStockMovementRow = {
@@ -1421,14 +1435,10 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
     return;
   }
 
-  // A re-save on an already-Delivered order is normally a date correction (no
-  // stock deduction). BUT if stock_deducted=false (the phantom case — the prior
-  // delivery write succeeded but the deduction failed and couldn't flip the flag
-  // back), it is a deduction RETRY, not a date correction. Without this guard,
-  // the deduction block is always skipped on re-saves, making "Re-save to retry"
-  // the advice in the phantom-stock notification completely ineffective.
-  const isDeliveredDateCorrection = existing.status === "Delivered" && status === "Delivered"
-    && existing.stock_deducted !== false;
+  // Stock is now closed by the Inventory Officer. Re-saving an already
+  // delivered order can only correct its date/details; it must never bypass
+  // that queue and deduct stock itself.
+  const isDeliveredDateCorrection = existing.status === "Delivered" && status === "Delivered";
   const inventoryLines = orderInventoryLinesFromRow(existing);
   const inventoryProductId = primaryInventoryProductId(inventoryLines, existing.product_id);
 
@@ -1489,7 +1499,7 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
           requiredLines: inventoryLines.map((line) => ({ productId: line.productId, quantity: line.quantity }))
         });
     const availability = await inventoryAvailabilityMap(
-      effectiveAgentId,
+      req.user!.orgId, effectiveAgentId,
       resolvedLocation?.id,
       inventoryLines.map((line) => line.productId)
     );
@@ -1556,8 +1566,8 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
   }
 
   const watDate = new Date(Date.now() + 60 * 60 * 1000).toISOString().split("T")[0];
-  const shouldRunDeliveryDeduction =
-    !isDeliveredDateCorrection && status === "Delivered" && effectiveAgentId && inventoryLines.length > 0;
+  const shouldCreateDeliveredStockPending =
+    existing.status !== "Delivered" && status === "Delivered" && Boolean(effectiveAgentId) && inventoryLines.length > 0;
 
   if (status === "Delivered") {
     updates.call_outcome = null;
@@ -1571,7 +1581,13 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
       updates.delivered_date = watDate.toISOString().split("T")[0];
     }
     if (!isDeliveredDateCorrection) {
-      updates.stock_deducted = true;
+      updates.stock_deducted = false;
+      updates.stock_reconciliation_status = "pending";
+      updates.stock_reconciliation_lines_snapshot = inventoryLines.map((line) => ({
+        productId: line.productId,
+        productName: line.productName,
+        quantity: line.quantity
+      }));
       // ⚠️ Freeze what this order cost us at the SAME moment its stock comes
       // off the shelf. Without this a newly delivered order floats on live
       // pricing until some later cost change happens to catch it - and if the
@@ -1653,15 +1669,11 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
       return;
     }
 
-    // Per-line idempotency: only lines whose latest delivery stock movement is
-    // still active need no stock right now. If a prior delivery was reversed,
-    // the next real delivery must be allowed to deduct again.
-    const alreadyDeducted = (await deliveryStockHistoryForOrder(req.user!.orgId, String(req.params.id))).active;
-    const linesNeedingStock = inventoryLines.filter((line) => !alreadyDeducted.has(line.productId));
+    const linesNeedingStock = inventoryLines;
 
     if (linesNeedingStock.length > 0) {
       const availability = await inventoryAvailabilityMap(
-        effectiveAgentId, preflightLocation.id, linesNeedingStock.map((line) => line.productId));
+        req.user!.orgId, effectiveAgentId, preflightLocation.id, linesNeedingStock.map((line) => line.productId));
       const shortfalls = linesNeedingStock
         .map((line) => ({ name: line.productName, need: line.quantity, have: availability.get(line.productId) ?? 0 }))
         .filter((s) => s.have < s.need);
@@ -1685,7 +1697,7 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
     // Only the request that claims stock_deducted=false may run delivery stock
     // side-effects. This closes the double-click / concurrent-save window where
     // two requests can both mark Delivered and both deduct the same order lines.
-    if (shouldRunDeliveryDeduction) {
+    if (shouldCreateDeliveredStockPending) {
       query = query.eq("stock_deducted", false);
     }
     return query;
@@ -1706,20 +1718,35 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
       .single());
   }
 
-  if (error && shouldRunDeliveryDeduction && (error as any).code === "PGRST116") {
+  if (error && shouldCreateDeliveredStockPending && (error as any).code === "PGRST116") {
     const { data: latest } = await supabase
       .from("orders")
       .select("*")
       .eq("id", req.params.id)
       .eq("org_id", req.user!.orgId)
       .single();
-    if (latest?.status === "Delivered" && latest?.stock_deducted === true) {
+    if (latest?.status === "Delivered" && ["pending", "partial", "exception", "reconciled"].includes(String(latest?.stock_reconciliation_status))) {
       res.json(latest);
       return;
     }
     res.status(409).json({
       error: "This order was changed by another request. Refresh the order and try again.",
       code: "ORDER_DELIVERY_CONFLICT"
+    });
+    return;
+  }
+
+  if (error && /INSUFFICIENT_STOCK\|/.test(error.message ?? "")) {
+    res.status(409).json({
+      error: String(error.message).split("|").slice(1).join("|") || "Pending deliveries have already committed this stock.",
+      code: "INSUFFICIENT_STOCK"
+    });
+    return;
+  }
+  if (error && /DELIVERED_STOCK_PENDING\|/.test(error.message ?? "")) {
+    res.status(400).json({
+      error: String(error.message).split("|").slice(1).join("|"),
+      code: "DELIVERED_STOCK_PENDING"
     });
     return;
   }
@@ -1802,8 +1829,10 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
     });
   }
 
-  // ── Delivery side-effects: deduct agent stock, create waybill, log movement ──
-  if (shouldRunDeliveryDeduction) {
+  // ── Delivery side-effect: create the customer waybill. The order update's
+  // database trigger already captured its immutable pending stock lines in the
+  // same transaction. Only the Inventory Officer reconciliation may deduct. ──
+  if (shouldCreateDeliveredStockPending) {
    try {
     const today = new Date().toISOString().split("T")[0];
     const deductionLines = inventoryLines.map((line) => ({ productId: line.productId, quantity: line.quantity }));
@@ -1876,42 +1905,9 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
       notes:           `Auto-created on order delivery (${existing.customer})`
     });
 
-    // Per-line idempotency: never deduct a product whose latest delivery stock
-    // movement is still Order Fulfilled. This guards against double-deduction on
-    // re-saves / partial-failure retries while allowing a legitimately reversed
-    // order to deduct again if it is delivered again later.
-    const deliveryHistory = await deliveryStockHistoryForOrder(req.user!.orgId, String(req.params.id));
-    const linesToDeduct = inventoryLines.filter((line) => !deliveryHistory.active.has(line.productId));
-    if (linesToDeduct.length > 0) {
-      await applyInventoryMovements({
-        orgId: req.user!.orgId,
-        actorUserId: req.user!.id,
-        actorName: req.user!.name,
-        lines: linesToDeduct.map((line) => ({
-          productId: line.productId,
-          productName: line.productName,
-          type: "Order Fulfilled",
-          quantity: line.quantity,
-          sourceScope: "agent_location",
-          sourceAgentLocationId: resolvedLocation.id,
-          agentId: effectiveAgentId,
-          orderId: String(req.params.id),
-          waybillId,
-          fromLocation: agentLocationName || originState,
-          toLocation: customerLocation,
-          note: `Delivered to ${existing.customer} — ${line.productName}${line.isFreeGift ? " (gift)" : ""} deducted by agent ${agentName}${serviceStateNote}`,
-          idempotencyKey: `order:${req.params.id}:fulfill:${line.productId}:${(deliveryHistory.fulfillmentCount.get(line.productId) ?? 0) + 1}`
-        }))
-      });
-    }
    } catch (deductionError: any) {
-    // The deduction failed mid-way (e.g. a transient DB error). NEVER leave the
-    // order claiming stock was deducted — flip the flag honest so the gap is
-    // detectable, not a silent phantom. Invariant: an order that is Delivered +
-    // stock_deducted=true has had its deduction run to completion.
-    await supabase.from("orders").update({ stock_deducted: false })
-      .eq("id", req.params.id).eq("org_id", req.user!.orgId);
-    res.status(500).json({ error: "Order marked delivered, but the stock deduction failed and was flagged for review. Re-save the delivery to retry.", code: "DEDUCTION_FAILED" });
+    logger.error("delivered order waybill creation failed", { orderId: req.params.id, error: deductionError?.message });
+    res.status(500).json({ error: "Order is pending stock reconciliation, but its delivery waybill could not be created. Please review the order.", code: "WAYBILL_CREATE_FAILED" });
     return;
    }
   }
