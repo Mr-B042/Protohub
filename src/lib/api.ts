@@ -2026,6 +2026,33 @@ export const stockApi = {
   runSmartAlerts: () => post<{ scannedOrgs: number; firedAlerts: number }>(`/api/stock/smart-alerts/run`, {})
 };
 
+export type DeliveredStockReconciliationRow = {
+  id: string;
+  orderId: string;
+  agentId: string;
+  agentLocationId: string;
+  state: string;
+  agentName: string;
+  customer: string;
+  productId: string;
+  productName: string;
+  quantity: number;
+  status: "pending" | "exception" | "reconciled";
+  deliveredAt: string;
+  reconciledAt?: string | null;
+  reconciledBy?: string | null;
+  movementId?: string | null;
+  issueNote?: string | null;
+  currentStock: number;
+};
+
+export const deliveredStockReconciliationApi = {
+  list: () => get<{ generatedAt: string; rows: DeliveredStockReconciliationRow[] }>("/api/delivered-stock-reconciliation"),
+  reconcile: (lineIds: string[]) => post<{ reconciledLines: number; movements: unknown[] }>("/api/delivered-stock-reconciliation/reconcile", { lineIds }),
+  flag: (lineIds: string[], note: string) => post<{ flagged: number }>("/api/delivered-stock-reconciliation/flag", { lineIds, note }),
+  resolve: (lineId: string) => post<{ resolved: boolean }>(`/api/delivered-stock-reconciliation/${encodeURIComponent(lineId)}/resolve`, {})
+};
+
 // ── Expenses ──────────────────────────────────────────────
 export const expensesApi = {
   list: (params?: Record<string, string>) => {

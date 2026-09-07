@@ -3325,28 +3325,41 @@ router.get("/my/orders", requireAgentPortal, async (req, res) => {
 /**
  * Moves the stock behind an assignment, resolving the product from the order.
  *
- * Deliberately best-effort: a stock hiccup must not stop an agent recording
- * what actually happened on a delivery. The ledger is the record of truth, so a
- * failure here surfaces as a missing ledger row rather than a lost outcome.
+ * The stock and ledger change are one database transaction. Callers save the
+ * assignment state only after this succeeds, so a shortfall cannot be hidden by
+ * a delivery status update.
  */
 async function moveAssignmentStock(
   req: any, assignment: any, movement: "Out for delivery" | "Delivered to customer" | "Returned to available"
-) {
-  try {
-    const orgId = orgIdOf(req);
-    const { data: order } = await supabase.from("orders")
-      .select("product_id, product_name, quantity").eq("org_id", orgId).eq("id", assignment.order_id).maybeSingle();
-    if (!order?.product_id) return;
-    await applyStockMovement({
-      orgId, agentId: assignment.agent_id,
-      productId: order.product_id, productName: order.product_name,
-      movement, quantity: Math.max(1, Number(order.quantity ?? 1)),
-      orderId: assignment.order_id,
-      userId: req.user?.id ?? null, userName: req.user?.name ?? null
+): Promise<string | null> {
+  const orgId = orgIdOf(req);
+  const { data: order, error } = await supabase.from("orders")
+    .select("product_id, product_name, quantity").eq("org_id", orgId).eq("id", assignment.order_id).maybeSingle();
+  if (error) return error.message;
+  if (!order?.product_id) return "The assigned order has no inventory product.";
+  const common = {
+    orgId, agentId: assignment.agent_id,
+    productId: order.product_id, productName: order.product_name,
+    quantity: Math.max(1, Number(order.quantity ?? 1)),
+    orderId: assignment.order_id,
+    userId: req.user?.id ?? null, userName: req.user?.name ?? null
+  };
+  // Dispatch has no earlier reservation action in the portal. Reserve first;
+  // stable keys make an interrupted request safely continue on retry.
+  if (movement === "Out for delivery") {
+    const reserve = await applyStockMovement({
+      ...common,
+      movement: "Reserved for order",
+      idempotencyKey: `pda:assignment:${assignment.id}:Reserved for order`
     });
-  } catch {
-    // Swallowed on purpose - see the note above.
+    if (reserve.error) return reserve.error;
   }
+  const result = await applyStockMovement({
+    ...common,
+    movement,
+    idempotencyKey: `pda:assignment:${assignment.id}:${movement}`
+  });
+  return result.error ?? null;
 }
 
 /** Loads an assignment and proves it belongs to the signed-in agent. */
@@ -3433,6 +3446,9 @@ router.post("/my/orders/:assignmentId/dispatch", requireAgentPortal, async (req,
   const expected = Number.isFinite(minutes) && minutes > 0
     ? new Date(Date.now() + minutes * 60_000).toISOString() : null;
 
+  const stockError = await moveAssignmentStock(req, found.assignment, "Out for delivery");
+  if (stockError) { res.status(409).json({ error: stockError }); return; }
+
   const { data, error } = await supabase.from(ASSIGNMENTS).update({
     delivery_status: "Dispatch Started",
     dispatch_started_at: new Date().toISOString(),
@@ -3441,7 +3457,6 @@ router.post("/my/orders/:assignmentId/dispatch", requireAgentPortal, async (req,
     updated_at: new Date().toISOString()
   }).eq("id", req.params.assignmentId).select("*").single();
   if (error) { res.status(500).json({ error: error.message }); return; }
-  await moveAssignmentStock(req, found.assignment, "Out for delivery");
   res.json({ row: mapAssignment(data) });
 });
 
@@ -3468,7 +3483,8 @@ router.post("/my/orders/:assignmentId/delivered", requireAgentPortal, async (req
   // the same non-idempotency that once over-deducted 275 units across 42 orders
   // on the main order flow.
   if (!found.assignment.stock_settled) {
-    await moveAssignmentStock(req, found.assignment, "Delivered to customer");
+    const stockError = await moveAssignmentStock(req, found.assignment, "Delivered to customer");
+    if (stockError) { res.status(409).json({ error: stockError }); return; }
   }
 
   const { data, error } = await supabase.from(ASSIGNMENTS).update({
@@ -3509,8 +3525,9 @@ router.post("/my/orders/:assignmentId/failed", requireAgentPortal, async (req, r
 
   // The unit is back in the agent's hands, so it must stop being held for this
   // order - otherwise their available stock silently shrinks with every failure.
-  if (!found.assignment.stock_settled) {
-    await moveAssignmentStock(req, found.assignment, "Returned to available");
+  if (!found.assignment.stock_settled && found.assignment.stock_reserved) {
+    const stockError = await moveAssignmentStock(req, found.assignment, "Returned to available");
+    if (stockError) { res.status(409).json({ error: stockError }); return; }
   }
 
   const { data, error } = await supabase.from(ASSIGNMENTS).update({
@@ -3688,15 +3705,6 @@ router.post("/my/transfers/:transferId/confirm", requireAgentPortal, async (req,
     }
 
     const short = parsed.data.quantityReceived < transfer.quantity_sent;
-    await supabase.from(TRANSFERS).update({
-      quantity_received: parsed.data.quantityReceived,
-      condition_note: parsed.data.conditionNote ?? null,
-      proof_file_path: parsed.data.proofFilePath ?? null,
-      status: short ? "Received Short" : "Received",
-      confirmed_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    }).eq("id", transferId);
-
     if (parsed.data.quantityReceived > 0) {
       const result = await applyStockMovement({
         orgId, agentId: agent.id,
@@ -3705,10 +3713,21 @@ router.post("/my/transfers/:transferId/confirm", requireAgentPortal, async (req,
         quantity: parsed.data.quantityReceived,
         transferId,
         note: short ? `${transfer.quantity_sent} sent, ${parsed.data.quantityReceived} confirmed` : null,
-        userId: req.user!.id, userName: req.user!.name
+        userId: req.user!.id, userName: req.user!.name,
+        idempotencyKey: `pda:transfer:${transferId}:received`
       });
       if (result.error) { res.status(409).json({ error: result.error }); return; }
     }
+
+    const { error: transferUpdateError } = await supabase.from(TRANSFERS).update({
+      quantity_received: parsed.data.quantityReceived,
+      condition_note: parsed.data.conditionNote ?? null,
+      proof_file_path: parsed.data.proofFilePath ?? null,
+      status: short ? "Received Short" : "Received",
+      confirmed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }).eq("id", transferId);
+    if (transferUpdateError) { res.status(500).json({ error: transferUpdateError.message }); return; }
 
     res.json({ received: parsed.data.quantityReceived, short });
   } catch (error: any) {
@@ -3828,7 +3847,8 @@ router.post("/stock/discrepancies/:discrepancyId/review", requireRole(...MANAGEM
           orgId, agentId: row.agent_id, productId: row.product_id,
           movement, quantity: shortfall,
           note: `Discrepancy approved: ${row.reason}${parsed.data.reviewNote ? ` - ${parsed.data.reviewNote}` : ""}`,
-          userId: req.user!.id, userName: req.user!.name
+          userId: req.user!.id, userName: req.user!.name,
+          idempotencyKey: `pda:discrepancy:${discrepancyId}:approved`
         });
         if (result.error) { res.status(409).json({ error: result.error }); return; }
 

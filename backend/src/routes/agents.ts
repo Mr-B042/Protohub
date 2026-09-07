@@ -3,9 +3,10 @@ import { humanFieldErrors } from "../lib/validation-message.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { buildCoverageRows } from "../lib/agent-coverage.js";
-import { loadAgentLocations, syncAgentLocationsFromCoverage, syncAgentStockAggregate } from "../lib/agent-locations.js";
+import { loadAgentLocations, syncAgentLocationsFromCoverage } from "../lib/agent-locations.js";
 import { supabase } from "../lib/supabase.js";
 import { recordStockLossExpense } from "../lib/stock-loss-expense.js";
+import { applyInventoryMovements, InventoryMovementError } from "../lib/inventory-movements.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 
 const router = Router();
@@ -200,6 +201,64 @@ router.patch("/:id", requireRole("Owner", "Admin"), async (req, res) => {
 
 // ── DELETE /api/agents/:id ────────────────────────────────
 router.delete("/:id", requireRole("Owner", "Admin"), async (req, res) => {
+  const { data: agent, error: agentError } = await supabase
+    .from("agents")
+    .select("id, name, locations:agent_locations(id, name, stock:agent_location_stock(product_id, quantity, defective, missing, product:products(name)))")
+    .eq("id", req.params.id)
+    .eq("org_id", req.user!.orgId)
+    .single();
+  if (agentError || !agent) { res.status(404).json({ error: "Agent not found." }); return; }
+
+  const stockRows = (agent.locations ?? []).flatMap((location: any) =>
+    (location.stock ?? []).map((row: any) => ({ location, row }))
+  );
+  const unresolved = stockRows.filter(({ row }: any) => Number(row.defective ?? 0) > 0 || Number(row.missing ?? 0) > 0);
+  if (unresolved.length > 0) {
+    res.status(409).json({
+      error: "This agent still has defective or missing stock under investigation. Reconcile those units before deleting the agent.",
+      code: "AGENT_HAS_UNRESOLVED_STOCK"
+    });
+    return;
+  }
+
+  const returnLines: Parameters<typeof applyInventoryMovements>[0]["lines"] = stockRows
+    .filter(({ row }: any) => Number(row.quantity ?? 0) > 0)
+    .map(({ location, row }: any) => ({
+      productId: row.product_id,
+      productName: row.product?.name ?? row.product_id,
+      type: "Return",
+      quantity: Number(row.quantity),
+      sourceScope: "agent_location" as const,
+      sourceAgentLocationId: location.id,
+      destinationScope: "warehouse" as const,
+      agentId: agent.id,
+      fromLocation: location.name,
+      toLocation: "Warehouse",
+      note: `All available stock returned before agent "${agent.name}" was deleted`,
+      idempotencyKey: `agent:${agent.id}:delete-return:${location.id}:${row.product_id}`
+    }));
+  if (returnLines.length > 100) {
+    res.status(409).json({ error: "This agent has too many stock lines to delete safely in one operation. Contact support.", code: "AGENT_DELETE_BATCH_TOO_LARGE" });
+    return;
+  }
+  if (returnLines.length > 0) {
+    try {
+      await applyInventoryMovements({
+        orgId: req.user!.orgId,
+        actorUserId: req.user!.id,
+        actorName: req.user!.name,
+        lines: returnLines
+      });
+    } catch (error: any) {
+      const movementError = error instanceof InventoryMovementError ? error : null;
+      res.status(movementError?.status ?? 500).json({
+        error: movementError?.message ?? "Agent stock could not be returned safely.",
+        code: movementError?.code ?? "INVENTORY_MOVEMENT_FAILED"
+      });
+      return;
+    }
+  }
+
   const { error } = await supabase
     .from("agents")
     .delete()
@@ -241,7 +300,8 @@ router.get("/:id/stock", async (req, res) => {
 const AssignStockSchema = z.object({
   locationId: z.string().uuid().optional(),
   productId: z.string().uuid(),
-  quantity:  z.number().int().min(1)
+  quantity:  z.number().int().min(1),
+  requestId: z.string().trim().min(8).max(160).optional()
 });
 
 router.post("/:id/stock",
@@ -285,62 +345,52 @@ router.post("/:id/stock",
       return;
     }
 
-    // Upsert location stock first
-    const { data: existing } = await supabase
-      .from("agent_location_stock")
-      .select("quantity")
-      .eq("agent_location_id", targetLocation.id)
-      .eq("product_id", productId)
-      .maybeSingle();
-
-    const newQty = (existing?.quantity ?? 0) + quantity;
-
-    const { error: stockError } = await supabase
-      .from("agent_location_stock")
-      .upsert({
-        org_id: orgId,
-        agent_id: agentId,
-        agent_location_id: targetLocation.id,
-        product_id: productId,
-        quantity: newQty
-      }, { onConflict: "agent_location_id,product_id" });
-    if (stockError) { res.status(500).json({ error: stockError.message }); return; }
-
-    const totals = await syncAgentStockAggregate(orgId, agentId, productId);
-
-    // Deduct from warehouse
     const { data: product } = await supabase
       .from("products")
       .select("warehouse_stock, agent_stock, name")
+      .eq("org_id", orgId)
       .eq("id", productId)
       .single();
-    if (product) {
-      // syncAgentStockAggregate above already recomputed products.agent_stock from
-      // the live hub sum (which now includes this distribution). Only warehouse_stock
-      // is ours to adjust here — re-adding quantity to agent_stock double-counts it
-      // and is the chronic upward cache drift the inventory audit surfaced.
-      await supabase.from("products").update({
-        warehouse_stock: Math.max(0, product.warehouse_stock - quantity)
-      }).eq("id", productId);
+    if (!product) { res.status(404).json({ error: "Product not found." }); return; }
 
-      // Log stock movement
-      await supabase.from("stock_movements").insert({
-        id:           `MOV-${randomUUID()}`,
-        org_id:       orgId,
-        product_id:   productId,
-        product_name: product.name,
-        type:         "Distributed to Agent",
-        qty:          quantity,
-        balance_after: newQty,
-        agent_id:     agentId,
-        to_agent_location_id: targetLocation.id,
-        from_location: "Warehouse",
-        to_location: `${targetLocation.name}${targetLocation.city ? "" : ""}`,
-        by_name:      req.user!.name,
-        by_user_id:   req.user!.id,
-        note:         `Assigned to ${agent?.name ?? "agent"} at ${targetLocation.name}`
+    let movement;
+    try {
+      [movement] = await applyInventoryMovements({
+        orgId,
+        actorUserId: req.user!.id,
+        actorName: req.user!.name,
+        lines: [{
+          productId,
+          productName: product.name,
+          type: "Distributed to Agent",
+          quantity,
+          sourceScope: "warehouse",
+          destinationScope: "agent_location",
+          destinationAgentLocationId: targetLocation.id,
+          agentId,
+          fromLocation: "Warehouse",
+          toLocation: targetLocation.name,
+          note: `Assigned to ${agent?.name ?? "agent"} at ${targetLocation.name}`,
+          idempotencyKey: parsed.data.requestId
+            ?? (String(req.get("Idempotency-Key") ?? "").trim() || `agent-assignment:${randomUUID()}`)
+        }]
       });
+    } catch (error: any) {
+      const movementError = error instanceof InventoryMovementError ? error : null;
+      res.status(movementError?.status ?? 500).json({
+        error: movementError?.message ?? "Agent stock assignment failed.",
+        code: movementError?.code ?? "INVENTORY_MOVEMENT_FAILED"
+      });
+      return;
     }
+
+    const { data: aggregate } = await supabase
+      .from("agent_stock")
+      .select("quantity")
+      .eq("agent_id", agentId)
+      .eq("product_id", productId)
+      .maybeSingle();
+    const newQty = Number(movement?.destinationBalanceAfter ?? 0);
 
     res.json({
       agentId,
@@ -348,7 +398,7 @@ router.post("/:id/stock",
       locationId: targetLocation.id,
       locationName: targetLocation.name,
       newQty,
-      aggregateQty: totals.quantity
+      aggregateQty: Number(aggregate?.quantity ?? newQty)
     });
   }
 );
@@ -361,7 +411,8 @@ const ReconcileSchema = z.object({
   returned:  z.number().int().min(0).default(0),
   defective: z.number().int().min(0).default(0),
   missing:   z.number().int().min(0).default(0),
-  notes:     z.string().optional()
+  notes:     z.string().optional(),
+  requestId: z.string().trim().min(8).max(160).optional()
 });
 
 router.post("/:id/reconcile",
@@ -425,7 +476,7 @@ router.post("/:id/reconcile",
       return;
     }
 
-    let stock = currentStockRow
+    const stock = currentStockRow
       ? {
           quantity: Math.max(0, Number(currentStockRow.quantity ?? 0)),
           defective: Math.max(0, Number(currentStockRow.defective ?? 0)),
@@ -433,48 +484,7 @@ router.post("/:id/reconcile",
         }
       : null;
 
-    // Legacy fallback: older agent records can still have aggregate agent_stock without
-    // a matching agent_location_stock row yet. Seed the selected hub from aggregate once
-    // so multi-state reconcile can keep working without fake "Available: 0" failures.
-    if (!stock) {
-      const { data: aggregateRow, error: aggregateError } = await supabase
-        .from("agent_stock")
-        .select("quantity, defective, missing")
-        .eq("agent_id", agentId)
-        .eq("product_id", productId)
-        .maybeSingle();
-      if (aggregateError) {
-        res.status(500).json({ error: aggregateError.message });
-        return;
-      }
-
-      const aggregate = {
-        quantity: Math.max(0, Number(aggregateRow?.quantity ?? 0)),
-        defective: Math.max(0, Number(aggregateRow?.defective ?? 0)),
-        missing: Math.max(0, Number(aggregateRow?.missing ?? 0))
-      };
-
-      if (aggregate.quantity > 0 && stockAcrossLocations.length === 0) {
-        const { error: seedError } = await supabase
-          .from("agent_location_stock")
-          .upsert({
-            agent_location_id: targetLocation.id,
-            product_id: productId,
-            quantity: aggregate.quantity,
-            defective: aggregate.defective,
-            missing: aggregate.missing
-          }, { onConflict: "agent_location_id,product_id" });
-        if (seedError) {
-          res.status(500).json({ error: seedError.message });
-          return;
-        }
-        stock = aggregate;
-      }
-    }
-
     const currentQuantity = Number(stock?.quantity ?? 0);
-    const currentDefective = Number(stock?.defective ?? 0);
-    const currentMissing = Number(stock?.missing ?? 0);
 
     if (currentQuantity < totalRemoved) {
       if (currentQuantity <= 0 && stockInOtherLocations.length > 0) {
@@ -492,58 +502,76 @@ router.post("/:id/reconcile",
 
     const nextQty = currentQuantity - totalRemoved;
 
-    // Update agent location stock
-    await supabase.from("agent_location_stock").update({
-      quantity: nextQty,
-      defective: currentDefective + defective,
-      missing: currentMissing + missing
-    }).eq("agent_location_id", targetLocation.id).eq("product_id", productId);
+    const { data: product } = await supabase.from("products")
+      .select("name").eq("id", productId).eq("org_id", orgId).single();
+    if (!product) { res.status(404).json({ error: "Product not found." }); return; }
 
-    const totals = await syncAgentStockAggregate(orgId, agentId, productId);
+    const requestKey = parsed.data.requestId
+      ?? (String(req.get("Idempotency-Key") ?? "").trim() || `agent-reconcile:${randomUUID()}`);
+    const movementLines: Parameters<typeof applyInventoryMovements>[0]["lines"] = [];
 
     // Return good stock to warehouse
     if (returned > 0) {
-      const { data: product } = await supabase.from("products").select("warehouse_stock, agent_stock, name").eq("id", productId).single();
-      if (product) {
-        // syncAgentStockAggregate above already recomputed products.agent_stock from
-        // the live hub sum (which now reflects this return). Only warehouse_stock is
-        // ours to adjust — re-subtracting returned from agent_stock double-counts it
-        // (the mirror of the distribution drift).
-        await supabase.from("products").update({
-          warehouse_stock: product.warehouse_stock + returned
-        }).eq("id", productId);
-
-        await supabase.from("stock_movements").insert({
-          id: `MOV-${randomUUID()}`, org_id: orgId,
-          product_id: productId, product_name: product.name,
-          type: "Return", qty: returned,
-          balance_after: product.warehouse_stock + returned,
-          from_agent_location_id: targetLocation.id,
-          from_location: targetLocation.name,
-          to_location: "Warehouse",
-          agent_id: agentId, by_name: req.user!.name, by_user_id: req.user!.id,
-          note: `${returned} unit${returned !== 1 ? "s" : ""} returned to warehouse from ${targetLocation.name}${notes ? ` — ${notes}` : ""}`
-        });
-      }
+      movementLines.push({
+        productId,
+        productName: product.name,
+        type: "Return",
+        quantity: returned,
+        sourceScope: "agent_location",
+        sourceAgentLocationId: targetLocation.id,
+        destinationScope: "warehouse",
+        agentId,
+        fromLocation: targetLocation.name,
+        toLocation: "Warehouse",
+        note: `${returned} unit${returned !== 1 ? "s" : ""} returned to warehouse from ${targetLocation.name}${notes ? ` — ${notes}` : ""}`,
+        idempotencyKey: `${requestKey}:return`
+      });
     }
 
     // Log write-off if defective/missing
     if (defective > 0 || missing > 0) {
-      const { data: product } = await supabase.from("products").select("name").eq("id", productId).single();
       const parts: string[] = [];
       if (defective > 0) parts.push(`${defective} defective`);
       if (missing > 0) parts.push(`${missing} missing`);
-      const movementId = `MOV-${randomUUID()}`;
-      await supabase.from("stock_movements").insert({
-          id: movementId, org_id: orgId,
-        product_id: productId, product_name: product?.name ?? productId,
-        type: "Correction", qty: -(defective + missing),
-        balance_after: nextQty, agent_id: agentId,
-        from_agent_location_id: targetLocation.id,
-        from_location: targetLocation.name,
-        by_name: req.user!.name, by_user_id: req.user!.id,
-        note: `${parts.join(", ")} written off at ${targetLocation.name}${notes ? ` — ${notes}` : ""}`
+      movementLines.push({
+        productId,
+        productName: product.name,
+        type: "Correction",
+        quantity: defective + missing,
+        ledgerQuantity: -(defective + missing),
+        sourceScope: "agent_location",
+        sourceAgentLocationId: targetLocation.id,
+        bucketAgentLocationId: targetLocation.id,
+        defectiveDelta: defective,
+        missingDelta: missing,
+        agentId,
+        fromLocation: targetLocation.name,
+        note: `${parts.join(", ")} written off at ${targetLocation.name}${notes ? ` — ${notes}` : ""}`,
+        idempotencyKey: `${requestKey}:loss`
       });
+    }
+
+    let movementResults;
+    try {
+      movementResults = await applyInventoryMovements({
+        orgId,
+        actorUserId: req.user!.id,
+        actorName: req.user!.name,
+        lines: movementLines
+      });
+    } catch (error: any) {
+      const movementError = error instanceof InventoryMovementError ? error : null;
+      res.status(movementError?.status ?? 500).json({
+        error: movementError?.message ?? "Agent stock reconciliation failed.",
+        code: movementError?.code ?? "INVENTORY_MOVEMENT_FAILED"
+      });
+      return;
+    }
+
+    // Book the cost only after the atomic inventory transaction succeeds.
+    if (defective > 0 || missing > 0) {
+      const movementId = movementResults.find((row) => row.idempotencyKey.endsWith(":loss"))?.movementId
+        ?? `${requestKey}:loss`;
       // These units are gone and were never sold, so their cost has never been
       // recognised anywhere. Booking it here is what makes shrinkage show up in
       // the P&L instead of quietly flattering net profit. `returned` is excluded
@@ -552,7 +580,7 @@ router.post("/:id/reconcile",
         orgId,
         reference: movementId,
         productId,
-        productName: product?.name ?? productId,
+        productName: product.name,
         units: defective + missing,
         reason: defective > 0 && missing > 0 ? "Damaged and missing"
           : defective > 0 ? "Damaged" : "Missing",
@@ -560,7 +588,9 @@ router.post("/:id/reconcile",
       });
     }
 
-    res.json({ agentId, productId, locationId: targetLocation.id, quantity: nextQty, aggregateQty: totals.quantity });
+    const { data: totals } = await supabase.from("agent_stock")
+      .select("quantity").eq("agent_id", agentId).eq("product_id", productId).maybeSingle();
+    res.json({ agentId, productId, locationId: targetLocation.id, quantity: nextQty, aggregateQty: Number(totals?.quantity ?? nextQty) });
   }
 );
 

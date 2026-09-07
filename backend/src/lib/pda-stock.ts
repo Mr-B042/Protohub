@@ -6,10 +6,8 @@
 //
 // Agents cannot change their own numbers. They report a discrepancy; a manager
 // approves it; only then does anything move.
+import { randomUUID } from "node:crypto";
 import { supabase } from "./supabase.js";
-
-const STOCK = "pda_agent_stock";
-const LEDGER = "pda_stock_ledger";
 
 /** The columns a unit can occupy. Their sum is what the agent really holds. */
 export type StockBucket =
@@ -42,11 +40,6 @@ export const MOVEMENT_MAP: Record<StockMovementName, { from: StockBucket | null;
 };
 
 export type StockRow = Record<StockBucket, number> & { id?: string };
-
-const EMPTY: StockRow = {
-  available: 0, reserved: 0, out_for_delivery: 0,
-  damaged: 0, missing: 0, awaiting_investigation: 0
-};
 
 /** Total units physically with the agent (written-off units included: they are still unaccounted for). */
 export function totalHeld(row: StockRow): number {
@@ -94,6 +87,7 @@ export type MovementInput = {
   note?: string | null;
   userId?: string | null;
   userName?: string | null;
+  idempotencyKey?: string | null;
 };
 
 /**
@@ -101,60 +95,40 @@ export type MovementInput = {
  * Returns an error message instead of throwing so routes can answer plainly.
  */
 export async function applyStockMovement(input: MovementInput): Promise<{ error?: string; balance?: StockRow }> {
-  const { data: existing } = await supabase.from(STOCK)
-    .select("id, available, reserved, out_for_delivery, damaged, missing, awaiting_investigation")
-    .eq("agent_id", input.agentId).eq("product_id", input.productId).maybeSingle();
-
-  const current: StockRow = existing
-    ? {
-        id: existing.id,
-        available: Number(existing.available ?? 0),
-        reserved: Number(existing.reserved ?? 0),
-        out_for_delivery: Number(existing.out_for_delivery ?? 0),
-        damaged: Number(existing.damaged ?? 0),
-        missing: Number(existing.missing ?? 0),
-        awaiting_investigation: Number(existing.awaiting_investigation ?? 0)
-      }
-    : { ...EMPTY };
-
-  const blocker = stockMovementBlocker(input.movement, input.quantity, current);
-  if (blocker) return { error: blocker };
-
-  const next = applyToRow(input.movement, input.quantity, current);
-
-  if (existing) {
-    const { error } = await supabase.from(STOCK).update({
-      available: next.available, reserved: next.reserved, out_for_delivery: next.out_for_delivery,
-      damaged: next.damaged, missing: next.missing, awaiting_investigation: next.awaiting_investigation,
-      updated_at: new Date().toISOString()
-    }).eq("id", existing.id);
-    if (error) return { error: error.message };
-  } else {
-    const { error } = await supabase.from(STOCK).insert({
-      org_id: input.orgId, agent_id: input.agentId, product_id: input.productId,
-      available: next.available, reserved: next.reserved, out_for_delivery: next.out_for_delivery,
-      damaged: next.damaged, missing: next.missing, awaiting_investigation: next.awaiting_investigation
-    });
-    if (error) return { error: error.message };
+  if (!Number.isInteger(input.quantity) || input.quantity <= 0) {
+    return { error: "Quantity must be a whole number above zero." };
+  }
+  const idempotencyKey = input.idempotencyKey?.trim() || `pda:manual:${randomUUID()}`;
+  const { data, error } = await supabase.rpc("apply_pda_stock_movement", {
+    p_org_id: input.orgId,
+    p_agent_id: input.agentId,
+    p_product_id: input.productId,
+    p_product_name: input.productName ?? null,
+    p_movement: input.movement,
+    p_quantity: input.quantity,
+    p_order_id: input.orderId ?? null,
+    p_transfer_id: input.transferId ?? null,
+    p_note: input.note ?? null,
+    p_recorded_by: input.userId ?? null,
+    p_recorded_by_name: input.userName ?? null,
+    p_idempotency_key: idempotencyKey
+  });
+  if (error) {
+    const message = error.message
+      .replace(/^INSUFFICIENT_PDA_STOCK\|/, "")
+      .replace(/^INVALID_PDA_INVENTORY\|/, "");
+    return { error: message || "Stock could not be updated." };
   }
 
-  // The ledger records the balance AFTER the move, so a reader never has to
-  // reconstruct it by replaying every earlier row - the mistake that made an
-  // agent's balance read -86 when the real figure was 1.
-  await supabase.from(LEDGER).insert({
-    org_id: input.orgId,
-    agent_id: input.agentId,
-    product_id: input.productId,
-    product_name: input.productName ?? null,
-    movement: input.movement,
-    quantity: input.quantity,
-    balance_after: next.available,
-    order_id: input.orderId ?? null,
-    transfer_id: input.transferId ?? null,
-    note: input.note ?? null,
-    recorded_by: input.userId ?? null,
-    recorded_by_name: input.userName ?? null
-  });
-
-  return { balance: next };
+  const row = (data ?? {}) as Record<string, unknown>;
+  return {
+    balance: {
+      available: Number(row.available ?? 0),
+      reserved: Number(row.reserved ?? 0),
+      out_for_delivery: Number(row.outForDelivery ?? 0),
+      damaged: Number(row.damaged ?? 0),
+      missing: Number(row.missing ?? 0),
+      awaiting_investigation: Number(row.awaitingInvestigation ?? 0)
+    }
+  };
 }

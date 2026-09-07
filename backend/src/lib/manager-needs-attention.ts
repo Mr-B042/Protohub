@@ -38,6 +38,7 @@ type NeedsAttentionOrderRow = {
   review_hold?: boolean | null;
   assigned_rep_id?: string | null;
   stock_deducted?: boolean | null;
+  stock_reconciliation_status?: string | null;
   call_outcome?: string | null;
   logistics_cost?: number | null;
   upsell_from_qty?: number | null;
@@ -56,14 +57,14 @@ type NeedsAttentionOrderRow = {
 export const computeNeedsAttentionSummary = async (orgId: string): Promise<NeedsAttentionSummary> => {
   const { data, error } = await supabase
     .from("orders")
-    .select("id, status, review_hold, assigned_rep_id, stock_deducted, call_outcome, logistics_cost, upsell_from_qty, upsell_to_qty, product_id, product_name, state, created_at, delivered_date, quantity, package_components_snapshot, cross_sell_lines, free_gift_lines")
+    .select("id, status, review_hold, assigned_rep_id, stock_deducted, stock_reconciliation_status, call_outcome, logistics_cost, upsell_from_qty, upsell_to_qty, product_id, product_name, state, created_at, delivered_date, quantity, package_components_snapshot, cross_sell_lines, free_gift_lines")
     .eq("org_id", orgId);
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as NeedsAttentionOrderRow[];
 
   const reviewHold = rows.filter((order) => order.review_hold).length;
 
-  const skippedDeduction = rows.filter((order) => order.status === "Delivered" && !order.stock_deducted).length;
+  const skippedDeduction = rows.filter((order) => order.status === "Delivered" && order.stock_reconciliation_status === "exception").length;
 
   const stockMismatch = await countStockMismatches(orgId, rows);
 

@@ -9,6 +9,7 @@ import { sendLowStockEmail } from "../lib/mailer.js";
 import { getOrgPushBranding } from "../lib/push-branding.js";
 import { sendPushToRoles } from "../lib/push.js";
 import { runSmartStockAlerts } from "../lib/smart-stock-alerts.js";
+import { applyInventoryMovements, InventoryMovementError } from "../lib/inventory-movements.js";
 
 const movementId = () => `MOV-${randomUUID()}`;
 
@@ -44,12 +45,47 @@ router.get("/movements", async (req, res) => {
   res.json({ data, total: count ?? 0, page: pageNum, pageSize });
 });
 
+// Live invariant check used by operations and deployment verification.
+router.get("/reconciliation",
+  requireRole("Owner", "Admin", "Inventory Manager"),
+  async (req, res) => {
+    const orgId = req.user!.orgId;
+    const [balances, aggregates, personalAgents] = await Promise.all([
+      supabase.from("inventory_balance_reconciliation").select("*").eq("org_id", orgId),
+      supabase.from("inventory_aggregate_reconciliation").select("*").eq("org_id", orgId),
+      supabase.from("pda_inventory_reconciliation").select("*").eq("org_id", orgId)
+    ]);
+    const error = balances.error ?? aggregates.error ?? personalAgents.error;
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    const balanceDrift = (balances.data ?? []).filter((row: any) => Number(row.drift ?? 0) !== 0);
+    const aggregateDrift = (aggregates.data ?? []).filter((row: any) =>
+      [row.quantity_drift, row.defective_drift, row.missing_drift, row.product_cache_drift]
+        .some((value) => Number(value ?? 0) !== 0)
+    );
+    const personalAgentDrift = (personalAgents.data ?? []).filter((row: any) =>
+      [row.available_drift, row.reserved_drift, row.out_for_delivery_drift,
+        row.damaged_drift, row.missing_drift, row.awaiting_investigation_drift]
+        .some((value) => Number(value ?? 0) !== 0)
+    );
+    res.json({
+      ok: balanceDrift.length + aggregateDrift.length + personalAgentDrift.length === 0,
+      checked: {
+        balances: balances.data?.length ?? 0,
+        aggregates: aggregates.data?.length ?? 0,
+        personalAgents: personalAgents.data?.length ?? 0
+      },
+      drift: { balances: balanceDrift, aggregates: aggregateDrift, personalAgents: personalAgentDrift }
+    });
+  }
+);
+
 // ── POST /api/stock/update ────────────────────────────────
 // Manual warehouse stock update (add or remove)
 const UpdateSchema = z.object({
   productId: z.string().uuid(),
   change:    z.number().int(),            // positive = add, negative = remove
-  note:      z.string().trim().min(3, "Reason is required.").max(300, "Reason is too long.")
+  note:      z.string().trim().min(3, "Reason is required.").max(300, "Reason is too long."),
+  requestId: z.string().trim().min(8).max(160).optional()
 });
 
 router.post("/update",
@@ -83,44 +119,47 @@ router.post("/update",
       return;
     }
 
-    const targetStock = Number(product.warehouse_stock ?? 0) + change;
-
-    const { data: updatedProduct, error: updateError } = await supabase
-      .from("products")
-      .update({ warehouse_stock: targetStock })
-      .eq("id", productId)
-      .eq("org_id", req.user!.orgId)
-      .eq("warehouse_stock", product.warehouse_stock)
-      .select("warehouse_stock")
-      .single();
-
-    if (updateError) { res.status(500).json({ error: updateError.message }); return; }
-    if (!updatedProduct) {
-      res.status(409).json({ error: "Warehouse stock changed just now. Please refresh and try again." });
+    const movType = change > 0 ? "Stock Added" : "Correction";
+    let movementResult;
+    try {
+      [movementResult] = await applyInventoryMovements({
+        orgId: req.user!.orgId,
+        actorUserId: req.user!.id,
+        actorName: req.user!.name,
+        lines: [{
+          productId,
+          productName: product.name,
+          type: movType,
+          quantity: Math.abs(change),
+          ledgerQuantity: change,
+          sourceScope: change < 0 ? "warehouse" : null,
+          destinationScope: change > 0 ? "warehouse" : null,
+          note,
+          idempotencyKey: parsed.data.requestId
+            ?? (String(req.get("Idempotency-Key") ?? "").trim() || `warehouse-adjustment:${randomUUID()}`)
+        }]
+      });
+    } catch (error: any) {
+      const movementError = error instanceof InventoryMovementError ? error : null;
+      res.status(movementError?.status ?? 500).json({
+        error: movementError?.message ?? "Warehouse stock could not be updated.",
+        code: movementError?.code ?? "INVENTORY_MOVEMENT_FAILED"
+      });
       return;
     }
-    const newStock = Number(updatedProduct.warehouse_stock ?? targetStock);
+    if (!movementResult) {
+      res.status(500).json({ error: "Warehouse stock update returned no result.", code: "INVENTORY_MOVEMENT_FAILED" });
+      return;
+    }
+    const newStock = Number(
+      change > 0 ? movementResult?.destinationBalanceAfter : movementResult?.sourceBalanceAfter
+    );
 
-    // Log the movement
-    const movType = change > 0 ? "Stock Added" : "Correction";
-    const { data: movement, error: movError } = await supabase
+    const { data: movement } = await supabase
       .from("stock_movements")
-      .insert({
-        id:           movementId(),
-        org_id:       req.user!.orgId,
-        product_id:   productId,
-        product_name: product.name,
-        type:         movType,
-        qty:          change,
-        balance_after: newStock,
-        by_name:      req.user!.name,
-        by_user_id:   req.user!.id,
-        note:         note || (change > 0 ? "Manual stock addition" : "Manual stock correction")
-      })
-      .select()
+      .select("*")
+      .eq("id", movementResult.movementId)
       .single();
-
-    if (movError) { res.status(500).json({ error: movError.message }); return; }
 
     const movementLabel = change > 0 ? "added to" : "removed from";
     const movementMessage = `Warehouse stock ${movementLabel} ${product.name}: ${change > 0 ? "+" : "−"}${Math.abs(change)} unit${Math.abs(change) === 1 ? "" : "s"} · warehouse ${product.warehouse_stock} → ${newStock}${agentHeld > 0 ? ` · with agents ${agentHeld}` : ""} · reason: ${note} · by ${req.user!.name}`;
@@ -200,49 +239,10 @@ router.post("/movements",
       res.status(400).json({ error: humanFieldErrors(parsed.error) });
       return;
     }
-    const d = parsed.data;
-
-    // Trust boundary: balance_after must be derived from authoritative state,
-    // not whatever the client posted. Look up current stock for this scope.
-    let balanceAfter = 0;
-    if (d.agentId) {
-      const { data: ag } = await supabase
-        .from("agent_stock")
-        .select("quantity")
-        .eq("agent_id", d.agentId)
-        .eq("product_id", d.productId)
-        .maybeSingle();
-      balanceAfter = ag?.quantity ?? 0;
-    } else {
-      const { data: prod } = await supabase
-        .from("products")
-        .select("warehouse_stock")
-        .eq("id", d.productId)
-        .eq("org_id", req.user!.orgId)
-        .maybeSingle();
-      balanceAfter = prod?.warehouse_stock ?? 0;
-    }
-
-    const { data, error } = await supabase
-      .from("stock_movements")
-      .insert({
-        id:            movementId(),
-        org_id:        req.user!.orgId,
-        product_id:    d.productId,
-        product_name:  d.productName,
-        type:          d.type,
-        qty:           d.qty,
-        balance_after: balanceAfter,
-        agent_id:      d.agentId ?? null,
-        order_id:      d.orderId ?? null,
-        by_name:       req.user!.name,
-        by_user_id:    req.user!.id,
-        note:          d.note ?? null
-      })
-      .select()
-      .single();
-    if (error) { res.status(500).json({ error: error.message }); return; }
-    res.status(201).json(data);
+    res.status(410).json({
+      error: "Ledger-only stock entries are disabled. Use the warehouse adjustment, agent stock, order delivery, or waybill action so the balance and ledger are committed together.",
+      code: "LEDGER_ONLY_MOVEMENT_DISABLED"
+    });
   }
 );
 
@@ -283,10 +283,12 @@ router.post("/count-sessions",
       return;
     }
 
-    // Build entries from current agent stock
+    // Build entries from the actual hub rows, not the legacy per-agent cache.
+    // A physical count is tied to one place; changing the cache alone was a
+    // direct source of cache-vs-hub drift.
     const { data: stocks } = await supabase
-      .from("agent_stock")
-      .select("agent_id, product_id, quantity, agents(name), products(name)")
+      .from("agent_location_stock")
+      .select("agent_id, agent_location_id, product_id, quantity, agent:agents(name), location:agent_locations(name), product:products(name)")
       .in("agent_id", agentIds)
       .gt("quantity", 0);
 
@@ -294,9 +296,11 @@ router.post("/count-sessions",
       const entries = stocks.map((s: any) => ({
         session_id:   session.id,
         product_id:   s.product_id,
-        product_name: s.products?.name ?? s.product_id,
+        product_name: s.product?.name ?? s.product_id,
         agent_id:     s.agent_id,
-        agent_name:   s.agents?.name ?? s.agent_id,
+        agent_name:   s.agent?.name ?? s.agent_id,
+        agent_location_id: s.agent_location_id,
+        agent_location_name: s.location?.name ?? "Hub",
         system_qty:   s.quantity,
         status:       "Pending"
       }));
@@ -397,38 +401,87 @@ router.post("/count-entries/:entryId/adjust",
       return;
     }
 
-    const delta      = entry.agent_count - entry.system_qty;
     const reasonLabel = writeoffReason === "Other" && writeoffCustom?.trim()
       ? writeoffCustom.trim()
       : writeoffReason;
 
-    // Update agent_stock
-    await supabase
-      .from("agent_stock")
-      .update({ quantity: entry.agent_count })
-      .eq("agent_id", entry.agent_id)
-      .eq("product_id", entry.product_id);
+    let locationId = entry.agent_location_id as string | null;
+    let locationName = String(entry.agent_location_name ?? "").trim();
+    if (!locationId) {
+      const { data: locations } = await supabase
+        .from("agent_locations")
+        .select("id, name, is_primary")
+        .eq("org_id", req.user!.orgId)
+        .eq("agent_id", entry.agent_id)
+        .eq("active", true)
+        .order("is_primary", { ascending: false });
+      if (!locations || locations.length !== 1) {
+        res.status(409).json({
+          error: "This older stock count is not tied to one hub. Start a new count so the correction is applied to the exact location.",
+          code: "STOCK_COUNT_LOCATION_REQUIRED"
+        });
+        return;
+      }
+      locationId = locations[0].id;
+      locationName = locations[0].name;
+    }
+    if (!entry.product_id) {
+      res.status(409).json({ error: "The counted product no longer exists.", code: "STOCK_COUNT_PRODUCT_MISSING" });
+      return;
+    }
 
-    // Sync denormalized total on the products row
-    const { data: allAgentStock } = await supabase
-      .from("agent_stock").select("quantity").eq("product_id", entry.product_id);
-    const newAgentTotal = (allAgentStock ?? []).reduce((sum, r) => sum + (r.quantity ?? 0), 0);
-    await supabase.from("products").update({ agent_stock: newAgentTotal }).eq("id", entry.product_id);
+    const { data: liveStock, error: liveStockError } = await supabase
+      .from("agent_location_stock")
+      .select("quantity")
+      .eq("org_id", req.user!.orgId)
+      .eq("agent_location_id", locationId)
+      .eq("product_id", entry.product_id)
+      .maybeSingle();
+    if (liveStockError) { res.status(500).json({ error: liveStockError.message }); return; }
+    const liveQuantity = Number(liveStock?.quantity ?? 0);
+    if (liveQuantity !== Number(entry.system_qty ?? 0)) {
+      res.status(409).json({
+        error: `Stock changed after this count started (${entry.system_qty} → ${liveQuantity}). Start a new count instead of overwriting newer movements.`,
+        code: "STALE_STOCK_COUNT"
+      });
+      return;
+    }
 
-    // Log movement
-    await supabase.from("stock_movements").insert({
-      id:           movementId(),
-      org_id:       req.user!.orgId,
-      product_id:   entry.product_id,
-      product_name: entry.product_name,
-      type:         "Correction",
-      qty:          delta,
-      balance_after: entry.agent_count,
-      agent_id:     entry.agent_id,
-      by_name:      req.user!.name,
-      by_user_id:   req.user!.id,
-      note:         `Write-off: ${delta >= 0 ? "+" : ""}${delta} units — ${reasonLabel}. (Stock count reconciliation)`
-    });
+    const delta = Number(entry.agent_count) - liveQuantity;
+    if (delta !== 0) {
+      try {
+        await applyInventoryMovements({
+          orgId: req.user!.orgId,
+          actorUserId: req.user!.id,
+          actorName: req.user!.name,
+          lines: [{
+            productId: entry.product_id,
+            productName: entry.product_name,
+            type: delta > 0 ? "Correction" : (writeoffReason === "Return to Warehouse" ? "Return" : "Correction"),
+            quantity: Math.abs(delta),
+            ledgerQuantity: delta,
+            sourceScope: delta < 0 ? "agent_location" : null,
+            sourceAgentLocationId: delta < 0 ? locationId : null,
+            destinationScope: delta > 0
+              ? "agent_location"
+              : (writeoffReason === "Return to Warehouse" ? "warehouse" : null),
+            destinationAgentLocationId: delta > 0 ? locationId : null,
+            agentId: entry.agent_id,
+            fromLocation: delta < 0 ? locationName : null,
+            toLocation: delta > 0 ? locationName : (writeoffReason === "Return to Warehouse" ? "Warehouse" : null),
+            note: `Stock count: ${delta >= 0 ? "+" : ""}${delta} units — ${reasonLabel}`,
+            idempotencyKey: `stock-count:${entry.id}:adjust:${entry.agent_count}`
+          }]
+        });
+      } catch (error: any) {
+        const movementError = error instanceof InventoryMovementError ? error : null;
+        res.status(movementError?.status ?? 500).json({
+          error: movementError?.message ?? "Stock count correction failed.",
+          code: movementError?.code ?? "INVENTORY_MOVEMENT_FAILED"
+        });
+        return;
+      }
+    }
 
     // Book the cost of what went missing. Adjusting the quantity alone left the
     // loss invisible in the P&L - the write-off reason was recorded but never
@@ -442,7 +495,7 @@ router.post("/count-entries/:entryId/adjust",
         productName: entry.product_name ?? "Unknown product",
         units: Math.abs(delta),
         reason: reasonLabel,
-        context: `Stock count — ${entry.agent_name ?? "agent"}`
+        context: `Stock count — ${entry.agent_name ?? "agent"} · ${locationName}`
       });
     }
 

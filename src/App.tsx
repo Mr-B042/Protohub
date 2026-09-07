@@ -442,6 +442,7 @@ const INVENTORY_OPERATIONS_NAV: InventoryOperationsNavGroup[] = [
     { action: "expenses", label: "Expenses", icon: WalletCards },
   ] },
   { label: "Control & Reconciliation", items: [
+    { action: "delivered-reconciliation", label: "Delivered Stock Reconciliation", icon: PackageCheck },
     { action: "movements", label: "Stock Movements", icon: History },
     { action: "counts", label: "Stock Counts & Reconciliation", icon: ClipboardCheck },
     { action: "discrepancies", label: "Discrepancies / Incidents", icon: AlertTriangle },
@@ -1312,6 +1313,7 @@ type TrackedOrder = {
   agentLocationCitySnapshot?: string | null;
   agentCoverageStateSnapshot?: string | null;
   stockDeducted?: boolean;
+  stockReconciliationStatus?: "not_applicable" | "pending" | "partial" | "exception" | "reconciled" | "voided";
   logisticsCost?: number;
   amountRemitted?: number;
   remittanceStatus?: "Pending" | "Partial" | "Paid";
@@ -6800,6 +6802,7 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
     agentLocationStateSnapshot: value?.agentLocationStateSnapshot ?? value?.agent_location_state_snapshot ?? null,
     agentLocationCitySnapshot: value?.agentLocationCitySnapshot ?? value?.agent_location_city_snapshot ?? null,
     agentCoverageStateSnapshot: value?.agentCoverageStateSnapshot ?? value?.agent_coverage_state_snapshot ?? null,
+    stockReconciliationStatus: value?.stockReconciliationStatus ?? value?.stock_reconciliation_status ?? "not_applicable",
     latitude: typeof (value?.latitude ?? value?.lat) === "number" ? (value?.latitude ?? value?.lat) : value?.latitude === null ? null : undefined,
     longitude: typeof (value?.longitude ?? value?.lng) === "number" ? (value?.longitude ?? value?.lng) : value?.longitude === null ? null : undefined,
     geoAccuracy: value?.geoAccuracy ?? value?.geo_accuracy ?? null,
@@ -22289,7 +22292,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return bNeedsAttention - aNeedsAttention
         || bOutstanding - aOutstanding
         || remittanceOrderSortValue(b) - remittanceOrderSortValue(a)
-        || a.customer.localeCompare(b.customer);
+        || String(a.customer ?? "").localeCompare(String(b.customer ?? ""));
     })
     .filter((order) => {
       if (!normalizedRemittanceOrderSearch) return true;
@@ -32545,7 +32548,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       })
       .sort((a, b) => new Date(a.createdAt ?? "").getTime() - new Date(b.createdAt ?? "").getTime());
 
-    const skippedDeductionRows = trackedOrders.filter((order) => order.status === "Delivered" && !order.stockDeducted && needsAttentionInScope(order.deliveredDate, order.createdAt));
+    const skippedDeductionRows = trackedOrders.filter((order) => order.status === "Delivered" && order.stockReconciliationStatus === "exception" && needsAttentionInScope(order.deliveredDate, order.createdAt));
     const stockRetryRows: Array<{ order: TrackedOrder; reason: string; detail: string }> = [
       ...skippedDeductionRows.map((order) => ({
         order,
@@ -35200,7 +35203,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     triggerCsvDownload("inventory", rows, "Inventory exported as CSV.");
   };
 
-  const printWaybill = (w: WaybillRecord) => {
+  const printWaybill = (w: WaybillRecord, includeFinancials = true) => {
     const win = window.open("", "_blank", "width=800,height=600");
     if (!win) return;
     // Notes and product/state names are user-editable; escape every interpolation.
@@ -35217,7 +35220,7 @@ ${waybillLineItems(w).length > 1
   ? `<tr><th>Items</th><td colspan="3">${waybillLineItems(w).map((it) => `${String(it.quantity)} × ${esc(it.productName)}`).join("<br/>")}</td></tr>`
   : `<tr><th>Product</th><td>${esc(w.productName)}</td><th>Quantity</th><td>${esc(String(w.quantity))} units</td></tr>`}
 <tr><th>From</th><td>${esc(w.sendingState)}</td><th>To</th><td>${esc(w.receivingState)}</td></tr>
-<tr><th>Logistics Partner</th><td>${esc(w.logisticsPartner || "-")}</td><th>Waybill Fee</th><td>${w.waybillFee > 0 ? "₦" + w.waybillFee.toLocaleString() : "-"}</td></tr>
+<tr><th>Logistics Partner</th><td>${esc(w.logisticsPartner || "-")}</td>${includeFinancials ? `<th>Waybill Fee</th><td>${w.waybillFee > 0 ? "₦" + w.waybillFee.toLocaleString() : "-"}</td>` : ""}</tr>
 <tr><th>Date Sent</th><td>${esc(w.dateSent)}</td><th>Date Received</th><td>${esc(w.dateReceived || "-")}</td></tr>
 <tr><th>Status</th><td><span class="badge status-${w.status === "In Transit" ? "transit" : w.status === "Received" ? "received" : w.status === "Returned" ? "returned" : "cancelled"}">${esc(w.status)}</span></td><th>Notes</th><td>${esc(w.note || "-")}</td></tr>
 </table>
@@ -38565,7 +38568,6 @@ ${waybillLineItems(w).length > 1
     }
 
     if (!isDeliveryDateOnly && nextStatus === "Delivered") {
-      deductProductStockForOrder(order);
       // Auto-create waybill record (agent → customer) for audit trail
       if (order.agentId) {
         const agent = agents.find((a) => a.id === order.agentId);
@@ -38620,7 +38622,8 @@ ${waybillLineItems(w).length > 1
               response,
               callOutcome: nextStatus === "Delivered" ? undefined : callOutcome === undefined ? item.callOutcome : callOutcome || undefined,
               deliveredDate: nextStatus === "Delivered" ? effectiveDeliveredDate : order.status === "Delivered" ? undefined : item.deliveredDate,
-              stockDeducted: isDeliveryDateOnly ? item.stockDeducted : nextStatus === "Delivered" ? true : order.status === "Delivered" ? false : item.stockDeducted,
+              stockDeducted: isDeliveryDateOnly ? item.stockDeducted : nextStatus === "Delivered" ? false : order.status === "Delivered" ? false : item.stockDeducted,
+              stockReconciliationStatus: isDeliveryDateOnly ? item.stockReconciliationStatus : nextStatus === "Delivered" ? "pending" : order.status === "Delivered" ? "voided" : item.stockReconciliationStatus,
               notes: [
                 orderTimelineNote(
                   isDeliveryDateOnly
@@ -40363,24 +40366,10 @@ ${waybillLineItems(w).length > 1
     if (!selectedOrder) {
       return;
     }
-    // Snapshot full state needed to undo if the server rejects the delete:
-    // the order itself, the warehouse-stock restore, the audit movement.
+    // The API owns the stock reversal. The browser only removes the order
+    // optimistically; writing warehouse stock here as well used to restore a
+    // delivered order twice (once here, once to the original hub in the API).
     const orderSnapshot = selectedOrder;
-    const productSnapshot = selectedOrder.stockDeducted && selectedOrder.productId
-      ? products.find((p) => p.id === selectedOrder.productId)
-      : null;
-    let restoreMovementId: string | null = null;
-    if (selectedOrder.stockDeducted && selectedOrder.productId) {
-      const product = products.find((p) => p.id === selectedOrder.productId);
-      const qty = quantityForOrder(selectedOrder);
-      if (product) {
-        const movId = makeMovementId();
-        restoreMovementId = movId;
-        setProducts((prev) => prev.map((p) => p.id === product.id ? { ...p, warehouseStock: p.warehouseStock + qty, unitsSold: Math.max(0, p.unitsSold - qty) } : p));
-        setStockMovements((prev) => [{ id: movId, date: new Date().toISOString(), productId: product.id, productName: product.name, type: "Return", qty, balanceAfter: product.warehouseStock + qty, order: selectedOrder.id, by: ownerName, note: `Stock restored: order ${selectedOrder.id} deleted` }, ...prev]);
-        stockApi.update({ productId: product.id, change: qty, note: `Stock restored: order ${selectedOrder.id} deleted` }).catch(() => { /* movement reconciles on next stockApi.movements load */ });
-      }
-    }
     const _doId = selectedOrder.id;
     const _doStockDeducted = selectedOrder.stockDeducted;
     setTrackedOrders((value) => value.filter((order) => order.id !== selectedOrder.id));
@@ -40394,10 +40383,9 @@ ${waybillLineItems(w).length > 1
     }
     showToast(`${_doId} deleted${_doStockDeducted ? " and stock restored" : ""}.`);
     ordersApi.delete(_doId).catch((err: any) => {
-      // Restore the order; restore stock + units_sold; remove the audit movement we synthesized.
+      // Restore only the optimistic order row. Inventory was never written by
+      // the browser, so there is no second balance to compensate.
       setTrackedOrders((value) => [orderSnapshot, ...value]);
-      if (productSnapshot) setProducts((prev) => prev.map((p) => p.id === productSnapshot.id ? productSnapshot : p));
-      if (restoreMovementId) setStockMovements((prev) => prev.filter((m) => m.id !== restoreMovementId));
       showToast(`Failed to delete ${_doId}: ${err?.message ?? "please retry"}.`);
     });
   };
@@ -41548,15 +41536,9 @@ ${waybillLineItems(w).length > 1
         })
       );
       setStockMovements((prev) => [...newMovements, ...prev]);
-      Promise.allSettled(
-        [...productUpdates].map(([productId, qty]) =>
-          stockApi.update({ productId, change: qty, note: `Stock returned: agent "${selectedAgent.name}" deleted` })
-        )
-      ).then((results) => {
-        if (results.some((r) => r.status === "rejected")) {
-          showToast("Warehouse stock sync failed for some products - please reload to verify counts.");
-        }
-      });
+      // The delete endpoint returns every hub row and writes its ledger entry
+      // before deleting the agent. A second stockApi.update here used to credit
+      // the warehouse independently and could survive even when deletion failed.
     }
 
     // Unassign this agent from historical (non-active) orders so they don't show a ghost agent name
@@ -44312,7 +44294,7 @@ ${waybillLineItems(w).length > 1
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
   const handleInventoryOperationsAction = (action: InventoryOperationsAction) => {
-    if (isInventoryOperationsRole && ["expenses", "settings", "create-expense"].includes(action)) {
+    if (isInventoryOperationsRole && ["carriers", "expenses", "settings", "create-expense"].includes(action)) {
       showToast("That area is outside the Inventory & Logistics Operations role.");
       return;
     }
@@ -44333,6 +44315,7 @@ ${waybillLineItems(w).length > 1
       case "coverage":
       case "forecast":
       case "stock-agents":
+      case "delivered-reconciliation":
         openInventoryOperationsRoute(action);
         return;
       case "movements":
@@ -68013,7 +67996,7 @@ ${waybillLineItems(w).length > 1
       switch (key) {
         case "newest": return sorted.sort((a, b) => b.anchorMs - a.anchorMs);
         case "value": return sorted.sort((a, b) => b.amount - a.amount);
-        case "name": return sorted.sort((a, b) => a.customer.localeCompare(b.customer));
+        case "name": return sorted.sort((a, b) => String(a.customer ?? "").localeCompare(String(b.customer ?? "")));
         // Oldest first, and an order with no date anywhere is the most
         // neglected of all, so it leads rather than being parked at the end.
         default: return sorted.sort((a, b) => a.anchorMs - b.anchorMs);
@@ -73743,7 +73726,7 @@ ${waybillLineItems(w).length > 1
     // showing 194 against a card showing 46.
     const inScope = needsAttentionInScope;
     const reviewHold = trackedOrders.filter((order) => order.reviewHold && inScope(order.createdAt)).length;
-    const skippedDeduction = trackedOrders.filter((order) => order.status === "Delivered" && !order.stockDeducted && inScope(order.deliveredDate, order.createdAt)).length;
+    const skippedDeduction = trackedOrders.filter((order) => order.status === "Delivered" && order.stockReconciliationStatus === "exception" && inScope(order.deliveredDate, order.createdAt)).length;
     const stockMismatch = new Set(stockMismatchRows.filter((row) => inScope(row.deliveredDate)).map((row) => row.orderId)).size;
     const unassigned = trackedOrders.filter((order) => {
       const status = (order.status ?? "New") as Exclude<OrderStatus, "All Orders">;
@@ -73967,7 +73950,7 @@ ${waybillLineItems(w).length > 1
                     {INVENTORY_OPERATIONS_NAV.map((group) => ({
                       ...group,
                       items: isInventoryOperationsRole
-                        ? group.items.filter((item) => !["expenses", "settings"].includes(item.action))
+                        ? group.items.filter((item) => !["carriers", "expenses", "settings"].includes(item.action))
                         : group.items
                     })).filter((group) => group.items.length > 0).map((group, groupIndex) => (
                       <div key={group.label ?? `inventory-ops-${groupIndex}`} className="space-y-1">
@@ -83446,16 +83429,15 @@ ${waybillLineItems(w).length > 1
                 const received = base.filter((w) => w.status === "Received");
                 const customerDeliveries = base.filter((w) => isCustomerDeliveryWaybill(w));
                 const manualTransfers = base.filter((w) => !isCustomerDeliveryWaybill(w));
-                const totalFees = base.filter((w) => w.status !== "Cancelled").reduce((s, w) => s + w.waybillFee, 0);
                 const inTransitUnits = inTransit.reduce((s, w) => s + w.quantity, 0);
                 return (
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+                  <div className={`grid grid-cols-2 gap-4 ${canViewInventoryFinancials ? "sm:grid-cols-5" : "sm:grid-cols-4"}`}>
                     {[
                       { label: "In Transit", value: inTransit.length, sub: `${inTransitUnits} units`, color: "text-blue-700 bg-blue-50 border-blue-200" },
                       { label: "Received", value: received.length, sub: `${received.reduce((s,w)=>s+w.quantity,0)} units`, color: "text-green-700 bg-green-50 border-green-200" },
                       { label: "Manual Transfers", value: manualTransfers.length, sub: "stock transfer records", color: "text-slate-700 bg-slate-50 border-slate-200" },
                       { label: "Customer Deliveries", value: customerDeliveries.length, sub: "auto-waybills from delivered orders", color: "text-amber-700 bg-amber-50 border-amber-200" },
-                      { label: "Total Waybill Fees", value: formatMoney(totalFees), sub: "filtered", color: "text-purple-700 bg-purple-50 border-purple-200" },
+                      ...(canViewInventoryFinancials ? [{ label: "Total Waybill Fees", value: formatMoney(base.filter((w) => w.status !== "Cancelled").reduce((s, w) => s + w.waybillFee, 0)), sub: "filtered", color: "text-purple-700 bg-purple-50 border-purple-200" }] : []),
                     ].map((card) => (
                       <div key={card.label} className={`rounded-xl border p-4 ${card.color}`}>
                         <p className="text-xs font-bold uppercase tracking-wide opacity-70">{card.label}</p>
@@ -83490,8 +83472,8 @@ ${waybillLineItems(w).length > 1
                     </button>
                     {showWaybillsDateRange && renderDateRangeCalendar("waybill-date-range-panel", waybillsDateRange, setWaybillsDateRange, applyWaybillsDateRange, () => setShowWaybillsDateRange(false))}
                   </div>
-                  {/* Currency - full width on mobile */}
-                  <select
+                  {/* Currency - full width on mobile; hidden from inventory operations */}
+                  {canViewInventoryFinancials && <select
                     className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors"
                     aria-label="Currency"
                     value={currency}
@@ -83500,7 +83482,7 @@ ${waybillLineItems(w).length > 1
                     <option value="NGN">₦ Nigerian Naira</option>
                     <option value="USD">$ US Dollar</option>
                     <option value="GBP">£ British Pound</option>
-                  </select>
+                  </select>}
                   {renderProductFilter(waybillProductIds, setWaybillProductIds, showWaybillProductFilter, setShowWaybillProductFilter)}
                   <select
                     className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
@@ -83633,10 +83615,10 @@ ${waybillLineItems(w).length > 1
                             <span className="font-semibold uppercase tracking-wide text-gray-400">Partner</span>
                             <span className="text-gray-700">{w.logisticsPartner}</span>
                           </div>
-                          <div className="flex flex-col gap-0.5">
+                          {canViewInventoryFinancials && <div className="flex flex-col gap-0.5">
                             <span className="font-semibold uppercase tracking-wide text-gray-400">Fee</span>
                             {waybillFeeCell(w, formatMoney(w.waybillFee))}
-                          </div>
+                          </div>}
                           <div className="flex flex-col gap-0.5 col-span-2">
                             <span className="font-semibold uppercase tracking-wide text-gray-400">Sent</span>
                             <span className="text-gray-700">{formatMoment(w.createdAt) || formatDateOnly(w.dateSent)}</span>
@@ -83655,7 +83637,7 @@ ${waybillLineItems(w).length > 1
                             </>
                           )}
                           <button className="!min-h-0 inline-flex items-center justify-center px-3 py-2 rounded-lg border border-blue-100 text-blue-700 bg-blue-50 text-sm font-semibold hover:bg-blue-100 transition-colors" onClick={() => openEditWaybill(w)}>Edit</button>
-                          <button className="!min-h-0 inline-flex items-center justify-center px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => printWaybill(w)}>Print</button>
+                          <button className="!min-h-0 inline-flex items-center justify-center px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => printWaybill(w, canViewInventoryFinancials)}>Print</button>
                           {["In Transit", "Cancelled"].includes(w.status) && (
                             <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-rose-200 text-rose-700 bg-rose-50 text-sm font-semibold hover:bg-rose-100 transition-colors" onClick={() => deleteWaybill(w)}><Trash2 className="w-4 h-4" /> Delete</button>
                           )}
@@ -83668,7 +83650,7 @@ ${waybillLineItems(w).length > 1
                     <table className="w-full text-sm sticky-col-first">
                       <thead className="bg-gray-50 border-b border-gray-200">
                         <tr>
-                          {["ID", "Product", "Flow", "Qty", "Route", "Logistics Partner", "Fee", "Date Sent", "Status", "Actions"].map((h) => (
+                          {["ID", "Product", "Flow", "Qty", "Route", "Logistics Partner", ...(canViewInventoryFinancials ? ["Fee"] : []), "Date Sent", "Status", "Actions"].map((h) => (
                             <th key={h} className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
@@ -83696,7 +83678,7 @@ ${waybillLineItems(w).length > 1
                               <span className="text-gray-900 font-medium">{getWaybillDestinationLabel(w)}</span>
                             </td>
                             <td className="px-4 py-3 text-gray-700">{w.logisticsPartner}</td>
-                            <td className="px-4 py-3 whitespace-nowrap">{waybillFeeCell(w, formatMoney(w.waybillFee))}</td>
+                            {canViewInventoryFinancials && <td className="px-4 py-3 whitespace-nowrap">{waybillFeeCell(w, formatMoney(w.waybillFee))}</td>}
                             <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
                               <span className="block">{formatMoment(w.createdAt) || formatDateOnly(w.dateSent)}</span>
                               <span className="block text-xs text-gray-400 mt-0.5">Dispatch date {formatDateOnly(w.dateSent)}</span>
@@ -83727,7 +83709,7 @@ ${waybillLineItems(w).length > 1
                                   </>
                                 )}
                                 <button className="inline-flex items-center px-2.5 py-1 rounded-md border border-blue-100 text-blue-700 bg-blue-50 text-xs font-semibold hover:bg-blue-100 transition-colors" onClick={() => openEditWaybill(w)}>Edit</button>
-                                <button className="inline-flex items-center px-2.5 py-1 rounded-md border border-gray-200 text-gray-600 text-xs font-semibold hover:bg-gray-100 transition-colors" onClick={() => printWaybill(w)}>Print</button>
+                                <button className="inline-flex items-center px-2.5 py-1 rounded-md border border-gray-200 text-gray-600 text-xs font-semibold hover:bg-gray-100 transition-colors" onClick={() => printWaybill(w, canViewInventoryFinancials)}>Print</button>
                                 {["In Transit", "Cancelled"].includes(w.status) && (
                                   <button className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-rose-200 text-rose-700 bg-rose-50 text-xs font-semibold hover:bg-rose-100 transition-colors" onClick={() => deleteWaybill(w)}><Trash2 className="w-3.5 h-3.5" /> Delete</button>
                                 )}
@@ -96722,7 +96704,6 @@ ${waybillLineItems(w).length > 1
                 // real grouping, so the column shows that rather than an
                 // invented taxonomy.
                 category: product.catalogType === "combo_only" ? "Combo" : "Standard",
-                sellingPrice: Math.max(0, Number(primaryPricing(product)?.sellingPrice ?? 0)),
               }))}
               stateHubs={inventoryStateHubRows.map(({ agent, location }) => ({
                 state: normalizeAgentState(location.state) || agentPrimaryBaseState(agent) || "Unassigned",
@@ -96767,7 +96748,6 @@ ${waybillLineItems(w).length > 1
                   productName: item.productName,
                   quantity: Math.max(0, Number(item.quantity ?? 0)),
                 })),
-                fee: Math.max(0, Number(waybill.waybillFee ?? 0)),
                 carrier: waybill.logisticsPartner || "Not assigned",
                 from: waybill.sendingLocationName || waybill.sendingState || "Warehouse",
                 to: waybill.receivingLocationName || waybill.receivingState || "Unassigned",
@@ -96781,11 +96761,6 @@ ${waybillLineItems(w).length > 1
                 dateSent: waybill.dateSent,
                 dateReceived: waybill.dateReceived,
                 status: waybill.status,
-              }))}
-              expenses={expenses.map((expense) => ({
-                type: expense.type,
-                amount: Math.max(0, Number(expense.amount ?? 0)),
-                date: expense.date || expense.createdAt || "",
               }))}
               discrepancies={stockCounts.flatMap((session) => session.entries
                 .filter((entry) => entry.status === "Discrepancy" || Number(entry.variance ?? 0) !== 0)
@@ -110547,10 +110522,10 @@ ${waybillLineItems(w).length > 1
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700 dark:bg-slate-700/40 dark:text-slate-200">{getWaybillFlowLabel(w)}</span>
                       </div>
                     </div>
-                    <div className="text-right">
+                    {canViewInventoryFinancials && <div className="text-right">
                       <p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Waybill fee</p>
                       <p className="text-base font-extrabold text-gray-900 dark:text-slate-100 m-0">{w.waybillFee > 0 ? formatMoney(w.waybillFee) : "-"}</p>
-                    </div>
+                    </div>}
                   </div>
 
                   <section className="rounded-xl border border-gray-200 dark:border-slate-800/80 p-3 flex items-center justify-between gap-3 text-sm">
@@ -110592,7 +110567,7 @@ ${waybillLineItems(w).length > 1
                     {["In Transit", "Cancelled"].includes(w.status) && (
                       <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-rose-200 text-rose-700 bg-rose-50 text-sm font-semibold hover:bg-rose-100 transition-colors dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200" onClick={() => deleteWaybill(w)}><Trash2 className="w-4 h-4" /> Delete</button>
                     )}
-                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800/60" onClick={() => printWaybill(w)}>Print</button>
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800/60" onClick={() => printWaybill(w, canViewInventoryFinancials)}>Print</button>
                     {w.status === "In Transit" && (
                       <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-semibold hover:bg-green-700 transition-colors" onClick={() => openReceiveWaybill(w)}>Mark Received</button>
                     )}
@@ -110824,12 +110799,12 @@ ${waybillLineItems(w).length > 1
                       <ErrMsg k="qty" />
                       <button type="button" className="!min-h-0 mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dashed border-blue-300 text-blue-700 text-xs font-bold hover:bg-blue-50 transition-colors" onClick={addWaybillItemRow}>+ Add another product</button>
                     </div>
-                    <div>
+                    {canViewInventoryFinancials && <div>
                       <label className="block text-sm font-bold text-gray-900 mb-1.5">Waybill Fee (₦)</label>
                       <input type="number" min={0} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" value={waybillFee} onChange={(e) => setWaybillFee(e.target.value)} />
                       <p className="mt-1.5 text-xs text-gray-500">One fee for the whole waybill</p>
-                    </div>
-                    <div className="waybill-fee-note self-end flex items-start gap-3 rounded-xl bg-indigo-50 px-4 py-3 text-sm text-indigo-900"><span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-indigo-600"><ShieldCheck className="h-4 w-4" /></span><span><strong>One fee covers the entire waybill</strong><span className="mt-1 block">This fee will be charged once for all items.</span></span></div>
+                    </div>}
+                    {canViewInventoryFinancials && <div className="waybill-fee-note self-end flex items-start gap-3 rounded-xl bg-indigo-50 px-4 py-3 text-sm text-indigo-900"><span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-indigo-600"><ShieldCheck className="h-4 w-4" /></span><span><strong>One fee covers the entire waybill</strong><span className="mt-1 block">This fee will be charged once for all items.</span></span></div>}
                     <div className="sm:col-span-2">
                       <label className="mb-1.5 flex items-center text-sm font-bold text-gray-900"><StepIcon icon={<Truck className="h-4 w-4" />} tone="bg-sky-100 text-sky-600" />2. Logistics Partner / Carrier<Req /></label>
                       <input type="text" className={fieldCls("partner")} placeholder="e.g. RNR Log., Korrect, MR B/BSTAR" value={waybillPartner} onChange={(ev) => { setWaybillPartner(ev.target.value); setWaybillErrors((prev) => ({ ...prev, partner: "" })); }} />
@@ -111053,10 +111028,10 @@ ${waybillLineItems(w).length > 1
                         </>
                       )}
                     </div>
-                    <div>
+                    {canViewInventoryFinancials && <div>
                       <label className="block text-sm font-bold text-gray-900 mb-1.5">Waybill Fee (₦) <span className="font-normal text-gray-400">(one fee · whole waybill)</span></label>
                       <input type="number" min={0} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" value={waybillFee} onChange={(e) => setWaybillFee(e.target.value)} />
-                    </div>
+                    </div>}
                     <div>
                       <label className="block text-sm font-bold text-gray-900 mb-1.5">Date Sent<EReq /></label>
                       <input type="date" className={efieldCls("dateSent")} value={waybillDateSent} onChange={(ev) => { setWaybillDateSent(ev.target.value); setWaybillErrors((prev) => ({ ...prev, dateSent: "" })); }} />

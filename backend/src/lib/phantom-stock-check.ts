@@ -42,6 +42,7 @@ async function scanOrgForPhantomStock(orgId: string): Promise<number> {
     .limit(REPORT_ROW_CEILING)
     .eq("org_id", orgId)
     .eq("status", "Delivered")
+    .eq("stock_reconciliation_status", "reconciled")
     .gte("delivered_date", sinceDate)
     .not("agent_id", "is", null)
     .not("product_id", "is", null);
@@ -67,16 +68,6 @@ async function scanOrgForPhantomStock(orgId: string): Promise<number> {
 
   const phantoms = orderIds.filter((id) => !fulfilled.has(id));
   if (phantoms.length === 0) return 0;
-
-  // Reset stock_deducted=false so a "Re-save the delivery" actually retriggers
-  // the deduction. Without this, the isDeliveredDateCorrection guard in the
-  // status handler silently skips deduction on every re-save attempt.
-  for (let i = 0; i < phantoms.length; i += 200) {
-    await supabase.from("orders")
-      .update({ stock_deducted: false })
-      .eq("org_id", orgId)
-      .in("id", phantoms.slice(i, i + 200));
-  }
 
   // Recipients = active Owners/Admins
   const { data: recipientsRaw } = await supabase
@@ -105,7 +96,7 @@ async function scanOrgForPhantomStock(orgId: string): Promise<number> {
   if (legacyRecent && legacyRecent.length > 0) return 0;
 
   const title = `Stock audit: ${n} delivered order${n === 1 ? "" : "s"} not deducted`;
-  const message = `${n} order${n === 1 ? " was" : "s were"} marked Delivered but agent stock was NOT deducted (${sample}${n > 6 ? ", ..." : ""}). Re-save the delivery on each to retry, or check the agent's hub.`;
+  const message = `${n} reconciled order${n === 1 ? " has" : "s have"} no matching fulfilment movement (${sample}${n > 6 ? ", ..." : ""}). Review Delivered Stock Reconciliation and the agent ledger immediately.`;
 
   const rows = recipientIds.map((rid) => ({
     org_id: orgId,

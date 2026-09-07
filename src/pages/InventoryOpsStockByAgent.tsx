@@ -1,13 +1,8 @@
-// Stock by Agent - what each agent hub is holding, and what it is worth.
-//
-// Stock value is quantity x the product's SELLING price, matching the design's
-// "At selling price". That is exposure, not cost - it is what the company would
-// lose if a hub's stock walked, which is the number worth watching on a page
-// about who is holding what.
+// Stock by Agent - what each agent hub is holding and its operational coverage.
 import { useMemo, useState } from "react";
-import { AlertTriangle, ArrowLeftRight, Boxes, CalendarDays, ClipboardCheck, Download, History, MessageCircle, PackageSearch, Search, Truck, UserCog, UserRound, Wallet } from "lucide-react";
+import { AlertTriangle, ArrowLeftRight, Boxes, CalendarDays, ClipboardCheck, Download, History, MessageCircle, PackageSearch, Search, Truck, UserCog, UserRound } from "lucide-react";
 import type { InventoryOperationsAction, OpsDiscrepancy, OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryLogisticsOperationsPage";
-import { CLOSED_ORDER_STATES, downloadCsv, inventoryLinesForOrder, isInTransitWaybill, isInsideWindow, money, norm, num, orderEventDate, statusFor, statusTone, waybillInventoryLines, type StockStatus } from "./inventory-ops-model";
+import { CLOSED_ORDER_STATES, downloadCsv, inventoryLinesForOrder, isInTransitWaybill, isInsideWindow, norm, num, orderEventDate, statusFor, statusTone, waybillInventoryLines, type StockStatus } from "./inventory-ops-model";
 
 type Props = {
   products: OpsProduct[];
@@ -43,7 +38,6 @@ type AgentRow = {
   inTransit: number;
   dailySales: number;
   coverDays: number;
-  value: number;
   status: StockStatus;
   lines: Array<{ name: string; units: number }>;
 };
@@ -61,7 +55,6 @@ export default function InventoryOpsStockByAgent({
   const [windowDays, setWindowDays] = useState(lookbackDays);
 
   const rows = useMemo<AgentRow[]>(() => {
-    const priceById = new Map(products.map((product) => [product.id, Math.max(0, product.sellingPrice ?? 0)]));
     const nameById = new Map(products.map((product) => [product.id, product.name]));
     const allowedIds = categoryFilter === "all"
       ? null
@@ -114,8 +107,6 @@ export default function InventoryOpsStockByAgent({
         + (agentFallback && agentFallback !== assignmentKey ? deliveredByAgent.get(agentFallback) ?? 0 : 0);
       const dailySales = deliveredUnits / Math.max(1, windowDays);
       const coverDays = dailySales > 0 ? available / dailySales : Number.POSITIVE_INFINITY;
-      const value = visibleStocks.reduce((sum, stock) =>
-        sum + Math.max(0, stock.quantity) * (priceById.get(stock.productId) ?? 0), 0);
       const lines = visibleStocks
         .filter((stock) => stock.quantity > 0)
         .map((stock) => ({ name: nameById.get(stock.productId) ?? stock.productId, units: Math.max(0, stock.quantity) }))
@@ -141,7 +132,7 @@ export default function InventoryOpsStockByAgent({
         inTransit: incoming || transitByAgent.get(norm(hub.agentName)) || 0,
         dailySales,
         coverDays,
-        value, status, lines
+        status, lines
       };
     }).sort((a, b) => b.total - a.total);
   }, [products, stateHubs, orders, waybills, windowDays, criticalDays, watchDays, categoryFilter]);
@@ -180,9 +171,8 @@ export default function InventoryOpsStockByAgent({
   const totals = rows.reduce((acc, row) => ({
     agents: acc.agents + 1,
     units: acc.units + row.total,
-    value: acc.value + row.value,
     transit: acc.transit + row.inTransit
-  }), { agents: 0, units: 0, value: 0, transit: 0 });
+  }), { agents: 0, units: 0, transit: 0 });
   const openDiscrepancies = discrepancies.filter((row) => norm(row.status) !== "resolved").length;
 
   const card = (label: string, value: string, foot: string, Icon: typeof Boxes, tint: string) => (
@@ -202,7 +192,7 @@ export default function InventoryOpsStockByAgent({
         <div className="flex flex-wrap items-center gap-2">
         <label className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-700"><CalendarDays className="h-4 w-4 text-blue-600" /><select className="!min-h-0 border-0 bg-transparent p-0 outline-none" value={windowDays} onChange={(event) => setWindowDays(Number(event.target.value))}><option value={7}>Last 7 days</option><option value={14}>Last 14 days</option><option value={30}>Last 30 days</option></select></label>
         <button className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-700"
-          onClick={() => downloadCsv("stock-by-agent.csv", visible.map((row) => ({ Agent: row.name, State: row.state, Area: row.city, Products: row.productCount, Stock: row.total, Available: row.available, Reserved: row.reserved, "In transit": row.inTransit, "Daily sales": Math.round(row.dailySales * 10) / 10, "Days cover": Number.isFinite(row.coverDays) ? Math.round(row.coverDays * 10) / 10 : "-", Value: row.value, Status: row.status })))}>
+          onClick={() => downloadCsv("stock-by-agent.csv", visible.map((row) => ({ Agent: row.name, State: row.state, Area: row.city, Products: row.productCount, Stock: row.total, Available: row.available, Reserved: row.reserved, "In transit": row.inTransit, "Daily sales": Math.round(row.dailySales * 10) / 10, "Days cover": Number.isFinite(row.coverDays) ? Math.round(row.coverDays * 10) / 10 : "-", Status: row.status })))}>
           <Download className="h-4 w-4" /> Export
         </button>
         </div>
@@ -211,7 +201,6 @@ export default function InventoryOpsStockByAgent({
       <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
         {card("Total Agent Hubs", num(totals.agents), "Holding stock", UserRound, "bg-indigo-50 text-indigo-600")}
         {card("Total Stock (Units)", num(totals.units), "With all agents", Boxes, "bg-emerald-50 text-emerald-600")}
-        {card("Total Stock Value", money(totals.value), "At selling price", Wallet, "bg-violet-50 text-violet-600")}
         {card("Incoming to Agents", num(totals.transit), "Units in transit", Truck, "bg-amber-50 text-amber-600")}
         {card("Discrepancies", num(openDiscrepancies), "Agents with issues", AlertTriangle, "bg-rose-50 text-rose-600")}
       </section>
@@ -250,13 +239,12 @@ export default function InventoryOpsStockByAgent({
                   <th className="px-3 py-3 text-right">Available</th>
                   <th className="px-3 py-3 text-right">Reserved</th>
                   <th className="px-3 py-3 text-right">In transit</th>
-                  <th className="px-3 py-3 text-right">Stock value</th>
                   <th className="px-3 py-3">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {visible.length === 0 ? (
-                  <tr><td colSpan={9} className="px-4 py-10 text-center text-sm italic text-gray-400">No agent matches those filters.</td></tr>
+                  <tr><td colSpan={8} className="px-4 py-10 text-center text-sm italic text-gray-400">No agent matches those filters.</td></tr>
                 ) : visible.map((row) => (
                   <tr key={row.key} className={`cursor-pointer border-b border-gray-50 ${selectedKey === row.key ? "bg-blue-50/40" : ""}`}
                     onClick={() => setSelectedKey(selectedKey === row.key ? null : row.key)}>
@@ -273,7 +261,6 @@ export default function InventoryOpsStockByAgent({
                     <td className="px-3 py-3 text-right font-semibold text-emerald-700">{num(row.available)}</td>
                     <td className="px-3 py-3 text-right text-orange-600">{num(row.reserved)}</td>
                     <td className="px-3 py-3 text-right text-violet-700">{num(row.inTransit)}</td>
-                    <td className="px-3 py-3 text-right font-semibold text-gray-900">{money(row.value)}</td>
                     <td className="px-3 py-3"><span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${statusTone(row.status)}`}>{row.status}</span></td>
                   </tr>
                 ))}
@@ -302,7 +289,6 @@ export default function InventoryOpsStockByAgent({
                     ["Available", num(selected.available)],
                     ["Avg. daily sales", `${Math.round(selected.dailySales * 10) / 10}`],
                     ["Days cover", Number.isFinite(selected.coverDays) ? `${Math.round(selected.coverDays * 10) / 10} days` : "No recent assigned sales"],
-                    ["Stock value", money(selected.value)]
                   ] as Array<[string, string]>).map(([label, value]) => (
                     <div key={label} className="flex items-center justify-between gap-3 border-b border-gray-50 pb-1.5">
                       <dt className="shrink-0 text-gray-500">{label}</dt>

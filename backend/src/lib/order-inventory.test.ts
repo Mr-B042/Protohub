@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { orderInventoryLinesFromRow } from "./order-inventory.js";
+import { orderInventoryLinesFromRow, scalePackageComponentLines, type OrderInventoryLine } from "./order-inventory.js";
 
 test("package quantities are physical units, not one unit per order", () => {
   const packageQuantities = [3, 6, 10];
@@ -161,4 +161,63 @@ test("main product still deducts when package snapshot only contains free gifts"
       }
     ]
   );
+});
+
+test("package components scale with a multi-unit order", () => {
+  const oneUnitSnapshot: OrderInventoryLine[] = [
+    {
+      productId: "shelf",
+      productName: "Corner Storage Shelf",
+      quantity: 1,
+      isFreeGift: false,
+      sourceType: "package_component"
+    },
+    {
+      productId: "hooks",
+      productName: "Adhesive Hooks",
+      quantity: 10,
+      isFreeGift: true,
+      sourceType: "package_component"
+    },
+    {
+      productId: "glue",
+      productName: "Super Glue",
+      quantity: 1,
+      isFreeGift: true,
+      sourceType: "package_component"
+    }
+  ];
+
+  const scaledSnapshot = scalePackageComponentLines(oneUnitSnapshot, 1, 3);
+  const lines = orderInventoryLinesFromRow({
+    product_id: "corner-rack",
+    product_name: "5-in-1 Corner Racks",
+    quantity: 3,
+    package_components_snapshot: scaledSnapshot
+  });
+
+  assert.deepEqual(
+    Object.fromEntries(lines.map((line) => [line.productId, line.quantity])),
+    { shelf: 3, hooks: 30, glue: 3 }
+  );
+});
+
+test("a package tier already configured for its full quantity is not scaled twice", () => {
+  const fourPieceSnapshot: OrderInventoryLine[] = [
+    {
+      productId: "shelf",
+      productName: "Corner Storage Shelf",
+      quantity: 4,
+      sourceType: "package_component"
+    },
+    {
+      productId: "hooks",
+      productName: "Adhesive Hooks",
+      quantity: 4,
+      sourceType: "package_component"
+    }
+  ];
+
+  const snapshot = scalePackageComponentLines(fourPieceSnapshot, 4, 4);
+  assert.deepEqual(snapshot.map((line) => line.quantity), [4, 4]);
 });

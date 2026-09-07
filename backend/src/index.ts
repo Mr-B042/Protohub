@@ -62,6 +62,7 @@ import managerDashboardAlertRoutes from "./routes/manager-dashboard-alerts.js";
 import salesBonusRoutes from "./routes/sales-bonuses.js";
 import remittanceTransactionRoutes from "./routes/remittance-transactions.js";
 import stockRoutes    from "./routes/stock.js";
+import deliveredStockReconciliationRoutes from "./routes/delivered-stock-reconciliation.js";
 import expenseRoutes  from "./routes/expenses.js";
 import payrollRoutes  from "./routes/payroll.js";
 import customerRoutes from "./routes/customers.js";
@@ -337,6 +338,7 @@ app.use("/api/agents",        agentRoutes);
 app.use("/api/weekend-stock-summary", weekendStockSummaryRoutes);
 app.use("/api/remittance-transactions", remittanceTransactionRoutes);
 app.use("/api/stock",         stockRoutes);
+app.use("/api/delivered-stock-reconciliation", deliveredStockReconciliationRoutes);
 app.use("/api/expenses",      expenseRoutes);
 app.use("/api/payroll",       payrollRoutes);
 app.use("/api/customers",     customerRoutes);
@@ -482,25 +484,23 @@ cron.schedule("45 2 * * *", async () => {
 });
 }
 
-// ── Agent stock drift check — daily 03:00 UTC (04:00 Lagos) ──
-//
-// ⚠️ Does every hub balance still match the ledger behind it? Nine units left
-// one hub in four seconds on 2026-08-26 with no movement, no order and no
-// waybill recording it, and nobody noticed until a physical count came up
-// short. This is the query that would have caught it the next morning.
-//
-// Runs after the nightly prune and before the working day, and alerts only on
-// drift that CHANGED against the accepted baseline - see migration 238 for why
-// alerting on drift itself would be noise nobody reads.
+// ── Inventory reconciliation monitor — every 15 minutes, around the clock ──
+// Atomic writes prevent ordinary drift; this catches a privileged/manual write,
+// a bad migration, or a stale aggregate quickly instead of waiting for a shelf
+// count. One replica runs it, once at boot and then continuously.
 if (ENABLE_BACKGROUND_JOBS) {
-cron.schedule("0 3 * * *", async () => {
-  logger.info("cron: agent stock drift check");
-  try {
-    const result = await runAgentStockDriftCheck();
-    if (result.flagged > 0) logger.warn("cron: agent stock drift found", result);
-    else logger.info("cron: agent stock drift check clean", result);
-  } catch (e) { logger.error("cron: agent stock drift check crashed", { error: (e as Error).message }); }
-});
+  runAsSingleton("inventory_reconciliation_monitor", () => {
+    const check = async () => {
+      logger.info("monitor: inventory reconciliation check");
+      try {
+        const result = await runAgentStockDriftCheck();
+        if (result.flagged > 0) logger.warn("monitor: inventory drift found", result);
+        else logger.info("monitor: inventory reconciliation clean", result);
+      } catch (e) { logger.error("monitor: inventory reconciliation crashed", { error: (e as Error).message }); }
+    };
+    setTimeout(() => { void check(); }, 15_000);
+    cron.schedule("*/15 * * * *", () => { void check(); });
+  });
 }
 
 // ── Weekly salary daily drip — daily 05:00 UTC (06:00 Lagos) ──

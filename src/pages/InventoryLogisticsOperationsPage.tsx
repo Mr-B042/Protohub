@@ -4,6 +4,7 @@ import InventoryOpsStockByState from "./InventoryOpsStockByState";
 import InventoryOpsStockByAgent from "./InventoryOpsStockByAgent";
 import InventoryOpsCoverage from "./InventoryOpsCoverage";
 import InventoryOpsRestockForecast from "./InventoryOpsRestockForecast";
+import DeliveredStockReconciliationPage from "./DeliveredStockReconciliationPage";
 import { buildProductRows, buildStateRows, coverText, isInTransitWaybill, waybillInventoryLines } from "./inventory-ops-model";
 import {
   AlertTriangle,
@@ -25,7 +26,6 @@ import {
   Truck,
   Users,
   Warehouse,
-  WalletCards,
 } from "lucide-react";
 
 export type InventoryOperationsAction =
@@ -33,6 +33,7 @@ export type InventoryOperationsAction =
   | "stock-products"
   | "stock-states"
   | "stock-agents"
+  | "delivered-reconciliation"
   | "coverage"
   | "forecast"
   | "recommended-transfers"
@@ -64,8 +65,6 @@ export type OpsProduct = {
   /** Products have no category field. Derived from catalogType so the column
    *  in the design has an honest source rather than an invented taxonomy. */
   category?: string;
-  /** Selling price per unit, for valuing agent-held stock. */
-  sellingPrice?: number;
 };
 
 export type OpsStateHub = {
@@ -103,7 +102,6 @@ export type OpsWaybill = {
   productName: string;
   quantity: number;
   items?: Array<{ productId?: string; productName: string; quantity: number }>;
-  fee: number;
   carrier: string;
   from: string;
   to: string;
@@ -119,7 +117,6 @@ export type OpsWaybill = {
   status: string;
 };
 
-export type OpsExpense = { type: string; amount: number; date: string };
 export type OpsDiscrepancy = {
   id: string;
   productName: string;
@@ -139,7 +136,6 @@ type Props = {
   stateHubs: OpsStateHub[];
   orders: OpsOrder[];
   waybills: OpsWaybill[];
-  expenses: OpsExpense[];
   discrepancies: OpsDiscrepancy[];
   activeAgentCount: number;
   canManage: boolean;
@@ -150,7 +146,6 @@ type Props = {
   onViewAgentHistory?: (agentId: string) => void;
 };
 
-const money = (value: number) => `₦${Math.round(value).toLocaleString("en-NG")}`;
 const number = (value: number) => Math.max(0, Math.round(value)).toLocaleString("en-NG");
 const normalized = (value: string | undefined) => String(value ?? "").trim().toLowerCase();
 const validDate = (value: string | undefined) => {
@@ -198,7 +193,6 @@ export function InventoryLogisticsOperationsPage({
   stateHubs,
   orders,
   waybills,
-  expenses,
   discrepancies,
   activeAgentCount,
   canManage,
@@ -263,12 +257,6 @@ export function InventoryLogisticsOperationsPage({
     });
     const inTransitUnits = inTransit.reduce((sum, row) => sum + waybillInventoryLines(row).reduce((lineSum, line) => lineSum + line.quantity, 0), 0);
     const awaitingDispatch = waybills.filter((row) => ["pending", "awaiting dispatch", "assigned"].includes(normalized(row.status)));
-    const logisticsSpend = expenses
-      .filter((expense) => {
-        const date = validDate(expense.date);
-        return date && date >= weekAgo && /waybill|delivery|clearing|shipping|logistics/i.test(expense.type);
-      })
-      .reduce((sum, expense) => sum + Math.max(0, expense.amount), 0);
     const completedTransitDays = receivedThisWeek.flatMap((row) => {
       const sent = validDate(row.dateSent);
       const received = validDate(row.dateReceived);
@@ -303,7 +291,6 @@ export function InventoryLogisticsOperationsPage({
       inTransit,
       inTransitUnits,
       awaitingDispatch,
-      logisticsSpend,
       shipmentsThisWeek,
       receivedThisWeek,
       averageTransitDays,
@@ -312,7 +299,7 @@ export function InventoryLogisticsOperationsPage({
       criticalStates,
       health,
     };
-  }, [products, stateHubs, orders, waybills, expenses, lookbackDays, criticalDays, watchDays]);
+  }, [products, stateHubs, orders, waybills, lookbackDays, criticalDays, watchDays]);
 
   const healthRows = [
     { label: "Healthy", helper: `>${Math.round(watchDays * 1.5)} days`, value: model.health.Healthy ?? 0, color: "#10b981" },
@@ -349,11 +336,11 @@ export function InventoryLogisticsOperationsPage({
     { label: "Awaiting Dispatch", value: number(model.awaitingDispatch.length), helper: "Transfers", icon: Clock3, tone: "violet" },
     { label: `Critical (< ${criticalDays} Days)`, value: number(model.criticalStates.length), helper: "States at risk", icon: AlertTriangle, tone: "rose" },
     { label: "Overall Coverage", value: Number.isFinite(model.overallCover) ? `${coverText(model.overallCover)} Days` : "No recent demand", helper: "Available stock cover", icon: ShieldCheck, tone: "blue" },
-    { label: "Logistics Spend", value: money(model.logisticsSpend), helper: "This week", icon: WalletCards, tone: "amber" },
   ] as const;
 
   const shared = { products, stateHubs, orders, waybills, lookbackDays, criticalDays, watchDays };
   if (section === "stock-products") return <InventoryOpsStockByProduct {...shared} onOpenProduct={onOpenProduct} />;
+  if (section === "delivered-reconciliation") return <DeliveredStockReconciliationPage />;
   if (section === "stock-states") return <InventoryOpsStockByState {...shared} onOpenForecast={() => onAction("forecast")} />;
   if (section === "stock-agents") {
     return (
@@ -411,7 +398,7 @@ export function InventoryLogisticsOperationsPage({
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4 2xl:grid-cols-8" aria-label="Inventory operations summary">
         {metrics.map((metric) => {
           const Icon = metric.icon;
-          const iconTone = metric.tone === "rose" ? "bg-rose-50 text-rose-600" : metric.tone === "orange" ? "bg-orange-50 text-orange-600" : metric.tone === "violet" ? "bg-violet-50 text-violet-600" : metric.tone === "amber" ? "bg-amber-50 text-amber-600" : metric.tone === "emerald" ? "bg-emerald-50 text-emerald-600" : metric.tone === "teal" ? "bg-teal-50 text-teal-600" : "bg-blue-50 text-blue-600";
+          const iconTone = metric.tone === "rose" ? "bg-rose-50 text-rose-600" : metric.tone === "orange" ? "bg-orange-50 text-orange-600" : metric.tone === "violet" ? "bg-violet-50 text-violet-600" : metric.tone === "emerald" ? "bg-emerald-50 text-emerald-600" : metric.tone === "teal" ? "bg-teal-50 text-teal-600" : "bg-blue-50 text-blue-600";
           return (
             <article key={metric.label} className="min-w-0 rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
               <span className={`mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg ${iconTone}`}><Icon className="h-5 w-5" /></span>
@@ -453,7 +440,6 @@ export function InventoryLogisticsOperationsPage({
               ["On-time Delivery", `${model.onTime}%`, model.receivedThisWeek.length ? "Within 3 days" : "No completed trips"],
               ["Avg. Pickup Time", "Not captured", "Start capturing pickup"],
               ["Avg. Transit Time", `${model.averageTransitDays.toFixed(1)} Days`, model.receivedThisWeek.length ? "Actual completed trips" : "No completed trips"],
-              ["Logistics Spend", money(model.logisticsSpend), "Recorded this week"],
             ].map(([label, value, helper]) => <div key={label} className="min-w-0 rounded-lg border border-gray-100 bg-gray-50 p-3"><span className="text-[10px] font-semibold text-gray-500">{label}</span><strong className="mt-1 block break-words text-base text-gray-950">{value}</strong><small className="mt-1 block text-[10px] text-gray-400">{helper}</small></div>)}
           </div>
         </article>
