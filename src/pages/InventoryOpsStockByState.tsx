@@ -176,8 +176,9 @@ export default function InventoryOpsStockByState({
               <tbody>
                 {visible.length === 0 ? (
                   <tr><td colSpan={9} className="px-4 py-10 text-center text-sm italic text-gray-400">No state matches those filters.</td></tr>
-                ) : visible.map((row) => (
-                  <tr key={row.state} className={`border-b border-gray-50 ${selectedKey === row.key ? "bg-blue-50/40" : ""}`}>
+                ) : visible.flatMap((row) => [
+                  <tr key={row.state} className={`cursor-pointer border-b border-gray-50 ${selectedKey === row.key ? "bg-blue-50/40" : "hover:bg-gray-50/60"}`}
+                    onClick={() => setSelectedKey(selectedKey === row.key ? null : row.key)}>
                     <td className="px-4 py-3">
                       <span className="flex items-center gap-1.5 font-bold text-gray-900">
                         <MapPin className="h-3.5 w-3.5 shrink-0 text-gray-400" />{row.state}
@@ -191,13 +192,49 @@ export default function InventoryOpsStockByState({
                     <td className="px-3 py-3 text-right text-orange-600">{num(row.openOrders)}</td>
                     <td className="px-3 py-3"><span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${statusTone(row.status)}`}>{row.status}</span></td>
                     <td className="px-3 py-3 text-right">
-                      <button type="button" className="!min-h-0 inline-flex items-center gap-1 rounded-lg border border-blue-200 px-2.5 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-50"
-                        onClick={() => setSelectedKey(selectedKey === row.key ? null : row.key)}>
-                        <Eye className="h-3.5 w-3.5" /> View
-                      </button>
+                      <span className="!min-h-0 inline-flex items-center gap-1 rounded-lg border border-blue-200 px-2.5 py-1.5 text-xs font-bold text-blue-700">
+                        <Eye className="h-3.5 w-3.5" /> {selectedKey === row.key ? "Hide" : "View"}
+                      </span>
                     </td>
-                  </tr>
-                ))}
+                  </tr>,
+                  /* ⚠️ INLINE, NOT ONLY IN THE SIDE PANEL. Who to collect from
+                     is the question this page gets asked, and it was answerable
+                     only after clicking View and reading a panel to the right.
+                     The agents in a state now open under the state. */
+                  selectedKey === row.key ? (
+                    <tr key={`${row.state}-agents`} className="border-b border-gray-100 bg-blue-50/20">
+                      <td colSpan={9} className="px-4 py-3">
+                        <p className="m-0 mb-2 text-[10px] font-bold uppercase tracking-wider text-gray-500">
+                          Agents in {row.state} — {selectedAgents.length} holding stock
+                        </p>
+                        {selectedAgents.length === 0 ? (
+                          <p className="m-0 text-xs italic text-gray-400">No agent in this state is holding stock.</p>
+                        ) : (
+                          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                            {selectedAgents.map((agent) => (
+                              <div key={agent.agentId} className="rounded-lg border border-gray-200 bg-white p-2.5">
+                                <div className="flex items-baseline justify-between gap-2">
+                                  <strong className="min-w-0 truncate text-xs text-gray-900">
+                                    {agent.agentName}{agent.city && <span className="font-normal text-gray-400"> · {agent.city}</span>}
+                                  </strong>
+                                  <span className="shrink-0 text-xs"><b className="text-gray-900">{num(agent.units)}</b> <span className="text-gray-400">units</span></span>
+                                </div>
+                                <ul className="m-0 mt-1.5 list-none space-y-1 p-0">
+                                  {agent.items.map((item) => (
+                                    <li key={item.productId} className="flex items-center justify-between gap-2 text-[11px]">
+                                      <span className="min-w-0 truncate text-gray-600">{item.productName}</span>
+                                      <b className="shrink-0 text-gray-800">{num(item.units)}</b>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ) : null
+                ])}
               </tbody>
             </table>
           </div>

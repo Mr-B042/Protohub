@@ -186,8 +186,9 @@ export default function InventoryOpsStockByProduct({
               <tbody>
                 {visible.length === 0 ? (
                   <tr><td colSpan={11} className="px-4 py-10 text-center text-sm italic text-gray-400">No product matches those filters.</td></tr>
-                ) : visible.map((row) => (
-                  <tr key={row.id} className={`border-b border-gray-50 ${selectedId === row.id ? "bg-blue-50/40" : ""}`}>
+                ) : visible.flatMap((row) => [
+                  <tr key={row.id} className={`cursor-pointer border-b border-gray-50 ${selectedId === row.id ? "bg-blue-50/40" : "hover:bg-gray-50/60"}`}
+                    onClick={() => setSelectedId(selectedId === row.id ? null : row.id)}>
                     <td className="px-4 py-3 font-bold text-gray-900">{row.name}</td>
                     <td className="px-3 py-3 text-gray-500">{row.category}</td>
                     <td className="px-3 py-3 text-right font-bold text-gray-900">{num(row.total)}</td>
@@ -199,13 +200,50 @@ export default function InventoryOpsStockByProduct({
                     <td className={`px-3 py-3 text-right font-bold ${coverTone(row.status)}`}>{cover(row.coverDays)}</td>
                     <td className="px-3 py-3"><span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${tone(row.status)}`}>{row.status}</span></td>
                     <td className="px-3 py-3">
-                      <button className="!min-h-0 rounded p-1 text-gray-400 hover:bg-gray-100" aria-label={`Open ${row.name}`}
-                        onClick={() => setSelectedId(selectedId === row.id ? null : row.id)}>
-                        <ChevronRight className="h-4 w-4" />
-                      </button>
+                      <span className="inline-flex rounded p-1 text-gray-400" aria-hidden>
+                        <ChevronRight className={`h-4 w-4 transition-transform ${selectedId === row.id ? "rotate-90" : ""}`} />
+                      </span>
                     </td>
-                  </tr>
-                ))}
+                  </tr>,
+                  /* ⚠️ INLINE, NOT ONLY IN THE SIDE PANEL. The breakdown existed
+                     but lived behind a small grey chevron at the far right of a
+                     wide table, which is not an answer to "difficult to find".
+                     Opening a row now shows who holds it, in the table, under
+                     the row it belongs to. */
+                  selectedId === row.id ? (
+                    <tr key={`${row.id}-held`} className="border-b border-gray-100 bg-blue-50/20">
+                      <td colSpan={11} className="px-4 py-3">
+                        <p className="m-0 mb-2 text-[10px] font-bold uppercase tracking-wider text-gray-500">
+                          Where {row.name} is held — {productHoldings.length} state{productHoldings.length === 1 ? "" : "s"}
+                        </p>
+                        {productHoldings.length === 0 ? (
+                          <p className="m-0 text-xs italic text-gray-400">No agent hub is holding this product.</p>
+                        ) : (
+                          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                            {productHoldings.map((group) => (
+                              <div key={group.state} className="rounded-lg border border-gray-200 bg-white p-2.5">
+                                <div className="flex items-baseline justify-between gap-2">
+                                  <strong className="text-xs text-gray-900">{group.state}</strong>
+                                  <span className="text-xs"><b className="text-gray-900">{num(group.units)}</b> <span className="text-gray-400">units</span></span>
+                                </div>
+                                <ul className="m-0 mt-1.5 list-none space-y-1 p-0">
+                                  {group.agents.map((agent) => (
+                                    <li key={agent.agentId} className="flex items-center justify-between gap-2 text-[11px]">
+                                      <span className="min-w-0 truncate text-gray-600">
+                                        {agent.agentName}{agent.city && <span className="text-gray-400"> · {agent.city}</span>}
+                                      </span>
+                                      <b className="shrink-0 text-gray-800">{num(agent.units)}</b>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ) : null
+                ])}
               </tbody>
             </table>
           </div>
