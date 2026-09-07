@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle, Box, Check, CheckCircle2, ChevronRight, CircleHelp,
   MapPin, Package, RefreshCw, Search, Users, X
@@ -49,6 +49,12 @@ export default function DeliveredStockReconciliationPage() {
   const [agentKey, setAgentKey] = useState("");
   const [productKey, setProductKey] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
+  // ⚠️ ONE ORDER CAN SPAN SEVERAL PRODUCTS. The product groups are the right way
+  // to VERIFY stock (count the Edge Brushers, then the Hangers), but they are
+  // the wrong way to CLOSE an order: a single delivery of three products meant
+  // opening three groups and deducting three times. This widens the same modal
+  // to the whole agent, grouped by the order the lines actually came from.
+  const [modalAllProducts, setModalAllProducts] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showHelp, setShowHelp] = useState(false);
   const [flagging, setFlagging] = useState(false);
@@ -125,10 +131,25 @@ export default function DeliveredStockReconciliationPage() {
   }, [products, productKey]);
   const productPendingRows = products.find((group) => group.key === productKey)?.rows ?? [];
   const productHistoryRows = useMemo(() => {
-    if (!agentKey || !productKey) return [];
-    return scoped.filter((row) => row.agentId === agentKey && row.productId === productKey)
-      .sort((a, b) => String(a.deliveredAt).localeCompare(String(b.deliveredAt))).slice(-200);
-  }, [scoped, agentKey, productKey]);
+    if (!agentKey) return [];
+    if (!modalAllProducts && !productKey) return [];
+    return scoped
+      .filter((row) => row.agentId === agentKey && (modalAllProducts || row.productId === productKey))
+      .sort((a, b) => String(a.deliveredAt).localeCompare(String(b.deliveredAt))).slice(-300);
+  }, [scoped, agentKey, productKey, modalAllProducts]);
+  /** The same rows gathered under the order they were delivered on. */
+  const orderGroups = useMemo(() => {
+    const map = new Map<string, DeliveredStockReconciliationRow[]>();
+    for (const row of productHistoryRows) {
+      const found = map.get(row.orderId);
+      if (found) found.push(row); else map.set(row.orderId, [row]);
+    }
+    return [...map.entries()].map(([orderId, rows]) => ({ orderId, rows }));
+  }, [productHistoryRows]);
+  const agentPendingRows = useMemo(
+    () => (agentKey ? scoped.filter((row) => row.agentId === agentKey && pending(row)) : []),
+    [scoped, agentKey]
+  );
   const eligibleRows = productHistoryRows.filter(pending);
   const chosenRows = productHistoryRows.filter((row) => selected.has(row.id) && pending(row));
   const selectedUnits = sumQty(chosenRows);
@@ -139,7 +160,7 @@ export default function DeliveredStockReconciliationPage() {
 
   const chooseProduct = (key: string, open = false) => {
     setProductKey(key); setSelected(new Set()); setFlagging(false); setIssueNote("");
-    if (open) setModalOpen(true);
+    if (open) { setModalAllProducts(false); setModalOpen(true); }
   };
   const toggle = (id: string) => setSelected((current) => {
     const next = new Set(current);
@@ -261,7 +282,14 @@ export default function DeliveredStockReconciliationPage() {
     {loading && rows.length === 0 ? <div className="rounded-xl border border-gray-200 bg-white p-16 text-center text-sm text-gray-400">Loading delivered stock…</div> : openRows.length === 0 ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-16 text-center"><CheckCircle2 className="mx-auto h-10 w-10 text-emerald-600" /><h2 className="mt-3 font-black text-emerald-900">{scope === "All time" ? "All delivered stock is reconciled" : `Nothing pending in ${scope === "Custom" ? "this range" : scope.toLowerCase()}`}</h2><p className="mt-1 text-sm text-emerald-700">{scope === "All time" ? "New delivered orders will appear here automatically." : "This is the chosen window only — switch to All time to see the whole queue."}</p></div> : <div className="grid gap-3 xl:grid-cols-[0.8fr_0.8fr_1.6fr]">
       <section className="rounded-lg border border-gray-200 bg-white p-2 shadow-sm"><h2 className="px-2 py-2 text-sm font-black text-blue-700">States ({states.length})</h2><div className="relative mb-2"><Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search state…" className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm" /></div>{visibleStates.map((group) => <button type="button" key={group.key} onClick={() => { setStateKey(group.key); setAgentKey(""); setProductKey(""); }} className={`mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-3 text-left ${stateKey === group.key ? "bg-blue-50 ring-1 ring-blue-300" : "hover:bg-gray-50"}`}><MapPin className="h-4 w-4 text-blue-500" /><span className="flex-1 font-bold">{group.name}</span><span className="text-xs text-gray-500">{uniqueOrders(group.rows)} · {count(sumQty(group.rows))}</span><ChevronRight className="h-4 w-4" /></button>)}</section>
       <section className="rounded-lg border border-gray-200 bg-white p-2 shadow-sm"><h2 className="px-2 py-2 text-sm font-black text-blue-700">Agents in {states.find((group) => group.key === stateKey)?.name ?? "State"} ({agents.length})</h2>{agents.map((group) => <button type="button" key={group.key} onClick={() => { setAgentKey(group.key); setProductKey(""); }} className={`mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-3 text-left ${agentKey === group.key ? "bg-blue-50 ring-1 ring-blue-300" : "hover:bg-gray-50"}`}><Users className="h-4 w-4 text-blue-500" /><span className="flex-1 font-bold">{group.name}</span><span className="text-xs text-gray-500">{uniqueOrders(group.rows)} · {count(sumQty(group.rows))}</span><ChevronRight className="h-4 w-4" /></button>)}</section>
-      <section className="rounded-lg border border-gray-200 bg-white shadow-sm"><div className="flex flex-col gap-3 border-b border-gray-100 p-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-black">{selectedAgent?.name ?? "Select an agent"} — {states.find((group) => group.key === stateKey)?.name}</h2><p className="text-xs text-gray-500">{uniqueOrders(agentRows)} delivered orders · {count(sumQty(agentRows))} units pending</p></div>{agentRows.filter(pending).length > 0 && <button type="button" disabled={working || agentRows.filter(pending).length > 100} onClick={() => { const eligible = agentRows.filter(pending); if (window.confirm(`Deduct ${sumQty(eligible)} units across ${uniqueOrders(eligible)} delivered orders for ${selectedAgent?.name}?`)) void reconcile(eligible.map((row) => row.id)); }} className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">Reconcile All ({count(sumQty(agentRows.filter(pending)))} Units)</button>}</div><div className="p-2"><div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-2 text-[10px] font-bold uppercase text-gray-400"><span>Product Group</span><span>Orders / Units</span><span>Action</span></div>{products.map((group) => <div key={group.key} className={`grid grid-cols-[1fr_auto_auto] items-center gap-3 rounded-lg border px-3 py-3 ${productKey === group.key ? "border-blue-300 bg-blue-50" : "border-transparent hover:bg-gray-50"}`}><button type="button" onClick={() => chooseProduct(group.key)} className="flex min-w-0 items-center gap-2 text-left"><span className="rounded-lg bg-orange-50 p-2 text-orange-600"><Package className="h-4 w-4" /></span><span className="truncate text-sm font-bold">{group.name}</span></button><span className="text-right text-xs text-gray-600">{uniqueOrders(group.rows)} · <b>{count(sumQty(group.rows))}</b></span><button type="button" onClick={() => chooseProduct(group.key, true)} className="rounded-md border border-blue-300 px-3 py-1.5 text-xs font-bold text-blue-700">View Orders</button></div>)}</div>
+      <section className="rounded-lg border border-gray-200 bg-white shadow-sm"><div className="flex flex-col gap-3 border-b border-gray-100 p-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-black">{selectedAgent?.name ?? "Select an agent"} — {states.find((group) => group.key === stateKey)?.name}</h2><p className="text-xs text-gray-500">{uniqueOrders(agentRows)} delivered orders · {count(sumQty(agentRows))} units pending</p></div>{agentRows.filter(pending).length > 0 && <button type="button" disabled={working || agentRows.filter(pending).length > 100}
+          /* ⚠️ SHOWS THE WORK BEFORE POSTING IT. This used to be a window.confirm
+             carrying a bare total - the officer approved a number, never the
+             lines behind it. It now opens the same modal across every product,
+             pre-selected, so the three lines of a single delivery are reviewed
+             and posted together in one press. */
+          onClick={() => { setModalAllProducts(true); setSelected(new Set(agentRows.filter(pending).map((row) => row.id))); setFlagging(false); setIssueNote(""); setModalOpen(true); }}
+          className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">Review & Reconcile All ({count(sumQty(agentRows.filter(pending)))} Units)</button>}</div><div className="p-2"><div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-2 text-[10px] font-bold uppercase text-gray-400"><span>Product Group</span><span>Orders / Units</span><span>Action</span></div>{products.map((group) => <div key={group.key} className={`grid grid-cols-[1fr_auto_auto] items-center gap-3 rounded-lg border px-3 py-3 ${productKey === group.key ? "border-blue-300 bg-blue-50" : "border-transparent hover:bg-gray-50"}`}><button type="button" onClick={() => chooseProduct(group.key)} className="flex min-w-0 items-center gap-2 text-left"><span className="rounded-lg bg-orange-50 p-2 text-orange-600"><Package className="h-4 w-4" /></span><span className="truncate text-sm font-bold">{group.name}</span></button><span className="text-right text-xs text-gray-600">{uniqueOrders(group.rows)} · <b>{count(sumQty(group.rows))}</b></span><button type="button" onClick={() => chooseProduct(group.key, true)} className="rounded-md border border-blue-300 px-3 py-1.5 text-xs font-bold text-blue-700">View Orders</button></div>)}</div>
         {selectedProduct && <div className="m-2 flex flex-col gap-3 rounded-lg border border-orange-200 bg-orange-50 p-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-black">{selectedProduct.name}</p><p className="text-xs text-gray-600">{uniqueOrders(productPendingRows)} delivered orders · {count(sumQty(productPendingRows))} units pending deduction</p></div><button type="button" onClick={() => { setSelected(new Set(eligibleRows.map((row) => row.id))); setModalOpen(true); }} className="rounded-lg border border-orange-400 bg-white px-4 py-2 text-xs font-bold text-orange-700">Reconcile & Deduct Group ({count(sumQty(productPendingRows.filter(pending)))} Units)</button></div>}
       </section>
     </div>}
@@ -269,12 +297,61 @@ export default function DeliveredStockReconciliationPage() {
     <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800"><b>Important:</b> Checking orders only previews the result. The final action deducts from the exact agent location and posts the matching immutable ledger entries in one transaction.</div>
 
     {modalOpen && selectedProduct && <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 p-3" onMouseDown={(event) => { if (event.currentTarget === event.target && !working) setModalOpen(false); }}><div className="max-h-[94vh] w-full max-w-4xl overflow-y-auto rounded-xl bg-white shadow-2xl"><div className="flex items-start justify-between p-5"><div><h2 className="text-xl font-black">View Delivered Orders</h2><p className="text-sm text-gray-500">Select orders to deduct from agent stock.</p></div><button type="button" disabled={working} onClick={() => setModalOpen(false)} className="rounded-lg p-2 text-gray-500 hover:bg-gray-100"><X className="h-5 w-5" /></button></div>
-      <div className="mx-5 rounded-lg border border-gray-200 p-4"><div className="flex flex-col justify-between gap-3 sm:flex-row"><div><p className="text-lg font-black">{selectedProduct.name}</p><p className="text-xs text-blue-600">Agent Stock</p></div><div><p className="text-xs text-gray-500">Agent</p><p className="font-black">{selectedAgent?.name}</p><p className="text-xs text-gray-500">{states.find((group) => group.key === stateKey)?.name}</p></div></div></div>
-      <div className="grid grid-cols-2 gap-2 p-5 lg:grid-cols-4">{[["Current Agent Stock", currentStock], ["Pending Delivered Qty", sumQty(eligibleRows)], ["Selected for Deduction", selectedUnits], ["Projected Stock After", selectedAfter]].map(([label, value], index) => <div key={String(label)} className={`rounded-lg border p-3 ${index === 3 ? "border-blue-200 bg-blue-50" : "border-gray-200"}`}><p className="text-xs text-gray-500">{label}</p><p className="text-2xl font-black">{count(Number(value))} <span className="text-xs font-medium text-gray-400">units</span></p></div>)}</div>
-      <div className="px-5 pb-4"><div className="flex items-center justify-between border-y border-gray-100 py-3"><label className="flex items-center gap-2 text-sm font-bold"><input type="checkbox" checked={allEligibleSelected} onChange={toggleAll} disabled={eligibleRows.length === 0} />Select All ({eligibleRows.length} orders · {count(sumQty(eligibleRows))} units)</label><span className="text-xs text-gray-500">Reconciled rows are locked</span></div><div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-xs"><thead className="bg-gray-50 text-[10px] uppercase text-gray-500"><tr><th className="p-3"></th><th>Order</th><th>Delivered</th><th>Customer</th><th>Qty</th><th>Current Stock → After</th><th>Status</th></tr></thead><tbody>{(() => { let running = currentStock; return productHistoryRows.map((row) => { const before = running; if (pending(row)) running -= row.quantity; const locked = row.status !== "pending"; return <tr key={row.id} className="border-b border-gray-100"><td className="p-3"><input type="checkbox" checked={row.status === "reconciled" || selected.has(row.id)} disabled={locked} onChange={() => toggle(row.id)} /></td><td className="font-bold">{row.orderId}</td><td>{new Date(row.deliveredAt).toLocaleString("en-NG", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" })}</td><td>{row.customer}</td><td className="font-bold">{count(row.quantity)}</td><td>{locked ? "—" : `${count(before)} → ${count(running)}`}</td><td><Status value={row.status} /></td></tr>; }); })()}</tbody></table></div></div>
-      <div className="mx-5 rounded-lg border border-blue-100 bg-blue-50 p-4"><p className="text-xs font-black text-blue-900">Live Deduction Preview</p><div className="mt-3 grid grid-cols-4 gap-3 text-center"><div><b className="text-xl">{count(currentStock)}</b><p className="text-[10px] text-gray-500">Current</p></div><div><b className="text-xl">{chosenRows.length}</b><p className="text-[10px] text-gray-500">Orders</p></div><div><b className="text-xl">−{count(selectedUnits)}</b><p className="text-[10px] text-gray-500">Deduction</p></div><div><b className={`text-xl ${selectedAfter < 0 ? "text-rose-600" : "text-blue-700"}`}>{count(selectedAfter)}</b><p className="text-[10px] text-gray-500">New Stock</p></div></div></div>
+      <div className="mx-5 rounded-lg border border-gray-200 p-4"><div className="flex flex-col justify-between gap-3 sm:flex-row"><div><p className="text-lg font-black">{modalAllProducts ? "All products" : selectedProduct.name}</p><p className="text-xs text-blue-600">Agent Stock</p></div><div><p className="text-xs text-gray-500">Agent</p><p className="font-black">{selectedAgent?.name}</p><p className="text-xs text-gray-500">{states.find((group) => group.key === stateKey)?.name}</p></div></div>
+        {/* One delivery of three products should close in one pass, not three. */}
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-gray-100 pt-3">
+          {([false, true] as const).map((value) => (
+            <button key={String(value)} type="button"
+              onClick={() => { setModalAllProducts(value); setSelected(new Set()); }}
+              className={`!min-h-0 rounded-full px-3 py-1.5 text-xs font-bold ${modalAllProducts === value ? "bg-gray-900 text-white" : "border border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
+              {value ? `All products for this agent (${count(sumQty(agentPendingRows))} units)` : `This product only (${count(sumQty(productPendingRows.filter(pending)))} units)`}
+            </button>
+          ))}
+        </div>
+      </div>
+      {/* ⚠️ NO SINGLE "AGENT STOCK" FIGURE ACROSS PRODUCTS. Stock is held per
+          product, so one before/after number would be a sum of unrelated things.
+          In all-products mode the cards count orders and products instead, and
+          the per-product balance stays on each line where it means something. */}
+      <div className="grid grid-cols-2 gap-2 p-5 lg:grid-cols-4">{(modalAllProducts
+        ? [["Orders in view", orderGroups.length], ["Products affected", new Set(eligibleRows.map((row) => row.productId)).size], ["Pending Delivered Qty", sumQty(eligibleRows)], ["Selected for Deduction", selectedUnits]]
+        : [["Current Agent Stock", currentStock], ["Pending Delivered Qty", sumQty(eligibleRows)], ["Selected for Deduction", selectedUnits], ["Projected Stock After", selectedAfter]]
+      ).map(([label, value], index) => <div key={String(label)} className={`rounded-lg border p-3 ${index === 3 ? "border-blue-200 bg-blue-50" : "border-gray-200"}`}><p className="text-xs text-gray-500">{label}</p><p className="text-2xl font-black">{count(Number(value))} <span className="text-xs font-medium text-gray-400">{modalAllProducts && index < 2 ? "" : "units"}</span></p></div>)}</div>
+      <div className="px-5 pb-4"><div className="flex items-center justify-between border-y border-gray-100 py-3"><label className="flex items-center gap-2 text-sm font-bold"><input type="checkbox" checked={allEligibleSelected} onChange={toggleAll} disabled={eligibleRows.length === 0} />Select All ({eligibleRows.length} orders · {count(sumQty(eligibleRows))} units)</label><span className="text-xs text-gray-500">Reconciled rows are locked</span></div><div className="overflow-x-auto">{(() => {
+        // ⚠️ THE RUNNING BALANCE IS PER PRODUCT. Stock is held per product, so a
+        // single counter walking every row would subtract Hangers from the
+        // Toothbrush Holder balance. Each product gets its own, seeded from that
+        // product's own current stock.
+        const running = new Map<string, number>();
+        const balanceFor = (row: DeliveredStockReconciliationRow) => {
+          if (!running.has(row.productId)) running.set(row.productId, row.currentStock ?? 0);
+          const before = running.get(row.productId) ?? 0;
+          const after = pending(row) ? before - row.quantity : before;
+          running.set(row.productId, after);
+          return { before, after };
+        };
+        return <table className="w-full min-w-[680px] text-left text-xs"><thead className="bg-gray-50 text-[10px] uppercase text-gray-500"><tr><th className="p-3"></th><th>{modalAllProducts ? "Product" : "Order"}</th><th>Delivered</th><th>Customer</th><th>Qty</th><th>Current Stock → After</th><th>Status</th></tr></thead><tbody>{orderGroups.map((group) => {
+          const groupPending = group.rows.filter(pending);
+          const allChosen = groupPending.length > 0 && groupPending.every((row) => selected.has(row.id));
+          return <Fragment key={group.orderId}>
+            {/* One header per order, so a delivery that carried three products
+                reads as one delivery and can be ticked in one click. */}
+            {modalAllProducts && <tr className="bg-gray-50/80"><td className="p-3">
+              <input type="checkbox" checked={allChosen} disabled={groupPending.length === 0}
+                onChange={() => setSelected((current) => {
+                  const next = new Set(current);
+                  if (allChosen) groupPending.forEach((row) => next.delete(row.id));
+                  else groupPending.forEach((row) => next.add(row.id));
+                  return next;
+                })} />
+            </td><td colSpan={6} className="py-2 pr-3"><span className="font-black text-gray-900">{group.orderId}</span><span className="ml-2 text-gray-500">{group.rows[0]?.customer}</span><span className="ml-2 text-gray-400">· {group.rows.length} product{group.rows.length === 1 ? "" : "s"} · {count(sumQty(group.rows))} units</span></td></tr>}
+            {group.rows.map((row) => { const { before, after } = balanceFor(row); const locked = row.status !== "pending"; return <tr key={row.id} className="border-b border-gray-100"><td className="p-3">{modalAllProducts && <span className="inline-block w-3" />}<input type="checkbox" checked={row.status === "reconciled" || selected.has(row.id)} disabled={locked} onChange={() => toggle(row.id)} /></td><td className="font-bold">{modalAllProducts ? row.productName : row.orderId}</td><td>{new Date(row.deliveredAt).toLocaleString("en-NG", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" })}</td><td>{row.customer}</td><td className="font-bold">{count(row.quantity)}</td><td>{locked ? "—" : `${count(before)} → ${count(after)}`}</td><td><Status value={row.status} /></td></tr>; })}
+          </Fragment>;
+        })}</tbody></table>;
+      })()}</div></div>
+      <div className="mx-5 rounded-lg border border-blue-100 bg-blue-50 p-4"><p className="text-xs font-black text-blue-900">Live Deduction Preview</p><div className="mt-3 grid grid-cols-4 gap-3 text-center"><div><b className="text-xl">{modalAllProducts ? new Set(chosenRows.map((row) => row.productId)).size : count(currentStock)}</b><p className="text-[10px] text-gray-500">{modalAllProducts ? "Products" : "Current"}</p></div><div><b className="text-xl">{chosenRows.length}</b><p className="text-[10px] text-gray-500">Orders</p></div><div><b className="text-xl">−{count(selectedUnits)}</b><p className="text-[10px] text-gray-500">Deduction</p></div><div><b className={`text-xl ${!modalAllProducts && selectedAfter < 0 ? "text-rose-600" : "text-blue-700"}`}>{modalAllProducts ? orderGroups.length : count(selectedAfter)}</b><p className="text-[10px] text-gray-500">{modalAllProducts ? "Orders" : "New Stock"}</p></div></div></div>
       {flagging && <div className="mx-5 mt-4"><textarea value={issueNote} onChange={(event) => setIssueNote(event.target.value)} placeholder="Describe the quantity, product, agent, or delivery issue…" className="min-h-20 w-full rounded-lg border border-rose-200 p-3 text-sm" /></div>}
-      <div className="flex flex-col-reverse gap-2 p-5 sm:flex-row sm:justify-end"><button type="button" onClick={() => setModalOpen(false)} disabled={working} className="rounded-lg border border-gray-300 px-5 py-2 text-sm font-bold">Cancel</button>{flagging ? <button type="button" onClick={() => void flag()} disabled={working || selected.size === 0 || issueNote.trim().length < 3} className="rounded-lg bg-rose-600 px-5 py-2 text-sm font-bold text-white disabled:opacity-40">Submit Issue</button> : <button type="button" onClick={() => setFlagging(true)} disabled={working || selected.size === 0} className="rounded-lg border border-rose-300 px-5 py-2 text-sm font-bold text-rose-700 disabled:opacity-40">Flag Issue</button>}<button type="button" onClick={() => void reconcile([...selected])} disabled={working || selected.size === 0 || selectedAfter < 0} className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-bold text-white disabled:bg-gray-200 disabled:text-gray-400">{working ? "Posting…" : `Deduct Selected (${count(selectedUnits)} Units)`}</button></div>
+      <div className="flex flex-col-reverse gap-2 p-5 sm:flex-row sm:justify-end"><button type="button" onClick={() => setModalOpen(false)} disabled={working} className="rounded-lg border border-gray-300 px-5 py-2 text-sm font-bold">Cancel</button>{flagging ? <button type="button" onClick={() => void flag()} disabled={working || selected.size === 0 || issueNote.trim().length < 3} className="rounded-lg bg-rose-600 px-5 py-2 text-sm font-bold text-white disabled:opacity-40">Submit Issue</button> : <button type="button" onClick={() => setFlagging(true)} disabled={working || selected.size === 0} className="rounded-lg border border-rose-300 px-5 py-2 text-sm font-bold text-rose-700 disabled:opacity-40">Flag Issue</button>}<button type="button" onClick={() => void reconcile([...selected])} disabled={working || selected.size === 0 || (!modalAllProducts && selectedAfter < 0)} className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-bold text-white disabled:bg-gray-200 disabled:text-gray-400">{working ? "Posting…" : `Deduct Selected (${count(selectedUnits)} Units)`}</button></div>
     </div></div>}
   </div>;
 }
