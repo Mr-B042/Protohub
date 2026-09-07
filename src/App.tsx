@@ -429,6 +429,10 @@ const INVENTORY_OPERATIONS_NAV: InventoryOperationsNavGroup[] = [
     { action: "stock-products", label: "Stock by Product", icon: Boxes },
     { action: "stock-states", label: "Stock by State", icon: MapPin },
     { action: "stock-agents", label: "Stock by Agent", icon: Users },
+    // Product-first, unlike the three above. Answers "where else do we already
+    // have this, who has it, and how much is genuinely sellable" - a marketing
+    // and cross-sell question, not a stock-count one.
+    { action: "product-availability", label: "Product Availability", icon: MapPin },
     { action: "coverage", label: "State / Order Coverage", icon: ShieldCheck },
     { action: "forecast", label: "Restock Forecast", icon: TrendingUp },
     { action: "recommended-transfers", label: "Recommended Transfers", icon: ArrowLeftRight },
