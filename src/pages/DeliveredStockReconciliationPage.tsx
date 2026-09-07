@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle, Box, CalendarDays, Check, CheckCircle2, ChevronRight, CircleHelp,
+  AlertTriangle, Box, Check, CheckCircle2, ChevronRight, CircleHelp,
   MapPin, Package, RefreshCw, Search, Users, X
 } from "lucide-react";
 import {
@@ -8,6 +8,7 @@ import {
   type DeliveredStockReconciliationRow
 } from "../lib/api";
 import { PERIODS, periodBounds, periodRangeLabel, type DateRange, type Period } from "../lib/period-bounds";
+import DateWindowNav from "../components/DateWindowNav";
 
 /** "All time" is not a Period - it is the absence of a window. */
 type Scope = Period | "All time";
@@ -71,10 +72,23 @@ export default function DeliveredStockReconciliationPage() {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
-  const bounds = useMemo(
-    () => (scope === "All time" ? null : periodBounds(scope, range)),
-    [scope, range]
-  );
+  const todayKey = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  // ⚠️ ONE SOURCE OF TRUTH. The pills and the calendar are two ways to set the
+  // SAME window: a pill writes its bounds into `range`, and the calendar writes
+  // its own. `scope` only records which pill looks selected. Letting each hold
+  // its own dates is how a page ends up filtering by one window while the label
+  // above it names another.
+  const bounds = useMemo(() => {
+    if (scope === "All time") return null;
+    if (range.start && range.end) return { dateFrom: range.start, dateTo: range.end };
+    return periodBounds(scope, range);
+  }, [scope, range]);
+  const applyPeriod = (option: Scope) => {
+    setScope(option);
+    if (option === "All time") { setRange({ start: "", end: "" }); return; }
+    const next = periodBounds(option, range);
+    setRange(next ? { start: next.dateFrom, end: next.dateTo } : { start: "", end: "" });
+  };
   // ⚠️ ONE WINDOW, APPLIED ONCE. Everything below - the columns, the product
   // groups, the modal and the deduct buttons - reads from `scoped`, so what is
   // on screen is exactly what a Reconcile button will post. Filtering the list
@@ -180,42 +194,36 @@ export default function DeliveredStockReconciliationPage() {
           <button
             key={option}
             type="button"
-            onClick={() => { setScope(option); if (option !== "Custom") setRange({ start: "", end: "" }); }}
+            onClick={() => applyPeriod(option)}
             className={`rounded-full px-4 py-1.5 text-sm font-bold transition-colors ${
               scope === option ? "bg-gray-900 text-white shadow-sm" : "text-gray-600 hover:bg-gray-100"}`}
           >
             {option}
           </button>
         ))}
-        <button
-          type="button"
-          onClick={() => setScope("Custom")}
-          className={`inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-sm font-bold transition-colors ${
-            scope === "Custom" ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 text-gray-700 hover:bg-gray-100"}`}
-        >
-          <CalendarDays className="h-4 w-4" /> Pick a date range
-        </button>
         <span className="ml-auto text-xs font-semibold text-gray-500">
           {scope === "All time"
             ? `Every delivered line · ${count(rows.length)} row${rows.length === 1 ? "" : "s"}`
             : periodRangeLabel(scope, range)}
         </span>
       </div>
-      {scope === "Custom" && (
-        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-gray-100 pt-3 text-xs font-semibold text-gray-600">
-          <label className="flex items-center gap-2">From
-            <input type="date" value={range.start} max={range.end || undefined}
-              onChange={(event) => setRange((current) => ({ ...current, start: event.target.value }))}
-              className="rounded-lg border border-gray-200 px-2 py-1.5" />
-          </label>
-          <label className="flex items-center gap-2">To
-            <input type="date" value={range.end} min={range.start || undefined}
-              onChange={(event) => setRange((current) => ({ ...current, end: event.target.value }))}
-              className="rounded-lg border border-gray-200 px-2 py-1.5" />
-          </label>
-          {(!range.start || !range.end) && <span className="text-gray-400">Pick both dates to apply the window.</span>}
-        </div>
-      )}
+      {/* The app's own range picker - quick ranges, a two-month calendar and a
+          window size - rather than a second one built for this page. Choosing
+          here makes the window Custom, because a hand-picked range is no longer
+          the pill that happened to be lit. */}
+      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-gray-100 pt-3">
+        <DateWindowNav
+          value={range.start && range.end ? range : { start: todayKey, end: todayKey }}
+          onChange={(next) => { setScope("Custom"); setRange(next); }}
+          todayKey={todayKey}
+        />
+        {scope !== "All time" && (
+          <button type="button" onClick={() => applyPeriod("All time")}
+            className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-100">
+            Clear window
+          </button>
+        )}
+      </div>
     </div>
 
     {/* ⚠️ A FILTER MUST NEVER QUIETLY SWALLOW OUTSTANDING STOCK. Without this the
