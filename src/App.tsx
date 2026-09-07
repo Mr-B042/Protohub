@@ -14288,33 +14288,64 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setReceiveVarianceReason("");
     setReceiveVarianceMode("return");
   }, [modal, receiveWaybillId, waybillRecords]);
+  // ⚠️ SEED ONCE PER RECORD, NEVER ON REFRESH. See seededUserDraftRef below for
+  // the full reason - the same one-minute wipe applies here.
+  const seededSalesRepDraftRef = useRef("");
   useEffect(() => {
     if (modal !== "editSalesRep" || !selectedSalesRepId) {
+      seededSalesRepDraftRef.current = "";
       return;
     }
+    if (seededSalesRepDraftRef.current === selectedSalesRepId) return;
     const rep = users.find((user) => user.id === selectedSalesRepId);
     if (!rep) {
       return;
     }
+    seededSalesRepDraftRef.current = selectedSalesRepId;
     setSalesRepName(rep.name);
     setSalesRepEmail(rep.email);
     setSalesRepPhone(rep.phone ?? "");
     setSalesRepActive(rep.active);
   }, [modal, selectedSalesRepId, users]);
+  /**
+   * ⚠️ SEED ONCE PER OPENED USER, NEVER ON EVERY `users` CHANGE.
+   *
+   * This effect used to re-run whenever `users` got a new identity, and it
+   * overwrote the form with the STORED values every time. `users` is replaced
+   * far more often than it changes: the presence heartbeat runs every 60s and
+   * does `setUsers(current => current.map(...))`, and `.map` allocates a new
+   * array whether or not a single field differs.
+   *
+   * So an Owner editing a user had roughly a minute before their typing was
+   * silently reverted and the footer went back to "Nothing has changed yet" -
+   * reported as "I'm trying to edit this user but it keeps returning the old
+   * info and I can't edit it".
+   *
+   * The ref makes seeding happen once for a given user. The `users` dependency
+   * stays so a modal opened before the list has loaded still fills in when it
+   * arrives; it just cannot clobber an edit in progress.
+   */
+  const seededUserDraftRef = useRef("");
   useEffect(() => {
     if (modal !== "editUser" || !selectedUserId) {
+      seededUserDraftRef.current = "";
       return;
     }
+    if (seededUserDraftRef.current === selectedUserId) return;
     const user = users.find((item) => item.id === selectedUserId);
     if (!user) {
       return;
     }
+    seededUserDraftRef.current = selectedUserId;
     setUserFullName(user.name);
     setUserEmail(user.email);
     setUserPhone(user.phone ?? "");
     setUserPassword("");
     setNewUserRole(user.role);
     setNewUserActive(user.active);
+    // openEditUserModal seeds this too; without it here the deep-link path left
+    // a Marketer's tags showing the previous user's.
+    setUserMarketingTagDraft((user.marketingAttributionTags ?? []).join(", "));
   }, [modal, selectedUserId, users]);
   useEffect(() => {
     if (!modal || !selectedAgentId || !["assignAgentStock", "reconcileAgentStock", "editAgent"].includes(modal)) {
