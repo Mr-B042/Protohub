@@ -5,7 +5,7 @@
 import { useMemo, useState } from "react";
 import { AlertTriangle, Boxes, CalendarDays, ClipboardList, Download, Eye, MapPin, Search, Truck } from "lucide-react";
 import type { OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryLogisticsOperationsPage";
-import { buildStateRows, coverText, downloadCsv, num, runRateText, statusText, statusTone } from "./inventory-ops-model";
+import { agentsInState, buildStateRows, coverText, downloadCsv, num, runRateText, statusText, statusTone } from "./inventory-ops-model";
 
 type Props = {
   products: OpsProduct[];
@@ -46,6 +46,10 @@ export default function InventoryOpsStockByState({
     return true;
   });
   const selected = rows.find((row) => row.key === selectedKey) ?? null;
+  const selectedAgents = useMemo(
+    () => (selected ? agentsInState(selected.state, stateHubs, products) : []),
+    [selected, stateHubs, products]
+  );
   const selectedProducts = selected
     ? Array.from(new Set([
       ...selected.unitsByProductId.keys(),
@@ -242,6 +246,39 @@ export default function InventoryOpsStockByState({
                     </li>
                   ))}
                 </ul>
+              )}
+
+              {/* ⚠️ THE MISSING DIMENSION. This page could say Lagos holds 86
+                  units of Edge Brusher, but never which of the five Lagos
+                  agents had them - so answering "who do I collect from" meant
+                  leaving for Stock by Agent and reading every row. The join was
+                  already in the hub data. */}
+              <h3 className="m-0 mt-4 text-xs font-bold uppercase tracking-wider text-gray-500">
+                Agents in {selected.state} ({selectedAgents.length})
+              </h3>
+              {selectedAgents.length === 0 ? (
+                <p className="m-0 mt-2 text-xs italic text-gray-400">No agent in this state is holding stock.</p>
+              ) : (
+                <div className="mt-2 max-h-72 space-y-2 overflow-y-auto pr-1">
+                  {selectedAgents.map((agent) => (
+                    <div key={agent.agentId} className="rounded-lg border border-gray-100 bg-white px-3 py-2">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <strong className="min-w-0 truncate text-xs text-gray-900">
+                          {agent.agentName}{agent.city && <span className="font-normal text-gray-400"> · {agent.city}</span>}
+                        </strong>
+                        <span className="shrink-0 text-xs"><b className="text-gray-900">{num(agent.units)}</b> <span className="text-gray-400">units</span></span>
+                      </div>
+                      <ul className="m-0 mt-1.5 list-none space-y-1 p-0">
+                        {agent.items.map((item) => (
+                          <li key={item.productId} className="flex items-center justify-between gap-2 text-[11px]">
+                            <span className="min-w-0 truncate text-gray-600">{item.productName}</span>
+                            <b className="shrink-0 text-gray-800">{num(item.units)}</b>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
               )}
             </section>
           )}
