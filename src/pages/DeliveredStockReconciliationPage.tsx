@@ -44,6 +44,11 @@ export default function DeliveredStockReconciliationPage() {
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
+  // ⚠️ THIS ACTION MOVES STOCK AND WRITES A LEDGER, so it has to say what it
+  // did. It used to close the modal on success and say nothing, and on failure
+  // it set a page-level banner that renders BEHIND the open modal - so a
+  // deduction that was refused looked exactly like one that did nothing.
+  const [result, setResult] = useState<{ tone: "success" | "error"; message: string } | null>(null);
   const [query, setQuery] = useState("");
   const [stateKey, setStateKey] = useState("");
   const [agentKey, setAgentKey] = useState("");
@@ -159,7 +164,7 @@ export default function DeliveredStockReconciliationPage() {
   const selectedProduct = products.find((group) => group.key === productKey);
 
   const chooseProduct = (key: string, open = false) => {
-    setProductKey(key); setSelected(new Set()); setFlagging(false); setIssueNote("");
+    setProductKey(key); setSelected(new Set()); setFlagging(false); setIssueNote(""); setResult(null);
     if (open) { setModalAllProducts(false); setModalOpen(true); }
   };
   const toggle = (id: string) => setSelected((current) => {
@@ -172,11 +177,27 @@ export default function DeliveredStockReconciliationPage() {
 
   const reconcile = async (lineIds: string[]) => {
     if (lineIds.length === 0 || working) return;
-    setWorking(true); setError("");
+    // Counted BEFORE the reload, because after it these lines are reconciled
+    // and the numbers the officer needs told back to them are gone.
+    const posted = rows.filter((row) => lineIds.includes(row.id));
+    const units = sumQty(posted);
+    const orderCount = uniqueOrders(posted);
+    const productCount = new Set(posted.map((row) => row.productId)).size;
+    setWorking(true); setError(""); setResult(null);
     try {
       await deliveredStockReconciliationApi.reconcile(lineIds);
       setSelected(new Set()); setModalOpen(false); await load();
-    } catch (cause: any) { setError(cause?.message ?? "Could not reconcile selected stock."); }
+      setResult({
+        tone: "success",
+        message: `Deducted ${count(units)} unit${units === 1 ? "" : "s"} across ${orderCount} delivered order${orderCount === 1 ? "" : "s"}`
+          + `${productCount > 1 ? ` and ${productCount} products` : ""}`
+          + `${selectedAgent?.name ? ` from ${selectedAgent.name}` : ""}. Stock and its ledger entries were posted together.`
+      });
+    } catch (cause: any) {
+      // Stays open, with the reason where the button was pressed. Nothing was
+      // posted - the whole reconcile is one transaction.
+      setResult({ tone: "error", message: `${cause?.message ?? "Could not reconcile selected stock."} No stock was deducted.` });
+    }
     finally { setWorking(false); }
   };
   const flag = async () => {
@@ -186,14 +207,15 @@ export default function DeliveredStockReconciliationPage() {
     try {
       await deliveredStockReconciliationApi.flag(ids, issueNote.trim());
       setSelected(new Set()); setFlagging(false); setIssueNote(""); setModalOpen(false); await load();
-    } catch (cause: any) { setError(cause?.message ?? "Could not flag selected stock."); }
+      setResult({ tone: "success", message: `${ids.length} delivered line${ids.length === 1 ? "" : "s"} flagged for review. They are locked from deduction until the issue is resolved.` });
+    } catch (cause: any) { setResult({ tone: "error", message: `${cause?.message ?? "Could not flag selected stock."} Nothing was flagged.` }); }
     finally { setWorking(false); }
   };
   const resolveIssue = async (lineId: string) => {
     if (working) return;
     setWorking(true); setError("");
-    try { await deliveredStockReconciliationApi.resolve(lineId); await load(); }
-    catch (cause: any) { setError(cause?.message ?? "Could not return this issue to Pending."); }
+    try { await deliveredStockReconciliationApi.resolve(lineId); await load(); setResult({ tone: "success", message: "Issue resolved. That line is back in the queue as Pending." }); }
+    catch (cause: any) { setResult({ tone: "error", message: cause?.message ?? "Could not return this issue to Pending." }); }
     finally { setWorking(false); }
   };
 
@@ -264,6 +286,19 @@ export default function DeliveredStockReconciliationPage() {
       </div>
     )}
     {error && <div className="flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-700"><AlertTriangle className="h-4 w-4" />{error}</div>}
+
+    {/* The outcome of the last action, in words and figures. Dismissible, but
+        it never disappears on its own - somebody posting stock deserves to
+        still see what happened when they look back up. */}
+    {result && (
+      <div className={`flex items-start gap-2 rounded-lg border p-3 text-sm font-semibold ${
+        result.tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
+        {result.tone === "success" ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />}
+        <span className="flex-1">{result.message}</span>
+        <button type="button" onClick={() => setResult(null)} aria-label="Dismiss"
+          className="!min-h-0 rounded p-1 opacity-70 hover:opacity-100"><X className="h-4 w-4" /></button>
+      </div>
+    )}
 
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       {([
@@ -350,6 +385,13 @@ export default function DeliveredStockReconciliationPage() {
         })}</tbody></table>;
       })()}</div></div>
       <div className="mx-5 rounded-lg border border-blue-100 bg-blue-50 p-4"><p className="text-xs font-black text-blue-900">Live Deduction Preview</p><div className="mt-3 grid grid-cols-4 gap-3 text-center"><div><b className="text-xl">{modalAllProducts ? new Set(chosenRows.map((row) => row.productId)).size : count(currentStock)}</b><p className="text-[10px] text-gray-500">{modalAllProducts ? "Products" : "Current"}</p></div><div><b className="text-xl">{chosenRows.length}</b><p className="text-[10px] text-gray-500">Orders</p></div><div><b className="text-xl">−{count(selectedUnits)}</b><p className="text-[10px] text-gray-500">Deduction</p></div><div><b className={`text-xl ${!modalAllProducts && selectedAfter < 0 ? "text-rose-600" : "text-blue-700"}`}>{modalAllProducts ? orderGroups.length : count(selectedAfter)}</b><p className="text-[10px] text-gray-500">{modalAllProducts ? "Orders" : "New Stock"}</p></div></div></div>
+      {/* ⚠️ FAILURES BELONG IN THE MODAL. The page-level banner sits behind this
+          overlay, so an error shown only there is an error nobody reads. */}
+      {result?.tone === "error" && (
+        <div className="mx-5 mt-4 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-700">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><span>{result.message}</span>
+        </div>
+      )}
       {flagging && <div className="mx-5 mt-4"><textarea value={issueNote} onChange={(event) => setIssueNote(event.target.value)} placeholder="Describe the quantity, product, agent, or delivery issue…" className="min-h-20 w-full rounded-lg border border-rose-200 p-3 text-sm" /></div>}
       <div className="flex flex-col-reverse gap-2 p-5 sm:flex-row sm:justify-end"><button type="button" onClick={() => setModalOpen(false)} disabled={working} className="rounded-lg border border-gray-300 px-5 py-2 text-sm font-bold">Cancel</button>{flagging ? <button type="button" onClick={() => void flag()} disabled={working || selected.size === 0 || issueNote.trim().length < 3} className="rounded-lg bg-rose-600 px-5 py-2 text-sm font-bold text-white disabled:opacity-40">Submit Issue</button> : <button type="button" onClick={() => setFlagging(true)} disabled={working || selected.size === 0} className="rounded-lg border border-rose-300 px-5 py-2 text-sm font-bold text-rose-700 disabled:opacity-40">Flag Issue</button>}<button type="button" onClick={() => void reconcile([...selected])} disabled={working || selected.size === 0 || (!modalAllProducts && selectedAfter < 0)} className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-bold text-white disabled:bg-gray-200 disabled:text-gray-400">{working ? "Posting…" : `Deduct Selected (${count(selectedUnits)} Units)`}</button></div>
     </div></div>}
