@@ -310,12 +310,20 @@ export default function InventoryOpsStockByAgent({
                 </dl>
               </section>
               <section className="rounded-xl border border-gray-200 bg-white p-4">
-                <h2 className="m-0 text-sm font-bold text-gray-900">Stock by Product</h2>
+                {/* ⚠️ NO SILENT CAP. This showed the first 8 products with nothing
+                    to say more existed, so an agent holding 12 lines looked like
+                    an agent holding 8 - part of "very difficult to find what we
+                    are looking for". The list scrolls instead, and the heading
+                    carries the real count. */}
+                <div className="flex items-baseline justify-between gap-2">
+                  <h2 className="m-0 text-sm font-bold text-gray-900">Stock by Product</h2>
+                  <span className="text-xs text-gray-500">{selected.lines.length} line{selected.lines.length === 1 ? "" : "s"} · {selected.state}</span>
+                </div>
                 {selected.lines.length === 0 ? (
                   <p className="m-0 mt-2 text-xs italic text-gray-400">This hub is holding nothing.</p>
                 ) : (
-                  <ul className="m-0 mt-3 list-none space-y-2 p-0">
-                    {selected.lines.slice(0, 8).map((line) => (
+                  <ul className="m-0 mt-3 max-h-72 list-none space-y-2 overflow-y-auto p-0 pr-1">
+                    {selected.lines.map((line) => (
                       <li key={line.name} className="flex items-center justify-between gap-3 text-sm">
                         <span className="min-w-0 truncate text-gray-700">{line.name}</span>
                         <span className="shrink-0 font-bold text-gray-900">{num(line.units)}</span>

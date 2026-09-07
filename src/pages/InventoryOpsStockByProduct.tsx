@@ -14,7 +14,7 @@
 import { useMemo, useState } from "react";
 import { Box, CalendarDays, ChevronRight, Download, Search, X } from "lucide-react";
 import type { OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryLogisticsOperationsPage";
-import { buildProductRows, buildStateRows, coverText, downloadCsv, runRateText, type ProductRow } from "./inventory-ops-model";
+import { buildProductRows, buildStateRows, coverText, downloadCsv, runRateText, statesHoldingProduct, type ProductRow } from "./inventory-ops-model";
 
 type Props = {
   products: OpsProduct[];
@@ -45,6 +45,10 @@ export default function InventoryOpsStockByProduct({
   const [lowOnly, setLowOnly] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [windowDays, setWindowDays] = useState(lookbackDays);
+  const productHoldings = useMemo(
+    () => (selectedId ? statesHoldingProduct(selectedId, stateHubs) : []),
+    [selectedId, stateHubs]
+  );
 
   const rows = useMemo<Row[]>(() => {
     const stateRows = buildStateRows(stateHubs, orders, waybills, windowDays, criticalDays, watchDays);
@@ -239,18 +243,42 @@ export default function InventoryOpsStockByProduct({
                 </div>
               ))}
             </dl>
-            <h3 className="m-0 mt-4 text-sm font-bold text-gray-900">Top states by availability</h3>
-            {selected.byState.length === 0 ? (
+            {/* ⚠️ WHO IS HOLDING IT, NOT JUST WHERE. This was five states with an
+                availability figure, which answered "is there stock in Lagos"
+                but never "which agent has it" - so finding a specific unit
+                meant leaving for the Stock by Agent page and searching by eye.
+                State -> agent -> units, uncapped, is the join the data already
+                had. */}
+            <h3 className="m-0 mt-4 text-sm font-bold text-gray-900">Where this stock is held</h3>
+            {productHoldings.length === 0 ? (
               <p className="m-0 mt-2 text-xs italic text-gray-400">No agent hub is holding this product.</p>
             ) : (
-              <ul className="m-0 mt-2 list-none space-y-1.5 p-0">
-                {selected.byState.slice(0, 5).map((entry) => (
-                  <li key={entry.state} className="flex items-center justify-between text-sm">
-                    <span className="text-gray-600">{entry.state}</span>
-                    <span className="text-right"><strong className="block text-gray-900">{num(entry.available)} available</strong><small className="text-gray-400">{Number.isFinite(entry.coverDays) ? `${Math.round(entry.coverDays * 10) / 10} days` : "no recent sales"}</small></span>
-                  </li>
-                ))}
-              </ul>
+              <div className="mt-2 max-h-80 space-y-2 overflow-y-auto pr-1">
+                {productHoldings.map((group) => {
+                  const stateCover = selected.byState.find((entry) => entry.state === group.state);
+                  return (
+                    <div key={group.state} className="rounded-lg border border-gray-100 bg-gray-50/60 p-2">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <strong className="text-sm text-gray-900">{group.state}</strong>
+                        <span className="text-right text-xs text-gray-500">
+                          <b className="text-gray-900">{num(group.units)}</b> units
+                          {stateCover && Number.isFinite(stateCover.coverDays) && <> · {Math.round(stateCover.coverDays * 10) / 10}d cover</>}
+                        </span>
+                      </div>
+                      <ul className="m-0 mt-1.5 list-none space-y-1 p-0">
+                        {group.agents.map((agent) => (
+                          <li key={`${group.state}-${agent.agentId}`} className="flex items-center justify-between gap-2 text-xs">
+                            <span className="min-w-0 truncate text-gray-600">
+                              {agent.agentName}{agent.city && <span className="text-gray-400"> · {agent.city}</span>}
+                            </span>
+                            <b className="shrink-0 text-gray-900">{num(agent.units)}</b>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })}
+              </div>
             )}
             {onOpenProduct && (
               <button className="!min-h-0 mt-4 w-full rounded-lg bg-[#1F8FE0] px-3 py-2 text-sm font-bold text-white hover:bg-[#1560a8]"

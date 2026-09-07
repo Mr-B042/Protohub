@@ -335,3 +335,96 @@ export function downloadCsv(filename: string, rows: Array<Record<string, string 
   anchor.click();
   URL.revokeObjectURL(url);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cross-dimension breakdowns.
+//
+// ⚠️ THE THREE STOCK PAGES EACH ANSWER ONLY THEIR OWN DIMENSION, which is
+// exactly the complaint: "Stock by Product are not grouped by agent and state,
+// Stock by Agent not by product and state, Stock by State not by agent and
+// product ... very difficult to find what we are looking for."
+//
+// Every one of those joins is already sitting in OpsStateHub, which carries the
+// state, the agent AND that agent's per-product quantities. Nothing new is
+// fetched; these functions just cut the same data the other way, in one place
+// so the three pages cannot disagree about what an agent is holding.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type AgentHolding = {
+  agentId: string;
+  agentName: string;
+  state: string;
+  city: string;
+  units: number;
+};
+
+export type ProductHolding = {
+  productId: string;
+  productName: string;
+  units: number;
+};
+
+/** Who is holding one product, and where. Highest holding first. */
+export function agentsHoldingProduct(productId: string, hubs: OpsStateHub[]): AgentHolding[] {
+  return hubs
+    .map((hub) => ({
+      agentId: hub.agentId ?? hub.agentName,
+      agentName: hub.agentName,
+      state: hub.state,
+      city: hub.city ?? "",
+      units: hub.stocks
+        .filter((stock) => stock.productId === productId)
+        .reduce((sum, stock) => sum + Math.max(0, stock.quantity), 0)
+    }))
+    .filter((entry) => entry.units > 0)
+    .sort((a, b) => b.units - a.units || a.agentName.localeCompare(b.agentName));
+}
+
+/** The same holdings, gathered under their state. */
+export function statesHoldingProduct(productId: string, hubs: OpsStateHub[]) {
+  const byState = new Map<string, { state: string; units: number; agents: AgentHolding[] }>();
+  for (const holding of agentsHoldingProduct(productId, hubs)) {
+    const key = canonicalStateKey(holding.state) || norm(holding.state);
+    const found = byState.get(key);
+    if (found) { found.units += holding.units; found.agents.push(holding); }
+    else byState.set(key, { state: holding.state, units: holding.units, agents: [holding] });
+  }
+  return [...byState.values()].sort((a, b) => b.units - a.units || a.state.localeCompare(b.state));
+}
+
+/** What one agent is holding, by product. Needs the catalogue for names. */
+export function productsHeldByAgent(hub: OpsStateHub, products: OpsProduct[]): ProductHolding[] {
+  const nameById = new Map(products.map((product) => [product.id, product.name]));
+  const byProduct = new Map<string, ProductHolding>();
+  for (const stock of hub.stocks) {
+    const units = Math.max(0, stock.quantity);
+    if (units <= 0) continue;
+    const found = byProduct.get(stock.productId);
+    if (found) found.units += units;
+    else byProduct.set(stock.productId, {
+      productId: stock.productId,
+      productName: nameById.get(stock.productId) ?? "Unknown product",
+      units
+    });
+  }
+  return [...byProduct.values()].sort((a, b) => b.units - a.units || a.productName.localeCompare(b.productName));
+}
+
+/** Every agent in one state, each with what they hold. */
+export function agentsInState(state: string, hubs: OpsStateHub[], products: OpsProduct[]) {
+  const wanted = canonicalStateKey(state) || norm(state);
+  return hubs
+    .filter((hub) => (canonicalStateKey(hub.state) || norm(hub.state)) === wanted)
+    .map((hub) => {
+      const items = productsHeldByAgent(hub, products);
+      return {
+        agentId: hub.agentId ?? hub.agentName,
+        agentName: hub.agentName,
+        city: hub.city ?? "",
+        items,
+        units: items.reduce((sum, item) => sum + item.units, 0)
+      };
+    })
+    .filter((entry) => entry.units > 0)
+    .sort((a, b) => b.units - a.units || a.agentName.localeCompare(b.agentName));
+}
