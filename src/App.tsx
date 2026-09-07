@@ -128,6 +128,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { OrderSourceLogo } from "./components/OrderSourceLogo";
+import { periodBounds } from "./lib/period-bounds";
 import { WhatsAppIcon } from "./components/WhatsAppIcon";
 import {
   ManagerProductChallenges,
@@ -5137,51 +5138,12 @@ const sundayWeeksForExplicitRange = (range: DateRange): Array<{ start: string; e
   return weeks;
 };
 
-const periodBoundsForQuery = (activePeriod: Period, range: DateRange) => {
-  const now = new Date();
-  const today = formatDateKey(now);
-  const weekStart = new Date(now);
-  weekStart.setDate(now.getDate() - now.getDay());
-
-  if (activePeriod === "Custom") {
-    return range.start && range.end ? { dateFrom: range.start, dateTo: range.end } : null;
-  }
-
-  if (activePeriod === "Today") {
-    return { dateFrom: today, dateTo: today };
-  }
-
-  if (activePeriod === "Yesterday") {
-    const y = new Date(now);
-    y.setDate(now.getDate() - 1);
-    const key = formatDateKey(y);
-    return { dateFrom: key, dateTo: key };
-  }
-
-  if (activePeriod === "This Week") {
-    return { dateFrom: formatDateKey(weekStart), dateTo: today };
-  }
-
-  if (activePeriod === "Last Week") {
-    const lastWeekStart = new Date(weekStart);
-    lastWeekStart.setDate(weekStart.getDate() - 7);
-    const lastWeekEnd = new Date(weekStart);
-    lastWeekEnd.setDate(weekStart.getDate() - 1);
-    return { dateFrom: formatDateKey(lastWeekStart), dateTo: formatDateKey(lastWeekEnd) };
-  }
-
-  if (activePeriod === "This Month") {
-    return { dateFrom: `${today.slice(0, 7)}-01`, dateTo: today };
-  }
-
-  if (activePeriod === "Last Month") {
-    const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const lastDay = new Date(now.getFullYear(), now.getMonth(), 0);
-    return { dateFrom: formatDateKey(lastMonth), dateTo: formatDateKey(lastDay) };
-  }
-
-  return { dateFrom: `${today.slice(0, 4)}-01-01`, dateTo: today };
-};
+// ⚠️ DELEGATES. The bounds maths moved to lib/period-bounds.ts so the standalone
+// pages that are not rendered inside App (Delivered Stock Reconciliation, and
+// anything after it) filter by the same definition of "This Month" instead of a
+// copy that can drift - including this app's Sunday-anchored week.
+const periodBoundsForQuery = (activePeriod: Period, range: DateRange) =>
+  periodBounds(activePeriod, range);
 
 const daysInPeriodSoFar = (activePeriod: Period, range: DateRange) => {
   const now = new Date();
