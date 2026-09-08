@@ -14939,7 +14939,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       location.stock.some((stock) => stock.productId === productId)
     );
   const stockRowsForStateHub = (agent: DeliveryAgentRecord, location: DeliveryAgentLocation): DeliveryAgentLocationStock[] => {
-    const directRows = location.stock;
+    // ⚠️ ALWAYS AN ARRAY. `stock` is TYPED as required, so nothing forced a
+    // guard here - but the value is built from an API payload, and a location
+    // with no stock rows at all arrives without it. 3 of the 84 agent locations
+    // are in that state right now. Returning undefined made the caller below do
+    // undefined.map(...), which takes down the whole Inventory & Logistics page
+    // for the one role that lives on it.
+    const directRows = location.stock ?? [];
     const agentLocations = agentLocationRows(agent);
     const preferredLegacyLocation = agentLocations.find((row) => row.isPrimary) ?? agentLocations[0] ?? null;
     const isPreferredLegacyLocation = Boolean(preferredLegacyLocation) && (
@@ -96712,7 +96718,7 @@ ${waybillLineItems(w).length > 1
                 active: agent.active,
                 joinedAt: agent.created,
                 lastCountAt: latestStockCountAtForAgent(agent.id),
-                stocks: stockRowsForStateHub(agent, location).map((stock) => ({
+                stocks: (stockRowsForStateHub(agent, location) ?? []).map((stock) => ({
                   productId: stock.productId,
                   quantity: Math.max(0, Number(stock.quantity ?? 0) - Number(stock.defective ?? 0) - Number(stock.missing ?? 0)),
                 })),

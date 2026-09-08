@@ -100,7 +100,8 @@ export function buildAvailabilityCells(
   const cells: AvailabilityCell[] = [];
   for (const hub of hubs) {
     const locationId = hub.locationId ?? "";
-    for (const stock of hub.stocks) {
+    // ⚠️ A hub with no stock rows arrives without this array entirely.
+    for (const stock of hub.stocks ?? []) {
       const onHand = Math.max(0, stock.quantity);
       const key = `${locationId}::${stock.productId}`;
       const cellReserved = reserved.get(key) ?? 0;
