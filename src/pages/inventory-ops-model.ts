@@ -152,9 +152,14 @@ export function buildStateRows(
   };
 
   for (const hub of stateHubs) {
+    // ⚠️ THE OLDEST INSTANCE OF THIS, and the one every stock page runs through.
+    // buildStateRows feeds Stock by State, Stock by Product and the operations
+    // dashboard, so a single hub arriving without its stocks array took all
+    // three down at once.
+    const hubStocks = hub.stocks ?? [];
     const stocks = includedProductIds
-      ? hub.stocks.filter((stock) => includedProductIds.has(stock.productId))
-      : hub.stocks;
+      ? hubStocks.filter((stock) => includedProductIds.has(stock.productId))
+      : hubStocks;
     if (includedProductIds && stocks.length === 0) continue;
     const bucket = bucketFor(hub.state);
     if (!bucket) continue;
@@ -372,7 +377,7 @@ export function agentsHoldingProduct(productId: string, hubs: OpsStateHub[]): Ag
       agentName: hub.agentName,
       state: hub.state,
       city: hub.city ?? "",
-      units: hub.stocks
+      units: (hub.stocks ?? [])
         .filter((stock) => stock.productId === productId)
         .reduce((sum, stock) => sum + Math.max(0, stock.quantity), 0)
     }))
@@ -396,7 +401,8 @@ export function statesHoldingProduct(productId: string, hubs: OpsStateHub[]) {
 export function productsHeldByAgent(hub: OpsStateHub, products: OpsProduct[]): ProductHolding[] {
   const nameById = new Map(products.map((product) => [product.id, product.name]));
   const byProduct = new Map<string, ProductHolding>();
-  for (const stock of hub.stocks) {
+  // ⚠️ A hub can arrive with no stocks at all - see stockRowsForStateHub.
+  for (const stock of hub.stocks ?? []) {
     const units = Math.max(0, stock.quantity);
     if (units <= 0) continue;
     const found = byProduct.get(stock.productId);
