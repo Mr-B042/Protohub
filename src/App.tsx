@@ -3537,12 +3537,19 @@ const hydrateAgentFromApi = (saved: any, fallback?: DeliveryAgentRecord): Delive
   };
 };
 
-const primaryPricing = (product: Product) =>
+const primaryPricing = (product: Product) => {
+  // ⚠️ TOLERATE A PRODUCT WITH NO PRICINGS KEY AT ALL. The API strips pricing
+  // for the Inventory & Logistics role, and this helper is read from reduces
+  // all over the app - one undefined took every one of them down. Normalising
+  // in api.ts is the real fix; this is the second line, because this function
+  // is the single hottest reader of the field.
+  const pricings = Array.isArray(product?.pricings) ? product.pricings : [];
   // Prefer the row marked primary. Tolerate both `primary` (legacy) and
   // `isPrimary` (new snake→camel API shape from is_primary). Fall back to
   // first pricing so products with one currency still value correctly.
-  product.pricings.find((pricing) => (pricing as any).primary || (pricing as any).isPrimary)
-  ?? product.pricings[0];
+  return pricings.find((pricing) => (pricing as any).primary || (pricing as any).isPrimary)
+    ?? pricings[0];
+};
 const totalProductStock = (product: Product) => product.warehouseStock + product.agentStock;
 const DEFAULT_PACKAGE_SET_LABEL = "Default";
 const ADD_ON_ONLY_PACKAGE_SET_LABEL = "Add-ons only";
