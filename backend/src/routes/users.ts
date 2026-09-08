@@ -145,6 +145,44 @@ router.patch("/:id",
       return;
     }
 
+    // ⚠️ THE LOGIN EMAIL LIVES IN auth.users, NOT HERE. Writing the new address
+    // to this table alone left the sign-in identity on the old one, so the
+    // person typed the address their profile showed, Supabase had never heard
+    // of it, and they were told "invalid password" - with a password that was
+    // perfectly correct. Ihuoma Favour was locked out that way after her
+    // account was renamed from its previous owner's details.
+    //
+    // Auth goes FIRST on purpose. If it fails we stop, and the profile keeps
+    // the address the person can still log in with. The other order is what
+    // caused the lockout: profile updated, auth stale, no way back in.
+    if (typeof updates.email === "string") {
+      const nextEmail = updates.email.trim().toLowerCase();
+      const { data: existing, error: lookupError } = await supabase
+        .from("users")
+        .select("email")
+        .eq("id", req.params.id)
+        .eq("org_id", req.user!.orgId)
+        .maybeSingle();
+      if (lookupError) { res.status(500).json({ error: lookupError.message }); return; }
+      if (!existing) { res.status(404).json({ error: "User not found." }); return; }
+
+      if (String(existing.email ?? "").trim().toLowerCase() !== nextEmail) {
+        const { error: authError } = await supabase.auth.admin.updateUserById(String(req.params.id), {
+          email: nextEmail,
+          // Already a working account being renamed, not a new signup - making
+          // them re-confirm by email would lock them out just as effectively.
+          email_confirm: true
+        });
+        if (authError) {
+          res.status(400).json({
+            error: `Could not change the sign-in email: ${authError.message}. Nothing was changed, so they can still sign in with ${existing.email}.`
+          });
+          return;
+        }
+      }
+      updates.email = nextEmail;
+    }
+
     // Ensure target user belongs to caller's org
     const { data, error } = await supabase
       .from("users")
