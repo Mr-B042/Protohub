@@ -502,8 +502,34 @@ export const usersApi = {
 };
 
 // ── Products ──────────────────────────────────────────────
+/**
+ * ⚠️ A ROLE THAT CANNOT SEE PRICING STILL GETS A PRODUCT SHAPE.
+ *
+ * The server strips `pricings` and `dedicated_handlers` outright for
+ * "Inventory Manager & Logistics Operations" - correct, that role must not see
+ * money - but it REMOVES the keys rather than emptying them. The client types
+ * both as required arrays, so nothing forced a guard, and the first read of
+ * `product.pricings.find(...)` threw
+ *
+ *   TypeError: Cannot read properties of undefined (reading 'find')
+ *
+ * which took the whole app down for that role. Normalising here fixes every
+ * reader at once instead of guarding dozens of call sites, and it is the right
+ * place: the shape a role is allowed to see is still a valid product shape.
+ */
+const normaliseProductRow = (row: any) => ({
+  ...row,
+  pricings: Array.isArray(row?.pricings) ? row.pricings : [],
+  packages: Array.isArray(row?.packages) ? row.packages : [],
+  dedicatedHandlers: Array.isArray(row?.dedicatedHandlers) ? row.dedicatedHandlers
+    : Array.isArray(row?.dedicated_handlers) ? row.dedicated_handlers : []
+});
+
 export const productsApi = {
-  list: () => get<any[]>("/api/products"),
+  list: async () => {
+    const rows = await get<any[]>("/api/products");
+    return Array.isArray(rows) ? rows.map(normaliseProductRow) : rows;
+  },
   // Every recorded unit-cost move, so a historical line can be costed at what
   // it cost THEN instead of what the product record says today.
   costChanges: () => get<{ changes: any[] }>("/api/products/cost-changes"),
