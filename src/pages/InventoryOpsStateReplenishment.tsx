@@ -283,6 +283,44 @@ export default function InventoryOpsStateReplenishment({
         || a.row.state.localeCompare(b.row.state));
   }, [scoped, search]);
 
+  // Same lines, gathered under their state, with the customers behind them
+  // worked out so the page can say when products travel together.
+  const needGroups = useMemo(() => {
+    const groups = new Map<string, { row: StateReplenishmentRow; lines: typeof needList }>();
+    for (const line of needList) {
+      const found = groups.get(line.row.key);
+      if (found) found.lines.push(line);
+      else groups.set(line.row.key, { row: line.row, lines: [line] });
+    }
+    return Array.from(groups.values()).map(({ row, lines }) => {
+      // Who is actually waiting, per short product. Only ready orders and cart
+      // people count - the same rule that built the shortage.
+      const whoWants = (productId: string) => new Set<string>([
+        ...row.orders.filter((order) => order.actionable && order.lines.some((l) => l.productId === productId))
+          .map((order) => `o:${order.id || order.customer}`),
+        ...row.carts.filter((cart) => cart.productId === productId).map((cart) => `c:${cart.id}`)
+      ]);
+      const sets = lines.map((line) => whoWants(line.entry.productId));
+      const union = new Set(sets.flatMap((set) => [...set]));
+      const shared = sets.length > 0
+        ? [...sets[0]].filter((who) => sets.every((set) => set.has(who)))
+        : [];
+      // Anybody wanting every one of these products bought them as a package,
+      // so those products ship together whatever else is going on.
+      const travelTogether = lines.length > 1 && shared.length > 0;
+      return {
+        row, lines,
+        customers: union.size,
+        sharedCustomers: shared.length,
+        travelTogether,
+        sendUnits: lines.reduce((sum, line) => sum + line.entry.sendUnits, 0),
+        shortUnits: lines.reduce((sum, line) => sum + line.entry.deficit, 0),
+        urgent: lines.some((line) => line.urgent)
+      };
+    }).sort((a, b) =>
+      Number(b.urgent) - Number(a.urgent) || b.sendUnits - a.sendUnits || a.row.state.localeCompare(b.row.state));
+  }, [needList]);
+
   const needTotals = useMemo(() => ({
     lines: needList.length,
     urgentLines: needList.filter((entry) => entry.urgent).length,
@@ -554,8 +592,8 @@ export default function InventoryOpsStateReplenishment({
             {tab === "overview" && (
               <div>
                 <div className="grid grid-cols-2 gap-3 border-b border-gray-100 p-4 md:grid-cols-4">
-                  <StatCard label="Products short" value={num(needTotals.urgentLines)}
-                    foot={`${num(needTotals.statesTouched)} state${needTotals.statesTouched === 1 ? "" : "s"} · ${num(needTotals.productsTouched)} product${needTotals.productsTouched === 1 ? "" : "s"}`}
+                  <StatCard label="States to sort out" value={num(needTotals.statesTouched)}
+                    foot={`${num(needTotals.productsTouched)} product${needTotals.productsTouched === 1 ? "" : "s"} between them`}
                     Icon={AlertTriangle} tint="bg-rose-50 text-rose-600" />
                   <StatCard label="Units to send" value={num(needTotals.unitsToSend)}
                     foot="After in-state spare and stock on the way" Icon={Truck} tint="bg-violet-50 text-violet-600" />
@@ -566,18 +604,17 @@ export default function InventoryOpsStateReplenishment({
                 </div>
 
                 <p className="m-0 border-b border-gray-100 bg-blue-50/60 px-4 py-2.5 text-[12px] leading-relaxed text-blue-900">
-                  <strong>One line per state and product.</strong> A state total hides this: Cross River can read
-                  "160 in stock" while holding none at all of the one shelf its customers are waiting for. Everything you need
-                  is on this screen - you should not have to open a single state.
+                  <strong>One block per state, one shipment each.</strong> A state total hides which product is short:
+                  Cross River can read "160 in stock" while holding none at all of the shelf its customers are waiting for.
+                  A package also brings its free gifts, so one order needs several products - those are grouped here rather
+                  than listed as separate jobs. Everything you need is on this screen; you should not have to open a state.
                 </p>
 
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[940px] text-left text-sm">
                     <thead>
                       <tr className="border-b border-gray-100 bg-gray-50/70">
-                        <th className={`${headCell} w-10`}>#</th>
-                        <th className={headCell}>State</th>
-                        <th className={headCell}>Which product</th>
+                        <th className={headCell}>Where / what</th>
                         <th className={`${headCell} text-right`} title="Units of THIS product in this state - not the state's total stock.">
                           Stock<span className="block normal-case text-gray-400">of this one</span></th>
                         <th className={`${headCell} text-right`}>Waiting<span className="block normal-case text-gray-400">units</span></th>
@@ -588,58 +625,90 @@ export default function InventoryOpsStateReplenishment({
                       </tr>
                     </thead>
                     <tbody>
-                      {needList.length === 0 ? (
-                        <tr><td colSpan={9} className="px-4 py-12 text-center text-sm italic text-gray-400">
+                      {needGroups.length === 0 ? (
+                        <tr><td colSpan={7} className="px-4 py-12 text-center text-sm italic text-gray-400">
                           Nothing is short right now. Every customer who is ready can be served.
                         </td></tr>
-                      ) : needList.map(({ row, entry, urgent, waiting }, index) => (
-                        <tr key={`${row.key}-${entry.productId}`} className="border-b border-gray-50 hover:bg-gray-50/60">
-                          <td className={`${rowPad} text-gray-400`}>{index + 1}</td>
-                          <td className={rowPad}>
-                            <strong className="block font-bold text-gray-900">{row.state}</strong>
-                            <span className="block text-[11px] text-gray-400">{row.agentCount} agent{row.agentCount === 1 ? "" : "s"} · {row.zone ?? "Unzoned"}</span>
-                          </td>
-                          <td className={`${rowPad} font-bold text-gray-900`}>{entry.productName}</td>
-                          <td className={`${rowPad} text-right`}>
-                            <span className={`inline-flex min-w-9 justify-center rounded-md px-2 py-1 text-xs font-bold ${
-                              entry.sellable === 0 ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>{num(entry.sellable)}</span>
-                          </td>
-                          <td className={`${rowPad} text-right font-bold text-gray-900`}>
-                            {num(waiting)}
-                            {entry.cartUnits > 0 && (
-                              <span className="ml-1 inline-flex items-center gap-0.5 rounded-full bg-violet-50 px-1.5 py-0.5 text-[10px] font-bold text-violet-700"
-                                title={`${num(entry.cartUnits)} of these are for people who left a cart and said yes on a call`}>
-                                <ShoppingBag className="h-2.5 w-2.5" />{num(entry.cartUnits)}
+                      ) : needGroups.map((group, groupIndex) => (
+                        <Fragment key={group.row.key}>
+                          {/* One block per state. Everything under it goes on the
+                              same lorry, so it is one job, not one per product. */}
+                          <tr className="border-b border-gray-100 bg-gray-50/60">
+                            <td className="px-3 py-2.5">
+                              <span className="flex items-center gap-2">
+                                <span className="text-gray-400">{groupIndex + 1}</span>
+                                <strong className="text-[15px] font-black text-gray-950">{group.row.state}</strong>
+                                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${PRIORITY_TONE[group.row.priority]}`}>{PRIORITY_LABEL[group.row.priority]}</span>
                               </span>
-                            )}
-                          </td>
-                          <td className={`${rowPad} text-right`}>
-                            <span className="inline-flex min-w-9 justify-center rounded-md bg-rose-50 px-2 py-1 text-xs font-bold text-rose-700">{num(entry.deficit)}</span>
-                          </td>
-                          <td className={`${rowPad} text-right ${entry.inTransit > 0 ? "text-blue-600" : "text-gray-300"}`}>{entry.inTransit > 0 ? num(entry.inTransit) : "-"}</td>
-                          <td className={rowPad}>
-                            {urgent ? (
-                              <>
-                                <strong className="block text-[12px] font-bold text-rose-600">Send {num(entry.sendUnits)} unit{entry.sendUnits === 1 ? "" : "s"}</strong>
-                                <span className="block text-[11px] text-gray-400">nobody here has enough</span>
-                              </>
-                            ) : entry.rebalanceUnits > 0 && row.agentShortages > 0 ? (
-                              <>
-                                <strong className="block text-[12px] font-bold text-orange-600">Move {num(entry.rebalanceUnits)} across</strong>
-                                <span className="block text-[11px] text-gray-400">another agent here has spare</span>
-                              </>
-                            ) : (
-                              <>
-                                <strong className="block text-[12px] font-bold text-blue-600">Give the order to an agent</strong>
-                                <span className="block text-[11px] text-gray-400">the stock is already here</span>
-                              </>
-                            )}
-                          </td>
-                          <td className={`${rowPad} text-right`}>
-                            <button type="button" onClick={() => openModal(row, entry.productId)}
-                              className="!min-h-0 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-50">View</button>
-                          </td>
-                        </tr>
+                              <span className="mt-0.5 block text-[11px] text-gray-500">
+                                {group.row.agentCount} agent{group.row.agentCount === 1 ? "" : "s"} · {group.row.zone ?? "Unzoned"} ·{" "}
+                                {num(group.customers)} {group.customers === 1 ? "person" : "people"} waiting
+                              </span>
+                            </td>
+                            <td colSpan={4} className="px-3 py-2.5">
+                              {/* ⚠️ A package ships with its free gifts, so ONE order
+                                  becomes several product lines. Saying so is the
+                                  difference between one job and three. */}
+                              {group.travelTogether ? (
+                                <span className="inline-flex items-start gap-1.5 rounded-lg bg-blue-50 px-2.5 py-1.5 text-[11px] font-semibold leading-relaxed text-blue-900">
+                                  <Package className="mt-0.5 h-3 w-3 shrink-0" />
+                                  {group.sharedCustomers === group.customers
+                                    ? `These ${group.lines.length} go out together - the same ${num(group.customers)} ${group.customers === 1 ? "person" : "people"} ordered all of them as one package.`
+                                    : `${num(group.sharedCustomers)} of these ${num(group.customers)} people ordered all ${group.lines.length} as one package, so those go out together.`}
+                                </span>
+                              ) : group.lines.length > 1 ? (
+                                <span className="text-[11px] text-gray-500">{group.lines.length} different products short here</span>
+                              ) : null}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <strong className={`block text-[12px] font-bold ${group.sendUnits > 0 ? "text-rose-600" : "text-blue-600"}`}>
+                                {group.sendUnits > 0 ? `Send ${num(group.sendUnits)} unit${group.sendUnits === 1 ? "" : "s"} in total` : "Give the orders to an agent"}
+                              </strong>
+                              <span className="block text-[11px] text-gray-400">{group.sendUnits > 0 ? "one shipment" : "the stock is already here"}</span>
+                            </td>
+                            <td className="px-3 py-2.5 text-right">
+                              <button type="button" onClick={() => openModal(group.row, group.lines[0].entry.productId)}
+                                className="!min-h-0 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-50">View</button>
+                            </td>
+                          </tr>
+                          {group.lines.map(({ row, entry, urgent, waiting }) => (
+                            <tr key={`${row.key}-${entry.productId}`} className="border-b border-gray-50 hover:bg-gray-50/40">
+                              <td className={`${rowPad} pl-10`}>
+                                <span className="font-bold text-gray-900">{entry.productName}</span>
+                              </td>
+                              <td className={`${rowPad} text-right`}>
+                                <span className={`inline-flex min-w-9 justify-center rounded-md px-2 py-1 text-xs font-bold ${
+                                  entry.sellable === 0 ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>{num(entry.sellable)}</span>
+                              </td>
+                              <td className={`${rowPad} text-right font-bold text-gray-900`}>
+                                {num(waiting)}
+                                {entry.cartUnits > 0 && (
+                                  <span className="ml-1 inline-flex items-center gap-0.5 rounded-full bg-violet-50 px-1.5 py-0.5 text-[10px] font-bold text-violet-700"
+                                    title={`${num(entry.cartUnits)} of these are for people who left a cart and said yes on a call`}>
+                                    <ShoppingBag className="h-2.5 w-2.5" />{num(entry.cartUnits)}
+                                  </span>
+                                )}
+                              </td>
+                              <td className={`${rowPad} text-right`}>
+                                <span className="inline-flex min-w-9 justify-center rounded-md bg-rose-50 px-2 py-1 text-xs font-bold text-rose-700">{num(entry.deficit)}</span>
+                              </td>
+                              <td className={`${rowPad} text-right ${entry.inTransit > 0 ? "text-blue-600" : "text-gray-300"}`}>{entry.inTransit > 0 ? num(entry.inTransit) : "-"}</td>
+                              <td className={rowPad}>
+                                {urgent ? (
+                                  <span className="text-[12px] font-bold text-rose-600">Send {num(entry.sendUnits)}</span>
+                                ) : entry.rebalanceUnits > 0 && row.agentShortages > 0 ? (
+                                  <span className="text-[12px] font-bold text-orange-600">Move {num(entry.rebalanceUnits)} across</span>
+                                ) : (
+                                  <span className="text-[12px] font-bold text-blue-600">Already here</span>
+                                )}
+                              </td>
+                              <td className={`${rowPad} text-right`}>
+                                <button type="button" onClick={() => openModal(row, entry.productId)}
+                                  className="!min-h-0 rounded-lg px-2 py-1 text-[11px] font-bold text-gray-500 hover:bg-gray-100">Open</button>
+                              </td>
+                            </tr>
+                          ))}
+                        </Fragment>
                       ))}
                     </tbody>
                   </table>
@@ -647,6 +716,7 @@ export default function InventoryOpsStateReplenishment({
                 <p className="m-0 border-t border-gray-100 px-4 py-3 text-xs text-gray-400">
                   Sorted by what cannot be covered at all, then by size. "Short by" counts people who ordered plus people who
                   left a cart and said yes on a call. "Send" takes off what agents here can spare and what is already on the way.
+                  Products marked as going out together are one package - the same customers ordered all of them.
                 </p>
               </div>
             )}
@@ -970,7 +1040,7 @@ export default function InventoryOpsStateReplenishment({
             )}
 
             <p className="m-0 border-t border-gray-100 px-4 py-3 text-xs text-gray-400">
-              {tab === "overview" && `${needList.length} thing${needList.length === 1 ? "" : "s"} to sort out · `}
+              {tab === "overview" && `${needGroups.length} state${needGroups.length === 1 ? "" : "s"} to sort out, ${needList.length} product line${needList.length === 1 ? "" : "s"} · `}
               {tab === "state" && `Showing ${visible.length} of ${rows.length} states · `}
               {tab === "agent" && `Showing ${agentRows.length} agent hubs · `}
               {tab === "product" && `Showing ${visibleProductRows.length} of ${productRows.length} products · `}
