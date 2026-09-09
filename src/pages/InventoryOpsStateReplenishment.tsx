@@ -55,12 +55,13 @@ type Props = {
   onOpenAgent?: (agentId: string) => void;
 };
 
-type Tab = "state" | "agent" | "product" | "forecast";
+type Tab = "overview" | "state" | "agent" | "product" | "forecast";
 type SortKey = "priority" | "shortage" | "ready" | "stock" | "state";
 type InlineTab = "agents" | "open" | "ready" | "carts" | "transfer";
 type ModalTab = "agents" | "orders" | "carts" | "transfer" | "performance" | "notes";
 
 const TABS: Array<{ key: Tab; label: string }> = [
+  { key: "overview", label: "Overview" },
   { key: "state", label: "State View" },
   { key: "agent", label: "Agent View" },
   { key: "product", label: "Product View" },
@@ -72,6 +73,7 @@ const PRIORITIES: ReplenishmentPriority[] = ["Critical", "High", "Medium", "Low"
 const RECOMMENDATION_LABEL: Record<StateReplenishmentRow["recommendation"], string> = {
   "Replenish State": "Send stock in",
   "Rebalance Agents": "Move stock across",
+  "Assign Orders": "Give orders to an agent",
   "Watch Demand": "Wait and see",
   "No Action": "Nothing to do"
 };
@@ -85,6 +87,7 @@ const AGENT_STATUS_LABEL: Record<AgentPosition["status"], string> = {
 const RECOMMENDATION_TONE: Record<StateReplenishmentRow["recommendation"], string> = {
   "Replenish State": "text-rose-600",
   "Rebalance Agents": "text-orange-600",
+  "Assign Orders": "text-blue-600",
   "Watch Demand": "text-amber-600",
   "No Action": "text-gray-400"
 };
@@ -179,7 +182,7 @@ export default function InventoryOpsStateReplenishment({
   products, stateHubs, orders, carts, waybills, lookbackDays, canManage,
   onCreateTransfer, onOpenOrders, onOpenAgent
 }: Props) {
-  const [tab, setTab] = useState<Tab>("state");
+  const [tab, setTab] = useState<Tab>("overview");
   const [search, setSearch] = useState("");
   const [productFilter, setProductFilter] = useState("all");
   const [zoneFilter, setZoneFilter] = useState<"all" | NigeriaZone>("all");
@@ -258,6 +261,37 @@ export default function InventoryOpsStateReplenishment({
       .sort((a, b) => a.position - b.position || b.readyOrders - a.readyOrders || a.name.localeCompare(b.name));
   }, [scoped, search, actionOnly]);
 
+  const needList = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return scoped
+      .flatMap((row) => row.byProduct
+        .filter((entry) => entry.deficit > 0)
+        .map((entry) => ({
+          row, entry,
+          // A line is only truly urgent when the state cannot cover it at all.
+          // Stock that is present but unassigned is paperwork, not a shortage.
+          urgent: entry.sendUnits > 0,
+          waiting: entry.readyUnits + entry.cartUnits
+        })))
+      .filter(({ row, entry }) => !term
+        || row.state.toLowerCase().includes(term)
+        || entry.productName.toLowerCase().includes(term))
+      .sort((a, b) =>
+        Number(b.urgent) - Number(a.urgent)
+        || b.entry.sendUnits - a.entry.sendUnits
+        || b.entry.deficit - a.entry.deficit
+        || a.row.state.localeCompare(b.row.state));
+  }, [scoped, search]);
+
+  const needTotals = useMemo(() => ({
+    lines: needList.length,
+    urgentLines: needList.filter((entry) => entry.urgent).length,
+    statesTouched: new Set(needList.map((entry) => entry.row.key)).size,
+    productsTouched: new Set(needList.map((entry) => entry.entry.productId)).size,
+    unitsToSend: needList.reduce((sum, entry) => sum + entry.entry.sendUnits, 0),
+    peopleWaiting: needList.reduce((sum, entry) => sum + entry.waiting, 0)
+  }), [needList]);
+
   const visibleProductRows = useMemo(() => {
     const term = search.trim().toLowerCase();
     return productRows
@@ -293,10 +327,10 @@ export default function InventoryOpsStateReplenishment({
     setSelectedKey(key);
     setInlineTab("agents");
   };
-  const openModal = (row: StateReplenishmentRow) => {
+  const openModal = (row: StateReplenishmentRow, productId?: string) => {
     setModalKey(row.key);
     setModalTab("agents");
-    setModalProductId(row.byProduct[0]?.productId ?? "");
+    setModalProductId(productId ?? row.byProduct[0]?.productId ?? "");
     setNoteDraft("");
     setNoteError("");
   };
@@ -376,9 +410,17 @@ export default function InventoryOpsStateReplenishment({
       return target ? `to ${target.agent.name}` : "to state agent";
     }
     if (row.recommendation === "Rebalance Agents") return "from another agent here";
+    if (row.recommendation === "Assign Orders") return "the stock is already here";
     if (row.recommendation === "Watch Demand") return "hardly anyone is ready";
     return "";
   };
+  // The products actually short here, worst first - at most two, so the cell
+  // stays a cell.
+  function shortestProducts(row: StateReplenishmentRow) {
+    return row.byProduct.filter((entry) => entry.deficit > 0)
+      .sort((a, b) => b.sendUnits - a.sendUnits || b.deficit - a.deficit)
+      .slice(0, 2);
+  }
   function modalProductIdFor(row: StateReplenishmentRow) {
     return productFilter === "all" ? null : (row.byProduct.find((entry) => entry.productId === productFilter)?.productId ?? null);
   }
@@ -472,7 +514,7 @@ export default function InventoryOpsStateReplenishment({
               <label className="flex min-w-[180px] flex-1 items-center gap-2 rounded-lg border border-gray-200 px-3 py-2">
                 <Search className="h-4 w-4 shrink-0 text-gray-400" />
                 <input className="!min-h-0 w-full border-0 p-0 text-sm outline-none"
-                  placeholder={tab === "product" ? "Search product..." : tab === "agent" ? "Search agent..." : "Search state..."}
+                  placeholder={tab === "overview" ? "Search state or product..." : tab === "product" ? "Search product..." : tab === "agent" ? "Search agent..." : "Search state..."}
                   value={search} onChange={(event) => setSearch(event.target.value)} />
               </label>
               {/* Bound to the same state as the Filters panel on the right, so the
@@ -508,6 +550,106 @@ export default function InventoryOpsStateReplenishment({
                 <SlidersHorizontal className="h-4 w-4" />
               </button>
             </div>
+
+            {tab === "overview" && (
+              <div>
+                <div className="grid grid-cols-2 gap-3 border-b border-gray-100 p-4 md:grid-cols-4">
+                  <StatCard label="Products short" value={num(needTotals.urgentLines)}
+                    foot={`${num(needTotals.statesTouched)} state${needTotals.statesTouched === 1 ? "" : "s"} · ${num(needTotals.productsTouched)} product${needTotals.productsTouched === 1 ? "" : "s"}`}
+                    Icon={AlertTriangle} tint="bg-rose-50 text-rose-600" />
+                  <StatCard label="Units to send" value={num(needTotals.unitsToSend)}
+                    foot="After in-state spare and stock on the way" Icon={Truck} tint="bg-violet-50 text-violet-600" />
+                  <StatCard label="People waiting" value={num(needTotals.peopleWaiting)}
+                    foot="Units they are waiting for" Icon={Users} tint="bg-amber-50 text-amber-600" />
+                  <StatCard label="Money at risk" value={naira(totals.atRiskRevenue)}
+                    foot="Orders their agent cannot fill" Icon={TrendingUp} tint="bg-emerald-50 text-emerald-600" />
+                </div>
+
+                <p className="m-0 border-b border-gray-100 bg-blue-50/60 px-4 py-2.5 text-[12px] leading-relaxed text-blue-900">
+                  <strong>One line per state and product.</strong> A state total hides this: Cross River can read
+                  "160 in stock" while holding none at all of the one shelf its customers are waiting for. Everything you need
+                  is on this screen - you should not have to open a single state.
+                </p>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[940px] text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-100 bg-gray-50/70">
+                        <th className={`${headCell} w-10`}>#</th>
+                        <th className={headCell}>State</th>
+                        <th className={headCell}>Which product</th>
+                        <th className={`${headCell} text-right`} title="Units of THIS product in this state - not the state's total stock.">
+                          Stock<span className="block normal-case text-gray-400">of this one</span></th>
+                        <th className={`${headCell} text-right`}>Waiting<span className="block normal-case text-gray-400">units</span></th>
+                        <th className={`${headCell} text-right`}>Short by</th>
+                        <th className={`${headCell} text-right`}>On the way</th>
+                        <th className={headCell}>What to do</th>
+                        <th className={`${headCell} text-right`}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {needList.length === 0 ? (
+                        <tr><td colSpan={9} className="px-4 py-12 text-center text-sm italic text-gray-400">
+                          Nothing is short right now. Every customer who is ready can be served.
+                        </td></tr>
+                      ) : needList.map(({ row, entry, urgent, waiting }, index) => (
+                        <tr key={`${row.key}-${entry.productId}`} className="border-b border-gray-50 hover:bg-gray-50/60">
+                          <td className={`${rowPad} text-gray-400`}>{index + 1}</td>
+                          <td className={rowPad}>
+                            <strong className="block font-bold text-gray-900">{row.state}</strong>
+                            <span className="block text-[11px] text-gray-400">{row.agentCount} agent{row.agentCount === 1 ? "" : "s"} · {row.zone ?? "Unzoned"}</span>
+                          </td>
+                          <td className={`${rowPad} font-bold text-gray-900`}>{entry.productName}</td>
+                          <td className={`${rowPad} text-right`}>
+                            <span className={`inline-flex min-w-9 justify-center rounded-md px-2 py-1 text-xs font-bold ${
+                              entry.sellable === 0 ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>{num(entry.sellable)}</span>
+                          </td>
+                          <td className={`${rowPad} text-right font-bold text-gray-900`}>
+                            {num(waiting)}
+                            {entry.cartUnits > 0 && (
+                              <span className="ml-1 inline-flex items-center gap-0.5 rounded-full bg-violet-50 px-1.5 py-0.5 text-[10px] font-bold text-violet-700"
+                                title={`${num(entry.cartUnits)} of these are for people who left a cart and said yes on a call`}>
+                                <ShoppingBag className="h-2.5 w-2.5" />{num(entry.cartUnits)}
+                              </span>
+                            )}
+                          </td>
+                          <td className={`${rowPad} text-right`}>
+                            <span className="inline-flex min-w-9 justify-center rounded-md bg-rose-50 px-2 py-1 text-xs font-bold text-rose-700">{num(entry.deficit)}</span>
+                          </td>
+                          <td className={`${rowPad} text-right ${entry.inTransit > 0 ? "text-blue-600" : "text-gray-300"}`}>{entry.inTransit > 0 ? num(entry.inTransit) : "-"}</td>
+                          <td className={rowPad}>
+                            {urgent ? (
+                              <>
+                                <strong className="block text-[12px] font-bold text-rose-600">Send {num(entry.sendUnits)} unit{entry.sendUnits === 1 ? "" : "s"}</strong>
+                                <span className="block text-[11px] text-gray-400">nobody here has enough</span>
+                              </>
+                            ) : entry.rebalanceUnits > 0 && row.agentShortages > 0 ? (
+                              <>
+                                <strong className="block text-[12px] font-bold text-orange-600">Move {num(entry.rebalanceUnits)} across</strong>
+                                <span className="block text-[11px] text-gray-400">another agent here has spare</span>
+                              </>
+                            ) : (
+                              <>
+                                <strong className="block text-[12px] font-bold text-blue-600">Give the order to an agent</strong>
+                                <span className="block text-[11px] text-gray-400">the stock is already here</span>
+                              </>
+                            )}
+                          </td>
+                          <td className={`${rowPad} text-right`}>
+                            <button type="button" onClick={() => openModal(row, entry.productId)}
+                              className="!min-h-0 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-50">View</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="m-0 border-t border-gray-100 px-4 py-3 text-xs text-gray-400">
+                  Sorted by what cannot be covered at all, then by size. "Short by" counts people who ordered plus people who
+                  left a cart and said yes on a call. "Send" takes off what agents here can spare and what is already on the way.
+                </p>
+              </div>
+            )}
 
             {tab === "state" && (
               <div className="overflow-x-auto">
@@ -588,7 +730,17 @@ export default function InventoryOpsStateReplenishment({
                           </td>
                           <td className={rowPad}>
                             <strong className={`block text-[12px] font-bold ${RECOMMENDATION_TONE[row.recommendation]}`}>{recommendationText(row)}</strong>
-                            {recommendationDetail(row) && <span className="block text-[11px] text-gray-400">({recommendationDetail(row)})</span>}
+                            {/* ⚠️ WHICH PRODUCT. Without this the row says "send 3
+                                units" next to "160 in stock" and the only way to
+                                learn what is actually short is to open the state. */}
+                            {shortestProducts(row).length > 0 ? (
+                              <span className="block text-[11px] text-gray-500">
+                                {shortestProducts(row).map((entry) => entry.productName).join(", ")}
+                                {row.byProduct.filter((entry) => entry.deficit > 0).length > 2 && " +more"}
+                              </span>
+                            ) : recommendationDetail(row) ? (
+                              <span className="block text-[11px] text-gray-400">({recommendationDetail(row)})</span>
+                            ) : null}
                           </td>
                           <td className={`${rowPad} text-right`}>
                             <button type="button" onClick={() => openModal(row)}
@@ -818,6 +970,7 @@ export default function InventoryOpsStateReplenishment({
             )}
 
             <p className="m-0 border-t border-gray-100 px-4 py-3 text-xs text-gray-400">
+              {tab === "overview" && `${needList.length} thing${needList.length === 1 ? "" : "s"} to sort out · `}
               {tab === "state" && `Showing ${visible.length} of ${rows.length} states · `}
               {tab === "agent" && `Showing ${agentRows.length} agent hubs · `}
               {tab === "product" && `Showing ${visibleProductRows.length} of ${productRows.length} products · `}

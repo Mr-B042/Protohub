@@ -153,6 +153,11 @@ export type ProductPosition = {
   deficit: number;
   /** Units free of every open commitment - the honest amount it can give away. */
   surplus: number;
+  /** New stock this product needs in this state, after in-state spare and
+   *  anything already on the way. Zero on hub-level rows. */
+  sendUnits: number;
+  /** Units another agent in the same state could hand over. Zero on hub rows. */
+  rebalanceUnits: number;
 };
 
 export type AgentPosition = {
@@ -180,7 +185,18 @@ export type AgentPosition = {
   status: "Critical" | "Low Stock" | "Watch" | "Healthy";
 };
 
-export type Recommendation = "Replenish State" | "Rebalance Agents" | "Watch Demand" | "No Action";
+export type Recommendation =
+  | "Replenish State"
+  | "Rebalance Agents"
+  /** ⚠️ NOT THE SAME AS REBALANCING, and telling a manager to "move stock
+   *  across from another agent" when NO agent is short is simply false - Abia
+   *  has one agent and was being told exactly that. When every hub can already
+   *  cover its own customers, the units are short only because orders are
+   *  sitting on the state with nobody assigned to serve them. Nothing needs to
+   *  move; somebody needs to be given the job. */
+  | "Assign Orders"
+  | "Watch Demand"
+  | "No Action";
 export type ReplenishmentPriority = "Critical" | "High" | "Medium" | "Low" | "Healthy";
 
 export type StateReplenishmentRow = {
@@ -472,7 +488,11 @@ export function buildStateReplenishmentRows(
           // Free of EVERY open commitment, not just the ready ones. Giving away
           // a unit that a Call Back customer may still take is how a rebalance
           // turns one shortage into two.
-          surplus: Math.max(0, sellable - reserved)
+          surplus: Math.max(0, sellable - reserved),
+          // Only meaningful once a whole state is added up - a single hub
+          // cannot know what the others can spare.
+          sendUnits: 0,
+          rebalanceUnits: 0
         };
       }).sort((a, b) => b.deficit - a.deficit || b.sellable - a.sellable);
 
@@ -522,6 +542,9 @@ export function buildStateReplenishmentRows(
       const unassignedOpen = state.unassigned
         .reduce((sum, order) => sum + order.lines.filter((line) => line.productId === productId).reduce((n, line) => n + line.quantity, 0), 0);
       const cartUnits = state.cartUnits.get(productId) ?? 0;
+      const productDeficit = parts.reduce((sum, row) => sum + (row?.deficit ?? 0), 0) + unassignedReady + cartUnits;
+      const productSurplus = parts.reduce((sum, row) => sum + (row?.surplus ?? 0), 0);
+      const productTransit = parts.reduce((sum, row) => sum + (row?.inTransit ?? 0), 0) + (state.transitLoose.get(productId) ?? 0);
       return {
         productId,
         productName: productName.get(productId) ?? "Unknown product",
@@ -538,8 +561,10 @@ export function buildStateReplenishmentRows(
         //
         // Cart units are added here because nobody holds stock for them yet -
         // same treatment as an order with no agent.
-        deficit: parts.reduce((sum, row) => sum + (row?.deficit ?? 0), 0) + unassignedReady + cartUnits,
-        surplus: parts.reduce((sum, row) => sum + (row?.surplus ?? 0), 0)
+        deficit: productDeficit,
+        surplus: productSurplus,
+        sendUnits: Math.max(0, productDeficit - productSurplus - productTransit),
+        rebalanceUnits: Math.min(productDeficit, productSurplus)
       };
     }).sort((a, b) => b.deficit - a.deficit || b.sellable - a.sellable);
 
@@ -565,17 +590,24 @@ export function buildStateReplenishmentRows(
     const unservedReady = state.unassigned.some((order) => order.actionable) || state.carts.length > 0;
 
     const recommendation: Recommendation = sendUnits > 0 ? "Replenish State"
-      : rebalanceUnits > 0 ? "Rebalance Agents"
-        : openUnits > sellable && state.orders.length > 0 ? "Watch Demand"
-          : "No Action";
+      // Only a state where a hub genuinely cannot serve its own customers has
+      // anything to move between agents.
+      : rebalanceUnits > 0 && agentShortages > 0 ? "Rebalance Agents"
+        : rebalanceUnits > 0 ? "Assign Orders"
+          : openUnits > sellable && state.orders.length > 0 ? "Watch Demand"
+            : "No Action";
 
     const priority: ReplenishmentPriority =
       sendUnits > 0 && (strandedReady || unservedReady) ? "Critical"
         : sendUnits > 0 ? "High"
-          : rebalanceUnits > 0 && agentShortages > 1 ? "High"
-            : rebalanceUnits > 0 ? "Medium"
-              : recommendation === "Watch Demand" ? "Low"
-                : "Healthy";
+          : recommendation === "Rebalance Agents" && agentShortages > 1 ? "High"
+            : recommendation === "Rebalance Agents" ? "Medium"
+              // Unassigned orders over stock that is already in the state are
+              // paperwork, not a stock problem. They must not shout as loudly
+              // as a state that genuinely has nothing.
+              : recommendation === "Assign Orders" ? "Low"
+                : recommendation === "Watch Demand" ? "Low"
+                  : "Healthy";
 
     // Revenue riding on ready orders whose own hub cannot cover them. Counted
     // per order, never per unit, so a part-covered order is not half-lost.
