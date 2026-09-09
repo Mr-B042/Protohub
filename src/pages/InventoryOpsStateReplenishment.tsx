@@ -17,7 +17,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle, ArrowLeftRight, ChevronDown, ChevronRight, CircleHelp, Download,
   FileText, Loader2, MapPin, Package, PackageCheck, Search, ShoppingBag, ShoppingCart,
-  SlidersHorizontal, Sparkles, TrendingUp, Truck, Users, X
+  CornerDownRight, SlidersHorizontal, Sparkles, TrendingUp, Truck, Users, X
 } from "lucide-react";
 import type { OpsCart, OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryLogisticsOperationsPage";
 import { downloadCsv, num } from "./inventory-ops-model";
@@ -301,6 +301,21 @@ export default function InventoryOpsStateReplenishment({
       else groups.set(line.row.key, { row: line.row, lines: [line] });
     }
     return Array.from(groups.values()).map(({ row, lines }) => {
+      // Main products first, each followed by whatever ships free with it. A
+      // companion whose parent is not short here stays top-level, because
+      // burying it under a product that is not on screen would hide it.
+      const shortIds = new Set(lines.map((line) => line.entry.productId));
+      const parentShown = (line: typeof lines[number]) =>
+        line.entry.partOfProductId && shortIds.has(line.entry.partOfProductId)
+          ? line.entry.partOfProductId : null;
+      const mains = lines.filter((line) => !parentShown(line))
+        .sort((a, b) => b.entry.sendUnits - a.entry.sendUnits || b.entry.deficit - a.entry.deficit);
+      const ordered = mains.flatMap((main) => [
+        main,
+        ...lines.filter((line) => parentShown(line) === main.entry.productId)
+          .sort((a, b) => b.entry.deficit - a.entry.deficit)
+      ]);
+      lines = ordered;
       // Who is actually waiting, per short product. Only ready orders and cart
       // people count - the same rule that built the shortage.
       const whoWants = (productId: string) => new Set<string>([
@@ -320,6 +335,7 @@ export default function InventoryOpsStateReplenishment({
         row, lines,
         customers: union.size,
         sharedCustomers: shared.length,
+        mainCount: lines.filter((line) => !parentShown(line)).length,
         travelTogether,
         sendUnits: lines.reduce((sum, line) => sum + line.entry.sendUnits, 0),
         shortUnits: lines.reduce((sum, line) => sum + line.entry.deficit, 0),
@@ -673,7 +689,11 @@ export default function InventoryOpsStateReplenishment({
                                     : `${num(group.sharedCustomers)} of these ${num(group.customers)} people ordered all ${group.lines.length} as one package, so those go out together.`}
                                 </span>
                               ) : group.lines.length > 1 ? (
-                                <span className="text-[11px] text-gray-500">{group.lines.length} different products short here</span>
+                                <span className="text-[11px] text-gray-500">
+                                  {group.mainCount === group.lines.length
+                                    ? `${group.lines.length} different products short here`
+                                    : `${num(group.mainCount)} product${group.mainCount === 1 ? "" : "s"} short here, plus ${num(group.lines.length - group.mainCount)} that ship free with ${group.mainCount === 1 ? "it" : "them"}`}
+                                </span>
                               ) : null}
                             </td>
                             <td className="px-3 py-2.5">
@@ -687,10 +707,23 @@ export default function InventoryOpsStateReplenishment({
                                 className="!min-h-0 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-50">View</button>
                             </td>
                           </tr>
-                          {group.lines.map(({ row, entry, urgent, waiting }) => (
+                          {group.lines.map(({ row, entry, urgent, waiting }) => {
+                            const ridesWithShown = entry.partOfProductId
+                              && group.lines.some((line) => line.entry.productId === entry.partOfProductId);
+                            return (
                             <tr key={`${row.key}-${entry.productId}`} className="border-b border-gray-50 hover:bg-gray-50/40">
-                              <td className={`${rowPad} pl-10`}>
-                                <span className="font-bold text-gray-900">{entry.productName}</span>
+                              <td className={`${rowPad} ${ridesWithShown ? "pl-16" : "pl-10"}`}>
+                                {ridesWithShown ? (
+                                  <span className="flex items-start gap-1.5">
+                                    <CornerDownRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-300" />
+                                    <span>
+                                      <span className="font-semibold text-gray-700">{entry.productName}</span>
+                                      <span className="block text-[11px] text-gray-400">free with the {entry.partOfProductName}</span>
+                                    </span>
+                                  </span>
+                                ) : (
+                                  <span className="font-bold text-gray-900">{entry.productName}</span>
+                                )}
                               </td>
                               <td className={`${rowPad} text-right`}>
                                 <span className={`inline-flex min-w-9 justify-center rounded-md px-2 py-1 text-xs font-bold ${
@@ -723,7 +756,8 @@ export default function InventoryOpsStateReplenishment({
                                   className="!min-h-0 rounded-lg px-2 py-1 text-[11px] font-bold text-gray-500 hover:bg-gray-100">Open</button>
                               </td>
                             </tr>
-                          ))}
+                            );
+                          })}
                         </Fragment>
                       ))}
                     </tbody>
