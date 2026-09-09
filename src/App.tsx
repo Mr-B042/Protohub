@@ -22965,7 +22965,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   );
 
   // ===== Customer flags =====
-  const normalizePhone = (phone: string) => phone.replace(/\D/g, "");
+  // ⚠️ TYPED AS REQUIRED, CALLED WITH undefined. Thirteen call sites reach
+  // this and several hand it a phone straight off a record - customer.phone,
+  // r.phone - that the API is allowed to omit. The server strips `phone` from
+  // orders for the logistics role, so one preview was enough to put phoneless
+  // customers in the store and take the whole Customers page down with
+  // "Cannot read properties of undefined (reading 'replace')".
+  //
+  // Coerced here rather than at each call site, for the same reason api.ts
+  // normalises product payloads: the type said this was impossible, so nothing
+  // forced a guard anywhere, and the next new caller would have the same hole.
+  const normalizePhone = (phone?: string | null) => String(phone ?? "").replace(/\D/g, "");
   const customerIdentityKeyForOrder = (order: TrackedOrder) => {
     const normalizedPhone = normalizePhone(order.phone ?? "");
     if (normalizedPhone.length >= 7) {
@@ -28730,6 +28740,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const latestOrderUpdatedAt = useRef<string>("");
   useEffect(() => {
     if (!auth.isLoggedIn()) return;
+    // See the note on the dependency array below: a poll fired while previewing
+    // another role writes that role's stripped rows into the real session.
+    if (isPreviewing) return;
     const poll = async () => {
       try {
         const params: Record<string, string> = { limit: "100" };
@@ -28771,7 +28784,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // there is no reason to ask every 30 seconds for what is already pushed.
     const id = setInterval(poll, 3 * 60_000);
     return () => clearInterval(id);
-  }, []);
+    // ⚠️ PAUSED WHILE PREVIEWING ANOTHER ROLE. Every request carries
+    // X-Spy-User-Id once a preview starts, so this poll comes back with the
+    // PREVIEWED role's shape - and for the logistics role the server strips
+    // phone, customer name and amount. It then upserts those rows in place,
+    // quietly replacing good orders with stripped ones in the real session's
+    // store. Leaving the preview does not undo it; the damage stays until a
+    // reload, which is how an Owner ended up on the Customers page with
+    // customers that had no phone.
+    //
+    // A preview is read-only and short. Not refreshing during one costs
+    // nothing; corrupting the store behind it cost a crash.
+  }, [isPreviewing]);
 
   // Realtime delivers notifications immediately. This slow poll repairs
   // websocket gaps without downloading the latest 100 notifications every
