@@ -137,6 +137,8 @@ export type ReplenishmentOrder = {
   note: string;
   /** Only the lines that match the current product filter. */
   lines: Array<{ productId: string; quantity: number }>;
+  /** The product the customer actually chose. The other lines ride with it. */
+  mainProductId?: string;
 };
 
 export type ProductPosition = {
@@ -158,6 +160,14 @@ export type ProductPosition = {
   sendUnits: number;
   /** Units another agent in the same state could hand over. Zero on hub rows. */
   rebalanceUnits: number;
+  /** ⚠️ SET WHEN THIS PRODUCT ONLY EVER SHIPS AS PART OF ANOTHER ONE.
+   *  A Toothpaste Dispenser is short in Edo solely because three people bought
+   *  the Multi Corner Storage Shelf it comes free with. Listing it as an equal
+   *  third row reads as three separate problems; naming its parent lets the
+   *  screen show it as what it is - a gift that travels with the shelf. Null
+   *  when the product is bought on its own anywhere in this state. */
+  partOfProductId: string | null;
+  partOfProductName: string;
 };
 
 export type AgentPosition = {
@@ -396,6 +406,7 @@ export function buildStateReplenishmentRows(
       scheduledDate: order.scheduledDate,
       amount: Math.max(0, Number(order.amount) || 0),
       note: order.lastNote ?? "",
+      mainProductId: order.mainProductId,
       lines
     };
     state.orders.push(row);
@@ -492,7 +503,9 @@ export function buildStateReplenishmentRows(
           // Only meaningful once a whole state is added up - a single hub
           // cannot know what the others can spare.
           sendUnits: 0,
-          rebalanceUnits: 0
+          rebalanceUnits: 0,
+          partOfProductId: null,
+          partOfProductName: ""
         };
       }).sort((a, b) => b.deficit - a.deficit || b.sellable - a.sellable);
 
@@ -534,6 +547,38 @@ export function buildStateReplenishmentRows(
     for (const productId of state.transitLoose.keys()) productKeys.add(productId);
     for (const productId of state.cartUnits.keys()) productKeys.add(productId);
 
+    // ── Which products only ever ride along with another one ────────────────
+    // Built from every open order here, not just the ready ones: a package's
+    // shape does not change with how likely the customer is to answer.
+    const boughtOnItsOwn = new Set<string>();
+    const ridesWith = new Map<string, Set<string>>();
+    for (const order of state.orders) {
+      const main = order.mainProductId;
+      if (!main) {
+        // No headline product recorded, so nothing can be called a companion
+        // of it. Every line stands on its own.
+        for (const line of order.lines) boughtOnItsOwn.add(line.productId);
+        continue;
+      }
+      boughtOnItsOwn.add(main);
+      for (const line of order.lines) {
+        if (line.productId === main) continue;
+        const parents = ridesWith.get(line.productId) ?? new Set<string>();
+        parents.add(main);
+        ridesWith.set(line.productId, parents);
+      }
+    }
+    // A cart is a straight product choice, never a package expansion.
+    for (const cart of state.carts) boughtOnItsOwn.add(cart.productId);
+
+    const parentOf = (productId: string) => {
+      // Sold by itself somewhere here, so it is a product in its own right.
+      if (boughtOnItsOwn.has(productId)) return null;
+      const parents = ridesWith.get(productId);
+      // Two different packages pull it in - naming one parent would be a lie.
+      return parents && parents.size === 1 ? [...parents][0] : null;
+    };
+
     const byProduct: ProductPosition[] = Array.from(productKeys).map((productId) => {
       const parts = agents.map((agent) => agent.byProduct.find((row) => row.productId === productId));
       const unassignedReady = state.unassigned
@@ -564,7 +609,9 @@ export function buildStateReplenishmentRows(
         deficit: productDeficit,
         surplus: productSurplus,
         sendUnits: Math.max(0, productDeficit - productSurplus - productTransit),
-        rebalanceUnits: Math.min(productDeficit, productSurplus)
+        rebalanceUnits: Math.min(productDeficit, productSurplus),
+        partOfProductId: parentOf(productId),
+        partOfProductName: productName.get(parentOf(productId) ?? "") ?? ""
       };
     }).sort((a, b) => b.deficit - a.deficit || b.sellable - a.sellable);
 

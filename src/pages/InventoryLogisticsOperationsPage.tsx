@@ -110,6 +110,13 @@ export type OpsOrder = {
   assignedAgentName?: string;
   /** Exact stock lines consumed by the package, add-ons and gifts. */
   inventoryItems?: Array<{ productId: string; quantity: number }>;
+  /** ⚠️ THE HEADLINE PRODUCT, kept beside the flattened lines above.
+   *  demandLinesForOrder expands a package into every product it consumes, so
+   *  a Multi Corner Storage Shelf order arrives as three equal lines - shelf,
+   *  toothbrush holder, toothpaste dispenser - with nothing saying the last two
+   *  are free gifts that ride along with the first. Six other callers depend on
+   *  that flat shape, so the parent is carried alongside rather than folded in. */
+  mainProductId?: string;
 };
 
 /** An abandoned cart the rep has already called. Only Who Needs Stock uses

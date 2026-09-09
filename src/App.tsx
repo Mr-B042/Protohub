@@ -96859,6 +96859,9 @@ ${waybillLineItems(w).length > 1
                 assignedAgentName: order.agentLocationNameSnapshot
                   || agents.find((agent) => agent.id === order.agentId)?.name,
                 inventoryItems: demandLinesForOrder(order),
+                // What the customer actually bought. The rest of the lines are
+                // the gifts and extras that ship with it.
+                mainProductId: order.productId,
               }))}
               // ⚠️ CARTS, NOT ORDERS. Somebody the rep rang who said yes and
               // never placed an order. They were invisible to the stock pages
