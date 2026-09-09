@@ -112,6 +112,30 @@ export type OpsOrder = {
   inventoryItems?: Array<{ productId: string; quantity: number }>;
 };
 
+/** An abandoned cart the rep has already called. Only Who Needs Stock uses
+ *  these: a cart is somebody who said yes on the phone but has not ordered, so
+ *  it is real demand for stock and NOT an order. It is kept in its own type,
+ *  and its own column on screen, so the two can never be added up by accident. */
+export type OpsCart = {
+  id: string;
+  customer: string;
+  phone: string;
+  /** Usually blank - carts are captured mid-checkout. `city` often holds the
+   *  state instead, so the page works it out rather than dropping the row. */
+  state?: string;
+  city?: string;
+  productId?: string;
+  productName?: string;
+  /** Units the chosen package covers. Carts store no quantity of their own. */
+  quantity: number;
+  amount: number;
+  /** Result of the last call. "Interested" and "Wants to order now" are the
+   *  two that mean the person is waiting for stock. */
+  lastOutcomeCode?: string;
+  lastOutcomeAt?: string;
+  status?: string;
+};
+
 export type OpsWaybill = {
   id: string;
   productId?: string;
@@ -151,6 +175,7 @@ type Props = {
   products: OpsProduct[];
   stateHubs: OpsStateHub[];
   orders: OpsOrder[];
+  carts: OpsCart[];
   waybills: OpsWaybill[];
   discrepancies: OpsDiscrepancy[];
   activeAgentCount: number;
@@ -213,6 +238,7 @@ export function InventoryLogisticsOperationsPage({
   products,
   stateHubs,
   orders,
+  carts,
   waybills,
   discrepancies,
   activeAgentCount,
@@ -391,6 +417,7 @@ export function InventoryLogisticsOperationsPage({
         products={products}
         stateHubs={stateHubs}
         orders={orders}
+        carts={carts}
         waybills={waybills}
         lookbackDays={lookbackDays}
         canManage={canManage}

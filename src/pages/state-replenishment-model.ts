@@ -14,12 +14,12 @@
 // Nigeria; a customer with a delivery date does. Actionable demand is the only
 // number that triggers a recommendation - raw orders are shown beside it so the
 // two can never be mistaken for each other.
-import type { OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryLogisticsOperationsPage";
+import type { OpsCart, OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryLogisticsOperationsPage";
 import {
   CLOSED_ORDER_STATES, canonicalStateKey, inventoryLinesForOrder,
   isInTransitWaybill, norm, waybillInventoryLines
 } from "./inventory-ops-model";
-import { zoneForState, type NigeriaZone } from "../lib/nigeria";
+import { resolveStateFromText, zoneForState, type NigeriaZone, type StateSource } from "../lib/nigeria";
 
 // ── Demand confidence ────────────────────────────────────────────────────────
 // Tiers over the app's REAL rep-facing status labels (orderStatusViews in
@@ -85,6 +85,40 @@ export const tierForOrder = (order: OpsOrder): DemandTier => {
 
 export const isActionableTier = (tier: DemandTier) => tier === "very_high" || tier === "high";
 
+// ── Abandoned carts ──────────────────────────────────────────────────────────
+// ⚠️ A CART IS NOT AN ORDER. Somebody said yes on the phone and never placed
+// one. That is real demand for stock - it was invisible here before, so a state
+// could show "no action" while people waited - but it is a WEAKER promise than
+// an order, and Bright asked to see the two apart. So cart units are counted in
+// the shortage AND kept in their own field the whole way through, never folded
+// into readyUnits.
+//
+// Only these two results mean the person is waiting (Bright, 2026-09-09).
+// "Asked to call back" and "Price concern" are deliberately out: nobody has
+// said yes yet.
+const CART_DEMAND_OUTCOMES = new Set(["interested", "wants to order now"]);
+
+export const isCartWaiting = (cart: OpsCart) =>
+  norm(cart.status) !== "converted"
+  && norm(cart.status) !== "lost"
+  && CART_DEMAND_OUTCOMES.has(norm(cart.lastOutcomeCode));
+
+export type CartDemandRow = {
+  id: string;
+  customer: string;
+  phone: string;
+  productId: string;
+  productName: string;
+  quantity: number;
+  amount: number;
+  lastOutcomeCode: string;
+  lastOutcomeAt?: string;
+  /** How the state was arrived at. "guessed-from-city" can be wrong, so the
+   *  page marks those rows rather than presenting them as fact. */
+  stateSource: StateSource;
+  city: string;
+};
+
 // ── Row shapes ───────────────────────────────────────────────────────────────
 
 export type ReplenishmentOrder = {
@@ -112,7 +146,10 @@ export type ProductPosition = {
   reserved: number;
   readyUnits: number;
   inTransit: number;
-  /** Units this hub is short for its own ready customers. */
+  /** Units people who said yes on a call are waiting for. Counted in the
+   *  shortage, never mixed into readyUnits. */
+  cartUnits: number;
+  /** Units this hub is short for its own ready customers AND cart people. */
   deficit: number;
   /** Units free of every open commitment - the honest amount it can give away. */
   surplus: number;
@@ -159,6 +196,14 @@ export type StateReplenishmentRow = {
   readyUnits: number;
   openUnits: number;
   inTransit: number;
+  /** People who said yes on a call and never ordered. Own fields on purpose. */
+  cartCustomers: number;
+  cartUnits: number;
+  cartRevenue: number;
+  carts: CartDemandRow[];
+  /** Carts here whose state was worked out from the city box rather than typed
+   *  by the customer. Shown so a wrong guess can be spotted. */
+  cartsFromGuessedState: number;
   /** How many hubs in this state cannot serve their own ready customers. */
   agentShortages: number;
   /** Sellable across the state minus ready demand across the state. */
@@ -230,6 +275,7 @@ export function buildStateReplenishmentRows(
   stateHubs: OpsStateHub[],
   orders: OpsOrder[],
   waybills: OpsWaybill[],
+  carts: OpsCart[] = [],
   options: BuildOptions = {}
 ): StateReplenishmentRow[] {
   const { productIds, lookbackDays = 7 } = options;
@@ -255,6 +301,8 @@ export function buildStateReplenishmentRows(
     unassigned: ReplenishmentOrder[];
     delivered: number;
     transitLoose: Map<string, number>;
+    carts: CartDemandRow[];
+    cartUnits: Map<string, number>;
   };
 
   const states = new Map<string, StateDraft>();
@@ -265,7 +313,8 @@ export function buildStateReplenishmentRows(
     if (found) return found;
     const created: StateDraft = {
       key, label: stateLabelOf(raw), hubs: new Map(), orders: [],
-      unassigned: [], delivered: 0, transitLoose: new Map()
+      unassigned: [], delivered: 0, transitLoose: new Map(),
+      carts: [], cartUnits: new Map()
     };
     states.set(key, created);
     return created;
@@ -367,7 +416,41 @@ export function buildStateReplenishmentRows(
     }
   }
 
-  // 4. Fold each state up from its hubs.
+  // 4. Carts where the last call said the person is waiting.
+  //
+  // ⚠️ CARTS CARRY NO AGENT, only a state - nobody has been assigned to serve
+  // them yet. So they behave exactly like an order with no agent: they raise
+  // the STATE's shortage without belonging to any hub, which is right, because
+  // whichever agent ends up serving them still needs the units.
+  //
+  // The state is worked out rather than read: most carts are captured
+  // mid-checkout with the state box blank and the town typed into `city`. The
+  // source is kept on every row so a guess is never shown as a fact.
+  for (const cart of carts) {
+    if (!isCartWaiting(cart)) continue;
+    if (!cart.productId || !included(cart.productId)) continue;
+    const resolved = resolveStateFromText(cart.state, cart.city);
+    if (!resolved.state) continue;
+    const state = stateFor(resolved.state);
+    if (!state) continue;
+    const units = Math.max(1, Math.round(Number(cart.quantity) || 0) || 1);
+    state.carts.push({
+      id: cart.id,
+      customer: cart.customer || "Unnamed customer",
+      phone: cart.phone || "",
+      productId: cart.productId,
+      productName: productName.get(cart.productId) ?? cart.productName ?? "Unknown product",
+      quantity: units,
+      amount: Math.max(0, Number(cart.amount) || 0),
+      lastOutcomeCode: cart.lastOutcomeCode ?? "",
+      lastOutcomeAt: cart.lastOutcomeAt,
+      stateSource: resolved.source,
+      city: cart.city ?? ""
+    });
+    state.cartUnits.set(cart.productId, (state.cartUnits.get(cart.productId) ?? 0) + units);
+  }
+
+  // 5. Fold each state up from its hubs.
   return Array.from(states.values()).map((state) => {
     const agents: AgentPosition[] = Array.from(state.hubs.values()).map((draft) => {
       const productIdsHere = new Set([
@@ -381,6 +464,9 @@ export function buildStateReplenishmentRows(
           productId,
           productName: productName.get(productId) ?? "Unknown product",
           sellable, reserved, readyUnits,
+          // Always zero at hub level: a cart has no agent yet, so its units sit
+          // on the state row and never on one agent's shoulders.
+          cartUnits: 0,
           inTransit: draft.transit.get(productId) ?? 0,
           deficit: Math.max(0, readyUnits - sellable),
           // Free of EVERY open commitment, not just the ready ones. Giving away
@@ -426,6 +512,7 @@ export function buildStateReplenishmentRows(
     for (const agent of agents) for (const row of agent.byProduct) productKeys.add(row.productId);
     for (const order of state.unassigned) for (const line of order.lines) productKeys.add(line.productId);
     for (const productId of state.transitLoose.keys()) productKeys.add(productId);
+    for (const productId of state.cartUnits.keys()) productKeys.add(productId);
 
     const byProduct: ProductPosition[] = Array.from(productKeys).map((productId) => {
       const parts = agents.map((agent) => agent.byProduct.find((row) => row.productId === productId));
@@ -434,17 +521,24 @@ export function buildStateReplenishmentRows(
         .reduce((sum, order) => sum + order.lines.filter((line) => line.productId === productId).reduce((n, line) => n + line.quantity, 0), 0);
       const unassignedOpen = state.unassigned
         .reduce((sum, order) => sum + order.lines.filter((line) => line.productId === productId).reduce((n, line) => n + line.quantity, 0), 0);
+      const cartUnits = state.cartUnits.get(productId) ?? 0;
       return {
         productId,
         productName: productName.get(productId) ?? "Unknown product",
         sellable: parts.reduce((sum, row) => sum + (row?.sellable ?? 0), 0),
         reserved: parts.reduce((sum, row) => sum + (row?.reserved ?? 0), 0) + unassignedOpen,
         readyUnits: parts.reduce((sum, row) => sum + (row?.readyUnits ?? 0), 0) + unassignedReady,
+        // Kept apart from readyUnits the whole way up, so a shortage built out
+        // of phone calls can always be told from one built out of orders.
+        cartUnits,
         inTransit: parts.reduce((sum, row) => sum + (row?.inTransit ?? 0), 0) + (state.transitLoose.get(productId) ?? 0),
         // ⚠️ SUM OF HUB DEFICITS, NOT THE NETTED STATE FIGURE. Netting is the
         // mistake this whole page exists to correct: it makes a state whose
         // stock sits with the wrong agent look healthy.
-        deficit: parts.reduce((sum, row) => sum + (row?.deficit ?? 0), 0) + unassignedReady,
+        //
+        // Cart units are added here because nobody holds stock for them yet -
+        // same treatment as an order with no agent.
+        deficit: parts.reduce((sum, row) => sum + (row?.deficit ?? 0), 0) + unassignedReady + cartUnits,
         surplus: parts.reduce((sum, row) => sum + (row?.surplus ?? 0), 0)
       };
     }).sort((a, b) => b.deficit - a.deficit || b.sellable - a.sellable);
@@ -468,7 +562,7 @@ export function buildStateReplenishmentRows(
 
     const agentShortages = agents.filter((agent) => agent.deficit > 0).length;
     const strandedReady = agents.some((agent) => agent.deficit > 0 && agent.sellable === 0);
-    const unservedReady = state.unassigned.some((order) => order.actionable);
+    const unservedReady = state.unassigned.some((order) => order.actionable) || state.carts.length > 0;
 
     const recommendation: Recommendation = sendUnits > 0 ? "Replenish State"
       : rebalanceUnits > 0 ? "Rebalance Agents"
@@ -488,7 +582,10 @@ export function buildStateReplenishmentRows(
     const shortHubs = new Set(agents.filter((agent) => agent.deficit > 0).map((agent) => agent.key));
     const atRiskRevenue = readyOrdersList
       .filter((order) => !order.agentKey || shortHubs.has(order.agentKey))
-      .reduce((sum, order) => sum + order.amount, 0);
+      .reduce((sum, order) => sum + order.amount, 0)
+      // Cart money is at risk whenever the state cannot cover its shortage:
+      // no agent is holding anything for these people at all.
+      + (sendUnits > 0 ? state.carts.reduce((sum, cart) => sum + cart.amount, 0) : 0);
 
     const tierCounts = DEMAND_TIER_ORDER.reduce((acc, tier) => {
       acc[tier] = state.orders.filter((order) => order.tier === tier).length;
@@ -512,6 +609,11 @@ export function buildStateReplenishmentRows(
       openOrders: state.orders.length,
       readyOrders: readyOrdersList.length,
       readyUnits, openUnits, inTransit,
+      cartCustomers: state.carts.length,
+      cartUnits: state.carts.reduce((sum, cart) => sum + cart.quantity, 0),
+      cartRevenue: state.carts.reduce((sum, cart) => sum + cart.amount, 0),
+      carts: state.carts.sort((a, b) => Date.parse(b.lastOutcomeAt ?? "") - Date.parse(a.lastOutcomeAt ?? "")),
+      cartsFromGuessedState: state.carts.filter((cart) => cart.stateSource === "guessed-from-city").length,
       agentShortages,
       position: sellable - readyUnits,
       deficit, surplus, sendUnits, rebalanceUnits,

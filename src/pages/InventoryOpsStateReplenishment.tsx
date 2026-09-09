@@ -16,10 +16,10 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle, ArrowLeftRight, ChevronDown, ChevronRight, CircleHelp, Download,
-  FileText, Loader2, MapPin, Package, PackageCheck, Search, ShoppingCart,
+  FileText, Loader2, MapPin, Package, PackageCheck, Search, ShoppingBag, ShoppingCart,
   SlidersHorizontal, Sparkles, TrendingUp, Truck, Users, X
 } from "lucide-react";
-import type { OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryLogisticsOperationsPage";
+import type { OpsCart, OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryLogisticsOperationsPage";
 import { downloadCsv, num } from "./inventory-ops-model";
 import { naira } from "../lib/money-privacy";
 import { NIGERIA_ZONES, type NigeriaZone } from "../lib/nigeria";
@@ -28,7 +28,7 @@ import {
   AGENT_STATUS_TONE, DEMAND_TIER_META, DEMAND_TIER_ORDER, PRIORITY_TONE,
   buildProductReplenishmentRows, buildStateReplenishmentRows, donorsFor,
   internalDonorsFor, priorityRank, receivingPlanFor,
-  type AgentPosition, type DemandTier, type ProductPosition, type ReplenishmentOrder,
+  type AgentPosition, type CartDemandRow, type DemandTier, type ProductPosition, type ReplenishmentOrder,
   type ReplenishmentPriority, type StateReplenishmentRow
 } from "./state-replenishment-model";
 
@@ -46,6 +46,7 @@ type Props = {
   products: OpsProduct[];
   stateHubs: OpsStateHub[];
   orders: OpsOrder[];
+  carts: OpsCart[];
   waybills: OpsWaybill[];
   lookbackDays: number;
   canManage: boolean;
@@ -56,8 +57,8 @@ type Props = {
 
 type Tab = "state" | "agent" | "product" | "forecast";
 type SortKey = "priority" | "shortage" | "ready" | "stock" | "state";
-type InlineTab = "agents" | "open" | "ready" | "transfer";
-type ModalTab = "agents" | "orders" | "transfer" | "performance" | "notes";
+type InlineTab = "agents" | "open" | "ready" | "carts" | "transfer";
+type ModalTab = "agents" | "orders" | "carts" | "transfer" | "performance" | "notes";
 
 const TABS: Array<{ key: Tab; label: string }> = [
   { key: "state", label: "State View" },
@@ -175,7 +176,7 @@ function StatCard({ label, value, foot, Icon, tint }: {
 }
 
 export default function InventoryOpsStateReplenishment({
-  products, stateHubs, orders, waybills, lookbackDays, canManage,
+  products, stateHubs, orders, carts, waybills, lookbackDays, canManage,
   onCreateTransfer, onOpenOrders, onOpenAgent
 }: Props) {
   const [tab, setTab] = useState<Tab>("state");
@@ -220,8 +221,8 @@ export default function InventoryOpsStateReplenishment({
     [productFilter]
   );
   const rows = useMemo(
-    () => buildStateReplenishmentRows(products, stateHubs, orders, waybills, { productIds, lookbackDays }),
-    [products, stateHubs, orders, waybills, productIds, lookbackDays]
+    () => buildStateReplenishmentRows(products, stateHubs, orders, waybills, carts, { productIds, lookbackDays }),
+    [products, stateHubs, orders, waybills, carts, productIds, lookbackDays]
   );
   const productRows = useMemo(() => buildProductReplenishmentRows(rows), [rows]);
 
@@ -270,6 +271,8 @@ export default function InventoryOpsStateReplenishment({
     agentShortages: scoped.reduce((sum, row) => sum + row.agentShortages, 0),
     statesAffected: scoped.filter((row) => row.agentShortages > 0).length,
     readyOrders: scoped.reduce((sum, row) => sum + row.readyOrders, 0),
+    cartCustomers: scoped.reduce((sum, row) => sum + row.cartCustomers, 0),
+    cartUnits: scoped.reduce((sum, row) => sum + row.cartUnits, 0),
     agentsWithReady: scoped.reduce((sum, row) => sum + row.agents.filter((agent) => agent.readyOrders > 0).length, 0),
     unitsRecommended: scoped.reduce((sum, row) => sum + row.sendUnits + row.rebalanceUnits, 0),
     atRiskRevenue: scoped.reduce((sum, row) => sum + row.atRiskRevenue, 0)
@@ -340,7 +343,9 @@ export default function InventoryOpsStateReplenishment({
   const exportStates = () => downloadCsv("states-that-need-stock.csv", visible.map((row) => ({
     State: row.state, Zone: row.zone ?? "-", Agents: row.agentCount,
     "Stock we can sell": row.sellable, "Orders waiting": row.openOrders, "Customers ready": row.readyOrders,
-    "Units ready customers need": row.readyUnits, "Agents who cannot deliver": row.agentShortages,
+    "Units ready customers need": row.readyUnits,
+    "People from carts": row.cartCustomers, "Units for cart people": row.cartUnits,
+    "Agents who cannot deliver": row.agentShortages,
     "Short or spare": row.position,
     "Units to send in": row.sendUnits, "Units to move between agents": row.rebalanceUnits,
     "Units on the way": row.inTransit,
@@ -419,8 +424,10 @@ export default function InventoryOpsStateReplenishment({
         <Kpi label="Agents who cannot deliver" value={num(totals.agentShortages)}
           foot={`In ${num(totals.statesAffected)} state${totals.statesAffected === 1 ? "" : "s"}`}
           Icon={Users} tint="bg-orange-50 text-orange-600" />
-        <Kpi label="Customers ready right now" value={num(totals.readyOrders)}
-          foot={`Waiting on ${num(totals.agentsWithReady)} agent${totals.agentsWithReady === 1 ? "" : "s"}`}
+        <Kpi label="Customers ready right now" value={num(totals.readyOrders + totals.cartCustomers)}
+          foot={totals.cartCustomers > 0
+            ? `${num(totals.readyOrders)} ordered · ${num(totals.cartCustomers)} said yes on a call`
+            : `Waiting on ${num(totals.agentsWithReady)} agent${totals.agentsWithReady === 1 ? "" : "s"}`}
           Icon={ShoppingCart} tint="bg-emerald-50 text-emerald-600" />
         <Kpi label="Units to move" value={num(totals.unitsRecommended)}
           foot={`${naira(totals.atRiskRevenue)} of orders could be lost`}
@@ -518,6 +525,8 @@ export default function InventoryOpsStateReplenishment({
                         Orders<span className="block normal-case text-gray-400">all waiting</span></th>
                       <th className={`${headCell} text-right`} title="Customers a rep confirmed, or who gave a delivery date. Only these move stock.">
                         Ready<span className="block normal-case text-gray-400">will take it now</span></th>
+                      <th className={`${headCell} text-right`} title="People who left a cart, said yes when a rep rang, and never placed the order. They still need stock.">
+                        From cart<span className="block normal-case text-gray-400">said yes on a call</span></th>
                       <th className={`${headCell} text-right`} title="Agents here who cannot serve their own ready customers.">
                         Agents short<span className="block normal-case text-gray-400">cannot deliver</span></th>
                       <th className={`${headCell} text-right`} title="Stock left once every ready customer is served. A minus means not enough.">
@@ -529,7 +538,7 @@ export default function InventoryOpsStateReplenishment({
                   </thead>
                   <tbody>
                     {visible.length === 0 ? (
-                      <tr><td colSpan={12} className="px-4 py-12 text-center text-sm italic text-gray-400">
+                      <tr><td colSpan={13} className="px-4 py-12 text-center text-sm italic text-gray-400">
                         {actionOnly ? "Nothing needs stock moved right now." : "No state matches what you picked."}
                       </td></tr>
                     ) : visible.map((row, index) => (
@@ -560,6 +569,14 @@ export default function InventoryOpsStateReplenishment({
                                 : row.readyOrders > 0 ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>{num(row.readyOrders)}</span>
                           </td>
                           <td className={`${rowPad} text-right`}>
+                            {row.cartCustomers > 0 ? (
+                              <span className="inline-flex items-center gap-1 rounded-md bg-violet-50 px-2 py-1 text-xs font-bold text-violet-700"
+                                title={`${row.cartCustomers} left a cart and said yes when we rang · ${num(row.cartUnits)} unit${row.cartUnits === 1 ? "" : "s"}`}>
+                                <ShoppingBag className="h-3 w-3" />{num(row.cartCustomers)}
+                              </span>
+                            ) : <span className="text-xs text-gray-300">-</span>}
+                          </td>
+                          <td className={`${rowPad} text-right`}>
                             <span className={`inline-flex min-w-9 justify-center rounded-md px-2 py-1 text-xs font-bold ${
                               row.agentShortages > 0 ? "bg-rose-50 text-rose-700" : "bg-gray-100 text-gray-500"}`}>{num(row.agentShortages)}</span>
                           </td>
@@ -580,7 +597,7 @@ export default function InventoryOpsStateReplenishment({
                         </tr>
                         {expanded.has(row.key) && (
                           <tr className="border-b border-gray-100 bg-gray-50/70">
-                            <td colSpan={12} className="px-10 py-3">
+                            <td colSpan={13} className="px-10 py-3">
                               <p className="m-0 mb-2 text-[10px] font-bold uppercase tracking-wider text-gray-500">Each product in {row.state}</p>
                               <table className="w-full text-left text-xs">
                                 <thead className="text-[10px] uppercase tracking-wider text-gray-400">
@@ -589,6 +606,7 @@ export default function InventoryOpsStateReplenishment({
                                     <th className="pb-1.5 text-right">Stock</th>
                                     <th className="pb-1.5 text-right">Kept for orders</th>
                                     <th className="pb-1.5 text-right">Needed now</th>
+                                    <th className="pb-1.5 text-right">From cart</th>
                                     <th className="pb-1.5 text-right">On the way</th>
                                     <th className="pb-1.5 text-right">Short by</th>
                                     <th className="pb-1.5 text-right">Can give away</th>
@@ -596,13 +614,14 @@ export default function InventoryOpsStateReplenishment({
                                 </thead>
                                 <tbody>
                                   {row.byProduct.length === 0 ? (
-                                    <tr><td colSpan={7} className="py-2 italic text-gray-400">No stock here, and nobody has ordered.</td></tr>
+                                    <tr><td colSpan={8} className="py-2 italic text-gray-400">No stock here, and nobody has ordered.</td></tr>
                                   ) : row.byProduct.map((entry) => (
                                     <tr key={entry.productId} className="border-t border-gray-200/70">
                                       <td className="py-1.5 font-semibold text-gray-800">{entry.productName}</td>
                                       <td className="py-1.5 text-right text-gray-700">{num(entry.sellable)}</td>
                                       <td className="py-1.5 text-right text-gray-500">{num(entry.reserved)}</td>
                                       <td className="py-1.5 text-right font-bold text-gray-900">{num(entry.readyUnits)}</td>
+                                      <td className={`py-1.5 text-right ${entry.cartUnits > 0 ? "font-bold text-violet-700" : "text-gray-300"}`}>{entry.cartUnits > 0 ? num(entry.cartUnits) : "-"}</td>
                                       <td className="py-1.5 text-right text-blue-600">{entry.inTransit > 0 ? num(entry.inTransit) : "-"}</td>
                                       <td className={`py-1.5 text-right font-bold ${entry.deficit > 0 ? "text-rose-600" : "text-gray-300"}`}>{entry.deficit > 0 ? num(entry.deficit) : "-"}</td>
                                       <td className={`py-1.5 text-right ${entry.surplus > 0 ? "text-emerald-600" : "text-gray-300"}`}>{entry.surplus > 0 ? num(entry.surplus) : "-"}</td>
@@ -1060,6 +1079,68 @@ function OrderTable({ orders, showNote }: { orders: ReplenishmentOrder[]; showNo
   );
 }
 
+function CartTable({ carts, state }: { carts: CartDemandRow[]; state: string }) {
+  return (
+    <div>
+      <p className="m-0 border-b border-gray-100 bg-violet-50/60 px-4 py-2.5 text-[12px] leading-relaxed text-violet-900">
+        <strong>These people never placed an order.</strong> They left a cart, a rep rang them, and they said yes.
+        They still need stock, so they count towards the shortage - but they are kept apart from real orders here so you can
+        judge them yourself.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[820px] text-left text-sm">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50/70 text-[10px] font-bold uppercase tracking-wider text-gray-500">
+              <th className="px-3 py-2.5">Customer</th>
+              <th className="px-3 py-2.5">Phone</th>
+              <th className="px-3 py-2.5">Product</th>
+              <th className="px-3 py-2.5 text-right">Units</th>
+              <th className="px-3 py-2.5">They said</th>
+              <th className="px-3 py-2.5">Where they are</th>
+              <th className="px-3 py-2.5">Last call</th>
+            </tr>
+          </thead>
+          <tbody>
+            {carts.length === 0 ? (
+              <tr><td colSpan={7} className="px-4 py-8 text-center text-sm italic text-gray-400">Nobody in {state} left a cart and said yes.</td></tr>
+            ) : carts.map((cart) => (
+              <tr key={cart.id} className="border-b border-gray-50">
+                <td className="px-3 py-2.5">
+                  <strong className="block font-bold text-gray-900">{cart.customer}</strong>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-1.5 py-0.5 text-[10px] font-bold text-violet-700">
+                    <ShoppingBag className="h-2.5 w-2.5" /> From cart
+                  </span>
+                </td>
+                <td className="px-3 py-2.5 text-gray-600">{cart.phone || "-"}</td>
+                <td className="px-3 py-2.5 text-gray-700">{cart.productName}</td>
+                <td className="px-3 py-2.5 text-right font-bold text-gray-900">{num(cart.quantity)}</td>
+                <td className="px-3 py-2.5">
+                  <span className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-bold text-violet-700">{cart.lastOutcomeCode}</span>
+                </td>
+                <td className="px-3 py-2.5">
+                  <span className="block text-[12px] text-gray-700">{cart.city || "Not given"}</span>
+                  {/* ⚠️ A worked-out state can be wrong. Saying so is the only
+                      thing that lets somebody catch it before stock moves. */}
+                  {cart.stateSource === "guessed-from-city" && (
+                    <span className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700"
+                      title="The customer left the state blank. We worked it out from the town they typed - check it before sending stock.">
+                      <AlertTriangle className="h-2.5 w-2.5" /> State worked out
+                    </span>
+                  )}
+                  {cart.stateSource === "read-from-text" && (
+                    <span className="mt-0.5 block text-[10px] text-gray-400">State read from the address</span>
+                  )}
+                </td>
+                <td className="px-3 py-2.5 text-gray-500">{shortDate(cart.lastOutcomeAt) || "-"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function TransferOptions({ row, rows, productId, canManage, onCreateTransfer }: {
   row: StateReplenishmentRow;
   rows: StateReplenishmentRow[];
@@ -1191,6 +1272,7 @@ function StateDetailPanel({
     { key: "agents", label: `Agents (${row.agentCount})` },
     { key: "open", label: `All Orders (${row.openOrders})` },
     { key: "ready", label: `Ready Customers (${row.readyOrders})` },
+    { key: "carts", label: `From Carts (${row.cartCustomers})` },
     { key: "transfer", label: "Where to get stock" }
   ];
 
@@ -1219,7 +1301,7 @@ function StateDetailPanel({
               <div>
                 <strong className="block text-[13px] font-black text-rose-800">Short by {num(row.deficit)} unit{row.deficit === 1 ? "" : "s"}</strong>
                 <span className="block text-[11px] text-rose-700">
-                  {num(row.readyOrders)} customer{row.readyOrders === 1 ? "" : "s"} ready, but only {num(row.sellable)} unit{row.sellable === 1 ? "" : "s"} to give them
+                  {num(row.readyOrders)} customer{row.readyOrders === 1 ? "" : "s"} ready{row.cartCustomers > 0 ? ` + ${num(row.cartCustomers)} from carts` : ""}, but only {num(row.sellable)} unit{row.sellable === 1 ? "" : "s"} to give them
                 </span>
               </div>
               {canManage && onCreateTransfer && receiving[0] ? (
@@ -1271,6 +1353,7 @@ function StateDetailPanel({
       )}
       {tab === "open" && <OrderTable orders={row.orders} showNote />}
       {tab === "ready" && <OrderTable orders={ready} showNote />}
+      {tab === "carts" && <CartTable carts={row.carts} state={row.state} />}
       {tab === "transfer" && <TransferOptions row={row} rows={rows} productId={productFilter} canManage={canManage} onCreateTransfer={onCreateTransfer} />}
     </section>
   );
@@ -1311,6 +1394,7 @@ function StateModal({
   const tabs: Array<{ key: ModalTab; label: string }> = [
     { key: "agents", label: "Agent by agent" },
     { key: "orders", label: "All orders" },
+    { key: "carts", label: `From carts (${row.cartCustomers})` },
     { key: "transfer", label: "Where to get stock" },
     { key: "performance", label: "How this state is doing" },
     { key: "notes", label: `Notes (${notes.length})` }
@@ -1464,7 +1548,7 @@ function StateModal({
                   </strong>
                   <p className={`m-0 mt-1.5 text-[11px] leading-relaxed ${row.deficit > 0 ? "text-rose-700" : "text-emerald-700"}`}>
                     {row.recommendation === "Replenish State"
-                      ? `${num(row.readyOrders)} customer${row.readyOrders === 1 ? "" : "s"} ${row.readyOrders === 1 ? "is" : "are"} ready, but the ${num(row.agentCount)} agent${row.agentCount === 1 ? "" : "s"} here only have ${num(product?.sellable ?? row.sellable)} unit${(product?.sellable ?? row.sellable) === 1 ? "" : "s"} between them. Send stock to the agent whose customers are waiting.`
+                      ? `${num(row.readyOrders)} customer${row.readyOrders === 1 ? "" : "s"} ${row.readyOrders === 1 ? "is" : "are"} ready${row.cartCustomers > 0 ? `, plus ${num(row.cartCustomers)} more who left a cart and said yes on a call` : ""}, but the ${num(row.agentCount)} agent${row.agentCount === 1 ? "" : "s"} here only have ${num(product?.sellable ?? row.sellable)} unit${(product?.sellable ?? row.sellable) === 1 ? "" : "s"} between them. Send stock to the agent whose customers are waiting.`
                       : row.recommendation === "Rebalance Agents"
                         ? `${row.state} has enough stock in total - it is just with the wrong agent. Move it across inside the state instead of shipping more in.`
                         : row.recommendation === "Watch Demand"
@@ -1486,6 +1570,14 @@ function StateModal({
                   </div>
                 )}
 
+                {row.cartUnits > 0 && (
+                  <p className="m-0 mt-2 rounded-lg bg-violet-50 px-3 py-2 text-[11px] leading-relaxed text-violet-900">
+                    <ShoppingBag className="mr-1 inline h-3 w-3" />
+                    {num(row.cartUnits)} of those unit{row.cartUnits === 1 ? "" : "s"} {row.cartUnits === 1 ? "is" : "are"} for {num(row.cartCustomers)} {row.cartCustomers === 1 ? "person" : "people"} who
+                    left a cart and said yes on a call, not for orders already placed.
+                    {row.cartsFromGuessedState > 0 && ` ${num(row.cartsFromGuessedState)} of them left the state blank, so we worked it out from the town they typed.`}
+                  </p>
+                )}
                 {row.rebalanceUnits > 0 && row.sendUnits > 0 && (
                   <p className="m-0 mt-2 rounded-lg bg-blue-50 px-3 py-2 text-[11px] leading-relaxed text-blue-800">
 {num(row.rebalanceUnits)} of those unit{row.rebalanceUnits === 1 ? "" : "s"} can come from another agent already in {row.state} - only {num(row.sendUnits)} really needs shipping in.
@@ -1546,6 +1638,18 @@ function StateModal({
           </div>
         )}
 
+        {tab === "carts" && (
+          <div className="px-6 py-5">
+            <h3 className="m-0 text-base font-black text-gray-950">People from carts in {row.state}</h3>
+            <p className="m-0 mb-3 text-[12px] text-gray-500">
+              {num(row.cartCustomers)} {row.cartCustomers === 1 ? "person" : "people"} · {num(row.cartUnits)} unit{row.cartUnits === 1 ? "" : "s"} · {naira(row.cartRevenue)}
+              {row.cartsFromGuessedState > 0 && ` · ${num(row.cartsFromGuessedState)} with a state we worked out`}
+            </p>
+            <div className="overflow-hidden rounded-xl border border-gray-200">
+              <CartTable carts={row.carts} state={row.state} />
+            </div>
+          </div>
+        )}
         {tab === "transfer" && (
           <TransferOptions row={row} rows={rows} productId={productId} canManage={canManage} onCreateTransfer={onCreateTransfer} />
         )}
