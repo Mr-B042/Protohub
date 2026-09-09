@@ -5,6 +5,7 @@ import InventoryOpsProductAvailability from "./InventoryOpsProductAvailability";
 import InventoryOpsStockByAgent from "./InventoryOpsStockByAgent";
 import InventoryOpsCoverage from "./InventoryOpsCoverage";
 import InventoryOpsRestockForecast from "./InventoryOpsRestockForecast";
+import InventoryOpsStateReplenishment, { type ReplenishmentTransferRequest } from "./InventoryOpsStateReplenishment";
 import DeliveredStockReconciliationPage from "./DeliveredStockReconciliationPage";
 import { buildProductRows, buildStateRows, coverText, isInTransitWaybill, waybillInventoryLines } from "./inventory-ops-model";
 import {
@@ -37,6 +38,7 @@ export type InventoryOperationsAction =
   | "product-availability"
   | "delivered-reconciliation"
   | "coverage"
+  | "state-replenishment"
   | "forecast"
   | "recommended-transfers"
   | "transfers"
@@ -83,12 +85,24 @@ export type OpsStateHub = {
 };
 
 export type OpsOrder = {
+  id?: string;
+  customer?: string;
+  phone?: string;
   productId?: string;
   productName?: string;
   state?: string;
   location?: string;
   quantity: number;
   status?: string;
+  /** The rep-facing label App.tsx already resolved from (status, call_outcome).
+   *  Passed in rather than re-derived, so State Replenishment reads demand
+   *  confidence off the SAME status-views layer the order list shows and the
+   *  two can never disagree. Raw `status` still drives every other number. */
+  statusLabel?: string;
+  amount?: number;
+  scheduledDate?: string;
+  /** Newest order note, for the replenishment drill-down's Notes column. */
+  lastNote?: string;
   createdAt?: string;
   deliveredAt?: string;
   assignedAgentId?: string;
@@ -144,6 +158,11 @@ type Props = {
   onAction: (action: InventoryOperationsAction) => void;
   onOpenProduct?: (productId: string) => void;
   onOpenAgent?: (agentId: string) => void;
+  /** Opens Create Waybill already filled in for a replenishment or rebalance.
+   *  State Replenishment only ever RECOMMENDS - the transfer is still confirmed
+   *  by hand, so nothing on that page can move stock on its own. */
+  onCreateTransfer?: (request: ReplenishmentTransferRequest) => void;
+  onOpenOrders?: (search: string) => void;
   onEditAgent?: (agentId: string) => void;
   onViewAgentHistory?: (agentId: string) => void;
 };
@@ -203,6 +222,8 @@ export function InventoryLogisticsOperationsPage({
   onOpenAgent,
   onEditAgent,
   onViewAgentHistory,
+  onCreateTransfer,
+  onOpenOrders,
 }: Props) {
   const [showFilters, setShowFilters] = useState(false);
   const [riskFilter, setRiskFilter] = useState<"all" | "risk" | "transit">("all");
@@ -361,6 +382,21 @@ export function InventoryLogisticsOperationsPage({
         onOpenAgent={onOpenAgent}
         onEditAgent={onEditAgent}
         onViewAgentHistory={onViewAgentHistory}
+      />
+    );
+  }
+  if (section === "state-replenishment") {
+    return (
+      <InventoryOpsStateReplenishment
+        products={products}
+        stateHubs={stateHubs}
+        orders={orders}
+        waybills={waybills}
+        lookbackDays={lookbackDays}
+        canManage={canManage}
+        onCreateTransfer={onCreateTransfer}
+        onOpenOrders={onOpenOrders}
+        onOpenAgent={onOpenAgent}
       />
     );
   }
