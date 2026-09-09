@@ -10813,6 +10813,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const canManageProductCatalog = currentRole === "Owner" || currentRole === "Admin";
   const canManageAgentDirectory = currentRole === "Owner" || currentRole === "Admin";
   const canViewInventoryFinancials = !isInventoryOperationsRole;
+  // ⚠️ A WAYBILL FEE IS A TRANSPORT COST, NOT REVENUE, so it is gated
+  // separately from canViewInventoryFinancials.
+  //
+  // What the carrier charged to move stock between hubs IS the logistics job.
+  // The person booking the lorry is the person who knows the price, and hiding
+  // the field meant they filled in a waybill and somebody else had to go back
+  // afterwards and add the money - which is how a fee gets forgotten.
+  //
+  // Order revenue, product pricing, margins and stock value stay hidden. This
+  // is only the cost of the journey.
+  //
+  // The list mirrors the server's own guard on /api/waybills
+  // (requireRole "Owner", "Admin", "Inventory Manager" plus the legacy shim
+  // that accepts the combined role), so the form can never offer a field the
+  // API would refuse.
+  const canSeeWaybillFees = ["Owner", "Admin", "Inventory Manager", "Inventory Manager & Logistics Operations"].includes(currentRole);
   useEffect(() => {
     if (!isInventoryOperationsRole) return;
     if (["pricing", "packages", "combos"].includes(inventoryView)) {
@@ -82839,7 +82855,7 @@ ${waybillLineItems(w).length > 1
                                   <Field label="Route" value={`${linkedWaybill.sendingState} → ${linkedWaybill.receivingState}`} />
                                   <Field label="Logistics partner" value={linkedWaybill.logisticsPartner} />
                                   <Field label="Quantity" value={linkedWaybill.quantity} />
-                                  {!isInventoryOperationsRole && <Field label="Fee" value={naira(linkedWaybill.waybillFee)} />}
+                                  {canSeeWaybillFees && <Field label="Fee" value={naira(linkedWaybill.waybillFee)} />}
                                   <Field label="Sent" value={formatMoment(linkedWaybill.createdAt) || formatDateOnly(linkedWaybill.dateSent)} />
                                   <Field label="Received" value={(() => {
                                     const receivedMoment = getWaybillStatusMoment(linkedWaybill, stockMovements);
@@ -83531,7 +83547,7 @@ ${waybillLineItems(w).length > 1
                       { label: "Received", value: received.length, sub: `${received.reduce((s,w)=>s+w.quantity,0)} units`, color: "text-green-700 bg-green-50 border-green-200" },
                       { label: "Manual Transfers", value: manualTransfers.length, sub: "stock transfer records", color: "text-slate-700 bg-slate-50 border-slate-200" },
                       { label: "Customer Deliveries", value: customerDeliveries.length, sub: "auto-waybills from delivered orders", color: "text-amber-700 bg-amber-50 border-amber-200" },
-                      ...(canViewInventoryFinancials ? [{ label: "Total Waybill Fees", value: formatMoney(base.filter((w) => w.status !== "Cancelled").reduce((s, w) => s + w.waybillFee, 0)), sub: "filtered", color: "text-purple-700 bg-purple-50 border-purple-200" }] : []),
+                      ...(canSeeWaybillFees ? [{ label: "Total Waybill Fees", value: formatMoney(base.filter((w) => w.status !== "Cancelled").reduce((s, w) => s + w.waybillFee, 0)), sub: "filtered", color: "text-purple-700 bg-purple-50 border-purple-200" }] : []),
                     ].map((card) => (
                       <div key={card.label} className={`rounded-xl border p-4 ${card.color}`}>
                         <p className="text-xs font-bold uppercase tracking-wide opacity-70">{card.label}</p>
@@ -83709,7 +83725,7 @@ ${waybillLineItems(w).length > 1
                             <span className="font-semibold uppercase tracking-wide text-gray-400">Partner</span>
                             <span className="text-gray-700">{w.logisticsPartner}</span>
                           </div>
-                          {canViewInventoryFinancials && <div className="flex flex-col gap-0.5">
+                          {canSeeWaybillFees && <div className="flex flex-col gap-0.5">
                             <span className="font-semibold uppercase tracking-wide text-gray-400">Fee</span>
                             {waybillFeeCell(w, formatMoney(w.waybillFee))}
                           </div>}
@@ -83731,7 +83747,7 @@ ${waybillLineItems(w).length > 1
                             </>
                           )}
                           <button className="!min-h-0 inline-flex items-center justify-center px-3 py-2 rounded-lg border border-blue-100 text-blue-700 bg-blue-50 text-sm font-semibold hover:bg-blue-100 transition-colors" onClick={() => openEditWaybill(w)}>Edit</button>
-                          <button className="!min-h-0 inline-flex items-center justify-center px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => printWaybill(w, canViewInventoryFinancials)}>Print</button>
+                          <button className="!min-h-0 inline-flex items-center justify-center px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => printWaybill(w, canSeeWaybillFees)}>Print</button>
                           {["In Transit", "Cancelled"].includes(w.status) && (
                             <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-rose-200 text-rose-700 bg-rose-50 text-sm font-semibold hover:bg-rose-100 transition-colors" onClick={() => deleteWaybill(w)}><Trash2 className="w-4 h-4" /> Delete</button>
                           )}
@@ -83744,7 +83760,7 @@ ${waybillLineItems(w).length > 1
                     <table className="w-full text-sm sticky-col-first">
                       <thead className="bg-gray-50 border-b border-gray-200">
                         <tr>
-                          {["ID", "Product", "Flow", "Qty", "Route", "Logistics Partner", ...(canViewInventoryFinancials ? ["Fee"] : []), "Date Sent", "Status", "Actions"].map((h) => (
+                          {["ID", "Product", "Flow", "Qty", "Route", "Logistics Partner", ...(canSeeWaybillFees ? ["Fee"] : []), "Date Sent", "Status", "Actions"].map((h) => (
                             <th key={h} className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
@@ -83772,7 +83788,7 @@ ${waybillLineItems(w).length > 1
                               <span className="text-gray-900 font-medium">{getWaybillDestinationLabel(w)}</span>
                             </td>
                             <td className="px-4 py-3 text-gray-700">{w.logisticsPartner}</td>
-                            {canViewInventoryFinancials && <td className="px-4 py-3 whitespace-nowrap">{waybillFeeCell(w, formatMoney(w.waybillFee))}</td>}
+                            {canSeeWaybillFees && <td className="px-4 py-3 whitespace-nowrap">{waybillFeeCell(w, formatMoney(w.waybillFee))}</td>}
                             <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
                               <span className="block">{formatMoment(w.createdAt) || formatDateOnly(w.dateSent)}</span>
                               <span className="block text-xs text-gray-400 mt-0.5">Dispatch date {formatDateOnly(w.dateSent)}</span>
@@ -83803,7 +83819,7 @@ ${waybillLineItems(w).length > 1
                                   </>
                                 )}
                                 <button className="inline-flex items-center px-2.5 py-1 rounded-md border border-blue-100 text-blue-700 bg-blue-50 text-xs font-semibold hover:bg-blue-100 transition-colors" onClick={() => openEditWaybill(w)}>Edit</button>
-                                <button className="inline-flex items-center px-2.5 py-1 rounded-md border border-gray-200 text-gray-600 text-xs font-semibold hover:bg-gray-100 transition-colors" onClick={() => printWaybill(w, canViewInventoryFinancials)}>Print</button>
+                                <button className="inline-flex items-center px-2.5 py-1 rounded-md border border-gray-200 text-gray-600 text-xs font-semibold hover:bg-gray-100 transition-colors" onClick={() => printWaybill(w, canSeeWaybillFees)}>Print</button>
                                 {["In Transit", "Cancelled"].includes(w.status) && (
                                   <button className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-rose-200 text-rose-700 bg-rose-50 text-xs font-semibold hover:bg-rose-100 transition-colors" onClick={() => deleteWaybill(w)}><Trash2 className="w-3.5 h-3.5" /> Delete</button>
                                 )}
@@ -110699,7 +110715,7 @@ ${waybillLineItems(w).length > 1
                     {["In Transit", "Cancelled"].includes(w.status) && (
                       <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-rose-200 text-rose-700 bg-rose-50 text-sm font-semibold hover:bg-rose-100 transition-colors dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200" onClick={() => deleteWaybill(w)}><Trash2 className="w-4 h-4" /> Delete</button>
                     )}
-                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800/60" onClick={() => printWaybill(w, canViewInventoryFinancials)}>Print</button>
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800/60" onClick={() => printWaybill(w, canSeeWaybillFees)}>Print</button>
                     {w.status === "In Transit" && (
                       <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-semibold hover:bg-green-700 transition-colors" onClick={() => openReceiveWaybill(w)}>Mark Received</button>
                     )}
@@ -110931,12 +110947,12 @@ ${waybillLineItems(w).length > 1
                       <ErrMsg k="qty" />
                       <button type="button" className="!min-h-0 mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dashed border-blue-300 text-blue-700 text-xs font-bold hover:bg-blue-50 transition-colors" onClick={addWaybillItemRow}>+ Add another product</button>
                     </div>
-                    {canViewInventoryFinancials && <div>
+                    {canSeeWaybillFees && <div>
                       <label className="block text-sm font-bold text-gray-900 mb-1.5">Waybill Fee (₦)</label>
                       <input type="number" min={0} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" value={waybillFee} onChange={(e) => setWaybillFee(e.target.value)} />
                       <p className="mt-1.5 text-xs text-gray-500">One fee for the whole waybill</p>
                     </div>}
-                    {canViewInventoryFinancials && <div className="waybill-fee-note self-end flex items-start gap-3 rounded-xl bg-indigo-50 px-4 py-3 text-sm text-indigo-900"><span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-indigo-600"><ShieldCheck className="h-4 w-4" /></span><span><strong>One fee covers the entire waybill</strong><span className="mt-1 block">This fee will be charged once for all items.</span></span></div>}
+                    {canSeeWaybillFees && <div className="waybill-fee-note self-end flex items-start gap-3 rounded-xl bg-indigo-50 px-4 py-3 text-sm text-indigo-900"><span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-indigo-600"><ShieldCheck className="h-4 w-4" /></span><span><strong>One fee covers the entire waybill</strong><span className="mt-1 block">This fee will be charged once for all items.</span></span></div>}
                     <div className="sm:col-span-2">
                       <label className="mb-1.5 flex items-center text-sm font-bold text-gray-900"><StepIcon icon={<Truck className="h-4 w-4" />} tone="bg-sky-100 text-sky-600" />2. Logistics Partner / Carrier<Req /></label>
                       <input type="text" className={fieldCls("partner")} placeholder="e.g. RNR Log., Korrect, MR B/BSTAR" value={waybillPartner} onChange={(ev) => { setWaybillPartner(ev.target.value); setWaybillErrors((prev) => ({ ...prev, partner: "" })); }} />
@@ -111160,7 +111176,7 @@ ${waybillLineItems(w).length > 1
                         </>
                       )}
                     </div>
-                    {canViewInventoryFinancials && <div>
+                    {canSeeWaybillFees && <div>
                       <label className="block text-sm font-bold text-gray-900 mb-1.5">Waybill Fee (₦) <span className="font-normal text-gray-400">(one fee · whole waybill)</span></label>
                       <input type="number" min={0} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" value={waybillFee} onChange={(e) => setWaybillFee(e.target.value)} />
                     </div>}
