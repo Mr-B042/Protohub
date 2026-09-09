@@ -1440,6 +1440,13 @@ type AbandonedCartRecord = {
   assignedRepId?: string;
   lastActivity: string;
   createdAt: string;
+  /** The result of the LAST call logged on this cart, from the carts endpoint.
+   *  The cart's own `status` cannot answer this: "Interested", "Asked to call
+   *  back", "Price concern", "Wants to order now" and "Rescheduled" all store
+   *  the status "Contacted", so a customer who said yes reads the same as one
+   *  who asked to be rung later. Who Needs Stock needs the difference. */
+  lastOutcomeCode?: string;
+  lastOutcomeAt?: string;
   embedLabel?: string;
   preferredDelivery?: string;
   outageCaptured?: boolean;
@@ -6908,6 +6915,14 @@ const normalizeRealtimeCart = (value: any): AbandonedCartRecord => {
     dedupSignal: cart.dedupSignal ?? undefined,
     touchpoints: Array.isArray(cart.touchpoints) ? cart.touchpoints : undefined,
     mergedInto: cart.mergedInto ?? null,
+    // ⚠️ THE KEY IS OMITTED, NOT SET TO undefined, WHEN THE ROW DOES NOT CARRY
+    // IT. Realtime cart rows come straight off the table and have no call
+    // result on them, while both merge sites do `{ ...existing, ...next }`.
+    // Writing the key as undefined there would wipe a known "Interested" every
+    // time the customer touched the cart again, and its demand would vanish
+    // off Who Needs Stock with nothing to show why.
+    ...("lastOutcomeCode" in cart ? { lastOutcomeCode: cart.lastOutcomeCode ?? undefined } : {}),
+    ...("lastOutcomeAt" in cart ? { lastOutcomeAt: cart.lastOutcomeAt ?? undefined } : {}),
     lastActivity: cart.lastActivity ?? cart.createdAt ?? "",
     createdAt: cart.createdAt ?? ""
   };
@@ -14070,6 +14085,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         source:       c.source ?? "Website",
         status:       c.status ?? "Open abandoned",
         assignedRepId:c.assignedRepId ?? c.assigned_rep_id ?? undefined,
+        lastOutcomeCode: c.lastOutcomeCode ?? c.last_outcome_code ?? undefined,
+        lastOutcomeAt:   c.lastOutcomeAt ?? c.last_outcome_at ?? undefined,
         lastActivity: c.lastActivity ?? c.last_activity ?? c.createdAt ?? c.created_at ?? "",
         createdAt:    c.createdAt ?? c.created_at ?? ""
       })) as any);
@@ -96802,6 +96819,28 @@ ${waybillLineItems(w).length > 1
                 assignedAgentName: order.agentLocationNameSnapshot
                   || agents.find((agent) => agent.id === order.agentId)?.name,
                 inventoryItems: demandLinesForOrder(order),
+              }))}
+              // ⚠️ CARTS, NOT ORDERS. Somebody the rep rang who said yes and
+              // never placed an order. They were invisible to the stock pages
+              // before, so a state could read "no action" while people waited.
+              // The quantity lives on the package, never on the cart.
+              carts={abandonedCarts.map((cart) => ({
+                id: cart.id,
+                customer: cart.customer,
+                phone: cart.phone,
+                state: cart.state,
+                city: cart.city,
+                productId: cart.productId,
+                productName: cart.productName,
+                quantity: Math.max(1, Number(
+                  catalogProducts
+                    .flatMap((product) => product.packages)
+                    .find((pkg) => pkg.id === cart.packageId)?.quantity ?? 1
+                ) || 1),
+                amount: Number(cart.amount ?? 0),
+                lastOutcomeCode: cart.lastOutcomeCode,
+                lastOutcomeAt: cart.lastOutcomeAt,
+                status: cart.status,
               }))}
               waybills={waybillRecords.map((waybill) => ({
                 id: waybill.id,

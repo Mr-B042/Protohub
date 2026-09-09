@@ -47,7 +47,35 @@ router.get("/", async (req, res) => {
     all.push(...batch);
     if (batch.length < PAGE) break; // last page reached
   }
-  res.json(all);
+
+  // ⚠️ THE CART'S STATUS DOES NOT SAY WHAT THE LAST CALL FOUND. Five different
+  // call results all collapse to the status "Contacted" (see
+  // CART_OUTCOME_STATUS), so a cart where the customer said "yes, I want it"
+  // looks identical to one where they asked to be rung back. The Who Needs
+  // Stock page has to tell those apart to count real waiting demand, and until
+  // now the browser had no way to.
+  //
+  // Read as its own small query rather than joined per cart: only ~400 of 3,400
+  // carts have ever been called, so this is a few hundred rows of three short
+  // columns. Cheap enough that it does not need a stored column on the cart.
+  const attempts = new Map<string, { code: string | null; at: string | null }>();
+  const { data: attemptRows } = await supabase
+    .from("cart_contact_attempts")
+    .select("cart_id, outcome_code, attempted_at")
+    .eq("org_id", req.user!.orgId)
+    .order("attempted_at", { ascending: false })
+    .limit(REPORT_ROW_CEILING);
+  // Sorted newest first, so the first row seen for a cart is its latest call.
+  for (const row of attemptRows ?? []) {
+    if (!row.cart_id || attempts.has(row.cart_id)) continue;
+    attempts.set(row.cart_id, { code: row.outcome_code ?? null, at: row.attempted_at ?? null });
+  }
+
+  res.json(all.map((cart) => ({
+    ...cart,
+    last_outcome_code: attempts.get(cart.id)?.code ?? null,
+    last_outcome_at: attempts.get(cart.id)?.at ?? null
+  })));
 });
 
 // ── GET /api/carts/changes ───────────────────────────────
