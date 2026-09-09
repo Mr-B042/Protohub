@@ -11151,7 +11151,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         .catch((err: any) => { showToast(`Settings sync failed: ${err.message}`); });
     }, 600);
     return () => clearTimeout(handle);
-  }, [companyName, companyLogo, topPerformerBonusEnabled, topPerformerBonusAmount, timezoneSetting, adminCartNotifications, smartStockRules, workingScheduleEnabled, workingDaysSetting, workingDayStart, workingDayEnd]);
+  }, [companyName, companyLogo, companyAndroidAppUrl, topPerformerBonusEnabled, topPerformerBonusAmount, timezoneSetting, adminCartNotifications, smartStockRules, workingScheduleEnabled, workingDaysSetting, workingDayStart, workingDayEnd]);
 
   // Hydrate embed settings from API once on mount.
   useEffect(() => {
