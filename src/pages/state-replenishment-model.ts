@@ -29,12 +29,12 @@ import { zoneForState, type NigeriaZone } from "../lib/nigeria";
 export type DemandTier = "very_high" | "high" | "medium" | "low" | "very_low" | "none";
 
 export const DEMAND_TIER_META: Record<DemandTier, { label: string; dot: string; chip: string; text: string }> = {
-  very_high: { label: "Very High", dot: "bg-rose-500",    chip: "bg-rose-50 text-rose-700 border-rose-200",       text: "text-rose-600" },
-  high:      { label: "High",      dot: "bg-rose-400",    chip: "bg-rose-50 text-rose-600 border-rose-200",       text: "text-rose-500" },
-  medium:    { label: "Medium",    dot: "bg-amber-400",   chip: "bg-amber-50 text-amber-700 border-amber-200",    text: "text-amber-600" },
-  low:       { label: "Low",       dot: "bg-yellow-300",  chip: "bg-yellow-50 text-yellow-700 border-yellow-200", text: "text-yellow-700" },
-  very_low:  { label: "Very Low",  dot: "bg-gray-300",    chip: "bg-gray-100 text-gray-600 border-gray-200",      text: "text-gray-500" },
-  none:      { label: "None",      dot: "bg-gray-800",    chip: "bg-gray-100 text-gray-600 border-gray-200",      text: "text-gray-500" }
+  very_high: { label: "Very sure",     dot: "bg-rose-500",    chip: "bg-rose-50 text-rose-700 border-rose-200",       text: "text-rose-600" },
+  high:      { label: "Sure",          dot: "bg-rose-400",    chip: "bg-rose-50 text-rose-600 border-rose-200",       text: "text-rose-500" },
+  medium:    { label: "Maybe",         dot: "bg-amber-400",   chip: "bg-amber-50 text-amber-700 border-amber-200",    text: "text-amber-600" },
+  low:       { label: "Not likely",    dot: "bg-yellow-300",  chip: "bg-yellow-50 text-yellow-700 border-yellow-200", text: "text-yellow-700" },
+  very_low:  { label: "Very unlikely", dot: "bg-gray-300",    chip: "bg-gray-100 text-gray-600 border-gray-200",      text: "text-gray-500" },
+  none:      { label: "Gone",          dot: "bg-gray-800",    chip: "bg-gray-100 text-gray-600 border-gray-200",      text: "text-gray-500" }
 };
 
 // ⚠️ ONLY very_high AND high COUNT AS ACTIONABLE - confirmed by Bright,
