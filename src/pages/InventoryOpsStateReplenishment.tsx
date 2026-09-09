@@ -50,6 +50,14 @@ type Props = {
   waybills: OpsWaybill[];
   lookbackDays: number;
   canManage: boolean;
+  /** ⚠️ FALSE FOR "Inventory Manager & Logistics Operations". That role must not
+   *  see money anywhere - the server already strips order amounts for them, and
+   *  about sixty other places in the app gate on the same flag. This page did
+   *  not, and showed them a naira figure. */
+  canSeeMoney: boolean;
+  /** False for the same role: it has never seen a customer name or phone
+   *  anywhere in the app, so counts are shown instead of people. */
+  canSeeCustomers: boolean;
   onCreateTransfer?: (request: ReplenishmentTransferRequest) => void;
   onOpenOrders?: (search: string) => void;
   onOpenAgent?: (agentId: string) => void;
@@ -180,7 +188,7 @@ function StatCard({ label, value, foot, Icon, tint }: {
 
 export default function InventoryOpsStateReplenishment({
   products, stateHubs, orders, carts, waybills, lookbackDays, canManage,
-  onCreateTransfer, onOpenOrders, onOpenAgent
+  canSeeMoney, canSeeCustomers, onCreateTransfer, onOpenOrders, onOpenAgent
 }: Props) {
   const [tab, setTab] = useState<Tab>("overview");
   const [search, setSearch] = useState("");
@@ -422,7 +430,8 @@ export default function InventoryOpsStateReplenishment({
     "Units to send in": row.sendUnits, "Units to move between agents": row.rebalanceUnits,
     "Units on the way": row.inTransit,
     "What to do": RECOMMENDATION_LABEL[row.recommendation], "How urgent": PRIORITY_LABEL[row.priority],
-    "Money at risk": row.atRiskRevenue
+    // A spreadsheet leaks just as well as a screen.
+    ...(canSeeMoney ? { "Money at risk": row.atRiskRevenue } : {})
   })));
   const exportAgents = () => downloadCsv("what-each-agent-holds.csv", agentRows.map((agent) => ({
     Agent: agent.name, State: agent.state, Area: agent.area, Phone: agent.phone,
@@ -510,7 +519,9 @@ export default function InventoryOpsStateReplenishment({
             : `Waiting on ${num(totals.agentsWithReady)} agent${totals.agentsWithReady === 1 ? "" : "s"}`}
           Icon={ShoppingCart} tint="bg-emerald-50 text-emerald-600" />
         <Kpi label="Units to move" value={num(totals.unitsRecommended)}
-          foot={`${naira(totals.atRiskRevenue)} of orders could be lost`}
+          foot={canSeeMoney
+            ? `${naira(totals.atRiskRevenue)} of orders could be lost`
+            : `${num(totals.readyOrders + totals.cartCustomers)} order${totals.readyOrders + totals.cartCustomers === 1 ? "" : "s"} could be lost`}
           Icon={TrendingUp} tint="bg-violet-50 text-violet-600" />
       </section>
 
@@ -599,8 +610,13 @@ export default function InventoryOpsStateReplenishment({
                     foot="After in-state spare and stock on the way" Icon={Truck} tint="bg-violet-50 text-violet-600" />
                   <StatCard label="People waiting" value={num(needTotals.peopleWaiting)}
                     foot="Units they are waiting for" Icon={Users} tint="bg-amber-50 text-amber-600" />
-                  <StatCard label="Money at risk" value={naira(totals.atRiskRevenue)}
-                    foot="Orders their agent cannot fill" Icon={TrendingUp} tint="bg-emerald-50 text-emerald-600" />
+                  {canSeeMoney ? (
+                    <StatCard label="Money at risk" value={naira(totals.atRiskRevenue)}
+                      foot="Orders their agent cannot fill" Icon={TrendingUp} tint="bg-emerald-50 text-emerald-600" />
+                  ) : (
+                    <StatCard label="Orders at risk" value={num(totals.readyOrders + totals.cartCustomers)}
+                      foot="Their agent cannot fill these" Icon={TrendingUp} tint="bg-emerald-50 text-emerald-600" />
+                  )}
                 </div>
 
                 <p className="m-0 border-b border-gray-100 bg-blue-50/60 px-4 py-2.5 text-[12px] leading-relaxed text-blue-900">
@@ -1055,6 +1071,7 @@ export default function InventoryOpsStateReplenishment({
               rows={rows}
               productFilter={productFilter === "all" ? null : productFilter}
               canManage={canManage}
+              canSeeCustomers={canSeeCustomers}
               dense={dense}
               onTab={setInlineTab}
               onClose={() => setSelectedKey(null)}
@@ -1155,6 +1172,8 @@ export default function InventoryOpsStateReplenishment({
           onTab={setModalTab}
           onClose={() => setModalKey(null)}
           canManage={canManage}
+          canSeeMoney={canSeeMoney}
+          canSeeCustomers={canSeeCustomers}
           notes={notesFor(modalRow)}
           notesLoaded={notesLoaded}
           noteDraft={noteDraft}
@@ -1256,15 +1275,18 @@ function AgentTable({ agents, dense, canManage, productId, onSend, onOrders, onO
   );
 }
 
-function OrderTable({ orders, showNote }: { orders: ReplenishmentOrder[]; showNote?: boolean }) {
+function OrderTable({ orders, showNote, canSeeCustomers = true }: {
+  orders: ReplenishmentOrder[]; showNote?: boolean; canSeeCustomers?: boolean;
+}) {
+  const columns = (canSeeCustomers ? 8 : 6) + (showNote ? 1 : 0);
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[820px] text-left text-sm">
         <thead>
           <tr className="border-b border-gray-100 bg-gray-50/70 text-[10px] font-bold uppercase tracking-wider text-gray-500">
             <th className="px-3 py-2.5">Order</th>
-            <th className="px-3 py-2.5">Customer</th>
-            <th className="px-3 py-2.5">Phone</th>
+            {canSeeCustomers && <th className="px-3 py-2.5">Customer</th>}
+            {canSeeCustomers && <th className="px-3 py-2.5">Phone</th>}
             <th className="px-3 py-2.5">Agent</th>
             <th className="px-3 py-2.5 text-right">Units</th>
             <th className="px-3 py-2.5">Status</th>
@@ -1275,12 +1297,12 @@ function OrderTable({ orders, showNote }: { orders: ReplenishmentOrder[]; showNo
         </thead>
         <tbody>
           {orders.length === 0 ? (
-            <tr><td colSpan={showNote ? 9 : 8} className="px-4 py-8 text-center text-sm italic text-gray-400">No orders here.</td></tr>
+            <tr><td colSpan={columns} className="px-4 py-8 text-center text-sm italic text-gray-400">No orders here.</td></tr>
           ) : orders.map((order) => (
             <tr key={order.id || `${order.customer}-${order.createdAt}`} className="border-b border-gray-50">
               <td className="px-3 py-2.5 font-semibold text-gray-500">{order.id || "-"}</td>
-              <td className="px-3 py-2.5 font-bold text-gray-900">{order.customer}</td>
-              <td className="px-3 py-2.5 text-gray-600">{order.phone || "-"}</td>
+              {canSeeCustomers && <td className="px-3 py-2.5 font-bold text-gray-900">{order.customer}</td>}
+              {canSeeCustomers && <td className="px-3 py-2.5 text-gray-600">{order.phone || "-"}</td>}
               <td className="px-3 py-2.5 text-gray-600">{order.agentName}</td>
               <td className="px-3 py-2.5 text-right font-bold text-gray-900">{num(order.quantity)}</td>
               <td className="px-3 py-2.5">
@@ -1302,7 +1324,7 @@ function OrderTable({ orders, showNote }: { orders: ReplenishmentOrder[]; showNo
   );
 }
 
-function CartTable({ carts, state }: { carts: CartDemandRow[]; state: string }) {
+function CartTable({ carts, state, canSeeCustomers = true }: { carts: CartDemandRow[]; state: string; canSeeCustomers?: boolean }) {
   return (
     <div>
       <p className="m-0 border-b border-gray-100 bg-violet-50/60 px-4 py-2.5 text-[12px] leading-relaxed text-violet-900">
@@ -1314,8 +1336,8 @@ function CartTable({ carts, state }: { carts: CartDemandRow[]; state: string }) 
         <table className="w-full min-w-[820px] text-left text-sm">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50/70 text-[10px] font-bold uppercase tracking-wider text-gray-500">
-              <th className="px-3 py-2.5">Customer</th>
-              <th className="px-3 py-2.5">Phone</th>
+              {canSeeCustomers && <th className="px-3 py-2.5">Customer</th>}
+              {canSeeCustomers && <th className="px-3 py-2.5">Phone</th>}
               <th className="px-3 py-2.5">Product</th>
               <th className="px-3 py-2.5 text-right">Units</th>
               <th className="px-3 py-2.5">They said</th>
@@ -1325,16 +1347,18 @@ function CartTable({ carts, state }: { carts: CartDemandRow[]; state: string }) 
           </thead>
           <tbody>
             {carts.length === 0 ? (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-sm italic text-gray-400">Nobody in {state} left a cart and said yes.</td></tr>
+              <tr><td colSpan={canSeeCustomers ? 7 : 5} className="px-4 py-8 text-center text-sm italic text-gray-400">Nobody in {state} left a cart and said yes.</td></tr>
             ) : carts.map((cart) => (
               <tr key={cart.id} className="border-b border-gray-50">
-                <td className="px-3 py-2.5">
-                  <strong className="block font-bold text-gray-900">{cart.customer}</strong>
-                  <span className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-1.5 py-0.5 text-[10px] font-bold text-violet-700">
-                    <ShoppingBag className="h-2.5 w-2.5" /> From cart
-                  </span>
-                </td>
-                <td className="px-3 py-2.5 text-gray-600">{cart.phone || "-"}</td>
+                {canSeeCustomers && (
+                  <td className="px-3 py-2.5">
+                    <strong className="block font-bold text-gray-900">{cart.customer}</strong>
+                    <span className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-1.5 py-0.5 text-[10px] font-bold text-violet-700">
+                      <ShoppingBag className="h-2.5 w-2.5" /> From cart
+                    </span>
+                  </td>
+                )}
+                {canSeeCustomers && <td className="px-3 py-2.5 text-gray-600">{cart.phone || "-"}</td>}
                 <td className="px-3 py-2.5 text-gray-700">{cart.productName}</td>
                 <td className="px-3 py-2.5 text-right font-bold text-gray-900">{num(cart.quantity)}</td>
                 <td className="px-3 py-2.5">
@@ -1475,13 +1499,14 @@ function TransferOptions({ row, rows, productId, canManage, onCreateTransfer }: 
 // ── Inline drill-down under the table ────────────────────────────────────────
 
 function StateDetailPanel({
-  row, tab, rows, productFilter, canManage, dense, onTab, onClose, onCreateTransfer, onOpenOrders, onOpenAgent
+  row, tab, rows, productFilter, canManage, canSeeCustomers, dense, onTab, onClose, onCreateTransfer, onOpenOrders, onOpenAgent
 }: {
   row: StateReplenishmentRow;
   tab: InlineTab;
   rows: StateReplenishmentRow[];
   productFilter: string | null;
   canManage: boolean;
+  canSeeCustomers: boolean;
   dense: boolean;
   onTab: (tab: InlineTab) => void;
   onClose: () => void;
@@ -1574,9 +1599,9 @@ function StateDetailPanel({
           onOrders={(agent) => onOpenOrders?.(agent.name)}
         />
       )}
-      {tab === "open" && <OrderTable orders={row.orders} showNote />}
-      {tab === "ready" && <OrderTable orders={ready} showNote />}
-      {tab === "carts" && <CartTable carts={row.carts} state={row.state} />}
+      {tab === "open" && <OrderTable orders={row.orders} showNote canSeeCustomers={canSeeCustomers} />}
+      {tab === "ready" && <OrderTable orders={ready} showNote canSeeCustomers={canSeeCustomers} />}
+      {tab === "carts" && <CartTable carts={row.carts} state={row.state} canSeeCustomers={canSeeCustomers} />}
       {tab === "transfer" && <TransferOptions row={row} rows={rows} productId={productFilter} canManage={canManage} onCreateTransfer={onCreateTransfer} />}
     </section>
   );
@@ -1585,7 +1610,7 @@ function StateDetailPanel({
 // ── Full state modal ─────────────────────────────────────────────────────────
 
 function StateModal({
-  row, rows, product, onProduct, tab, onTab, onClose, canManage, notes, notesLoaded,
+  row, rows, product, onProduct, tab, onTab, onClose, canManage, canSeeMoney, canSeeCustomers, notes, notesLoaded,
   noteDraft, onNoteDraft, noteSaving, noteError, onAddNote, onCreateTransfer, onOpenOrders, lookbackDays
 }: {
   row: StateReplenishmentRow;
@@ -1596,6 +1621,8 @@ function StateModal({
   onTab: (tab: ModalTab) => void;
   onClose: () => void;
   canManage: boolean;
+  canSeeMoney: boolean;
+  canSeeCustomers: boolean;
   notes: StateReplenishmentNote[];
   notesLoaded: boolean;
   noteDraft: string;
@@ -1734,6 +1761,17 @@ function StateModal({
                 <ul className="m-0 mt-3 list-none space-y-2 p-0">
                   {ready.length === 0 ? (
                     <li className="text-[12px] italic text-gray-400">Nobody in {row.state} is ready to receive yet.</li>
+                  ) : !canSeeCustomers ? (
+                    /* ⚠️ This role has never seen a customer name or phone
+                       anywhere in the app. Counts answer the stock question
+                       just as well, so it gets counts. */
+                    row.agents.filter((agent) => agent.readyOrders > 0).map((agent) => (
+                      <li key={agent.key} className="flex items-center gap-2.5">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-[10px] font-black text-gray-600">{initials(agent.name)}</span>
+                        <span className="min-w-0 flex-1 text-[12px] font-bold text-gray-900">{agent.name}</span>
+                        <span className="shrink-0 text-[11px] font-bold text-gray-600">{num(agent.readyOrders)} waiting</span>
+                      </li>
+                    ))
                   ) : ready.slice(0, 4).map((order) => (
                     <li key={order.id || order.customer} className="flex items-center gap-2.5">
                       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-[10px] font-black text-gray-600">{initials(order.customer)}</span>
@@ -1841,7 +1879,7 @@ function StateModal({
                   <button type="button" onClick={() => onOpenOrders(row.state)} className="!min-h-0 text-xs font-bold text-blue-600 hover:underline">View All Orders →</button>
                 )}
               </div>
-              <OrderTable orders={recent} showNote />
+              <OrderTable orders={recent} showNote canSeeCustomers={canSeeCustomers} />
             </section>
           </div>
         )}
@@ -1856,6 +1894,7 @@ function StateModal({
               <OrderTable
                 orders={[...row.orders].sort((a, b) => DEMAND_TIER_ORDER.indexOf(a.tier) - DEMAND_TIER_ORDER.indexOf(b.tier))}
                 showNote
+                canSeeCustomers={canSeeCustomers}
               />
             </div>
           </div>
@@ -1865,11 +1904,11 @@ function StateModal({
           <div className="px-6 py-5">
             <h3 className="m-0 text-base font-black text-gray-950">People from carts in {row.state}</h3>
             <p className="m-0 mb-3 text-[12px] text-gray-500">
-              {num(row.cartCustomers)} {row.cartCustomers === 1 ? "person" : "people"} · {num(row.cartUnits)} unit{row.cartUnits === 1 ? "" : "s"} · {naira(row.cartRevenue)}
+              {num(row.cartCustomers)} {row.cartCustomers === 1 ? "person" : "people"} · {num(row.cartUnits)} unit{row.cartUnits === 1 ? "" : "s"}{canSeeMoney ? ` · ${naira(row.cartRevenue)}` : ""}
               {row.cartsFromGuessedState > 0 && ` · ${num(row.cartsFromGuessedState)} with a state we worked out`}
             </p>
             <div className="overflow-hidden rounded-xl border border-gray-200">
-              <CartTable carts={row.carts} state={row.state} />
+              <CartTable carts={row.carts} state={row.state} canSeeCustomers={canSeeCustomers} />
             </div>
           </div>
         )}
@@ -1887,7 +1926,9 @@ function StateModal({
               <StatCard label="Sold a day" value={`${Math.round(row.dailySales * 10) / 10}`} foot="Units, on average" Icon={TrendingUp} tint="bg-blue-50 text-blue-600" />
               <StatCard label="Days left" value={row.dailySales > 0 ? `${Math.round((Math.max(0, row.sellable - row.readyUnits) / row.dailySales) * 10) / 10}` : "-"} foot="Before the shelf is empty" Icon={PackageCheck} tint="bg-emerald-50 text-emerald-600" />
               <StatCard label="On the way" value={num(row.inTransit)} foot="Units already shipped here" Icon={Truck} tint="bg-sky-50 text-sky-600" />
-              <StatCard label="Money at risk" value={naira(row.atRiskRevenue)} foot="Ready orders their agent cannot fill" Icon={AlertTriangle} tint="bg-rose-50 text-rose-600" />
+              {canSeeMoney
+                ? <StatCard label="Money at risk" value={naira(row.atRiskRevenue)} foot="Ready orders their agent cannot fill" Icon={AlertTriangle} tint="bg-rose-50 text-rose-600" />
+                : <StatCard label="Orders at risk" value={num(row.readyOrders)} foot="Ready orders their agent cannot fill" Icon={AlertTriangle} tint="bg-rose-50 text-rose-600" />}
             </div>
             <div className="mt-4 overflow-hidden rounded-xl border border-gray-200">
               <table className="w-full text-left text-sm">
