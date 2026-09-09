@@ -96879,6 +96879,8 @@ ${waybillLineItems(w).length > 1
               canManage={["Owner", "Admin", "Inventory Manager", "Inventory Manager & Logistics Operations"].includes(currentRole)}
               onOpenProduct={openInventoryProductDetailRoute}
               onOpenAgent={openAdminAgentDetail}
+              canSeeMoney={canViewInventoryFinancials}
+              canSeeCustomers={canViewInventoryFinancials}
               onCreateTransfer={openCreateWaybillForReplenishment}
               onOpenOrders={(search) => { setOrderSearch(search); setActivePage("Orders"); }}
               onEditAgent={openAdminAgentEditRoute}

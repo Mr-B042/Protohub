@@ -17,13 +17,22 @@ import {
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 
 const router = Router();
-router.use(requireAuth, requireRole("Owner", "Admin", "Manager", "Sales Rep", "Marketer", "Viewer", "Recovery Rep", "Sales Closer"));
+router.use(requireAuth);
 
 // ── GET /api/carts ───────────────────────────────────────
 // Returns ALL carts for the org. Supabase caps a single select at 1000 rows, so we
 // page with .range() until exhausted — otherwise the oldest carts silently drop once
 // the org crosses 1000, breaking link-repair and the returned-conversion badges.
-router.get("/", async (req, res) => {
+// ⚠️ THE ONLY CART ENDPOINT THE INVENTORY ROLE CAN REACH, and it hands them a
+// stripped row. Who Needs Stock counts a cart the rep rang and got a yes from
+// as real demand for stock; without this the whole cart side of that page was
+// invisible to the one role that acts on it, so the shortage read lower than it
+// really is. They get the product, the place and the call result - never the
+// customer, the phone or the money.
+const CART_LIST_ROLES = ["Owner", "Admin", "Manager", "Sales Rep", "Marketer", "Viewer",
+  "Recovery Rep", "Sales Closer", "Inventory Manager", "Inventory Manager & Logistics Operations"] as const;
+
+router.get("/", requireRole(...CART_LIST_ROLES), async (req, res) => {
   const PAGE = 1000;
   const SAFETY_CAP = 50_000; // hard ceiling so a runaway never loads unbounded memory
   const all: any[] = [];
@@ -71,12 +80,37 @@ router.get("/", async (req, res) => {
     attempts.set(row.cart_id, { code: row.outcome_code ?? null, at: row.attempted_at ?? null });
   }
 
-  res.json(all.map((cart) => ({
-    ...cart,
-    last_outcome_code: attempts.get(cart.id)?.code ?? null,
-    last_outcome_at: attempts.get(cart.id)?.at ?? null
-  })));
+  const stripped = req.user!.role === "Inventory Manager & Logistics Operations"
+    || scopeOf(req).role === "Inventory Manager & Logistics Operations";
+
+  res.json(all.map((cart) => {
+    const withOutcome = {
+      ...cart,
+      last_outcome_code: attempts.get(cart.id)?.code ?? null,
+      last_outcome_at: attempts.get(cart.id)?.at ?? null
+    };
+    if (!stripped) return withOutcome;
+    // Same allowlist idea as inventory-operations-access: name it or it does
+    // not travel. Enough to count demand and place it, nothing more.
+    return {
+      id: withOutcome.id,
+      state: withOutcome.state,
+      city: withOutcome.city,
+      product_id: withOutcome.product_id,
+      product_name: withOutcome.product_name,
+      package_id: withOutcome.package_id,
+      status: withOutcome.status,
+      created_at: withOutcome.created_at,
+      last_activity: withOutcome.last_activity,
+      last_outcome_code: withOutcome.last_outcome_code,
+      last_outcome_at: withOutcome.last_outcome_at
+    };
+  }));
 });
+
+// Every other cart route keeps the guard it always had - widening the list
+// above must not widen assignment, notes or conversion.
+router.use(requireRole("Owner", "Admin", "Manager", "Sales Rep", "Marketer", "Viewer", "Recovery Rep", "Sales Closer"));
 
 // ── GET /api/carts/changes ───────────────────────────────
 // Small reconciliation feed for websocket gaps. The abandoned-cart screen used

@@ -188,6 +188,10 @@ type Props = {
    *  by hand, so nothing on that page can move stock on its own. */
   onCreateTransfer?: (request: ReplenishmentTransferRequest) => void;
   onOpenOrders?: (search: string) => void;
+  /** False for "Inventory Manager & Logistics Operations" - that role sees no
+   *  money and no customer names anywhere else in the app either. */
+  canSeeMoney?: boolean;
+  canSeeCustomers?: boolean;
   onEditAgent?: (agentId: string) => void;
   onViewAgentHistory?: (agentId: string) => void;
 };
@@ -250,6 +254,8 @@ export function InventoryLogisticsOperationsPage({
   onViewAgentHistory,
   onCreateTransfer,
   onOpenOrders,
+  canSeeMoney = true,
+  canSeeCustomers = true,
 }: Props) {
   const [showFilters, setShowFilters] = useState(false);
   const [riskFilter, setRiskFilter] = useState<"all" | "risk" | "transit">("all");
@@ -421,6 +427,8 @@ export function InventoryLogisticsOperationsPage({
         waybills={waybills}
         lookbackDays={lookbackDays}
         canManage={canManage}
+        canSeeMoney={canSeeMoney}
+        canSeeCustomers={canSeeCustomers}
         onCreateTransfer={onCreateTransfer}
         onOpenOrders={onOpenOrders}
         onOpenAgent={onOpenAgent}
