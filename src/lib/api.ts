@@ -2079,6 +2079,27 @@ export const deliveredStockReconciliationApi = {
   resolve: (lineId: string) => post<{ resolved: boolean }>(`/api/delivered-stock-reconciliation/${encodeURIComponent(lineId)}/resolve`, {})
 };
 
+// ── State replenishment notes ─────────────────────────────
+// The only stored part of the State Replenishment page. Everything else there
+// is derived in the browser from stock, orders and waybills.
+export type StateReplenishmentNote = {
+  id: string;
+  stateKey: string;
+  stateLabel: string;
+  productId: string | null;
+  productName: string;
+  body: string;
+  createdBy: string | null;
+  createdByName: string;
+  createdAt: string;
+};
+export const stateReplenishmentNotesApi = {
+  list: () => get<{ notes: StateReplenishmentNote[] }>("/api/state-replenishment-notes"),
+  create: (body: { stateKey: string; stateLabel: string; productId: string | null; productName: string; body: string }) =>
+    post<{ note: StateReplenishmentNote }>("/api/state-replenishment-notes", body),
+  remove: (id: string) => del<{ deleted: boolean }>(`/api/state-replenishment-notes/${encodeURIComponent(id)}`)
+};
+
 // ── Expenses ──────────────────────────────────────────────
 export const expensesApi = {
   list: (params?: Record<string, string>) => {

@@ -420,7 +420,10 @@ const LEARNING_TAG_OPTIONS = ["Use & Scale", "Test More", "Adjust Approach", "Ke
 
 type InventoryOperationsNavGroup = {
   label?: string;
-  items: Array<{ action: InventoryOperationsAction; label: string; icon: typeof LayoutPanelTop }>;
+  /** `tag` renders a small word-pill (e.g. "New") instead of the numeric
+   *  work-count badge the other entries carry - a count of zero would read as
+   *  "nothing to do" on a page that is not a queue. */
+  items: Array<{ action: InventoryOperationsAction; label: string; icon: typeof LayoutPanelTop; tag?: string }>;
 };
 
 const INVENTORY_OPERATIONS_NAV: InventoryOperationsNavGroup[] = [
@@ -435,6 +438,10 @@ const INVENTORY_OPERATIONS_NAV: InventoryOperationsNavGroup[] = [
     { action: "product-availability", label: "Product Availability", icon: MapPin },
     { action: "coverage", label: "State / Order Coverage", icon: ShieldCheck },
     { action: "forecast", label: "Restock Forecast", icon: TrendingUp },
+    // Sits under Restock Forecast on purpose: Forecast says WHAT runs out and
+    // when, this says WHICH AGENT cannot deliver right now and whether the
+    // state can cover it without a shipment.
+    { action: "state-replenishment", label: "State Replenishment", icon: ShieldCheck, tag: "New" },
     { action: "recommended-transfers", label: "Recommended Transfers", icon: ArrowLeftRight },
   ] },
   { label: "Movements & Logistics", items: [
@@ -41643,6 +41650,40 @@ ${waybillLineItems(w).length > 1
     syncHashRoute("#/dashboard/admin/waybill/new");
   };
 
+  // ⚠️ STATE REPLENISHMENT RECOMMENDS; IT NEVER MOVES STOCK. This fills the
+  // normal Create Waybill form in and stops - the same validation, the same
+  // source-stock check, the same confirm button as a hand-built transfer. A
+  // page that could dispatch on its own would be a fifth way for agent stock
+  // to drift, and there have already been enough of those.
+  //
+  // The receiving AGENT is what is prefilled, not just the state: the whole
+  // point of that page is that stock goes to the agent holding the ready
+  // customers, not to a state.
+  const openCreateWaybillForReplenishment = (request: {
+    productId?: string;
+    quantity: number;
+    toState?: string;
+    toAgentId?: string;
+    toAgentLocationId?: string;
+    fromAgentId?: string;
+    fromAgentLocationId?: string;
+  }) => {
+    setActivePage("Waybill");
+    openCreateWaybillModal();
+    // Left blank when the page was on "All Products" - the manager still has to
+    // say which product, because a multi-product shortage is not one line.
+    setWaybillItems([{ productId: request.productId ?? "", quantity: String(Math.max(1, Math.round(request.quantity) || 1)) }]);
+    if (request.fromAgentId) {
+      setWaybillFromType("Agent");
+      setWaybillFromAgentId(request.fromAgentId);
+      setWaybillFromAgentLocationId(request.fromAgentLocationId ?? "");
+    }
+    if (request.toAgentId) setWaybillToAgentId(request.toAgentId);
+    if (request.toAgentLocationId) setWaybillToAgentLocationId(request.toAgentLocationId);
+    if (request.toState) setWaybillToState(request.toState);
+    syncHashRoute("#/dashboard/admin/waybill/new");
+  };
+
   const createWaybill = () => {
     if (waybillCreating) return;
     const errs: Record<string, string> = {};
@@ -44323,6 +44364,7 @@ ${waybillLineItems(w).length > 1
       // section you never arrived at.
       case "stock-states":
       case "coverage":
+      case "state-replenishment":
       case "forecast":
       case "stock-agents":
       case "delivered-reconciliation":
@@ -73991,6 +74033,7 @@ ${waybillLineItems(w).length > 1
                             >
                               <SubIcon className="w-4 h-4 shrink-0" />
                               <span className="flex-1 text-left leading-4">{sub.label}</span>
+                              {sub.tag && <span className="rounded-full bg-[#1F8FE0] px-1.5 py-0.5 text-[9px] font-bold text-white">{sub.tag}</span>}
                               {badge > 0 && <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[9px] font-bold text-white">{badge}</span>}
                             </button>
                           );
@@ -96731,6 +96774,18 @@ ${waybillLineItems(w).length > 1
                 })),
               }))}
               orders={trackedOrders.map((order) => ({
+                id: order.id,
+                customer: order.customer,
+                phone: order.phone,
+                // The rep-facing label resolved ONCE, here, by the same
+                // status-views layer the order list renders. State
+                // Replenishment reads demand confidence off this rather than
+                // re-deriving (status, call_outcome) for itself, so the two can
+                // never disagree about what "Ready" means.
+                statusLabel: orderStatusLabelFor(order),
+                amount: Number(order.amount ?? 0),
+                scheduledDate: order.scheduledDate,
+                lastNote: order.notes?.[order.notes.length - 1]?.text,
                 productId: order.productId,
                 productName: order.productName,
                 state: normalizeAgentState(order.state)
@@ -96785,6 +96840,8 @@ ${waybillLineItems(w).length > 1
               canManage={["Owner", "Admin", "Inventory Manager", "Inventory Manager & Logistics Operations"].includes(currentRole)}
               onOpenProduct={openInventoryProductDetailRoute}
               onOpenAgent={openAdminAgentDetail}
+              onCreateTransfer={openCreateWaybillForReplenishment}
+              onOpenOrders={(search) => { setOrderSearch(search); setActivePage("Orders"); }}
               onEditAgent={openAdminAgentEditRoute}
               onViewAgentHistory={(agentId) => openInventoryHistoryWithFilters({ agentId })}
               onAction={handleInventoryOperationsAction}
