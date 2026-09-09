@@ -441,7 +441,7 @@ const INVENTORY_OPERATIONS_NAV: InventoryOperationsNavGroup[] = [
     // Sits under Restock Forecast on purpose: Forecast says WHAT runs out and
     // when, this says WHICH AGENT cannot deliver right now and whether the
     // state can cover it without a shipment.
-    { action: "state-replenishment", label: "State Replenishment", icon: ShieldCheck, tag: "New" },
+    { action: "state-replenishment", label: "Who Needs Stock", icon: ShieldCheck, tag: "New" },
     { action: "recommended-transfers", label: "Recommended Transfers", icon: ArrowLeftRight },
   ] },
   { label: "Movements & Logistics", items: [
