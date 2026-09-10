@@ -273,7 +273,23 @@ export default function InventoryOpsStateReplenishment({
     const term = search.trim().toLowerCase();
     return scoped
       .flatMap((row) => row.byProduct
-        .filter((entry) => entry.deficit > 0)
+        // ⚠️ "SHORT" IS NOT THE SAME AS "NEEDS STOCK MOVED", and listing the
+        // first was nonsense on screen: Abia showed Edge Brusher Max as
+        // "short by 3" with 61 units sitting in the state.
+        //
+        // `deficit` is the raw gap - what the waiting people need, counted
+        // before anything is netted off. It stays that way because the maths
+        // needs it. But an order with no agent yet, or a cart, adds to that gap
+        // whether or not the units are already on the shelf, so a state with
+        // plenty of stock still showed a shortage.
+        //
+        // This page is called Who Needs Stock. A line belongs on it when stock
+        // has to travel: sent in because nobody here has enough, or moved
+        // across because the agent who is short is not the agent holding it.
+        // Stock already here, or already on its way, is not a shortage - those
+        // orders need assigning, which the state row says and the footnote
+        // below counts.
+        .filter((entry) => entry.sendUnits > 0 || (entry.rebalanceUnits > 0 && row.agentShortages > 0))
         .map((entry) => ({
           row, entry,
           // A line is only truly urgent when the state cannot cover it at all.
@@ -344,6 +360,23 @@ export default function InventoryOpsStateReplenishment({
     }).sort((a, b) =>
       Number(b.urgent) - Number(a.urgent) || b.sendUnits - a.sendUnits || a.row.state.localeCompare(b.row.state));
   }, [needList]);
+
+  // Demand that is already covered by stock in the state or stock on its way.
+  // Not a shortage, but somebody still has to give those orders to an agent -
+  // so it is counted and said out loud rather than silently dropped.
+  const coveredByStockHere = useMemo(() => {
+    const states = new Set<string>();
+    let orders = 0;
+    for (const row of scoped) {
+      for (const entry of row.byProduct) {
+        if (entry.deficit <= 0) continue;
+        if (entry.sendUnits > 0 || (entry.rebalanceUnits > 0 && row.agentShortages > 0)) continue;
+        states.add(row.key);
+        orders += entry.deficit;
+      }
+    }
+    return { states: states.size, units: orders };
+  }, [scoped]);
 
   const needTotals = useMemo(() => ({
     lines: needList.length,
@@ -659,7 +692,10 @@ export default function InventoryOpsStateReplenishment({
                     <tbody>
                       {needGroups.length === 0 ? (
                         <tr><td colSpan={7} className="px-4 py-12 text-center text-sm italic text-gray-400">
-                          Nothing is short right now. Every customer who is ready can be served.
+                          Nothing needs stock moved right now.
+                          {coveredByStockHere.units > 0
+                            ? ` ${num(coveredByStockHere.units)} unit${coveredByStockHere.units === 1 ? "" : "s"} are waiting on stock that is already there or on its way - those orders just need giving to an agent.`
+                            : " Every customer who is ready can be served."}
                         </td></tr>
                       ) : needGroups.map((group, groupIndex) => (
                         <Fragment key={group.row.key}>
@@ -764,9 +800,16 @@ export default function InventoryOpsStateReplenishment({
                   </table>
                 </div>
                 <p className="m-0 border-t border-gray-100 px-4 py-3 text-xs text-gray-400">
-                  Sorted by what cannot be covered at all, then by size. "Short by" counts people who ordered plus people who
-                  left a cart and said yes on a call. "Send" takes off what agents here can spare and what is already on the way.
+                  Only products that need stock moved are listed. "Short by" counts people who ordered plus people who left a
+                  cart and said yes on a call; "Send" then takes off what agents here can spare and what is already on the way.
                   Products marked as going out together are one package - the same customers ordered all of them.
+                  {coveredByStockHere.units > 0 && (
+                    <span className="mt-1 block text-gray-500">
+                      Another {num(coveredByStockHere.units)} unit{coveredByStockHere.units === 1 ? "" : "s"} across{" "}
+                      {num(coveredByStockHere.states)} state{coveredByStockHere.states === 1 ? "" : "s"} {coveredByStockHere.units === 1 ? "is" : "are"} already
+                      covered by stock there or stock on the way - those orders just need giving to an agent. See State View.
+                    </span>
+                  )}
                 </p>
               </div>
             )}
