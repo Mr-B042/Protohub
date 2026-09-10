@@ -139,6 +139,16 @@ export type ReplenishmentOrder = {
   lines: Array<{ productId: string; quantity: number }>;
   /** The product the customer actually chose. The other lines ride with it. */
   mainProductId?: string;
+  /** ⚠️ THE NAME, NOT JUST THE ID. "Customers waiting on us" and the order
+   *  tables listed a name, a phone and a date but never said WHAT the person
+   *  was waiting for - which is the one thing you need before deciding what to
+   *  put on the lorry. Resolved here, where the product-name map already
+   *  exists, so no screen has to be handed the catalogue to print a row. */
+  mainProductName: string;
+  /** Units of that product. `quantity` above is every line added up, so for a
+   *  package it counts the free gifts too and reads as 3 when one shelf was
+   *  bought. */
+  mainQuantity: number;
 };
 
 export type ProductPosition = {
@@ -407,6 +417,15 @@ export function buildStateReplenishmentRows(
       amount: Math.max(0, Number(order.amount) || 0),
       note: order.lastNote ?? "",
       mainProductId: order.mainProductId,
+      // Falls back to the biggest line when an order has no headline product
+      // recorded, so a row never renders with a blank product.
+      mainProductName: productName.get(order.mainProductId ?? "")
+        ?? productName.get([...lines].sort((a, b) => b.quantity - a.quantity)[0]?.productId ?? "")
+        ?? order.productName
+        ?? "Unknown product",
+      mainQuantity: lines.find((line) => line.productId === order.mainProductId)?.quantity
+        ?? [...lines].sort((a, b) => b.quantity - a.quantity)[0]?.quantity
+        ?? units,
       lines
     };
     state.orders.push(row);
