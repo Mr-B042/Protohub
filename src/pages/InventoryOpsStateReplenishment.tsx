@@ -1355,7 +1355,7 @@ function AgentTable({ agents, dense, canManage, productId, onSend, onOrders, onO
 function OrderTable({ orders, showNote, canSeeCustomers = true }: {
   orders: ReplenishmentOrder[]; showNote?: boolean; canSeeCustomers?: boolean;
 }) {
-  const columns = (canSeeCustomers ? 8 : 6) + (showNote ? 1 : 0);
+  const columns = (canSeeCustomers ? 9 : 7) + (showNote ? 1 : 0);
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[820px] text-left text-sm">
@@ -1364,6 +1364,7 @@ function OrderTable({ orders, showNote, canSeeCustomers = true }: {
             <th className="px-3 py-2.5">Order</th>
             {canSeeCustomers && <th className="px-3 py-2.5">Customer</th>}
             {canSeeCustomers && <th className="px-3 py-2.5">Phone</th>}
+            <th className="px-3 py-2.5">Product</th>
             <th className="px-3 py-2.5">Agent</th>
             <th className="px-3 py-2.5 text-right">Units</th>
             <th className="px-3 py-2.5">Status</th>
@@ -1380,6 +1381,12 @@ function OrderTable({ orders, showNote, canSeeCustomers = true }: {
               <td className="px-3 py-2.5 font-semibold text-gray-500">{order.id || "-"}</td>
               {canSeeCustomers && <td className="px-3 py-2.5 font-bold text-gray-900">{order.customer}</td>}
               {canSeeCustomers && <td className="px-3 py-2.5 text-gray-600">{order.phone || "-"}</td>}
+              <td className="px-3 py-2.5 font-semibold text-gray-800">
+                {order.mainProductName}
+                {order.lines.length > 1 && (
+                  <span className="block text-[11px] font-normal text-gray-400">+{order.lines.length - 1} that ship with it</span>
+                )}
+              </td>
               <td className="px-3 py-2.5 text-gray-600">{order.agentName}</td>
               <td className="px-3 py-2.5 text-right font-bold text-gray-900">{num(order.quantity)}</td>
               <td className="px-3 py-2.5">
@@ -1854,6 +1861,11 @@ function StateModal({
                       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-[10px] font-black text-gray-600">{initials(order.customer)}</span>
                       <span className="min-w-0 flex-1">
                         <strong className="block truncate text-[12px] font-bold text-gray-900">{order.customer}</strong>
+                        {/* ⚠️ WHAT they are waiting for. A name and a date do not
+                            tell you what to put on the lorry. */}
+                        <span className="block truncate text-[11px] font-semibold text-gray-600">
+                          {order.mainProductName}{order.mainQuantity > 1 ? ` × ${num(order.mainQuantity)}` : ""}
+                        </span>
                         <span className="block text-[11px] text-gray-400">{order.phone || order.agentName}</span>
                       </span>
                       <span className="shrink-0 text-right">
