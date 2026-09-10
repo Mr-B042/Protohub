@@ -1269,19 +1269,17 @@ export default function InventoryOpsStateReplenishment({
 
 // ── Shared pieces ────────────────────────────────────────────────────────────
 
-function AgentTable({ agents, dense, canManage, productId, onSend, onOrders, onOpenAgent }: {
+function AgentTable({ agents, dense, canManage, productId, productName, onSend, onOrders, onOpenAgent }: {
   agents: AgentPosition[];
   dense: boolean;
   canManage: boolean;
   productId: string | null;
+  productName?: string;
   onSend?: (agent: AgentPosition, units: number) => void;
   onOrders?: (agent: AgentPosition) => void;
   onOpenAgent?: (agentId: string) => void;
 }) {
   const pad = dense ? "px-3 py-2" : "px-3 py-2.5";
-  const unitsFor = (agent: AgentPosition) => productId
-    ? (agent.byProduct.find((entry) => entry.productId === productId)?.deficit ?? 0)
-    : agent.deficit;
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[820px] text-left text-sm">
@@ -1290,7 +1288,7 @@ function AgentTable({ agents, dense, canManage, productId, onSend, onOrders, onO
             <th className="px-3 py-2.5 w-10">#</th>
             <th className="px-3 py-2.5">Agent</th>
             <th className="px-3 py-2.5">Area</th>
-            <th className="px-3 py-2.5 text-right" title="Units on hand, minus anything damaged or missing.">Stock</th>
+            <th className="px-3 py-2.5 text-right" title="Units on hand, minus anything damaged or missing.">{productName ? `${productName} stock` : "Stock"}</th>
             <th className="px-3 py-2.5 text-right" title="Units already promised to open orders.">Kept for orders</th>
             <th className="px-3 py-2.5 text-right">Orders</th>
             <th className="px-3 py-2.5 text-right">Ready</th>
@@ -1303,7 +1301,20 @@ function AgentTable({ agents, dense, canManage, productId, onSend, onOrders, onO
           {agents.length === 0 ? (
             <tr><td colSpan={10} className="px-4 py-8 text-center text-sm italic text-gray-400">No agent has been set up in this state yet.</td></tr>
           ) : agents.map((agent, index) => {
-            const units = unitsFor(agent);
+            const selected = productId ? agent.byProduct.find((entry) => entry.productId === productId) : null;
+            const orders = productId
+              ? agent.orders.filter((order) => order.lines.some((line) => line.productId === productId))
+              : agent.orders;
+            const readyOrders = orders.filter((order) => order.actionable).length;
+            const sellable = productId ? (selected?.sellable ?? 0) : agent.sellable;
+            const reserved = productId ? (selected?.reserved ?? 0) : agent.reserved;
+            const readyUnits = productId ? (selected?.readyUnits ?? 0) : agent.readyUnits;
+            const deficit = productId ? (selected?.deficit ?? 0) : agent.deficit;
+            const position = sellable - readyUnits;
+            const status: AgentPosition["status"] = deficit > 0 && sellable === 0 ? "Critical"
+              : deficit > 0 ? "Low Stock"
+                : orders.length > 0 && sellable === 0 ? "Watch" : "Healthy";
+            const units = deficit;
             return (
               <tr key={agent.key} className="border-b border-gray-50">
                 <td className={`${pad} text-gray-400`}>{index + 1}</td>
@@ -1315,20 +1326,20 @@ function AgentTable({ agents, dense, canManage, productId, onSend, onOrders, onO
                 </td>
                 <td className={`${pad} text-gray-600`}>{agent.area || "-"}</td>
                 <td className={`${pad} text-right`}>
-                  <span className={`inline-flex min-w-9 justify-center rounded-md px-2 py-1 text-xs font-bold ${agent.sellable === 0 ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-700"}`}>{num(agent.sellable)}</span>
+                  <span className={`inline-flex min-w-9 justify-center rounded-md px-2 py-1 text-xs font-bold ${sellable === 0 ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-700"}`}>{num(sellable)}</span>
                 </td>
-                <td className={`${pad} text-right text-gray-500`}>{num(agent.reserved)}</td>
-                <td className={`${pad} text-right text-gray-700`}>{num(agent.openOrders)}</td>
+                <td className={`${pad} text-right text-gray-500`}>{num(reserved)}</td>
+                <td className={`${pad} text-right text-gray-700`}>{num(orders.length)}</td>
                 <td className={`${pad} text-right`}>
                   <span className={`inline-flex min-w-9 justify-center rounded-md px-2 py-1 text-xs font-bold ${
-                    agent.readyOrders > 0 && agent.deficit > 0 ? "bg-amber-50 text-amber-700"
-                      : agent.readyOrders > 0 ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>{num(agent.readyOrders)}</span>
+                    readyOrders > 0 && deficit > 0 ? "bg-amber-50 text-amber-700"
+                      : readyOrders > 0 ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>{num(readyOrders)}</span>
                 </td>
                 <td className={`${pad} text-right`}>
-                  <span className={`inline-flex min-w-9 justify-center rounded-md px-2 py-1 text-xs font-bold ${signedTone(agent.position)}`}>{signed(agent.position)}</span>
+                  <span className={`inline-flex min-w-9 justify-center rounded-md px-2 py-1 text-xs font-bold ${signedTone(position)}`}>{signed(position)}</span>
                 </td>
                 <td className={pad}>
-                  <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-bold ${AGENT_STATUS_TONE[agent.status]}`}>{AGENT_STATUS_LABEL[agent.status]}</span>
+                  <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-bold ${AGENT_STATUS_TONE[status]}`}>{AGENT_STATUS_LABEL[status]}</span>
                 </td>
                 <td className={`${pad} text-right`}>
                   {units > 0 && canManage && onSend ? (
@@ -1352,8 +1363,8 @@ function AgentTable({ agents, dense, canManage, productId, onSend, onOrders, onO
   );
 }
 
-function OrderTable({ orders, showNote, canSeeCustomers = true }: {
-  orders: ReplenishmentOrder[]; showNote?: boolean; canSeeCustomers?: boolean;
+function OrderTable({ orders, showNote, canSeeCustomers = true, productId, productName }: {
+  orders: ReplenishmentOrder[]; showNote?: boolean; canSeeCustomers?: boolean; productId?: string | null; productName?: string;
 }) {
   const columns = (canSeeCustomers ? 9 : 7) + (showNote ? 1 : 0);
   return (
@@ -1382,13 +1393,15 @@ function OrderTable({ orders, showNote, canSeeCustomers = true }: {
               {canSeeCustomers && <td className="px-3 py-2.5 font-bold text-gray-900">{order.customer}</td>}
               {canSeeCustomers && <td className="px-3 py-2.5 text-gray-600">{order.phone || "-"}</td>}
               <td className="px-3 py-2.5 font-semibold text-gray-800">
-                {order.mainProductName}
-                {order.lines.length > 1 && (
+                {productName ?? order.mainProductName}
+                {!productId && order.lines.length > 1 && (
                   <span className="block text-[11px] font-normal text-gray-400">+{order.lines.length - 1} that ship with it</span>
                 )}
               </td>
               <td className="px-3 py-2.5 text-gray-600">{order.agentName}</td>
-              <td className="px-3 py-2.5 text-right font-bold text-gray-900">{num(order.quantity)}</td>
+              <td className="px-3 py-2.5 text-right font-bold text-gray-900">
+                {num(productId ? (order.lines.find((line) => line.productId === productId)?.quantity ?? 0) : order.quantity)}
+              </td>
               <td className="px-3 py-2.5">
                 <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-bold ${DEMAND_TIER_META[order.tier].chip}`}>{order.statusLabel}</span>
               </td>
@@ -1722,8 +1735,21 @@ function StateModal({
   const receiving = receivingPlanFor(row, productId);
   const target = receiving[0];
   const sendUnits = product ? Math.max(0, product.deficit - product.surplus - product.inTransit) : row.sendUnits;
-  const ready = row.orders.filter((order) => order.actionable);
-  const recent = [...row.orders].sort((a, b) => Date.parse(b.createdAt ?? "") - Date.parse(a.createdAt ?? "")).slice(0, 8);
+  const productOrders = productId
+    ? row.orders.filter((order) => order.lines.some((line) => line.productId === productId))
+    : row.orders;
+  const ready = productOrders.filter((order) => order.actionable);
+  const productHoldingAgents = productId
+    ? row.agents.filter((agent) => (agent.byProduct.find((entry) => entry.productId === productId)?.sellable ?? 0) > 0).length
+    : row.agentCount;
+  const recent = [...productOrders].sort((a, b) => Date.parse(b.createdAt ?? "") - Date.parse(a.createdAt ?? "")).slice(0, 8);
+  const statusCounts = Array.from(productOrders.reduce((counts, order) => {
+    const current = counts.get(order.statusLabel);
+    counts.set(order.statusLabel, current
+      ? { ...current, count: current.count + 1 }
+      : { label: order.statusLabel, tier: order.tier, count: 1 });
+    return counts;
+  }, new Map<string, { label: string; tier: DemandTier; count: number }>()).values());
 
   const tabs: Array<{ key: ModalTab; label: string }> = [
     { key: "agents", label: "Agent by agent" },
@@ -1735,7 +1761,7 @@ function StateModal({
   ];
 
   const slices = DEMAND_TIER_ORDER
-    .map((tier) => ({ tier, value: row.tierCounts[tier] ?? 0 }))
+    .map((tier) => ({ tier, value: productOrders.filter((order) => order.tier === tier).length }))
     .filter((entry) => entry.value > 0)
     .map((entry) => ({ value: entry.value, color: TIER_HEX[entry.tier] }));
 
@@ -1773,9 +1799,9 @@ function StateModal({
 
         <div className="grid grid-cols-2 gap-3 px-6 pb-5 md:grid-cols-3 xl:grid-cols-5">
           <StatCard label="Stock we can sell" value={num(product?.sellable ?? row.sellable)}
-            foot={`Held by ${num(row.agentCount)} agent${row.agentCount === 1 ? "" : "s"}`} Icon={Package} tint="bg-emerald-50 text-emerald-600" />
-          <StatCard label="Orders waiting" value={num(row.openOrders)} foot="Everyone who has ordered" Icon={FileText} tint="bg-blue-50 text-blue-600" />
-          <StatCard label="Ready to take it" value={num(row.readyOrders)} foot="Confirmed, or gave a date" Icon={Users} tint="bg-amber-50 text-amber-600" />
+            foot={`Held by ${num(productHoldingAgents)} agent${productHoldingAgents === 1 ? "" : "s"}`} Icon={Package} tint="bg-emerald-50 text-emerald-600" />
+          <StatCard label="Orders waiting" value={num(productOrders.length)} foot={product ? `For ${product.productName}` : "Everyone who has ordered"} Icon={FileText} tint="bg-blue-50 text-blue-600" />
+          <StatCard label="Ready to take it" value={num(ready.length)} foot={product ? `For ${product.productName}` : "Confirmed, or gave a date"} Icon={Users} tint="bg-amber-50 text-amber-600" />
           <StatCard label="Units short" value={product ? signed(-product.deficit) : signed(-row.deficit)}
             foot="Needed today" Icon={AlertTriangle} tint="bg-rose-50 text-rose-600" />
           <StatCard label="Units to send" value={`${num(sendUnits)} units`}
@@ -1799,8 +1825,8 @@ function StateModal({
           <div className="px-6 py-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h3 className="m-0 text-base font-black text-gray-950">Agents in {row.state}</h3>
-                <p className="m-0 text-[12px] text-gray-500">What each agent here is holding, and how many customers are waiting on them.</p>
+                <h3 className="m-0 text-base font-black text-gray-950">{product?.productName ?? "All products"} · Agents in {row.state}</h3>
+                <p className="m-0 text-[12px] text-gray-500">Every number below is for {product?.productName ?? "all products"} only.</p>
               </div>
               <button type="button" onClick={() => onTab("notes")}
                 className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50">
@@ -1809,7 +1835,7 @@ function StateModal({
             </div>
             <div className="mt-3 overflow-hidden rounded-xl border border-gray-200">
               <AgentTable
-                agents={row.agents} dense={false} canManage={canManage} productId={productId}
+                agents={row.agents} dense={false} canManage={canManage} productId={productId} productName={product?.productName}
                 onSend={(agent, units) => onCreateTransfer?.({
                   productId: productId ?? undefined, quantity: units, toState: row.state,
                   toAgentId: agent.agentId, toAgentLocationId: agent.locationId
@@ -1821,18 +1847,18 @@ function StateModal({
             <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
               <section className="rounded-xl border border-gray-200 p-4">
                 <h4 className="m-0 text-sm font-bold text-gray-900">Where the orders stand</h4>
-                <p className="m-0 text-[11px] text-gray-500">{num(row.openOrders)} order{row.openOrders === 1 ? "" : "s"} waiting in {row.state}.</p>
+                <p className="m-0 text-[11px] text-gray-500">{num(productOrders.length)} {product?.productName ?? "product"} order{productOrders.length === 1 ? "" : "s"} waiting in {row.state}.</p>
                 <div className="mt-3 flex items-center gap-4">
-                  <Donut slices={slices} total={row.openOrders} caption="Orders" />
+                  <Donut slices={slices} total={productOrders.length} caption="Orders" />
                   <ul className="m-0 min-w-0 flex-1 list-none space-y-1.5 p-0">
-                    {row.statusCounts.length === 0 ? (
+                    {statusCounts.length === 0 ? (
                       <li className="text-[12px] italic text-gray-400">No open orders.</li>
-                    ) : row.statusCounts.map((entry) => (
+                    ) : statusCounts.map((entry) => (
                       <li key={entry.label} className="flex items-center gap-2 text-[12px]">
                         <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: TIER_HEX[entry.tier] }} />
                         <span className="min-w-0 flex-1 truncate text-gray-600">{entry.label}</span>
                         <span className="shrink-0 font-bold text-gray-900">{entry.count}</span>
-                        <span className="w-10 shrink-0 text-right text-gray-400">{Math.round((entry.count / Math.max(1, row.openOrders)) * 100)}%</span>
+                        <span className="w-10 shrink-0 text-right text-gray-400">{Math.round((entry.count / Math.max(1, productOrders.length)) * 100)}%</span>
                       </li>
                     ))}
                   </ul>
@@ -1849,11 +1875,11 @@ function StateModal({
                     /* ⚠️ This role has never seen a customer name or phone
                        anywhere in the app. Counts answer the stock question
                        just as well, so it gets counts. */
-                    row.agents.filter((agent) => agent.readyOrders > 0).map((agent) => (
+                    row.agents.map((agent) => ({ agent, count: agent.orders.filter((order) => order.actionable && (!productId || order.lines.some((line) => line.productId === productId))).length })).filter(({ count }) => count > 0).map(({ agent, count }) => (
                       <li key={agent.key} className="flex items-center gap-2.5">
                         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-[10px] font-black text-gray-600">{initials(agent.name)}</span>
                         <span className="min-w-0 flex-1 text-[12px] font-bold text-gray-900">{agent.name}</span>
-                        <span className="shrink-0 text-[11px] font-bold text-gray-600">{num(agent.readyOrders)} waiting</span>
+                        <span className="shrink-0 text-[11px] font-bold text-gray-600">{num(count)} waiting</span>
                       </li>
                     ))
                   ) : ready.slice(0, 4).map((order) => (
@@ -1963,27 +1989,29 @@ function StateModal({
 
             <section className="mt-4 overflow-hidden rounded-xl border border-gray-200">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-4 py-3">
-                <h4 className="m-0 text-sm font-bold text-gray-900">Recent Orders in {row.state}</h4>
+                <h4 className="m-0 text-sm font-bold text-gray-900">Recent {product?.productName ?? "Product"} Orders in {row.state}</h4>
                 {onOpenOrders && (
                   <button type="button" onClick={() => onOpenOrders(row.state)} className="!min-h-0 text-xs font-bold text-blue-600 hover:underline">View All Orders →</button>
                 )}
               </div>
-              <OrderTable orders={recent} showNote canSeeCustomers={canSeeCustomers} />
+              <OrderTable orders={recent} showNote canSeeCustomers={canSeeCustomers} productId={productId} productName={product?.productName} />
             </section>
           </div>
         )}
 
         {tab === "orders" && (
           <div className="px-6 py-5">
-            <h3 className="m-0 text-base font-black text-gray-950">All orders in {row.state}</h3>
+            <h3 className="m-0 text-base font-black text-gray-950">{product?.productName ?? "All product"} orders in {row.state}</h3>
             <p className="m-0 mb-3 text-[12px] text-gray-500">
-              Everyone waiting, most likely to buy at the top. Only the {num(row.readyOrders)} ready {row.readyOrders === 1 ? "one" : "ones"} decide whether we send stock.
+              Everyone waiting for this product, most likely to buy at the top. Only the {num(ready.length)} ready {ready.length === 1 ? "one" : "ones"} decide whether we send stock.
             </p>
             <div className="overflow-hidden rounded-xl border border-gray-200">
               <OrderTable
-                orders={[...row.orders].sort((a, b) => DEMAND_TIER_ORDER.indexOf(a.tier) - DEMAND_TIER_ORDER.indexOf(b.tier))}
+                orders={[...productOrders].sort((a, b) => DEMAND_TIER_ORDER.indexOf(a.tier) - DEMAND_TIER_ORDER.indexOf(b.tier))}
                 showNote
                 canSeeCustomers={canSeeCustomers}
+                productId={productId}
+                productName={product?.productName}
               />
             </div>
           </div>
