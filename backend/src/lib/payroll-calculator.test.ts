@@ -100,3 +100,29 @@ test("cross-sell bonus source rules match the Sales Bonus Engine", () => {
   assert.equal(bonusFor("auto_include"), 0);
   assert.equal(bonusFor(), 500);
 });
+
+test("Multi Corner Storage Shelf order 4092 earns its configured 3 to 6 upgrade", () => {
+  const shelfConfig = {
+    ...defaultBonusConfig(),
+    baseDelivered: [{ quantity: 6, amount: 200 }],
+    upgradeBonuses: [
+      { fromQty: 3, toQty: 5, amount: 6_000 },
+      { fromQty: 3, toQty: 6, amount: 12_450 }
+    ],
+    upgradeRequiresMinDeliveryRate: 60
+  };
+  const productMap = buildProductBonusConfigMap([{
+    id: "multi-corner-storage-shelf",
+    bonus_config: shelfConfig
+  }]);
+  const order4092 = deliveredOrder("4092", {
+    product_id: "multi-corner-storage-shelf",
+    quantity: 6,
+    amount: 250_000,
+    upsell_from_qty: 3,
+    upsell_to_qty: 6
+  });
+
+  assert.equal(computeOrderBonus(order4092, productMap, 60, 0, 1), 12_650);
+  assert.equal(computeOrderBonus(order4092, productMap, 59, 0, 1), 6_425);
+});
