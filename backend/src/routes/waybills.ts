@@ -458,7 +458,18 @@ router.patch("/:id",
       // edit generation, so a retry after an uncertain response cannot repeat it.
       const editGeneration = current.updated_at ?? current.created_at ?? "initial";
       try {
-        await applyInventoryMovements({
+        // ⚠️ AN EDIT THAT MOVES NO STOCK IS STILL A VALID EDIT.
+        //
+        // The edit form always posts the item list back, even when the person
+        // only touched the fee, the carrier, the note or the date. Every delta
+        // is then zero, `planned` comes out empty, and the stock writer refuses
+        // an empty batch with "At least one inventory movement is required" -
+        // so the whole waybill failed to save. That is why a 2,000 fee could
+        // not be corrected to 2,500 after the agent paid more at pickup.
+        //
+        // Nothing moved, so nothing is written to the ledger. The fee and the
+        // other fields below still save.
+        if (planned.length > 0) await applyInventoryMovements({
           orgId: req.user!.orgId,
           actorUserId: req.user!.id,
           actorName: req.user!.name,
