@@ -907,6 +907,12 @@ router.post("/weekly-opening", requireRole("Owner"), async (req, res) => {
     // Only THIS week's row is touched - other weeks are never rewritten.
     const { data: savedId, error } = await supabase.rpc("save_weekly_opening_cash", {
       p_org_id: orgId,
+      // ⚠️ ONE OPENING BALANCE PER BRANCH PER WEEK, NOT PER ORGANISATION.
+      // These are SECURITY DEFINER functions, so the branch filter that guards
+      // every ordinary query cannot reach inside them - they have to be told.
+      // Without it, Accra saving its week would overwrite Nigeria's figures for
+      // that week and say nothing.
+      p_branch_id: req.user!.branchId,
       p_week_start: body.weekStart,
       p_amount: total,
       p_reason: body.reason || `Counted across ${body.sources.length} cash source${body.sources.length === 1 ? "" : "s"}.`,
@@ -1183,6 +1189,7 @@ router.post("/reconciliation", requireRole("Owner"), async (req, res) => {
     // weekly opening cash function was written to avoid.
     const { data: savedId, error } = await supabase.rpc("save_weekly_cash_verification", {
       p_org_id: orgId,
+      p_branch_id: req.user!.branchId,
       p_week_start: weekStart,
       p_expected: summary.totalSystem,
       p_actual: summary.totalActual,
