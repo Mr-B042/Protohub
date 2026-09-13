@@ -1849,6 +1849,7 @@ router.post("/inventory/snapshot", requireRole("Owner"), async (req, res) => {
     // module where it lands in stock_movements and stays auditable.
     const { data: savedId, error } = await supabase.rpc("save_inventory_valuation", {
       p_org_id: orgId,
+      p_branch_id: req.user!.branchId,
       p_week_start: weekStart,
       p_status: body.status,
       p_notes: body.notes,
