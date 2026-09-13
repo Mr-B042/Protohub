@@ -74384,20 +74384,22 @@ ${waybillLineItems(w).length > 1
           )}
 
           <div className="ml-auto flex items-center gap-4">
-            <label className="hidden items-center gap-2 rounded-lg border border-blue-200 bg-blue-50/60 px-2.5 py-1.5 sm:flex" title="Choose the country and branch you are working in">
-              <Globe className="h-4 w-4 shrink-0 text-[#1F8FE0]" />
-              <span className="sr-only">Operating branch</span>
-              <select
-                aria-label="Operating branch"
-                className="!min-h-0 max-w-[190px] border-0 bg-transparent p-0 text-xs font-bold text-blue-900 outline-none"
-                value={activeBranch.id}
-                onChange={(event) => changeBranch(event.target.value)}
-              >
-                {branchOptions.map((branch) => (
-                  <option key={branch.id} value={branch.id}>{branch.country} · {branch.name}</option>
-                ))}
-              </select>
-            </label>
+            {currentRole === "Owner" && (
+              <label className="hidden items-center gap-2 rounded-lg border border-blue-200 bg-blue-50/60 px-2.5 py-1.5 sm:flex" title="Choose the country and branch you are working in">
+                <Globe className="h-4 w-4 shrink-0 text-[#1F8FE0]" />
+                <span className="sr-only">Operating branch</span>
+                <select
+                  aria-label="Operating branch"
+                  className="!min-h-0 max-w-[190px] border-0 bg-transparent p-0 text-xs font-bold text-blue-900 outline-none"
+                  value={activeBranch.id}
+                  onChange={(event) => changeBranch(event.target.value)}
+                >
+                  {branchOptions.map((branch) => (
+                    <option key={branch.id} value={branch.id}>{branch.country} · {branch.name}</option>
+                  ))}
+                </select>
+              </label>
+            )}
             <span className="hidden text-[10px] font-semibold text-gray-400 lg:inline" title="Current branch scope">{activeBranch.scope}</span>
             {/* Hide money toggle - masks every ₦/$/£ amount app-wide, e.g. when
                 someone else can see your screen. Remembered per device. */}
