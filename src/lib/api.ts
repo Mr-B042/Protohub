@@ -38,6 +38,8 @@ export type BranchWorkspace = {
   currency: string;
   active: boolean;
   createdAt: string;
+  /** The branch this person opens when their device has none saved. */
+  isDefault?: boolean;
 };
 
 const toSnakeKey = (key: string) =>

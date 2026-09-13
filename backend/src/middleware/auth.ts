@@ -4,6 +4,7 @@ import { sanitizeMarketingAttributionTags } from "../lib/marketing-attribution.j
 import { TtlCache } from "../lib/ttl-cache.js";
 import { publicUserRole } from "../lib/user-role.js";
 import { runWithBranchScope } from "../lib/branch-scope.js";
+import { resolveDefaultBranchId } from "../lib/branch-membership.js";
 
 type UserProfile = {
   id: string; org_id: string; role: import("../types/index.js").UserRole;
@@ -92,14 +93,12 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     if (!branch) { res.status(403).json({ error: "You are not assigned to that branch." }); return; }
     req.user.branchId = requestedBranchId;
   } else {
-    const { data: defaultBranch } = profile.role === "Owner"
-      ? await supabase.from("branches").select("id").eq("org_id", profile.org_id).eq("name", "Nigeria Operations").eq("active", true).maybeSingle()
-      : await supabase.from("branch_memberships").select("branch_id, branches!inner(id)").eq("user_id", profile.id).eq("is_default", true).eq("branches.active", true).limit(1).maybeSingle();
-    const fallbackId = profile.role === "Owner"
-      ? (defaultBranch as { id?: string } | null)?.id
-      : (defaultBranch as { branch_id?: string } | null)?.branch_id;
+    // ⚠️ THE SAME ANSWER THE BRANCH LIST GIVES THE BROWSER. Both sides call
+    // this one function, so a device with nothing saved opens the branch this
+    // request would have used anyway.
+    const fallbackId = await resolveDefaultBranchId(profile.id, profile.org_id, profile.role);
     if (!fallbackId) { res.status(403).json({ error: "No active branch is assigned to your account." }); return; }
-    req.user.branchId = fallbackId as string;
+    req.user.branchId = fallbackId;
   }
 
   // Apply spy header inline — must happen after req.user is set.

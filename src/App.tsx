@@ -8461,7 +8461,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (cancelled) return;
       setBranchOptions(branches);
       if (!branches.length) return;
-      const selected = branches.some((branch) => branch.id === activeBranchId) ? activeBranchId : branches[0].id;
+      // ⚠️ NEVER FALL BACK TO branches[0]. The list is sorted by country, so
+      // the first entry is whichever country sorts first - Ghana before
+      // Nigeria. A phone with nothing saved opened Accra and showed an empty
+      // app. The server marks the branch it would have used; take that.
+      const home = branches.find((branch) => branch.isDefault) ?? branches[0];
+      const selected = branches.some((branch) => branch.id === activeBranchId) ? activeBranchId : home.id;
       if (selected !== activeBranchId) {
         setActiveBranchId(selected);
         try { window.localStorage.setItem("protohub.activeBranch", selected); } catch { /* private mode */ }
@@ -74057,6 +74062,31 @@ ${waybillLineItems(w).length > 1
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Branch picker, phone only.
+            ⚠️ THE TOP BAR'S PICKER IS `hidden sm:flex`, SO IT DOES NOT EXIST
+            BELOW 640px. A phone that opened the wrong branch had no way back -
+            it could show an empty branch and hide the only control that fixes
+            it. This one covers exactly the widths that one does not. */}
+        {currentRole === "Owner" && !collapsed && branchOptions.length > 1 && (
+          <div className="sm:hidden shrink-0 border-b border-white/10 px-5 py-3">
+            <label className="flex flex-col gap-1.5">
+              <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                <Globe className="h-3.5 w-3.5 text-[#1F8FE0]" />Branch you are working in
+              </span>
+              <select
+                aria-label="Operating branch"
+                className="!min-h-0 w-full rounded-lg border border-white/15 bg-white/10 px-2.5 py-2 text-sm font-semibold text-white outline-none focus:border-[#1F8FE0]"
+                value={activeBranch?.id ?? ""}
+                onChange={(event) => changeBranch(event.target.value)}
+              >
+                {branchOptions.map((branch) => (
+                  <option key={branch.id} value={branch.id} className="text-gray-900">{branch.countryName} · {branch.name}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
 
         {/* Nav items */}
         <nav className="flex-1 min-h-0 overflow-y-auto px-2 py-3 space-y-0.5">
