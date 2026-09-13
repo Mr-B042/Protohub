@@ -80,6 +80,16 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     marketingAttributionTags: sanitizeMarketingAttributionTags(profile.marketing_attribution_tags)
   };
 
+  const branchHeader = req.headers["x-branch-id"];
+  if (typeof branchHeader === "string" && branchHeader.trim()) {
+    const branchQuery = supabase.from("branches").select("id").eq("id", branchHeader.trim()).eq("org_id", profile.org_id).eq("active", true);
+    const { data: branch } = profile.role === "Owner"
+      ? await branchQuery.maybeSingle()
+      : await supabase.from("branch_memberships").select("branch_id, branches!inner(id)").eq("branch_id", branchHeader.trim()).eq("user_id", profile.id).eq("branches.org_id", profile.org_id).maybeSingle();
+    if (!branch) { res.status(403).json({ error: "You are not assigned to that branch." }); return; }
+    req.user.branchId = branchHeader.trim();
+  }
+
   // Apply spy header inline — must happen after req.user is set.
   // The global applySpyHeader middleware runs before requireAuth so req.user
   // is null when it fires. Doing it here guarantees correct ordering.

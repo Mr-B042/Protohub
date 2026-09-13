@@ -43,6 +43,8 @@ router.post("/", async (req, res) => {
     currency: value.currency
   }).select("id, country_code, country_name, name, state_or_region, city, currency, active, created_at").single();
   if (error) { res.status(error.code === "23505" ? 409 : 500).json({ error: error.message }); return; }
+  const { error: membershipError } = await supabase.from("branch_memberships").insert({ branch_id: data.id, user_id: req.user!.id, is_default: false });
+  if (membershipError) { res.status(500).json({ error: membershipError.message }); return; }
   res.status(201).json({ branch: {
     id: data.id, countryCode: data.country_code, countryName: data.country_name,
     name: data.name, stateOrRegion: data.state_or_region, city: data.city,

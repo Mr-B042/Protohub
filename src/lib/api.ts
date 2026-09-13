@@ -259,6 +259,8 @@ async function request<T>(
     }
   }
   let res: Response;
+  let branchId: string | null = null;
+  try { branchId = localStorage.getItem("protohub.activeBranch"); } catch { /* private mode */ }
   try {
     res = await fetchWithApiFailover(path, {
       method,
@@ -266,6 +268,7 @@ async function request<T>(
       headers: {
         "Content-Type": "application/json",
         ...(token && !isSessionStartEndpoint ? { Authorization: `Bearer ${token}` } : {}),
+        ...(branchId && !isSessionStartEndpoint ? { "X-Branch-Id": branchId } : {}),
         ...(_spyUserId ? { "X-Spy-User-Id": _spyUserId } : {})
       },
       body: body !== undefined ? JSON.stringify(body) : undefined
