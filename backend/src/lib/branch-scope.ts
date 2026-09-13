@@ -37,7 +37,23 @@ const BRANCH_TABLES = new Set([
   "state_replenishment_notes",
 
   // Operational records with no parent to inherit from.
-  "recovery_actions", "sales_call_reviews", "customer_flags"
+  "recovery_actions", "sales_call_reviews", "customer_flags",
+
+  // The books. Each branch trades in its own currency - naira, cedi,
+  // shilling - so one shared ledger cannot hold three. A delivery expense
+  // follows the waybill it paid for and a remittance follows the order whose
+  // cash came in; the rest were created in Nigeria and stay there.
+  "expenses", "remittance_transactions", "rep_penalties",
+  "payroll_runs", "pay_structures",
+  "bank_accounts", "bank_account_transfers",
+  "cash_opening_balances", "cash_opening_balance_sources",
+  "cash_reserves", "cash_reserve_releases",
+  "weekly_cash_verifications", "weekly_cash_verification_accounts",
+  "cash_variance_investigations", "cash_variance_investigation_events",
+  "account_reconciliations", "account_reconciliation_matches",
+  "account_reconciliation_adjustments",
+  "period_closes", "period_close_checks",
+  "batch_economics", "batch_cost_tiers", "batch_status_tier_map"
 ]);
 
 /**
