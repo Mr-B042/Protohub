@@ -2,7 +2,6 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
-import { resolveDefaultBranchId } from "../lib/branch-membership.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -17,13 +16,6 @@ const branchSchema = z.object({
 });
 
 router.get("/", async (req, res) => {
-  // ⚠️ THE BROWSER MUST NOT GUESS WHICH BRANCH TO OPEN. A device with nothing
-  // saved used to take the first branch in this list, and the list is sorted by
-  // country - Ghana before Nigeria - so a phone opened Accra and showed an
-  // empty app. Marking the branch the server itself would pick removes the
-  // guess entirely.
-  const defaultBranchId = await resolveDefaultBranchId(req.user!.id, req.user!.orgId, req.user!.role);
-
   if (req.user!.role !== "Owner") {
     const { data, error } = await supabase
       .from("branch_memberships")
@@ -37,8 +29,7 @@ router.get("/", async (req, res) => {
       const row = membership.branches;
       return { id: row.id, countryCode: row.country_code, countryName: row.country_name,
         name: row.name, stateOrRegion: row.state_or_region, city: row.city,
-        currency: row.currency, active: row.active, createdAt: row.created_at,
-        isDefault: row.id === defaultBranchId };
+        currency: row.currency, active: row.active, createdAt: row.created_at };
     }));
     return;
   }
@@ -53,8 +44,7 @@ router.get("/", async (req, res) => {
   res.json((data ?? []).map((row) => ({
     id: row.id, countryCode: row.country_code, countryName: row.country_name,
     name: row.name, stateOrRegion: row.state_or_region, city: row.city,
-    currency: row.currency, active: row.active, createdAt: row.created_at,
-    isDefault: row.id === defaultBranchId
+    currency: row.currency, active: row.active, createdAt: row.created_at
   })));
 });
 

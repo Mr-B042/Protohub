@@ -110,3 +110,50 @@ export async function setUserBranches(
 
   return listUserBranches(userId, orgId);
 }
+
+/**
+ * The branch somebody gets when they have not asked for one.
+ *
+ * ⚠️ ONE ANSWER, TWO CALLERS. `requireAuth` uses this when no X-Branch-Id
+ * header arrives, and GET /api/branches uses it to tell the browser which
+ * branch to open. They MUST agree. When they did not, a phone with nothing
+ * saved opened the first branch alphabetically - Ghana sorts before Nigeria -
+ * so the Owner landed in Accra and saw an empty app, while the server would
+ * have given them Nigeria.
+ */
+export async function resolveDefaultBranchId(
+  userId: string,
+  orgId: string,
+  role: string
+): Promise<string | null> {
+  // What the person actually chose, which is now settable per user. This runs
+  // for the Owner too: before, their "opens first" was read for everyone
+  // except them.
+  const { data: chosen } = await supabase
+    .from("branch_memberships")
+    .select("branch_id, branches!inner(id, org_id, active)")
+    .eq("user_id", userId)
+    .eq("is_default", true)
+    .eq("branches.org_id", orgId)
+    .eq("branches.active", true)
+    .limit(1)
+    .maybeSingle();
+  if (chosen?.branch_id) return chosen.branch_id as string;
+
+  // Everyone else stops here: no membership is not a branch to guess at, it is
+  // an account that has not been set up, and 403 says so.
+  if (role !== "Owner") return null;
+
+  // The Owner can open any branch, so they always get one. The home branch
+  // first, then whatever exists - never an arbitrary alphabetical pick.
+  const { data: home } = await supabase
+    .from("branches").select("id")
+    .eq("org_id", orgId).eq("name", "Nigeria Operations").eq("active", true).maybeSingle();
+  if (home?.id) return home.id as string;
+
+  const { data: fallback } = await supabase
+    .from("branches").select("id")
+    .eq("org_id", orgId).eq("active", true)
+    .order("country_name").order("name").limit(1).maybeSingle();
+  return (fallback?.id as string) ?? null;
+}
