@@ -5,6 +5,7 @@ import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole, invalidateUserProfile } from "../middleware/auth.js";
 import { loadAssignedAgentIdsByUser } from "../lib/user-agent-assignments.js";
 import { sanitizeMarketingAttributionTags } from "../lib/marketing-attribution.js";
+import { listUserBranches, setUserBranches, BranchMembershipError } from "../lib/branch-membership.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -17,6 +18,30 @@ router.get("/", async (req, res) => {
     .select("id, name, email, phone, role, active, round_robin_excluded, is_demo, is_head_of_sales_rep, head_of_sales_rep_appointed_at, created_at, last_seen_at, agent_balance_scope_mode, agent_balance_state_scope, agent_balance_agent_ids, marketing_attribution_tags")
     .eq("org_id", req.user!.orgId)
     .order("created_at", { ascending: true });
+
+  // ⚠️ A PERSON IS NOT SPLIT PER BRANCH - THEIR MEMBERSHIPS ARE.
+  //
+  // `users` deliberately has no branch_id and never will. One human is one row,
+  // because the whole point is that somebody working in Lagos and Accra signs
+  // in once and switches, rather than keeping two accounts and two passwords.
+  //
+  // The separation Bright asked for is delivered here instead: the staff list
+  // shows the people who work in the branch you are looking at. Accra's
+  // directory is Accra's team, even though the underlying person may also
+  // appear in Nigeria's.
+  //
+  // The caller is always included. Vanishing from your own staff list because
+  // nobody has assigned you yet reads as a broken screen, not a permission.
+  if (req.user!.branchId) {
+    const { data: memberRows, error: memberError } = await supabase
+      .from("branch_memberships")
+      .select("user_id")
+      .eq("branch_id", req.user!.branchId);
+    if (memberError) { res.status(500).json({ error: memberError.message }); return; }
+    const memberIds = new Set<string>((memberRows ?? []).map((row: any) => row.user_id));
+    memberIds.add(req.user!.id);
+    query = query.in("id", [...memberIds]);
+  }
 
   if (req.user!.role === "Marketer") {
     query = query.eq("id", req.user!.id);
@@ -198,5 +223,49 @@ router.patch("/:id",
     res.json(data);
   }
 );
+
+// ── Which branches somebody works in ────────────────────────────────────────
+// Bright asked for one person to work in two or more branches "without getting
+// to sign in as a new user". So this is not a second account - it is a list of
+// the branches one account may open, switched from the picker already in the
+// top bar. The rules all live in ../lib/branch-membership.js.
+
+router.get("/:id/branches", requireRole("Owner", "Admin"), async (req, res) => {
+  // Read through `users` first: it is filtered by organisation, so an id from
+  // another company returns nothing rather than that person's branches.
+  const { data: person } = await supabase
+    .from("users").select("id").eq("id", req.params.id).eq("org_id", req.user!.orgId).maybeSingle();
+  if (!person) { res.status(404).json({ error: "That person is not in your team." }); return; }
+  try {
+    res.json(await listUserBranches(String(req.params.id), req.user!.orgId));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.put("/:id/branches", requireRole("Owner", "Admin"), async (req, res) => {
+  const parsed = z.object({
+    branchIds: z.array(z.string().uuid()).min(1),
+    defaultBranchId: z.string().uuid().optional().nullable()
+  }).strict().safeParse(req.body ?? {});
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+
+  const { data: person } = await supabase
+    .from("users").select("id").eq("id", req.params.id).eq("org_id", req.user!.orgId).maybeSingle();
+  if (!person) { res.status(404).json({ error: "That person is not in your team." }); return; }
+
+  try {
+    const branches = await setUserBranches(
+      String(req.params.id), req.user!.orgId, parsed.data.branchIds, parsed.data.defaultBranchId ?? null
+    );
+    // Their branch is resolved from the cached profile, so a change made here
+    // would otherwise not reach them until it expired.
+    invalidateUserProfile(String(req.params.id));
+    res.json(branches);
+  } catch (error: any) {
+    if (error instanceof BranchMembershipError) { res.status(error.status).json({ error: error.message }); return; }
+    res.status(500).json({ error: error.message });
+  }
+});
 
 export default router;

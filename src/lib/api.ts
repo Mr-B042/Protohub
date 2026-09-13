@@ -518,7 +518,21 @@ export const usersApi = {
     users: Array<{ id: string; active: boolean; online: boolean; lastSeenAt?: string | null }>;
   }>("/api/users/presence"),
   update: (id: string, body: { name?: string; email?: string; phone?: string; active?: boolean }) =>
-    patch<any>(`/api/users/${id}`, body)
+    patch<any>(`/api/users/${id}`, body),
+  // Which branches one person may open. Not a second account - the same login
+  // switches between them from the picker in the top bar.
+  branches: (id: string) => get<UserBranchMembership[]>(`/api/users/${id}/branches`),
+  setBranches: (id: string, body: { branchIds: string[]; defaultBranchId?: string | null }) =>
+    put<UserBranchMembership[]>(`/api/users/${id}/branches`, body)
+};
+
+export type UserBranchMembership = {
+  branchId: string;
+  name: string;
+  countryName: string;
+  currency: string;
+  /** Where this person lands when they sign in. Exactly one is true. */
+  isDefault: boolean;
 };
 
 // ── Products ──────────────────────────────────────────────
