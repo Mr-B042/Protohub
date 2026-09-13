@@ -28,6 +28,18 @@ export type AuthRefreshResult =
 
 let refreshInFlight: Promise<AuthRefreshResult> | null = null;
 
+export type BranchWorkspace = {
+  id: string;
+  countryCode: string;
+  countryName: string;
+  name: string;
+  stateOrRegion?: string | null;
+  city?: string | null;
+  currency: string;
+  active: boolean;
+  createdAt: string;
+};
+
 const toSnakeKey = (key: string) =>
   key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
 
@@ -1875,6 +1887,11 @@ export const personalDeliveryAgentsApi = {
   },
   overview: () => get<PersonalDeliveryAgentOverview>("/api/personal-delivery-agents/overview"),
   create: (body: unknown) => post<{ row: PersonalDeliveryAgentRow }>("/api/personal-delivery-agents", body)
+};
+
+export const branchesApi = {
+  list: () => get<BranchWorkspace[]>("/api/branches"),
+  create: (body: Omit<BranchWorkspace, "id" | "active" | "createdAt">) => post<{ branch: BranchWorkspace }>("/api/branches", body)
 };
 
 export const ordersApi = {
