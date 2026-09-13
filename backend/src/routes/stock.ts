@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { recordStockLossExpense } from "../lib/stock-loss-expense.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { applyBranchScope, requireAuth, requireRole } from "../middleware/auth.js";
 import { sendLowStockEmail } from "../lib/mailer.js";
 import { getOrgPushBranding } from "../lib/push-branding.js";
 import { sendPushToRoles } from "../lib/push.js";
@@ -27,12 +27,12 @@ router.get("/movements", async (req, res) => {
   const pageSize = Math.min(1000, parseInt(limit as string, 10));
   const offset   = (pageNum - 1) * pageSize;
 
-  let query = supabase
+  let query = applyBranchScope(supabase
     .from("stock_movements")
     .select("*", { count: "exact" })
     .eq("org_id", req.user!.orgId)
     .order("created_at", { ascending: false })
-    .range(offset, offset + pageSize - 1);
+    .range(offset, offset + pageSize - 1), req);
 
   if (productId) query = query.eq("product_id", productId as string);
   if (agentId)   query = query.eq("agent_id", agentId as string);

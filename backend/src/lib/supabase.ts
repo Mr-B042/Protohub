@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import "./load-env.js";
 import { assertSafeSupabaseRuntime } from "./local-safety.js";
+import { branchScopedFetch } from "./branch-scope.js";
 
 const url = process.env.SUPABASE_URL;
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -14,7 +15,8 @@ assertSafeSupabaseRuntime(url);
 // Service role client — bypasses RLS for server-side operations.
 // Never expose this key to the frontend.
 export const supabase = createClient(url, serviceKey, {
-  auth: { persistSession: false }
+  auth: { persistSession: false },
+  global: { fetch: branchScopedFetch }
 });
 
 // Anon-key client. Required for flows that go through Supabase's public auth

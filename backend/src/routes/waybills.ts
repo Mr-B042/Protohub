@@ -5,7 +5,7 @@ import { z } from "zod";
 import { applyInventoryMovements, InventoryMovementError } from "../lib/inventory-movements.js";
 import { notifyWaybillEvent } from "../lib/waybill-notifications.js";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { applyBranchScope, requireAuth, requireRole } from "../middleware/auth.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -193,24 +193,24 @@ router.post("/",
     const fromAgentId = d.fromAgentId ?? null;
 
     if (d.fromAgentLocationId) {
-      const { data: locationCheck } = await supabase
+      const { data: locationCheck } = await applyBranchScope(supabase
         .from("agent_locations")
         .select("id, agent_id")
         .eq("id", d.fromAgentLocationId)
         .eq("org_id", req.user!.orgId)
-        .single();
+        .single(), req);
       if (!locationCheck || (fromAgentId && locationCheck.agent_id !== fromAgentId)) {
         res.status(400).json({ error: "Sending agent location not found." });
         return;
       }
     }
     if (d.toAgentLocationId) {
-      const { data: locationCheck } = await supabase
+      const { data: locationCheck } = await applyBranchScope(supabase
         .from("agent_locations")
         .select("id, agent_id")
         .eq("id", d.toAgentLocationId)
         .eq("org_id", req.user!.orgId)
-        .single();
+        .single(), req);
       if (!locationCheck || (toAgentId && locationCheck.agent_id !== toAgentId)) {
         res.status(400).json({ error: "Receiving agent location not found." });
         return;
@@ -249,12 +249,12 @@ router.post("/",
     for (const item of items) {
       let available = 0;
       if (d.fromAgentLocationId) {
-        const { data: locationStock } = await supabase
-          .from("agent_location_stock")
+          const { data: locationStock } = await applyBranchScope(supabase
+            .from("agent_location_stock")
           .select("quantity")
           .eq("agent_location_id", d.fromAgentLocationId)
           .eq("product_id", item.product_id)
-          .single();
+          .single(), req);
         available = locationStock?.quantity ?? 0;
       } else {
         const { data: product } = await supabase
@@ -438,9 +438,9 @@ router.patch("/:id",
       for (const change of changedItems) {
         let available = 0;
         if (current.from_agent_location_id) {
-          const { data: locationStock } = await supabase
+          const { data: locationStock } = await applyBranchScope(supabase
             .from("agent_location_stock").select("quantity")
-            .eq("agent_location_id", current.from_agent_location_id).eq("product_id", change.productId).single();
+            .eq("agent_location_id", current.from_agent_location_id).eq("product_id", change.productId).single(), req);
           available = Number(locationStock?.quantity ?? 0);
         } else {
           const { data: product } = await supabase

@@ -42333,14 +42333,27 @@ ${waybillLineItems(w).length > 1
       dispatched_date: waybillDateSent,
       notes: waybillNote.trim() || null,
     }).then(async () => {
-      const [waybills, expenses] = await Promise.all([
-        waybillsApi.list(),
-        expensesApi.list()
-      ]);
-      setWaybillRecords(waybills.map(normalizeWaybillRecord));
-      setExpenses(expenses.map(normalizeExpenseRecord));
+      // ⚠️ THE WAYBILL IS ALREADY SAVED BY THE TIME WE GET HERE.
+      //
+      // Nothing below may report it as failed. Refreshing expenses used to sit
+      // in the same Promise.all as the waybill refresh, so when the expenses
+      // call was refused the rejection landed in the save's catch and the
+      // screen said "Failed to save waybill: Requires one of: Owner, Admin" -
+      // on a waybill that had just saved. The Inventory Manager re-entered
+      // work that was already stored, because the modal stayed open too.
+      //
+      // Expenses are Owner/Admin only on purpose: money is hidden from that
+      // role. So the refresh is allowed to fail quietly, exactly as the create
+      // and delete paths already do.
+      try {
+        const waybills = await waybillsApi.list();
+        setWaybillRecords(waybills.map(normalizeWaybillRecord));
+      } catch { /* the save stands; only the list on screen is stale */ }
       closeModal();
       showToast("Waybill and stock updated.");
+      expensesApi.list()
+        .then((rows) => setExpenses(rows.map(normalizeExpenseRecord)))
+        .catch(() => { /* this role cannot see expenses - nothing to show */ });
     }).catch((err: any) => showToast(`Failed to save waybill: ${err.message}`));
   };
 

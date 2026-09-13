@@ -4,7 +4,7 @@ import { z } from "zod";
 import { appendCartJourneyEvent, compactCartJourneyEventsForAnalytics } from "../lib/cart-journey.js";
 import { notifyNewAbandonedCart } from "../lib/cart-notifications.js";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
+import { applyBranchScope, requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { sendCartAssignedSms } from "../lib/sms.js";
 import { applyCartMarketingScope } from "../lib/marketing-attribution.js";
 import { lagosDateKey, lagosStartOfDayUtc, mondayOfWeek, addDays, dowOf } from "../lib/follow-up-kpi.js";
@@ -37,13 +37,13 @@ router.get("/", requireRole(...CART_LIST_ROLES), async (req, res) => {
   const SAFETY_CAP = 50_000; // hard ceiling so a runaway never loads unbounded memory
   const all: any[] = [];
   for (let from = 0; from < SAFETY_CAP; from += PAGE) {
-    let query = supabase
+    let query = applyBranchScope(supabase
       .from("abandoned_carts")
       .select("*")
       .eq("org_id", req.user!.orgId)
       .is("merged_into", null)  // hide carts absorbed into another (the "Merged" state)
       .order("created_at", { ascending: false })
-      .range(from, from + PAGE - 1);
+      .range(from, from + PAGE - 1), req);
     // Sales Reps see assigned carts; Marketers see only attributed cart traffic.
     if (req.user!.role === "Marketer") {
       query = applyCartMarketingScope(query, req.user!.marketingAttributionTags, req.user!.id);
@@ -136,7 +136,7 @@ router.get("/changes", async (req, res) => {
   const rows: any[] = [];
 
   for (let from = 0; from < SAFETY_CAP; from += PAGE) {
-    let query = supabase
+    let query = applyBranchScope(supabase
       .from("abandoned_carts")
       .select("*")
       .eq("org_id", req.user!.orgId)
@@ -144,7 +144,7 @@ router.get("/changes", async (req, res) => {
       .lte("last_activity", serverTime)
       .order("last_activity", { ascending: true })
       .order("id", { ascending: true })
-      .range(from, from + PAGE - 1);
+      .range(from, from + PAGE - 1), req);
 
     if (req.user!.role === "Marketer") {
       query = applyCartMarketingScope(query, req.user!.marketingAttributionTags, req.user!.id);

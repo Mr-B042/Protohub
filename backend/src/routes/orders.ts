@@ -14,7 +14,7 @@ import { formatOrderForWhatsAppDispatch, type WhatsAppDispatchOrderRow } from ".
 import { isPerUserWhatsAppDispatch } from "../lib/whatsapp-dispatch-mode.js";
 import { logger } from "../lib/logger.js";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { applyBranchScope, requireAuth, requireRole } from "../middleware/auth.js";
 import { isFrontlineRepRole } from "../lib/roles.js";
 import {
   sendOrderStatusEmail, sendNewOrderEmail,
@@ -631,12 +631,12 @@ router.get("/", async (req, res) => {
   // Fresh filtered query per sub-batch (Supabase caps one response at 1000 rows,
   // so a large pageSize must be fetched in 1000-row chunks or the oldest drop).
   const buildQuery = (rFrom: number, rTo: number) => {
-    let query = supabase
+    let query = applyBranchScope(supabase
       .from("orders")
       .select("*", selectOptions)
       .eq("org_id", req.user!.orgId)
       .order(sortColumn, { ascending: false })
-      .range(rFrom, rTo);
+      .range(rFrom, rTo), req);
     if (scopeRole === "Marketer") {
       query = applyOrderMarketingScope(query, req.user!.marketingAttributionTags, scopeId);
     } else if (isFrontlineRepRole(scopeRole)) {

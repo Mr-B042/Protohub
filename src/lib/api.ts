@@ -28,6 +28,20 @@ export type AuthRefreshResult =
 
 let refreshInFlight: Promise<AuthRefreshResult> | null = null;
 
+export type BranchWorkspace = {
+  id: string;
+  countryCode: string;
+  countryName: string;
+  name: string;
+  stateOrRegion?: string | null;
+  city?: string | null;
+  currency: string;
+  active: boolean;
+  createdAt: string;
+  /** The branch this person opens when their device has none saved. */
+  isDefault?: boolean;
+};
+
 const toSnakeKey = (key: string) =>
   key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
 
@@ -247,6 +261,13 @@ async function request<T>(
     }
   }
   let res: Response;
+  let branchId: string | null = null;
+  try {
+    const storedBranchId = localStorage.getItem("protohub.activeBranch");
+    // The initial selector uses temporary labels until /api/branches has
+    // hydrated real database UUIDs. Never send a placeholder as scope.
+    branchId = storedBranchId && /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(storedBranchId) ? storedBranchId : null;
+  } catch { /* private mode */ }
   try {
     res = await fetchWithApiFailover(path, {
       method,
@@ -254,6 +275,7 @@ async function request<T>(
       headers: {
         "Content-Type": "application/json",
         ...(token && !isSessionStartEndpoint ? { Authorization: `Bearer ${token}` } : {}),
+        ...(branchId && !isSessionStartEndpoint ? { "X-Branch-Id": branchId } : {}),
         ...(_spyUserId ? { "X-Spy-User-Id": _spyUserId } : {})
       },
       body: body !== undefined ? JSON.stringify(body) : undefined
@@ -498,7 +520,21 @@ export const usersApi = {
     users: Array<{ id: string; active: boolean; online: boolean; lastSeenAt?: string | null }>;
   }>("/api/users/presence"),
   update: (id: string, body: { name?: string; email?: string; phone?: string; active?: boolean }) =>
-    patch<any>(`/api/users/${id}`, body)
+    patch<any>(`/api/users/${id}`, body),
+  // Which branches one person may open. Not a second account - the same login
+  // switches between them from the picker in the top bar.
+  branches: (id: string) => get<UserBranchMembership[]>(`/api/users/${id}/branches`),
+  setBranches: (id: string, body: { branchIds: string[]; defaultBranchId?: string | null }) =>
+    put<UserBranchMembership[]>(`/api/users/${id}/branches`, body)
+};
+
+export type UserBranchMembership = {
+  branchId: string;
+  name: string;
+  countryName: string;
+  currency: string;
+  /** Where this person lands when they sign in. Exactly one is true. */
+  isDefault: boolean;
 };
 
 // ── Products ──────────────────────────────────────────────
@@ -1875,6 +1911,11 @@ export const personalDeliveryAgentsApi = {
   },
   overview: () => get<PersonalDeliveryAgentOverview>("/api/personal-delivery-agents/overview"),
   create: (body: unknown) => post<{ row: PersonalDeliveryAgentRow }>("/api/personal-delivery-agents", body)
+};
+
+export const branchesApi = {
+  list: () => get<BranchWorkspace[]>("/api/branches"),
+  create: (body: Omit<BranchWorkspace, "id" | "active" | "createdAt">) => post<{ branch: BranchWorkspace }>("/api/branches", body)
 };
 
 export const ordersApi = {

@@ -3,7 +3,7 @@ import { fetchAllRowsOrThrow } from "../lib/query-limits.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { applyBranchScope, requireAuth, requireRole } from "../middleware/auth.js";
 import { isFrontlineRepRole } from "../lib/roles.js";
 
 const router = Router();
@@ -19,12 +19,12 @@ router.get("/", async (req, res) => {
   // the same one to every .range() call silently returns the first page over
   // and over - the paging equivalent of the cap it is meant to defeat.
   const buildCustomerQuery = () => {
-    let query = supabase
+    let query = applyBranchScope(supabase
       .from("orders")
       .select("phone, customer, city, state, amount, status, created_at, assigned_rep_id")
       .eq("org_id", req.user!.orgId)
       .order("created_at", { ascending: false })
-      .order("id", { ascending: false });
+      .order("id", { ascending: false }), req);
     if (isFrontlineRepRole(scopeRole)) query = query.eq("assigned_rep_id", scopeId);
     return query;
   };
