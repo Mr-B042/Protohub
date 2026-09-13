@@ -8455,6 +8455,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return window.localStorage.getItem("protohub.activeBranch") ?? "";
   });
   const activeBranch = branchOptions.find((branch) => branch.id === activeBranchId) ?? branchOptions[0] ?? null;
+  // The live feed subscribes once and never re-subscribes, so a value captured
+  // in that effect would still hold whichever branch was open at sign-in. This
+  // ref always reads the branch on screen right now.
+  const activeBranchIdRef = useRef(activeBranchId);
+  activeBranchIdRef.current = activeBranchId;
   useEffect(() => {
     let cancelled = false;
     branchesApi.list().then((branches) => {
@@ -28619,12 +28624,38 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           .catch(() => undefined);
       }, 300);
     };
+    // ⚠️ THE LIVE FEED IS A THIRD WAY ROUND THE BRANCH FILTER.
+    //
+    // These rows arrive straight from the database to the browser. They are not
+    // API calls, so branchScopedFetch never sees them - the same blind spot as
+    // the database functions, for the same reason. An order arriving while
+    // Accra was open was dropped onto that screen even though it belongs to
+    // Nigeria; switching branch and back reloaded through the API, which IS
+    // filtered, and it vanished. Nothing was lost, but it looked like it was.
+    //
+    // Only handlers that push the row STRAIGHT INTO STATE need this. The ones
+    // that call a queue*Reload() re-read through the API and are already
+    // filtered.
+    //
+    // A row with no branch on it is let through on purpose: DELETE payloads
+    // carry only the key columns, so demanding a branch there would leave
+    // deleted rows sitting on screen. Dropping a row that is not ours is the
+    // safe direction; failing to remove one is not.
+    const rowIsForThisBranch = (row: any) => {
+      const rowBranchId = row?.branchId ?? row?.branch_id ?? null;
+      if (!rowBranchId) return true;
+      const openBranchId = activeBranchIdRef.current;
+      if (!openBranchId) return true;
+      return rowBranchId === openBranchId;
+    };
+
     const channel = realtimeClient.channel(`protohub-live-${currentUser?.id ?? "session"}`);
 
     channel.on("postgres_changes", { event: "*", schema: "public", table: "orders" }, (payload) => {
       const row = payload.eventType === "DELETE" ? snakeToCamel<any>(payload.old) : snakeToCamel<any>(payload.new);
       const orderId = row?.id;
       if (!orderId) return;
+      if (!rowIsForThisBranch(row)) return;
       const updatedStamp = row?.updatedAt ?? row?.updated_at ?? payload.commit_timestamp ?? "";
       if (updatedStamp && updatedStamp > latestOrderUpdatedAt.current) latestOrderUpdatedAt.current = updatedStamp;
       const createdStamp = row?.createdAt ?? row?.created_at ?? "";
@@ -28653,6 +28684,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const row = payload.eventType === "DELETE" ? snakeToCamel<any>(payload.old) : snakeToCamel<any>(payload.new);
       const notificationId = row?.id;
       if (!notificationId) return;
+      if (!rowIsForThisBranch(row)) return;
 
       if (payload.eventType === "DELETE") {
         setSystemNotifications((prev) => prev.filter((notification) => notification.id !== notificationId));
@@ -28673,6 +28705,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const row = payload.eventType === "DELETE" ? snakeToCamel<any>(payload.old) : snakeToCamel<any>(payload.new);
       const cartId = row?.id;
       if (!cartId) return;
+      if (!rowIsForThisBranch(row)) return;
 
       if (payload.eventType === "DELETE") {
         setAbandonedCarts((prev) => prev.filter((cart) => cart.id !== cartId));
@@ -28728,7 +28761,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const nextUser = normalizeRealtimeUser(row);
       setUsers((prev) => {
         const index = prev.findIndex((user) => user.id === nextUser.id);
-        if (index === -1) return [...prev, nextUser];
+        // ⚠️ `users` HAS NO BRANCH COLUMN, SO THE GUARD ABOVE CANNOT JUDGE IT.
+        // Whether somebody belongs on this screen is decided by their branch
+        // memberships, which only the API knows - a live row cannot say. So
+        // changes to people already listed are applied, and somebody not
+        // listed is left for the next load rather than added to a branch they
+        // may not work in.
+        if (index === -1) return prev;
         const merged = prev.slice();
         merged[index] = {
           ...prev[index],
