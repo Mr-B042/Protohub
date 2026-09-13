@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { applyBranchScope, requireAuth, requireRole } from "../middleware/auth.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -36,13 +36,13 @@ const databaseFailure = (message: string) => {
 router.get("/", async (req, res) => {
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
   const orgId = req.user!.orgId;
-  const { data: lines, error } = await supabase
+  const { data: lines, error } = await applyBranchScope(supabase
     .from("delivered_stock_reconciliation_lines")
     .select("id, order_id, agent_id, agent_location_id, state_snapshot, agent_name_snapshot, customer_snapshot, product_id, product_name_snapshot, quantity, status, delivered_at, reconciled_at, reconciled_by_name, movement_id, issue_note")
     .eq("org_id", orgId)
     .in("status", ["pending", "exception", "reconciled"])
     .order("delivered_at", { ascending: false })
-    .limit(5000);
+    .limit(5000), req);
   if (error) { res.status(500).json({ error: error.message }); return; }
 
   const locationIds = Array.from(new Set((lines ?? []).map((row: any) => String(row.agent_location_id)).filter(Boolean)));

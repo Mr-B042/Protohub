@@ -162,9 +162,9 @@ import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, ordersExtraApi, productCostApi, stockApi as _stockApi,
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, targetPeriodsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
-  setApiSpyUserId,
+  branchesApi, setApiSpyUserId,
   setApiPreviewReadOnly,
-  PreviewReadOnlyError
+  PreviewReadOnlyError, type BranchWorkspace
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
 import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid,CartRecoverySummary, CartGridRow, CartLogPenaltiesView, CartLogRangePreset, RecoveryCalendarView, RecoveryFollowUpPairs, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, TargetPeriod, TargetProgressView, TargetSuggestion, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, CostChangeImpact, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView } from "./lib/api";
@@ -8449,22 +8449,33 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const moneyHidden = useSyncExternalStore(subscribeMoneyHidden, isMoneyHidden);
   const [collapsed, setCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const branchOptions = [
-    { id: "ng-main", country: "Nigeria", name: "Nigeria Operations", scope: "All Nigeria" },
-    { id: "ng-owerri", country: "Nigeria", name: "Owerri Branch", scope: "Imo State" },
-    { id: "gh-accra", country: "Ghana", name: "Accra Branch", scope: "Accra" },
-    { id: "ke-nairobi", country: "Kenya", name: "Nairobi Branch", scope: "Nairobi" }
-  ] as const;
+  const [branchOptions, setBranchOptions] = useState<BranchWorkspace[]>([]);
   const [activeBranchId, setActiveBranchId] = useState(() => {
     if (typeof window === "undefined") return "ng-main";
-    return window.localStorage.getItem("protohub.activeBranch") ?? "ng-main";
+    return window.localStorage.getItem("protohub.activeBranch") ?? "";
   });
-  const activeBranch = branchOptions.find((branch) => branch.id === activeBranchId) ?? branchOptions[0];
+  const activeBranch = branchOptions.find((branch) => branch.id === activeBranchId) ?? branchOptions[0] ?? null;
+  useEffect(() => {
+    let cancelled = false;
+    branchesApi.list().then((branches) => {
+      if (cancelled) return;
+      setBranchOptions(branches);
+      if (!branches.length) return;
+      const selected = branches.some((branch) => branch.id === activeBranchId) ? activeBranchId : branches[0].id;
+      if (selected !== activeBranchId) {
+        setActiveBranchId(selected);
+        try { window.localStorage.setItem("protohub.activeBranch", selected); } catch { /* private mode */ }
+        window.location.reload();
+      }
+    }).catch(() => { /* Normal page-level API errors remain visible. */ });
+    return () => { cancelled = true; };
+  }, []);
   const changeBranch = (branchId: string) => {
     setActiveBranchId(branchId);
     try { window.localStorage.setItem("protohub.activeBranch", branchId); } catch { /* private mode */ }
     const next = branchOptions.find((branch) => branch.id === branchId);
-    if (next) showToast(`${next.country} · ${next.name} selected. Branch data scope is being prepared.`);
+    if (next) showToast(`${next.countryName} · ${next.name} selected.`);
+    window.location.reload();
   };
   const [hashRoute, setHashRoute] = useState(() => (typeof window === "undefined" ? "" : window.location.hash));
   // Mirrors activePage for the realtime effect. Reading the state directly there
@@ -74391,16 +74402,16 @@ ${waybillLineItems(w).length > 1
                 <select
                   aria-label="Operating branch"
                   className="!min-h-0 max-w-[190px] border-0 bg-transparent p-0 text-xs font-bold text-blue-900 outline-none"
-                  value={activeBranch.id}
+                  value={activeBranch?.id ?? ""}
                   onChange={(event) => changeBranch(event.target.value)}
                 >
                   {branchOptions.map((branch) => (
-                    <option key={branch.id} value={branch.id}>{branch.country} · {branch.name}</option>
+                    <option key={branch.id} value={branch.id}>{branch.countryName} · {branch.name}</option>
                   ))}
                 </select>
               </label>
             )}
-            <span className="hidden text-[10px] font-semibold text-gray-400 lg:inline" title="Current branch scope">{activeBranch.scope}</span>
+            <span className="hidden text-[10px] font-semibold text-gray-400 lg:inline" title="Current branch scope">{activeBranch ? (activeBranch.stateOrRegion || activeBranch.city || activeBranch.countryName) : "Loading branch…"}</span>
             {/* Hide money toggle - masks every ₦/$/£ amount app-wide, e.g. when
                 someone else can see your screen. Remembered per device. */}
             <button

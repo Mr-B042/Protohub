@@ -7,18 +7,18 @@ import { loadAgentLocations, syncAgentLocationsFromCoverage } from "../lib/agent
 import { supabase } from "../lib/supabase.js";
 import { recordStockLossExpense } from "../lib/stock-loss-expense.js";
 import { applyInventoryMovements, InventoryMovementError } from "../lib/inventory-movements.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { applyBranchScope, requireAuth, requireRole } from "../middleware/auth.js";
 
 const router = Router();
 router.use(requireAuth);
 
 // ── GET /api/agents ───────────────────────────────────────
 router.get("/", async (req, res) => {
-  const { data, error } = await supabase
+  const { data, error } = await applyBranchScope(supabase
     .from("agents")
     .select(`*, stock: agent_stock(product_id, quantity, defective, missing), coverage: agent_coverage(*), locations: agent_locations(*, stock: agent_location_stock(product_id, quantity, defective, missing))`)
     .eq("org_id", req.user!.orgId)
-    .order("name");
+    .order("name"), req);
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json(data);
 });
@@ -61,6 +61,7 @@ router.post("/",
       .from("agents")
       .insert({
         org_id: req.user!.orgId,
+        branch_id: req.user!.branchId ?? null,
         name: parsed.data.name,
         zone: primaryBaseState,
         primary_base_state: primaryBaseState,

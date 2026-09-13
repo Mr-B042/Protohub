@@ -3,6 +3,7 @@ import { supabase } from "../lib/supabase.js";
 import { sanitizeMarketingAttributionTags } from "../lib/marketing-attribution.js";
 import { TtlCache } from "../lib/ttl-cache.js";
 import { publicUserRole } from "../lib/user-role.js";
+import { runWithBranchScope } from "../lib/branch-scope.js";
 
 type UserProfile = {
   id: string; org_id: string; role: import("../types/index.js").UserRole;
@@ -81,13 +82,24 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   };
 
   const branchHeader = req.headers["x-branch-id"];
-  if (typeof branchHeader === "string" && branchHeader.trim()) {
-    const branchQuery = supabase.from("branches").select("id").eq("id", branchHeader.trim()).eq("org_id", profile.org_id).eq("active", true);
+  const requestedBranchId = typeof branchHeader === "string" && /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(branchHeader.trim())
+    ? branchHeader.trim() : null;
+  if (requestedBranchId) {
+    const branchQuery = supabase.from("branches").select("id").eq("id", requestedBranchId).eq("org_id", profile.org_id).eq("active", true);
     const { data: branch } = profile.role === "Owner"
       ? await branchQuery.maybeSingle()
-      : await supabase.from("branch_memberships").select("branch_id, branches!inner(id)").eq("branch_id", branchHeader.trim()).eq("user_id", profile.id).eq("branches.org_id", profile.org_id).maybeSingle();
+      : await supabase.from("branch_memberships").select("branch_id, branches!inner(id)").eq("branch_id", requestedBranchId).eq("user_id", profile.id).eq("branches.org_id", profile.org_id).maybeSingle();
     if (!branch) { res.status(403).json({ error: "You are not assigned to that branch." }); return; }
-    req.user.branchId = branchHeader.trim();
+    req.user.branchId = requestedBranchId;
+  } else {
+    const { data: defaultBranch } = profile.role === "Owner"
+      ? await supabase.from("branches").select("id").eq("org_id", profile.org_id).eq("name", "Nigeria Operations").eq("active", true).maybeSingle()
+      : await supabase.from("branch_memberships").select("branch_id, branches!inner(id)").eq("user_id", profile.id).eq("is_default", true).eq("branches.active", true).limit(1).maybeSingle();
+    const fallbackId = profile.role === "Owner"
+      ? (defaultBranch as { id?: string } | null)?.id
+      : (defaultBranch as { branch_id?: string } | null)?.branch_id;
+    if (!fallbackId) { res.status(403).json({ error: "No active branch is assigned to your account." }); return; }
+    req.user.branchId = fallbackId as string;
   }
 
   // Apply spy header inline — must happen after req.user is set.
@@ -108,7 +120,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     }
   }
 
-  next();
+  runWithBranchScope(req.user.branchId!, next);
 }
 
 /**
@@ -127,6 +139,11 @@ export function scopeOf(req: Request): { role: string; id: string } {
     role: req.user!.effectiveUserRole ?? req.user!.role,
     id: req.user!.effectiveUserId ?? req.user!.id
   };
+}
+
+/** Apply the selected branch to tables that carry branch_id. */
+export function applyBranchScope<T>(query: T, req: Request): T {
+  return req.user?.branchId ? (query as any).eq("branch_id", req.user.branchId) : query;
 }
 
 // Role guard — use after requireAuth

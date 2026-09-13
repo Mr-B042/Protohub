@@ -12,10 +12,27 @@ const branchSchema = z.object({
   name: z.string().trim().min(2).max(120),
   stateOrRegion: z.string().trim().max(120).optional().nullable(),
   city: z.string().trim().max(120).optional().nullable(),
-  currency: z.enum(["NGN", "USD", "GBP"]).default("NGN")
+  currency: z.string().trim().length(3).transform((value) => value.toUpperCase()).default("NGN")
 });
 
 router.get("/", async (req, res) => {
+  if (req.user!.role !== "Owner") {
+    const { data, error } = await supabase
+      .from("branch_memberships")
+      .select("is_default, branches!inner(id, country_code, country_name, name, state_or_region, city, currency, active, created_at)")
+      .eq("user_id", req.user!.id)
+      .eq("branches.org_id", req.user!.orgId)
+      .eq("branches.active", true)
+      .order("is_default", { ascending: false });
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json((data ?? []).map((membership: any) => {
+      const row = membership.branches;
+      return { id: row.id, countryCode: row.country_code, countryName: row.country_name,
+        name: row.name, stateOrRegion: row.state_or_region, city: row.city,
+        currency: row.currency, active: row.active, createdAt: row.created_at };
+    }));
+    return;
+  }
   const { data, error } = await supabase
     .from("branches")
     .select("id, country_code, country_name, name, state_or_region, city, currency, active, created_at")
