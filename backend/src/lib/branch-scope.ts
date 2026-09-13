@@ -53,7 +53,53 @@ const BRANCH_TABLES = new Set([
   "account_reconciliations", "account_reconciliation_matches",
   "account_reconciliation_adjustments",
   "period_closes", "period_close_checks",
-  "batch_economics", "batch_cost_tiers", "batch_status_tier_map"
+  "batch_economics", "batch_cost_tiers", "batch_status_tier_map",
+
+  // People, targets and bonuses. A Ghana rep must not be measured against a
+  // Nigerian target, and a bonus rule written in naira must not pay in cedi.
+  "sales_teams", "sales_leads", "sales_bonus_programs", "sales_bonus_rules",
+  "sales_closer_bonus_settings", "sales_closer_bonus_monthly_records",
+  "manager_bonus_settings", "manager_product_challenges",
+  "manager_product_challenge_allocations", "manager_activity_logs",
+  "head_of_sales_settings", "head_of_sales_weekly_reports",
+  "head_of_sales_bonus_weekly_records",
+  "rep_weekly_targets", "rep_coaching_plans", "rep_coaching_action_items",
+  "target_periods", "daily_target_snapshots", "incentive_rules",
+  "upsell_bonus_settings", "sales_expansion_settings",
+  "sales_expansion_compliance_waivers", "recovery_rep_kpi_settings",
+  "recovery_templates", "sales_initiatives", "sales_initiative_learnings",
+
+  // Retention and marketing.
+  "customer_retention_touchpoints", "customer_retention_action_events",
+  "customer_retention_tasks", "customer_retention_referrals",
+  "customer_retention_bonus_settings",
+  "marketing_spend_records", "marketing_link_variants",
+
+  // Personal delivery agents: people holding a branch's stock and its cash.
+  // ⚠️ A DIFFERENT MODULE FROM `agents`. Their paperwork, fees and
+  // remittances follow the rider, and the rider belongs to the branch that
+  // signed them.
+  "personal_delivery_agents", "pda_agent_stock", "pda_agreement_acceptances",
+  "pda_application_links", "pda_blocked_applicants", "pda_cod_discrepancies",
+  "pda_documents", "pda_earning_payouts", "pda_fee_negotiations", "pda_fee_rules",
+  "pda_guarantors", "pda_incidents", "pda_inventory_baselines", "pda_kyc_items",
+  "pda_notes", "pda_order_assignments", "pda_remittance_allocations",
+  "pda_remittances", "pda_reports", "pda_settings", "pda_stock_discrepancies",
+  "pda_stock_ledger", "pda_stock_transfers",
+
+  // Messaging, and the settings that drive it. Ghana sends from its own
+  // number and runs its own order form, so its message history and alerts
+  // stay in Ghana too.
+  //
+  // ⚠️ THE PUBLIC ORDER FORM STILL WORKS. Public and background callers have
+  // no request scope, so branchScopedFetch leaves them alone - a customer
+  // filling in the form is never inside a branch session.
+  "system_notifications", "short_links",
+  "sms_messages", "sms_inbound_messages", "sms_opt_outs", "sms_settings",
+  "email_messages", "email_settings",
+  "whatsapp_messages", "whatsapp_inbox_messages", "whatsapp_opt_outs",
+  "whatsapp_settings", "whatsapp_user_accounts", "whatsapp_user_destinations",
+  "embed_settings", "meta_capi_configs"
 ]);
 
 /**
