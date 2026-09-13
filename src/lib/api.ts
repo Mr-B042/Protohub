@@ -260,7 +260,12 @@ async function request<T>(
   }
   let res: Response;
   let branchId: string | null = null;
-  try { branchId = localStorage.getItem("protohub.activeBranch"); } catch { /* private mode */ }
+  try {
+    const storedBranchId = localStorage.getItem("protohub.activeBranch");
+    // The initial selector uses temporary labels until /api/branches has
+    // hydrated real database UUIDs. Never send a placeholder as scope.
+    branchId = storedBranchId && /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(storedBranchId) ? storedBranchId : null;
+  } catch { /* private mode */ }
   try {
     res = await fetchWithApiFailover(path, {
       method,
