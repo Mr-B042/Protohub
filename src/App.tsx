@@ -10599,6 +10599,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [userPassword, setUserPassword] = useState("");
   const [newUserRole, setNewUserRole] = useState<EditableUserRole>("Sales Rep");
   const [userMarketingTagDraft, setUserMarketingTagDraft] = useState("");
+  // Which branches the person being edited may open, and where they land at
+  // sign-in. Kept apart from the profile draft because it saves through its own
+  // endpoint - `users` has no branch column and never will.
+  const [userBranchIds, setUserBranchIds] = useState<string[]>([]);
+  const [userLandingBranchId, setUserLandingBranchId] = useState("");
+  const [userBranchesAtOpen, setUserBranchesAtOpen] = useState<{ ids: string[]; landing: string }>({ ids: [], landing: "" });
+  const [userBranchesLoading, setUserBranchesLoading] = useState(false);
+  const [userBranchesFailed, setUserBranchesFailed] = useState(false);
+  // ⚠️ AN EMPTY BASELINE MEANS "NOT LOADED", NOT "WORKS NOWHERE". Nobody can
+  // have zero branches, so a baseline of none can only mean the fetch failed -
+  // and treating that as a change would save an empty list and lock them out.
+  const userBranchesDirty = userBranchesAtOpen.ids.length > 0 && (
+    userBranchIds.length !== userBranchesAtOpen.ids.length
+    || userBranchIds.some((id) => !userBranchesAtOpen.ids.includes(id))
+    || userLandingBranchId !== userBranchesAtOpen.landing
+  );
   const [newUserActive, setNewUserActive] = useState(true);
   const [selectedUserId, setSelectedUserId] = useState("owner");
   const [users, setUsers] = useState<ManagedUser[]>([]);
@@ -14426,6 +14442,40 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // a Marketer's tags showing the previous user's.
     setUserMarketingTagDraft((user.marketingAttributionTags ?? []).join(", "));
   }, [modal, selectedUserId, users]);
+
+  // The branches a person works in are not part of the user record, so they are
+  // fetched when the editor opens rather than read from the list already loaded.
+  useEffect(() => {
+    if (modal !== "editUser" || !selectedUserId || isTemporaryUserId(selectedUserId)) {
+      setUserBranchIds([]);
+      setUserLandingBranchId("");
+      setUserBranchesAtOpen({ ids: [], landing: "" });
+      setUserBranchesFailed(false);
+      return;
+    }
+    let cancelled = false;
+    setUserBranchesLoading(true);
+    setUserBranchesFailed(false);
+    usersApi.branches(selectedUserId).then((rows) => {
+      if (cancelled) return;
+      const ids = rows.map((row) => row.branchId);
+      const landing = rows.find((row) => row.isDefault)?.branchId ?? ids[0] ?? "";
+      setUserBranchIds(ids);
+      setUserLandingBranchId(landing);
+      setUserBranchesAtOpen({ ids, landing });
+    }).catch(() => {
+      if (cancelled) return;
+      // ⚠️ CLEARED, NOT LEFT ALONE. Holding the previous person's branches here
+      // would show one person's access under another's name. Emptied to match
+      // the baseline instead, so nothing is ticked, the section says it could
+      // not load, and saving sends no branch change at all.
+      setUserBranchIds([]);
+      setUserLandingBranchId("");
+      setUserBranchesAtOpen({ ids: [], landing: "" });
+      setUserBranchesFailed(true);
+    }).finally(() => { if (!cancelled) setUserBranchesLoading(false); });
+    return () => { cancelled = true; };
+  }, [modal, selectedUserId]);
   useEffect(() => {
     if (!modal || !selectedAgentId || !["assignAgentStock", "reconcileAgentStock", "editAgent"].includes(modal)) {
       return;
@@ -43684,6 +43734,10 @@ ${waybillLineItems(w).length > 1
     const prevUsers = users;
     const _uuId = selectedUser.id;
     const _uuPw = userPassword.trim();
+    // Read before closeModal, which empties the branch draft.
+    const _uuBranchesChanged = userBranchesDirty;
+    const _uuBranchIds = [...userBranchIds];
+    const _uuLanding = userLandingBranchId || null;
     setUsers((value) =>
       value.map((user) =>
         user.id === selectedUser.id
@@ -43704,6 +43758,13 @@ ${waybillLineItems(w).length > 1
     if (_uuPw) {
       authApi.setPassword(_uuId, _uuPw).catch((err: any) => {
         showToast(`Profile saved, but password change failed: ${err.message}`);
+      });
+    }
+    // Branches save through their own endpoint - `users` has no branch column,
+    // because one person is one row however many branches they work in.
+    if (_uuBranchesChanged) {
+      usersApi.setBranches(_uuId, { branchIds: _uuBranchIds, defaultBranchId: _uuLanding }).catch((err: any) => {
+        showToast(`Profile saved, but their branches did not change: ${err.message}`);
       });
     }
   };
@@ -108318,7 +108379,8 @@ ${waybillLineItems(w).length > 1
                 || newUserRole !== selectedUser.role
                 || newUserActive !== selectedUser.active
                 || marketingTags.join("|") !== selectedMarketingTags.join("|")
-                || pwdLen > 0;
+                || pwdLen > 0
+                || userBranchesDirty;
               const canSave = !!userFullName.trim()
                 && !!userEmail.trim()
                 && emailFormatOk
@@ -108433,6 +108495,80 @@ ${waybillLineItems(w).length > 1
                     </select>
                     <p className="text-[11px] text-gray-500">{roleHelper[newUserRole] ?? "Default permissions apply for this role."}</p>
                     {isOwner && <p className="text-[11px] text-amber-700">The Owner role can't be changed from here.</p>}
+                  </section>
+
+                  {/* Branches ───────────────────────────────────────────────
+                      One person, several branches, one sign-in. Ticking a
+                      branch here does not make a second account - it lets this
+                      same login open that branch from the picker in the top
+                      bar. */}
+                  <section className="space-y-3">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500">Branches they work in</h4>
+                    {userBranchesLoading ? (
+                      <p className="m-0 text-xs text-gray-500">Loading their branches...</p>
+                    ) : userBranchesFailed ? (
+                      <p className="m-0 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+                        Could not load their branches. Close this and open it again to try. Saving now will leave their branches as they are.
+                      </p>
+                    ) : branchOptions.length === 0 ? (
+                      <p className="m-0 text-xs text-gray-500">There is only one branch so far.</p>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          {branchOptions.map((branch) => {
+                            const ticked = userBranchIds.includes(branch.id);
+                            const lastOne = ticked && userBranchIds.length === 1;
+                            return (
+                              <label
+                                key={branch.id}
+                                className={`flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 transition-colors ${ticked ? "border-[#1F8FE0] bg-blue-50/60" : "border-gray-200 hover:bg-gray-50"} ${lastOne ? "cursor-not-allowed" : ""}`}
+                                title={lastOne ? "This is the only branch they work in." : undefined}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={ticked}
+                                  disabled={lastOne}
+                                  className="mt-0.5 h-4 w-4 shrink-0 accent-[#1F8FE0] disabled:opacity-50"
+                                  onChange={(e) => {
+                                    const next = e.target.checked
+                                      ? [...userBranchIds, branch.id]
+                                      : userBranchIds.filter((id) => id !== branch.id);
+                                    setUserBranchIds(next);
+                                    // Untick the branch they land in and the
+                                    // sign-in has nowhere to go, so move it.
+                                    if (!next.includes(userLandingBranchId)) setUserLandingBranchId(next[0] ?? "");
+                                  }}
+                                />
+                                <span className="min-w-0 flex-1">
+                                  <span className="flex flex-wrap items-center gap-1.5">
+                                    <span className="text-sm font-semibold text-gray-900">{branch.name}</span>
+                                    {userLandingBranchId === branch.id && ticked && (
+                                      <span className="rounded-full bg-[#1F8FE0] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">Opens first</span>
+                                    )}
+                                  </span>
+                                  <span className="mt-0.5 block text-[11px] text-gray-500">{branch.countryName} · {branch.currency}</span>
+                                  {ticked && userLandingBranchId !== branch.id && (
+                                    <button
+                                      type="button"
+                                      className="!min-h-0 mt-1.5 rounded border border-gray-200 bg-white px-2 py-1 text-[10px] font-bold text-gray-600 transition-colors hover:bg-gray-50"
+                                      onClick={(e) => { e.preventDefault(); setUserLandingBranchId(branch.id); }}
+                                    >Open this one first</button>
+                                  )}
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                        <p className="m-0 text-[11px] text-gray-500">
+                          Tick every branch this person works in. They keep one email and one password, and switch branches from the menu at the top of the screen. The branch marked <strong className="font-semibold text-gray-700">Opens first</strong> is the one they see when they sign in.
+                        </p>
+                        {userBranchIds.length === 1 && (
+                          <p className="m-0 text-[11px] text-gray-400">
+                            Everybody needs at least one branch. To stop someone working, switch their account off below.
+                          </p>
+                        )}
+                      </>
+                    )}
                   </section>
 
                   {newUserRole === "Marketer" && (
