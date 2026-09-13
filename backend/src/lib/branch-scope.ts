@@ -99,7 +99,20 @@ const BRANCH_TABLES = new Set([
   "email_messages", "email_settings",
   "whatsapp_messages", "whatsapp_inbox_messages", "whatsapp_opt_outs",
   "whatsapp_settings", "whatsapp_user_accounts", "whatsapp_user_destinations",
-  "embed_settings", "meta_capi_configs"
+  "embed_settings", "meta_capi_configs",
+
+  // The catalogue. A full split, chosen deliberately: one shared price list
+  // cannot hold naira, cedi and shilling at once.
+  //
+  // ⚠️ THIS IS WHY ACCRA'S PRODUCTS PAGE IS EMPTY. All 25 products were
+  // created in Nigeria and stay there. A new branch has no catalogue until
+  // somebody adds products to it - that is the split working, not a fault.
+  //
+  // The public order form is not affected: it fetches a product by the id in
+  // the embed link rather than listing a catalogue, and public callers carry
+  // no request scope, so this filter never touches them.
+  "products", "product_packages", "product_pricings",
+  "product_cost_changes", "product_dedicated_handlers", "product_delivery_goals"
 ]);
 
 /**
