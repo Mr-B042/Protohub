@@ -8470,7 +8470,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (selected !== activeBranchId) {
         setActiveBranchId(selected);
         try { window.localStorage.setItem("protohub.activeBranch", selected); } catch { /* private mode */ }
-        window.location.reload();
+        // Reload only when a branch was already stored and we are LEAVING it,
+        // because the data on screen was fetched under the old one. With
+        // nothing stored, the requests carried no branch at all and the server
+        // answered with this very branch - the screen is already correct, so a
+        // reload would just make every first visit flicker.
+        if (activeBranchId) window.location.reload();
       }
     }).catch(() => { /* Normal page-level API errors remain visible. */ });
     return () => { cancelled = true; };

@@ -33,6 +33,27 @@ const STALE_IMPORT_PATTERNS = [
 ];
 const CHUNK_RECOVERY_SESSION_KEY = "protohub.chunk-recovery-once";
 
+// ⚠️ ONE-TIME CLEAR OF A BRANCH THIS DEVICE SHOULD NEVER HAVE SAVED.
+//
+// Before the fix, a device with no saved branch took the first one in the
+// list. That list is sorted by country, so Ghana came before Nigeria and a
+// new phone opened Accra - which is empty - then SAVED that choice. Fixing
+// the fallback does not help those devices: they now have a stored branch,
+// so the fallback never runs and they keep opening Accra.
+//
+// So the bad value has to be cleared once. After this, the device resolves
+// again and lands on the branch the server actually picks for the person.
+// Anyone who had deliberately chosen a non-default branch is returned to
+// their own default once, which is why this runs a single time and never
+// again.
+const BRANCH_RESET_KEY = "protohub.activeBranch.reset-country-order";
+try {
+  if (!window.localStorage.getItem(BRANCH_RESET_KEY)) {
+    window.localStorage.removeItem("protohub.activeBranch");
+    window.localStorage.setItem(BRANCH_RESET_KEY, "1");
+  }
+} catch { /* private mode - nothing was stored to clear */ }
+
 function extractErrorMessage(error: unknown): string {
   if (typeof error === "string") return error;
   if (error && typeof error === "object") {
