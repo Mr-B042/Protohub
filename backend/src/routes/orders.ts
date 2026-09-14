@@ -41,6 +41,7 @@ import { availableAfterDeliveredReservations } from "../lib/delivered-stock-rese
 import {
   checkAgentStock, normalizeAdditionalLines, orderMoneyBreakdown, stockShortfallMessage
 } from "../lib/order-additional-lines.js";
+import { refreshPendingDeliveredLines } from "../lib/delivered-stock-refresh.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -2904,24 +2905,8 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Reco
     }, "Assigned");
   }
 
-  // ── Items added AFTER delivery still have to come off the shelf ───────────
-  //
-  // ⚠️ THE TRIGGER ONLY FIRES ON THE WAY INTO "DELIVERED".
-  // capture_delivered_stock_pending runs when the status CHANGES to Delivered
-  // and builds the officer's list from the snapshot taken at that instant. Add
-  // a free gift or an add-on afterwards and nothing re-runs, so the item never
-  // reaches the reconciliation screen and is never deducted - it physically
-  // leaves the shelf while the system still counts it as in stock.
-  //
-  // Order 4238 is the case that surfaced it: delivered on the 12th, two gifts
-  // added on the 14th, neither on the officer's screen.
-  //
-  // ⚠️ ONLY WHILE THE ORDER IS STILL PENDING, AND ONLY EVER ADDING.
-  // A reconciled order is a record of what was actually counted off the shelf
-  // and must not move. Individual lines can also already be reconciled while
-  // the order as a whole is pending, so rows are INSERTED ONLY IF ABSENT -
-  // rewriting them would reset a finished count back to pending and drop the
-  // movement that recorded it.
+  // Items added after delivery still have to come off the shelf. Every path
+  // that changes what an order contains calls this - see the helper for why.
   const INVENTORY_SHAPING_FIELDS = [
     "cross_sell_lines", "free_gift_lines", "additional_lines",
     "quantity", "product_id", "package_components_snapshot"
@@ -2930,63 +2915,8 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Reco
     hasOwn(updates, field)
     && JSON.stringify((current as Record<string, unknown>)[field] ?? null)
        !== JSON.stringify((data as Record<string, unknown>)[field] ?? null));
-
-  if (inventoryShapeChanged
-      && (data as any).status === "Delivered"
-      && (data as any).stock_reconciliation_status === "pending") {
-    try {
-      const refreshedLines = orderInventoryLinesFromRow(data as any);
-      if (refreshedLines.length > 0) {
-        await supabase.from("orders").update({
-          stock_reconciliation_lines_snapshot: refreshedLines.map((line) => ({
-            productId: line.productId,
-            productName: line.productName,
-            quantity: line.quantity
-          }))
-        }).eq("id", req.params.id).eq("org_id", req.user!.orgId);
-
-        const { data: alreadyListed } = await supabase
-          .from("delivered_stock_reconciliation_lines")
-          .select("product_id")
-          .eq("org_id", req.user!.orgId)
-          .eq("order_id", req.params.id);
-        const listedProductIds = new Set((alreadyListed ?? []).map((row: any) => row.product_id));
-        const newRows = refreshedLines
-          .filter((line) => !listedProductIds.has(line.productId))
-          .map((line) => ({
-            org_id: req.user!.orgId,
-            order_id: req.params.id,
-            agent_id: (data as any).agent_id,
-            agent_location_id: (data as any).agent_location_id,
-            state_snapshot: (data as any).agent_location_state_snapshot ?? (data as any).state ?? "",
-            agent_name_snapshot: (data as any).agent_name_snapshot ?? "",
-            customer_snapshot: (data as any).customer ?? "",
-            product_id: line.productId,
-            product_name_snapshot: line.productName,
-            quantity: line.quantity,
-            status: "pending",
-            delivered_at: (data as any).updated_at ?? new Date().toISOString()
-          }));
-
-        // Short stock is NOT a reason to refuse the edit. The officer's screen
-        // already has an exception route for a line it cannot cover, and that
-        // is a better place to settle it than blocking a rep from recording
-        // what was actually sent.
-        if (newRows.length > 0 && (data as any).agent_id && (data as any).agent_location_id) {
-          const { error: lineError } = await supabase
-            .from("delivered_stock_reconciliation_lines").insert(newRows);
-          if (lineError) {
-            logger.error("delivered stock: could not add lines to a pending order", {
-              orderId: req.params.id, error: lineError.message
-            });
-          }
-        }
-      }
-    } catch (err) {
-      logger.error("delivered stock: refresh after an item change failed", {
-        orderId: req.params.id, error: (err as Error).message
-      });
-    }
+  if (inventoryShapeChanged) {
+    await refreshPendingDeliveredLines(req.user!.orgId, String(req.params.id));
   }
 
   // Keep a human-readable item audit alongside the raw per-field history.
@@ -3671,6 +3601,10 @@ router.put("/:id/additional-lines",
       const { error } = await supabase.from("orders").update(patch)
         .eq("id", req.params.id).eq("org_id", orgId);
       if (error) { res.status(500).json({ error: error.message }); return; }
+
+      // Extra items are a second way to change what an order contains, so they
+      // need the officer's screen updated too.
+      await refreshPendingDeliveredLines(orgId, String(req.params.id));
 
       const breakdown = orderMoneyBreakdown({
         amount: patch.amount ?? order.amount,
