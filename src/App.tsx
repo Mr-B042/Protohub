@@ -5558,6 +5558,28 @@ const orderHasVerifiedUpsell = (order: TrackedOrder) =>
 const upsellReversedByEdit = (order: TrackedOrder, nextQuantity: number) =>
   orderHasVerifiedUpsell(order) && nextQuantity <= (order.upsellFromQty ?? 0);
 
+// The other direction, and the one that was missing. Raising the quantity on
+// an order is EITHER an upsell the rep talked the customer into OR a plain
+// correction of a wrong number - and only a person knows which.
+//
+// Order 4200 is why this exists. The rep raised a shelf from 1 to 2 and added
+// a cross-sell. The cross-sell was recorded through its own tool so it counted
+// everywhere; the upsell was only a quantity edit, so the two flags commission
+// reads stayed empty and the N4,600 upgrade paid nothing. The customer edit
+// screen could CANCEL an upsell when the quantity dropped but had no way to
+// RECORD one when it rose.
+//
+// ⚠️ NOT AUTOMATIC, DELIBERATELY. Paying every quantity increase would pay for
+// typo fixes too, and this is real money leaving the business.
+const upsellRaisedByEdit = (order: TrackedOrder, nextQuantity: number, nextProductId?: string) =>
+  (nextProductId === undefined || nextProductId === order.productId)
+  && nextQuantity > (order.quantity ?? 1)
+  && !(orderHasVerifiedUpsell(order) && order.upsellToQty === nextQuantity);
+
+/** Upgrades are cumulative, so an upsell always counts from where the customer started. */
+const upsellStartQtyFor = (order: TrackedOrder) =>
+  orderHasVerifiedUpsell(order) ? (order.upsellFromQty as number) : (order.quantity ?? 1);
+
 // Client-side mirror of backend/src/lib/upsell-bonus.ts's evaluateUpsellBonus
 // - same pure math, kept in lockstep on purpose (see that file for the tests
 // covering every branch/tier boundary). Needed here because contribution
@@ -12975,6 +12997,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Ticked by the rep to confirm they know this edit cancels a logged upsell.
   // See upsellReversedByEdit - the commission would otherwise keep paying.
   const [upsellReversalAck, setUpsellReversalAck] = useState(false);
+  // "" until the rep says which it is. Both edit screens refuse to save a
+  // quantity increase while this is blank, so an upsell can no longer be lost
+  // by being typed in as a plain number.
+  const [upsellIntent, setUpsellIntent] = useState<"" | "upsell" | "correction">("");
   const [createOrderAmount, setCreateOrderAmount] = useState("");
   const [createOrderSource, setCreateOrderSource] = useState<Exclude<OrderSource, "All Sources">>("Website");
   const [createOrderRepId, setCreateOrderRepId] = useState("auto");
@@ -26969,6 +26995,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (repOrderAction === "edit-customer") {
       setOrderActionReturnTarget("list");
       setUpsellReversalAck(false);
+    setUpsellIntent("");
     setModal("editOrderCustomer");
       return;
     }
@@ -27130,12 +27157,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (parts[4] === "edit") {
         setOrderActionReturnTarget("list");
         setUpsellReversalAck(false);
+    setUpsellIntent("");
     setModal("editOrderItems");
         return;
       }
       if (parts[4] === "edit-customer") {
         setOrderActionReturnTarget("list");
         setUpsellReversalAck(false);
+    setUpsellIntent("");
     setModal("editOrderCustomer");
         return;
       }
@@ -39301,6 +39330,7 @@ ${waybillLineItems(w).length > 1
     setOrderScheduleDate(plannedParts.date || scheduledKeyForOrder(selectedOrder) || todayKey());
     setOrderScheduleTime(plannedParts.time || nextTimeValue());
     setUpsellReversalAck(false);
+    setUpsellIntent("");
     setModal("editOrderItems");
   };
 
@@ -39370,9 +39400,17 @@ ${waybillLineItems(w).length > 1
     // the rep hand-filling the upsell panel. A product switch or same/lower
     // quantity is not an upsell.
     const prevQty = quantityForOrder(selectedOrder);
-    const alreadyLoggedUpsell = typeof selectedOrder.upsellToQty === "number" && selectedOrder.upsellToQty > (selectedOrder.upsellFromQty ?? 0);
-    const autoUpsell = product.id === selectedOrder.productId && quantity > prevQty && !alreadyLoggedUpsell
-      ? { upsellFromQty: prevQty, upsellToQty: quantity }
+    // ⚠️ THE REP SAYS WHETHER THIS IS AN UPSELL. IT IS NOT ASSUMED.
+    // This used to record one automatically on any increase. Bright chose an
+    // explicit answer instead: a quantity edit is sometimes a corrected typo,
+    // and paying commission on those sends real money out wrongly.
+    const raisesQuantity = upsellRaisedByEdit(selectedOrder, quantity, product.id);
+    if (raisesQuantity && upsellIntent === "") {
+      showToast("Say whether this is an upsell or a correction before saving.");
+      return;
+    }
+    const autoUpsell = raisesQuantity && upsellIntent === "upsell"
+      ? { upsellFromQty: upsellStartQtyFor(selectedOrder), upsellToQty: quantity }
       : null;
     // The mirror of autoUpsell. This form has always RECORDED an upsell when the
     // quantity went up; it never removed one when the quantity came back down,
@@ -40397,6 +40435,7 @@ ${waybillLineItems(w).length > 1
     setCreateOrderQuantity(String(order.quantity ?? 1));
     setCreateOrderAmount(String(order.amount ?? ""));
     setUpsellReversalAck(false);
+    setUpsellIntent("");
     setModal("editOrderCustomer");
     syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/edit-customer`));
   };
@@ -40405,6 +40444,57 @@ ${waybillLineItems(w).length > 1
   // logged upsell. It has to be acknowledged before the save goes through -
   // this takes money off a rep, so it must not be something you can do without
   // reading it. The Owner already gets a notification on any qty/amount edit.
+  // Shown in BOTH edit modals the moment the quantity goes UP. The rep has to
+  // say which it is before the save goes through, because the system cannot
+  // tell an upgrade from a corrected typo and guessing either way is wrong:
+  // guess "upsell" and typo fixes pay commission, guess "correction" and real
+  // upsells go unpaid - which is exactly what happened on order 4200.
+  const renderUpsellRaiseQuestion = (order: TrackedOrder, nextQuantity: number, nextProductId?: string) => {
+    if (!upsellRaisedByEdit(order, nextQuantity, nextProductId)) return null;
+    const fromQty = upsellStartQtyFor(order);
+    return (
+      <div className="flex items-start gap-2.5 rounded-lg border border-blue-300 bg-blue-50 px-3 py-3">
+        <TrendingUp className="mt-0.5 h-4 w-4 shrink-0 text-[#1F8FE0]" />
+        <div className="min-w-0 flex-1">
+          <p className="m-0 text-[13px] font-bold text-blue-900">
+            You are raising this from {order.quantity ?? 1} to {nextQuantity} pc{nextQuantity === 1 ? "" : "s"}. Why?
+          </p>
+          <p className="m-0 mt-1 text-[11px] leading-4 text-blue-800">
+            Pick one so the upsell is counted, or not counted, correctly. An upsell earns commission; a typo fix does not.
+          </p>
+          <div className="mt-2 flex flex-col gap-1.5">
+            <label className="!mb-0 !flex cursor-pointer items-start gap-2 text-[12px] font-semibold text-blue-900">
+              <input
+                type="radio"
+                name="upsell-intent"
+                className="!min-h-0 mt-0.5 h-3.5 w-3.5 shrink-0 accent-[#1F8FE0]"
+                checked={upsellIntent === "upsell"}
+                onChange={() => setUpsellIntent("upsell")}
+              />
+              <span>
+                The customer agreed to take more
+                <span className="ml-1 font-normal text-blue-700">- record an upsell {fromQty} → {nextQuantity} pcs</span>
+              </span>
+            </label>
+            <label className="!mb-0 !flex cursor-pointer items-start gap-2 text-[12px] font-semibold text-blue-900">
+              <input
+                type="radio"
+                name="upsell-intent"
+                className="!min-h-0 mt-0.5 h-3.5 w-3.5 shrink-0 accent-[#1F8FE0]"
+                checked={upsellIntent === "correction"}
+                onChange={() => setUpsellIntent("correction")}
+              />
+              <span>
+                The number was wrong
+                <span className="ml-1 font-normal text-blue-700">- just fix it, no commission</span>
+              </span>
+            </label>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderUpsellReversalWarning = (order: TrackedOrder, nextQuantity: number) => {
     if (!upsellReversedByEdit(order, nextQuantity)) return null;
     return (
@@ -40451,11 +40541,23 @@ ${waybillLineItems(w).length > 1
       showToast(`This cancels the ${selectedOrder.upsellFromQty}→${selectedOrder.upsellToQty} upgrade. Tick the box to confirm the upsell commission stops counting.`);
       return;
     }
+    // ⚠️ THIS SCREEN COULD CANCEL AN UPSELL BUT NEVER RECORD ONE.
+    // That one-way asymmetry is what lost order 4200: the rep raised a shelf
+    // from 1 to 2 here, the quantity and the money saved correctly, and the two
+    // flags commission reads stayed empty, so a N4,600 upgrade paid nothing.
+    const raisesQuantity = upsellRaisedByEdit(selectedOrder, newQty);
+    if (raisesQuantity && upsellIntent === "") {
+      showToast("Say whether this is an upsell or a correction before saving.");
+      return;
+    }
+    const recordsUpsell = raisesQuantity && upsellIntent === "upsell"
+      ? { upsellFromQty: upsellStartQtyFor(selectedOrder), upsellToQty: newQty }
+      : null;
 
     const orderSnapshot = selectedOrder;
     const nextNotes = [
       orderTimelineNote(
-        `Customer/delivery details edited by ${repScopeName}.${qtyChanged ? ` Qty: ${selectedOrder.quantity ?? 1}→${newQty}.` : ""}${amountChanged ? ` Amount: ${formatProductMoney(selectedOrder.amount, selectedOrder.currency)}→${formatProductMoney(newAmount, selectedOrder.currency)}.` : ""}${reversesUpsell ? ` Upsell ${selectedOrder.upsellFromQty}→${selectedOrder.upsellToQty} cancelled - no longer counts for commission.` : ""}`,
+        `Customer/delivery details edited by ${repScopeName}.${qtyChanged ? ` Qty: ${selectedOrder.quantity ?? 1}→${newQty}${raisesQuantity ? (recordsUpsell ? " (upsell recorded)" : " (correction, no commission)") : ""}.` : ""}${amountChanged ? ` Amount: ${formatProductMoney(selectedOrder.amount, selectedOrder.currency)}→${formatProductMoney(newAmount, selectedOrder.currency)}.` : ""}${reversesUpsell ? ` Upsell ${selectedOrder.upsellFromQty}→${selectedOrder.upsellToQty} cancelled - no longer counts for commission.` : ""}`,
         { by: repScopeName }
       ),
       ...orderNotesFor(selectedOrder)
@@ -40475,6 +40577,7 @@ ${waybillLineItems(w).length > 1
               location: orderLocationFromFields(createOrderCity, createOrderState),
               quantity: newQty,
               amount: newAmount,
+              ...(recordsUpsell ?? {}),
               ...(reversesUpsell ? { upsellFromQty: undefined, upsellToQty: undefined, upsellNote: undefined } : {}),
               notes: nextNotes
             }
@@ -40508,6 +40611,7 @@ ${waybillLineItems(w).length > 1
       state: createOrderState.trim(),
       quantity: newQty,
       amount: newAmount,
+      ...(recordsUpsell ? { upsell_from_qty: recordsUpsell.upsellFromQty, upsell_to_qty: recordsUpsell.upsellToQty } : {}),
       ...(reversesUpsell ? { upsell_from_qty: null, upsell_to_qty: null, upsell_note: null } : {}),
       timeline_notes: nextNotes
     }).catch((err: any) => {
@@ -44050,6 +44154,7 @@ ${waybillLineItems(w).length > 1
         openOrderModal(order, "editOrderItems");
       } else {
         setUpsellReversalAck(false);
+    setUpsellIntent("");
     setModal("editOrderItems");
       }
       syncHashRoute(repOrderWorkspaceHash(`/${orderId}/edit`));
@@ -44061,6 +44166,7 @@ ${waybillLineItems(w).length > 1
       openOrderModal(order, "editOrderItems");
     } else {
       setUpsellReversalAck(false);
+    setUpsellIntent("");
     setModal("editOrderItems");
     }
     syncHashRoute(adminOrderWorkspaceHash(`/${orderId}/edit`));
@@ -44087,6 +44193,7 @@ ${waybillLineItems(w).length > 1
       setCreateOrderAmount(String(order.amount ?? ""));
     }
     setUpsellReversalAck(false);
+    setUpsellIntent("");
     setModal("editOrderCustomer");
     syncHashRoute(
       currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)
@@ -103119,6 +103226,7 @@ ${waybillLineItems(w).length > 1
 	                </div>
 	                <label><span>Delivery Address</span><textarea value={createOrderAddress} onChange={(event) => setCreateOrderAddress(event.target.value)} /></label>
 	                {renderUpsellReversalWarning(selectedOrder, Math.max(1, Number(createOrderQuantity) || 1))}
+	                {renderUpsellRaiseQuestion(selectedOrder, Math.max(1, Number(createOrderQuantity) || 1))}
 	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveOrderCustomerEdit}>Save Changes</button></div>
 	              </div>
 	            )}
@@ -103191,6 +103299,7 @@ ${waybillLineItems(w).length > 1
                     )}
                   </div>
 	                {renderUpsellReversalWarning(selectedOrder, Math.max(1, Number(createOrderQuantity) || 1))}
+	                {renderUpsellRaiseQuestion(selectedOrder, Math.max(1, Number(createOrderQuantity) || 1))}
 	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Back</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveSelectedOrderEdit}>Save Order</button></div>
 	              </div>
 	              );
