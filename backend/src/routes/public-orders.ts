@@ -221,6 +221,7 @@ const PublicUpsellAcceptSchema = z.object({
 });
 
 import { ORDER_SOURCES as ALLOWED_SOURCES, resolveOrderSource } from "../lib/order-source.js";
+import { refreshPendingDeliveredLines } from "../lib/delivered-stock-refresh.js";
 const PUBLIC_UPSELL_TTL_MS = 4 * 60 * 60 * 1000;
 
 const normalizeStateName = (value: string | undefined) => {
@@ -1847,6 +1848,12 @@ router.post("/:id/upsell", submitRateLimit, async (req, res) => {
     res.status(500).json({ error: "Could not add this offer to the order." });
     return;
   }
+
+  // ⚠️ A CUSTOMER CAN ADD TO AN ORDER WITHOUT ANY OF US TOUCHING IT.
+  // This offer is accepted from the customer's own phone, so if the order is
+  // already delivered and still pending, the extra item has to reach the
+  // officer's screen the same as one a rep adds.
+  await refreshPendingDeliveredLines(order.org_id, String(order.id));
 
   await supabase.from("order_audit").insert({
     order_id: order.id,
