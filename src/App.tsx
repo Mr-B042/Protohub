@@ -5580,6 +5580,34 @@ const upsellRaisedByEdit = (order: TrackedOrder, nextQuantity: number, nextProdu
 const upsellStartQtyFor = (order: TrackedOrder) =>
   orderHasVerifiedUpsell(order) ? (order.upsellFromQty as number) : (order.quantity ?? 1);
 
+/**
+ * What the Quick log should offer on this order.
+ *
+ * ⚠️ IT USED TO COUNT FROM THE CURRENT QUANTITY, WHICH HID THE ANSWER.
+ * A rep who raised an order from 1 to 2 - the thing they MUST do so the
+ * customer is billed correctly - then found the panel offering "upsold from
+ * 2pcs to: 3pcs, 4pcs". The 1 → 2 they had just made was not on it, so the
+ * only way left was typing both numbers by hand, and it got skipped. Order
+ * 4200 lost a N4,600 upgrade exactly that way.
+ *
+ * So when the quantity sits above what the customer first ordered and nothing
+ * has been logged, the panel counts from where they STARTED and offers the
+ * quantity the order is on now - the upgrade that actually happened, one tap.
+ */
+const upsellQuickLogFor = (order: TrackedOrder, packageQtys: number[]) => {
+  const currentQty = order.quantity ?? 1;
+  const startedAt = order.originalQuantity ?? currentQty;
+  const missedRaise = !orderHasVerifiedUpsell(order) && startedAt < currentQty;
+  const fromQty = orderHasVerifiedUpsell(order)
+    ? (order.upsellFromQty as number)
+    : (missedRaise ? startedAt : currentQty);
+  const targets = [...new Set([
+    ...(missedRaise ? [currentQty] : []),
+    ...packageQtys.filter((qty) => qty > fromQty)
+  ])].sort((a, b) => a - b);
+  return { fromQty, targets, missedRaise };
+};
+
 // Client-side mirror of backend/src/lib/upsell-bonus.ts's evaluateUpsellBonus
 // - same pure math, kept in lockstep on purpose (see that file for the tests
 // covering every branch/tier boundary). Needed here because contribution
@@ -45909,22 +45937,29 @@ ${waybillLineItems(w).length > 1
         </div>
         {(() => {
           const prod = products.find((p) => p.id === order.productId);
-          const curQty = quantityForOrder(order);
-          const biggerQtys = Array.from(new Set((prod?.packages ?? []).map((pk) => pk.quantity).filter((q): q is number => typeof q === "number" && q > curQty))).sort((a, b) => a - b);
-          if (biggerQtys.length === 0) return null;
+          const packageQtys = (prod?.packages ?? []).map((pk) => pk.quantity).filter((q): q is number => typeof q === "number");
+          const { fromQty, targets, missedRaise } = upsellQuickLogFor(order, packageQtys);
+          if (targets.length === 0) return null;
           return (
-            <div className="px-5 pt-4 flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold text-gray-500">Quick log — upsold from {curQty}pcs to:</span>
-              {biggerQtys.map((q) => {
-                const on = order.upsellFromQty === curQty && order.upsellToQty === q;
-                return (
-                  <button key={q} type="button"
-                    onClick={() => { updateOrderUpsellFields(order, { upsellFromQty: curQty, upsellToQty: q }); showToast(`Upsell ${curQty}→${q}pcs logged.`); }}
-                    className={`!min-h-0 px-3 py-1.5 text-xs font-bold rounded-full border transition-colors ${on ? "bg-[#1F8FE0] border-[#1F8FE0] text-white" : "border-gray-200 text-gray-700 hover:border-[#1F8FE0] hover:text-[#1F8FE0]"}`}>
-                    {q}pcs
-                  </button>
-                );
-              })}
+            <div className="px-5 pt-4 flex flex-col gap-2">
+              {missedRaise && (
+                <p className="m-0 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold leading-4 text-amber-900">
+                  This order went from {fromQty} to {order.quantity ?? 1} pcs, but no upgrade is recorded yet. If the customer agreed to take more, tap it below so it counts towards your bonus.
+                </p>
+              )}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold text-gray-500">Quick log — upsold from {fromQty}pcs to:</span>
+                {targets.map((q) => {
+                  const on = order.upsellFromQty === fromQty && order.upsellToQty === q;
+                  return (
+                    <button key={q} type="button"
+                      onClick={() => { updateOrderUpsellFields(order, { upsellFromQty: fromQty, upsellToQty: q }); showToast(`Upsell ${fromQty}→${q}pcs logged.`); }}
+                      className={`!min-h-0 px-3 py-1.5 text-xs font-bold rounded-full border transition-colors ${on ? "bg-[#1F8FE0] border-[#1F8FE0] text-white" : "border-gray-200 text-gray-700 hover:border-[#1F8FE0] hover:text-[#1F8FE0]"}`}>
+                      {q}pcs
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           );
         })()}
@@ -101778,22 +101813,29 @@ ${waybillLineItems(w).length > 1
 	                  <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Bonus &amp; Upsell Tracking</h3>
 	                  {(() => {
 	                    const prod = products.find((p) => p.id === selectedOrder.productId);
-	                    const curQty = quantityForOrder(selectedOrder);
-	                    const biggerQtys = Array.from(new Set((prod?.packages ?? []).map((pk) => pk.quantity).filter((q): q is number => typeof q === "number" && q > curQty))).sort((a, b) => a - b);
-	                    if (biggerQtys.length === 0) return null;
+	                    const packageQtys = (prod?.packages ?? []).map((pk) => pk.quantity).filter((q): q is number => typeof q === "number");
+	                    const { fromQty, targets, missedRaise } = upsellQuickLogFor(selectedOrder, packageQtys);
+	                    if (targets.length === 0) return null;
 	                    return (
-	                      <div className="mb-3 flex flex-wrap items-center gap-2">
-	                        <span className="text-xs font-semibold text-gray-500">Quick log — upsold from {curQty}pcs to:</span>
-	                        {biggerQtys.map((q) => {
-	                          const on = selectedOrder.upsellFromQty === curQty && selectedOrder.upsellToQty === q;
-	                          return (
-	                            <button key={q} type="button"
-	                              onClick={() => { updateOrderUpsellFields(selectedOrder, { upsellFromQty: curQty, upsellToQty: q }); showToast(`Upsell ${curQty}→${q}pcs logged.`); }}
-	                              className={`!min-h-0 px-3 py-1.5 text-xs font-bold rounded-full border transition-colors ${on ? "bg-[#1F8FE0] border-[#1F8FE0] text-white" : "border-gray-200 text-gray-700 hover:border-[#1F8FE0] hover:text-[#1F8FE0]"}`}>
-	                              {q}pcs
-	                            </button>
-	                          );
-	                        })}
+	                      <div className="mb-3 flex flex-col gap-2">
+	                        {missedRaise && (
+	                          <p className="m-0 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold leading-4 text-amber-900">
+	                            This order went from {fromQty} to {selectedOrder.quantity ?? 1} pcs, but no upgrade is recorded yet. If the customer agreed to take more, tap it below so it counts.
+	                          </p>
+	                        )}
+	                        <div className="flex flex-wrap items-center gap-2">
+	                          <span className="text-xs font-semibold text-gray-500">Quick log — upsold from {fromQty}pcs to:</span>
+	                          {targets.map((q) => {
+	                            const on = selectedOrder.upsellFromQty === fromQty && selectedOrder.upsellToQty === q;
+	                            return (
+	                              <button key={q} type="button"
+	                                onClick={() => { updateOrderUpsellFields(selectedOrder, { upsellFromQty: fromQty, upsellToQty: q }); showToast(`Upsell ${fromQty}→${q}pcs logged.`); }}
+	                                className={`!min-h-0 px-3 py-1.5 text-xs font-bold rounded-full border transition-colors ${on ? "bg-[#1F8FE0] border-[#1F8FE0] text-white" : "border-gray-200 text-gray-700 hover:border-[#1F8FE0] hover:text-[#1F8FE0]"}`}>
+	                                {q}pcs
+	                              </button>
+	                            );
+	                          })}
+	                        </div>
 	                      </div>
 	                    );
 	                  })()}
