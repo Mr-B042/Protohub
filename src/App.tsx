@@ -274,9 +274,12 @@ function syncDynamicManifestLink(orgId: string | null | undefined, brandName: st
 }
 
 type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" | "Last Month" | "This Year" | "Custom";
-type CurrencyCode = "NGN" | "USD" | "GBP";
-type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addExtraItems" | "addFreeGift" | "salesBonusFullReport" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | "pdaPortalCredentials" | null;
+type CurrencyCode = "NGN" | "GHS" | "KES" | "ZMW" | "XOF" | "XAF" | "TZS" | "MWK" | "UGX" | "USD" | "GBP" | "EUR";
+// A product is priced in the money its branch sells in, so this is the same
+// list as CurrencyCode - they must not drift apart or a branch could exist in a
+// currency no product can be priced in.
+type ProductCurrencyCode = CurrencyCode;
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "addBranch" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addExtraItems" | "addFreeGift" | "salesBonusFullReport" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | "pdaPortalCredentials" | null;
 type ActivePage = "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
@@ -2200,15 +2203,64 @@ type RepBonusCoachResponse = {
 
 const periods: Period[] = ["Today", "Yesterday", "This Week", "Last Week", "This Month", "Last Month", "This Year"];
 
+// ⚠️ ONE ENTRY PER CURRENCY, NOT PER COUNTRY.
+// Ivory Coast and Senegal both trade in the WEST African CFA franc (XOF), and
+// Cameroon in the CENTRAL African one (XAF). Two different currencies that
+// share a name, so Douala and Dakar money must never be added together even
+// though both read "CFA franc".
 const currencies: Record<CurrencyCode, { label: string; locale: string; currency: string }> = {
   NGN: { label: "Nigerian Naira", locale: "en-NG", currency: "NGN" },
+  GHS: { label: "Ghanaian Cedi", locale: "en-GH", currency: "GHS" },
+  KES: { label: "Kenyan Shilling", locale: "en-KE", currency: "KES" },
+  ZMW: { label: "Zambian Kwacha", locale: "en-ZM", currency: "ZMW" },
+  XOF: { label: "West African CFA Franc", locale: "fr-SN", currency: "XOF" },
+  XAF: { label: "Central African CFA Franc", locale: "fr-CM", currency: "XAF" },
+  TZS: { label: "Tanzanian Shilling", locale: "en-TZ", currency: "TZS" },
+  MWK: { label: "Malawian Kwacha", locale: "en-MW", currency: "MWK" },
+  UGX: { label: "Ugandan Shilling", locale: "en-UG", currency: "UGX" },
   USD: { label: "US Dollar", locale: "en-US", currency: "USD" },
-  GBP: { label: "British Pound", locale: "en-GB", currency: "GBP" }
+  GBP: { label: "British Pound", locale: "en-GB", currency: "GBP" },
+  EUR: { label: "Euro", locale: "de-DE", currency: "EUR" }
 };
+
+/** Countries a branch can be opened in, each with the money it trades in. */
+const BRANCH_COUNTRIES: { code: string; name: string; currency: CurrencyCode }[] = [
+  { code: "NG", name: "Nigeria", currency: "NGN" },
+  { code: "GH", name: "Ghana", currency: "GHS" },
+  { code: "KE", name: "Kenya", currency: "KES" },
+  { code: "ZM", name: "Zambia", currency: "ZMW" },
+  { code: "CI", name: "Ivory Coast", currency: "XOF" },
+  { code: "TZ", name: "Tanzania", currency: "TZS" },
+  { code: "MW", name: "Malawi", currency: "MWK" },
+  { code: "SN", name: "Senegal", currency: "XOF" },
+  { code: "UG", name: "Uganda", currency: "UGX" },
+  { code: "CM", name: "Cameroon", currency: "XAF" }
+];
+
+const isCurrencyCode = (value: unknown): value is CurrencyCode =>
+  typeof value === "string" && value.toUpperCase() in currencies;
+
+/**
+ * The money a branch trades in.
+ *
+ * ⚠️ NOTHING IS CONVERTED ANYWHERE IN THIS APP. This only puts the right label
+ * on amounts already stored in that branch's own money. A branch whose currency
+ * is not listed falls back to naira rather than showing a figure with no symbol,
+ * so adding a currency above is what makes a new country's money read correctly.
+ */
+const currencyForBranch = (branch?: { currency?: string | null } | null): CurrencyCode =>
+  isCurrencyCode(branch?.currency) ? (branch!.currency!.toUpperCase() as CurrencyCode) : "NGN";
 
 const productCurrencies: Record<ProductCurrencyCode, { label: string; symbol: string; locale: string; currency: string }> = {
   NGN: { label: "Nigerian Naira", symbol: "₦", locale: "en-NG", currency: "NGN" },
   GHS: { label: "Ghanaian Cedi", symbol: "₵", locale: "en-GH", currency: "GHS" },
+  KES: { label: "Kenyan Shilling", symbol: "KSh", locale: "en-KE", currency: "KES" },
+  ZMW: { label: "Zambian Kwacha", symbol: "ZK", locale: "en-ZM", currency: "ZMW" },
+  XOF: { label: "West African CFA Franc", symbol: "CFA", locale: "fr-SN", currency: "XOF" },
+  XAF: { label: "Central African CFA Franc", symbol: "FCFA", locale: "fr-CM", currency: "XAF" },
+  TZS: { label: "Tanzanian Shilling", symbol: "TSh", locale: "en-TZ", currency: "TZS" },
+  MWK: { label: "Malawian Kwacha", symbol: "MK", locale: "en-MW", currency: "MWK" },
+  UGX: { label: "Ugandan Shilling", symbol: "USh", locale: "en-UG", currency: "UGX" },
   USD: { label: "US Dollar", symbol: "$", locale: "en-US", currency: "USD" },
   GBP: { label: "British Pound", symbol: "£", locale: "en-GB", currency: "GBP" },
   EUR: { label: "Euro", symbol: "€", locale: "de-DE", currency: "EUR" }
@@ -8508,6 +8560,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // The live feed subscribes once and never re-subscribes, so a value captured
   // in that effect would still hold whichever branch was open at sign-in. This
   // ref always reads the branch on screen right now.
+  const [newBranchCountry, setNewBranchCountry] = useState("");
+  const [newBranchName, setNewBranchName] = useState("");
+  const [newBranchCity, setNewBranchCity] = useState("");
+  const [creatingBranch, setCreatingBranch] = useState(false);
   const activeBranchIdRef = useRef(activeBranchId);
   activeBranchIdRef.current = activeBranchId;
   useEffect(() => {
@@ -8535,6 +8591,42 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }).catch(() => { /* Normal page-level API errors remain visible. */ });
     return () => { cancelled = true; };
   }, []);
+  const openAddBranch = () => {
+    setNewBranchCountry("");
+    setNewBranchName("");
+    setNewBranchCity("");
+    setModal("addBranch");
+  };
+
+  // ⚠️ THE COUNTRY DECIDES THE CURRENCY, AND IT IS NOT EDITABLE HERE.
+  // Money is never converted anywhere in this app, so a branch created in
+  // Uganda with naira selected by mistake would file Ugandan takings in a
+  // Nigerian currency with nothing to catch it afterwards. The currency comes
+  // from the country and is shown, not asked.
+  const saveNewBranch = () => {
+    const country = BRANCH_COUNTRIES.find((item) => item.code === newBranchCountry);
+    if (!country) { showToast("Choose the country this branch trades in."); return; }
+    if (!newBranchName.trim()) { showToast("Give the branch a name, for example Lusaka Branch."); return; }
+    setCreatingBranch(true);
+    branchesApi.create({
+      countryCode: country.code,
+      countryName: country.name,
+      name: newBranchName.trim(),
+      city: newBranchCity.trim() || null,
+      stateOrRegion: null,
+      currency: country.currency
+    } as any)
+      .then((created) => {
+        showToast(`${country.name} · ${newBranchName.trim()} is open. Its money is the ${currencies[country.currency].label}.`);
+        closeModal();
+        // Open it straight away - the reason somebody adds a branch is to work
+        // in it. changeBranch reloads, which is what picks up the new scope.
+        if (created?.branch?.id) changeBranch(created.branch.id);
+      })
+      .catch((err: any) => showToast(`Could not add that branch: ${err?.message ?? "please retry"}.`))
+      .finally(() => setCreatingBranch(false));
+  };
+
   const changeBranch = (branchId: string) => {
     setActiveBranchId(branchId);
     try { window.localStorage.setItem("protohub.activeBranch", branchId); } catch { /* private mode */ }
@@ -8593,11 +8685,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     })
   );
   const [ordersConversion, setOrdersConversion] = useState(0);
-  const [currency, setCurrency] = useState<CurrencyCode>(() =>
-    readPref<CurrencyCode>("protohub.dashboard.currency", "NGN", (raw) =>
-      raw === "NGN" || raw === "USD" || raw === "GBP" ? raw : null
-    )
-  );
+  // ⚠️ THE BRANCH DECIDES THE MONEY. THIS USED TO BE A BROWSER SETTING.
+  //
+  // It offered naira, dollar and pound and only RELABELLED the figures -
+  // nothing was ever converted - so choosing "pound" showed N104,500 as
+  // GBP104,500. Harmless with one country; wrong the moment Accra trades in
+  // cedi. Accra was also still showing naira, because the branch's own
+  // currency was stored and never read.
+  const currency: CurrencyCode = currencyForBranch(activeBranch);
   const [showDateRange, setShowDateRange] = useState(false);
   const [dateRange, setDateRange] = useState<DateRange>({ start: "", end: "" });
   const [showManagerDateRange, setShowManagerDateRange] = useState(false);
@@ -47493,17 +47588,7 @@ ${waybillLineItems(w).length > 1
           </button>
           {showRepWorkspaceDateRange && renderDateRangeCalendar("rep-workspace-date-range-panel", repWorkspaceDateRange, setRepWorkspaceDateRange, applyRepWorkspaceDateRange, () => setShowRepWorkspaceDateRange(false))}
         </div>
-        {/* Currency - full width on mobile */}
-        <select
-          className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors"
-          aria-label="Currency"
-          value={currency}
-          onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
-        >
-          <option value="NGN">₦ Nigerian Naira</option>
-          <option value="USD">$ US Dollar</option>
-          <option value="GBP">£ British Pound</option>
-        </select>
+        
         {renderProductFilter(repWorkspaceProductIds, setRepWorkspaceProductIds, showRepWorkspaceProductFilter, setShowRepWorkspaceProductFilter)}
       </div>
       {renderWeekNav(repWorkspaceNavStart, setRepWorkspaceNavStart, repWorkspaceNavSpan, setRepWorkspaceNavSpan, setRepWorkspacePeriod, setRepWorkspaceDateRange, repWorkspacePeriod, repWorkspaceDateRange)}
@@ -74277,11 +74362,15 @@ ${waybillLineItems(w).length > 1
                 aria-label="Operating branch"
                 className="!min-h-0 w-full rounded-lg border border-white/15 bg-white/10 px-2.5 py-2 text-sm font-semibold text-white outline-none focus:border-[#1F8FE0]"
                 value={activeBranch?.id ?? ""}
-                onChange={(event) => changeBranch(event.target.value)}
+                onChange={(event) => {
+                  if (event.target.value === "__new") { openAddBranch(); return; }
+                  changeBranch(event.target.value);
+                }}
               >
                 {branchOptions.map((branch) => (
                   <option key={branch.id} value={branch.id} className="text-gray-900">{branch.countryName} · {branch.name}</option>
                 ))}
+                {currentRole === "Owner" && <option value="__new" className="text-gray-900">+ Add a country…</option>}
               </select>
             </label>
           </div>
@@ -74693,11 +74782,15 @@ ${waybillLineItems(w).length > 1
                   aria-label="Operating branch"
                   className="!min-h-0 max-w-[190px] border-0 bg-transparent p-0 text-xs font-bold text-blue-900 outline-none"
                   value={activeBranch?.id ?? ""}
-                  onChange={(event) => changeBranch(event.target.value)}
+                  onChange={(event) => {
+                    if (event.target.value === "__new") { openAddBranch(); return; }
+                    changeBranch(event.target.value);
+                  }}
                 >
                   {branchOptions.map((branch) => (
                     <option key={branch.id} value={branch.id}>{branch.countryName} · {branch.name}</option>
                   ))}
+                  <option value="__new">+ Add a country…</option>
                 </select>
               </label>
             )}
@@ -74907,21 +75000,7 @@ ${waybillLineItems(w).length > 1
                       {renderWeekNav(dashboardNavStart, setDashboardNavStart, dashboardNavSpan, setDashboardNavSpan, setPeriod, setDateRange, period, dateRange, { compact: true, onPickRange: () => setShowDateRange((value) => !value) })}
                       {showDateRange && renderDateRangeCalendar("date-range-panel", dateRange, setDateRange, applyDateRange, () => setShowDateRange(false))}
                     </div>
-                    {/* Currency - full width on mobile */}
-                    <select
-                      className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors"
-                      aria-label="Currency"
-                      value={currency}
-                      onChange={(event) => {
-                        const nextCurrency = event.target.value as CurrencyCode;
-                        setCurrency(nextCurrency);
-                        showToast(`Currency changed to ${currencies[nextCurrency].label}.`);
-                      }}
-                    >
-                      <option value="NGN">₦ NGN</option>
-                      <option value="USD">$ USD</option>
-                      <option value="GBP">£ GBP</option>
-                    </select>
+                    
                     {renderProductFilter(dashboardProductIds, setDashboardProductIds, showDashboardProductFilter, setShowDashboardProductFilter)}
                   <button className="!min-h-0 w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 sm:py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm" onClick={exportReport}>
                     <Download className="w-4 h-4" /> Export Report
@@ -76521,12 +76600,7 @@ ${waybillLineItems(w).length > 1
                     </button>
                     {showOrdersDateRange && renderDateRangeCalendar("orders-date-range-panel", ordersDateRange, setOrdersDateRange, applyOrdersDateRange, () => setShowOrdersDateRange(false))}
                   </div>
-                  {/* Currency - full width on mobile */}
-                  <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Currency" value={currency} onChange={(event) => { const c = event.target.value as CurrencyCode; setCurrency(c); showToast(`Currency changed to ${currencies[c].label}.`); }}>
-                    <option value="NGN">₦ Nigerian Naira</option>
-                    <option value="USD">$ US Dollar</option>
-                    <option value="GBP">£ British Pound</option>
-                  </select>
+                  
                   {/* Mobile-only: Create Order + Export CSV stacked full-width */}
                   <div className="flex flex-col gap-2 w-full sm:hidden">
                     {canMutate && (
@@ -78249,12 +78323,7 @@ ${waybillLineItems(w).length > 1
                     </button>
                     {showCartsDateRange && renderDateRangeCalendar("carts-date-range-panel", cartsDateRange, setCartsDateRange, applyCartsDateRange, () => setShowCartsDateRange(false))}
                   </div>
-                  {/* Currency - full width on mobile */}
-                  <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(e) => setCurrency(e.target.value as CurrencyCode)}>
-                    <option value="NGN">₦ Nigerian Naira</option>
-                    <option value="USD">$ US Dollar</option>
-                    <option value="GBP">£ British Pound</option>
-                  </select>
+                  
                   {renderProductFilter(cartProductIds, setCartProductIds, showCartProductFilter, setShowCartProductFilter)}
                   {/* Mobile-only: Export CSV stacked full-width */}
                   <div className="flex flex-col gap-2 w-full sm:hidden">
@@ -79616,12 +79685,7 @@ ${waybillLineItems(w).length > 1
                     </button>
                     {showDeliveriesDateRange && renderDateRangeCalendar("deliveries-date-range-panel", deliveriesDateRange, setDeliveriesDateRange, applyDeliveriesDateRange, () => setShowDeliveriesDateRange(false))}
                   </div>
-                  {/* Currency - full width on mobile */}
-                  <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(event) => { const nextCurrency = event.target.value as CurrencyCode; setCurrency(nextCurrency); showToast(`Currency changed to ${currencies[nextCurrency].label}.`); }}>
-                    <option value="NGN">₦ Nigerian Naira</option>
-                    <option value="USD">$ US Dollar</option>
-                    <option value="GBP">£ British Pound</option>
-                  </select>
+                  
                   {renderProductFilter(deliveriesProductIds, setDeliveriesProductIds, showDeliveriesProductFilter, setShowDeliveriesProductFilter)}
                   {/* Mobile-only: Export CSV stacked full-width */}
                   <div className="flex flex-col gap-2 w-full sm:hidden">
@@ -81656,15 +81720,7 @@ ${waybillLineItems(w).length > 1
                       </div>
                     </div>
                     <div className="flex items-center gap-2 flex-wrap shrink-0">
-                      {canViewInventoryFinancials && <select
-                        className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
-                        value={currency}
-                        onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
-                      >
-                        <option value="NGN">₦ Nigerian Naira</option>
-                        <option value="USD">$ US Dollar</option>
-                        <option value="GBP">£ British Pound</option>
-                      </select>}
+                      
                       <button
                         className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
                         onClick={() => openAdminAgentAssignStockRoute(agent.id)}
@@ -83342,18 +83398,8 @@ ${waybillLineItems(w).length > 1
                     {showAgentsDateRange && renderDateRangeCalendar("agent-list-date-range-panel", agentsDateRange, setAgentsDateRange, applyAgentsDateRange, () => setShowAgentsDateRange(false))}
                   </div>
                   {renderProductFilter(agentProductIds, setAgentProductIds, showAgentProductFilter, setShowAgentProductFilter)}
-                  {/* Currency - only shown where financial metrics are visible */}
                   {canViewInventoryFinancials && <>
-                  <select
-                    className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors"
-                    aria-label="Currency"
-                    value={currency}
-                    onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
-                  >
-                    <option value="NGN">₦ Nigerian Naira</option>
-                    <option value="USD">$ US Dollar</option>
-                    <option value="GBP">£ British Pound</option>
-                  </select>
+                  
                   <span className="text-xs font-medium text-gray-500 hidden sm:inline">All amounts in {selectedCurrency.label}</span>
                   </>}
                   {/* Mobile-only: Add Agent + Export CSV stacked full-width */}
@@ -83917,17 +83963,7 @@ ${waybillLineItems(w).length > 1
                     </button>
                     {showWaybillsDateRange && renderDateRangeCalendar("waybill-date-range-panel", waybillsDateRange, setWaybillsDateRange, applyWaybillsDateRange, () => setShowWaybillsDateRange(false))}
                   </div>
-                  {/* Currency - full width on mobile; hidden from inventory operations */}
-                  {canViewInventoryFinancials && <select
-                    className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors"
-                    aria-label="Currency"
-                    value={currency}
-                    onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
-                  >
-                    <option value="NGN">₦ Nigerian Naira</option>
-                    <option value="USD">$ US Dollar</option>
-                    <option value="GBP">£ British Pound</option>
-                  </select>}
+                  
                   {renderProductFilter(waybillProductIds, setWaybillProductIds, showWaybillProductFilter, setShowWaybillProductFilter)}
                   <select
                     className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
@@ -84827,12 +84863,7 @@ ${waybillLineItems(w).length > 1
                     </button>
                     {showCustomerDateRange && renderDateRangeCalendar("customer-date-range-panel", customerDateRange, setCustomerDateRange, applyCustomerDateRange, () => setShowCustomerDateRange(false))}
                   </div>
-                  {/* Currency - full width on mobile */}
-                  <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(event) => { const nextCurrency = event.target.value as CurrencyCode; setCurrency(nextCurrency); showToast(`Currency changed to ${currencies[nextCurrency].label}.`); }}>
-                    <option value="NGN">₦ Nigerian Naira</option>
-                    <option value="USD">$ US Dollar</option>
-                    <option value="GBP">£ British Pound</option>
-                  </select>
+                  
                   {/* Mobile-only: Export Data stacked full-width */}
                   {canExportCustomers && <div className="flex flex-col gap-2 w-full sm:hidden">
                     <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={exportCustomersCsv}>
@@ -85165,12 +85196,7 @@ ${waybillLineItems(w).length > 1
                     </button>
                     {showExpenseDateRange && renderDateRangeCalendar("expense-date-range-panel", expenseDateRange, setExpenseDateRange, applyExpenseDateRange, () => setShowExpenseDateRange(false))}
                   </div>
-                  {/* Currency - full width on mobile */}
-                  <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(event) => { const nextCurrency = event.target.value as CurrencyCode; setCurrency(nextCurrency); showToast(`Currency changed to ${currencies[nextCurrency].label}.`); }}>
-                    <option value="NGN">₦ Nigerian Naira</option>
-                    <option value="USD">$ US Dollar</option>
-                    <option value="GBP">£ British Pound</option>
-                  </select>
+                  
                   {/* Mobile-only: Add Expense + Refresh stacked full-width */}
                   <div className="flex flex-col gap-2 w-full sm:hidden">
                     <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={openAdminExpenseCreateRoute}>
@@ -85460,12 +85486,7 @@ ${waybillLineItems(w).length > 1
                       </div>
                     </>
                   )}
-                  {/* Currency - full width on mobile */}
-                  <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(event) => { const nextCurrency = event.target.value as CurrencyCode; setCurrency(nextCurrency); showToast(`Currency changed to ${currencies[nextCurrency].label}.`); }}>
-                    <option value="NGN">₦ Nigerian Naira</option>
-                    <option value="USD">$ US Dollar</option>
-                    <option value="GBP">£ British Pound</option>
-                  </select>
+                  
                   {financeTab === "Weekly Accounting" && (
                     <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-800">
                       Weekly Accounting uses the week selector inside the report below.
@@ -90007,12 +90028,7 @@ ${waybillLineItems(w).length > 1
                     </button>
                     {showCampaignDateRange && renderDateRangeCalendar("campaign-date-range-panel", campaignDateRange, setCampaignDateRange, applyCampaignDateRange, () => setShowCampaignDateRange(false))}
                   </div>
-                  {/* Currency - full width on mobile */}
-                  <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(e) => { setCurrency(e.target.value as CurrencyCode); showToast(`Currency changed to ${currencies[e.target.value as CurrencyCode].label}.`); }}>
-                    <option value="NGN">₦ Nigerian Naira</option>
-                    <option value="USD">$ US Dollar</option>
-                    <option value="GBP">£ British Pound</option>
-                  </select>
+                  
                   {renderProductFilter(campaignProductIds, setCampaignProductIds, showCampaignProductFilter, setShowCampaignProductFilter)}
                   <select
                     className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors"
@@ -90574,11 +90590,7 @@ ${waybillLineItems(w).length > 1
                           </button>
                           {showCampaignDateRange && renderDateRangeCalendar("campaign-date-range-panel", campaignDateRange, setCampaignDateRange, applyCampaignDateRange, () => setShowCampaignDateRange(false))}
                         </div>
-                        <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(e) => { setCurrency(e.target.value as CurrencyCode); showToast(`Currency changed to ${currencies[e.target.value as CurrencyCode].label}.`); }}>
-                          <option value="NGN">₦ Nigerian Naira</option>
-                          <option value="USD">$ US Dollar</option>
-                          <option value="GBP">£ British Pound</option>
-                        </select>
+                        
                         {renderProductFilter(campaignProductIds, setCampaignProductIds, showCampaignProductFilter, setShowCampaignProductFilter)}
                         <select
                           className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
@@ -98629,15 +98641,7 @@ ${waybillLineItems(w).length > 1
                     <h1 className="text-2xl font-bold text-[#1F8FE0]">Inventory Dashboard</h1>
                     <p className="text-sm font-medium text-gray-500">Centralized management for global balance and localized agent distribution.</p>
                   </div>
-                  <select aria-label="Currency" className="w-full sm:w-auto border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" value={currency} onChange={(event) => {
-                    const nextCurrency = event.target.value as CurrencyCode;
-                    setCurrency(nextCurrency);
-                    showToast(`Currency changed to ${currencies[nextCurrency].label}.`);
-                  }}>
-                    <option value="NGN">₦ Nigerian Naira</option>
-                    <option value="USD">$ US Dollar</option>
-                    <option value="GBP">£ British Pound</option>
-                  </select>
+                  
                 </header>
 
                 <DataErrorBanner />
@@ -100516,6 +100520,7 @@ ${waybillLineItems(w).length > 1
                 {modal === "addExpense" && "Add New Expense"}
                 {modal === "addUser" && "Add New User"}
                 {modal === "editUser" && "Edit User"}
+                {modal === "addBranch" && "Add a country"}
                 {modal === "resetUserPassword" && "Reset Password"}
                 {modal === "deleteUser" && "Delete User"}
                 {modal === "productDetails" && "Product Details"}
@@ -104289,15 +104294,7 @@ ${waybillLineItems(w).length > 1
                       {!isComboCreate && (
                         <label className="flex flex-col gap-1.5">
                           <span className="text-xs font-semibold text-gray-700">Currency <span className="text-red-500">*</span></span>
-                          <select
-                            value={currency}
-                            onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
-                            className="px-3 py-2 text-sm border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
-                          >
-                            <option value="NGN">₦ Nigerian Naira</option>
-                            <option value="USD">$ US Dollar</option>
-                            <option value="GBP">£ British Pound</option>
-                          </select>
+                          
                         </label>
                       )}
                       {isComboCreate && (
@@ -108381,7 +108378,7 @@ ${waybillLineItems(w).length > 1
               <div className="modal-form">
                 <label><span>Expense Type</span><select value={expenseType} onChange={(event) => setExpenseType(event.target.value as ExpenseType)}>{expenseTypes.map((type) => <option key={type}>{type}</option>)}</select></label>
                 <label><span>Amount ({currencies[expenseCurrency]?.currency ?? expenseCurrency})</span><input value={expenseAmount} onChange={(event) => setExpenseAmount(event.target.value)} inputMode="decimal" /></label>
-                <label><span>Currency</span><select value={expenseCurrency} onChange={(event) => setExpenseCurrency(event.target.value as CurrencyCode)}><option value="NGN">₦ - Nigerian Naira</option><option value="USD">$ - US Dollar</option><option value="GBP">£ - British Pound</option></select></label>
+                <label><span>Currency</span><select value={expenseCurrency} onChange={(event) => setExpenseCurrency(event.target.value as CurrencyCode)}>{Object.entries(productCurrencies).map(([code, item]) => <option key={code} value={code}>{item.symbol} - {item.label}</option>)}</select></label>
                 <label><span>Date</span><input type="date" className="h-9 px-3 border border-gray-200 rounded-lg text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} /></label>
                 <label><span>Product (Optional)</span><select value={expenseProduct} onChange={(event) => setExpenseProduct(event.target.value)}><option>General Expense</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></label>
                 <p>Link this expense to a specific product</p>
@@ -108584,6 +108581,86 @@ ${waybillLineItems(w).length > 1
                     >
                       <Plus className="w-4 h-4" /> Create user
                     </button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {modal === "addBranch" && (() => {
+              const country = BRANCH_COUNTRIES.find((item) => item.code === newBranchCountry);
+              const alreadyOpen = country
+                ? branchOptions.filter((branch) => branch.countryName === country.name)
+                : [];
+              return (
+                <div className="px-6 py-5 flex flex-col gap-4">
+                  <p className="m-0 text-sm text-gray-600">
+                    A branch keeps its own orders, stock, products, prices and books. Nothing is shared with the other countries, and nothing is added together across them.
+                  </p>
+
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs font-semibold text-gray-700">Country</span>
+                    <select
+                      value={newBranchCountry}
+                      onChange={(event) => setNewBranchCountry(event.target.value)}
+                      className="px-3 py-2 text-sm border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
+                    >
+                      <option value="">Choose a country</option>
+                      {BRANCH_COUNTRIES.map((item) => (
+                        <option key={item.code} value={item.code}>{item.name}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  {country && (
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5">
+                      <p className="m-0 text-[12px] font-bold text-blue-900">
+                        Money here is the {currencies[country.currency].label}.
+                      </p>
+                      <p className="m-0 mt-0.5 text-[11px] leading-4 text-blue-800">
+                        Set by the country so it cannot be picked wrongly. Amounts are never converted between branches.
+                      </p>
+                      {alreadyOpen.length > 0 && (
+                        <p className="m-0 mt-1 text-[11px] leading-4 text-blue-800">
+                          You already have {alreadyOpen.map((branch) => branch.name).join(" and ")} in {country.name}. Adding another is fine - they stay separate.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs font-semibold text-gray-700">Branch name</span>
+                    <input
+                      value={newBranchName}
+                      onChange={(event) => setNewBranchName(event.target.value)}
+                      placeholder={country ? `e.g. ${country.name === "Nigeria" ? "Owerri" : country.name} Branch` : "e.g. Lusaka Branch"}
+                      className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
+                    />
+                  </label>
+
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs font-semibold text-gray-700">City <span className="font-normal text-gray-400">(optional)</span></span>
+                    <input
+                      value={newBranchCity}
+                      onChange={(event) => setNewBranchCity(event.target.value)}
+                      placeholder="e.g. Lusaka"
+                      className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
+                    />
+                  </label>
+
+                  <p className="m-0 text-[11px] leading-4 text-gray-500">
+                    A new branch starts empty - no products, no orders, no stock. Add its products first, then the people who will work in it from User Management.
+                  </p>
+
+                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2 border-t border-gray-100">
+                    <button
+                      className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
+                      onClick={closeModal}
+                    >Cancel</button>
+                    <button
+                      disabled={!country || !newBranchName.trim() || creatingBranch}
+                      className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      onClick={saveNewBranch}
+                    >{creatingBranch ? "Adding…" : "Add branch"}</button>
                   </div>
                 </div>
               );
