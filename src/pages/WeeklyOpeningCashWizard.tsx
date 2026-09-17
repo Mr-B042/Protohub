@@ -2,10 +2,10 @@ import { useMemo, useState } from "react";
 import {
   ArrowRight, BadgeCheck, CalendarDays, CheckCircle2, Info, Lock, Plus, Sparkles, X
 } from "lucide-react";
-// ⚠️ Shared formatters, NOT a local `naira()`. A private one silently
+// ⚠️ Shared formatters, NOT a local `money()`. A private one silently
 // ignores the topbar "hide money" toggle - which is exactly how these
 // pages kept showing real figures with privacy mode on.
-import { naira } from "../lib/money-privacy";
+import { money } from "../lib/money-privacy";
 
 // The gate on a new accounting week.
 //
@@ -269,7 +269,7 @@ export default function WeeklyOpeningCashWizard({ view, saving, blocking, onClos
                       <li key={source.key} className="flex items-center justify-between gap-3 border-b border-gray-50 pb-1.5 text-[13px]">
                         <span className="truncate text-gray-600">{source.accountLabel || "Unnamed source"}</span>
                         <span className="shrink-0 font-black text-gray-900">
-                          {naira(Number(String(source.amount).replace(/[^\d.-]/g, "")) || 0)}
+                          {money(Number(String(source.amount).replace(/[^\d.-]/g, "")) || 0)}
                         </span>
                       </li>
                     ))}
@@ -283,7 +283,7 @@ export default function WeeklyOpeningCashWizard({ view, saving, blocking, onClos
                   </label>
                   {Math.abs(change) > 0 && view.previousWeek.closingCash !== 0 && (
                     <p className="m-0 rounded-xl border border-gray-200 bg-gray-50 px-3.5 py-2.5 text-[12px] font-medium leading-4 text-gray-600">
-                      Last week closed at <strong className="font-black">{naira(view.previousWeek.closingCash)}</strong>.
+                      Last week closed at <strong className="font-black">{money(view.previousWeek.closingCash)}</strong>.
                       {" "}A gap between that and what you counted means either a miscount or cash that never got recorded — worth knowing before you confirm.
                     </p>
                   )}
@@ -304,7 +304,7 @@ export default function WeeklyOpeningCashWizard({ view, saving, blocking, onClos
                       zero reads as the word "NO" and looks like an answer to a
                       question nobody asked. Nothing entered yet says so. */}
                   {total > 0 ? (
-                    <span className="text-3xl font-black text-emerald-600">{naira(total)}</span>
+                    <span className="text-3xl font-black text-emerald-600">{money(total)}</span>
                   ) : (
                     <span className="text-xl font-black text-gray-400">Nothing entered yet</span>
                   )}
@@ -320,7 +320,7 @@ export default function WeeklyOpeningCashWizard({ view, saving, blocking, onClos
                       <span className="truncate text-gray-500">{source.accountLabel || "Unnamed"}</span>
                       <span className="shrink-0 font-black text-gray-800">
                         {(Number(String(source.amount).replace(/[^\d.-]/g, "")) || 0) > 0
-                          ? naira(Number(String(source.amount).replace(/[^\d.-]/g, "")) || 0)
+                          ? money(Number(String(source.amount).replace(/[^\d.-]/g, "")) || 0)
                           : <span className="font-semibold text-gray-400">—</span>}
                       </span>
                     </li>
@@ -333,12 +333,12 @@ export default function WeeklyOpeningCashWizard({ view, saving, blocking, onClos
                   </div>
                   <div className="flex items-center justify-between gap-2">
                     <dt className="truncate text-gray-500">Last closing ({dayLabel(view.previousWeek.from)})</dt>
-                    <dd className="m-0 shrink-0 font-black text-gray-800">{naira(view.previousWeek.closingCash)}</dd>
+                    <dd className="m-0 shrink-0 font-black text-gray-800">{money(view.previousWeek.closingCash)}</dd>
                   </div>
                 </dl>
                 {view.previousWeek.closingCash !== 0 && (
                   <p className={`m-0 mt-2 rounded-lg px-2.5 py-1.5 text-[11px] font-black ${change >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
-                    Change from last week {change >= 0 ? "+" : "−"}{naira(Math.abs(change))} {change >= 0 ? "↑" : "↓"}
+                    Change from last week {change >= 0 ? "+" : "−"}{money(Math.abs(change))} {change >= 0 ? "↑" : "↓"}
                   </p>
                 )}
               </section>
@@ -411,7 +411,7 @@ export default function WeeklyOpeningCashWizard({ view, saving, blocking, onClos
                   }))
                 })}
                 className="!min-h-0 inline-flex items-center gap-2 rounded-xl bg-[#1F8FE0] px-5 py-2.5 text-[13px] font-black text-white hover:bg-[#1a7ec4] disabled:opacity-50">
-                {saving ? "Saving…" : `Confirm ${naira(total)} Opening Cash`}
+                {saving ? "Saving…" : `Confirm ${money(total)} Opening Cash`}
               </button>
             )}
           </div>

@@ -26,10 +26,10 @@ import {
   X
 } from "lucide-react";
 import type { AgentAccessRow, AgentAccessView, AgentLoginEvent, PortalSendOptions } from "../lib/api";
-// ⚠️ Shared formatters, NOT a local `naira()`. A private one silently
+// ⚠️ Shared formatters, NOT a local `money()`. A private one silently
 // ignores the topbar "hide money" toggle - which is exactly how these
 // pages kept showing real figures with privacy mode on.
-import { naira } from "../lib/money-privacy";
+import { money } from "../lib/money-privacy";
 
 // The portal permission set an agent role carries. Mirrors the backend's
 // `/my/*` endpoints - these are descriptions of what the API already enforces,
@@ -432,7 +432,7 @@ export default function AgentAccessPage(props: AgentAccessPageProps) {
                     <td className="px-4 py-3 text-sm font-bold text-gray-800 dark:text-slate-200">{row.activeOrders}</td>
                     <td className="px-4 py-3 text-sm font-medium text-gray-600 dark:text-slate-300">{row.stockUnitsHeld} units</td>
                     <td className={`px-4 py-3 text-sm font-bold ${row.codExposure > 0 ? "text-amber-600 dark:text-amber-300" : "text-gray-400"}`}>
-                      {naira(row.codExposure)}
+                      {money(row.codExposure)}
                     </td>
                     <td className="px-4 py-3">
                       <div className="relative flex items-center justify-end gap-1.5">
@@ -626,7 +626,7 @@ function OperationalSummary({ row, onOpenAgent }: { row: AgentAccessRow; onOpenA
           action="View Orders" onAction={() => onOpenAgent(row.id, "orders")} />
         <OpsTile icon={Box} tone="text-emerald-500" label="Stock Held" value={`${row.stockUnitsHeld} units`}
           action="View Inventory" onAction={() => onOpenAgent(row.id, "inventory")} />
-        <OpsTile icon={WalletCards} tone="text-amber-500" label="COD Exposure" value={naira(row.codExposure)}
+        <OpsTile icon={WalletCards} tone="text-amber-500" label="COD Exposure" value={money(row.codExposure)}
           action="View COD" onAction={() => onOpenAgent(row.id, "cod")} />
         <OpsTile icon={AlertTriangle} tone="text-rose-500" label="Open Incidents" value={String(row.openIncidents)}
           action="View Incidents" onAction={() => onOpenAgent(row.id, "incidents")} />

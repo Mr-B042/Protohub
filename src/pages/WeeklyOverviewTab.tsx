@@ -7,10 +7,10 @@ import {
   Lock, TrendingUp, Users, Wallet
 } from "lucide-react";
 import type { WeeklyOverviewView, WeekMovement } from "../lib/api";
-// ⚠️ Shared formatters, NOT a local `naira()`. A private one silently
+// ⚠️ Shared formatters, NOT a local `money()`. A private one silently
 // ignores the topbar "hide money" toggle - which is exactly how these
 // pages kept showing real figures with privacy mode on.
-import { maskMoneyText, naira, shortNaira, signedNaira } from "../lib/money-privacy";
+import { maskMoneyText, money, shortMoney, signedMoney, currencySymbol } from "../lib/money-privacy";
 
 // The whole week's financial position on one screen.
 //
@@ -145,7 +145,7 @@ export default function WeeklyOverviewTab(props: WeeklyOverviewTabProps) {
                 <Icon className="h-5 w-5" />
               </span>
               <p className="m-0 mt-2.5 text-[11px] font-black uppercase tracking-wide text-gray-500">{card.label}</p>
-              <p className="m-0 mt-0.5 text-xl font-black text-gray-900">{naira(card.movement?.current ?? 0)}</p>
+              <p className="m-0 mt-0.5 text-xl font-black text-gray-900">{money(card.movement?.current ?? 0)}</p>
               <p className="m-0 mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-gray-400">
                 Vs last week{" "}
                 {card.movement ? <MovementCell movement={card.movement} invert={card.invert} /> : "—"}
@@ -165,7 +165,7 @@ export default function WeeklyOverviewTab(props: WeeklyOverviewTabProps) {
           <p className={`m-0 mt-0.5 text-xl font-black ${
             !view?.headline.varianceVerified ? "text-gray-400"
               : Math.abs(view.headline.cashVariance) <= 0.5 ? "text-emerald-600" : "text-rose-600"}`}>
-            {view?.headline.varianceVerified ? signedNaira(view.headline.cashVariance) : "Not counted"}
+            {view?.headline.varianceVerified ? signedMoney(view.headline.cashVariance) : "Not counted"}
           </p>
           <p className="m-0 mt-0.5 text-[11px] font-semibold text-gray-400">
             {view?.headline.varianceVerified
@@ -187,7 +187,7 @@ export default function WeeklyOverviewTab(props: WeeklyOverviewTabProps) {
                   <th className="px-5 py-2.5">Description</th>
                   <th className="px-5 py-2.5 text-right">This Week</th>
                   <th className="px-5 py-2.5 text-right">Last Week</th>
-                  <th className="px-5 py-2.5 text-right">Change (₦)</th>
+                  <th className="px-5 py-2.5 text-right">Change ({currencySymbol()})</th>
                   <th className="px-5 py-2.5 text-right">%</th>
                 </tr>
               </thead>
@@ -198,13 +198,13 @@ export default function WeeklyOverviewTab(props: WeeklyOverviewTabProps) {
                     <tr key={row.label} className={`border-b border-gray-50 last:border-0 ${isVariance ? "bg-rose-50/40" : ""}`}>
                       <td className="px-5 py-3 text-[13px] font-bold text-gray-900">{row.label}</td>
                       <td className={`px-5 py-3 text-right text-[13px] font-black ${isVariance ? "text-rose-600" : "text-gray-900"}`}>
-                        {isVariance ? signedNaira(row.current) : naira(row.current)}
+                        {isVariance ? signedMoney(row.current) : money(row.current)}
                       </td>
                       <td className="px-5 py-3 text-right text-[13px] font-semibold text-gray-500">
-                        {isVariance ? signedNaira(row.previous) : naira(row.previous)}
+                        {isVariance ? signedMoney(row.previous) : money(row.previous)}
                       </td>
                       <td className={`px-5 py-3 text-right text-[13px] font-black ${row.delta === 0 ? "text-gray-400" : row.delta > 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                        {signedNaira(row.delta)}
+                        {signedMoney(row.delta)}
                       </td>
                       <td className="px-5 py-3 text-right"><MovementCell movement={row} /></td>
                     </tr>
@@ -234,14 +234,14 @@ export default function WeeklyOverviewTab(props: WeeklyOverviewTabProps) {
                       <Icon className="h-3.5 w-3.5 shrink-0 text-gray-400" />
                       <span className="truncate">{row.label}</span>
                     </dt>
-                    <dd className="m-0 shrink-0 text-[12px] font-black text-gray-900">{naira(row.value)}</dd>
+                    <dd className="m-0 shrink-0 text-[12px] font-black text-gray-900">{money(row.value)}</dd>
                   </div>
                 );
               })}
               <div className="flex items-center justify-between gap-2 border-t border-gray-100 pt-2">
                 <dt className="m-0 text-[12px] font-black text-gray-900">Free Operating Cash</dt>
                 <dd className={`m-0 text-base font-black ${(view?.cashPosition.freeOperatingCash ?? 0) >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                  {signedNaira(view?.cashPosition.freeOperatingCash ?? 0)}
+                  {signedMoney(view?.cashPosition.freeOperatingCash ?? 0)}
                 </dd>
               </div>
               <p className="m-0 text-[11px] font-semibold text-gray-400">
@@ -294,9 +294,9 @@ export default function WeeklyOverviewTab(props: WeeklyOverviewTabProps) {
                 <LineChart data={trendPoints} margin={{ top: 8, right: 12, bottom: 4, left: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
                   <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#94A3B8" }} axisLine={false} tickLine={false} />
-                  <YAxis tickFormatter={shortNaira} tick={{ fontSize: 11, fill: "#94A3B8" }} axisLine={false} tickLine={false} width={56} />
+                  <YAxis tickFormatter={shortMoney} tick={{ fontSize: 11, fill: "#94A3B8" }} axisLine={false} tickLine={false} width={56} />
                   <ReferenceLine y={0} stroke="#CBD5E1" />
-                  <Tooltip formatter={(value: number) => signedNaira(value)} />
+                  <Tooltip formatter={(value: number) => signedMoney(value)} />
                   {/* connectNulls is OFF: an uncounted week must leave a gap in
                       the line rather than being bridged as if it were checked. */}
                   <Line type="monotone" dataKey="variance" stroke="#EF4444" strokeWidth={2}
@@ -317,7 +317,7 @@ export default function WeeklyOverviewTab(props: WeeklyOverviewTabProps) {
             <div key={highlight.key} className="rounded-xl border border-gray-200 px-3 py-3">
               <p className="m-0 text-[11px] font-bold text-gray-500">{highlight.label}</p>
               <p className="m-0 mt-1 text-base font-black text-gray-900">
-                {highlight.format === "pct" ? `${highlight.value.toFixed(2)}%` : naira(highlight.value)}
+                {highlight.format === "pct" ? `${highlight.value.toFixed(2)}%` : money(highlight.value)}
               </p>
               <p className="m-0 mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-gray-400">
                 Vs last week <MovementCell movement={highlight.movement}
@@ -343,7 +343,7 @@ export default function WeeklyOverviewTab(props: WeeklyOverviewTabProps) {
                   <span className="flex items-center justify-between gap-2">
                     <span className="truncate text-[12px] font-bold text-gray-700">{row.label}</span>
                     <span className="shrink-0 text-[12px] font-black text-gray-900">
-                      {naira(row.amount)} <span className="font-semibold text-gray-400">({row.sharePct.toFixed(2)}%)</span>
+                      {money(row.amount)} <span className="font-semibold text-gray-400">({row.sharePct.toFixed(2)}%)</span>
                     </span>
                   </span>
                   <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-gray-100">

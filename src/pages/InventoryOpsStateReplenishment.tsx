@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import type { OpsCart, OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryLogisticsOperationsPage";
 import { downloadCsv, num } from "./inventory-ops-model";
-import { naira } from "../lib/money-privacy";
+import { money } from "../lib/money-privacy";
 import { NIGERIA_ZONES, type NigeriaZone } from "../lib/nigeria";
 import { stateReplenishmentNotesApi, type StateReplenishmentNote } from "../lib/api";
 import {
@@ -569,7 +569,7 @@ export default function InventoryOpsStateReplenishment({
           Icon={ShoppingCart} tint="bg-emerald-50 text-emerald-600" />
         <Kpi label="Units to move" value={num(totals.unitsRecommended)}
           foot={canSeeMoney
-            ? `${naira(totals.atRiskRevenue)} of orders could be lost`
+            ? `${money(totals.atRiskRevenue)} of orders could be lost`
             : `${num(totals.readyOrders + totals.cartCustomers)} order${totals.readyOrders + totals.cartCustomers === 1 ? "" : "s"} could be lost`}
           Icon={TrendingUp} tint="bg-violet-50 text-violet-600" />
       </section>
@@ -660,7 +660,7 @@ export default function InventoryOpsStateReplenishment({
                   <StatCard label="People waiting" value={num(needTotals.peopleWaiting)}
                     foot="Units they are waiting for" Icon={Users} tint="bg-amber-50 text-amber-600" />
                   {canSeeMoney ? (
-                    <StatCard label="Money at risk" value={naira(totals.atRiskRevenue)}
+                    <StatCard label="Money at risk" value={money(totals.atRiskRevenue)}
                       foot="Orders their agent cannot fill" Icon={TrendingUp} tint="bg-emerald-50 text-emerald-600" />
                   ) : (
                     <StatCard label="Orders at risk" value={num(totals.readyOrders + totals.cartCustomers)}
@@ -2021,7 +2021,7 @@ function StateModal({
           <div className="px-6 py-5">
             <h3 className="m-0 text-base font-black text-gray-950">People from carts in {row.state}</h3>
             <p className="m-0 mb-3 text-[12px] text-gray-500">
-              {num(row.cartCustomers)} {row.cartCustomers === 1 ? "person" : "people"} · {num(row.cartUnits)} unit{row.cartUnits === 1 ? "" : "s"}{canSeeMoney ? ` · ${naira(row.cartRevenue)}` : ""}
+              {num(row.cartCustomers)} {row.cartCustomers === 1 ? "person" : "people"} · {num(row.cartUnits)} unit{row.cartUnits === 1 ? "" : "s"}{canSeeMoney ? ` · ${money(row.cartRevenue)}` : ""}
               {row.cartsFromGuessedState > 0 && ` · ${num(row.cartsFromGuessedState)} with a state we worked out`}
             </p>
             <div className="overflow-hidden rounded-xl border border-gray-200">
@@ -2044,7 +2044,7 @@ function StateModal({
               <StatCard label="Days left" value={row.dailySales > 0 ? `${Math.round((Math.max(0, row.sellable - row.readyUnits) / row.dailySales) * 10) / 10}` : "-"} foot="Before the shelf is empty" Icon={PackageCheck} tint="bg-emerald-50 text-emerald-600" />
               <StatCard label="On the way" value={num(row.inTransit)} foot="Units already shipped here" Icon={Truck} tint="bg-sky-50 text-sky-600" />
               {canSeeMoney
-                ? <StatCard label="Money at risk" value={naira(row.atRiskRevenue)} foot="Ready orders their agent cannot fill" Icon={AlertTriangle} tint="bg-rose-50 text-rose-600" />
+                ? <StatCard label="Money at risk" value={money(row.atRiskRevenue)} foot="Ready orders their agent cannot fill" Icon={AlertTriangle} tint="bg-rose-50 text-rose-600" />
                 : <StatCard label="Orders at risk" value={num(row.readyOrders)} foot="Ready orders their agent cannot fill" Icon={AlertTriangle} tint="bg-rose-50 text-rose-600" />}
             </div>
             <div className="mt-4 overflow-hidden rounded-xl border border-gray-200">

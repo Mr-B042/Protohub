@@ -5,10 +5,10 @@ import {
   Lock, MoreVertical, Pencil, PiggyBank, Plus, ShieldAlert, Trash2, TrendingUp, Unlock, Wallet, X
 } from "lucide-react";
 import type { BankAccountRow, ReserveCategoryKey, ReserveRow, ReservesView } from "../lib/api";
-// ⚠️ Shared formatters, NOT a local `naira()`. A private one silently
+// ⚠️ Shared formatters, NOT a local `money()`. A private one silently
 // ignores the topbar "hide money" toggle - which is exactly how these
 // pages kept showing real figures with privacy mode on.
-import { maskMoneyText, naira, signedNaira } from "../lib/money-privacy";
+import { maskMoneyText, money, signedMoney, currencySymbol } from "../lib/money-privacy";
 
 // Restricted cash: money still in the account but already spoken for.
 //
@@ -111,16 +111,16 @@ export default function ReservesTab(props: ReservesTabProps) {
   const releasedThisWeek = (view?.reserves ?? []).filter((row) => row.releasedAmount > 0);
 
   const cards = [
-    { label: "Total Reserved", value: naira(summary?.totalReserved ?? 0), hint: `Across ${summary?.activeCount ?? 0} reserve${(summary?.activeCount ?? 0) === 1 ? "" : "s"}`, icon: Lock, tone: "bg-violet-50 text-violet-600", valueTone: "text-gray-900" },
-    { label: "Total Liquid Cash", value: naira(summary?.totalLiquidCash ?? 0), hint: "All accounts + cash in hand", icon: Landmark, tone: "bg-blue-50 text-blue-600", valueTone: "text-gray-900" },
+    { label: "Total Reserved", value: money(summary?.totalReserved ?? 0), hint: `Across ${summary?.activeCount ?? 0} reserve${(summary?.activeCount ?? 0) === 1 ? "" : "s"}`, icon: Lock, tone: "bg-violet-50 text-violet-600", valueTone: "text-gray-900" },
+    { label: "Total Liquid Cash", value: money(summary?.totalLiquidCash ?? 0), hint: "All accounts + cash in hand", icon: Landmark, tone: "bg-blue-50 text-blue-600", valueTone: "text-gray-900" },
     {
-      label: "Free Operating Cash", value: signedNaira(summary?.freeOperatingCash ?? 0),
+      label: "Free Operating Cash", value: signedMoney(summary?.freeOperatingCash ?? 0),
       hint: summary?.overCommitted ? "You have reserved more than you hold" : "Available for operations",
       icon: Wallet, tone: summary?.overCommitted ? "bg-rose-50 text-rose-600" : "bg-emerald-50 text-emerald-600",
       valueTone: summary?.overCommitted ? "text-rose-600" : "text-gray-900"
     },
     { label: "% of Cash Reserved", value: `${(summary?.reservedPct ?? 0).toFixed(2)}%`, hint: "Of total liquid cash", icon: TrendingUp, tone: "bg-amber-50 text-amber-600", valueTone: "text-gray-900" },
-    { label: "Released So Far", value: naira(releasedThisWeek.reduce((sum, row) => sum + row.releasedAmount, 0)), hint: `From ${releasedThisWeek.length} reserve${releasedThisWeek.length === 1 ? "" : "s"}`, icon: Unlock, tone: "bg-emerald-50 text-emerald-600", valueTone: "text-gray-900" }
+    { label: "Released So Far", value: money(releasedThisWeek.reduce((sum, row) => sum + row.releasedAmount, 0)), hint: `From ${releasedThisWeek.length} reserve${releasedThisWeek.length === 1 ? "" : "s"}`, icon: Unlock, tone: "bg-emerald-50 text-emerald-600", valueTone: "text-gray-900" }
   ];
 
   return (
@@ -143,8 +143,8 @@ export default function ReservesTab(props: ReservesTabProps) {
       {summary?.overCommitted && (
         <p className="m-0 flex gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-[13px] font-bold text-rose-700">
           <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          You have reserved {naira(summary.totalReserved)} against {naira(summary.totalLiquidCash)} of liquid cash.
-          {" "}{naira(Math.abs(summary.freeOperatingCash))} of what you have promised is not actually there.
+          You have reserved {money(summary.totalReserved)} against {money(summary.totalLiquidCash)} of liquid cash.
+          {" "}{money(Math.abs(summary.freeOperatingCash))} of what you have promised is not actually there.
         </p>
       )}
 
@@ -197,7 +197,7 @@ export default function ReservesTab(props: ReservesTabProps) {
                     <th className="px-4 py-2.5">Reserve Name</th>
                     <th className="px-4 py-2.5">Purpose</th>
                     <th className="px-4 py-2.5">Account / Source</th>
-                    <th className="px-4 py-2.5 text-right">Amount Reserved (₦)</th>
+                    <th className="px-4 py-2.5 text-right">Amount Reserved ({currencySymbol()})</th>
                     <th className="px-4 py-2.5">Available To Use</th>
                     <th className="px-4 py-2.5">Expected Release</th>
                     <th className="px-4 py-2.5">Status</th>
@@ -227,10 +227,10 @@ export default function ReservesTab(props: ReservesTabProps) {
                         <td className="px-4 py-3 text-[12px] font-medium text-gray-600">{row.purpose || "—"}</td>
                         <td className="px-4 py-3 text-[12px] font-semibold text-gray-600">{row.accountLabel || "Business-wide"}</td>
                         <td className="px-4 py-3 text-right">
-                          <span className="block text-[13px] font-black text-gray-900">{naira(row.outstanding)}</span>
+                          <span className="block text-[13px] font-black text-gray-900">{money(row.outstanding)}</span>
                           {row.releasedAmount > 0 && (
                             <span className="block text-[11px] font-semibold text-emerald-600">
-                              {naira(row.releasedAmount)} released of {naira(row.amount)}
+                              {money(row.releasedAmount)} released of {money(row.amount)}
                             </span>
                           )}
                         </td>
@@ -311,11 +311,11 @@ export default function ReservesTab(props: ReservesTabProps) {
                             <Cell key={slice.id} fill={SLICE_COLORS[index % SLICE_COLORS.length]} />
                           ))}
                         </Pie>
-                        <Tooltip formatter={(value: number) => naira(value)} />
+                        <Tooltip formatter={(value: number) => money(value)} />
                       </PieChart>
                     </ResponsiveContainer>
                     <span className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                      <span className="text-base font-black text-gray-900">{naira(view!.breakdown.total)}</span>
+                      <span className="text-base font-black text-gray-900">{money(view!.breakdown.total)}</span>
                       <span className="text-[11px] font-semibold text-gray-400">Total Reserved</span>
                     </span>
                   </div>
@@ -391,7 +391,7 @@ export default function ReservesTab(props: ReservesTabProps) {
                   return (
                     <tr key={entry.id} className="border-b border-gray-50 last:border-0">
                       <td className="px-5 py-3 text-[13px] font-bold text-gray-900">{entry.name}</td>
-                      <td className="px-5 py-3 text-right text-[13px] font-black text-gray-900">{naira(entry.amount)}</td>
+                      <td className="px-5 py-3 text-right text-[13px] font-black text-gray-900">{money(entry.amount)}</td>
                       <td className="px-5 py-3 text-[12px] font-semibold text-gray-600">{dateLabel(entry.releaseDate)}</td>
                       <td className={`px-5 py-3 text-[12px] font-black ${entry.daysLeft < 0 ? "text-rose-600" : entry.daysLeft <= 7 ? "text-amber-600" : "text-gray-500"}`}>
                         {entry.daysLeft < 0 ? `${Math.abs(entry.daysLeft)} days overdue` : entry.daysLeft === 0 ? "Due today" : `${entry.daysLeft} days`}
@@ -466,7 +466,7 @@ function ReserveFormModal({ reserve, accounts, saving, onClose, onSubmit }: {
     if (!name.trim()) { setError("Give the reserve a name."); return; }
     if (!Number.isFinite(parsed) || parsed <= 0) { setError("A reserve has to be more than ₦0."); return; }
     if (reserve && parsed < reserve.releasedAmount) {
-      setError(`${naira(reserve.releasedAmount)} has already been released, so it cannot be reduced below that.`);
+      setError(`${money(reserve.releasedAmount)} has already been released, so it cannot be reduced below that.`);
       return;
     }
     try {
@@ -518,7 +518,7 @@ function ReserveFormModal({ reserve, accounts, saving, onClose, onSubmit }: {
       </label>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="m-0 block text-[11px] font-black uppercase tracking-wide text-gray-500">
-          Amount (₦)
+          Amount ({currencySymbol()})
           <input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)}
             placeholder="0"
             className="mt-1.5 block w-full rounded-xl border border-gray-200 px-3 py-2.5 text-[13px] font-bold text-gray-900" />
@@ -579,7 +579,7 @@ function ReleaseModal({ reserve, saving, onClose, onSubmit }: {
 
   const submit = async () => {
     setError("");
-    if (!valid) { setError(`Enter an amount between ₦1 and ${naira(reserve.outstanding)}.`); return; }
+    if (!valid) { setError(`Enter an amount between ₦1 and ${money(reserve.outstanding)}.`); return; }
     try {
       await onSubmit({ amount: parsed, note: note.trim() });
     } catch (submitError: any) {
@@ -600,22 +600,22 @@ function ReleaseModal({ reserve, saving, onClose, onSubmit }: {
           </button>
           <button type="button" disabled={saving || !valid} onClick={() => void submit()}
             className="!min-h-0 inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
-            <Unlock className="h-4 w-4" /> Release {naira(Number.isFinite(parsed) ? parsed : 0)}
+            <Unlock className="h-4 w-4" /> Release {money(Number.isFinite(parsed) ? parsed : 0)}
           </button>
         </>
       }
     >
       <div className="rounded-xl bg-gray-50 px-3.5 py-3">
         <p className="m-0 text-[12px] font-semibold text-gray-500">Currently held</p>
-        <p className="m-0 text-xl font-black text-gray-900">{naira(reserve.outstanding)}</p>
+        <p className="m-0 text-xl font-black text-gray-900">{money(reserve.outstanding)}</p>
         {reserve.releasedAmount > 0 && (
           <p className="m-0 text-[11px] font-semibold text-emerald-600">
-            {naira(reserve.releasedAmount)} already released of {naira(reserve.amount)}
+            {money(reserve.releasedAmount)} already released of {money(reserve.amount)}
           </p>
         )}
       </div>
       <label className="m-0 block text-[11px] font-black uppercase tracking-wide text-gray-500">
-        Amount to release (₦)
+        Amount to release ({currencySymbol()})
         <input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)}
           className="mt-1.5 block w-full rounded-xl border border-gray-200 px-3 py-2.5 text-[13px] font-bold text-gray-900" />
       </label>

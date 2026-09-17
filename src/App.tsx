@@ -240,8 +240,9 @@ import { STALE_TIER_STYLE, staleOrderVerdict, summariseStaleOrders } from "./lib
 import { indexCostChanges, ProductCostChange, unitCostAsOf } from "./lib/product-cost-history";
 import { spaceNaira } from "./lib/naira-glyph";
 import {
-  isMoneyHidden, maskFormattedMoney, maskMoneyText, naira, setMoneyHiddenGlobal, shortNaira, subscribeMoneyHidden
-} from "./lib/money-privacy";
+  isMoneyHidden, maskFormattedMoney, maskMoneyText, money, money as moneyAmount,
+  setActiveCurrency, setMoneyHiddenGlobal, shortMoney, subscribeMoneyHidden
+, currencySymbol } from "./lib/money-privacy";
 import { SalesClosersOwnerPage } from "./pages/SalesClosersOwnerPage";
 
 const ORG_MANIFEST_PATH = "/org-manifest.webmanifest";
@@ -8687,12 +8688,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [ordersConversion, setOrdersConversion] = useState(0);
   // ⚠️ THE BRANCH DECIDES THE MONEY. THIS USED TO BE A BROWSER SETTING.
   //
-  // It offered naira, dollar and pound and only RELABELLED the figures -
+  // It offered money, dollar and pound and only RELABELLED the figures -
   // nothing was ever converted - so choosing "pound" showed N104,500 as
   // GBP104,500. Harmless with one country; wrong the moment Accra trades in
-  // cedi. Accra was also still showing naira, because the branch's own
+  // cedi. Accra was also still showing money, because the branch's own
   // currency was stored and never read.
   const currency: CurrencyCode = currencyForBranch(activeBranch);
+  // ⚠️ THE HELPERS OUTSIDE REACT READ THIS, NOT THE VALUE ABOVE.
+  // money(), signedMoney(), shortMoney() and currencySymbol() are called from
+  // plain functions and extracted pages that cannot see component state, so the
+  // branch's currency is pushed into the same module-level store the hide-money
+  // flag uses. Without this they keep printing naira in every branch.
+  //
+  // ⚠️ SET DURING RENDER, NOT IN AN EFFECT. An effect runs AFTER the first
+  // paint, so the opening screen of a Ghanaian branch would show naira and then
+  // never correct itself - nothing re-renders on the change, because switching
+  // branch reloads the page anyway. The write is idempotent and returns early
+  // when the currency has not moved.
+  setActiveCurrency({
+    code: currency,
+    symbol: productCurrencies[currency].symbol,
+    locale: currencies[currency].locale
+  });
   const [showDateRange, setShowDateRange] = useState(false);
   const [dateRange, setDateRange] = useState<DateRange>({ start: "", end: "" });
   const [showManagerDateRange, setShowManagerDateRange] = useState(false);
@@ -10335,7 +10352,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setWeeklyOpeningSaving(true);
     try {
       const result = await cashFlowApi.saveWeeklyOpening(body);
-      showToast(`Opening cash set for the week: ${naira(result.total)}.`);
+      showToast(`Opening cash set for the week: ${money(result.total)}.`);
       setWeeklyOpeningOpen(false);
       await Promise.all([loadWeeklyOpening(), loadCashFlow(cashFlowPeriod), loadBankAccounts()]);
     } catch (err: any) {
@@ -10407,7 +10424,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         ? "Closing cash count saved as a draft."
         : Math.abs(result.variance) <= 0.5
           ? "Closing cash verified - the week balances."
-          : `Closing cash verified. Variance of ${naira(Math.abs(result.variance))} needs investigating.`);
+          : `Closing cash verified. Variance of ${money(Math.abs(result.variance))} needs investigating.`);
       await loadReconciliation(body.weekStart);
     } catch (err: any) {
       showToast(err?.message ?? "Could not save the closing cash count.");
@@ -10474,7 +10491,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     try {
       const result = await cashFlowApi.saveInventorySnapshot(body);
       showToast(body.status === "final"
-        ? `Valuation saved: ${naira(result.totalValue)} across ${result.totalUnits.toLocaleString("en-NG")} units.`
+        ? `Valuation saved: ${money(result.totalValue)} across ${result.totalUnits.toLocaleString("en-NG")} units.`
         : "Valuation saved as a draft.");
       await loadInventoryValue(body.weekStart);
     } catch (err: any) {
@@ -16164,7 +16181,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       });
       showToast(lines.length === 0
         ? "Extra items cleared."
-        : `${lines.length} extra item${lines.length === 1 ? "" : "s"} saved. Order total ${naira(result.amount)}.`);
+        : `${lines.length} extra item${lines.length === 1 ? "" : "s"} saved. Order total ${money(result.amount)}.`);
       // Same optimistic update the cross-sell path uses, so the receipt and the
       // totals reflect the change without a full reload.
       setTrackedOrders((prev) => prev.map((row) => row.id === selectedOrder.id
@@ -16210,7 +16227,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         freezeHistory: costFreezeFirst
       });
       showToast(result.ordersFrozen > 0
-        ? `Cost updated. ${result.ordersFrozen} past order${result.ordersFrozen === 1 ? "" : "s"} frozen at ${naira(result.previousUnitCost)} - their profit will not move.`
+        ? `Cost updated. ${result.ordersFrozen} past order${result.ordersFrozen === 1 ? "" : "s"} frozen at ${money(result.previousUnitCost)} - their profit will not move.`
         : "Cost updated. No past orders needed freezing.");
       // Same optimistic update savePricing uses; there is no products reload.
       setProducts((value) => value.map((product) => product.id === selectedProduct.id
@@ -24259,7 +24276,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       bonusManuallyAdjusted: true
     } : o));
     closeModal();
-    showToast(`Bonus adjusted on ${order.id} - ${naira(total)}`);
+    showToast(`Bonus adjusted on ${order.id} - ${money(total)}`);
     ordersApi.update(order.id, {
       manual_bonus_components: components,
       manual_bonus_override: total,
@@ -30725,7 +30742,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         if (!current) return current;
         const last = current.tiers[current.tiers.length - 1];
         const nextMin = Math.max(0, last?.maxProfit ?? last?.minProfit ?? 0);
-        return { ...current, tiers: [...current.tiers, { id: `tier-${Date.now()}`, label: `₦${nextMin.toLocaleString()}+`, minProfit: nextMin, maxProfit: null, amount: 0 }] };
+        return { ...current, tiers: [...current.tiers, { id: `tier-${Date.now()}`, label: `${money(nextMin)}+`, minProfit: nextMin, maxProfit: null, amount: 0 }] };
       });
     };
     const statusLabel = evaluation?.status === "profit_gate_miss" ? "Profit gate not met"
@@ -35573,7 +35590,7 @@ ${waybillLineItems(w).length > 1
   ? `<tr><th>Items</th><td colspan="3">${waybillLineItems(w).map((it) => `${String(it.quantity)} × ${esc(it.productName)}`).join("<br/>")}</td></tr>`
   : `<tr><th>Product</th><td>${esc(w.productName)}</td><th>Quantity</th><td>${esc(String(w.quantity))} units</td></tr>`}
 <tr><th>From</th><td>${esc(w.sendingState)}</td><th>To</th><td>${esc(w.receivingState)}</td></tr>
-<tr><th>Logistics Partner</th><td>${esc(w.logisticsPartner || "-")}</td>${includeFinancials ? `<th>Waybill Fee</th><td>${w.waybillFee > 0 ? "₦" + w.waybillFee.toLocaleString() : "-"}</td>` : ""}</tr>
+<tr><th>Logistics Partner</th><td>${esc(w.logisticsPartner || "-")}</td>${includeFinancials ? `<th>Waybill Fee</th><td>${w.waybillFee > 0 ? money(w.waybillFee) : "-"}</td>` : ""}</tr>
 <tr><th>Date Sent</th><td>${esc(w.dateSent)}</td><th>Date Received</th><td>${esc(w.dateReceived || "-")}</td></tr>
 <tr><th>Status</th><td><span class="badge status-${w.status === "In Transit" ? "transit" : w.status === "Received" ? "received" : w.status === "Returned" ? "returned" : "cancelled"}">${esc(w.status)}</span></td><th>Notes</th><td>${esc(w.note || "-")}</td></tr>
 </table>
@@ -39977,7 +39994,7 @@ ${waybillLineItems(w).length > 1
     const ids = followUpMisses.map((m) => m.id);
     if (ids.length === 0) return;
     const totalAmount = followUpMisses.reduce((sum, miss) => sum + (Number(miss.amount ?? 50) || 0), 0);
-    showConfirm(`Approve all ${ids.length} pending follow-up ${ids.length === 1 ? "penalty" : "penalties"} (${naira(totalAmount)})?`, () => {
+    showConfirm(`Approve all ${ids.length} pending follow-up ${ids.length === 1 ? "penalty" : "penalties"} (${money(totalAmount)})?`, () => {
       setFollowUpMisses([]);
       ids.forEach((id) => followUpKpiApi.approveMiss(id).catch(() => {}));
       showToast(`Approved ${ids.length} follow-up ${ids.length === 1 ? "penalty" : "penalties"}.`);
@@ -39987,7 +40004,7 @@ ${waybillLineItems(w).length > 1
     const ids = followUpMisses.map((m) => m.id);
     if (ids.length === 0) return;
     const totalAmount = followUpMisses.reduce((sum, miss) => sum + (Number(miss.amount ?? 50) || 0), 0);
-    showConfirm(`Waive all ${ids.length} pending follow-up ${ids.length === 1 ? "penalty" : "penalties"} (${naira(totalAmount)})? This removes the debt - it won't be charged.`, () => {
+    showConfirm(`Waive all ${ids.length} pending follow-up ${ids.length === 1 ? "penalty" : "penalties"} (${money(totalAmount)})? This removes the debt - it won't be charged.`, () => {
       setFollowUpMisses([]);
       ids.forEach((id) => followUpKpiApi.waiveMiss(id).catch(() => {}));
       showToast(`Waived ${ids.length} follow-up ${ids.length === 1 ? "penalty" : "penalties"}.`);
@@ -42218,7 +42235,7 @@ ${waybillLineItems(w).length > 1
     }
 
     setWaybillRecords((prev) => [record, ...prev]);
-    showToast(`Waybill created - ${itemsLabel} → ${receivingState}.${fee > 0 ? ` Fee ${naira(fee)} booked to expenses.` : ""}`);
+    showToast(`Waybill created - ${itemsLabel} → ${receivingState}.${fee > 0 ? ` Fee ${money(fee)} booked to expenses.` : ""}`);
     // Roll back the waybill record if the
     // server rejects the create. Stock movement stays as a paper trail of
     // the attempt and is reconciled by the next stockApi.movements load.
@@ -42833,7 +42850,7 @@ ${waybillLineItems(w).length > 1
     const rate = Number(cartLogPenalties?.missAmount ?? 0);
     const atRisk = skipped.size * rate;
     showToast(skipped.size > 0
-      ? `${logged} logged. ${skipped.size} skipped — still at risk${rate > 0 ? `, ${naira(atRisk)} today` : ""}.`
+      ? `${logged} logged. ${skipped.size} skipped — still at risk${rate > 0 ? `, ${money(atRisk)} today` : ""}.`
       : `All ${logged} carts logged.`);
   };
 
@@ -49955,7 +49972,7 @@ ${waybillLineItems(w).length > 1
     const row = pdaAgentAccess?.rows.find((entry) => entry.id === agentId);
     const agentName = row?.fullName ?? "this agent";
     const held = row && (row.codExposure > 0 || row.stockUnitsHeld > 0)
-      ? `\n\nThey still hold ${row.stockUnitsHeld} unit(s) and ${naira(row.codExposure)} of company cash. Blocking the portal does not settle either.`
+      ? `\n\nThey still hold ${row.stockUnitsHeld} unit(s) and ${money(row.codExposure)} of company cash. Blocking the portal does not settle either.`
       : "";
     const typed = reason.trim() || window.prompt(`Why is ${agentName}'s portal access being blocked? This goes on the record.${held}`) || "";
     if (!typed.trim()) return;
@@ -54261,7 +54278,7 @@ ${waybillLineItems(w).length > 1
                                             <p className="mt-1 border-t border-gray-100 px-3 pt-1.5 text-[10px] font-black uppercase tracking-wide text-gray-400">Reward</p>
                                             <button type="button" onClick={() => {
                                               setRetentionReferralMenuId(null);
-                                              const raw = window.prompt(`Reward amount for ${r.referrerName} (₦):`, String(r.rewardAmount || ""));
+                                              const raw = window.prompt(`Reward amount for ${r.referrerName} ({currencySymbol()}):`, String(r.rewardAmount || ""));
                                               if (raw === null) return;
                                               const amount = Number(raw.replace(/[^\d.]/g, ""));
                                               if (!Number.isFinite(amount) || amount < 0) { showToast("Enter a valid amount."); return; }
@@ -55127,14 +55144,14 @@ ${waybillLineItems(w).length > 1
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {([
-                  ["satisfactionCheckBonus", "Satisfaction check bonus (₦)"],
-                  ["writtenReviewBonus", "Written review bonus (₦)"],
-                  ["videoTestimonialBonus", "Video testimonial bonus (₦)"],
-                  ["referralBonus", "Referral bonus (₦)"],
+                  ["satisfactionCheckBonus", `Satisfaction check bonus (${currencySymbol()})`],
+                  ["writtenReviewBonus", `Written review bonus (${currencySymbol()})`],
+                  ["videoTestimonialBonus", `Video testimonial bonus (${currencySymbol()})`],
+                  ["referralBonus", `Referral bonus (${currencySymbol()})`],
                   ["retentionSaleBonusPct", "Retention sale bonus (% of order)"],
                   ["customerDiscountPct", "Customer discount reward (%)"],
-                  ["highValueOrderThreshold", "High-value order threshold (₦)"],
-                  ["monthlyBonusTarget", "Monthly bonus target (₦)"]
+                  ["highValueOrderThreshold", `High-value order threshold (${currencySymbol()})`],
+                  ["monthlyBonusTarget", `Monthly bonus target (${currencySymbol()})`]
                 ] as const).map(([key, label]) => (
                   <label key={key} className="space-y-1">
                     <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">{label}</span>
@@ -62997,12 +63014,12 @@ ${waybillLineItems(w).length > 1
                 <div className="flex shrink-0 gap-4 text-right">
                   <span>
                     <span className="block text-[10px] font-black uppercase tracking-wide text-rose-700">Pending</span>
-                    <span className="block text-base font-black text-rose-900">{naira(penalties.totals.pendingAmount)}</span>
+                    <span className="block text-base font-black text-rose-900">{money(penalties.totals.pendingAmount)}</span>
                     <span className="block text-[10px] font-semibold text-rose-700">{penalties.totals.pendingCount} miss{penalties.totals.pendingCount === 1 ? "" : "es"}</span>
                   </span>
                   <span>
                     <span className="block text-[10px] font-black uppercase tracking-wide text-rose-700">Approved</span>
-                    <span className="block text-base font-black text-rose-900">{naira(penalties.totals.approvedAmount)}</span>
+                    <span className="block text-base font-black text-rose-900">{money(penalties.totals.approvedAmount)}</span>
                     <span className="block text-[10px] font-semibold text-rose-700">{penalties.totals.approvedCount} charged</span>
                   </span>
                 </div>
@@ -63085,7 +63102,7 @@ ${waybillLineItems(w).length > 1
                 </ul>
                 <p className="m-0 mt-1 text-[11px] font-medium text-gray-500">
                   {penalties.phase.active
-                    ? `₦${penalties.repsAtRiskToday.reduce((sum, rep) => sum + rep.atRisk, 0).toLocaleString("en-NG")} at risk if the day ends like this.`
+                    ? `${money(penalties.repsAtRiskToday.reduce((sum, rep) => sum + rep.atRisk, 0))} at risk if the day ends like this.`
                     : "Nothing is charged yet — this is what Monday will look like."}
                 </p>
               </div>
@@ -63119,7 +63136,7 @@ ${waybillLineItems(w).length > 1
                     className="inline-flex items-center gap-1.5 rounded-full border border-rose-300 bg-white px-2.5 py-1 text-[11px] font-black text-rose-800">
                     {rep.repName}
                     <span className="font-semibold text-rose-600">
-                      {rep.missedCount} day{rep.missedCount === 1 ? "" : "s"} · {rep.missedCarts} cart{rep.missedCarts === 1 ? "" : "s"} · {naira(rep.atRiskAmount)}
+                      {rep.missedCount} day{rep.missedCount === 1 ? "" : "s"} · {rep.missedCarts} cart{rep.missedCarts === 1 ? "" : "s"} · {money(rep.atRiskAmount)}
                     </span>
                   </li>
                 ))}
@@ -63150,7 +63167,7 @@ ${waybillLineItems(w).length > 1
                         <button type="button" disabled={cartLogSaving}
                           onClick={() => void reviewCartLogPenalty({ repId: row.repId, missDate: row.missDate, status: "approved", note: "" })}
                           className="!min-h-0 rounded-md bg-rose-600 px-2 py-1 text-[11px] font-bold text-white hover:bg-rose-700 disabled:opacity-50">
-                          Charge {naira(row.amount)}
+                          Charge {money(row.amount)}
                         </button>
                       </span>
                     </li>
@@ -63325,7 +63342,7 @@ ${waybillLineItems(w).length > 1
               </div>
             </div>
             {cartPenaltyShowFilters && <div className="mb-2 flex flex-wrap gap-2 rounded-xl border border-rose-100 bg-white p-2"><select value={cartPenaltySource} onChange={(event) => setCartPenaltySource(event.target.value)} className="rounded-lg border px-3 py-1.5 text-xs"><option>All sources</option>{actionSources.map((value) => <option key={value}>{value}</option>)}</select><select value={cartPenaltyLocation} onChange={(event) => setCartPenaltyLocation(event.target.value)} className="rounded-lg border px-3 py-1.5 text-xs"><option>All locations</option>{actionLocations.map((value) => <option key={value}>{value}</option>)}</select><button type="button" onClick={() => { setCartPenaltySource("All sources"); setCartPenaltyLocation("All locations"); }} className="text-xs font-bold text-rose-700">Clear filters</button></div>}
-            <div className="overflow-x-auto rounded-xl border border-rose-100 bg-white"><table className="w-full min-w-[1080px] text-left text-xs"><thead className="bg-rose-50/60 text-[10px] font-black uppercase tracking-wide text-gray-500"><tr><th className="px-3 py-2"><input type="checkbox" checked={visibleActionRows.length > 0 && visibleActionRows.every((row) => cartPenaltySelectedIds.has(row.id))} onChange={(event) => setCartPenaltySelectedIds(event.target.checked ? new Set(visibleActionRows.map((row) => row.id)) : new Set())} aria-label="Select all unlogged carts" /></th><th className="px-3 py-2">Cart / Customer</th><th className="px-3 py-2">Assigned time</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Item / Source</th><th className="px-3 py-2">Potential charge</th><th className="px-3 py-2" /></tr></thead><tbody>{visibleActionRows.map((row) => <tr key={`action-${row.id}`} className="border-t border-rose-50"><td className="px-3 py-2.5"><input type="checkbox" checked={cartPenaltySelectedIds.has(row.id)} onChange={(event) => setCartPenaltySelectedIds((current) => { const next = new Set(current); if (event.target.checked) next.add(row.id); else next.delete(row.id); return next; })} aria-label={`Select ${row.customer}`} /></td><td className="px-3 py-2.5"><b className="block">#{String(row.id).slice(0, 8)} · {row.customer || "No name given"}</b><span className="text-slate-400">{row.state || row.city || "—"}</span></td><td className="px-3 py-2.5 text-slate-600">{row.assignedAt ? new Date(row.assignedAt).toLocaleTimeString("en-NG", { hour: "numeric", minute: "2-digit" }) : "—"}</td><td className="px-3 py-2.5"><span className="rounded-full bg-rose-100 px-2 py-1 text-[10px] font-black uppercase text-rose-700">Unlogged</span><span className="block text-[11px] text-slate-500">No activity logged</span></td><td className="px-3 py-2.5 text-slate-600"><span className="block">{row.productName || "Cart"}{row.quantity ? ` (${row.quantity}pcs)` : ""}</span><span className="text-slate-400">Source: {row.source || "Unknown"}</span></td><td className="px-3 py-2.5 font-black text-rose-700">{naira(penalties.missAmount)}</td><td className="px-3 py-2.5"><button type="button" onClick={() => openCartFollowUpFromGrid(row)} className="rounded-lg border border-gray-200 bg-white px-3 py-2 font-bold text-gray-700 hover:border-blue-300 hover:text-blue-600">Open &amp; Log Activity →</button></td></tr>)}</tbody></table>{visibleActionRows.length === 0 && <p className="m-0 p-6 text-center text-xs text-slate-500">No unlogged carts match these filters.</p>}</div>
+            <div className="overflow-x-auto rounded-xl border border-rose-100 bg-white"><table className="w-full min-w-[1080px] text-left text-xs"><thead className="bg-rose-50/60 text-[10px] font-black uppercase tracking-wide text-gray-500"><tr><th className="px-3 py-2"><input type="checkbox" checked={visibleActionRows.length > 0 && visibleActionRows.every((row) => cartPenaltySelectedIds.has(row.id))} onChange={(event) => setCartPenaltySelectedIds(event.target.checked ? new Set(visibleActionRows.map((row) => row.id)) : new Set())} aria-label="Select all unlogged carts" /></th><th className="px-3 py-2">Cart / Customer</th><th className="px-3 py-2">Assigned time</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Item / Source</th><th className="px-3 py-2">Potential charge</th><th className="px-3 py-2" /></tr></thead><tbody>{visibleActionRows.map((row) => <tr key={`action-${row.id}`} className="border-t border-rose-50"><td className="px-3 py-2.5"><input type="checkbox" checked={cartPenaltySelectedIds.has(row.id)} onChange={(event) => setCartPenaltySelectedIds((current) => { const next = new Set(current); if (event.target.checked) next.add(row.id); else next.delete(row.id); return next; })} aria-label={`Select ${row.customer}`} /></td><td className="px-3 py-2.5"><b className="block">#{String(row.id).slice(0, 8)} · {row.customer || "No name given"}</b><span className="text-slate-400">{row.state || row.city || "—"}</span></td><td className="px-3 py-2.5 text-slate-600">{row.assignedAt ? new Date(row.assignedAt).toLocaleTimeString("en-NG", { hour: "numeric", minute: "2-digit" }) : "—"}</td><td className="px-3 py-2.5"><span className="rounded-full bg-rose-100 px-2 py-1 text-[10px] font-black uppercase text-rose-700">Unlogged</span><span className="block text-[11px] text-slate-500">No activity logged</span></td><td className="px-3 py-2.5 text-slate-600"><span className="block">{row.productName || "Cart"}{row.quantity ? ` (${row.quantity}pcs)` : ""}</span><span className="text-slate-400">Source: {row.source || "Unknown"}</span></td><td className="px-3 py-2.5 font-black text-rose-700">{money(penalties.missAmount)}</td><td className="px-3 py-2.5"><button type="button" onClick={() => openCartFollowUpFromGrid(row)} className="rounded-lg border border-gray-200 bg-white px-3 py-2 font-bold text-gray-700 hover:border-blue-300 hover:text-blue-600">Open &amp; Log Activity →</button></td></tr>)}</tbody></table>{visibleActionRows.length === 0 && <p className="m-0 p-6 text-center text-xs text-slate-500">No unlogged carts match these filters.</p>}</div>
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white/80 px-2 py-1.5 text-[11px] font-semibold text-slate-500"><span>🛡 Act now to avoid charges. Once logged, the charge is removed automatically.</span><span className="flex gap-3"><button type="button" onClick={() => setCartPenaltyShowHelp((value) => !value)} className="font-black text-rose-700">How it works</button><button type="button" onClick={() => setCartPenaltyShowPolicy((value) => !value)} className="font-black text-rose-700">View penalty policy →</button></span></div>
             {cartPenaltyShowHelp && <p className="m-0 mt-2 rounded-lg border border-rose-100 bg-white p-3 text-xs text-slate-600">Open each cart and record a call, WhatsApp, SMS, or outcome. The cart disappears from this risk list after a valid activity is saved. “Work through” walks the visible carts one at a time, oldest first — each still needs its own truthful outcome. Skip a cart you genuinely cannot reach and it comes back at the end of the run; skipping writes nothing and does not clear the charge.</p>}
           </div>
@@ -64847,7 +64864,7 @@ ${waybillLineItems(w).length > 1
       );
     }
 
-    const money = (value: number) => naira(Math.max(0, value));
+    const money = (value: number) => moneyAmount(Math.max(0, value));
     const pct = (value: number) => `${value}%`;
     const metricValue = (key: string, value: number) =>
       key === "teamAov" || key === "incrementalRevenue" ? money(value) : pct(value);
@@ -65234,7 +65251,7 @@ ${waybillLineItems(w).length > 1
       );
     }
 
-    const money = (value: number) => naira(Math.max(0, value));
+    const money = (value: number) => moneyAmount(Math.max(0, value));
     const pct = (value: number) => `${value}%`;
     const metricValue = (key: string, value: number) =>
       key === "teamAov" || key === "incrementalRevenue" ? money(value) : pct(value);
@@ -65568,7 +65585,7 @@ ${waybillLineItems(w).length > 1
       );
     }
 
-    const money = (value: number) => naira(Math.max(0, value));
+    const money = (value: number) => moneyAmount(Math.max(0, value));
     const pct = (value: number) => `${value}%`;
     const stat = (label: string, value: string) => (
       <div className="rounded-xl border border-gray-200 bg-white px-4 py-3.5">
@@ -65613,7 +65630,7 @@ ${waybillLineItems(w).length > 1
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={rows}>
                     <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-                    <YAxis tick={{ fontSize: 10 }} width={isPct ? 36 : 52} tickFormatter={(v) => isPct ? `${v}%` : shortNaira(Number(v))} />
+                    <YAxis tick={{ fontSize: 10 }} width={isPct ? 36 : 52} tickFormatter={(v) => isPct ? `${v}%` : shortMoney(Number(v))} />
                     <Tooltip formatter={(value: any) => format(Number(value))} />
                     {trend.map((rep: any, index: number) => (
                       <Line key={rep.repId} type="monotone" dataKey={rep.name} stroke={REP_TREND_COLORS[index % REP_TREND_COLORS.length]} strokeWidth={2} dot={{ r: 3 }} />
@@ -65798,7 +65815,7 @@ ${waybillLineItems(w).length > 1
       );
     }
 
-    const money = (value: number) => naira(Math.max(0, value));
+    const money = (value: number) => moneyAmount(Math.max(0, value));
     const pct = (value: number) => `${value}%`;
     const scrollToSection = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
     // Same shape as the server's own pctDelta so a card and its table row can
@@ -66296,7 +66313,7 @@ ${waybillLineItems(w).length > 1
       );
     }
 
-    const money = (value: number) => naira(Math.max(0, value));
+    const money = (value: number) => moneyAmount(Math.max(0, value));
     const pct = (value: number) => `${value}%`;
     const severityTone = (severity: string) =>
       severity === "High" ? "bg-rose-50 text-rose-700 border-rose-200"
@@ -66582,7 +66599,7 @@ ${waybillLineItems(w).length > 1
       );
     }
 
-    const money = (value: number) => naira(Math.max(0, value));
+    const money = (value: number) => moneyAmount(Math.max(0, value));
     const statusTone = (status: string) =>
       status === "Completed" ? "border-emerald-200 bg-emerald-50 text-emerald-700"
         : status === "Abandoned" ? "border-gray-300 bg-gray-100 text-gray-500"
@@ -66626,7 +66643,7 @@ ${waybillLineItems(w).length > 1
                     value={headOfSalesTrackResultsDraft.customersDelivered}
                     onChange={(e) => setHeadOfSalesTrackResultsDraft((d) => ({ ...d, customersDelivered: e.target.value }))} />
                 </label>
-                <label className="text-[11px] text-gray-500">Incremental Revenue (₦)
+                <label className="text-[11px] text-gray-500">Incremental Revenue ({currencySymbol()})
                   <input type="number" min="0" className="mt-0.5 w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
                     value={headOfSalesTrackResultsDraft.incrementalRevenue}
                     onChange={(e) => setHeadOfSalesTrackResultsDraft((d) => ({ ...d, incrementalRevenue: e.target.value }))} />
@@ -67038,7 +67055,7 @@ ${waybillLineItems(w).length > 1
       );
     }
 
-    const money = (value: number) => naira(Math.max(0, value));
+    const money = (value: number) => moneyAmount(Math.max(0, value));
     const pct = (value: number) => `${value}%`;
     const report = headOfSalesWeeklyReport;
     const snapshot = report?.performanceSnapshot ?? headOfSalesWeeklyReportLivePreview;
@@ -67256,7 +67273,7 @@ ${waybillLineItems(w).length > 1
               </div>
             ) : (
               <div className="mt-2 space-y-2">
-                <label className="block text-[11px] text-gray-500">Team AOV target (₦)
+                <label className="block text-[11px] text-gray-500">Team AOV target ({currencySymbol()})
                   <input type="number" min="0" className="mt-0.5 w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
                     value={form.focusTargetAov} onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, focusTargetAov: e.target.value }))} />
                 </label>
@@ -67317,7 +67334,7 @@ ${waybillLineItems(w).length > 1
       );
     }
 
-    const money = (value: number) => naira(Math.max(0, value));
+    const money = (value: number) => moneyAmount(Math.max(0, value));
     const data = headOfSalesBonusData;
     const tiers: any[] = data?.settings?.tiers ?? [];
     const record = data?.record;
@@ -67597,7 +67614,7 @@ ${waybillLineItems(w).length > 1
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={historyChronological.map((row: any) => ({ ...row, label: formatDateOnly(row.weekStart) }))}>
                     <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-                    <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => shortNaira(Number(v))} width={60} />
+                    <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => shortMoney(Number(v))} width={60} />
                     <Tooltip formatter={(value: any) => money(Number(value))} />
                     <Line type="monotone" dataKey="amount" stroke="#1F8FE0" strokeWidth={2} dot={{ r: 4 }} />
                   </LineChart>
@@ -69288,13 +69305,13 @@ ${waybillLineItems(w).length > 1
               {([
                 ["monthlyTargetMin", "Monthly net contribution (minimum, ₦)"],
                 ["monthlyTargetPreferred", "Monthly net contribution (preferred, ₦)"],
-                ["weeklyPaceTarget", "Weekly pace target (₦)"],
+                ["weeklyPaceTarget", `Weekly pace target (${currencySymbol()})`],
                 ["minDeliveryRatePct", "Minimum delivery rate (%)"],
                 ["upsellAttemptRatePct", "Upsell/cross-sell attempt rate (%)"],
                 ["documentationRatePct", "Documentation completeness (%)"],
-                ["repMonthlySalary", "Rep monthly salary (₦)"],
+                ["repMonthlySalary", `Rep monthly salary (${currencySymbol()})`],
                 ["surplusBonusPct", "Surplus bonus (% of net contribution above the minimum)"],
-                ["bonusPerRecoveredOrder", "Bonus per recovered order (₦)"],
+                ["bonusPerRecoveredOrder", `Bonus per recovered order (${currencySymbol()})`],
                 ["weeklyRecoveredTarget", "Recovered orders target (per week)"],
                 ["monthlyRecoveredTarget", "Recovered orders target (per month)"],
                 ["dailyFollowUpPickTarget", "Minimum follow-up orders picked per day"],
@@ -83246,7 +83263,7 @@ ${waybillLineItems(w).length > 1
                                   <Field label="Route" value={`${linkedWaybill.sendingState} → ${linkedWaybill.receivingState}`} />
                                   <Field label="Logistics partner" value={linkedWaybill.logisticsPartner} />
                                   <Field label="Quantity" value={linkedWaybill.quantity} />
-                                  {canSeeWaybillFees && <Field label="Fee" value={naira(linkedWaybill.waybillFee)} />}
+                                  {canSeeWaybillFees && <Field label="Fee" value={money(linkedWaybill.waybillFee)} />}
                                   <Field label="Sent" value={formatMoment(linkedWaybill.createdAt) || formatDateOnly(linkedWaybill.dateSent)} />
                                   <Field label="Received" value={(() => {
                                     const receivedMoment = getWaybillStatusMoment(linkedWaybill, stockMovements);
@@ -84462,7 +84479,7 @@ ${waybillLineItems(w).length > 1
                     {topPerformerBonusEnabled && (
                       <div className="space-y-3 pt-1">
                         <label className="flex flex-col gap-1">
-                          <span className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Bonus Amount (₦)</span>
+                          <span className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Bonus Amount ({currencySymbol()})</span>
                           <input className="w-48 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" inputMode="numeric" value={topPerformerBonusAmount} onChange={(e) => setTopPerformerBonusAmount(e.target.value)} placeholder="e.g. 10000" />
                         </label>
                         <p className="text-[11px] text-gray-500 italic">Tie-breaker: when two or more reps tie on delivered orders, the bonus splits equally between them.</p>
@@ -86076,7 +86093,7 @@ ${waybillLineItems(w).length > 1
                       () => cashFlowApi.updateReserve(id, body), "Reserve updated."),
                     onRelease: (id, body) => runReserveAction(
                       () => cashFlowApi.releaseReserve(id, body),
-                      `${naira(body.amount)} released back to operating cash.`),
+                      `${money(body.amount)} released back to operating cash.`),
                     onDelete: (id) => runReserveAction(
                       () => cashFlowApi.deleteReserve(id), "Reserve removed.")
                   }}
@@ -88981,7 +88998,7 @@ ${waybillLineItems(w).length > 1
                 </div>
               )}
               {financeTab === "Profitability" && (() => {
-                const fmt = (n: any) => "₦" + Math.round(Number(n) || 0).toLocaleString();
+                const fmt = (n: any) => money(Number(n) || 0);
                 const ck = (s: string) => String(s).replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase());
                 const econ = batchEconomics?.economics;
                 const w = econ?.worstCase;
@@ -103459,7 +103476,7 @@ ${waybillLineItems(w).length > 1
 
 	                <p className="m-0 flex items-center justify-between gap-2 rounded-lg bg-gray-50 px-3 py-2.5 text-[13px] font-bold text-gray-900">
 	                  <span>Extras total</span>
-	                  <span>{naira(extraItemsDraft.reduce((sum, row) =>
+	                  <span>{money(extraItemsDraft.reduce((sum, row) =>
 	                    sum + Math.max(0, Number(String(row.amount).replace(/,/g, "")) || 0), 0))}</span>
 	                </p>
 
@@ -104661,16 +104678,16 @@ ${waybillLineItems(w).length > 1
                         </p>
                         <p className="m-0 mt-1 text-[12px] font-medium leading-4 text-amber-800">
                           {costImpact.unitsAffected} unit{costImpact.unitsAffected === 1 ? "" : "s"} already sold at{" "}
-                          {naira(costImpact.previousUnitCost)}. Left unfrozen, reported profit on those orders would
+                          {money(costImpact.previousUnitCost)}. Left unfrozen, reported profit on those orders would
                           {costImpact.reportedProfitShift < 0 ? " fall by " : " rise by "}
-                          <strong className="font-black">{naira(Math.abs(costImpact.reportedProfitShift))}</strong>.
+                          <strong className="font-black">{money(Math.abs(costImpact.reportedProfitShift))}</strong>.
                         </p>
                         <label className="m-0 mt-2.5 flex items-start gap-2.5 rounded-lg bg-white px-3 py-2.5">
                           <input type="checkbox" checked={costFreezeFirst} className="mt-0.5 h-4 w-4"
                             onChange={(event) => setCostFreezeFirst(event.target.checked)} />
                           <span>
                             <span className="block text-[13px] font-bold text-gray-900">
-                              Freeze those orders at {naira(costImpact.previousUnitCost)} first
+                              Freeze those orders at {money(costImpact.previousUnitCost)} first
                             </span>
                             <span className="block text-[11px] font-medium text-gray-500">
                               Recommended. Past profit stays exactly as reported; only orders delivered from now on use
@@ -108340,10 +108357,10 @@ ${waybillLineItems(w).length > 1
                   ))}
                 </div>
                 {payStructureType !== "Per Delivered Order" && (
-                  <label><span>Fixed Salary (₦)</span><input value={fixedSalary} onChange={(event) => setFixedSalary(event.target.value)} inputMode="decimal" placeholder="e.g. 50000" /></label>
+                  <label><span>Fixed Salary ({currencySymbol()})</span><input value={fixedSalary} onChange={(event) => setFixedSalary(event.target.value)} inputMode="decimal" placeholder="e.g. 50000" /></label>
                 )}
                 {(payStructureType === "Per Delivered Order" || payStructureType === "Hybrid") && (
-                  <label><span>Rate per delivered order (₦)</span><input value={commissionRate} onChange={(event) => setCommissionRate(event.target.value)} inputMode="decimal" placeholder="e.g. 2000" /></label>
+                  <label><span>Rate per delivered order ({currencySymbol()})</span><input value={commissionRate} onChange={(event) => setCommissionRate(event.target.value)} inputMode="decimal" placeholder="e.g. 2000" /></label>
                 )}
                 {payStructureType === "Performance Bonus" && (
                   <div className="space-y-3">
@@ -108359,7 +108376,7 @@ ${waybillLineItems(w).length > 1
                           <input className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm" inputMode="numeric" value={tier.threshold || ""} placeholder="e.g. 50" onChange={(e) => setBonusTiers((prev) => prev.map((t, i) => i === idx ? { ...t, threshold: Number(e.target.value) || 0 } : t))} />
                         </div>
                         <div className="flex-1">
-                          <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Bonus (₦)</label>
+                          <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Bonus ({currencySymbol()})</label>
                           <input className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm" inputMode="numeric" value={tier.amount || ""} placeholder="e.g. 5000" onChange={(e) => setBonusTiers((prev) => prev.map((t, i) => i === idx ? { ...t, amount: Number(e.target.value) || 0 } : t))} />
                         </div>
                         <button type="button" className="!min-h-0 w-full sm:w-auto p-1.5 text-red-400 hover:text-red-600 transition-colors" onClick={() => setBonusTiers((prev) => prev.filter((_, i) => i !== idx))}>✕</button>
@@ -109820,7 +109837,7 @@ ${waybillLineItems(w).length > 1
                       <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
                       <p className="m-0 text-[11px] leading-relaxed text-gray-500 dark:text-slate-400">
                         Times are when the cash was recorded as received.<br />
-                        All amounts are in Nigerian Naira (₦). Red entries reduced the balance.
+                        All amounts are in {currencies[currency].label} ({currencySymbol()}). Red entries reduced the balance.
                       </p>
                     </div>
                     <button className="!min-h-0 inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 sm:w-auto" onClick={closeModal}>Close</button>
@@ -110871,7 +110888,7 @@ ${waybillLineItems(w).length > 1
                     {partFields.map((f) => (
                       <label key={f.key} className="flex flex-col gap-1">
                         <span className="flex items-center justify-between">
-                          <span>{f.label} (₦)</span>
+                          <span>{f.label} ({currencySymbol()})</span>
                           {num(manualBonusParts[f.key]) !== f.autoVal && (
                             <button type="button" className="!min-h-0 text-[10px] font-bold text-blue-600 hover:underline" onClick={() => setManualBonusParts((p) => ({ ...p, [f.key]: String(f.autoVal) }))}>
                               reset to ₦{f.autoVal.toLocaleString("en-NG")}
@@ -111056,7 +111073,7 @@ ${waybillLineItems(w).length > 1
                     {(["Fake Upgrade", "Wrong Data Entry", "Missed Recovery", "Poor Delivery Rate", "Order Source Manipulation", "Unprofessional Conduct", "Negligence", "Other"] as RepPenaltyType[]).map((t) => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </label>
-                <label><span>Deduction Amount (₦)</span><input value={penaltyAmount} onChange={(e) => setPenaltyAmount(e.target.value)} inputMode="decimal" /></label>
+                <label><span>Deduction Amount ({currencySymbol()})</span><input value={penaltyAmount} onChange={(e) => setPenaltyAmount(e.target.value)} inputMode="decimal" /></label>
                 <label className="flex items-center gap-2 text-xs">
                   <input type="checkbox" checked={penaltyRemoveAllBonuses} onChange={(e) => setPenaltyRemoveAllBonuses(e.target.checked)} />
                   <span>Also remove all bonuses for the related order/week</span>
@@ -111447,7 +111464,7 @@ ${waybillLineItems(w).length > 1
                       <button type="button" className="!min-h-0 mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dashed border-blue-300 text-blue-700 text-xs font-bold hover:bg-blue-50 transition-colors" onClick={addWaybillItemRow}>+ Add another product</button>
                     </div>
                     {canSeeWaybillFees && <div>
-                      <label className="block text-sm font-bold text-gray-900 mb-1.5">Waybill Fee (₦)</label>
+                      <label className="block text-sm font-bold text-gray-900 mb-1.5">Waybill Fee ({currencySymbol()})</label>
                       <input type="number" min={0} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" value={waybillFee} onChange={(e) => setWaybillFee(e.target.value)} />
                       <p className="mt-1.5 text-xs text-gray-500">One fee for the whole waybill</p>
                     </div>}
@@ -111676,7 +111693,7 @@ ${waybillLineItems(w).length > 1
                       )}
                     </div>
                     {canSeeWaybillFees && <div>
-                      <label className="block text-sm font-bold text-gray-900 mb-1.5">Waybill Fee (₦) <span className="font-normal text-gray-400">(one fee · whole waybill)</span></label>
+                      <label className="block text-sm font-bold text-gray-900 mb-1.5">Waybill Fee ({currencySymbol()}) <span className="font-normal text-gray-400">(one fee · whole waybill)</span></label>
                       <input type="number" min={0} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" value={waybillFee} onChange={(e) => setWaybillFee(e.target.value)} />
                     </div>}
                     <div>

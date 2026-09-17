@@ -13,10 +13,10 @@ import InventoryValueTab, { type InventoryValueTabProps } from "./InventoryValue
 import AccountReconciliationTab, { type AccountReconciliationTabProps } from "./AccountReconciliationTab";
 import PeriodCloseTab, { type PeriodCloseTabProps } from "./PeriodCloseTab";
 import WeeklyOverviewTab, { type WeeklyOverviewTabProps } from "./WeeklyOverviewTab";
-// ⚠️ Shared formatters, NOT a local `naira()`. A private one silently
+// ⚠️ Shared formatters, NOT a local `money()`. A private one silently
 // ignores the topbar "hide money" toggle - which is exactly how these
 // pages kept showing real figures with privacy mode on.
-import { naira, shortNaira } from "../lib/money-privacy";
+import { money, shortMoney, currencySymbol } from "../lib/money-privacy";
 
 // ⚠️ Cash, not profit. Profit is recognised when an order is Delivered; the
 // money arrives when the agent remits, days later and sometimes never. A week
@@ -298,7 +298,7 @@ export default function CashFlowPage(props: CashFlowPageProps) {
             </div>
             <p className="m-0 mt-2 text-[13px] font-bold text-gray-500">{card.label}</p>
             <p className={`m-0 mt-0.5 break-words text-2xl font-black ${card.valueTone}`}>
-              {loading && !view ? "—" : naira(card.value)}
+              {loading && !view ? "—" : money(card.value)}
             </p>
             {card.label === "Net Cash Flow" && view?.netChangeVsPreviousPct !== null && view?.netChangeVsPreviousPct !== undefined ? (
               <p className={`m-0 mt-1 text-[11px] font-bold ${view.netChangeVsPreviousPct >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
@@ -318,7 +318,7 @@ export default function CashFlowPage(props: CashFlowPageProps) {
           <div className="mt-3 flex items-center gap-3">
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600"><TrendingUp className="h-5 w-5" /></span>
             <div className="min-w-0">
-              <p className={`m-0 text-2xl font-black ${(view?.netCashFlow ?? 0) >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{naira(view?.netCashFlow ?? 0)}</p>
+              <p className={`m-0 text-2xl font-black ${(view?.netCashFlow ?? 0) >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{money(view?.netCashFlow ?? 0)}</p>
               <p className="m-0 text-[11px] font-semibold text-gray-400">
                 {(view?.netCashFlow ?? 0) >= 0 ? "more cash came in than went out this period" : "more cash went out than came in this period"}
               </p>
@@ -327,15 +327,15 @@ export default function CashFlowPage(props: CashFlowPageProps) {
           <dl className="mt-4 space-y-2 text-sm">
             <div className="flex items-center justify-between gap-3 border-b border-gray-50 pb-2">
               <dt className="text-gray-500">Cash Received (In)</dt>
-              <dd className="m-0 font-black text-gray-900">{naira(view?.cashIn ?? 0)}</dd>
+              <dd className="m-0 font-black text-gray-900">{money(view?.cashIn ?? 0)}</dd>
             </div>
             <div className="flex items-center justify-between gap-3 border-b border-gray-50 pb-2">
               <dt className="text-gray-500">Cash Spent (Out)</dt>
-              <dd className="m-0 font-black text-gray-900">{naira(view?.cashOut ?? 0)}</dd>
+              <dd className="m-0 font-black text-gray-900">{money(view?.cashOut ?? 0)}</dd>
             </div>
             <div className="flex items-center justify-between gap-3">
               <dt className="font-bold text-gray-700">Net Cash Flow</dt>
-              <dd className={`m-0 font-black ${(view?.netCashFlow ?? 0) >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{naira(view?.netCashFlow ?? 0)}</dd>
+              <dd className={`m-0 font-black ${(view?.netCashFlow ?? 0) >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{money(view?.netCashFlow ?? 0)}</dd>
             </div>
           </dl>
         </section>
@@ -345,7 +345,7 @@ export default function CashFlowPage(props: CashFlowPageProps) {
           <div className="mt-3 flex items-center gap-3">
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber-50 text-amber-600"><Users className="h-5 w-5" /></span>
             <div className="min-w-0">
-              <p className="m-0 text-2xl font-black text-amber-600">{naira(view?.cashStillWithAgents ?? 0)}</p>
+              <p className="m-0 text-2xl font-black text-amber-600">{money(view?.cashStillWithAgents ?? 0)}</p>
               <p className="m-0 text-[11px] font-semibold text-gray-400">
                 {view?.agentReceivables
                   ? `${view.agentReceivables.orderCount} order${view.agentReceivables.orderCount === 1 ? "" : "s"} across ${view.agentReceivables.agentCount} agent${view.agentReceivables.agentCount === 1 ? "" : "s"}`
@@ -377,7 +377,7 @@ export default function CashFlowPage(props: CashFlowPageProps) {
                     {agent.agentName}
                     <span className="ml-1 font-medium text-gray-400">({agent.orders})</span>
                   </span>
-                  <span className="shrink-0 text-[11px] font-black text-gray-800">{naira(agent.owed)}</span>
+                  <span className="shrink-0 text-[11px] font-black text-gray-800">{money(agent.owed)}</span>
                 </li>
               ))}
             </ul>
@@ -395,9 +395,9 @@ export default function CashFlowPage(props: CashFlowPageProps) {
               <LineChart data={view?.trend ?? []} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
                 <XAxis dataKey="day" tickFormatter={(value) => `${dayLabel(String(value))}`} tick={{ fontSize: 10, fill: "#94A3B8" }} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={(value) => shortNaira(Number(value))} tick={{ fontSize: 10, fill: "#94A3B8" }} axisLine={false} tickLine={false} width={54} />
+                <YAxis tickFormatter={(value) => shortMoney(Number(value))} tick={{ fontSize: 10, fill: "#94A3B8" }} axisLine={false} tickLine={false} width={54} />
                 <Tooltip
-                  formatter={(value: any, name: any) => [naira(Number(value)), name]}
+                  formatter={(value: any, name: any) => [money(Number(value)), name]}
                   labelFormatter={(label) => `${dowLabel(String(label))} ${dayLabel(String(label))}`}
                   contentStyle={{ borderRadius: 12, border: "1px solid #E2E8F0", fontSize: 12 }}
                 />
@@ -420,7 +420,7 @@ export default function CashFlowPage(props: CashFlowPageProps) {
           <section key={panel.title} className="rounded-2xl border border-gray-200 bg-white px-5 py-4">
             <div className="flex items-center justify-between gap-3">
               <h2 className="m-0 text-sm font-black text-gray-900">{panel.title}</h2>
-              <span className="text-sm font-black text-gray-900">{naira(panel.data?.total ?? 0)}</span>
+              <span className="text-sm font-black text-gray-900">{money(panel.data?.total ?? 0)}</span>
             </div>
             <div className="mt-3 flex flex-col items-center gap-4 sm:flex-row">
               <div className="h-[150px] w-[150px] shrink-0">
@@ -433,7 +433,7 @@ export default function CashFlowPage(props: CashFlowPageProps) {
                           <Cell key={slice.label} fill={panel.colors[index % panel.colors.length]} />
                         ))}
                       </Pie>
-                      <Tooltip formatter={(value: any, name: any) => [naira(Number(value)), name]}
+                      <Tooltip formatter={(value: any, name: any) => [money(Number(value)), name]}
                         contentStyle={{ borderRadius: 12, border: "1px solid #E2E8F0", fontSize: 12 }} />
                     </PieChart>
                   </ResponsiveContainer>
@@ -451,7 +451,7 @@ export default function CashFlowPage(props: CashFlowPageProps) {
                       <span className="truncate font-medium text-gray-700">{slice.label}</span>
                     </span>
                     <span className="flex shrink-0 items-center gap-3">
-                      <span className="font-black text-gray-900">{naira(slice.amount)}</span>
+                      <span className="font-black text-gray-900">{money(slice.amount)}</span>
                       <span className="w-14 text-right text-[11px] font-bold text-gray-400">{slice.sharePct}%</span>
                     </span>
                   </li>
@@ -460,7 +460,7 @@ export default function CashFlowPage(props: CashFlowPageProps) {
             </div>
             <div className="mt-3 flex items-center justify-between gap-3 border-t border-gray-100 pt-3">
               <span className="text-[13px] font-bold text-gray-700">{panel.totalLabel}</span>
-              <span className={`text-sm font-black ${panel.totalTone}`}>{naira(panel.data?.total ?? 0)}</span>
+              <span className={`text-sm font-black ${panel.totalTone}`}>{money(panel.data?.total ?? 0)}</span>
             </div>
             {panel.title === "Cash Out Breakdown" && (panel.data?.slices ?? []).some((slice) => slice.label === "Stock Purchases" && slice.amount === 0) && (
               <p className="m-0 mt-2 text-[11px] font-medium leading-4 text-amber-700">
@@ -507,9 +507,9 @@ export default function CashFlowPage(props: CashFlowPageProps) {
                 <th className="px-4 py-3">Category</th>
                 <th className="px-4 py-3">Description</th>
                 <th className="px-4 py-3">Source / Agent</th>
-                <th className="px-4 py-3 text-right">Cash In (₦)</th>
-                <th className="px-4 py-3 text-right">Cash Out (₦)</th>
-                <th className="px-4 py-3 text-right">Balance (₦)</th>
+                <th className="px-4 py-3 text-right">Cash In ({currencySymbol()})</th>
+                <th className="px-4 py-3 text-right">Cash Out ({currencySymbol()})</th>
+                <th className="px-4 py-3 text-right">Balance ({currencySymbol()})</th>
                 <th className="px-4 py-3 text-right">Action</th>
               </tr>
             </thead>
@@ -658,7 +658,7 @@ function SetOpeningCashModal({ view, history, saving, onClose, onSave }: {
             </div>
             <div className="text-right">
               <p className="m-0 text-[10px] font-black uppercase tracking-[0.14em] text-gray-400">Current opening cash</p>
-              <p className="m-0 text-lg font-black text-gray-900">{naira(view?.openingCash ?? 0)}</p>
+              <p className="m-0 text-lg font-black text-gray-900">{money(view?.openingCash ?? 0)}</p>
               <p className="m-0 text-[11px] font-semibold text-gray-400">
                 {view?.openingAnchor
                   ? `Set on ${stampLabel(view.openingAnchor.effectiveAt)} by ${view.openingAnchor.setByName || "Unknown"}`
@@ -670,7 +670,7 @@ function SetOpeningCashModal({ view, history, saving, onClose, onSave }: {
           <p className="m-0 mt-5 text-[10px] font-black uppercase tracking-[0.14em] text-gray-400">Choose how to set opening cash</p>
           <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
             {([
-              { key: "carry_forward" as const, title: "Carry forward previous period closing cash", hint: "Use the closing cash from the previous period as opening cash.", right: naira(carryAmount), rightHint: "Closing cash" },
+              { key: "carry_forward" as const, title: "Carry forward previous period closing cash", hint: "Use the closing cash from the previous period as opening cash.", right: money(carryAmount), rightHint: "Closing cash" },
               { key: "manual" as const, title: "Set opening cash manually", hint: "Enter the actual liquid cash available at the beginning of this period.", right: "", rightHint: "" }
             ]).map((option) => (
               <label key={option.key}
@@ -696,7 +696,7 @@ function SetOpeningCashModal({ view, history, saving, onClose, onSave }: {
           <div className="mt-4 rounded-xl border border-gray-200 px-4 py-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <label className="block text-[10px] font-black uppercase tracking-[0.14em] text-gray-500">
-                Opening cash amount (₦) <span className="text-rose-500">*</span>
+                Opening cash amount ({currencySymbol()}) <span className="text-rose-500">*</span>
                 <span className="relative mt-1.5 flex items-center">
                   <span className="pointer-events-none absolute left-3 text-sm font-black text-gray-400">₦</span>
                   <input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="numeric"
@@ -746,7 +746,7 @@ function SetOpeningCashModal({ view, history, saving, onClose, onSave }: {
                   <tr className="text-[10px] font-black uppercase tracking-wide text-gray-500">
                     <th className="px-3 py-2.5">Date &amp; Time</th>
                     <th className="px-3 py-2.5">Set By</th>
-                    <th className="px-3 py-2.5 text-right">Amount (₦)</th>
+                    <th className="px-3 py-2.5 text-right">Amount ({currencySymbol()})</th>
                     <th className="px-3 py-2.5">Method</th>
                     <th className="px-3 py-2.5">Reason / Notes</th>
                   </tr>

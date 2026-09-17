@@ -5,10 +5,10 @@ import {
   ShieldCheck, TrendingUp, UserCheck, Users, Wallet
 } from "lucide-react";
 import type { CloseCheckRow, PeriodCloseView } from "../lib/api";
-// ⚠️ Shared formatters, NOT a local `naira()`. A private one silently
+// ⚠️ Shared formatters, NOT a local `money()`. A private one silently
 // ignores the topbar "hide money" toggle - which is exactly how these
 // pages kept showing real figures with privacy mode on.
-import { maskMoneyText, naira, signedNaira } from "../lib/money-privacy";
+import { maskMoneyText, money, signedMoney } from "../lib/money-privacy";
 import { LoadingState } from "../components/ui/loading-state";
 
 // Weekly close: is this week actually finished?
@@ -93,10 +93,10 @@ export default function PeriodCloseTab(props: PeriodCloseTabProps) {
 
   const strip = [
     { label: "Week to Close", value: view ? `${dayLabel(view.weekStart)} – ${fullDay(view.weekEnd)}` : "—", tone: "text-gray-900", icon: CalendarDays },
-    { label: "Net Profit (Accrual)", value: naira(view?.profit.netProfit ?? 0), tone: (view?.profit.netProfit ?? 0) >= 0 ? "text-emerald-600" : "text-rose-600", icon: TrendingUp },
-    { label: "Expected Closing Cash", value: naira(view?.expectedClosingCash ?? 0), tone: "text-gray-900", icon: Wallet },
-    { label: "Actual Closing Cash", value: view?.actualClosingCash ? naira(view.actualClosingCash) : "Not counted", tone: view?.actualClosingCash ? "text-gray-900" : "text-amber-600", icon: Landmark },
-    { label: "Cash Variance", value: view?.actualClosingCash ? signedNaira(view.cashVariance) : "—", tone: view?.varianceSettled ? "text-emerald-600" : "text-rose-600", icon: ShieldCheck }
+    { label: "Net Profit (Accrual)", value: money(view?.profit.netProfit ?? 0), tone: (view?.profit.netProfit ?? 0) >= 0 ? "text-emerald-600" : "text-rose-600", icon: TrendingUp },
+    { label: "Expected Closing Cash", value: money(view?.expectedClosingCash ?? 0), tone: "text-gray-900", icon: Wallet },
+    { label: "Actual Closing Cash", value: view?.actualClosingCash ? money(view.actualClosingCash) : "Not counted", tone: view?.actualClosingCash ? "text-gray-900" : "text-amber-600", icon: Landmark },
+    { label: "Cash Variance", value: view?.actualClosingCash ? signedMoney(view.cashVariance) : "—", tone: view?.varianceSettled ? "text-emerald-600" : "text-rose-600", icon: ShieldCheck }
   ];
 
   return (
@@ -304,13 +304,13 @@ export default function PeriodCloseTab(props: PeriodCloseTabProps) {
               ].map((row) => (
                 <div key={row.label} className="flex items-center justify-between gap-2">
                   <dt className={`m-0 text-[12px] ${row.strong ? "font-black text-gray-900" : "font-semibold text-gray-600"}`}>{row.label}</dt>
-                  <dd className={`m-0 text-[12px] font-black ${row.tone}`}>{naira(row.value)}</dd>
+                  <dd className={`m-0 text-[12px] font-black ${row.tone}`}>{money(row.value)}</dd>
                 </div>
               ))}
               <div className="flex items-center justify-between gap-2 border-t border-gray-100 pt-2">
                 <dt className="m-0 text-[12px] font-black text-gray-900">Net Profit</dt>
                 <dd className={`m-0 text-base font-black ${(view?.profit.netProfit ?? 0) >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                  {naira(view?.profit.netProfit ?? 0)}
+                  {money(view?.profit.netProfit ?? 0)}
                 </dd>
               </div>
               <div className="text-right text-[11px] font-semibold text-gray-400">
@@ -337,7 +337,7 @@ export default function PeriodCloseTab(props: PeriodCloseTabProps) {
               ].map((row) => (
                 <div key={row.label} className="flex items-center justify-between gap-2">
                   <dt className="m-0 text-[12px] font-semibold text-gray-600">{row.label}</dt>
-                  <dd className="m-0 text-[12px] font-black text-gray-900">{naira(row.value)}</dd>
+                  <dd className="m-0 text-[12px] font-black text-gray-900">{money(row.value)}</dd>
                 </div>
               ))}
               <div className={`mt-1 rounded-xl px-3 py-2.5 ${(view?.cashPosition.freeOperatingCash ?? 0) >= 0 ? "bg-emerald-50" : "bg-rose-50"}`}>
@@ -346,7 +346,7 @@ export default function PeriodCloseTab(props: PeriodCloseTabProps) {
                     Free Operating Cash
                   </dt>
                   <dd className={`m-0 text-[13px] font-black ${(view?.cashPosition.freeOperatingCash ?? 0) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
-                    {signedNaira(view?.cashPosition.freeOperatingCash ?? 0)}
+                    {signedMoney(view?.cashPosition.freeOperatingCash ?? 0)}
                   </dd>
                 </div>
                 <p className="m-0 mt-0.5 text-[11px] font-semibold text-gray-500">

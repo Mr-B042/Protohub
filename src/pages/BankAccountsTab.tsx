@@ -5,10 +5,10 @@ import {
 } from "lucide-react";
 import type { BankAccountRow, BankAccountsView, BankTransferRow } from "../lib/api";
 import type { CashFlowTransaction } from "./CashFlowPage";
-// ⚠️ Shared formatters, NOT a local `naira()`. A private one silently
+// ⚠️ Shared formatters, NOT a local `money()`. A private one silently
 // ignores the topbar "hide money" toggle - which is exactly how these
 // pages kept showing real figures with privacy mode on.
-import { naira } from "../lib/money-privacy";
+import { money, currencySymbol } from "../lib/money-privacy";
 
 // Bank accounts inside Cash Flow, not beside it: "how much cash do we have" and
 // "where is it" are the same question asked twice.
@@ -153,7 +153,7 @@ export default function BankAccountsTab(props: BankAccountsTabProps) {
         {summaryCards.map((card, index) => (
           <div key={card.label} className={index > 0 ? "xl:border-l xl:border-gray-100 xl:pl-5" : ""}>
             <p className="m-0 text-[10px] font-black uppercase tracking-[0.12em] text-gray-400">{card.label}</p>
-            <p className={`m-0 mt-1 text-2xl font-black ${card.tone}`}>{props.loading && !view ? "—" : naira(card.value)}</p>
+            <p className={`m-0 mt-1 text-2xl font-black ${card.tone}`}>{props.loading && !view ? "—" : money(card.value)}</p>
             <p className="m-0 mt-0.5 text-[11px] font-semibold text-gray-400">{card.hint}</p>
           </div>
         ))}
@@ -164,7 +164,7 @@ export default function BankAccountsTab(props: BankAccountsTabProps) {
       {(view?.unassigned ?? 0) !== 0 && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
           <p className="m-0 text-[13px] font-bold text-amber-900">
-            {naira(view?.unassigned ?? 0)} of recorded cash is not assigned to any account.
+            {money(view?.unassigned ?? 0)} of recorded cash is not assigned to any account.
           </p>
           <p className="m-0 mt-0.5 text-[11px] font-medium leading-4 text-amber-800">
             Everything logged before accounts existed has no account against it. It still counts in Cash Flow — it just cannot be attributed to a balance. Assign it when you are ready, or leave it as it is.
@@ -214,15 +214,15 @@ export default function BankAccountsTab(props: BankAccountsTabProps) {
                   : `${account.bankName || "Bank"}${account.accountNumberLast4 ? ` ****${account.accountNumberLast4}` : ""}`}
               </p>
               <p className="m-0 mt-3 text-[10px] font-black uppercase tracking-wide text-gray-400">Current balance</p>
-              <p className="m-0 text-xl font-black text-gray-900">{naira(account.currentBalance)}</p>
+              <p className="m-0 text-xl font-black text-gray-900">{money(account.currentBalance)}</p>
               <dl className="mt-2.5 space-y-1.5 text-[12px]">
                 <div className="flex items-center justify-between gap-2">
                   <dt className="text-gray-500">Available</dt>
-                  <dd className="m-0 font-bold text-gray-800">{naira(account.availableBalance)}</dd>
+                  <dd className="m-0 font-bold text-gray-800">{money(account.availableBalance)}</dd>
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <dt className="text-gray-500">Opening</dt>
-                  <dd className="m-0 font-bold text-gray-800">{naira(account.openingBalance)}</dd>
+                  <dd className="m-0 font-bold text-gray-800">{money(account.openingBalance)}</dd>
                 </div>
                 {account.openingBalanceDate && (
                   <div className="flex items-center justify-between gap-2">
@@ -233,7 +233,7 @@ export default function BankAccountsTab(props: BankAccountsTabProps) {
                 {account.pendingIn > 0 && (
                   <div className="flex items-center justify-between gap-2">
                     <dt className="text-amber-700">Pending in</dt>
-                    <dd className="m-0 font-bold text-amber-700">{naira(account.pendingIn)}</dd>
+                    <dd className="m-0 font-bold text-amber-700">{money(account.pendingIn)}</dd>
                   </div>
                 )}
               </dl>
@@ -279,8 +279,8 @@ export default function BankAccountsTab(props: BankAccountsTabProps) {
                     <th className="px-4 py-3">Type</th>
                     <th className="px-4 py-3">Category</th>
                     <th className="px-4 py-3">Description / Party</th>
-                    <th className="px-4 py-3 text-right">Cash In (₦)</th>
-                    <th className="px-4 py-3 text-right">Cash Out (₦)</th>
+                    <th className="px-4 py-3 text-right">Cash In ({currencySymbol()})</th>
+                    <th className="px-4 py-3 text-right">Cash Out ({currencySymbol()})</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -357,10 +357,10 @@ export default function BankAccountsTab(props: BankAccountsTabProps) {
                   <tr key={account.id}>
                     <td className="px-4 py-3 font-bold text-gray-900">{account.name}</td>
                     <td className="px-4 py-3 text-[13px] text-gray-600">{account.accountType === "cash" ? "Cash in hand" : account.bankName || "Bank"}</td>
-                    <td className="px-4 py-3 text-right text-[13px] font-medium text-gray-600">{naira(account.openingBalance)}</td>
-                    <td className="px-4 py-3 text-right text-[13px] font-black text-gray-900">{naira(account.currentBalance)}</td>
-                    <td className="px-4 py-3 text-right text-[13px] font-bold text-gray-700">{naira(account.availableBalance)}</td>
-                    <td className="px-4 py-3 text-right text-[13px] font-bold text-amber-700">{account.pendingIn > 0 ? naira(account.pendingIn) : "–"}</td>
+                    <td className="px-4 py-3 text-right text-[13px] font-medium text-gray-600">{money(account.openingBalance)}</td>
+                    <td className="px-4 py-3 text-right text-[13px] font-black text-gray-900">{money(account.currentBalance)}</td>
+                    <td className="px-4 py-3 text-right text-[13px] font-bold text-gray-700">{money(account.availableBalance)}</td>
+                    <td className="px-4 py-3 text-right text-[13px] font-bold text-amber-700">{account.pendingIn > 0 ? money(account.pendingIn) : "–"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -388,7 +388,7 @@ function PendingTransferRow({ transfer, accounts, canManage, saving, onClear }: 
     <li className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/50 px-4 py-3">
       <div className="min-w-0">
         <p className="m-0 text-[13px] font-black text-gray-900">
-          {naira(transfer.amount)} · {nameOf(transfer.fromAccountId)} → {nameOf(transfer.toAccountId)}
+          {money(transfer.amount)} · {nameOf(transfer.fromAccountId)} → {nameOf(transfer.toAccountId)}
         </p>
         <p className="m-0 mt-0.5 text-[11px] font-medium text-gray-500">
           Sent {stamp(transfer.transferredAt)} {clock(transfer.transferredAt)}
@@ -487,7 +487,7 @@ function AddAccountModal({ saving, onClose, onSave }: {
         </span>
       </label>
       <div className="grid grid-cols-2 gap-3">
-        <label className={labelClass}>Opening balance (₦)
+        <label className={labelClass}>Opening balance ({currencySymbol()})
           <input value={openingBalance} onChange={(event) => setOpeningBalance(event.target.value)} inputMode="numeric" className={fieldClass} />
         </label>
         <label className={labelClass}>Effective date
@@ -544,11 +544,11 @@ function TransferModal({ accounts, saving, onClose, onSave }: {
         </label>
       </div>
       {from === to && <p className="m-0 text-[12px] font-bold text-rose-600">Choose two different accounts.</p>}
-      <label className={labelClass}>Amount (₦)
+      <label className={labelClass}>Amount ({currencySymbol()})
         <input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="numeric" className={fieldClass} />
         {overdrawn && (
           <span className="mt-1 block text-[11px] font-bold normal-case tracking-normal text-amber-700">
-            More than {sender?.name} has available ({naira(sender?.availableBalance ?? 0)}). Recorded anyway — the balance will go negative.
+            More than {sender?.name} has available ({money(sender?.availableBalance ?? 0)}). Recorded anyway — the balance will go negative.
           </span>
         )}
       </label>
@@ -623,7 +623,7 @@ function EditAccountModal({ account, saving, onClose, onSave }: {
         </label>
       </div>
       <div className="grid grid-cols-2 gap-3">
-        <label className={labelClass}>Opening balance (₦)
+        <label className={labelClass}>Opening balance ({currencySymbol()})
           <input value={openingBalance} onChange={(event) => setOpeningBalance(event.target.value)} inputMode="numeric" className={fieldClass} />
         </label>
         <label className={labelClass}>Effective date

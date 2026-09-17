@@ -2,11 +2,14 @@
 // Physical stock, committed demand and stock in transit remain separate so a
 // screen cannot make an unavailable unit look sellable.
 import type { OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryLogisticsOperationsPage";
+// ⚠️ NOT A PRIVATE ₦ FORMATTER. A local one ignores both the branch's currency
+// and the hide-money toggle - it is how this page printed naira against cedi.
+import { money as moneyAmount } from "../lib/money-privacy";
 
 export const CLOSED_ORDER_STATES = new Set(["delivered", "cancelled", "failed"]);
 export const norm = (value?: string) => String(value ?? "").trim().toLowerCase();
 export const num = (value: number) => Math.max(0, Math.round(value)).toLocaleString("en-NG");
-export const money = (value: number) => `₦${Math.max(0, Math.round(value)).toLocaleString("en-NG")}`;
+export const money = (value: number) => moneyAmount(Math.max(0, value));
 export const coverText = (days: number) => (Number.isFinite(days) ? `${Math.round(days * 10) / 10}` : "-");
 export const runRateText = (units: number) => `${Math.round(Math.max(0, units) * 10) / 10}`;
 
