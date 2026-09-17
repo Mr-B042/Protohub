@@ -33,6 +33,9 @@ import {
   UserPlus,
   Wallet
 } from "lucide-react";
+// ⚠️ NOT A PRIVATE ₦ FORMATTER. A local one ignores both the branch's currency
+// and the hide-money toggle - it is how this page printed naira against cedi.
+import { money } from "../lib/money-privacy";
 
 export type SalesCloserSection =
   | "overview"
@@ -327,7 +330,6 @@ const timeAgo = (value: string) => {
 
 const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? "").join("") || "?";
 
-const money = (value: number) => `₦${Math.round(value).toLocaleString("en-NG")}`;
 
 const dueLabel = (value: string) => {
   const date = new Date(value);

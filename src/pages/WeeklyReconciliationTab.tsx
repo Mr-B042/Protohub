@@ -10,10 +10,10 @@ import type {
   WeeklyReconciliationView
 } from "../lib/api";
 import { AccountMark } from "./BankAccountsTab";
-// ⚠️ Shared formatters, NOT a local `naira()`. A private one silently
+// ⚠️ Shared formatters, NOT a local `money()`. A private one silently
 // ignores the topbar "hide money" toggle - which is exactly how these
 // pages kept showing real figures with privacy mode on.
-import { naira, signedNaira } from "../lib/money-privacy";
+import { money, signedMoney, currencySymbol } from "../lib/money-privacy";
 
 // Weekly Reconciliation: does the cash we think we have actually exist?
 //
@@ -273,7 +273,7 @@ export default function WeeklyReconciliationTab(props: WeeklyReconciliationTabPr
                 <div className="min-w-0">
                   <p className="m-0 truncate text-[11px] font-black uppercase tracking-wide text-gray-500">{card.label}</p>
                   <p className="m-0 mt-1 flex flex-wrap items-center gap-1.5 text-xl font-black text-gray-900">
-                    {naira(card.value)}
+                    {money(card.value)}
                     {card.badge && (
                       <span className={`inline-flex items-center gap-0.5 text-[11px] font-black ${card.badgeTone}`}>
                         <CheckCircle2 className="h-3.5 w-3.5" /> {card.badge}
@@ -294,23 +294,23 @@ export default function WeeklyReconciliationTab(props: WeeklyReconciliationTabPr
           <dl className="m-0 space-y-3">
             <div className="flex items-center justify-between gap-3">
               <dt className="m-0 text-[13px] font-semibold text-gray-600">Opening Cash ({longDay(weekStart)})</dt>
-              <dd className="m-0 text-[13px] font-black text-gray-900">{naira(view?.openingCash ?? 0)}</dd>
+              <dd className="m-0 text-[13px] font-black text-gray-900">{money(view?.openingCash ?? 0)}</dd>
             </div>
             <div className="flex items-center justify-between gap-3">
               <dt className="m-0 text-[13px] font-semibold text-gray-600">
                 <span className="mr-1.5 font-black text-gray-400">+</span>{verification ? "Verified" : "Recorded"} Cash In
               </dt>
-              <dd className="m-0 text-[13px] font-black text-emerald-600">{naira(view?.cashIn ?? 0)}</dd>
+              <dd className="m-0 text-[13px] font-black text-emerald-600">{money(view?.cashIn ?? 0)}</dd>
             </div>
             <div className="flex items-center justify-between gap-3">
               <dt className="m-0 text-[13px] font-semibold text-gray-600">
                 <span className="mr-1.5 font-black text-gray-400">−</span>{verification ? "Verified" : "Recorded"} Cash Out
               </dt>
-              <dd className="m-0 text-[13px] font-black text-rose-600">{naira(view?.cashOut ?? 0)}</dd>
+              <dd className="m-0 text-[13px] font-black text-rose-600">{money(view?.cashOut ?? 0)}</dd>
             </div>
             <div className="flex items-center justify-between gap-3 border-t border-gray-100 pt-3">
               <dt className="m-0 text-[13px] font-black text-gray-900">Expected Closing Cash ({view ? longDay(view.weekEnd) : "—"})</dt>
-              <dd className="m-0 text-base font-black text-[#1F8FE0]">{naira(view?.expectedClosing ?? 0)}</dd>
+              <dd className="m-0 text-base font-black text-[#1F8FE0]">{money(view?.expectedClosing ?? 0)}</dd>
             </div>
           </dl>
           <p className="m-0 mt-4 flex gap-2 rounded-xl bg-blue-50 px-3 py-3 text-[12px] font-semibold text-blue-800">
@@ -354,7 +354,7 @@ export default function WeeklyReconciliationTab(props: WeeklyReconciliationTabPr
                         <span className={`inline-flex items-center gap-1 text-[11px] font-black ${matched ? "text-emerald-600" : "text-amber-600"}`}>
                           {matched ? <><CheckCircle2 className="h-3.5 w-3.5" /> Verified</> : <><AlertTriangle className="h-3.5 w-3.5" /> Mismatch</>}
                         </span>
-                        <span className="text-[13px] font-black text-gray-900">{naira(row.actualBalance)}</span>
+                        <span className="text-[13px] font-black text-gray-900">{money(row.actualBalance)}</span>
                       </span>
                     </li>
                   );
@@ -362,7 +362,7 @@ export default function WeeklyReconciliationTab(props: WeeklyReconciliationTabPr
               </ul>
               <div className="mt-3 flex items-center justify-between gap-3 border-t border-gray-100 pt-3">
                 <span className="text-[13px] font-black text-gray-900">Actual Closing Cash (Total)</span>
-                <span className="text-base font-black text-gray-900">{naira(verification.actualClosing)}</span>
+                <span className="text-base font-black text-gray-900">{money(verification.actualClosing)}</span>
               </div>
               <p className="m-0 mt-2 text-[11px] font-semibold text-gray-400">
                 Counted by {verification.verifiedByName || "—"} · {stamp(verification.verifiedAt)}
@@ -388,7 +388,7 @@ export default function WeeklyReconciliationTab(props: WeeklyReconciliationTabPr
             ) : (
               <>
                 <p className={`m-0 text-3xl font-black ${Math.abs(variance) <= 0.5 ? "text-emerald-600" : "text-rose-600"}`}>
-                  {signedNaira(variance)}
+                  {signedMoney(variance)}
                 </p>
                 <p className="m-0 mt-0.5 text-[12px] font-semibold text-gray-500">Actual – Expected</p>
 
@@ -403,7 +403,7 @@ export default function WeeklyReconciliationTab(props: WeeklyReconciliationTabPr
                     <div className="flex items-center justify-between gap-3">
                       <dt className="m-0 text-[12px] font-semibold text-gray-600">Unexplained Difference</dt>
                       <dd className="m-0 text-[12px] font-black text-rose-600">
-                        {unexplained === 0 ? "₦0" : signedNaira(variance < 0 ? -unexplained : unexplained)}
+                        {unexplained === 0 ? "₦0" : signedMoney(variance < 0 ? -unexplained : unexplained)}
                       </dd>
                     </div>
                     <div className="flex items-center justify-between gap-3">
@@ -412,7 +412,7 @@ export default function WeeklyReconciliationTab(props: WeeklyReconciliationTabPr
                     </div>
                     <div className="flex items-center justify-between gap-3">
                       <dt className="m-0 text-[12px] font-semibold text-gray-600">Explained</dt>
-                      <dd className="m-0 text-[12px] font-black text-emerald-600">{naira(explained)}</dd>
+                      <dd className="m-0 text-[12px] font-black text-emerald-600">{money(explained)}</dd>
                     </div>
                   </dl>
                 </div>
@@ -443,10 +443,10 @@ export default function WeeklyReconciliationTab(props: WeeklyReconciliationTabPr
           {[
             { label: "Total Orders", value: String(view?.activity.ordersPlaced ?? 0), hint: "Placed this week", icon: ClipboardList, tone: "bg-blue-50 text-blue-600" },
             { label: "Delivered Orders", value: String(view?.activity.ordersDelivered ?? 0), hint: `DR: ${(view?.activity.deliveryRatePct ?? 0).toFixed(2)}%`, icon: CheckCircle2, tone: "bg-emerald-50 text-emerald-600" },
-            { label: "Agent Remittances", value: naira(view?.activity.agentRemittances ?? 0), hint: `${(view?.activity.remittanceCoveragePct ?? 0).toFixed(2)}% of delivered value`, icon: Users, tone: "bg-violet-50 text-violet-600" },
-            { label: "Ad Spend", value: naira(view?.activity.adSpend ?? 0), hint: `${(view?.activity.adSpendPct ?? 0).toFixed(2)}% of cash out`, icon: ArrowUpRight, tone: "bg-rose-50 text-rose-600" },
-            { label: "Stock Purchases", value: naira(view?.activity.stockPurchases ?? 0), hint: `${(view?.activity.stockPurchasesPct ?? 0).toFixed(2)}% of cash out`, icon: Banknote, tone: "bg-amber-50 text-amber-600" },
-            { label: "Other Expenses", value: naira(view?.activity.otherExpenses ?? 0), hint: `${(view?.activity.otherExpensesPct ?? 0).toFixed(2)}% of cash out`, icon: CalendarDays, tone: "bg-gray-100 text-gray-600" }
+            { label: "Agent Remittances", value: money(view?.activity.agentRemittances ?? 0), hint: `${(view?.activity.remittanceCoveragePct ?? 0).toFixed(2)}% of delivered value`, icon: Users, tone: "bg-violet-50 text-violet-600" },
+            { label: "Ad Spend", value: money(view?.activity.adSpend ?? 0), hint: `${(view?.activity.adSpendPct ?? 0).toFixed(2)}% of cash out`, icon: ArrowUpRight, tone: "bg-rose-50 text-rose-600" },
+            { label: "Stock Purchases", value: money(view?.activity.stockPurchases ?? 0), hint: `${(view?.activity.stockPurchasesPct ?? 0).toFixed(2)}% of cash out`, icon: Banknote, tone: "bg-amber-50 text-amber-600" },
+            { label: "Other Expenses", value: money(view?.activity.otherExpenses ?? 0), hint: `${(view?.activity.otherExpensesPct ?? 0).toFixed(2)}% of cash out`, icon: CalendarDays, tone: "bg-gray-100 text-gray-600" }
           ].map((tile) => {
             const Icon = tile.icon;
             return (
@@ -493,7 +493,7 @@ export default function WeeklyReconciliationTab(props: WeeklyReconciliationTabPr
                     </span>
                   </span>
                   <span className={`shrink-0 text-[13px] font-black ${entry.amountTone}`}>
-                    {entry.row ? naira(entry.row.amount) : "—"}
+                    {entry.row ? money(entry.row.amount) : "—"}
                   </span>
                 </li>
               );
@@ -705,9 +705,9 @@ function VerifyClosingCashModal({ view, saving, onClose, onSave, onInvestigate }
               <thead>
                 <tr className="border-b border-gray-100 text-[11px] font-black uppercase tracking-wide text-gray-500">
                   <th className="px-4 py-2.5">Account</th>
-                  <th className="px-4 py-2.5 text-right">System Balance (₦)</th>
-                  <th className="px-4 py-2.5 text-right">Actual Balance (₦)</th>
-                  <th className="px-4 py-2.5 text-right">Difference (₦)</th>
+                  <th className="px-4 py-2.5 text-right">System Balance ({currencySymbol()})</th>
+                  <th className="px-4 py-2.5 text-right">Actual Balance ({currencySymbol()})</th>
+                  <th className="px-4 py-2.5 text-right">Difference ({currencySymbol()})</th>
                 </tr>
               </thead>
               <tbody>
@@ -733,7 +733,7 @@ function VerifyClosingCashModal({ view, saving, onClose, onSave, onInvestigate }
                         </span>
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right text-[13px] font-bold text-gray-700">{naira(entry.row.systemBalance)}</td>
+                    <td className="px-4 py-3 text-right text-[13px] font-bold text-gray-700">{money(entry.row.systemBalance)}</td>
                     <td className="px-4 py-3 text-right">
                       <input inputMode="decimal" value={entry.row.actual} placeholder="0"
                         onChange={(event) => setRows((prev) => prev.map((row, rowIndex) =>
@@ -744,7 +744,7 @@ function VerifyClosingCashModal({ view, saving, onClose, onSave, onInvestigate }
                       {entry.hasValue ? (
                         <span className="inline-flex items-center gap-2">
                           <span className={`text-[13px] font-black ${Math.abs(entry.difference) <= 0.5 ? "text-emerald-600" : "text-rose-600"}`}>
-                            {signedNaira(entry.difference)}
+                            {signedMoney(entry.difference)}
                           </span>
                           <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${Math.abs(entry.difference) <= 0.5 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
                             {Math.abs(entry.difference) <= 0.5 ? "Matched" : "Mismatch"}
@@ -786,16 +786,16 @@ function VerifyClosingCashModal({ view, saving, onClose, onSave, onInvestigate }
           <div className="space-y-3 px-4 py-4">
             <div className="flex items-center justify-between gap-3">
               <span className="text-[12px] font-semibold text-gray-600">Total System Balance</span>
-              <span className="text-[13px] font-black text-gray-900">{naira(totalSystem)}</span>
+              <span className="text-[13px] font-black text-gray-900">{money(totalSystem)}</span>
             </div>
             <div className="flex items-center justify-between gap-3">
               <span className="text-[12px] font-semibold text-gray-600">Total Actual Balance</span>
-              <span className="text-[13px] font-black text-[#1F8FE0]">{naira(totalActual)}</span>
+              <span className="text-[13px] font-black text-[#1F8FE0]">{money(totalActual)}</span>
             </div>
             <div className="border-t border-gray-100 pt-3">
               <span className="block text-[12px] font-semibold text-gray-600">Cash Variance (Actual – System)</span>
               <span className={`mt-1 block text-2xl font-black ${Math.abs(variance) <= 0.5 ? "text-emerald-600" : "text-rose-600"}`}>
-                {signedNaira(variance)}
+                {signedMoney(variance)}
               </span>
               <span className="mt-1.5 inline-block">
                 <StatusChip status={!allCounted ? "not_verified" : Math.abs(variance) <= 0.5 ? "balanced" : "needs_investigation"} />
@@ -914,16 +914,16 @@ function VarianceInvestigationModal({ view, variance, saving, onClose, onSave }:
         </span>
         <span>
           <span className="block text-[11px] font-black uppercase tracking-wide text-gray-500">Expected Closing Cash</span>
-          <span className="block text-[15px] font-black text-gray-900">{naira(view.verification?.expectedClosing ?? 0)}</span>
+          <span className="block text-[15px] font-black text-gray-900">{money(view.verification?.expectedClosing ?? 0)}</span>
         </span>
         <span>
           <span className="block text-[11px] font-black uppercase tracking-wide text-gray-500">Actual Closing Cash</span>
-          <span className="block text-[15px] font-black text-gray-900">{naira(view.verification?.actualClosing ?? 0)}</span>
+          <span className="block text-[15px] font-black text-gray-900">{money(view.verification?.actualClosing ?? 0)}</span>
         </span>
         <span>
           <span className="block text-[11px] font-black uppercase tracking-wide text-gray-500">Cash Variance</span>
           <span className="block text-[15px] font-black text-rose-600">
-            {signedNaira(variance)}
+            {signedMoney(variance)}
             <span className="ml-1.5 rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-black text-rose-700">
               {unexplained <= 0.5 ? "Explained" : "Unexplained"}
             </span>
@@ -941,7 +941,7 @@ function VarianceInvestigationModal({ view, variance, saving, onClose, onSave }:
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <span>
                 <span className="block text-[11px] font-bold text-gray-500">Variance Amount</span>
-                <span className="block text-2xl font-black text-rose-600">{signedNaira(variance)}</span>
+                <span className="block text-2xl font-black text-rose-600">{signedMoney(variance)}</span>
                 <span className="block text-[11px] font-semibold text-gray-400">
                   {variance < 0 ? "Actual is less than expected" : "Actual is more than expected"}
                 </span>
@@ -990,14 +990,14 @@ function VarianceInvestigationModal({ view, variance, saving, onClose, onSave }:
             </h4>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <label className="m-0 block text-[11px] font-bold text-gray-500">
-                Amount Explained (₦)
+                Amount Explained ({currencySymbol()})
                 <input inputMode="decimal" value={amountExplained} placeholder="0"
                   onChange={(event) => setAmountExplained(event.target.value)}
                   className="mt-1 block w-full rounded-xl border border-gray-200 px-3 py-2.5 text-[13px] font-bold text-gray-900" />
               </label>
               <span>
-                <span className="block text-[11px] font-bold text-gray-500">Unexplained Amount (₦)</span>
-                <span className="mt-1 block text-xl font-black text-rose-600">{naira(unexplained)}</span>
+                <span className="block text-[11px] font-bold text-gray-500">Unexplained Amount ({currencySymbol()})</span>
+                <span className="mt-1 block text-xl font-black text-rose-600">{money(unexplained)}</span>
               </span>
             </div>
             <label className="m-0 mt-3 block text-[11px] font-bold text-gray-500">
@@ -1055,23 +1055,23 @@ function VarianceInvestigationModal({ view, variance, saving, onClose, onSave }:
             <dl className="m-0 mt-3 space-y-2">
               <div className="flex items-center justify-between gap-3">
                 <dt className="m-0 text-[12px] font-semibold text-gray-600">Expected Closing Cash</dt>
-                <dd className="m-0 text-[12px] font-black text-gray-900">{naira(view.verification?.expectedClosing ?? 0)}</dd>
+                <dd className="m-0 text-[12px] font-black text-gray-900">{money(view.verification?.expectedClosing ?? 0)}</dd>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="m-0 text-[12px] font-semibold text-gray-600">Actual Closing Cash</dt>
-                <dd className="m-0 text-[12px] font-black text-gray-900">{naira(view.verification?.actualClosing ?? 0)}</dd>
+                <dd className="m-0 text-[12px] font-black text-gray-900">{money(view.verification?.actualClosing ?? 0)}</dd>
               </div>
               <div className="flex items-center justify-between gap-3 border-t border-gray-100 pt-2">
                 <dt className="m-0 text-[12px] font-semibold text-gray-600">Cash Variance</dt>
-                <dd className="m-0 text-base font-black text-rose-600">{signedNaira(variance)}</dd>
+                <dd className="m-0 text-base font-black text-rose-600">{signedMoney(variance)}</dd>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="m-0 text-[12px] font-semibold text-gray-600">Explained Amount</dt>
-                <dd className="m-0 text-[12px] font-black text-emerald-600">+{naira(explained)}</dd>
+                <dd className="m-0 text-[12px] font-black text-emerald-600">+{money(explained)}</dd>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="m-0 text-[12px] font-semibold text-gray-600">Unexplained Amount</dt>
-                <dd className="m-0 text-[12px] font-black text-rose-600">{naira(unexplained)}</dd>
+                <dd className="m-0 text-[12px] font-black text-rose-600">{money(unexplained)}</dd>
               </div>
             </dl>
           </div>
@@ -1089,19 +1089,19 @@ function VarianceInvestigationModal({ view, variance, saving, onClose, onSave }:
                 <dt className="m-0 inline-flex items-center gap-1.5 text-[12px] font-semibold text-gray-600">
                   <span className="h-2 w-2 rounded-full bg-emerald-500" /> Explained
                 </dt>
-                <dd className="m-0 text-[12px] font-black text-gray-900">{naira(explained)}</dd>
+                <dd className="m-0 text-[12px] font-black text-gray-900">{money(explained)}</dd>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="m-0 inline-flex items-center gap-1.5 text-[12px] font-semibold text-gray-600">
                   <span className="h-2 w-2 rounded-full bg-amber-500" /> Unexplained
                 </dt>
-                <dd className="m-0 text-[12px] font-black text-rose-600">{naira(unexplained)}</dd>
+                <dd className="m-0 text-[12px] font-black text-rose-600">{money(unexplained)}</dd>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="m-0 inline-flex items-center gap-1.5 text-[12px] font-semibold text-gray-600">
                   <span className="h-2 w-2 rounded-full bg-gray-300" /> Total Variance
                 </dt>
-                <dd className="m-0 text-[12px] font-black text-gray-900">{naira(total)}</dd>
+                <dd className="m-0 text-[12px] font-black text-gray-900">{money(total)}</dd>
               </div>
             </dl>
           </div>
@@ -1119,7 +1119,7 @@ function VarianceInvestigationModal({ view, variance, saving, onClose, onSave }:
                       <span className="block text-[11px] font-semibold text-gray-400">{stamp(event.createdAt)}</span>
                       <span className="block text-[12px] font-bold text-gray-900">
                         {EVENT_LABEL[event.kind] ?? event.kind}
-                        {event.amount !== null && ` · ${naira(event.amount)}`}
+                        {event.amount !== null && ` · ${money(event.amount)}`}
                       </span>
                       {event.detail && <span className="block truncate text-[11px] font-medium text-gray-500">{event.detail}</span>}
                       {event.actorName && <span className="block text-[11px] font-medium text-gray-400">by {event.actorName}</span>}
@@ -1176,10 +1176,10 @@ function ReconciliationHistoryModal({ weeks, onPick, onClose }: {
                   <td className="px-3 py-3 text-[13px] font-bold text-gray-900">
                     {dayLabel(week.weekStart)} – {dayLabel(week.weekEnd)}
                   </td>
-                  <td className="px-3 py-3 text-right text-[13px] font-semibold text-gray-700">{naira(week.expectedClosing)}</td>
-                  <td className="px-3 py-3 text-right text-[13px] font-semibold text-gray-700">{naira(week.actualClosing)}</td>
+                  <td className="px-3 py-3 text-right text-[13px] font-semibold text-gray-700">{money(week.expectedClosing)}</td>
+                  <td className="px-3 py-3 text-right text-[13px] font-semibold text-gray-700">{money(week.actualClosing)}</td>
                   <td className={`px-3 py-3 text-right text-[13px] font-black ${Math.abs(week.variance) <= 0.5 ? "text-emerald-600" : "text-rose-600"}`}>
-                    {signedNaira(week.variance)}
+                    {signedMoney(week.variance)}
                   </td>
                   <td className="px-3 py-3"><StatusChip status={week.status} /></td>
                   <td className="px-3 py-3 text-[12px] font-semibold text-gray-500">{week.verifiedByName || "—"}</td>

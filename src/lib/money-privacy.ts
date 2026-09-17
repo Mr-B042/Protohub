@@ -40,6 +40,35 @@ export const subscribeMoneyHidden = (listener: () => void) => {
   return () => moneyHiddenListeners.delete(listener);
 };
 
+// ── The money the branch on screen trades in ────────────────────────────────
+//
+// ⚠️ A PLAIN MODULE VALUE FOR THE SAME REASON AS THE FLAG ABOVE.
+// The helpers below are called from outside any component, so they cannot read
+// React state. They used to print a naira sign no matter what, which was fine
+// while there was one country and wrong the moment Accra traded in cedi - the
+// figure was real and the symbol was a lie.
+//
+// App.tsx pushes the active branch's currency here whenever the branch changes.
+// Nothing is ever converted; this only decides the label.
+
+type ActiveCurrency = { code: string; symbol: string; locale: string };
+
+let activeCurrency: ActiveCurrency = { code: "NGN", symbol: "\u20a6", locale: "en-NG" };
+const currencyListeners = new Set<() => void>();
+
+export const getActiveCurrency = () => activeCurrency;
+
+export const setActiveCurrency = (next: ActiveCurrency) => {
+  if (next.code === activeCurrency.code) return;
+  activeCurrency = next;
+  currencyListeners.forEach((listener) => listener());
+};
+
+export const subscribeActiveCurrency = (listener: () => void) => {
+  currencyListeners.add(listener);
+  return () => currencyListeners.delete(listener);
+};
+
 /**
  * Keeps any leading currency symbol so a masked amount still reads as money,
  * just with the digits hidden.
@@ -67,33 +96,41 @@ export const maskMoneyText = (text: string): string => {
   return String(text ?? "").replace(MONEY_IN_TEXT, (_match, symbol: string) => spaceNaira(`${symbol.trim()}••••`));
 };
 
-const nairaDigits = (value: number) => Math.round(Number(value) || 0).toLocaleString("en-NG");
+const moneyDigits = (value: number) =>
+  Math.round(Number(value) || 0).toLocaleString(activeCurrency.locale);
 
-/** ₦1,234,567 — masked to ₦•••• when privacy mode is on. */
-export const naira = (value: number): string =>
-  spaceNaira(isMoneyHidden() ? "₦••••" : `₦${nairaDigits(value)}`);
+/** The symbol of the branch on screen, for column headings and tight labels. */
+export const currencySymbol = () => activeCurrency.symbol;
+
+/** ₦1,234,567 in Nigeria, ₵1,234,567 in Ghana — masked when privacy mode is on. */
+export const money = (value: number): string => {
+  const sym = activeCurrency.symbol;
+  return spaceNaira(isMoneyHidden() ? `${sym}••••` : `${sym}${moneyDigits(value)}`);
+};
 
 /** Explicitly signed, for variances where the direction is the whole point. */
-export const signedNaira = (value: number): string => {
+export const signedMoney = (value: number): string => {
+  const sym = activeCurrency.symbol;
   const rounded = Math.round(Number(value) || 0);
   if (isMoneyHidden()) {
     // ⚠️ The SIGN survives masking. Whether money is missing or surplus is not
     // the sensitive part - the amount is - and hiding the direction would make
     // a variance panel useless rather than private.
-    if (rounded === 0) return spaceNaira("₦••••");
-    return spaceNaira(`${rounded < 0 ? "−" : "+"}₦••••`);
+    if (rounded === 0) return spaceNaira(`${sym}••••`);
+    return spaceNaira(`${rounded < 0 ? "−" : "+"}${sym}••••`);
   }
-  if (rounded === 0) return spaceNaira("₦0");
-  return spaceNaira(`${rounded < 0 ? "−" : "+"}₦${Math.abs(rounded).toLocaleString("en-NG")}`);
+  if (rounded === 0) return spaceNaira(`${sym}0`);
+  return spaceNaira(`${rounded < 0 ? "−" : "+"}${sym}${Math.abs(rounded).toLocaleString(activeCurrency.locale)}`);
 };
 
 /** ₦1.2M / ₦450K, for axis labels and tight cells. */
-export const shortNaira = (value: number): string => {
-  if (isMoneyHidden()) return spaceNaira("₦••");
+export const shortMoney = (value: number): string => {
+  const sym = activeCurrency.symbol;
+  if (isMoneyHidden()) return spaceNaira(`${sym}••`);
   const amount = Number(value) || 0;
   const abs = Math.abs(amount);
   const sign = amount < 0 ? "−" : "";
-  if (abs >= 1_000_000) return spaceNaira(`${sign}₦${(abs / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`);
-  if (abs >= 1_000) return spaceNaira(`${sign}₦${Math.round(abs / 1_000)}K`);
-  return spaceNaira(`${sign}₦${Math.round(abs)}`);
+  if (abs >= 1_000_000) return spaceNaira(`${sign}${sym}${(abs / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`);
+  if (abs >= 1_000) return spaceNaira(`${sign}${sym}${Math.round(abs / 1_000)}K`);
+  return spaceNaira(`${sign}${sym}${Math.round(abs)}`);
 };

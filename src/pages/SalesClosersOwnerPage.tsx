@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, Award, Package, Settings, ShoppingCart, Target, TrendingDown, TrendingUp, Trophy, UserPlus, Wallet } from "lucide-react";
 import type { SalesCloserBonusComponent, SalesCloserCostProfitability, SalesCloserLeaderboardRow } from "../lib/api";
 import { LoadingState } from "../components/ui/loading-state";
+// ⚠️ NOT A PRIVATE ₦ FORMATTER. A local one ignores both the branch's currency
+// and the hide-money toggle - it is how this page printed naira against cedi.
+import { money, currencySymbol } from "../lib/money-privacy";
 
 type Props = {
   rows: SalesCloserLeaderboardRow[];
@@ -15,7 +18,6 @@ type Props = {
   onLoadCostProfitability: (closerId: string) => Promise<SalesCloserCostProfitability>;
 };
 
-const money = (value: number) => `₦${Math.round(value).toLocaleString("en-NG")}`;
 
 const MEDAL_TONE = ["bg-amber-100 text-amber-700", "bg-gray-200 text-gray-600", "bg-orange-100 text-orange-700"];
 
@@ -128,12 +130,12 @@ function BonusRulesSettingsPanel({
                   <div key={tier.id} className="rounded-lg border border-gray-200 bg-white p-2.5">
                     <p className="text-[10px] font-black uppercase text-gray-400">{tier.label}</p>
                     <label className="mt-1.5 block text-[10px] font-bold text-gray-500">
-                      Min {BONUS_METRIC_UNIT[component.metric] === "money" ? "value (₦)" : "%"}
+                      Min {BONUS_METRIC_UNIT[component.metric] === "money" ? `value (${currencySymbol()})` : "%"}
                       <input type="number" min="0" className="mt-1 w-full rounded-md border border-gray-200 px-2 py-1.5 text-sm font-semibold text-gray-900"
                         value={tier.minValue} onChange={(event) => updateTier(component.id, tier.id, "minValue", Number(event.target.value) || 0)} />
                     </label>
                     <label className="mt-1.5 block text-[10px] font-bold text-gray-500">
-                      Amount (₦)
+                      Amount ({currencySymbol()})
                       <input type="number" min="0" className="mt-1 w-full rounded-md border border-gray-200 px-2 py-1.5 text-sm font-semibold text-gray-900"
                         value={tier.amount} onChange={(event) => updateTier(component.id, tier.id, "amount", Number(event.target.value) || 0)} />
                     </label>

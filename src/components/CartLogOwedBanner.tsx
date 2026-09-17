@@ -1,6 +1,9 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { AlertTriangle, Calculator, Check, ChevronDown, Clock, ExternalLink, FileText, Lock, Shield, ShoppingCart, X } from "lucide-react";
 import type { CartLogMiss } from "../lib/api";
+// ⚠️ NOT A PRIVATE ₦ FORMATTER. A local one ignores both the branch's currency
+// and the hide-money toggle - it is how this page printed naira against cedi.
+import { money as moneyAmount } from "../lib/money-privacy";
 
 type ReviewBody = { repId: string; missDate: string; status: "approved" | "waived"; note: string };
 type Props = {
@@ -16,7 +19,7 @@ export default function CartLogOwedBanner({
   const [open, setOpen] = useState<string>("");
   const [individualDay, setIndividualDay] = useState<string>("");
   if (!rows.length) return null;
-  const money = (value: number) => `₦${Math.max(0, Math.round(value)).toLocaleString("en-NG")}`;
+  const money = (value: number) => moneyAmount(Math.max(0, value));
   const total = rows.reduce((sum, row) => sum + row.amount, 0);
   const pending = rows.filter((row) => row.status === "pending");
   const dayCount = new Set(rows.map((row) => row.missDate)).size;

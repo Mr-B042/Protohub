@@ -4,6 +4,10 @@
 // Lagos midnight - not the browser's midnight. A rep on a phone set to another
 // timezone must see the same deadline as the rule that will charge them.
 
+// ⚠️ NOT A PRIVATE ₦ FORMATTER. A local one ignores both the branch's currency
+// and the hide-money toggle - it is how this line printed naira against cedi.
+import { money as moneyAmount } from "./money-privacy";
+
 /** Lagos is UTC+1 year-round; Nigeria has never observed DST. */
 export const LAGOS_OFFSET_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -101,7 +105,7 @@ export const COUNTDOWN_TIER_STYLE: Record<CountdownTier, { chip: string; digits:
 /** The line under the clock. Says what is lost, and that it is still avoidable. */
 export function countdownMessage(ms: number, cartsRemaining: number, amountAtRisk: number): string {
   const carts = `${cartsRemaining} cart${cartsRemaining === 1 ? "" : "s"}`;
-  const money = `₦${Math.max(0, Math.round(amountAtRisk)).toLocaleString("en-NG")}`;
+  const money = moneyAmount(Math.max(0, amountAtRisk));
   if (cartsRemaining <= 0) return "Board clear - nothing at risk today.";
   if (countdownTier(ms) === "over") return `Day ended with ${carts} unlogged. ${money} pending the Owner's review.`;
   return `left to log ${carts} · ${money} at risk`;

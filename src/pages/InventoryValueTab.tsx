@@ -6,10 +6,10 @@ import {
   Scale, Tag, TrendingUp, Users, X
 } from "lucide-react";
 import type { InventoryValueView, StockConditionKey, ValuedProductRow } from "../lib/api";
-// ⚠️ Shared formatters, NOT a local `naira()`. A private one silently
+// ⚠️ Shared formatters, NOT a local `money()`. A private one silently
 // ignores the topbar "hide money" toggle - which is exactly how these
 // pages kept showing real figures with privacy mode on.
-import { naira } from "../lib/money-privacy";
+import { money, currencySymbol } from "../lib/money-privacy";
 import { LoadingState } from "../components/ui/loading-state";
 
 // Inventory Value: how much cash is tied up in stock.
@@ -110,11 +110,11 @@ export default function InventoryValueTab(props: InventoryValueTabProps) {
   }, [view, groupTab]);
 
   const cards = [
-    { label: "Total Inventory (At Cost)", value: naira(view?.totals.totalCostValue ?? 0), hint: `Across ${view?.totals.productLines ?? 0} product lines`, icon: Boxes, tone: "bg-violet-50 text-violet-600" },
+    { label: "Total Inventory (At Cost)", value: money(view?.totals.totalCostValue ?? 0), hint: `Across ${view?.totals.productLines ?? 0} product lines`, icon: Boxes, tone: "bg-violet-50 text-violet-600" },
     { label: "Units Available", value: `${(view?.totals.totalUnits ?? 0).toLocaleString("en-NG")} Units`, hint: "Held by assigned agents", icon: Layers, tone: "bg-blue-50 text-blue-600" },
-    { label: "Avg. Cost per Unit", value: naira(view?.totals.averageUnitCost ?? 0), hint: "Weighted average", icon: Scale, tone: "bg-emerald-50 text-emerald-600" },
+    { label: "Avg. Cost per Unit", value: money(view?.totals.averageUnitCost ?? 0), hint: "Weighted average", icon: Scale, tone: "bg-emerald-50 text-emerald-600" },
     { label: "Stock Movement (This Week)", value: `${signedUnits(view?.movements.netUnits ?? 0)} Units`, hint: "Net change", icon: TrendingUp, tone: "bg-amber-50 text-amber-600" },
-    { label: "Potential Retail Value", value: naira(view?.totals.totalRetailValue ?? 0), hint: "Estimate, based on selling price", icon: Coins, tone: "bg-rose-50 text-rose-600" }
+    { label: "Potential Retail Value", value: money(view?.totals.totalRetailValue ?? 0), hint: "Estimate, based on selling price", icon: Coins, tone: "bg-rose-50 text-rose-600" }
   ];
 
   return (
@@ -209,7 +209,7 @@ export default function InventoryValueTab(props: InventoryValueTabProps) {
                   <tr className="border-b border-gray-100 text-[11px] font-black uppercase tracking-wide text-gray-500">
                     <th className="px-4 py-2.5">Product</th>
                     <th className="px-4 py-2.5 text-right">Units Available<br /><span className="font-semibold normal-case tracking-normal">Agent-held</span></th>
-                    <th className="px-4 py-2.5 text-right">Avg. Cost/Unit (₦)</th>
+                    <th className="px-4 py-2.5 text-right">Avg. Cost/Unit ({currencySymbol()})</th>
                     <th className="px-4 py-2.5 text-right">Inventory Value (At Cost)</th>
                     <th className="px-4 py-2.5 text-right">Retail Value (Est.)</th>
                     <th className="px-4 py-2.5">Stock Status</th>
@@ -239,10 +239,10 @@ export default function InventoryValueTab(props: InventoryValueTabProps) {
                       </td>
                       <td className="px-4 py-3 text-right text-[13px] font-bold text-gray-900">{row.units.toLocaleString("en-NG")}</td>
                       <td className="px-4 py-3 text-right text-[13px] font-semibold text-gray-700">
-                        {row.missingCost ? <span className="text-amber-600">No cost</span> : naira(row.unitCost)}
+                        {row.missingCost ? <span className="text-amber-600">No cost</span> : money(row.unitCost)}
                       </td>
-                      <td className="px-4 py-3 text-right text-[13px] font-black text-gray-900">{naira(row.costValue)}</td>
-                      <td className="px-4 py-3 text-right text-[13px] font-semibold text-gray-500">{naira(row.retailValue)}</td>
+                      <td className="px-4 py-3 text-right text-[13px] font-black text-gray-900">{money(row.costValue)}</td>
+                      <td className="px-4 py-3 text-right text-[13px] font-semibold text-gray-500">{money(row.retailValue)}</td>
                       <td className="px-4 py-3">
                         <span className={`rounded-full px-2 py-0.5 text-[11px] font-black ${CONDITION_STYLE[row.condition].chip}`}>
                           {CONDITION_STYLE[row.condition].label}
@@ -265,9 +265,9 @@ export default function InventoryValueTab(props: InventoryValueTabProps) {
                     <tr className="border-t border-gray-200 bg-gray-50 text-[13px] font-black text-gray-900">
                       <td className="px-4 py-3">Total</td>
                       <td className="px-4 py-3 text-right">{(view?.totals.totalUnits ?? 0).toLocaleString("en-NG")}</td>
-                      <td className="px-4 py-3 text-right">{naira(view?.totals.averageUnitCost ?? 0)}</td>
-                      <td className="px-4 py-3 text-right">{naira(view?.totals.totalCostValue ?? 0)}</td>
-                      <td className="px-4 py-3 text-right text-gray-500">{naira(view?.totals.totalRetailValue ?? 0)}</td>
+                      <td className="px-4 py-3 text-right">{money(view?.totals.averageUnitCost ?? 0)}</td>
+                      <td className="px-4 py-3 text-right">{money(view?.totals.totalCostValue ?? 0)}</td>
+                      <td className="px-4 py-3 text-right text-gray-500">{money(view?.totals.totalRetailValue ?? 0)}</td>
                       <td className="px-4 py-3" />
                       <td className="px-4 py-3 text-right">{signedUnits(view?.movements.netUnits ?? 0)}</td>
                     </tr>
@@ -291,7 +291,7 @@ export default function InventoryValueTab(props: InventoryValueTabProps) {
                     <tr key={group.key} className="border-b border-gray-50 last:border-0">
                       <td className="px-4 py-3 text-[13px] font-bold text-gray-900">{group.label}</td>
                       <td className="px-4 py-3 text-right text-[13px] font-semibold text-gray-700">{group.units.toLocaleString("en-NG")}</td>
-                      <td className="px-4 py-3 text-right text-[13px] font-black text-gray-900">{naira(group.amount)}</td>
+                      <td className="px-4 py-3 text-right text-[13px] font-black text-gray-900">{money(group.amount)}</td>
                       <td className="px-4 py-3 text-right">
                         <span className="inline-flex items-center gap-2">
                           <span className="h-1.5 w-20 overflow-hidden rounded-full bg-gray-100">
@@ -337,11 +337,11 @@ export default function InventoryValueTab(props: InventoryValueTabProps) {
                             <Cell key={slice.condition} fill={CONDITION_STYLE[slice.condition].dot} />
                           ))}
                         </Pie>
-                        <Tooltip formatter={(value: number) => naira(value)} />
+                        <Tooltip formatter={(value: number) => money(value)} />
                       </PieChart>
                     </ResponsiveContainer>
                     <span className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                      <span className="text-base font-black text-gray-900">{naira(view!.health.total)}</span>
+                      <span className="text-base font-black text-gray-900">{money(view!.health.total)}</span>
                       <span className="text-[11px] font-semibold text-gray-400">Total at Cost</span>
                     </span>
                   </div>
@@ -353,7 +353,7 @@ export default function InventoryValueTab(props: InventoryValueTabProps) {
                           <span className="truncate text-[12px] font-semibold text-gray-600">{slice.label}</span>
                         </span>
                         <span className="shrink-0 text-[12px] font-black text-gray-900">
-                          {naira(slice.amount)} <span className="font-semibold text-gray-400">({slice.sharePct.toFixed(2)}%)</span>
+                          {money(slice.amount)} <span className="font-semibold text-gray-400">({slice.sharePct.toFixed(2)}%)</span>
                         </span>
                       </li>
                     ))}
@@ -379,7 +379,7 @@ export default function InventoryValueTab(props: InventoryValueTabProps) {
                       <span className="truncate text-[12px] font-bold text-gray-700">{row.label}</span>
                     </span>
                     <span className="shrink-0 text-[12px] font-black text-gray-900">
-                      {naira(row.amount)} <span className="font-semibold text-gray-400">({row.sharePct.toFixed(2)}%)</span>
+                      {money(row.amount)} <span className="font-semibold text-gray-400">({row.sharePct.toFixed(2)}%)</span>
                     </span>
                   </span>
                   <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-gray-100">
@@ -437,7 +437,7 @@ export default function InventoryValueTab(props: InventoryValueTabProps) {
                   <Icon className="h-3.5 w-3.5" /> {tile.label}
                 </span>
                 <p className={`m-0 mt-1 text-lg font-black ${tile.tone}`}>{signedUnits(tile.units)} Units</p>
-                <p className="m-0 text-[12px] font-semibold text-gray-500">{naira(Math.abs(tile.value))}</p>
+                <p className="m-0 text-[12px] font-semibold text-gray-500">{money(Math.abs(tile.value))}</p>
               </div>
             );
           })}
@@ -621,8 +621,8 @@ function SnapshotModal({ view, saving, onClose, onSave }: {
                   <th className="px-3 py-2.5">#</th>
                   <th className="px-3 py-2.5">Product</th>
                   <th className="px-3 py-2.5 text-right">Units</th>
-                  <th className="px-3 py-2.5 text-right">Cost per Unit (₦)</th>
-                  <th className="px-3 py-2.5 text-right">Value (₦)</th>
+                  <th className="px-3 py-2.5 text-right">Cost per Unit ({currencySymbol()})</th>
+                  <th className="px-3 py-2.5 text-right">Value ({currencySymbol()})</th>
                   <th className="px-3 py-2.5">Condition</th>
                 </tr>
               </thead>
@@ -652,7 +652,7 @@ function SnapshotModal({ view, saving, onClose, onSave }: {
                           i === index ? { ...line, unitCost: event.target.value } : line))}
                         className="w-24 rounded-lg border border-gray-200 px-2 py-1.5 text-right text-[13px] font-bold text-gray-900 disabled:bg-gray-50" />
                     </td>
-                    <td className="px-3 py-2.5 text-right text-[13px] font-black text-gray-900">{naira(entry.value)}</td>
+                    <td className="px-3 py-2.5 text-right text-[13px] font-black text-gray-900">{money(entry.value)}</td>
                     <td className="px-3 py-2.5">
                       <select value={entry.line.condition} disabled={alreadyFinal}
                         onChange={(event) => setLines((prev) => prev.map((line, i) =>
@@ -671,7 +671,7 @@ function SnapshotModal({ view, saving, onClose, onSave }: {
                   <td className="px-3 py-3" colSpan={2}>Total</td>
                   <td className="px-3 py-3 text-right">{totalUnits.toLocaleString("en-NG")}</td>
                   <td className="px-3 py-3 text-right text-gray-500">At Cost</td>
-                  <td className="px-3 py-3 text-right text-violet-700">{naira(totalValue)}</td>
+                  <td className="px-3 py-3 text-right text-violet-700">{money(totalValue)}</td>
                   <td className="px-3 py-3" />
                 </tr>
               </tfoot>
@@ -703,7 +703,7 @@ function SnapshotModal({ view, saving, onClose, onSave }: {
                     <span className="truncate text-[12px] font-semibold text-gray-600">{CONDITION_STYLE[key].label}</span>
                   </span>
                   <span className="shrink-0 text-[12px] font-black text-gray-900">
-                    {naira(amount)}
+                    {money(amount)}
                     <span className="ml-1 font-semibold text-gray-400">
                       ({totalValue > 0 ? ((amount / totalValue) * 100).toFixed(2) : "0.00"}%)
                     </span>
@@ -713,7 +713,7 @@ function SnapshotModal({ view, saving, onClose, onSave }: {
             })}
             <li className="flex items-center justify-between gap-2 border-t border-gray-100 pt-2.5">
               <span className="text-[12px] font-black text-gray-900">Total Inventory (At Cost)</span>
-              <span className="text-base font-black text-violet-700">{naira(totalValue)}</span>
+              <span className="text-base font-black text-violet-700">{money(totalValue)}</span>
             </li>
             <li className="text-right text-[11px] font-semibold text-gray-400">{totalUnits.toLocaleString("en-NG")} units</li>
           </ul>

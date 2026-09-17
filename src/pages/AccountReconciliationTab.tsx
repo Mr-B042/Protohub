@@ -10,10 +10,10 @@ import type {
   ReconBookItem, ReconciliationWorkspace
 } from "../lib/api";
 import { AccountMark } from "./BankAccountsTab";
-// ⚠️ Shared formatters, NOT a local `naira()`. A private one silently
+// ⚠️ Shared formatters, NOT a local `money()`. A private one silently
 // ignores the topbar "hide money" toggle - which is exactly how these
 // pages kept showing real figures with privacy mode on.
-import { naira, signedNaira } from "../lib/money-privacy";
+import { money, signedMoney, currencySymbol } from "../lib/money-privacy";
 import { LoadingState } from "../components/ui/loading-state";
 
 // Reconciling ONE account against its bank statement.
@@ -126,7 +126,7 @@ export default function AccountReconciliationTab(props: AccountReconciliationTab
     { label: "Reconciled", value: String(summary?.reconciled ?? 0), hint: `${(summary?.reconciledPct ?? 0).toFixed(2)}%`, icon: CheckCircle2, tone: "bg-emerald-50 text-emerald-600" },
     { label: "In Progress", value: String(summary?.inProgress ?? 0), hint: `${(summary?.inProgressPct ?? 0).toFixed(2)}%`, icon: Search, tone: "bg-amber-50 text-amber-600" },
     { label: "Unreconciled", value: String(summary?.unreconciled ?? 0), hint: `${(summary?.unreconciledPct ?? 0).toFixed(2)}%`, icon: AlertTriangle, tone: "bg-rose-50 text-rose-600" },
-    { label: "Total Variance", value: naira(summary?.totalVariance ?? 0), hint: `Across ${summary?.varianceCount ?? 0} reconciliation${(summary?.varianceCount ?? 0) === 1 ? "" : "s"}`, icon: Landmark, tone: "bg-violet-50 text-violet-600" }
+    { label: "Total Variance", value: money(summary?.totalVariance ?? 0), hint: `Across ${summary?.varianceCount ?? 0} reconciliation${(summary?.varianceCount ?? 0) === 1 ? "" : "s"}`, icon: Landmark, tone: "bg-violet-50 text-violet-600" }
   ];
 
   return (
@@ -204,9 +204,9 @@ export default function AccountReconciliationTab(props: AccountReconciliationTab
                   <tr className="border-b border-gray-100 text-[11px] font-black uppercase tracking-wide text-gray-500">
                     <th className="px-4 py-2.5">Statement Date</th>
                     <th className="px-4 py-2.5">Account</th>
-                    <th className="px-4 py-2.5 text-right">Per Statement (₦)</th>
-                    <th className="px-4 py-2.5 text-right">Per Books (₦)</th>
-                    <th className="px-4 py-2.5 text-right">Difference (₦)</th>
+                    <th className="px-4 py-2.5 text-right">Per Statement ({currencySymbol()})</th>
+                    <th className="px-4 py-2.5 text-right">Per Books ({currencySymbol()})</th>
+                    <th className="px-4 py-2.5 text-right">Difference ({currencySymbol()})</th>
                     <th className="px-4 py-2.5">Status</th>
                     <th className="px-4 py-2.5">Reconciled By</th>
                     <th className="px-4 py-2.5 text-right">Actions</th>
@@ -227,10 +227,10 @@ export default function AccountReconciliationTab(props: AccountReconciliationTab
                           </span>
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-right text-[13px] font-semibold text-gray-700">{naira(row.statementBalance)}</td>
-                      <td className="px-4 py-3 text-right text-[13px] font-semibold text-gray-700">{naira(row.bookBalance)}</td>
+                      <td className="px-4 py-3 text-right text-[13px] font-semibold text-gray-700">{money(row.statementBalance)}</td>
+                      <td className="px-4 py-3 text-right text-[13px] font-semibold text-gray-700">{money(row.bookBalance)}</td>
                       <td className={`px-4 py-3 text-right text-[13px] font-black ${row.settled ? "text-emerald-600" : "text-rose-600"}`}>
-                        {signedNaira(row.remainingDifference)}
+                        {signedMoney(row.remainingDifference)}
                       </td>
                       <td className="px-4 py-3">
                         <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-black ${
@@ -285,11 +285,11 @@ export default function AccountReconciliationTab(props: AccountReconciliationTab
                           innerRadius={48} outerRadius={68} paddingAngle={2} stroke="none">
                           {bandSlices.map((slice) => <Cell key={slice.key} fill={BAND_COLOR[slice.key]} />)}
                         </Pie>
-                        <Tooltip formatter={(value: number) => naira(value)} />
+                        <Tooltip formatter={(value: number) => money(value)} />
                       </PieChart>
                     </ResponsiveContainer>
                     <span className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                      <span className="text-base font-black text-gray-900">{naira(summary?.totalVariance ?? 0)}</span>
+                      <span className="text-base font-black text-gray-900">{money(summary?.totalVariance ?? 0)}</span>
                       <span className="text-[11px] font-semibold text-gray-400">Outstanding</span>
                     </span>
                   </div>
@@ -301,7 +301,7 @@ export default function AccountReconciliationTab(props: AccountReconciliationTab
                           <span className="truncate text-[12px] font-semibold text-gray-600">{slice.label}</span>
                         </span>
                         <span className="shrink-0 text-[12px] font-black text-gray-900">
-                          {naira(slice.amount)} <span className="font-semibold text-gray-400">({slice.sharePct.toFixed(2)}%)</span>
+                          {money(slice.amount)} <span className="font-semibold text-gray-400">({slice.sharePct.toFixed(2)}%)</span>
                         </span>
                       </li>
                     ))}
@@ -326,7 +326,7 @@ export default function AccountReconciliationTab(props: AccountReconciliationTab
                       <span className="block truncate text-[12px] font-bold text-gray-900">{row.accountName}</span>
                       <span className="block text-[11px] font-semibold text-gray-400">{dateLabel(row.statementDate)}</span>
                     </span>
-                    <span className="shrink-0 text-[12px] font-black text-rose-600">{signedNaira(row.remainingDifference)}</span>
+                    <span className="shrink-0 text-[12px] font-black text-rose-600">{signedMoney(row.remainingDifference)}</span>
                   </li>
                 ))}
               {(view?.reconciliations ?? []).filter((row) => !row.settled).length === 0 && (
@@ -470,7 +470,7 @@ function WorkspaceModal({ workspace, loading, saving, onClose, onSave, onAddAdju
     setError("");
     if (!hasStatement) { setError("Enter the balance shown on the statement."); return; }
     if (status === "reconciled" && !settled) {
-      setError(`${naira(Math.abs(remaining))} is still unexplained. Add an adjustment for it, or save and continue later.`);
+      setError(`${money(Math.abs(remaining))} is still unexplained. Add an adjustment for it, or save and continue later.`);
       return;
     }
     try {
@@ -545,7 +545,7 @@ function WorkspaceModal({ workspace, loading, saving, onClose, onSave, onAddAdju
         <span className="grid grid-cols-3 gap-2">
           <span>
             <span className="block text-[11px] font-black uppercase tracking-wide text-gray-500">Per Books</span>
-            <span className="block text-[15px] font-black text-gray-900">{naira(workspace.bookBalance)}</span>
+            <span className="block text-[15px] font-black text-gray-900">{money(workspace.bookBalance)}</span>
           </span>
           <span>
             <span className="block text-[11px] font-black uppercase tracking-wide text-gray-500">Per Statement</span>
@@ -556,7 +556,7 @@ function WorkspaceModal({ workspace, loading, saving, onClose, onSave, onAddAdju
           <span>
             <span className="block text-[11px] font-black uppercase tracking-wide text-gray-500">Bank − Books</span>
             <span className={`block text-[15px] font-black ${!hasStatement ? "text-gray-400" : Math.abs(rawDiff) <= 0.5 ? "text-emerald-600" : "text-rose-600"}`}>
-              {hasStatement ? signedNaira(rawDiff) : "—"}
+              {hasStatement ? signedMoney(rawDiff) : "—"}
             </span>
           </span>
         </span>
@@ -607,7 +607,7 @@ function WorkspaceModal({ workspace, loading, saving, onClose, onSave, onAddAdju
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
                       <span className={`text-[13px] font-black ${row.direction === "in" ? "text-emerald-600" : "text-rose-600"}`}>
-                        {row.direction === "in" ? "+" : "−"}{naira(row.amount)}
+                        {row.direction === "in" ? "+" : "−"}{money(row.amount)}
                       </span>
                       {!alreadyReconciled && workspace.existing && (
                         <button type="button" aria-label="Remove adjustment"
@@ -691,7 +691,7 @@ function WorkspaceModal({ workspace, loading, saving, onClose, onSave, onAddAdju
                               </span>
                             </label>
                             <span className={`shrink-0 text-[13px] font-black ${isMatched ? "text-gray-400" : "text-gray-900"}`}>
-                              {naira(row.amount)}
+                              {money(row.amount)}
                             </span>
                           </li>
                         );
@@ -741,26 +741,26 @@ function WorkspaceModal({ workspace, loading, saving, onClose, onSave, onAddAdju
             <dl className="m-0 mt-2.5 space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <dt className="m-0 text-[12px] font-semibold text-gray-600">Balance per books</dt>
-                <dd className="m-0 text-[12px] font-black text-gray-900">{naira(workspace.bookBalance)}</dd>
+                <dd className="m-0 text-[12px] font-black text-gray-900">{money(workspace.bookBalance)}</dd>
               </div>
               <div className="flex items-center justify-between gap-2">
                 <dt className="m-0 text-[12px] font-semibold text-gray-600">Adjustments</dt>
                 <dd className={`m-0 text-[12px] font-black ${adjustmentDelta === 0 ? "text-gray-900" : adjustmentDelta > 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                  {signedNaira(adjustmentDelta)}
+                  {signedMoney(adjustmentDelta)}
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-2 border-t border-gray-100 pt-2">
                 <dt className="m-0 text-[12px] font-semibold text-gray-600">Adjusted books</dt>
-                <dd className="m-0 text-[12px] font-black text-gray-900">{naira(adjustedBooks)}</dd>
+                <dd className="m-0 text-[12px] font-black text-gray-900">{money(adjustedBooks)}</dd>
               </div>
               <div className="flex items-center justify-between gap-2">
                 <dt className="m-0 text-[12px] font-semibold text-gray-600">Balance per statement</dt>
-                <dd className="m-0 text-[12px] font-black text-gray-900">{hasStatement ? naira(parsedStatement) : "—"}</dd>
+                <dd className="m-0 text-[12px] font-black text-gray-900">{hasStatement ? money(parsedStatement) : "—"}</dd>
               </div>
               <div className="flex items-center justify-between gap-2 border-t border-gray-100 pt-2">
                 <dt className="m-0 text-[12px] font-black text-gray-900">Remaining difference</dt>
                 <dd className={`m-0 text-base font-black ${!hasStatement ? "text-gray-400" : settled ? "text-emerald-600" : "text-rose-600"}`}>
-                  {hasStatement ? signedNaira(remaining) : "—"}
+                  {hasStatement ? signedMoney(remaining) : "—"}
                 </dd>
               </div>
             </dl>
