@@ -66,6 +66,8 @@ export type EligibleRep = {
   name: string;
   roundRobinPosition: number;
   openCarts: number;
+  /** When this rep last received a cart. null = never, so they go first. */
+  lastAssignedAt: string | null;
 };
 
 /**
@@ -91,46 +93,64 @@ export async function eligibleReps(orgId: string, branchId?: string | null): Pro
   const rows = reps ?? [];
   if (rows.length === 0) return [];
 
-  // Live workload: how many open carts each already holds. This is what makes
-  // the rotation "smart" rather than a plain cycle - somebody sitting on four
-  // unworked carts should not be handed a fifth while a colleague has none.
+  // Two things about each rep: how many open carts they are carrying (shown on
+  // the panel so a manager can see the load) and when they last took their
+  // turn, which is what actually decides who is next.
   let loadQuery = supabase
     .from("abandoned_carts")
-    .select("assigned_rep_id")
-    .in("status", OPEN_STATUSES)
-    .not("assigned_rep_id", "is", null);
+    .select("assigned_rep_id, status, assigned_at")
+    .not("assigned_rep_id", "is", null)
+    .order("assigned_at", { ascending: false })
+    .limit(2000);
   if (branchId) loadQuery = loadQuery.eq("branch_id", branchId);
   const { data: loadRows } = await loadQuery;
 
-  const load = new Map<string, number>();
+  const openCount = new Map<string, number>();
+  const lastAssigned = new Map<string, string>();
   for (const row of loadRows ?? []) {
     const repId = (row as any).assigned_rep_id as string;
-    load.set(repId, (load.get(repId) ?? 0) + 1);
+    if (OPEN_STATUSES.includes((row as any).status)) {
+      openCount.set(repId, (openCount.get(repId) ?? 0) + 1);
+    }
+    const at = (row as any).assigned_at as string | null;
+    if (at && !lastAssigned.has(repId)) lastAssigned.set(repId, at);
   }
 
   return rows.map((rep: any) => ({
     id: rep.id,
     name: rep.name ?? "",
     roundRobinPosition: rep.round_robin_position ?? 0,
-    openCarts: load.get(rep.id) ?? 0
+    openCarts: openCount.get(rep.id) ?? 0,
+    lastAssignedAt: lastAssigned.get(rep.id) ?? null
   }));
 }
 
 /**
- * The rep next in line.
+ * The rep next in line: strict rotation, one after another.
  *
- * Fewest open carts first; ties broken by rotation position then name, which is
- * the same order the Active Sequence screen shows. Without that tie-break the
- * "Next" name in the sidebar could disagree with who actually gets the cart -
- * everybody starts on position 0, so ties are the normal case, not the rare one.
+ * ⚠️ TURN ORDER, NOT WORKLOAD. This first picked whoever was carrying the
+ * fewest carts and Bright rejected it - "give it orderly, not by fewer carts".
+ * He is right: load-balancing quietly punishes the rep who works fast. Clear
+ * your carts and the machine hands you every new one while a colleague sitting
+ * on four untouched carts is passed over. That is the opposite of the intent,
+ * which is simply that everyone takes their turn.
+ *
+ * So the order is: whoever went longest without a turn goes next. A rep who has
+ * never had one is ahead of everybody. Ties - the normal case on day one, when
+ * nobody has had a cart - fall back to the Active Sequence position and then the
+ * name, the same order that screen lists people in, so the "Next" badge on the
+ * panel always names the rep who will actually get it.
  */
 export const nextRepInLine = (reps: EligibleRep[]): EligibleRep | null => {
   if (reps.length === 0) return null;
-  return [...reps].sort((a, b) =>
-    a.openCarts - b.openCarts
-    || a.roundRobinPosition - b.roundRobinPosition
-    || a.name.localeCompare(b.name)
-  )[0];
+  return [...reps].sort((a, b) => {
+    if (a.lastAssignedAt === null && b.lastAssignedAt !== null) return -1;
+    if (b.lastAssignedAt === null && a.lastAssignedAt !== null) return 1;
+    if (a.lastAssignedAt && b.lastAssignedAt && a.lastAssignedAt !== b.lastAssignedAt) {
+      return a.lastAssignedAt < b.lastAssignedAt ? -1 : 1;
+    }
+    return a.roundRobinPosition - b.roundRobinPosition || a.name.localeCompare(b.name);
+  })[0];
 };
 
 export type AssignmentRun = { considered: number; assigned: number; noRepAvailable: number };
@@ -200,6 +220,9 @@ export async function runCartAutoAssign(): Promise<AssignmentRun> {
     }
     if (!claimed) continue; // somebody else took it first
 
+    // Take their turn: move them to the back so the next cart in this same run
+    // goes to the following rep rather than piling onto one person.
+    rep.lastAssignedAt = new Date().toISOString();
     rep.openCarts += 1;
     run.assigned += 1;
 

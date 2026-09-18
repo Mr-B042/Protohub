@@ -10991,7 +10991,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         .catch(() => { /* the panel is a monitor, never a blocker */ });
     };
     load();
-    const timer = window.setInterval(load, 30_000);
+    // ⚠️ MATCHES THE JOB, DOES NOT OUTRUN IT. The assignment job runs every two
+    // minutes, so nothing here can change faster than that - polling every 30
+    // seconds asked the same question four times for one possible answer, and
+    // API traffic is the largest line on the hosting bill.
+    const timer = window.setInterval(load, 120_000);
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [activePage, currentRole]);
 
@@ -78346,7 +78350,7 @@ ${waybillLineItems(w).length > 1
                   <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
                     <div>
                       <h3 className="m-0 mb-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                        Who gets the next one
+                        Turn order
                       </h3>
                       <ul className="m-0 list-none space-y-1 p-0">
                         {cartAssignmentPanel.reps.map((rep, index) => (

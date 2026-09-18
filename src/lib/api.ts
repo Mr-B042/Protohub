@@ -3606,7 +3606,7 @@ export const productCostApi = {
 
 export type CartAssignmentPanel = {
   active: boolean;
-  mode: "workload";
+  mode: "rotation";
   assignmentDelayMinutes: number;
   contactSlaMinutes: number;
   eligibleReps: number;
