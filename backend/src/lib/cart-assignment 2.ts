@@ -26,7 +26,6 @@
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { notifyCartAssignedToRep } from "./cart-notifications.js";
-import { isWorkingDay, lagosDateKey } from "./follow-up-kpi.js";
 
 /** Quiet this long before a rep is handed the cart. */
 export const ASSIGNMENT_DELAY_MS = 10 * 60 * 1000;
@@ -37,49 +36,10 @@ export const CONTACT_SLA_MS = 10 * 60 * 1000;
 /**
  * Stop reaching back forever. A cart from last week is a recovery lead and
  * belongs in the recovery queue, not on today's hot board.
- *
- * ⚠️ WIDE ENOUGH TO SURVIVE A CLOSED SUNDAY. With assignment limited to
- * working hours, a cart abandoned on Saturday evening cannot be handed out
- * until Monday morning - about 38 hours later. A 24-hour cutoff would have
- * quietly thrown those away before anybody could ring them, which is the
- * opposite of the rule.
  */
-const MAX_AGE_MS = 48 * 60 * 60 * 1000;
+const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 const OPEN_STATUSES = ["Open abandoned", "In progress"];
-
-/**
- * Carts are only handed out while somebody is there to ring them.
- *
- * ⚠️ THIS RAN AROUND THE CLOCK AND IT SHOWED. The first live run handed five
- * carts out at 01:00 UTC - 2am in Lagos. By the time the rep started work the
- * call deadline had been blown for six hours, so she would have opened the
- * board to nothing but red through no fault of her own. A warning that is
- * always on gets ignored within a week, and then it is worth nothing on the
- * day it matters.
- *
- * So a cart abandoned overnight waits and goes out at 08:30, first in the
- * queue. Nothing is lost - it is still the same day's first contact, which is
- * the whole rule.
- *
- * ⚠️ NO SUNDAYS. Bright asked for this explicitly and the rest of the app
- * already works that way: the follow-up KPI charges nobody on a Sunday and
- * scheduling refuses one. A Saturday-night cart waits for Monday morning.
- * isWorkingDay is reused rather than redefined here so there is one answer to
- * "is anybody working" and it cannot drift.
- *
- * Hours match the follow-up KPI's working window, for the same reason.
- */
-const WORK_START_MINUTE = 8 * 60 + 30;  // 08:30 Lagos
-const WORK_END_MINUTE = 17 * 60 + 30;   // 17:30 Lagos
-const LAGOS_OFFSET_MS = 60 * 60 * 1000; // UTC+1 year-round, no DST
-
-export const isAssignmentWindowOpen = (now: Date = new Date()): boolean => {
-  if (!isWorkingDay(lagosDateKey(now))) return false;
-  const lagos = new Date(now.getTime() + LAGOS_OFFSET_MS);
-  const minute = lagos.getUTCHours() * 60 + lagos.getUTCMinutes();
-  return minute >= WORK_START_MINUTE && minute < WORK_END_MINUTE;
-};
 
 /**
  * ⚠️ "No phone yet" IS NOT A PHONE NUMBER. The order form stores that literal
@@ -200,10 +160,6 @@ export type AssignmentRun = { considered: number; assigned: number; noRepAvailab
  * a cart already carrying a rep is never touched again.
  */
 export async function runCartAutoAssign(): Promise<AssignmentRun> {
-  // Outside working hours nothing is handed out. The carts keep waiting and go
-  // to the front of the queue when the day opens.
-  if (!isAssignmentWindowOpen()) return { considered: 0, assigned: 0, noRepAvailable: 0 };
-
   const now = Date.now();
   const readyBefore = new Date(now - ASSIGNMENT_DELAY_MS).toISOString();
   const notOlderThan = new Date(now - MAX_AGE_MS).toISOString();
