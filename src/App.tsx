@@ -5627,9 +5627,25 @@ const CART_CONTACT_SLA_MS = 10 * 60 * 1000;
 
 type CartClock =
   | { kind: "waiting"; msLeft: number }
+  | { kind: "closed" }
   | { kind: "due"; msLeft: number }
   | { kind: "overdue"; msOver: number }
   | { kind: "contacted" };
+
+/**
+ * Whether anybody is at work to take a cart right now.
+ *
+ * MUST AGREE WITH isAssignmentWindowOpen ON THE SERVER. If this counted down to
+ * zero at 2am while the job was asleep until 08:30, the screen would promise a
+ * rep who is not coming. Same hours, same no-Sundays rule.
+ */
+const CART_LAGOS_OFFSET_MS = 60 * 60 * 1000;
+const cartAssignmentWindowOpen = (now: number) => {
+  const lagos = new Date(now + CART_LAGOS_OFFSET_MS);
+  if (lagos.getUTCDay() === 0) return false; // no work on Sundays
+  const minute = lagos.getUTCHours() * 60 + lagos.getUTCMinutes();
+  return minute >= 8 * 60 + 30 && minute < 17 * 60 + 30;
+};
 
 const cartClockFor = (
   cart: AbandonedCartRecord,
@@ -5650,6 +5666,9 @@ const cartClockFor = (
     const quietSince = Date.parse(cart.lastActivity || cart.createdAt || "");
     if (!Number.isFinite(quietSince)) return null;
     const msLeft = quietSince + CART_ASSIGN_AFTER_MS - now;
+    // Outside working hours nobody is being handed anything, so a countdown
+    // would be a promise the system does not keep. It says so plainly instead.
+    if (msLeft <= 0 && !cartAssignmentWindowOpen(now)) return { kind: "closed" };
     // Past the mark but still unassigned: the job runs every two minutes, so
     // this is the normal gap, not a fault. Shown as waiting rather than a
     // negative number.
@@ -79442,6 +79461,13 @@ ${waybillLineItems(w).length > 1
                                 {(() => {
                                   const clock = cartClockFor(cart, cartAttemptsById.get(cart.id) ?? 0, cartClockNow);
                                   if (!clock || clock.kind === "contacted") return null;
+                                  if (clock.kind === "closed") {
+                                    return (
+                                      <span className="inline-flex w-fit items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-gray-600">
+                                        🌙 Waiting for the morning
+                                      </span>
+                                    );
+                                  }
                                   if (clock.kind === "waiting") {
                                     return (
                                       <span className="inline-flex w-fit items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-amber-800">
