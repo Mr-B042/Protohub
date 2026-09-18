@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Clock3, RefreshCw, Settings, Timer, Users, Inbox, ArrowRight } from "lucide-react";
+import { Check, Clock3, RefreshCw, Settings, Timer, Users, ClipboardList, ArrowRight } from "lucide-react";
 import type { CartAssignmentPanel } from "../lib/api";
 
 type Props = {
@@ -49,7 +49,7 @@ export function CartAssignmentOverview({ panel, onEditRules, onManageOrder, onTo
           </div>
           {[
             { icon: Users, label: "Eligible Reps", value: `${panel.eligibleReps} / ${panel.totalReps}` },
-            { icon: Inbox, label: "Unassigned Carts", value: String(panel.unassignedCarts) },
+            { icon: ClipboardList, label: "Unassigned Carts", value: String(panel.unassignedCarts) },
             { icon: Clock3, label: "Assignment Delay", value: `${panel.assignmentDelayMinutes} minutes` },
             { icon: Timer, label: "Contact SLA", value: `${panel.contactSlaMinutes} minutes` }
           ].map(({ icon: Icon, label, value }) => (
