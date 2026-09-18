@@ -1442,6 +1442,8 @@ type AbandonedCartRecord = {
   source: Exclude<OrderSource, "All Sources">;
   status: Exclude<CartStatus, "All statuses">;
   assignedRepId?: string;
+  /** When the rotation handed this cart over. Drives the call deadline. */
+  assignedAt?: string;
   lastActivity: string;
   createdAt: string;
   /** The result of the LAST call logged on this cart, from the carts endpoint.
@@ -5608,6 +5610,63 @@ const orderHasVerifiedUpsell = (order: TrackedOrder) =>
 //
 // Order 3146 is exactly that: logged 3->6 at 08:34, edited back to 3 at 08:49
 // by the same rep, delivered, and still paid N1,600 against N0 revenue.
+/**
+ * Where a cart stands against the clock.
+ *
+ * Bright's rule, in order: quiet for ten minutes and it goes to a rep; the rep
+ * then has ten minutes to make the first call; after that it is overdue and
+ * somebody should be chasing. The point is that none of this waits for tomorrow.
+ *
+ * ⚠️ ONLY FOR CARTS A REP MUST RING. A cart with everything filled in becomes a
+ * real order by itself in about two minutes, so counting it down to a phone call
+ * would show a deadline for something that is no longer a cart. Those return
+ * null and the column stays empty.
+ */
+const CART_ASSIGN_AFTER_MS = 10 * 60 * 1000;
+const CART_CONTACT_SLA_MS = 10 * 60 * 1000;
+
+type CartClock =
+  | { kind: "waiting"; msLeft: number }
+  | { kind: "due"; msLeft: number }
+  | { kind: "overdue"; msOver: number }
+  | { kind: "contacted" };
+
+const cartClockFor = (
+  cart: AbandonedCartRecord,
+  attempts: number,
+  now: number
+): CartClock | null => {
+  if (cart.status !== "Open abandoned" && cart.status !== "In progress") return null;
+
+  // The same test the server uses to decide whether a cart is even in the
+  // rotation, kept in step on purpose - a countdown on a cart that will never
+  // be assigned is a promise the system does not keep.
+  const digits = String(cart.phone ?? "").replace(/\D/g, "");
+  if (digits.length < 7) return null;
+
+  if (attempts > 0) return { kind: "contacted" };
+
+  if (!cart.assignedRepId) {
+    const quietSince = Date.parse(cart.lastActivity || cart.createdAt || "");
+    if (!Number.isFinite(quietSince)) return null;
+    const msLeft = quietSince + CART_ASSIGN_AFTER_MS - now;
+    // Past the mark but still unassigned: the job runs every two minutes, so
+    // this is the normal gap, not a fault. Shown as waiting rather than a
+    // negative number.
+    return { kind: "waiting", msLeft: Math.max(0, msLeft) };
+  }
+
+  const handedOver = Date.parse(cart.assignedAt || "");
+  if (!Number.isFinite(handedOver)) return null;
+  const msLeft = handedOver + CART_CONTACT_SLA_MS - now;
+  return msLeft >= 0 ? { kind: "due", msLeft } : { kind: "overdue", msOver: -msLeft };
+};
+
+const cartClockLabel = (ms: number) => {
+  const total = Math.max(0, Math.round(ms / 1000));
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+};
+
 const upsellReversedByEdit = (order: TrackedOrder, nextQuantity: number) =>
   orderHasVerifiedUpsell(order) && nextQuantity <= (order.upsellFromQty ?? 0);
 
@@ -7026,6 +7085,7 @@ const normalizeRealtimeCart = (value: any): AbandonedCartRecord => {
     // off Who Needs Stock with nothing to show why.
     ...("lastOutcomeCode" in cart ? { lastOutcomeCode: cart.lastOutcomeCode ?? undefined } : {}),
     ...("lastOutcomeAt" in cart ? { lastOutcomeAt: cart.lastOutcomeAt ?? undefined } : {}),
+    assignedAt: (cart as any).assignedAt ?? (cart as any).assigned_at ?? undefined,
     lastActivity: cart.lastActivity ?? cart.createdAt ?? "",
     createdAt: cart.createdAt ?? ""
   };
@@ -14007,6 +14067,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // pattern the follow-up countdowns use. The server supplies the authoritative
   // online flag; this tick keeps fallback last-seen labels fresh before the
   // first compact presence snapshot arrives.
+  // Ticks only while the cart board is open, and touches no network - the same
+  // pattern the presence labels below use. A countdown that only moved when the
+  // page reloaded would be worse than none, because it would read as accurate.
+  const cartAttemptsById = useMemo(
+    () => new Map(cartFollowUps.map((row) => [row.id, row.attempts ?? 0])),
+    [cartFollowUps]
+  );
+  const [cartClockNow, setCartClockNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (activePage !== "Abandoned Carts") return;
+    setCartClockNow(Date.now());
+    const timer = window.setInterval(() => setCartClockNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [activePage]);
+
   const [presenceNow, setPresenceNow] = useState(() => Date.now());
   useEffect(() => {
     if (activePage !== "User Management") return;
@@ -14350,6 +14425,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         source:       c.source ?? "Website",
         status:       c.status ?? "Open abandoned",
         assignedRepId:c.assignedRepId ?? c.assigned_rep_id ?? undefined,
+        assignedAt:   c.assignedAt ?? c.assigned_at ?? undefined,
         lastOutcomeCode: c.lastOutcomeCode ?? c.last_outcome_code ?? undefined,
         lastOutcomeAt:   c.lastOutcomeAt ?? c.last_outcome_at ?? undefined,
         lastActivity: c.lastActivity ?? c.last_activity ?? c.createdAt ?? c.created_at ?? "",
@@ -79363,6 +79439,29 @@ ${waybillLineItems(w).length > 1
                                   );
                                 })()}
                                 {conversionStatusLabel && <span className="text-[11px] font-medium text-gray-500">{conversionStatusLabel}</span>}
+                                {(() => {
+                                  const clock = cartClockFor(cart, cartAttemptsById.get(cart.id) ?? 0, cartClockNow);
+                                  if (!clock || clock.kind === "contacted") return null;
+                                  if (clock.kind === "waiting") {
+                                    return (
+                                      <span className="inline-flex w-fit items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-amber-800">
+                                        🔥 Hot · a rep in {cartClockLabel(clock.msLeft)}
+                                      </span>
+                                    );
+                                  }
+                                  if (clock.kind === "due") {
+                                    return (
+                                      <span className="inline-flex w-fit items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-blue-800">
+                                        ⏱ Call within {cartClockLabel(clock.msLeft)}
+                                      </span>
+                                    );
+                                  }
+                                  return (
+                                    <span className="inline-flex w-fit items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-rose-800">
+                                      🔴 Overdue · {cartClockLabel(clock.msOver)} with no call
+                                    </span>
+                                  );
+                                })()}
                               </div>
                             </td>
                             <td className="px-4 py-3 text-sm text-gray-500">{formatMoment(cart.lastActivity || cart.createdAt)}</td>
