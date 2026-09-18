@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { PAGE_HELP, DEFAULT_HELP } from "./help-content";
 import { LoadingState } from "@/components/ui/loading-state";
+import { CartAssignmentOverview } from "@/components/CartAssignmentOverview";
 import {
   ArrowRight,
   Archive,
@@ -8706,6 +8707,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         return cartsApi.assignmentPanel().then(setCartAssignmentPanel).catch(() => undefined);
       })
       .catch((err: any) => showToast(`Could not save the rules: ${err?.message ?? "please retry"}.`))
+      .finally(() => setSavingCartRules(false));
+  };
+
+  const toggleCartAssignment = (enabled: boolean) => {
+    if (!cartAssignmentPanel?.canEditRules) return;
+    setSavingCartRules(true);
+    cartsApi.saveAssignmentRules({
+      enabled,
+      assignmentDelayMinutes: cartAssignmentPanel.assignmentDelayMinutes,
+      contactSlaMinutes: cartAssignmentPanel.contactSlaMinutes,
+      workStartMinute: cartAssignmentPanel.workStartMinute,
+      workEndMinute: cartAssignmentPanel.workEndMinute,
+      worksSunday: cartAssignmentPanel.worksSunday
+    }).then(() => cartsApi.assignmentPanel().then(setCartAssignmentPanel))
+      .catch((err: any) => showToast(`Could not update automatic assignment: ${err?.message ?? "please retry"}.`))
       .finally(() => setSavingCartRules(false));
   };
 
@@ -78445,109 +78461,15 @@ ${waybillLineItems(w).length > 1
               </div>
           ) : activePage === "Abandoned Carts" ? (
             <>
-              {/* Automatic assignment — the monitor, not another place to work.
-                  ⚠️ A MANAGER SHOULD NOT BE HANDING CARTS OUT BY HAND. That was
-                  the delay Bright wanted gone: the job gives each cart to the
-                  least-loaded rep ten minutes after the customer goes quiet, and
-                  this panel exists so somebody can see it happening and chase
-                  the rep who has not called - not to distribute work. */}
               {cartAssignmentPanel && (
-                <section className="mb-6 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h2 className="m-0 flex items-center gap-2 text-sm font-black text-gray-900">
-                      <Bot className="h-4 w-4 text-[#1F8FE0]" />Automatic Assignment
-                    </h2>
-                    <div className="flex items-center gap-2">
-                      <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
-                        !cartAssignmentPanel.active ? "bg-gray-100 text-gray-600"
-                          : cartAssignmentPanel.windowOpenNow ? "bg-emerald-50 text-emerald-700"
-                          : "bg-amber-50 text-amber-700"}`}>
-                        <span className={`h-1.5 w-1.5 rounded-full ${
-                          !cartAssignmentPanel.active ? "bg-gray-400"
-                            : cartAssignmentPanel.windowOpenNow ? "bg-emerald-500" : "bg-amber-500"}`} />
-                        {!cartAssignmentPanel.active ? "Switched off"
-                          : cartAssignmentPanel.windowOpenNow ? "Handing out now" : "Waiting for the morning"}
-                      </span>
-                      {cartAssignmentPanel.canEditRules && (
-                        <button
-                          type="button"
-                          className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-bold text-gray-700 transition-colors hover:bg-gray-50"
-                          onClick={openCartAssignmentRules}
-                        >
-                          <Settings className="h-3.5 w-3.5" />Edit rules
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-4">
-                    {[
-                      ["Reps in rotation", `${cartAssignmentPanel.eligibleReps} of ${cartAssignmentPanel.totalReps}`],
-                      ["Waiting for a rep", String(cartAssignmentPanel.unassignedCarts)],
-                      ["Handed over after", `${cartAssignmentPanel.assignmentDelayMinutes} minutes quiet`],
-                      ["Call within", `${cartAssignmentPanel.contactSlaMinutes} minutes`]
-                    ].map(([label, value]) => (
-                      <div key={label}>
-                        <dt className="m-0 text-[10px] font-bold uppercase tracking-wider text-gray-400">{label}</dt>
-                        <dd className="m-0 mt-0.5 text-sm font-black text-gray-900">{value}</dd>
-                      </div>
-                    ))}
-                  </dl>
-
-                  <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-                    <div>
-                      <h3 className="m-0 mb-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                        Turn order
-                      </h3>
-                      <ul className="m-0 list-none space-y-1 p-0">
-                        {cartAssignmentPanel.reps.map((rep, index) => (
-                          <li key={rep.id} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 ${rep.isNext ? "bg-blue-50" : ""}`}>
-                            <span className="w-4 shrink-0 text-[11px] font-bold text-gray-400">{index + 1}</span>
-                            <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-gray-900">{rep.name}</span>
-                            {rep.isNext && (
-                              <span className="shrink-0 rounded-full bg-[#1F8FE0] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">Next</span>
-                            )}
-                            {/* ⚠️ Owner only. Bright asked that nobody else watch who is online. */}
-                            {cartAssignmentPanel.showsPresence && (
-                              <span className={`shrink-0 text-[10px] font-bold ${rep.online ? "text-emerald-600" : "text-gray-400"}`}>
-                                {rep.online ? "Online" : "Away"}
-                              </span>
-                            )}
-                            <span className="shrink-0 text-[11px] font-bold text-gray-500">
-                              {rep.openCarts} cart{rep.openCarts === 1 ? "" : "s"}
-                            </span>
-                          </li>
-                        ))}
-                        {cartAssignmentPanel.reps.length === 0 && (
-                          <li className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-900">
-                            Nobody is in the rotation, so carts will sit unassigned. Check that your sales reps are switched on and not paused in Round-Robin.
-                          </li>
-                        )}
-                      </ul>
-                    </div>
-
-                    <div>
-                      <h3 className="m-0 mb-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                        Just handed out
-                      </h3>
-                      {cartAssignmentPanel.recentAssignments.length === 0 ? (
-                        <p className="m-0 text-[11px] text-gray-500">Nothing handed out yet.</p>
-                      ) : (
-                        <ul className="m-0 list-none space-y-1 p-0">
-                          {cartAssignmentPanel.recentAssignments.map((row) => (
-                            <li key={`${row.cartId}-${row.assignedAt}`} className="flex items-center gap-2 text-[12px]">
-                              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
-                              <span className="min-w-0 flex-1 truncate text-gray-700">
-                                {row.customer || row.cartId} <span className="text-gray-400">→</span> <strong className="font-bold text-gray-900">{row.repName || "—"}</strong>
-                              </span>
-                              <span className="shrink-0 text-[10px] text-gray-400">{relativeMinutesLabel(row.assignedAt)}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  </div>
-                </section>
+                <CartAssignmentOverview
+                  panel={cartAssignmentPanel}
+                  onEditRules={openCartAssignmentRules}
+                  onManageOrder={() => handleNavClick("Round-Robin")}
+                  onToggle={toggleCartAssignment}
+                  saving={savingCartRules}
+                  relativeTime={relativeMinutesLabel}
+                />
               )}
 
               <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">

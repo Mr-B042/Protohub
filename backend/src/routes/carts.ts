@@ -2930,6 +2930,14 @@ router.get("/assignment-panel", requireRole("Owner", "Admin", "Manager"), async 
     const rules = branchId ? await assignmentRulesForBranch(branchId) : DEFAULT_ASSIGNMENT_RULES;
     const reps = await eligibleReps(orgId, branchId);
     const next = nextRepInLine(reps);
+    const { count: totalReps, error: totalRepsError } = await supabase
+      .from("users")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", orgId)
+      .eq("role", "Sales Rep")
+      .eq("active", true)
+      .eq("is_demo", false);
+    if (totalRepsError) throw new Error(totalRepsError.message);
 
     // Unassigned carts that this rotation would pick up - the half-finished
     // ones with a phone. A complete cart is the converter's job, not this.
@@ -2938,7 +2946,7 @@ router.get("/assignment-panel", requireRole("Owner", "Admin", "Manager"), async 
       .select("id, customer, phone, address, city, state, product_id, package_id, assigned_rep_id, last_activity, assigned_at")
       .in("status", ["Open abandoned", "In progress"])
       .is("merged_into", null)
-      .gte("last_activity", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+      .gte("last_activity", new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString())
       .limit(500);
     if (branchId) openQuery = openQuery.eq("branch_id", branchId);
     const { data: openCarts } = await openQuery;
@@ -2980,7 +2988,7 @@ router.get("/assignment-panel", requireRole("Owner", "Admin", "Manager"), async 
       windowOpenNow: isAssignmentWindowOpen(rules),
       canEditRules: ["Owner", "Admin"].includes(req.user!.role),
       eligibleReps: reps.length,
-      totalReps: reps.length,
+      totalReps: totalReps ?? reps.length,
       unassignedCarts: unassigned,
       showsPresence: isOwner,
       // ⚠️ LISTED IN TURN ORDER, THE SAME ORDER THEY WILL BE PICKED IN.
