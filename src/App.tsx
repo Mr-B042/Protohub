@@ -280,7 +280,7 @@ type CurrencyCode = "NGN" | "GHS" | "KES" | "ZMW" | "XOF" | "XAF" | "TZS" | "MWK
 // list as CurrencyCode - they must not drift apart or a branch could exist in a
 // currency no product can be priced in.
 type ProductCurrencyCode = CurrencyCode;
-type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "addBranch" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addExtraItems" | "addFreeGift" | "salesBonusFullReport" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | "pdaPortalCredentials" | null;
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "addBranch" | "cartAssignmentRules" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addExtraItems" | "addFreeGift" | "salesBonusFullReport" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | "pdaPortalCredentials" | null;
 type ActivePage = "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
@@ -8644,6 +8644,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // pushed: the numbers move when the 2-minute job runs, so a slow refresh is
   // honest and a live socket would be noise.
   const [cartAssignmentPanel, setCartAssignmentPanel] = useState<CartAssignmentPanel | null>(null);
+  const [cartRulesDraft, setCartRulesDraft] = useState({
+    enabled: true, assignmentDelayMinutes: 10, contactSlaMinutes: 10,
+    workStartMinute: 510, workEndMinute: 1050, worksSunday: false
+  });
+  const [savingCartRules, setSavingCartRules] = useState(false);
   const [newBranchCountry, setNewBranchCountry] = useState("");
   const [newBranchName, setNewBranchName] = useState("");
   const [newBranchCity, setNewBranchCity] = useState("");
@@ -8675,6 +8680,35 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }).catch(() => { /* Normal page-level API errors remain visible. */ });
     return () => { cancelled = true; };
   }, []);
+  const openCartAssignmentRules = () => {
+    if (!cartAssignmentPanel) return;
+    setCartRulesDraft({
+      enabled: cartAssignmentPanel.active,
+      assignmentDelayMinutes: cartAssignmentPanel.assignmentDelayMinutes,
+      contactSlaMinutes: cartAssignmentPanel.contactSlaMinutes,
+      workStartMinute: cartAssignmentPanel.workStartMinute,
+      workEndMinute: cartAssignmentPanel.workEndMinute,
+      worksSunday: cartAssignmentPanel.worksSunday
+    });
+    setModal("cartAssignmentRules");
+  };
+
+  const saveCartAssignmentRules = () => {
+    if (cartRulesDraft.workEndMinute <= cartRulesDraft.workStartMinute) {
+      showToast("The day has to end after it starts.");
+      return;
+    }
+    setSavingCartRules(true);
+    cartsApi.saveAssignmentRules(cartRulesDraft)
+      .then(() => {
+        showToast("Assignment rules saved.");
+        closeModal();
+        return cartsApi.assignmentPanel().then(setCartAssignmentPanel).catch(() => undefined);
+      })
+      .catch((err: any) => showToast(`Could not save the rules: ${err?.message ?? "please retry"}.`))
+      .finally(() => setSavingCartRules(false));
+  };
+
   const openAddBranch = () => {
     setNewBranchCountry("");
     setNewBranchName("");
@@ -78423,9 +78457,27 @@ ${waybillLineItems(w).length > 1
                     <h2 className="m-0 flex items-center gap-2 text-sm font-black text-gray-900">
                       <Bot className="h-4 w-4 text-[#1F8FE0]" />Automatic Assignment
                     </h2>
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-700">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />Active
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                        !cartAssignmentPanel.active ? "bg-gray-100 text-gray-600"
+                          : cartAssignmentPanel.windowOpenNow ? "bg-emerald-50 text-emerald-700"
+                          : "bg-amber-50 text-amber-700"}`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${
+                          !cartAssignmentPanel.active ? "bg-gray-400"
+                            : cartAssignmentPanel.windowOpenNow ? "bg-emerald-500" : "bg-amber-500"}`} />
+                        {!cartAssignmentPanel.active ? "Switched off"
+                          : cartAssignmentPanel.windowOpenNow ? "Handing out now" : "Waiting for the morning"}
+                      </span>
+                      {cartAssignmentPanel.canEditRules && (
+                        <button
+                          type="button"
+                          className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-bold text-gray-700 transition-colors hover:bg-gray-50"
+                          onClick={openCartAssignmentRules}
+                        >
+                          <Settings className="h-3.5 w-3.5" />Edit rules
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-4">
@@ -100774,6 +100826,7 @@ ${waybillLineItems(w).length > 1
                 {modal === "addUser" && "Add New User"}
                 {modal === "editUser" && "Edit User"}
                 {modal === "addBranch" && "Add a country"}
+                {modal === "cartAssignmentRules" && "How carts are handed out"}
                 {modal === "resetUserPassword" && "Reset Password"}
                 {modal === "deleteUser" && "Delete User"}
                 {modal === "productDetails" && "Product Details"}
@@ -108838,6 +108891,115 @@ ${waybillLineItems(w).length > 1
                 </div>
               );
             })()}
+
+            {modal === "cartAssignmentRules" && (
+              <div className="px-6 py-5 flex flex-col gap-4">
+                <p className="m-0 text-sm text-gray-600">
+                  These are the rules for <strong className="font-bold text-gray-900">{activeBranch?.name ?? "this branch"}</strong> only. Each branch keeps its own, so Accra can open at a different time from Lagos.
+                </p>
+
+                <label className="flex items-start gap-2.5 rounded-lg border border-gray-200 p-3">
+                  <input
+                    type="checkbox"
+                    checked={cartRulesDraft.enabled}
+                    onChange={(event) => setCartRulesDraft((d) => ({ ...d, enabled: event.target.checked }))}
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-[#1F8FE0]"
+                  />
+                  <span>
+                    <span className="block text-sm font-semibold text-gray-900">Hand carts out automatically</span>
+                    <span className="mt-0.5 block text-[11px] leading-4 text-gray-500">
+                      Switch this off and carts stay unassigned for somebody to give out by hand, the way it worked before.
+                    </span>
+                  </span>
+                </label>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs font-semibold text-gray-700">Wait this long before handing it over</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number" min={1} max={240}
+                        value={cartRulesDraft.assignmentDelayMinutes}
+                        onChange={(event) => setCartRulesDraft((d) => ({ ...d, assignmentDelayMinutes: Number(event.target.value) || 1 }))}
+                        className="w-24 px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
+                      />
+                      <span className="text-xs text-gray-500">minutes quiet</span>
+                    </div>
+                  </label>
+
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs font-semibold text-gray-700">The rep should call within</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number" min={1} max={240}
+                        value={cartRulesDraft.contactSlaMinutes}
+                        onChange={(event) => setCartRulesDraft((d) => ({ ...d, contactSlaMinutes: Number(event.target.value) || 1 }))}
+                        className="w-24 px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
+                      />
+                      <span className="text-xs text-gray-500">minutes</span>
+                    </div>
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs font-semibold text-gray-700">Day starts</span>
+                    <input
+                      type="time"
+                      value={`${String(Math.floor(cartRulesDraft.workStartMinute / 60)).padStart(2, "0")}:${String(cartRulesDraft.workStartMinute % 60).padStart(2, "0")}`}
+                      onChange={(event) => {
+                        const [h, m] = event.target.value.split(":").map(Number);
+                        if (Number.isFinite(h) && Number.isFinite(m)) setCartRulesDraft((d) => ({ ...d, workStartMinute: h * 60 + m }));
+                      }}
+                      className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs font-semibold text-gray-700">Day ends</span>
+                    <input
+                      type="time"
+                      value={`${String(Math.floor(cartRulesDraft.workEndMinute / 60)).padStart(2, "0")}:${String(cartRulesDraft.workEndMinute % 60).padStart(2, "0")}`}
+                      onChange={(event) => {
+                        const [h, m] = event.target.value.split(":").map(Number);
+                        if (Number.isFinite(h) && Number.isFinite(m)) setCartRulesDraft((d) => ({ ...d, workEndMinute: h * 60 + m }));
+                      }}
+                      className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
+                    />
+                  </label>
+                </div>
+
+                <label className="flex items-start gap-2.5">
+                  <input
+                    type="checkbox"
+                    checked={cartRulesDraft.worksSunday}
+                    onChange={(event) => setCartRulesDraft((d) => ({ ...d, worksSunday: event.target.checked }))}
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-[#1F8FE0]"
+                  />
+                  <span>
+                    <span className="block text-sm font-semibold text-gray-900">Hand carts out on Sundays too</span>
+                    <span className="mt-0.5 block text-[11px] leading-4 text-gray-500">
+                      Off by default. The rest of the app treats Sunday as a rest day - nobody is charged for a missed follow-up and nothing can be scheduled.
+                    </span>
+                  </span>
+                </label>
+
+                <p className="m-0 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] leading-4 text-blue-900">
+                  A cart that goes quiet outside these hours waits and is handed over when the day opens, first in the queue. Nothing is dropped.
+                </p>
+
+                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2 border-t border-gray-100">
+                  <button
+                    className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
+                    onClick={closeModal}
+                  >Cancel</button>
+                  <button
+                    disabled={savingCartRules}
+                    className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    onClick={saveCartAssignmentRules}
+                  >{savingCartRules ? "Saving…" : "Save rules"}</button>
+                </div>
+              </div>
+            )}
 
             {modal === "addBranch" && (() => {
               const country = BRANCH_COUNTRIES.find((item) => item.code === newBranchCountry);

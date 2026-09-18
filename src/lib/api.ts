@@ -3612,6 +3612,13 @@ export type CartAssignmentPanel = {
   eligibleReps: number;
   totalReps: number;
   unassignedCarts: number;
+  workStartMinute: number;
+  workEndMinute: number;
+  worksSunday: boolean;
+  /** Whether carts are being handed out right now. */
+  windowOpenNow: boolean;
+  /** Only Owner and Admin may change the rules; a Manager watches. */
+  canEditRules: boolean;
   /** Only the Owner is told who is online; everyone else gets null. */
   showsPresence: boolean;
   reps: Array<{ id: string; name: string; openCarts: number; isNext: boolean; online: boolean | null }>;
@@ -3621,6 +3628,14 @@ export type CartAssignmentPanel = {
 export const cartsApi = {
   /** Who the rotation would pick next, and what each rep is carrying. */
   assignmentPanel: () => get<CartAssignmentPanel>("/api/carts/assignment-panel"),
+  saveAssignmentRules: (body: {
+    enabled: boolean;
+    assignmentDelayMinutes: number;
+    contactSlaMinutes: number;
+    workStartMinute: number;
+    workEndMinute: number;
+    worksSunday: boolean;
+  }) => put<{ saved: boolean }>("/api/carts/assignment-rules", body),
   /** Recovery funnel over ANY range - the follow-up grid only knows one week. */
   recoverySummary: (params: { from?: string; to?: string; productId?: string }) => {
     const qs = new URLSearchParams();

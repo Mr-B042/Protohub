@@ -16,8 +16,8 @@ import {
 } from "../lib/cart-log-penalty.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 import {
-  ASSIGNMENT_DELAY_MS, CONTACT_SLA_MS, cartCanBecomeOrder,
-  eligibleReps, hasReachablePhone, nextRepInLine
+  DEFAULT_ASSIGNMENT_RULES, assignmentRulesForBranch, cartCanBecomeOrder,
+  eligibleReps, hasReachablePhone, isAssignmentWindowOpen, nextRepInLine
 } from "../lib/cart-assignment.js";
 
 const router = Router();
@@ -2927,6 +2927,7 @@ router.get("/assignment-panel", requireRole("Owner", "Admin", "Manager"), async 
     const branchId = req.user!.branchId ?? null;
     const isOwner = req.user!.role === "Owner";
 
+    const rules = branchId ? await assignmentRulesForBranch(branchId) : DEFAULT_ASSIGNMENT_RULES;
     const reps = await eligibleReps(orgId, branchId);
     const next = nextRepInLine(reps);
 
@@ -2969,10 +2970,15 @@ router.get("/assignment-panel", requireRole("Owner", "Admin", "Manager"), async 
     const repNames = new Map(reps.map((rep) => [rep.id, rep.name]));
 
     res.json({
-      active: true,
+      active: rules.enabled,
       mode: "rotation",
-      assignmentDelayMinutes: Math.round(ASSIGNMENT_DELAY_MS / 60000),
-      contactSlaMinutes: Math.round(CONTACT_SLA_MS / 60000),
+      assignmentDelayMinutes: rules.assignmentDelayMinutes,
+      contactSlaMinutes: rules.contactSlaMinutes,
+      workStartMinute: rules.workStartMinute,
+      workEndMinute: rules.workEndMinute,
+      worksSunday: rules.worksSunday,
+      windowOpenNow: isAssignmentWindowOpen(rules),
+      canEditRules: ["Owner", "Admin"].includes(req.user!.role),
       eligibleReps: reps.length,
       totalReps: reps.length,
       unassignedCarts: unassigned,
@@ -3006,6 +3012,52 @@ router.get("/assignment-panel", requireRole("Owner", "Admin", "Manager"), async 
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not load the assignment panel." });
   }
+});
+
+/**
+ * Change how carts are handed out.
+ *
+ * ⚠️ OWNER AND ADMIN ONLY. A Manager watches the board and chases; letting them
+ * widen the call deadline would let the person being measured move the line.
+ *
+ * The bounds are checked here AND by the table's own constraints. Two guards on
+ * purpose: these numbers drive a job that rings real customers, and a one-minute
+ * wait would hand over a cart while the customer is still typing.
+ */
+router.put("/assignment-rules", requireRole("Owner", "Admin"), async (req, res) => {
+  const parsed = z.object({
+    enabled: z.boolean(),
+    assignmentDelayMinutes: z.number().int().min(1).max(240),
+    contactSlaMinutes: z.number().int().min(1).max(240),
+    workStartMinute: z.number().int().min(0).max(1439),
+    workEndMinute: z.number().int().min(1).max(1440),
+    worksSunday: z.boolean()
+  }).strict().safeParse(req.body ?? {});
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+  if (parsed.data.workEndMinute <= parsed.data.workStartMinute) {
+    res.status(400).json({ error: "The day has to end after it starts." });
+    return;
+  }
+
+  const branchId = req.user!.branchId;
+  if (!branchId) { res.status(400).json({ error: "Open a branch before changing its rules." }); return; }
+
+  const { error } = await supabase
+    .from("cart_assignment_settings")
+    .update({
+      enabled: parsed.data.enabled,
+      assignment_delay_minutes: parsed.data.assignmentDelayMinutes,
+      contact_sla_minutes: parsed.data.contactSlaMinutes,
+      work_start_minute: parsed.data.workStartMinute,
+      work_end_minute: parsed.data.workEndMinute,
+      works_sunday: parsed.data.worksSunday,
+      updated_at: new Date().toISOString(),
+      updated_by: req.user!.id
+    })
+    .eq("branch_id", branchId)
+    .eq("org_id", req.user!.orgId);
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ saved: true });
 });
 
 export default router;
