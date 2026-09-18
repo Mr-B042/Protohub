@@ -39,6 +39,12 @@ const BRANCH_TABLES = new Set([
   // Operational records with no parent to inherit from.
   "recovery_actions", "sales_call_reviews", "customer_flags",
 
+  // How each branch hands abandoned carts to reps. Seeded one row per branch
+  // by migration 265 with branch_id NOT NULL, so it satisfies the rule above
+  // from the moment it exists. Lagos, Accra and Nairobi keep their own working
+  // hours, which is the whole reason it is per branch rather than per company.
+  "cart_assignment_settings",
+
   // The books. Each branch trades in its own currency - naira, cedi,
   // shilling - so one shared ledger cannot hold three. A delivery expense
   // follows the waybill it paid for and a remittance follows the order whose

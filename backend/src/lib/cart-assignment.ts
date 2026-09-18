@@ -28,11 +28,45 @@ import { logger } from "./logger.js";
 import { notifyCartAssignedToRep } from "./cart-notifications.js";
 import { isWorkingDay, lagosDateKey } from "./follow-up-kpi.js";
 
-/** Quiet this long before a rep is handed the cart. */
-export const ASSIGNMENT_DELAY_MS = 10 * 60 * 1000;
+/**
+ * What the rules are when a branch has no row of its own - which should not
+ * happen, since a trigger seeds one per branch, but a job that silently stops
+ * because a row is missing is worse than one that carries on with the numbers
+ * everybody already agreed to.
+ */
+export const DEFAULT_ASSIGNMENT_RULES = {
+  enabled: true,
+  assignmentDelayMinutes: 10,
+  contactSlaMinutes: 10,
+  workStartMinute: 8 * 60 + 30,
+  workEndMinute: 17 * 60 + 30,
+  worksSunday: false
+};
 
-/** How long the rep then has to make first contact before the cart reads OVERDUE. */
-export const CONTACT_SLA_MS = 10 * 60 * 1000;
+export type AssignmentRules = typeof DEFAULT_ASSIGNMENT_RULES;
+
+/** Kept for callers that only need the default, e.g. the screen's fallback. */
+export const ASSIGNMENT_DELAY_MS = DEFAULT_ASSIGNMENT_RULES.assignmentDelayMinutes * 60 * 1000;
+export const CONTACT_SLA_MS = DEFAULT_ASSIGNMENT_RULES.contactSlaMinutes * 60 * 1000;
+
+const rulesFromRow = (row: any): AssignmentRules => ({
+  enabled: row?.enabled !== false,
+  assignmentDelayMinutes: Number(row?.assignment_delay_minutes) || DEFAULT_ASSIGNMENT_RULES.assignmentDelayMinutes,
+  contactSlaMinutes: Number(row?.contact_sla_minutes) || DEFAULT_ASSIGNMENT_RULES.contactSlaMinutes,
+  workStartMinute: Number.isFinite(Number(row?.work_start_minute)) ? Number(row.work_start_minute) : DEFAULT_ASSIGNMENT_RULES.workStartMinute,
+  workEndMinute: Number.isFinite(Number(row?.work_end_minute)) ? Number(row.work_end_minute) : DEFAULT_ASSIGNMENT_RULES.workEndMinute,
+  worksSunday: row?.works_sunday === true
+});
+
+/** The rules for one branch. */
+export async function assignmentRulesForBranch(branchId: string): Promise<AssignmentRules> {
+  const { data } = await supabase
+    .from("cart_assignment_settings")
+    .select("enabled, assignment_delay_minutes, contact_sla_minutes, work_start_minute, work_end_minute, works_sunday")
+    .eq("branch_id", branchId)
+    .maybeSingle();
+  return rulesFromRow(data);
+}
 
 /**
  * Stop reaching back forever. A cart from last week is a recovery lead and
@@ -70,15 +104,17 @@ const OPEN_STATUSES = ["Open abandoned", "In progress"];
  *
  * Hours match the follow-up KPI's working window, for the same reason.
  */
-const WORK_START_MINUTE = 8 * 60 + 30;  // 08:30 Lagos
-const WORK_END_MINUTE = 17 * 60 + 30;   // 17:30 Lagos
 const LAGOS_OFFSET_MS = 60 * 60 * 1000; // UTC+1 year-round, no DST
 
-export const isAssignmentWindowOpen = (now: Date = new Date()): boolean => {
-  if (!isWorkingDay(lagosDateKey(now))) return false;
+export const isAssignmentWindowOpen = (
+  rules: AssignmentRules = DEFAULT_ASSIGNMENT_RULES,
+  now: Date = new Date()
+): boolean => {
+  if (!rules.enabled) return false;
+  if (!rules.worksSunday && !isWorkingDay(lagosDateKey(now))) return false;
   const lagos = new Date(now.getTime() + LAGOS_OFFSET_MS);
   const minute = lagos.getUTCHours() * 60 + lagos.getUTCMinutes();
-  return minute >= WORK_START_MINUTE && minute < WORK_END_MINUTE;
+  return minute >= rules.workStartMinute && minute < rules.workEndMinute;
 };
 
 /**
@@ -200,12 +236,12 @@ export type AssignmentRun = { considered: number; assigned: number; noRepAvailab
  * a cart already carrying a rep is never touched again.
  */
 export async function runCartAutoAssign(): Promise<AssignmentRun> {
-  // Outside working hours nothing is handed out. The carts keep waiting and go
-  // to the front of the queue when the day opens.
-  if (!isAssignmentWindowOpen()) return { considered: 0, assigned: 0, noRepAvailable: 0 };
-
   const now = Date.now();
-  const readyBefore = new Date(now - ASSIGNMENT_DELAY_MS).toISOString();
+  // ⚠️ THE WIDEST POSSIBLE WINDOW IS READ FIRST, THEN EACH BRANCH DECIDES.
+  // Branches keep their own wait, so a single query cannot use one cutoff -
+  // it reads anything that could be ready for the most impatient branch, and
+  // every cart is then checked against its own branch's rules below.
+  const readyBefore = new Date(now - 60 * 1000).toISOString();
   const notOlderThan = new Date(now - MAX_AGE_MS).toISOString();
 
   const { data: carts, error } = await supabase
@@ -223,8 +259,25 @@ export async function runCartAutoAssign(): Promise<AssignmentRun> {
     return { considered: 0, assigned: 0, noRepAvailable: 0 };
   }
 
-  const waiting = (carts ?? []).filter((cart: any) =>
-    hasReachablePhone(cart.phone) && !cartCanBecomeOrder(cart));
+  const rulesCache = new Map<string, AssignmentRules>();
+  const rulesFor = async (branchId: string | null) => {
+    const key = branchId ?? "";
+    if (!rulesCache.has(key)) {
+      rulesCache.set(key, branchId ? await assignmentRulesForBranch(branchId) : DEFAULT_ASSIGNMENT_RULES);
+    }
+    return rulesCache.get(key)!;
+  };
+
+  const waiting: any[] = [];
+  for (const cart of (carts ?? []) as any[]) {
+    if (!hasReachablePhone(cart.phone) || cartCanBecomeOrder(cart)) continue;
+    const rules = await rulesFor(cart.branch_id ?? null);
+    if (!isAssignmentWindowOpen(rules, new Date(now))) continue;
+    const quietSince = Date.parse(cart.last_activity ?? cart.created_at ?? "");
+    if (!Number.isFinite(quietSince)) continue;
+    if (now - quietSince < rules.assignmentDelayMinutes * 60 * 1000) continue;
+    waiting.push(cart);
+  }
 
   const run: AssignmentRun = { considered: waiting.length, assigned: 0, noRepAvailable: 0 };
   if (waiting.length === 0) return run;
