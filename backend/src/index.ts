@@ -18,6 +18,7 @@ import shortLinkRoutes from "./routes/short-links.js";
 import { startWhatsAppRuntime } from "./lib/whatsapp-runtime.js";
 import { runAsSingleton } from "./lib/runtime-lease.js";
 import { runCartAutoSubmit } from "./lib/cart-auto-submit.js";
+import { runCartAutoAssign } from "./lib/cart-assignment.js";
 import { runFollowUpCloseAllOrgs } from "./lib/follow-up-kpi.js";
 import { syncRecoveryNextActionReminders } from "./lib/recovery-next-action-reminders.js";
 import { runAgentStockDriftCheck } from "./lib/agent-stock-drift-check.js";
@@ -420,6 +421,23 @@ if (ENABLE_BACKGROUND_JOBS) {
 cron.schedule("*/2 * * * *", async () => {
   try { await runCartAutoSubmit(); }
   catch (e) { logger.error("cron: cart auto-submit crashed", { error: (e as Error).message }); }
+});
+}
+
+// ── Abandoned cart round-robin — every 2 minutes ──
+// The half-finished carts the converter above cannot touch: a phone number
+// typed, then they stopped before the address or the size. Nothing can be
+// delivered from that, so they used to sit with no owner until somebody
+// noticed. Ten minutes quiet and the least-loaded rep gets it.
+//
+// ⚠️ RUNS AFTER THE CONVERTER, NOT INSTEAD OF IT. A complete cart becomes a
+// real order in about two minutes and is assigned then - this must never race
+// it for the same record, which is why it only takes carts the converter has
+// already ruled out.
+if (ENABLE_BACKGROUND_JOBS) {
+cron.schedule("*/2 * * * *", async () => {
+  try { await runCartAutoAssign(); }
+  catch (e) { logger.error("cron: cart auto-assign crashed", { error: (e as Error).message }); }
 });
 }
 

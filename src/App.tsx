@@ -162,7 +162,7 @@ import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, ordersExtraApi, productCostApi, stockApi as _stockApi,
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, targetPeriodsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
-  branchesApi, setApiSpyUserId,
+  branchesApi, setApiSpyUserId, type CartAssignmentPanel,
   setApiPreviewReadOnly,
   PreviewReadOnlyError, type BranchWorkspace
 } from "./lib/api";
@@ -8561,6 +8561,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // The live feed subscribes once and never re-subscribes, so a value captured
   // in that effect would still hold whichever branch was open at sign-in. This
   // ref always reads the branch on screen right now.
+  // The automatic assignment panel on Abandoned Carts. Polled rather than
+  // pushed: the numbers move when the 2-minute job runs, so a slow refresh is
+  // honest and a live socket would be noise.
+  const [cartAssignmentPanel, setCartAssignmentPanel] = useState<CartAssignmentPanel | null>(null);
   const [newBranchCountry, setNewBranchCountry] = useState("");
   const [newBranchName, setNewBranchName] = useState("");
   const [newBranchCity, setNewBranchCity] = useState("");
@@ -8627,6 +8631,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       .catch((err: any) => showToast(`Could not add that branch: ${err?.message ?? "please retry"}.`))
       .finally(() => setCreatingBranch(false));
   };
+
 
   const changeBranch = (branchId: string) => {
     setActiveBranchId(branchId);
@@ -10975,6 +10980,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const currentRole: EditableUserRole = isSpying
     ? (spiedUser!.role)
     : isPreviewingRole ? previewRole! : realRole;
+
+  useEffect(() => {
+    if (activePage !== "Abandoned Carts") return;
+    if (!["Owner", "Admin", "Manager"].includes(currentRole)) return;
+    let cancelled = false;
+    const load = () => {
+      cartsApi.assignmentPanel()
+        .then((panel) => { if (!cancelled) setCartAssignmentPanel(panel); })
+        .catch(() => { /* the panel is a monitor, never a blocker */ });
+    };
+    load();
+    const timer = window.setInterval(load, 30_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [activePage, currentRole]);
+
   // ⚠️ Cash Flow is OWNER ONLY for now - it shows the true bank position, what
   // agents still owe, and every account balance. The backend refuses the
   // endpoints for anyone else, so this list only keeps the UI honest; the two
@@ -78292,6 +78312,93 @@ ${waybillLineItems(w).length > 1
               </div>
           ) : activePage === "Abandoned Carts" ? (
             <>
+              {/* Automatic assignment — the monitor, not another place to work.
+                  ⚠️ A MANAGER SHOULD NOT BE HANDING CARTS OUT BY HAND. That was
+                  the delay Bright wanted gone: the job gives each cart to the
+                  least-loaded rep ten minutes after the customer goes quiet, and
+                  this panel exists so somebody can see it happening and chase
+                  the rep who has not called - not to distribute work. */}
+              {cartAssignmentPanel && (
+                <section className="mb-6 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h2 className="m-0 flex items-center gap-2 text-sm font-black text-gray-900">
+                      <Bot className="h-4 w-4 text-[#1F8FE0]" />Automatic Assignment
+                    </h2>
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-700">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />Active
+                    </span>
+                  </div>
+
+                  <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-4">
+                    {[
+                      ["Reps in rotation", `${cartAssignmentPanel.eligibleReps} of ${cartAssignmentPanel.totalReps}`],
+                      ["Waiting for a rep", String(cartAssignmentPanel.unassignedCarts)],
+                      ["Handed over after", `${cartAssignmentPanel.assignmentDelayMinutes} minutes quiet`],
+                      ["Call within", `${cartAssignmentPanel.contactSlaMinutes} minutes`]
+                    ].map(([label, value]) => (
+                      <div key={label}>
+                        <dt className="m-0 text-[10px] font-bold uppercase tracking-wider text-gray-400">{label}</dt>
+                        <dd className="m-0 mt-0.5 text-sm font-black text-gray-900">{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+
+                  <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                    <div>
+                      <h3 className="m-0 mb-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                        Who gets the next one
+                      </h3>
+                      <ul className="m-0 list-none space-y-1 p-0">
+                        {cartAssignmentPanel.reps.map((rep, index) => (
+                          <li key={rep.id} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 ${rep.isNext ? "bg-blue-50" : ""}`}>
+                            <span className="w-4 shrink-0 text-[11px] font-bold text-gray-400">{index + 1}</span>
+                            <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-gray-900">{rep.name}</span>
+                            {rep.isNext && (
+                              <span className="shrink-0 rounded-full bg-[#1F8FE0] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">Next</span>
+                            )}
+                            {/* ⚠️ Owner only. Bright asked that nobody else watch who is online. */}
+                            {cartAssignmentPanel.showsPresence && (
+                              <span className={`shrink-0 text-[10px] font-bold ${rep.online ? "text-emerald-600" : "text-gray-400"}`}>
+                                {rep.online ? "Online" : "Away"}
+                              </span>
+                            )}
+                            <span className="shrink-0 text-[11px] font-bold text-gray-500">
+                              {rep.openCarts} cart{rep.openCarts === 1 ? "" : "s"}
+                            </span>
+                          </li>
+                        ))}
+                        {cartAssignmentPanel.reps.length === 0 && (
+                          <li className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-900">
+                            Nobody is in the rotation, so carts will sit unassigned. Check that your sales reps are switched on and not paused in Round-Robin.
+                          </li>
+                        )}
+                      </ul>
+                    </div>
+
+                    <div>
+                      <h3 className="m-0 mb-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                        Just handed out
+                      </h3>
+                      {cartAssignmentPanel.recentAssignments.length === 0 ? (
+                        <p className="m-0 text-[11px] text-gray-500">Nothing handed out yet.</p>
+                      ) : (
+                        <ul className="m-0 list-none space-y-1 p-0">
+                          {cartAssignmentPanel.recentAssignments.map((row) => (
+                            <li key={`${row.cartId}-${row.assignedAt}`} className="flex items-center gap-2 text-[12px]">
+                              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                              <span className="min-w-0 flex-1 truncate text-gray-700">
+                                {row.customer || row.cartId} <span className="text-gray-400">→</span> <strong className="font-bold text-gray-900">{row.repName || "—"}</strong>
+                              </span>
+                              <span className="shrink-0 text-[10px] text-gray-400">{relativeMinutesLabel(row.assignedAt)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                </section>
+              )}
+
               <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
                 <div className="flex flex-col gap-1">
                   <h1 className="text-2xl font-bold text-[#1F8FE0]">Abandoned Carts</h1>

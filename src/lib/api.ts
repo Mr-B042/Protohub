@@ -3604,7 +3604,23 @@ export const productCostApi = {
       `/api/products/${productId}/change-cost`, body)
 };
 
+export type CartAssignmentPanel = {
+  active: boolean;
+  mode: "workload";
+  assignmentDelayMinutes: number;
+  contactSlaMinutes: number;
+  eligibleReps: number;
+  totalReps: number;
+  unassignedCarts: number;
+  /** Only the Owner is told who is online; everyone else gets null. */
+  showsPresence: boolean;
+  reps: Array<{ id: string; name: string; openCarts: number; isNext: boolean; online: boolean | null }>;
+  recentAssignments: Array<{ cartId: string; customer: string; repName: string; assignedAt: string }>;
+};
+
 export const cartsApi = {
+  /** Who the rotation would pick next, and what each rep is carrying. */
+  assignmentPanel: () => get<CartAssignmentPanel>("/api/carts/assignment-panel"),
   /** Recovery funnel over ANY range - the follow-up grid only knows one week. */
   recoverySummary: (params: { from?: string; to?: string; productId?: string }) => {
     const qs = new URLSearchParams();
