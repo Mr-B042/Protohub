@@ -78460,18 +78460,8 @@ ${waybillLineItems(w).length > 1
                 )}
               </div>
           ) : activePage === "Abandoned Carts" ? (
-            <>
-              {cartAssignmentPanel && (
-                <CartAssignmentOverview
-                  panel={cartAssignmentPanel}
-                  onEditRules={openCartAssignmentRules}
-                  onManageOrder={() => handleNavClick("Round-Robin")}
-                  onToggle={toggleCartAssignment}
-                  saving={savingCartRules}
-                  relativeTime={relativeMinutesLabel}
-                />
-              )}
-
+            <div className={cartAssignmentPanel ? "grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_306px] xl:items-start" : "min-w-0"}>
+              <div className="min-w-0">
               <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
                 <div className="flex flex-col gap-1">
                   <h1 className="text-2xl font-bold text-[#1F8FE0]">Abandoned Carts</h1>
@@ -79526,7 +79516,20 @@ ${waybillLineItems(w).length > 1
               </section>
               </div>
               </>
-            </>
+              </div>
+              {cartAssignmentPanel && (
+                <aside className="min-w-0" aria-label="Automatic assignment overview">
+                  <CartAssignmentOverview
+                    panel={cartAssignmentPanel}
+                    onEditRules={openCartAssignmentRules}
+                    onManageOrder={() => handleNavClick("Round-Robin")}
+                    onToggle={toggleCartAssignment}
+                    saving={savingCartRules}
+                    relativeTime={relativeMinutesLabel}
+                  />
+                </aside>
+              )}
+            </div>
           ) : activePage === "Scheduled Deliveries" ? (
             <div className="space-y-6">
               <header className="space-y-1">
