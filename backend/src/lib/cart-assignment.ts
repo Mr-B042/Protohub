@@ -81,6 +81,7 @@ export async function assignmentRulesForBranch(branchId: string): Promise<Assign
 const MAX_AGE_MS = 48 * 60 * 60 * 1000;
 
 const OPEN_STATUSES = ["Open abandoned", "In progress"];
+const ACTIVE_WORKLOAD_STATUSES = [...OPEN_STATUSES, "Assigned"];
 
 /**
  * Carts are only handed out while somebody is there to ring them.
@@ -185,7 +186,7 @@ export async function eligibleReps(orgId: string, branchId?: string | null): Pro
   const lastAssigned = new Map<string, string>();
   for (const row of loadRows ?? []) {
     const repId = (row as any).assigned_rep_id as string;
-    if (OPEN_STATUSES.includes((row as any).status)) {
+    if (ACTIVE_WORKLOAD_STATUSES.includes((row as any).status)) {
       openCount.set(repId, (openCount.get(repId) ?? 0) + 1);
     }
     const at = (row as any).assigned_at as string | null;
@@ -306,9 +307,10 @@ export async function runCartAutoAssign(): Promise<AssignmentRun> {
     // update simply does nothing if somebody already owns it.
     const { data: claimed, error: claimError } = await supabase
       .from("abandoned_carts")
-      .update({ assigned_rep_id: rep.id, assigned_at: new Date().toISOString() })
+      .update({ assigned_rep_id: rep.id, assigned_at: new Date().toISOString(), status: "Assigned" })
       .eq("id", cart.id)
       .is("assigned_rep_id", null)
+      .in("status", OPEN_STATUSES)
       .select("id")
       .maybeSingle();
     if (claimError) {

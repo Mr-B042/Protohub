@@ -2380,6 +2380,14 @@ const CART_NOT_INTERESTED_REASONS = [
 const CART_UNRESPONSIVE_MIN_ATTEMPTS = 3;
 
 const cartStatuses: CartStatus[] = ["All statuses", "Open abandoned", "In progress", "Abandoned", "Assigned", "Contacted", "Converted", "No response", "Not interested"];
+// Older automatic assignments stored the rep but left the cart's pre-assignment
+// status unchanged. Classify those rows by ownership until their stored status
+// is corrected, while preserving contact and conversion outcomes.
+const cartListStatus = (cart: Pick<AbandonedCartRecord, "status" | "assignedRepId">): Exclude<CartStatus, "All statuses"> => {
+  if (cart.assignedRepId && (cart.status === "Open abandoned" || cart.status === "In progress")) return "Assigned";
+  if (!cart.assignedRepId && cart.status === "Assigned") return "Open abandoned";
+  return cart.status;
+};
 const cartConversionFilters: CartConversionFilter[] = ["All conversion paths", "Recovered by Team", "Recovered Delivered", "Recovered Pending", "Recovered Failed / Cancelled", "Customer Finished Later"];
 const scheduleRanges: ScheduleRange[] = ["Today", "Tomorrow", "Day After", "Custom"];
 const scheduleAuditModes: { value: ScheduleAuditMode; label: string }[] = [
@@ -5653,7 +5661,7 @@ const cartClockFor = (
   attempts: number,
   now: number
 ): CartClock | null => {
-  if (cart.status !== "Open abandoned" && cart.status !== "In progress") return null;
+  if (cart.status !== "Open abandoned" && cart.status !== "In progress" && cart.status !== "Assigned") return null;
 
   // The same test the server uses to decide whether a cart is even in the
   // rotation, kept in step on purpose - a countdown on a cart that will never
@@ -20282,7 +20290,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const linkedOrderStatus = linkedOrder?.status ?? "New";
     const embedLabel = cartEmbedLabelFor(cart, linkedOrder, abandonedCartJourneyMap[cart.id] ?? []);
     const matchesSearch = !search || `${cart.id} ${cart.customer} ${cart.phone} ${cart.productName} ${cart.packageName} ${cart.source} ${embedLabel}`.toLowerCase().includes(search);
-    const matchesStatus = cartStatus === "All statuses" || cart.status === cartStatus;
+    const matchesStatus = cartStatus === "All statuses" || cartListStatus(cart) === cartStatus;
     const matchesConversion =
       cartConversionFilter === "All conversion paths"
         ? true
@@ -78806,7 +78814,7 @@ ${waybillLineItems(w).length > 1
                   // so changing the date filter always shows the full picture. The
                   // search/status/conversion filters only affect the cart LIST below.
                   const scoped = pfCarts;
-                  const active = scoped.filter((cart) => ["Open abandoned", "Abandoned", "In progress"].includes(cart.status)).length;
+                  const active = scoped.filter((cart) => ["Open abandoned", "Abandoned", "In progress", "Assigned"].includes(cartListStatus(cart))).length;
                   const assigned = scoped.filter((cart) => cart.assignedRepId && cart.status !== "Converted").length;
                   const contacted = scoped.filter((cart) => ["Contacted", "Converted", "No response", "Not interested"].includes(cart.status)).length;
                   const converted = scoped.filter((cart) => cart.status === "Converted").length;
@@ -79205,7 +79213,7 @@ ${waybillLineItems(w).length > 1
                               <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Cart</span>
                               <span className="text-base font-bold text-[#1F8FE0] truncate">{cart.id}</span>
                             </div>
-                            <span className={`status-pill status-${slugify(cart.status)} shrink-0`}>{cart.status}</span>
+                            <span className={`status-pill status-${slugify(cartListStatus(cart))} shrink-0`}>{cartListStatus(cart)}</span>
                           </div>
                           <div className="min-w-0">
                             <div className="font-semibold text-sm text-gray-900 truncate">{cart.customer}</div>
@@ -79398,7 +79406,7 @@ ${waybillLineItems(w).length > 1
                             </td>
                             <td className="px-4 py-3">
                               <div className="flex flex-col gap-1">
-                                <span className={`status-pill status-${slugify(cart.status)}`}>{cart.status}</span>
+                                <span className={`status-pill status-${slugify(cartListStatus(cart))}`}>{cartListStatus(cart)}</span>
                                 {conversionMarker && <span className={`inline-flex w-fit items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${conversionMarker.pillClass}`}>{conversionMarker.label}</span>}
                                 {linkedOrder && orderWasAutoSubmitted(linkedOrder) && (() => {
                                   const isServer = orderAutoSubmitSource(linkedOrder) === "server";

@@ -2281,6 +2281,9 @@ router.patch("/:id",
     // handled, so nobody picks it up. Production had exactly one of these.
     const resultingRepId = repId !== undefined ? repId : existing.assigned_rep_id;
     const resultingStatus = (updates.status as string | undefined) ?? existing.status;
+    if (repId && ["Open abandoned", "In progress"].includes(resultingStatus)) {
+      updates.status = "Assigned";
+    }
     if (resultingStatus === "Assigned" && !resultingRepId) {
       if (repId !== undefined && !repId) {
         // Unassigning: send it back to the pool rather than refusing.
