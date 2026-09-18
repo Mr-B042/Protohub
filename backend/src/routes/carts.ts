@@ -15,6 +15,10 @@ import {
   type RangePreset, type RepDayInput
 } from "../lib/cart-log-penalty.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
+import {
+  ASSIGNMENT_DELAY_MS, CONTACT_SLA_MS, cartCanBecomeOrder,
+  eligibleReps, hasReachablePhone, nextRepInLine
+} from "../lib/cart-assignment.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -2906,6 +2910,92 @@ router.post("/log-penalties/review", requireRole("Owner"), async (req, res) => {
     res.json({ ok: true });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not save that decision." });
+  }
+});
+
+// ── The automatic assignment panel ──────────────────────────────────────────
+// Everything the Abandoned Carts sidebar shows: whether the rotation is
+// running, who is next, what each rep is carrying, and what was handed out
+// recently.
+//
+// ⚠️ ONLINE STATUS IS OWNER-ONLY. Bright was explicit: only the Owner sees who
+// is online. Everybody else gets the workload numbers without the presence
+// dots, so a rep cannot use this screen to watch their colleagues.
+router.get("/assignment-panel", requireRole("Owner", "Admin", "Manager"), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = req.user!.branchId ?? null;
+    const isOwner = req.user!.role === "Owner";
+
+    const reps = await eligibleReps(orgId, branchId);
+    const next = nextRepInLine(reps);
+
+    // Unassigned carts that this rotation would pick up - the half-finished
+    // ones with a phone. A complete cart is the converter's job, not this.
+    let openQuery = supabase
+      .from("abandoned_carts")
+      .select("id, customer, phone, address, city, state, product_id, package_id, assigned_rep_id, last_activity, assigned_at")
+      .in("status", ["Open abandoned", "In progress"])
+      .is("merged_into", null)
+      .gte("last_activity", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+      .limit(500);
+    if (branchId) openQuery = openQuery.eq("branch_id", branchId);
+    const { data: openCarts } = await openQuery;
+
+    const workable = (openCarts ?? []).filter((cart: any) =>
+      hasReachablePhone(cart.phone) && !cartCanBecomeOrder(cart));
+    const unassigned = workable.filter((cart: any) => !cart.assigned_rep_id).length;
+
+    // Presence, for the Owner only.
+    let onlineIds = new Set<string>();
+    if (isOwner) {
+      const cutoff = new Date(Date.now() - 150 * 1000).toISOString();
+      const { data: presence } = await supabase
+        .from("user_presence_sessions")
+        .select("user_id")
+        .gte("last_seen_at", cutoff);
+      onlineIds = new Set((presence ?? []).map((row: any) => row.user_id));
+    }
+
+    // Recently handed out, newest first.
+    let recentQuery = supabase
+      .from("abandoned_carts")
+      .select("id, customer, assigned_rep_id, assigned_at")
+      .not("assigned_at", "is", null)
+      .order("assigned_at", { ascending: false })
+      .limit(8);
+    if (branchId) recentQuery = recentQuery.eq("branch_id", branchId);
+    const { data: recent } = await recentQuery;
+    const repNames = new Map(reps.map((rep) => [rep.id, rep.name]));
+
+    res.json({
+      active: true,
+      mode: "workload",
+      assignmentDelayMinutes: Math.round(ASSIGNMENT_DELAY_MS / 60000),
+      contactSlaMinutes: Math.round(CONTACT_SLA_MS / 60000),
+      eligibleReps: reps.length,
+      totalReps: reps.length,
+      unassignedCarts: unassigned,
+      showsPresence: isOwner,
+      reps: reps
+        .slice()
+        .sort((a, b) => a.openCarts - b.openCarts || a.roundRobinPosition - b.roundRobinPosition || a.name.localeCompare(b.name))
+        .map((rep) => ({
+          id: rep.id,
+          name: rep.name,
+          openCarts: rep.openCarts,
+          isNext: rep.id === next?.id,
+          online: isOwner ? onlineIds.has(rep.id) : null
+        })),
+      recentAssignments: (recent ?? []).map((row: any) => ({
+        cartId: row.id,
+        customer: row.customer ?? "",
+        repName: repNames.get(row.assigned_rep_id) ?? "",
+        assignedAt: row.assigned_at
+      }))
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load the assignment panel." });
   }
 });
 
