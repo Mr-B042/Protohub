@@ -68,6 +68,25 @@ export function CartAssignmentOverview({ panel, onEditRules, onManageOrder, onTo
         )}
       </section>
 
+      <section className={cardClass} aria-label="How automatic assignment works">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className={headingClass}>How assignment works</h2>
+          <span className="rounded-full bg-[#edf3fb] px-2 py-1 text-[10px] font-semibold text-[#637393]">{panel.active ? "Live" : "Paused"}</span>
+        </div>
+        <ol className="m-0 mt-3 list-none space-y-2.5 p-0 text-[11px] text-[#637393]">
+          {[
+            "New abandoned carts enter the assignment queue.",
+            "Available reps receive carts in round-robin order.",
+            `The assigned rep has ${panel.contactSlaMinutes} minutes to make contact.`
+          ].map((step, index) => (
+            <li key={step} className="flex items-start gap-2.5">
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#edf3fb] text-[10px] font-bold text-[#253e70]">{index + 1}</span>
+              <span className="pt-0.5 leading-snug">{step}</span>
+            </li>
+          ))}
+        </ol>
+      </section>
+
       <section className={cardClass} aria-label="Round-robin order">
         <div className="flex items-center justify-between gap-2">
           <h2 className={headingClass}>Round-Robin Order</h2>
