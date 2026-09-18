@@ -2970,16 +2970,25 @@ router.get("/assignment-panel", requireRole("Owner", "Admin", "Manager"), async 
 
     res.json({
       active: true,
-      mode: "workload",
+      mode: "rotation",
       assignmentDelayMinutes: Math.round(ASSIGNMENT_DELAY_MS / 60000),
       contactSlaMinutes: Math.round(CONTACT_SLA_MS / 60000),
       eligibleReps: reps.length,
       totalReps: reps.length,
       unassignedCarts: unassigned,
       showsPresence: isOwner,
-      reps: reps
-        .slice()
-        .sort((a, b) => a.openCarts - b.openCarts || a.roundRobinPosition - b.roundRobinPosition || a.name.localeCompare(b.name))
+      // ⚠️ LISTED IN TURN ORDER, THE SAME ORDER THEY WILL BE PICKED IN.
+      // Sorting this list any other way would put a "Next" badge somewhere down
+      // the list and make the panel look broken.
+      reps: [...reps]
+        .sort((a, b) => {
+          if (a.lastAssignedAt === null && b.lastAssignedAt !== null) return -1;
+          if (b.lastAssignedAt === null && a.lastAssignedAt !== null) return 1;
+          if (a.lastAssignedAt && b.lastAssignedAt && a.lastAssignedAt !== b.lastAssignedAt) {
+            return a.lastAssignedAt < b.lastAssignedAt ? -1 : 1;
+          }
+          return a.roundRobinPosition - b.roundRobinPosition || a.name.localeCompare(b.name);
+        })
         .map((rep) => ({
           id: rep.id,
           name: rep.name,
