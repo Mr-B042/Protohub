@@ -166,10 +166,35 @@ export type FollowUpBoard = {
   atRiskAmount: number;
 };
 
+/**
+ * ⚠️ WHOSE JOB IS IT TO RING A CUSTOMER.
+ *
+ * This charge exists to make sure orders are chased, so it can only fall on
+ * people who chase them. It used to ask one question - is this account switched
+ * on - and never what the person actually does, so ANYBODY holding an open
+ * order was charged for not calling.
+ *
+ * Ihuoma Favour is why this is here. She runs inventory and logistics; she does
+ * not call customers. One sales order was assigned to her on 21 July and never
+ * moved, and from 31 July the board charged her N100 every working day for not
+ * following it up - N3,650 across 37 days for work that was never hers.
+ *
+ * ⚠️ AN EMPTY LIST HERE WOULD SILENTLY STOP EVERY CHARGE. If a role is renamed
+ * and no longer matches, nobody is ever charged again and the board simply
+ * reads clean - a failure that looks exactly like everybody doing their job.
+ * These strings must stay in step with UserRole in ../types/index.ts.
+ */
+export const FOLLOW_UP_ROLES = new Set(["Sales Rep", "Recovery Rep", "Sales Closer"]);
+
 async function activeRepIdsFor(orgId: string, repIds: string[]) {
   if (repIds.length === 0) return new Set<string>();
-  const { data } = await supabase.from("users").select("id, active").eq("org_id", orgId).in("id", repIds);
-  return new Set((data ?? []).filter((rep) => rep.active !== false).map((rep) => rep.id));
+  const { data } = await supabase
+    .from("users").select("id, active, role").eq("org_id", orgId).in("id", repIds);
+  return new Set(
+    (data ?? [])
+      .filter((rep) => rep.active !== false && FOLLOW_UP_ROLES.has(String((rep as any).role)))
+      .map((rep) => rep.id)
+  );
 }
 
 async function computeBoard(orgId: string, dateKey: string, repId?: string | null): Promise<FollowUpBoard> {
