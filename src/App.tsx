@@ -11283,7 +11283,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setActivePage(target);
     showToast("Exited view-as mode.");
   };
-  const [calendarStartMonth, setCalendarStartMonth] = useState(() => new Date(2026, 4, 1));
+  // Open the custom range picker on the current local month. This used to be
+  // hardcoded to May 2026, leaving the calendar several months behind.
+  const [calendarStartMonth, setCalendarStartMonth] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
   const [roundRobinTab, setRoundRobinTab] = useState<RoundRobinTab>("Active Sequence");
   const [roundRobinSearch, setRoundRobinSearch] = useState("");
   const [embedTab, setEmbedTab] = useState<EmbedTab>("Create Order Form");
