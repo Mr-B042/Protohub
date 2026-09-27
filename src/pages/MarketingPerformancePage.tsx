@@ -152,7 +152,9 @@ export default function MarketingPerformancePage({ canEnterSpend, onEnterSpend }
               <p className="m-0 mt-1 text-[13px] leading-5 text-amber-900">
                 Orders, revenue and delivery below are real. Anything that needs to know what the ads cost —
                 cost per order, return on ad spend, true profit — cannot be worked out, so it says so rather
-                than showing a zero that would read as free advertising.
+                than showing a zero that would read as free advertising. This reads both your own Ad Spend
+                entries and anything media buyers recorded, so an empty period means neither has anything for
+                these dates.
               </p>
               {canEnterSpend && (
                 <button
@@ -179,7 +181,14 @@ export default function MarketingPerformancePage({ canEnterSpend, onEnterSpend }
           <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {[
               { title: "Ad spend", value: asMoney(totals.adSpend), icon: Megaphone, tone: "blue" as const,
-                helper: totals.spendRecords === 0 ? "nothing entered" : `${totals.spendRecords} entr${totals.spendRecords === 1 ? "y" : "ies"}` },
+                // ⚠️ SAYS WHICH BOOK IT CAME FROM. The company's own ads and a
+                // media buyer's budget are different money, and reading only
+                // the buyer book is how this page first reported "not
+                // recorded" while N3.9m sat in expenses.
+                helper: totals.spendRecords === 0 ? "nothing entered"
+                  : totals.buyerSpend > 0 && totals.companySpend > 0
+                    ? `${money(totals.companySpend)} company · ${money(totals.buyerSpend)} buyers`
+                    : totals.buyerSpend > 0 ? "entered by media buyers" : "your own ad spend entries" },
               { title: "Orders placed", value: String(totals.ordersPlaced), icon: ShoppingCart, tone: "blue" as const,
                 helper: `${asPercent(totals.confirmationRate)} confirmed` },
               { title: "Delivered", value: String(totals.delivered), icon: Truck, tone: "green" as const,
