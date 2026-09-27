@@ -84,8 +84,6 @@ export async function runCartAutoSubmit(): Promise<void> {
         .in("status", ["Open abandoned", "In progress"])
         .not("customer", "eq", "Partial lead")
         .not("phone", "is", null)
-        .not("city", "is", null)
-        .not("state", "is", null)
         .not("product_id", "is", null)
         .not("package_id", "is", null)
         .limit(200)
@@ -186,8 +184,13 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
   // 4. Build order payload
   const capturePayload = (cart.capture_payload ?? {}) as Record<string, any>;
   const formContext = (capturePayload.formContext ?? {}) as Record<string, any>;
+  const customerPhone = cart.phone ?? capturePayload.phone ?? null;
+  const customerAddress = cart.address ?? capturePayload.address ?? null;
+  const customerCity = cart.city ?? capturePayload.city ?? null;
+  const customerState = cart.state ?? capturePayload.state ?? null;
+  if (!customerPhone || !customerAddress || !customerCity || !customerState) return;
 
-  const location = [cart.city, cart.state].filter(Boolean).join(", ") || null;
+  const location = [customerCity, customerState].filter(Boolean).join(", ") || null;
   const utmSource = capturePayload.utm_source ?? capturePayload.utmSource ?? cart.source ?? null;
   const source = utmSource === "tiktok" || utmSource === "TikTok" ? "TikTok"
     : utmSource === "facebook" || utmSource === "Facebook" ? "Facebook"
@@ -199,11 +202,11 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     org_id:           orgId,
     source_cart_id:   cartId,
     customer:         cart.customer,
-    phone:            cart.phone,
+    phone:            customerPhone,
     whatsapp:         cart.whatsapp ?? null,
-    address:          cart.address ?? null,
-    city:             cart.city ?? null,
-    state:            cart.state ?? null,
+    address:          customerAddress,
+    city:             customerCity,
+    state:            customerState,
     product_id:       product.id,
     package_id:       pkg.id,
     product_name:     product.name,
@@ -289,11 +292,11 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     id: order.id,
     productId: product.id,
     customer: cart.customer,
-    phone: cart.phone,
-    whatsapp: cart.whatsapp ?? cart.phone,
-    address: cart.address,
-    city: cart.city,
-    state: cart.state,
+    phone: customerPhone,
+    whatsapp: cart.whatsapp ?? customerPhone,
+    address: customerAddress,
+    city: customerCity,
+    state: customerState,
     productName: product.name,
     packageName: pkg.name,
     amount,
@@ -313,7 +316,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
       customer: cart.customer,
       productName: product.name,
       packageName: pkg.name,
-      phone: cart.phone,
+      phone: customerPhone,
       amount,
       currency: cart.currency ?? pkg.currency ?? "NGN",
       assignedRepId
@@ -368,10 +371,10 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
       clientIp: null,
       userAgent: null,
       customer: cart.customer,
-      phone: cart.phone,
+      phone: customerPhone,
       email: null,
-      city: cart.city ?? null,
-      state: cart.state ?? null,
+      city: customerCity,
+      state: customerState,
       country: "ng",
       fbp: capturePayload.fbp ?? null,
       fbc: capturePayload.fbc ?? null,
@@ -399,7 +402,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
         eventSourceUrl: capturePayload.landingUrl ?? null,
         clientIp: null,
         userAgent: null,
-        phone: cart.phone,
+        phone: customerPhone,
         email: null,
         ttclid,
         value: amount,
