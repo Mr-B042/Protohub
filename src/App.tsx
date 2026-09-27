@@ -20329,6 +20329,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       : embedLabel === cartEmbedFilter;
     return matchesSearch && matchesStatus && matchesConversion && matchesPeriod && matchesProduct && matchesViewer && matchesSource && matchesEmbed && matchesRep;
   });
+  const cartMatchesSelectedPeriod = (cart: AbandonedCartRecord) =>
+    isInPeriod(cart.createdAt, cartsPeriod, cartsDateRange)
+    || (Boolean(cart.lastActivity) && isInPeriod(cart.lastActivity, cartsPeriod, cartsDateRange));
   // Distinct source + embed-label options, built from the carts that actually exist.
   const cartSourceOptions = ["All sources", ...Array.from(new Set(abandonedCarts.map((c) => c.source ?? "Website"))).sort()];
   const cartEmbedOptions = (() => {
@@ -20432,7 +20435,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // set, making the date filter appear broken for Funnel/Blocks/Item Interest.
   // pfCarts is declared below; compute the same thing inline here.
   const abandonedJourneyCartIds = useMemo(() => {
-    const pCarts = abandonedCarts.filter((c) => isInPeriod(c.createdAt, cartsPeriod, cartsDateRange));
+    const pCarts = abandonedCarts.filter(cartMatchesSelectedPeriod);
     const scoped = cartProductIds.size === 0 ? pCarts : pCarts.filter((c) => matchesProductFilter(c.productId, c.productName, cartProductIds));
     return Array.from(new Set(scoped.map((c) => c.id).filter(Boolean)));
   }, [abandonedCarts, cartsPeriod, cartsDateRange, cartProductIds]);
@@ -20442,7 +20445,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const cartsPageClamped = Math.min(cartsPage, cartsTotalPages);
   const pagedAbandonedCarts = filteredAbandonedCarts.slice((cartsPageClamped - 1) * CARTS_PAGE_SIZE, cartsPageClamped * CARTS_PAGE_SIZE);
   const demoCarts = abandonedCarts.length;
-  const periodCarts = abandonedCarts.filter((cart) => isInPeriod(cart.createdAt, cartsPeriod, cartsDateRange));
+  const periodCarts = abandonedCarts.filter(cartMatchesSelectedPeriod);
   // Carts filtered by both period and active product selection - drives stat cards
   const pfCarts = cartProductIds.size === 0 ? periodCarts : periodCarts.filter(c => matchesProductFilter(c.productId, c.productName, cartProductIds));
   const cartProductIdFilterList = useMemo(() => Array.from(cartProductIds).sort(), [cartProductIds]);
