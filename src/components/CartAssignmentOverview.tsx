@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, ChevronDown, ChevronUp, Clock3, RefreshCw, Settings, Timer, Users, ClipboardList, ArrowRight } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, ChevronRight, Clock3, RefreshCw, Settings, Timer, Users, ClipboardList, ArrowRight } from "lucide-react";
 import type { CartAssignmentPanel } from "../lib/api";
 
 type Props = {
@@ -23,13 +23,22 @@ export function CartAssignmentOverview({ panel, onEditRules, onManageOrder, onTo
   const cardClass = "rounded-xl border border-[#e7edf7] bg-white px-4 py-4 shadow-[0_6px_24px_rgba(37,65,112,0.04)]";
   const headingClass = "m-0 text-sm font-bold leading-tight tracking-tight";
 
+  if (collapsed) {
+    return (
+      <button type="button" onClick={() => setCollapsed(false)} aria-label="Expand automatic assignment sidebar" title="Expand assignment sidebar"
+        className="sticky top-4 ml-auto flex h-10 w-10 items-center justify-center rounded-xl border border-[#cbd8ef] bg-white text-[#253e70] shadow-[0_6px_24px_rgba(37,65,112,0.08)] transition-colors hover:bg-[#f5f8ff]">
+        <ChevronRight className="h-5 w-5" aria-hidden="true" />
+      </button>
+    );
+  }
+
   return (
     <div className="space-y-3 text-[#172543]">
       <section className={cardClass} aria-label="Automatic assignment status">
         <div className="flex items-center justify-between gap-2">
           <button type="button" onClick={() => setCollapsed((value) => !value)} aria-expanded={!collapsed} className="flex min-w-0 flex-1 items-center gap-2 text-left">
             <h2 className={headingClass}>Automatic Assignment Status</h2>
-            {collapsed ? <ChevronDown className="h-4 w-4 shrink-0 text-[#637393]" aria-hidden="true" /> : <ChevronUp className="h-4 w-4 shrink-0 text-[#637393]" aria-hidden="true" />}
+            <ChevronUp className="h-4 w-4 shrink-0 text-[#637393]" aria-hidden="true" />
           </button>
           <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-[9px] font-bold uppercase ${panel.active ? "bg-emerald-100 text-emerald-900" : "bg-slate-100 text-slate-600"}`}>
             <span className={`h-1.5 w-1.5 rounded-full ${panel.active ? "bg-emerald-600" : "bg-slate-400"}`} />{panel.active ? "Active" : "Paused"}
