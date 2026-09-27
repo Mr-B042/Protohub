@@ -2841,7 +2841,7 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
     "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
-    "Ad Tracking", "Marketing", "Marketing Performance", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
+    "Ad Tracking", "Marketing", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
   ],
   "Manager": [
     "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
@@ -89596,10 +89596,27 @@ ${waybillLineItems(w).length > 1
               </div>
             </div>
           ) : activePage === "Marketing Performance" ? (
-            <MarketingPerformancePage
-              canEnterSpend={["Owner", "Admin", "Marketer"].includes(currentRole)}
-              onEnterSpend={() => handleNavClick("Marketing")}
-            />
+            // ⚠️ OWNER ONLY WHILE THIS IS STILL BEING BUILT.
+            // Bright's call: "Marketing Performance is a future module."
+            // The figures are real, but the module is one slice of a bigger
+            // design - Campaigns, Media Buyers, Attribution and Creative
+            // Library are not built. Showing a half-finished marketing module
+            // to staff invites decisions off a page that is still moving.
+            // Gated on currentRole, so "view as" previews the staff message
+            // rather than the page.
+            currentRole === "Owner" ? (
+              <MarketingPerformancePage
+                canEnterSpend={["Owner", "Admin", "Marketer"].includes(currentRole)}
+                onEnterSpend={() => handleNavClick("Marketing")}
+              />
+            ) : (
+              <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center shadow-sm">
+                <h2 className="m-0 text-base font-bold text-gray-900">Marketing Performance</h2>
+                <p className="mx-auto mt-2 max-w-lg text-sm text-gray-500">
+                  Still being built. Use Ad Tracking and Marketing in the meantime — they are unchanged.
+                </p>
+              </section>
+            )
           ) : activePage === "Marketing" ? (
             <div className="space-y-6">
               <header className="relative overflow-hidden rounded-3xl border border-sky-200/20 bg-gradient-to-br from-slate-950 via-[#0b2740] to-[#123f66] p-5 text-slate-50 shadow-xl shadow-sky-900/10 sm:p-7">
