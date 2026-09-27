@@ -56,7 +56,6 @@ const PublicFormContextSchema = z.record(
 
 const PublicOrderSchema = z.object({
   id:           z.string().min(1).max(50).regex(/^[A-Za-z0-9\-_]+$/).optional(),
-  submissionKey: z.string().uuid().optional(),
   cartId:       z.string().min(1).max(80).regex(/^[A-Za-z0-9\-_]+$/).optional(),
   customer:     z.string().min(1).max(120),
   phone:        z.string().min(1).max(40),
@@ -1239,6 +1238,12 @@ router.post("/", submitRateLimit, async (req, res) => {
   const source = resolveOrderSource(d.utmSource, d.formContext);
   const location = [d.city, d.state].filter(Boolean).join(", ") || null;
 
+  // Resolve merged cart aliases before choosing the database submission lock.
+  if (d.cartId) {
+    const canonical = await resolveCanonicalAbandonedCartId(product.org_id, d.cartId);
+    if (canonical.exists) d.cartId = canonical.id;
+  }
+
   // 4. Insert order
   const baseInsert = {
     ...(d.id ? { id: d.id } : {}),
@@ -1295,36 +1300,32 @@ router.post("/", submitRateLimit, async (req, res) => {
   delete legacyInsert.assigned_by_name_snapshot;
   delete legacyInsert.review_hold;
   delete legacyInsert.review_reason;
-
   let order: any = null;
   let orderErr: any = null;
 
-  // One committed order per cart/submission, across retries and worker races.
-  // Fail closed if the RPC is unavailable; a plain insert would reopen the race.
-  const result = await supabase.rpc("insert_order_once", {
-    p_org_id: product.org_id,
-    p_phone_last10: phoneLast10,
+  // A retry for the same cart must reuse the order already written. This also
+  // covers the server auto-submit worker racing a browser submission.
+  if (d.cartId) {
+    const { data: existing } = await supabase.from("orders").select("*")
+      .eq("org_id", product.org_id).eq("source_cart_id", d.cartId)
+      .order("created_at", { ascending: true }).limit(1).maybeSingle();
+    if (existing) {
+      res.status(200).json({ id: existing.id, amount: existing.amount, currency: existing.currency,
+        crossSellLines: existing.cross_sell_lines ?? [], reviewHold: Boolean(existing.review_hold),
+        upsellOffer: null, upsellToken: null, replayed: true });
+      return;
+    }
+  }
+
+  // Keep the existing atomic phone/product guard for genuine repeat orders.
+  const duplicateGuardResult = await supabase.rpc("insert_order_with_duplicate_guard", {
+    p_org_id: product.org_id, p_phone_last10: phoneLast10,
     p_product_id: stampProductId,
     p_window_start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-    p_order: baseInsert,
-    p_submission_key: d.submissionKey ?? randomUUID()
+    p_order: baseInsert
   });
-  order = result.data?.order;
-  orderErr = result.error;
-  if (!orderErr && result.data?.replayed) {
-    // No second rep rotation, notification, audit entry, or server conversion.
-    const replayOffer = order.review_hold ? null : upsellOffer;
-    const replayToken = replayOffer ? signPublicUpsellToken({
-      orderId: order.id, orgId: product.org_id, packageId: pkg.id,
-      companionId: replayOffer.companionId, productId: replayOffer.productId,
-      companionPackageId: replayOffer.packageId, quantity: replayOffer.quantity,
-      amount: replayOffer.amount, issuedAt: Date.now()
-    }) : null;
-    res.status(200).json({ id: order.id, amount: order.amount, currency: order.currency,
-      crossSellLines: order.cross_sell_lines ?? [], reviewHold: Boolean(order.review_hold),
-      upsellOffer: replayOffer, upsellToken: replayToken, replayed: true });
-    return;
-  }
+  order = duplicateGuardResult.data;
+  orderErr = duplicateGuardResult.error;
 
   if (orderErr) {
     if (orderErr.code === "23505") {

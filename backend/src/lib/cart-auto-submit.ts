@@ -198,16 +198,8 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     return;
   }
 
-  const { data: insertion, error: orderErr } = await supabase.rpc("insert_order_once", {
-    p_org_id: orgId,
-    p_phone_last10: String(cart.phone ?? "").replace(/\D/g, "").slice(-10),
-    p_product_id: product.id,
-    p_window_start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-    p_order: orderPayload,
-    p_submission_key: randomUUID()
-  });
-  const order = insertion?.order;
-  if (!orderErr && insertion?.replayed) return;
+  const { data: order, error: orderErr } = await supabase
+    .from("orders").insert(orderPayload).select().single();
 
   if (orderErr) {
     logger.error("cart-auto-submit: order insert failed", { cartId, error: orderErr.message });
