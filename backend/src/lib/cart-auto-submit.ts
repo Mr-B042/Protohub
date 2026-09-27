@@ -189,6 +189,14 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
   const customerCity = cart.city ?? capturePayload.city ?? null;
   const customerState = cart.state ?? capturePayload.state ?? null;
   if (!customerPhone || !customerAddress || !customerCity || !customerState) return;
+  // Preserve package switcher selections and add-ons captured by the form.
+  // The normal browser submit sends these as crossSellLines; recovery must
+  // carry them forward instead of creating a base-package-only order.
+  const selectedCrossSellLines = Array.isArray(capturePayload.selectedCrossSellLines)
+    ? capturePayload.selectedCrossSellLines : [];
+  const autoCompanionLines = Array.isArray(capturePayload.autoCompanionLines)
+    ? capturePayload.autoCompanionLines : [];
+  const crossSellLines = [...selectedCrossSellLines, ...autoCompanionLines];
 
   const location = [customerCity, customerState].filter(Boolean).join(", ") || null;
   const utmSource = capturePayload.utm_source ?? capturePayload.utmSource ?? cart.source ?? null;
@@ -214,7 +222,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     quantity:         pkg.quantity ?? 1,
     amount,
     currency:         cart.currency ?? pkg.currency ?? "NGN",
-    cross_sell_lines: [],
+    cross_sell_lines: crossSellLines,
     source,
     location,
     assigned_rep_id:  assignedRepId,
@@ -303,7 +311,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     currency: cart.currency ?? "NGN",
     quantity: pkg.quantity ?? 1,
     assignedRepId,
-    crossSellLines: [],
+    crossSellLines,
     embedLabel: capturePayload.embedLabel ?? null,
     createdAt: new Date().toISOString()
   };
