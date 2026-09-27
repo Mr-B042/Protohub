@@ -78488,7 +78488,7 @@ ${waybillLineItems(w).length > 1
                 )}
               </div>
           ) : activePage === "Abandoned Carts" ? (
-            <div className={cartAssignmentPanel ? `grid min-w-0 grid-cols-1 gap-4 xl:items-start ${cartAssignmentSidebarCollapsed ? "xl:grid-cols-[minmax(0,1fr)_40px]" : "xl:grid-cols-[minmax(0,1fr)_306px]"}` : "min-w-0"}>
+            <div className={cartAssignmentPanel ? `grid min-w-0 grid-cols-1 gap-4 xl:items-start ${cartAssignmentSidebarCollapsed ? "xl:grid-cols-[minmax(0,1fr)_0px] xl:gap-0" : "xl:grid-cols-[minmax(0,1fr)_306px]"}` : "min-w-0"}>
               <div className="min-w-0">
               <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
                 <div className="flex flex-col gap-1">

@@ -27,7 +27,7 @@ export function CartAssignmentOverview({ panel, onEditRules, onManageOrder, onTo
   if (collapsed) {
     return (
       <button type="button" onClick={() => { setCollapsed(false); onCollapsedChange?.(false); }} aria-label="Expand automatic assignment sidebar" title="Expand assignment sidebar"
-        className="sticky top-4 ml-auto flex h-10 w-10 items-center justify-center rounded-xl border border-[#cbd8ef] bg-white text-[#253e70] shadow-[0_6px_24px_rgba(37,65,112,0.08)] transition-colors hover:bg-[#f5f8ff]">
+        className="absolute left-2 top-0 z-20 flex h-10 w-10 items-center justify-center rounded-xl border border-[#cbd8ef] bg-white text-[#253e70] shadow-[0_6px_24px_rgba(37,65,112,0.08)] transition-colors hover:bg-[#f5f8ff]">
         <ChevronRight className="h-5 w-5" aria-hidden="true" />
       </button>
     );
