@@ -3295,7 +3295,53 @@ export const marketingLinkVariantsApi = {
 };
 
 // ── Marketing Spend Ledger ───────────────────────────────
+export type MarketingPerformance = {
+  from: string;
+  to: string;
+  totals: {
+    /** ⚠️ null means nobody recorded any spend - never treat it as zero. */
+    adSpend: number | null;
+    spendBasis: "actual" | "budget" | "mixed" | "none";
+    spendRecords: number;
+    daysWithoutSpend: number;
+    periodDays: number;
+    ordersPlaced: number;
+    confirmed: number;
+    delivered: number;
+    lost: number;
+    deliveredRevenue: number;
+    productCost: number;
+    deliveryCost: number;
+    trueNetProfit: number | null;
+    confirmationRate: number | null;
+    deliveryRate: number | null;
+    costPerOrder: number | null;
+    costPerDeliveredOrder: number | null;
+    deliveredAov: number | null;
+    placedAov: number | null;
+    roas: number | null;
+    breakEvenCostPerDelivered: number | null;
+  };
+  buyers: Array<{
+    key: string;
+    label: string;
+    ordersPlaced: number;
+    confirmed: number;
+    delivered: number;
+    deliveredRevenue: number;
+    adSpend: number | null;
+    trueNetProfit: number | null;
+    margin: number | null;
+    roas: number | null;
+    costPerDeliveredOrder: number | null;
+    deliveryRate: number | null;
+  }>;
+};
+
 export const marketingSpendApi = {
+  /** Ad spend through to profit for one period. */
+  performance: (from: string, to: string) =>
+    get<MarketingPerformance>(`/api/marketing-spend/performance?from=${from}&to=${to}`),
   list: (params?: { from?: string; to?: string; productId?: string; marketerUserId?: string }) => {
     const qs = new URLSearchParams();
     if (params?.from) qs.set("from", params.from);
@@ -3745,7 +3791,7 @@ export const publicOrdersApi = {
       method: "POST",
       keepalive: true,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
+      body: JSON.stringify({ submissionKey: crypto.randomUUID(), ...(body as Record<string, unknown>) })
     });
     if (!res.ok) {
       const payload = await res.json().catch(() => ({ error: res.statusText }));

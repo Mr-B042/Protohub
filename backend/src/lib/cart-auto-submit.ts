@@ -141,9 +141,8 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
 
   // 3. Assign — a product can restrict its orders to a weighted set of dedicated
   //    handlers (see migration 148); otherwise the global round-robin.
-  const assignment = await assignOrderRep(orgId, product.id);
-  const assignedRepId: string | null = assignment.assignedRepId;
-  const assignedByLabel: string | null = assignment.assignedByLabel;
+  let assignedRepId: string | null = null;
+  let assignedByLabel: string | null = null;
 
   // 4. Build order payload
   const capturePayload = (cart.capture_payload ?? {}) as Record<string, any>;
@@ -199,15 +198,33 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     return;
   }
 
-  const { data: order, error: orderErr } = await supabase
-    .from("orders")
-    .insert(orderPayload)
-    .select()
-    .single();
+  const { data: insertion, error: orderErr } = await supabase.rpc("insert_order_once", {
+    p_org_id: orgId,
+    p_phone_last10: String(cart.phone ?? "").replace(/\D/g, "").slice(-10),
+    p_product_id: product.id,
+    p_window_start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+    p_order: orderPayload,
+    p_submission_key: randomUUID()
+  });
+  const order = insertion?.order;
+  if (!orderErr && insertion?.replayed) return;
 
   if (orderErr) {
     logger.error("cart-auto-submit: order insert failed", { cartId, error: orderErr.message });
     return;
+  }
+
+  if (!order.review_hold) {
+    const assignment = await assignOrderRep(orgId, product.id);
+    assignedRepId = assignment.assignedRepId;
+    assignedByLabel = assignment.assignedByLabel;
+    const { error } = await supabase.from("orders").update({
+      assigned_rep_id: assignedRepId, assigned_by_name_snapshot: assignedByLabel
+    }).eq("id", order.id).eq("org_id", orgId);
+    if (error) {
+      logger.error("cart-auto-submit: assignment save failed", { orderId: order.id, error: error.message });
+      assignedRepId = null;
+    }
   }
 
   logger.info("cart-auto-submit: order created", { cartId, orderId: order.id, customer: cart.customer });
@@ -225,6 +242,8 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     changed_by: null,
     note: `Order auto-submitted by server after customer went idle with a complete form. Cart: ${cartId}`
   }).then(() => {});
+
+  if (order.review_hold) return;
 
   // 7. WhatsApp notifications (fire-and-forget)
   const orderForWa = {

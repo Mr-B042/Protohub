@@ -227,6 +227,7 @@ import {
 } from "./pages/SalesCloserWorkspacePage";
 import AgentAccessPage from "./pages/AgentAccessPage";
 import CashFlowPage, { type CashFlowPeriod, type CashFlowView, type OpeningBalanceRow } from "./pages/CashFlowPage";
+import MarketingPerformancePage from "./pages/MarketingPerformancePage";
 import WeeklyOpeningCashWizard, { type WeeklyOpeningView } from "./pages/WeeklyOpeningCashWizard";
 import DraftTextarea from "./components/DraftTextarea";
 import ChargeRiskBanner from "./components/ChargeRiskBanner";
@@ -282,7 +283,7 @@ type CurrencyCode = "NGN" | "GHS" | "KES" | "ZMW" | "XOF" | "XAF" | "TZS" | "MWK
 // currency no product can be priced in.
 type ProductCurrencyCode = CurrencyCode;
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "addBranch" | "cartAssignmentRules" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addExtraItems" | "addFreeGift" | "salesBonusFullReport" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | "pdaPortalCredentials" | null;
-type ActivePage = "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers";
+type ActivePage = "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "Marketing Performance" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type PendingSalesExpansionAction =
@@ -2834,13 +2835,13 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
     "Dashboard", "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
-    "Ad Tracking", "Marketing", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
+    "Ad Tracking", "Marketing", "Marketing Performance", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
   ],
   "Admin": [
     "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
-    "Ad Tracking", "Marketing", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
+    "Ad Tracking", "Marketing", "Marketing Performance", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
   ],
   "Manager": [
     "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
@@ -2950,6 +2951,7 @@ const dashboardHashByPage: Record<ActivePage, string> = {
   "Finance & Accounting": "#/dashboard/admin/reports",
   "Ad Tracking": "#/dashboard/admin/utm-tracking",
   Marketing: "#/dashboard/admin/marketing",
+  "Marketing Performance": "#/dashboard/admin/marketing-performance",
   "User Management": "#/dashboard/admin/users",
   "Round-Robin": "#/dashboard/admin/round-robin",
   "Embed Form": "#/dashboard/admin/embed",
@@ -27443,6 +27445,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       "utm-tracking": "Ad Tracking",
       "ad-tracking": "Ad Tracking",
       marketing: "Marketing",
+      "marketing-performance": "Marketing Performance",
       users: "User Management",
       "user-management": "User Management",
       "round-robin": "Round-Robin",
@@ -35886,6 +35889,7 @@ ${waybillLineItems(w).length > 1
       "Finance & Accounting": "#/dashboard/admin/reports",
       "Ad Tracking": "#/dashboard/admin/utm-tracking",
       Marketing: "#/dashboard/admin/marketing",
+  "Marketing Performance": "#/dashboard/admin/marketing-performance",
       "User Management": "#/dashboard/admin/users",
       "Round-Robin": "#/dashboard/admin/round-robin",
       "Embed Form": "#/dashboard/admin/embed",
@@ -89591,6 +89595,11 @@ ${waybillLineItems(w).length > 1
               })()}
               </div>
             </div>
+          ) : activePage === "Marketing Performance" ? (
+            <MarketingPerformancePage
+              canEnterSpend={["Owner", "Admin", "Marketer"].includes(currentRole)}
+              onEnterSpend={() => handleNavClick("Marketing")}
+            />
           ) : activePage === "Marketing" ? (
             <div className="space-y-6">
               <header className="relative overflow-hidden rounded-3xl border border-sky-200/20 bg-gradient-to-br from-slate-950 via-[#0b2740] to-[#123f66] p-5 text-slate-50 shadow-xl shadow-sky-900/10 sm:p-7">
