@@ -22,6 +22,7 @@ import { notifyOutageRecoveredOrder } from "./order-notifications.js";
 
 const MIN_IDLE_MS = 2 * 60 * 1000;   // must be idle at least 2 min
 const MAX_IDLE_MS = 15 * 60 * 1000;  // give up after 15 min
+const SUBMIT_ATTEMPT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
 export async function runCartAutoSubmit(): Promise<void> {
   const now = Date.now();
@@ -63,10 +64,46 @@ export async function runCartAutoSubmit(): Promise<void> {
     .lte("outage_captured_at", new Date(now - MIN_IDLE_MS).toISOString())
     .limit(50);
 
+  // A submit attempt is a stronger signal than an abandoned cart. The browser
+  // records this event immediately before calling the order API, so recover
+  // complete carts even when the API failed or the customer closed the tab.
+  // Validation-blocked events have different names and are intentionally not
+  // included here.
+  const { data: submitEvents } = await supabase
+    .from("cart_journey_events")
+    .select("cart_id")
+    .eq("event_type", "submit_attempted")
+    .gte("created_at", new Date(now - SUBMIT_ATTEMPT_LOOKBACK_MS).toISOString())
+    .limit(200);
+  const submitAttemptedIds = [...new Set((submitEvents ?? []).map((e: any) => e.cart_id).filter(Boolean))];
+  const { data: attemptedCarts } = submitAttemptedIds.length
+    ? await supabase
+        .from("abandoned_carts")
+        .select("*")
+        .in("id", submitAttemptedIds)
+        .in("status", ["Open abandoned", "In progress"])
+        .not("customer", "eq", "Partial lead")
+        .not("phone", "is", null)
+        .not("city", "is", null)
+        .not("state", "is", null)
+        .not("product_id", "is", null)
+        .not("package_id", "is", null)
+        .limit(200)
+    : { data: [] as any[] };
+
   const mergedCarts: any[] = [...((carts as any[]) ?? [])];
   const seenCartIds = new Set(mergedCarts.map((c: any) => c.id));
   for (const oc of (outageCarts as any[]) ?? []) {
     if (!seenCartIds.has(oc.id)) { mergedCarts.push(oc); seenCartIds.add(oc.id); }
+  }
+  for (const ac of (attemptedCarts as any[]) ?? []) {
+    if (!seenCartIds.has(ac.id)) {
+      mergedCarts.push({ ...ac, submit_attempted: true });
+      seenCartIds.add(ac.id);
+    } else {
+      const existing = mergedCarts.find((c) => c.id === ac.id);
+      if (existing) existing.submit_attempted = true;
+    }
   }
   if (!mergedCarts.length) return;
 
@@ -85,9 +122,11 @@ export async function runCartAutoSubmit(): Promise<void> {
     const mode = orgMode[(cart as any).org_id] ?? "full";
     // Outage captures are confirmed submissions — reconcile them even when the org has
     // speculative auto-submit turned off; that setting only governs INCOMPLETE carts.
-    if (!isOutage && mode === "off") continue;
+    // A true submit attempt is always recoverable, even if speculative
+    // idle-cart auto-submit is disabled for the organisation.
+    if (!isOutage && !cart.submit_attempted && mode === "off") continue;
     try {
-      await processCart(cart, isOutage ? "full" : mode);
+      await processCart(cart, (isOutage || cart.submit_attempted) ? "full" : mode);
     } catch (err) {
       logger.error("cart-auto-submit: cart failed", { cartId: cart.id, error: (err as Error).message });
     }
@@ -182,7 +221,13 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     utm_medium:       capturePayload.utm_medium ?? capturePayload.utmMedium ?? null,
     embed_label:      capturePayload.embedLabel ?? capturePayload.embed_label ?? null,
     referrer:         capturePayload.landingUrl ?? capturePayload.referrer ?? null,
-    form_context:     { ...formContext, autoSubmitted: "true", autoSubmitSource: "server", outageRecovered: Boolean(cart.outage_captured) },
+    form_context:     {
+      ...formContext,
+      autoSubmitted: "true",
+      autoSubmitSource: "server",
+      recoveryReason: cart.submit_attempted ? "customer_tried_to_submit" : undefined,
+      outageRecovered: Boolean(cart.outage_captured)
+    },
     // Confirmed submission that came in while the API was down and was reconciled
     // from a Supabase outage capture — flag it so the team can verify these.
     outage_recovered: Boolean(cart.outage_captured),
@@ -232,7 +277,9 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     order_id: order.id,
     org_id:   orgId,
     changed_by: null,
-    note: `Order auto-submitted by server after customer went idle with a complete form. Cart: ${cartId}`
+    note: cart.submit_attempted
+      ? `Order recovered by server after customer tried to submit. Cart: ${cartId}`
+      : `Order auto-submitted by server after customer went idle with a complete form. Cart: ${cartId}`
   }).then(() => {});
 
   if (order.review_hold) return;
