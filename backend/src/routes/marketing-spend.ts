@@ -4,6 +4,7 @@ import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sanitizeMarketingAttributionTags } from "../lib/marketing-attribution.js";
+import { loadMarketingPerformance } from "../lib/marketing-performance.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -351,6 +352,30 @@ router.delete("/:id", requireRole(...CREATE_ROLES), async (req, res) => {
     .eq("id", marketingExpenseId(String(req.params.id)))
     .eq("org_id", req.user!.orgId);
   res.status(204).send();
+});
+
+// ── Performance Center ──────────────────────────────────────────────────────
+// Ad spend through to real profit, for one period.
+//
+// ⚠️ THE ANSWER MAY BE "WE DO NOT KNOW". Anything that needs ad spend comes
+// back null when no spend was recorded, so the screen can say so rather than
+// drawing a zero. See ../lib/marketing-performance.js for why that matters
+// more here than anywhere else in the app.
+router.get("/performance", requireRole(...READ_ROLES), async (req, res) => {
+  const from = String(req.query.from ?? "").slice(0, 10);
+  const to = String(req.query.to ?? "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    res.status(400).json({ error: "Give a start and end date, both as YYYY-MM-DD." });
+    return;
+  }
+  if (to < from) { res.status(400).json({ error: "The end date is before the start date." }); return; }
+
+  try {
+    const result = await loadMarketingPerformance(req.user!.orgId, req.user!.branchId ?? null, from, to);
+    res.json({ from, to, ...result });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not work out marketing performance." });
+  }
 });
 
 export default router;

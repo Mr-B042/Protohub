@@ -56,6 +56,7 @@ const PublicFormContextSchema = z.record(
 
 const PublicOrderSchema = z.object({
   id:           z.string().min(1).max(50).regex(/^[A-Za-z0-9\-_]+$/).optional(),
+  submissionKey: z.string().uuid().optional(),
   cartId:       z.string().min(1).max(80).regex(/^[A-Za-z0-9\-_]+$/).optional(),
   customer:     z.string().min(1).max(120),
   phone:        z.string().min(1).max(40),
@@ -1235,16 +1236,6 @@ router.post("/", submitRateLimit, async (req, res) => {
   let assignedRepId: string | null = null;
   let assignedByLabel: string | null = null;
 
-  // Held orders are never auto-assigned — they wait, parked, for a human.
-  if (publicOrderAssignmentMode === "auto_assign" && !reviewHold) {
-    // A product can restrict its orders to a weighted set of dedicated handlers
-    // (see migration 148); otherwise it's the global round-robin. Falls back to
-    // the global rotation if the pinned set has nobody assignable.
-    const assignment = await assignOrderRep(product.org_id, product.id);
-    assignedRepId = assignment.assignedRepId;
-    assignedByLabel = assignment.assignedByLabel;
-  }
-
   const source = resolveOrderSource(d.utmSource, d.formContext);
   const location = [d.city, d.state].filter(Boolean).join(", ") || null;
 
@@ -1308,65 +1299,31 @@ router.post("/", submitRateLimit, async (req, res) => {
   let order: any = null;
   let orderErr: any = null;
 
-  // Primary path: atomic check-and-insert (migration 158). The duplicate
-  // check above (~line 881) only ever informed the pre-insert rep-assignment
-  // decision (line ~1218, held orders skip auto-assign) using a plain,
-  // non-atomic SELECT — this RPC re-runs the same check AND the insert
-  // inside one Postgres transaction, holding an advisory lock keyed on
-  // org+phone+product for its duration, so a second near-simultaneous
-  // request for the same key blocks until the first has committed instead
-  // of both seeing "no duplicate yet". This is the authoritative decision;
-  // `order.review_hold` below reflects it, not the pre-insert heuristic.
-  const duplicateGuardResult = await supabase.rpc("insert_order_with_duplicate_guard", {
+  // One committed order per cart/submission, across retries and worker races.
+  // Fail closed if the RPC is unavailable; a plain insert would reopen the race.
+  const result = await supabase.rpc("insert_order_once", {
     p_org_id: product.org_id,
-    p_phone_last10: phoneLast10.length >= 10 ? phoneLast10 : null,
+    p_phone_last10: phoneLast10,
     p_product_id: stampProductId,
     p_window_start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-    p_order: baseInsert
+    p_order: baseInsert,
+    p_submission_key: d.submissionKey ?? randomUUID()
   });
-  const guardUnavailable = Boolean(duplicateGuardResult.error) && (
-    duplicateGuardResult.error!.code === "PGRST202"
-    || /insert_order_with_duplicate_guard/i.test(duplicateGuardResult.error!.message ?? "")
-  );
-  if (!duplicateGuardResult.error) {
-    order = duplicateGuardResult.data;
-  } else if (!guardUnavailable) {
-    orderErr = duplicateGuardResult.error;
-  }
-
-  if (!order && (guardUnavailable || isMissingPublicOrderOptionalColumnsError(orderErr))) {
-    // Fallback for an environment that hasn't run migration 158 yet (e.g.
-    // local dev without the function deployed) — the old, non-atomic
-    // two-step path. Not race-condition-safe, but no worse than before this
-    // fix, and keeps order creation working rather than hard-failing on a
-    // deploy-ordering mistake. Logged loudly since this silently reopens the
-    // exact race this migration exists to close — it should never happen on
-    // prod once the migration has landed, so seeing this log means the
-    // migration is missing or the schema cache hasn't picked it up yet.
-    if (guardUnavailable) {
-      logger.error("public-orders: duplicate-guard RPC unavailable, falling back to non-atomic insert", { error: duplicateGuardResult.error?.message });
-    }
-    orderErr = null;
-    let insertPayload = { ...baseInsert };
-    for (let attempt = 0; attempt <= PUBLIC_ORDER_OPTIONAL_INSERT_COLUMNS.length; attempt += 1) {
-      const result = await supabase
-        .from("orders")
-        .insert(insertPayload)
-        .select()
-        .single();
-      order = result.data;
-      orderErr = result.error;
-      if (!orderErr || !isMissingPublicOrderOptionalColumnsError(orderErr)) break;
-      const missingColumn = missingPublicOrderOptionalColumn(orderErr, insertPayload);
-      if (!missingColumn) {
-        insertPayload = { ...legacyInsert };
-        continue;
-      }
-      const nextPayload = { ...insertPayload };
-      delete nextPayload[missingColumn];
-      if (Object.keys(nextPayload).length === Object.keys(insertPayload).length) break;
-      insertPayload = nextPayload;
-    }
+  order = result.data?.order;
+  orderErr = result.error;
+  if (!orderErr && result.data?.replayed) {
+    // No second rep rotation, notification, audit entry, or server conversion.
+    const replayOffer = order.review_hold ? null : upsellOffer;
+    const replayToken = replayOffer ? signPublicUpsellToken({
+      orderId: order.id, orgId: product.org_id, packageId: pkg.id,
+      companionId: replayOffer.companionId, productId: replayOffer.productId,
+      companionPackageId: replayOffer.packageId, quantity: replayOffer.quantity,
+      amount: replayOffer.amount, issuedAt: Date.now()
+    }) : null;
+    res.status(200).json({ id: order.id, amount: order.amount, currency: order.currency,
+      crossSellLines: order.cross_sell_lines ?? [], reviewHold: Boolean(order.review_hold),
+      upsellOffer: replayOffer, upsellToken: replayToken, replayed: true });
+    return;
   }
 
   if (orderErr) {
@@ -1400,6 +1357,20 @@ router.post("/", submitRateLimit, async (req, res) => {
   reviewHold = Boolean(order.review_hold);
   reviewReason = order.review_reason ?? null;
   assignedRepId = order.assigned_rep_id ?? null;
+  if (publicOrderAssignmentMode === "auto_assign" && !reviewHold) {
+    const assignment = await assignOrderRep(product.org_id, product.id);
+    assignedRepId = assignment.assignedRepId;
+    assignedByLabel = assignment.assignedByLabel;
+    const { error: assignmentError } = await supabase.from("orders").update({
+      assigned_rep_id: assignedRepId, assigned_by_name_snapshot: assignedByLabel
+    }).eq("id", order.id).eq("org_id", product.org_id);
+    if (assignmentError) {
+      logger.error("public-orders: assignment save failed", { orderId: order.id, error: assignmentError.message });
+      assignedRepId = null;
+    }
+    order.assigned_rep_id = assignedRepId;
+  }
+
 
   // 5. Mark linked abandoned cart as Converted (best-effort).
   // Race-condition repair: the cart capture may have been deduplicated into a
