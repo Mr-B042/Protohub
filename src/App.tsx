@@ -79545,7 +79545,7 @@ ${waybillLineItems(w).length > 1
               </>
               </div>
               {cartAssignmentPanel && (
-                <aside className="min-w-0 xl:sticky xl:top-4 xl:self-start" aria-label="Automatic assignment overview">
+                <aside className="min-w-0 xl:sticky xl:top-4 xl:self-stretch xl:rounded-2xl xl:bg-slate-50/70 xl:p-2" aria-label="Automatic assignment overview">
                   <CartAssignmentOverview
                     panel={cartAssignmentPanel}
                     onEditRules={openCartAssignmentRules}
