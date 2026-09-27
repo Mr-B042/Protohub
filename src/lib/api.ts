@@ -3303,6 +3303,10 @@ export type MarketingPerformance = {
     adSpend: number | null;
     spendBasis: "actual" | "budget" | "mixed" | "none";
     spendRecords: number;
+    /** The company's own advertising, from the Ad Spend page. */
+    companySpend: number;
+    /** What media buyers recorded against their own budgets. */
+    buyerSpend: number;
     daysWithoutSpend: number;
     periodDays: number;
     ordersPlaced: number;

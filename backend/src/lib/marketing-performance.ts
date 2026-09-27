@@ -1,25 +1,30 @@
 /**
  * Marketing Performance Center — ad spend through to real profit.
  *
- * ⚠️ NOT RECORDED IS NOT THE SAME AS ZERO, AND THAT IS THE WHOLE POINT HERE.
+ * ⚠️ AD SPEND LIVES IN TWO PLACES, AND THE BIG ONE IS `expenses`.
  *
- * Every headline on this page divides by ad spend: cost per lead, cost per
- * order, cost per delivered order, return on ad spend, true net profit, the
- * break-even point, and the buyer ranking. Bright's database has FOUR spend
- * rows, all from June, all "budget given" with nothing recorded as actually
- * spent.
+ * marketing_spend_records is the MEDIA BUYER's own book: a buyer is handed a
+ * budget, enters what they spent, and it is matched. Bright has no media buyers
+ * today, so that table has four rows from June and nothing since.
  *
- * Treating that as zero would produce a page that looks authoritative and is
- * false: N0 spent, infinite return, and every buyer ranked by a profit figure
- * that never subtracted the cost of the ads. Worse than the page it replaces.
+ * The company's own advertising is entered from the Ad Spend page and lands in
+ * `expenses` under the category "Ad Spend" - 263 entries and N20.1m between May
+ * and September, one row per product per day. Reading only the buyer table made
+ * this page report "not recorded" while N3.9m of September spend sat in plain
+ * sight. That was wrong, and it is the reason both are read here.
  *
- * So anything that needs spend returns NULL when spend is unknown, and the
- * screen says "not recorded" instead of drawing a number. A blank that tells
- * the truth beats a figure that does not.
+ * ⚠️ NOT RECORDED IS STILL NOT THE SAME AS ZERO. Where neither book has spend
+ * for a period, everything that divides by it returns NULL and the screen says
+ * so. A page showing N0 spent and an infinite return would look authoritative
+ * and be false.
  *
- * ⚠️ BUDGET GIVEN IS NOT MONEY SPENT. Where a row has no actual_spent we fall
- * back to budget_given so the page is usable, but it is reported separately and
- * flagged, because handing a buyer N50,000 is not evidence they spent it.
+ * ⚠️ BUDGET GIVEN IS NOT MONEY SPENT. A buyer row with no actual_spent falls
+ * back to budget_given so the page works, but the basis is reported and
+ * flagged: handing somebody N50,000 is not evidence they spent it.
+ *
+ * ⚠️ THE TWO ARE ADDED, NOT MAXED. A buyer's spend and the company's own
+ * advertising are different money. Company rows are credited to the product
+ * they name rather than to a person, because nobody is running them.
  */
 
 import { supabase } from "./supabase.js";
@@ -34,6 +39,10 @@ export type PerformanceTotals = {
   adSpend: number | null;
   spendBasis: SpendBasis;
   spendRecords: number;
+  /** The company's own advertising, from the Ad Spend page. */
+  companySpend: number;
+  /** What media buyers recorded against their own budgets. */
+  buyerSpend: number;
   /** Days in the period with no spend row at all - the honesty signal. */
   daysWithoutSpend: number;
   periodDays: number;
@@ -124,9 +133,21 @@ export async function loadMarketingPerformance(
     .lte("spend_date", to);
   if (branchId) spendQuery = spendQuery.eq("branch_id", branchId);
 
-  const [{ data: orders }, { data: spendRows }] = await Promise.all([orderQuery, spendQuery]);
+  // The company's own advertising, entered from the Ad Spend page.
+  let companySpendQuery = supabase
+    .from("expenses")
+    .select("date, amount, product_id, description")
+    .eq("org_id", orgId)
+    .eq("category", "Ad Spend")
+    .gte("date", from)
+    .lte("date", to);
+  if (branchId) companySpendQuery = companySpendQuery.eq("branch_id", branchId);
+
+  const [{ data: orders }, { data: spendRows }, { data: companyRows }] =
+    await Promise.all([orderQuery, spendQuery, companySpendQuery]);
   const orderRows = orders ?? [];
   const spend = spendRows ?? [];
+  const companySpend = companyRows ?? [];
 
   // ── Spend, and how much of it we actually believe ──────────────────────────
   let actualTotal = 0;
@@ -146,6 +167,21 @@ export async function loadMarketingPerformance(
       spendByBuyer.set(key, (spendByBuyer.get(key) ?? 0) + amount);
     }
   }
+
+  // ⚠️ COMPANY ADVERTISING COUNTS AS MONEY ACTUALLY SPENT. It is an expense
+  // already paid, not a budget handed to somebody, so it does not weaken the
+  // basis the way an unmatched buyer budget does.
+  let companyTotal = 0;
+  const companyByProduct = new Map<string, number>();
+  for (const row of companySpend as any[]) {
+    const amount = money(row.amount);
+    if (amount <= 0) continue;
+    companyTotal += amount;
+    spendDays.add(String(row.date));
+    const key = String(row.product_id ?? "").trim();
+    if (key) companyByProduct.set(key, (companyByProduct.get(key) ?? 0) + amount);
+  }
+  actualTotal += companyTotal;
 
   const adSpendTotal = actualTotal + budgetOnlyTotal;
   const spendBasis: SpendBasis =
@@ -219,7 +255,9 @@ export async function loadMarketingPerformance(
     totals: {
       adSpend,
       spendBasis,
-      spendRecords: spend.length,
+      spendRecords: spend.length + companySpend.length,
+      companySpend: companyTotal,
+      buyerSpend: adSpendTotal - companyTotal,
       daysWithoutSpend: Math.max(0, periodDays - spendDays.size),
       periodDays,
 
