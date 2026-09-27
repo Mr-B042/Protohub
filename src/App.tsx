@@ -8811,7 +8811,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [period, setPeriod] = useState<Period>(() =>
     readPref<Period>("protohub.dashboard.period", "Today", (raw) => raw as Period)
   );
-  const [ordersPeriod, setOrdersPeriod] = useState<Period>("This Month");
+  const [ordersPeriod, setOrdersPeriod] = useState<Period>(() => readPref<Period>("protohub.orders.period", "Today", (raw) => raw as Period));
   // Manager Dashboard has its own period (like every other page), defaulting
   // to Today, so it never inherits or mutates the main Dashboard's period.
   const [managerPeriod, setManagerPeriod] = useState<Period>("Today");
@@ -9005,7 +9005,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setShowSchedulePicker(false);
   };
   const [deliveriesPeriod, setDeliveriesPeriod] = useState<Period>(() =>
-    readPref<Period>("protohub.deliveries.period", "This Month", (raw) => raw as Period)
+    readPref<Period>("protohub.deliveries.period", "Today", (raw) => raw as Period)
   );
   const [showDeliveriesDateRange, setShowDeliveriesDateRange] = useState(false);
   const [deliveriesDateRange, setDeliveriesDateRange] = useState<DateRange>({ start: "", end: "" });
@@ -9190,7 +9190,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
   const [selectedPackageId, setSelectedPackageId] = useState("");
   const [packageDescriptionDraft, setPackageDescriptionDraft] = useState("");
-  const [salesPeriod, setSalesPeriod] = useState<Period>("This Month");
+  const [salesPeriod, setSalesPeriod] = useState<Period>(() => readPref<Period>("protohub.sales.period", "Today", (raw) => raw as Period));
   const [showSalesDateRange, setShowSalesDateRange] = useState(false);
   const [salesDateRange, setSalesDateRange] = useState<DateRange>({ start: "", end: "" });
   const [salesSearch, setSalesSearch] = useState("");
@@ -9569,7 +9569,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   }, [companyName]);
   const [fixedSalary, setFixedSalary] = useState("0");
   const [commissionRate, setCommissionRate] = useState("0");
-  const [customerPeriod, setCustomerPeriod] = useState<Period>("This Month");
+  const [customerPeriod, setCustomerPeriod] = useState<Period>(() => readPref<Period>("protohub.customers.period", "Today", (raw) => raw as Period));
   const [showCustomerDateRange, setShowCustomerDateRange] = useState(false);
   const [customerDateRange, setCustomerDateRange] = useState<DateRange>({ start: "", end: "" });
   const [customerSearch, setCustomerSearch] = useState("");
@@ -9579,7 +9579,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [customerTypeFilter, setCustomerTypeFilter] = useState<CustomerTypeFilter>("Customer Type: All");
   const [customerDeliveryFilter, setCustomerDeliveryFilter] = useState<CustomerDeliveryFilter>("Delivery History: All");
   const [customerPage, setCustomerPage] = useState(1);
-  const [expensePeriod, setExpensePeriod] = useState<Period>("This Month");
+  const [expensePeriod, setExpensePeriod] = useState<Period>(() => readPref<Period>("protohub.expenses.period", "Today", (raw) => raw as Period));
   const [showExpenseDateRange, setShowExpenseDateRange] = useState(false);
   const [expenseDateRange, setExpenseDateRange] = useState<DateRange>({ start: "", end: "" });
   const [expenseSearch, setExpenseSearch] = useState("");
@@ -9620,7 +9620,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     busy?: boolean;
   }>(null);
   const [financePeriod, setFinancePeriod] = useState<Period>(() =>
-    readPref<Period>("protohub.finance.period", "This Month", (raw) => raw as Period)
+    readPref<Period>("protohub.finance.period", "Today", (raw) => raw as Period)
   );
   useEffect(() => { writePref("protohub.finance.period", financePeriod); }, [financePeriod]);
   // Week navigator state - one weekStart + span per filterable page
@@ -10258,7 +10258,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [showDashboardProductFilter, setShowDashboardProductFilter] = useState(false);
   // Abandoned Carts period + week nav + product filter
   const [cartsPeriod, setCartsPeriod] = useState<Period>(() =>
-    readPref<Period>("protohub.carts.period", "This Month", (raw) => raw as Period)
+    readPref<Period>("protohub.carts.period", "Today", (raw) => raw as Period)
   );
   const [showCartsDateRange, setShowCartsDateRange] = useState(false);
   const [cartsDateRange, setCartsDateRange] = useState<DateRange>({ start: "", end: "" });
@@ -10281,6 +10281,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Persist Abandoned Carts UI prefs after their declarations (avoids the
   // TDZ trap we'd hit if these lived next to the Orders persistence effects).
   useEffect(() => { writePref("protohub.carts.period", cartsPeriod); }, [cartsPeriod]);
+  useEffect(() => { writePref("protohub.orders.period", ordersPeriod); }, [ordersPeriod]);
+  useEffect(() => { writePref("protohub.deliveries.period", deliveriesPeriod); }, [deliveriesPeriod]);
+  useEffect(() => { writePref("protohub.sales.period", salesPeriod); }, [salesPeriod]);
+  useEffect(() => { writePref("protohub.customers.period", customerPeriod); }, [customerPeriod]);
+  useEffect(() => { writePref("protohub.expenses.period", expensePeriod); }, [expensePeriod]);
+  useEffect(() => { writePref("protohub.finance.period", financePeriod); }, [financePeriod]);
   useEffect(() => { writePref("protohub.carts.productIds", JSON.stringify(Array.from(cartProductIds))); }, [cartProductIds]);
   // Scheduled Deliveries
   const [schedulePage, setSchedulePage] = useState(1);
@@ -10318,8 +10324,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [showCustomerProductFilter, setShowCustomerProductFilter] = useState(false);
   // Campaign Orders period + week nav + product filter
   const [campaignPeriod, setCampaignPeriod] = useState<Period>(() =>
-    readPref<Period>("protohub.adTracking.period", "This Month", (raw) => raw as Period)
+    readPref<Period>("protohub.adTracking.period", "Today", (raw) => raw as Period)
   );
+  useEffect(() => { writePref("protohub.adTracking.period", campaignPeriod); }, [campaignPeriod]);
   const [showCampaignDateRange, setShowCampaignDateRange] = useState(false);
   const [campaignDateRange, setCampaignDateRange] = useState<DateRange>({ start: "", end: "" });
   const [campaignNavStart, setCampaignNavStart] = useState(getSundayKey);
