@@ -19,6 +19,7 @@ import { resolveMetaTrackingConfig, sendMetaCapiPurchase } from "./meta-capi.js"
 import { sendTikTokConversion } from "./tiktok-events.js";
 import { assignOrderRep } from "./order-assignment.js";
 import { notifyOutageRecoveredOrder } from "./order-notifications.js";
+import { buildPackageComponentSnapshot } from "./order-inventory.js";
 
 const MIN_IDLE_MS = 2 * 60 * 1000;   // must be idle at least 2 min
 const MAX_IDLE_MS = 15 * 60 * 1000;  // give up after 15 min
@@ -164,7 +165,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
   // stores package_name, amount and currency, so we only need quantity (and price as fallback).
   const { data: pkgRow } = await supabase
     .from("product_packages")
-    .select("id, quantity, price")
+    .select("id, quantity, price, package_components, companion_products")
     .eq("id", cart.package_id)
     .maybeSingle();
   if (!pkgRow) return;
@@ -197,6 +198,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
   const autoCompanionLines = Array.isArray(capturePayload.autoCompanionLines)
     ? capturePayload.autoCompanionLines : [];
   const crossSellLines = [...selectedCrossSellLines, ...autoCompanionLines];
+  const packageComponentsSnapshot = await buildPackageComponentSnapshot(orgId, pkgRow.package_components ?? []);
 
   const location = [customerCity, customerState].filter(Boolean).join(", ") || null;
   const utmSource = capturePayload.utm_source ?? capturePayload.utmSource ?? cart.source ?? null;
@@ -223,6 +225,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     amount,
     currency:         cart.currency ?? pkg.currency ?? "NGN",
     cross_sell_lines: crossSellLines,
+    package_components_snapshot: packageComponentsSnapshot,
     source,
     location,
     assigned_rep_id:  assignedRepId,
