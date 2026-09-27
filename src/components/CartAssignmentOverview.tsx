@@ -7,13 +7,14 @@ type Props = {
   onEditRules: () => void;
   onManageOrder: () => void;
   onToggle: (enabled: boolean) => void;
+  onCollapsedChange?: (collapsed: boolean) => void;
   saving: boolean;
   relativeTime: (value?: string | null) => string;
 };
 
 const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? "").join("") || "?";
 
-export function CartAssignmentOverview({ panel, onEditRules, onManageOrder, onToggle, saving, relativeTime }: Props) {
+export function CartAssignmentOverview({ panel, onEditRules, onManageOrder, onToggle, onCollapsedChange, saving, relativeTime }: Props) {
   const [showAllAssignments, setShowAllAssignments] = useState(false);
   const [showAllWorkload, setShowAllWorkload] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -25,7 +26,7 @@ export function CartAssignmentOverview({ panel, onEditRules, onManageOrder, onTo
 
   if (collapsed) {
     return (
-      <button type="button" onClick={() => setCollapsed(false)} aria-label="Expand automatic assignment sidebar" title="Expand assignment sidebar"
+      <button type="button" onClick={() => { setCollapsed(false); onCollapsedChange?.(false); }} aria-label="Expand automatic assignment sidebar" title="Expand assignment sidebar"
         className="sticky top-4 ml-auto flex h-10 w-10 items-center justify-center rounded-xl border border-[#cbd8ef] bg-white text-[#253e70] shadow-[0_6px_24px_rgba(37,65,112,0.08)] transition-colors hover:bg-[#f5f8ff]">
         <ChevronRight className="h-5 w-5" aria-hidden="true" />
       </button>
@@ -36,7 +37,7 @@ export function CartAssignmentOverview({ panel, onEditRules, onManageOrder, onTo
     <div className="space-y-3 text-[#172543]">
       <section className={cardClass} aria-label="Automatic assignment status">
         <div className="flex items-center justify-between gap-2">
-          <button type="button" onClick={() => setCollapsed((value) => !value)} aria-expanded={!collapsed} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+          <button type="button" onClick={() => { const next = !collapsed; setCollapsed(next); onCollapsedChange?.(next); }} aria-expanded={!collapsed} className="flex min-w-0 flex-1 items-center gap-2 text-left">
             <h2 className={headingClass}>Automatic Assignment Status</h2>
             <ChevronUp className="h-4 w-4 shrink-0 text-[#637393]" aria-hidden="true" />
           </button>

@@ -8655,6 +8655,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // pushed: the numbers move when the 2-minute job runs, so a slow refresh is
   // honest and a live socket would be noise.
   const [cartAssignmentPanel, setCartAssignmentPanel] = useState<CartAssignmentPanel | null>(null);
+  const [cartAssignmentSidebarCollapsed, setCartAssignmentSidebarCollapsed] = useState(false);
   const [cartRulesDraft, setCartRulesDraft] = useState({
     enabled: true, assignmentDelayMinutes: 10, contactSlaMinutes: 10,
     workStartMinute: 510, workEndMinute: 1050, worksSunday: false
@@ -78487,7 +78488,7 @@ ${waybillLineItems(w).length > 1
                 )}
               </div>
           ) : activePage === "Abandoned Carts" ? (
-            <div className={cartAssignmentPanel ? "grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_306px] xl:items-start" : "min-w-0"}>
+            <div className={cartAssignmentPanel ? `grid min-w-0 grid-cols-1 gap-4 xl:items-start ${cartAssignmentSidebarCollapsed ? "xl:grid-cols-[minmax(0,1fr)_40px]" : "xl:grid-cols-[minmax(0,1fr)_306px]"}` : "min-w-0"}>
               <div className="min-w-0">
               <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
                 <div className="flex flex-col gap-1">
@@ -79551,6 +79552,7 @@ ${waybillLineItems(w).length > 1
                     onEditRules={openCartAssignmentRules}
                     onManageOrder={() => handleNavClick("Round-Robin")}
                     onToggle={toggleCartAssignment}
+                    onCollapsedChange={setCartAssignmentSidebarCollapsed}
                     saving={savingCartRules}
                     relativeTime={relativeMinutesLabel}
                   />
