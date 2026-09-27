@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Clock3, RefreshCw, Settings, Timer, Users, ClipboardList, ArrowRight } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Clock3, RefreshCw, Settings, Timer, Users, ClipboardList, ArrowRight } from "lucide-react";
 import type { CartAssignmentPanel } from "../lib/api";
 
 type Props = {
@@ -16,6 +16,7 @@ const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map((par
 export function CartAssignmentOverview({ panel, onEditRules, onManageOrder, onToggle, saving, relativeTime }: Props) {
   const [showAllAssignments, setShowAllAssignments] = useState(false);
   const [showAllWorkload, setShowAllWorkload] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const workloadScale = Math.max(5, ...panel.reps.map((rep) => rep.openCarts));
   const workloadRows = showAllWorkload ? panel.reps : panel.reps.slice(0, 4);
   const assignmentRows = showAllAssignments ? panel.recentAssignments : panel.recentAssignments.slice(0, 4);
@@ -26,12 +27,16 @@ export function CartAssignmentOverview({ panel, onEditRules, onManageOrder, onTo
     <div className="space-y-3 text-[#172543]">
       <section className={cardClass} aria-label="Automatic assignment status">
         <div className="flex items-center justify-between gap-2">
-          <h2 className={headingClass}>Automatic Assignment Status</h2>
+          <button type="button" onClick={() => setCollapsed((value) => !value)} aria-expanded={!collapsed} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+            <h2 className={headingClass}>Automatic Assignment Status</h2>
+            {collapsed ? <ChevronDown className="h-4 w-4 shrink-0 text-[#637393]" aria-hidden="true" /> : <ChevronUp className="h-4 w-4 shrink-0 text-[#637393]" aria-hidden="true" />}
+          </button>
           <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-[9px] font-bold uppercase ${panel.active ? "bg-emerald-100 text-emerald-900" : "bg-slate-100 text-slate-600"}`}>
             <span className={`h-1.5 w-1.5 rounded-full ${panel.active ? "bg-emerald-600" : "bg-slate-400"}`} />{panel.active ? "Active" : "Paused"}
           </span>
         </div>
 
+        {!collapsed && <>
         <div className="mt-5 space-y-3 text-[13px]">
           <div className="flex items-center gap-3">
             <Settings className="h-4 w-4 shrink-0 text-[#253e70]" aria-hidden="true" />
@@ -66,6 +71,7 @@ export function CartAssignmentOverview({ panel, onEditRules, onManageOrder, onTo
             <Settings className="h-4 w-4" aria-hidden="true" />Edit Assignment Rules
           </button>
         )}
+        </>}
       </section>
 
       <section className={cardClass} aria-label="How automatic assignment works">
