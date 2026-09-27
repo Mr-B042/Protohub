@@ -78938,7 +78938,7 @@ ${waybillLineItems(w).length > 1
                           {liveFormPulse?.summary.conversionRate ?? 0}% view → order
                         </span>
                       </div>
-                      <div className="mt-4 grid grid-cols-2 lg:grid-cols-5 gap-3">
+                      <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 2xl:grid-cols-5 gap-3">
                         {[
                           { label: liveFormPulseMetricLabel("Views", cartsPeriod), value: liveFormPulse?.summary.viewedToday ?? 0, sub: liveFormPulse?.summary.lastViewedAt ? `Last ${relativeMinutesLabel(liveFormPulse.summary.lastViewedAt)}` : "No view yet" },
                           { label: liveFormPulseMetricLabel("Clicks", cartsPeriod), value: liveFormPulse?.summary.interactedToday ?? 0, sub: `${liveFormPulse?.summary.interactionRate ?? 0}% of views` },
