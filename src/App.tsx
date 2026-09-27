@@ -78930,8 +78930,8 @@ ${waybillLineItems(w).length > 1
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 items-start xl:grid-cols-[1.15fr,0.85fr] gap-4">
-                    <article className="min-w-0 rounded-xl border border-gray-100 bg-gray-50 p-4">
+                  <div className="grid grid-cols-1 items-stretch xl:grid-cols-[1.15fr,0.85fr] gap-4">
+                    <article className="h-full min-w-0 rounded-xl border border-gray-100 bg-gray-50 p-4">
                       <div className="flex items-start justify-between gap-3 flex-wrap">
                         <div>
                           <h3 className="text-sm font-bold text-gray-900 m-0">{cartsPeriod === "Today" ? "Today’s conversion pulse" : `${liveFormPulseScope.charAt(0).toUpperCase()}${liveFormPulseScope.slice(1)} conversion pulse`}</h3>
