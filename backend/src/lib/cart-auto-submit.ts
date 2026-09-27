@@ -24,6 +24,7 @@ import { buildPackageComponentSnapshot } from "./order-inventory.js";
 const MIN_IDLE_MS = 2 * 60 * 1000;   // must be idle at least 2 min
 const MAX_IDLE_MS = 15 * 60 * 1000;  // give up after 15 min
 const SUBMIT_ATTEMPT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+const RECOVERY_CART_COLUMNS = "id, org_id, customer, phone, whatsapp, address, city, state, product_id, package_id, package_name, amount, currency, source, capture_payload, outage_captured, outage_captured_at";
 
 export async function runCartAutoSubmit(): Promise<void> {
   const now = Date.now();
@@ -32,7 +33,7 @@ export async function runCartAutoSubmit(): Promise<void> {
 
   const { data: carts, error } = await supabase
     .from("abandoned_carts")
-    .select("*")
+    .select(RECOVERY_CART_COLUMNS)
     .in("status", ["Open abandoned", "In progress"])
     .not("customer", "eq", "Partial lead")
     .not("phone", "is", null)
@@ -54,7 +55,7 @@ export async function runCartAutoSubmit(): Promise<void> {
   // bound, so a long outage's backlog is always drained once the API is back.
   const { data: outageCarts } = await supabase
     .from("abandoned_carts")
-    .select("*")
+    .select(RECOVERY_CART_COLUMNS)
     .in("status", ["Open abandoned", "In progress"])
     .eq("outage_captured", true)
     .not("phone", "is", null)
@@ -80,7 +81,7 @@ export async function runCartAutoSubmit(): Promise<void> {
   const { data: attemptedCarts } = submitAttemptedIds.length
     ? await supabase
         .from("abandoned_carts")
-        .select("*")
+        .select(RECOVERY_CART_COLUMNS)
         .in("id", submitAttemptedIds)
         .in("status", ["Open abandoned", "In progress"])
         .not("customer", "eq", "Partial lead")
