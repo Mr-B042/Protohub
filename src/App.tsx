@@ -10067,6 +10067,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [claimSaving, setClaimSaving] = useState(false);
   const [managerBonusWeekStart, setManagerBonusWeekStart] = useState<string>(getSundayKey);
   const [managerBonusSummary, setManagerBonusSummary] = useState<ManagerBonusSummary | null>(null);
+  const [previousManagerBonusSummary, setPreviousManagerBonusSummary] = useState<ManagerBonusSummary | null>(null);
   const [managerBonusLoading, setManagerBonusLoading] = useState(false);
   const [managerBonusSaving, setManagerBonusSaving] = useState(false);
   const [managerBonusSettings, setManagerBonusSettings] = useState<ManagerBonusSettings | null>(null);
@@ -29731,6 +29732,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     date.setDate(date.getDate() + days);
     setManagerBonusWeekStart(formatDateKey(date));
   };
+  const previousManagerBonusWeekStart = (weekStart: string) => {
+    const date = new Date(`${weekStart}T00:00:00`);
+    date.setDate(date.getDate() - 7);
+    return formatDateKey(date);
+  };
   const formatManagerBonusMoney = (amount: number, currencyCode: CurrencyCode = "NGN") => {
     const locale = currencyCode === "NGN" ? "en-NG" : currencyCode === "GBP" ? "en-GB" : "en-US";
     const formatted = new Intl.NumberFormat(locale, {
@@ -29746,15 +29752,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     setManagerBonusLoading(true);
     setManagerBonusError("");
-    return managerBonusApi.summary(managerBonusWeekStart, managerProductFilterIds(managerProductFilterKeys))
-      .then((result) => {
+    const productIds = managerProductFilterIds(managerProductFilterKeys);
+    const previousWeekStart = previousManagerBonusWeekStart(managerBonusWeekStart);
+    return Promise.all([
+      managerBonusApi.summary(managerBonusWeekStart, productIds),
+      managerBonusApi.summary(previousWeekStart, productIds)
+    ])
+      .then(([result, previousResult]) => {
         const summary = result as ManagerBonusSummary;
         setManagerBonusSummary(summary);
+        setPreviousManagerBonusSummary(previousResult as ManagerBonusSummary);
         setManagerBonusSettings(summary.settings);
         setManagerBonusDraft(summary.settings);
       })
       .catch((error: any) => {
         setManagerBonusSummary(null);
+        setPreviousManagerBonusSummary(null);
         setManagerBonusError(error?.message ?? "Could not load manager bonus.");
         if (!options?.quiet) showToast(error?.message ?? "Could not load manager bonus.");
       })
@@ -29808,6 +29821,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const settings = managerBonusDraft ?? summary?.settings;
     const metrics = summary?.metrics;
     const evaluation = summary?.evaluation;
+    const previousEvaluation = previousManagerBonusSummary?.evaluation;
     const currencyCode = settings?.currency ?? "NGN";
     const weekEnd = managerBonusWeekEnd(managerBonusWeekStart);
     const gateMet = evaluation?.profitGateMet ?? false;
@@ -29835,6 +29849,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     });
     const dashboardAlignedBreakEven = computeBreakEven(bonusWeekPlacedOrders, bonusWeekExpenses, { includeManagerBonus: true });
     const bonusWeekLabel = managerBonusWeekStart === getSundayKey() ? "this week" : "selected week";
+    const previousWeekStart = previousManagerBonusWeekStart(managerBonusWeekStart);
+    const previousWeekEnd = managerBonusWeekEnd(previousWeekStart);
     const breakEvenHelper = dashboardAlignedBreakEven.breakEvenRate != null
       ? dashboardAlignedBreakEven.profitable
         ? `${Math.round(dashboardAlignedBreakEven.headroom ?? 0)} pts above break-even`
@@ -29923,6 +29939,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           <div className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
             {managerBonusError}
           </div>
+        )}
+
+        {previousManagerBonusSummary && (
+          <section className="rounded-2xl border border-indigo-100 bg-indigo-50/70 px-4 py-3 shadow-sm" aria-label="Previous manager bonus">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.16em] text-indigo-500">Previous week recorded</p>
+                <p className="mt-1 text-sm font-semibold text-indigo-950">
+                  {previousWeekStart} to {previousWeekEnd} · {previousEvaluation?.label ?? "No tier hit"}
+                </p>
+              </div>
+              <strong className="text-xl font-black text-indigo-700">
+                {formatManagerBonusMoney(previousEvaluation?.amount ?? 0, previousManagerBonusSummary.settings.currency)}
+              </strong>
+            </div>
+            <p className="mt-1 text-xs font-medium text-indigo-700/80">This amount belongs to the previous earning week and is not added to the current week&apos;s bonus.</p>
+          </section>
         )}
 
         <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
