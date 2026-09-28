@@ -1352,8 +1352,8 @@ function MilestoneCard({ milestone, currency, formatMoney }: { milestone: Manage
   const expectedByToday = dailyTarget * elapsedDays;
   const requiredPace = daysRemaining > 0 ? Math.ceil(remainingUnits / daysRemaining) : remainingUnits;
   const paceVariance = milestone.progressUnits - expectedByToday;
-  const dailyPaceStatus = milestone.status === "Upcoming" ? `Starts ${formatDateShort(milestone.startDate)}` : paceVariance > 0 ? `Ahead by ${paceVariance.toLocaleString()} pcs` : paceVariance === 0 ? "On pace" : `${Math.abs(paceVariance).toLocaleString()} pcs to catch up`;
-  const paceGuidance = milestone.status === "Upcoming" ? "Prepare for this week" : paceVariance >= 0 ? "Keep this pace" : `Need ${Math.max(requiredPace, dailyTarget).toLocaleString()} pcs/day`;
+  const dailyPaceStatus = milestone.status === "Earned" ? "Target met" : milestone.status === "Upcoming" ? `Starts ${formatDateShort(milestone.startDate)}` : paceVariance > 0 ? `Ahead by ${paceVariance.toLocaleString()} pcs` : paceVariance === 0 ? "On pace" : `${Math.abs(paceVariance).toLocaleString()} pcs to catch up`;
+  const paceGuidance = milestone.status === "Earned" ? "Completed" : milestone.status === "Upcoming" ? "Prepare for this week" : paceVariance >= 0 ? "Keep this pace" : `Need ${Math.max(requiredPace, dailyTarget).toLocaleString()} pcs/day`;
   return (
     <div className={`rounded-lg border p-3 ${tone.card}`}>
       <div className="flex items-start justify-between gap-2">
