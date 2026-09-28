@@ -84795,7 +84795,6 @@ ${waybillLineItems(w).length > 1
                             type="month"
                             className="bg-transparent outline-none text-sm font-semibold text-gray-800 w-full"
                             value={selectedPayrollMonthKey}
-                            max={currentPayrollMonthKey}
                             onChange={(event) => {
                               const nextLabel = payrollMonthLabelFromKey(event.target.value);
                               setPayrollMonth(nextLabel || event.target.value);
@@ -84809,7 +84808,7 @@ ${waybillLineItems(w).length > 1
                         {[
                           { label: "Previous", key: shiftPayrollMonthKey(selectedPayrollMonthKey, -1), disabled: false },
                           { label: "This Month", key: currentPayrollMonthKey, disabled: false },
-                          { label: "Next", key: shiftPayrollMonthKey(selectedPayrollMonthKey, 1), disabled: selectedPayrollMonthKey >= currentPayrollMonthKey }
+                          { label: "Next", key: shiftPayrollMonthKey(selectedPayrollMonthKey, 1), disabled: false }
                         ].map((item) => (
                           <button
                             key={item.label}
