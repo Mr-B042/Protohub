@@ -2,29 +2,25 @@
  * Marketing Performance Center — ad spend through to real profit.
  *
  * ⚠️ AD SPEND LIVES IN TWO PLACES, AND THE BIG ONE IS `expenses`.
- *
- * marketing_spend_records is the MEDIA BUYER's own book: a buyer is handed a
- * budget, enters what they spent, and it is matched. Bright has no media buyers
- * today, so that table has four rows from June and nothing since.
- *
+ * marketing_spend_records is the MEDIA BUYER's own book (a budget handed out,
+ * then what was spent). Bright has no media buyers today, so it is nearly empty.
  * The company's own advertising is entered from the Ad Spend page and lands in
- * `expenses` under the category "Ad Spend" - 263 entries and N20.1m between May
- * and September, one row per product per day. Reading only the buyer table made
- * this page report "not recorded" while N3.9m of September spend sat in plain
- * sight. That was wrong, and it is the reason both are read here.
+ * `expenses` under "Ad Spend" - one row per product per day. Reading only the
+ * buyer book once made this page report "not recorded" while N3.9m of September
+ * spend sat in plain sight. Both are read.
  *
- * ⚠️ NOT RECORDED IS STILL NOT THE SAME AS ZERO. Where neither book has spend
- * for a period, everything that divides by it returns NULL and the screen says
- * so. A page showing N0 spent and an infinite return would look authoritative
- * and be false.
+ * ⚠️ NOT RECORDED IS NOT ZERO. Anything that divides by spend returns NULL when
+ * spend is unknown, and the screen says so. N0 spent and an infinite return
+ * would look authoritative and be false.
  *
- * ⚠️ BUDGET GIVEN IS NOT MONEY SPENT. A buyer row with no actual_spent falls
- * back to budget_given so the page works, but the basis is reported and
- * flagged: handing somebody N50,000 is not evidence they spent it.
+ * ⚠️ COMPANY SPEND IS RECORDED PER PRODUCT, NEVER PER PLATFORM OR CAMPAIGN.
+ * So it can follow a product filter exactly, but it cannot be split by platform,
+ * campaign or buyer. Under those filters, and on each paid platform's row of
+ * the leaderboard, the honest answer is "not recorded" - dividing it up by order
+ * share would print a precise-looking number nobody measured.
  *
- * ⚠️ THE TWO ARE ADDED, NOT MAXED. A buyer's spend and the company's own
- * advertising are different money. Company rows are credited to the product
- * they name rather than to a person, because nobody is running them.
+ * ⚠️ BUDGET GIVEN IS NOT MONEY SPENT. A buyer row with no actual_spent falls back
+ * to budget_given so the page works, but the basis is reported and flagged.
  */
 
 import { supabase } from "./supabase.js";
@@ -33,76 +29,138 @@ const DELIVERED = "Delivered";
 const CONFIRMED_STATUSES = ["Confirmed", "In Process", "Dispatched", "Delivered"];
 const LOST_STATUSES = ["Cancelled", "Failed"];
 
+/**
+ * Platforms nobody pays to advertise on. Their ad spend is a KNOWN zero rather
+ * than an unknown, so their profit can be stated in full.
+ */
+const ORGANIC_SOURCES = new Set(["website", "direct", "whatsapp", "organic", "referral"]);
+
+const PLATFORM_LABELS: Record<string, string> = {
+  facebook: "Facebook Ads",
+  fb: "Facebook Ads",
+  "fb-sitelink": "Facebook Ads",
+  instagram: "Instagram Ads",
+  ig: "Instagram Ads",
+  tiktok: "TikTok Ads",
+  google: "Google Ads",
+  "audience network": "Audience Network",
+  an: "Audience Network",
+  threads: "Threads",
+  th: "Threads",
+  website: "Website Organic",
+  direct: "Direct",
+  whatsapp: "WhatsApp"
+};
+
+export type PerformanceFilters = {
+  productId?: string | null;
+  campaign?: string | null;
+  source?: string | null;
+  mediaBuyer?: string | null;
+};
+
 export type SpendBasis = "actual" | "budget" | "mixed" | "none";
 
 export type PerformanceTotals = {
   adSpend: number | null;
   spendBasis: SpendBasis;
   spendRecords: number;
-  /** The company's own advertising, from the Ad Spend page. */
   companySpend: number;
-  /** What media buyers recorded against their own budgets. */
   buyerSpend: number;
-  /** Days in the period with no spend row at all - the honesty signal. */
+  /** True when a filter asks for a split the spend was never recorded at. */
+  spendNotSplittable: boolean;
   daysWithoutSpend: number;
   periodDays: number;
 
+  leads: number | null;
   ordersPlaced: number;
+  placedValue: number;
   confirmed: number;
   delivered: number;
+  confirmedPending: number;
+  awaitingConfirmation: number;
   lost: number;
   deliveredRevenue: number;
   productCost: number;
   deliveryCost: number;
-  /** Revenue less product cost, delivery and ad spend. Null without spend. */
   trueNetProfit: number | null;
+  profitMargin: number | null;
 
-  confirmationRate: number | null;
-  deliveryRate: number | null;
+  costPerLead: number | null;
   costPerOrder: number | null;
+  costPerConfirmed: number | null;
   costPerDeliveredOrder: number | null;
-  deliveredAov: number | null;
   placedAov: number | null;
+  deliveredAov: number | null;
   roas: number | null;
-  /** The most you can pay per delivered order and still break even. */
   breakEvenCostPerDelivered: number | null;
+  /** How far under break-even the current cost per delivered order sits. */
+  breakEvenHeadroom: number | null;
+
+  /** Placed as a share of leads - the funnel's first conversion. */
+  leadToOrderRate: number | null;
+  confirmationRate: number | null;
+  /** Delivered as a share of CONFIRMED, as the design's top card reads it. */
+  deliveryRateOfConfirmed: number | null;
 };
 
-export type BuyerRow = {
+export type LeaderboardStatus = "profitable" | "losing" | "high_value" | "check_tag" | "spend_unknown";
+
+export type LeaderboardRow = {
   key: string;
   label: string;
+  kind: "paid" | "organic" | "unattributed";
+  campaigns: number;
+  products: number;
   ordersPlaced: number;
   confirmed: number;
+  confirmationRate: number | null;
   delivered: number;
-  deliveredRevenue: number;
+  /** Delivered as a share of orders PLACED, as the design's table reads it. */
+  deliveryRate: number | null;
   adSpend: number | null;
-  trueNetProfit: number | null;
+  costPerDeliveredOrder: number | null;
+  deliveredAov: number | null;
+  deliveredRevenue: number;
+  netProfit: number | null;
   margin: number | null;
   roas: number | null;
+  status: LeaderboardStatus;
+};
+
+export type FilterOptions = {
+  products: Array<{ id: string; name: string }>;
+  campaigns: string[];
+  sources: string[];
+  mediaBuyers: string[];
+};
+
+export type PerformanceDeltas = {
+  adSpend: number | null;
+  ordersPlaced: number | null;
+  deliveredRevenue: number | null;
+  costPerOrder: number | null;
   costPerDeliveredOrder: number | null;
-  deliveryRate: number | null;
+  placedAov: number | null;
+  deliveredAov: number | null;
+  roas: number | null;
 };
 
-const ratio = (top: number, bottom: number): number | null =>
-  bottom > 0 ? top / bottom : null;
-
+const ratio = (top: number, bottom: number): number | null => (bottom > 0 ? top / bottom : null);
 const money = (value: unknown) => Number(value ?? 0) || 0;
+const clean = (value: unknown) => String(value ?? "").trim();
 
-/** The label an order is credited to. Falls back rather than dropping the order. */
-const buyerKeyFor = (order: any): { key: string; label: string } => {
-  const context = order.form_context ?? {};
-  const tagged = ["media_buyer", "mediaBuyer", "buyer"]
-    .map((key) => String(context?.[key] ?? "").trim())
-    .find(Boolean);
-  if (tagged) return { key: tagged.toLowerCase(), label: tagged };
-
-  const source = String(order.utm_source ?? "").trim();
-  if (source) return { key: source.toLowerCase(), label: source };
-
-  // ⚠️ SHOWN, NOT HIDDEN. Orders nobody can credit are the ones worth arguing
-  // about - dropping them would quietly flatter every buyer's numbers.
-  return { key: "__unattributed__", label: "Not tagged" };
+const sourceKeyOf = (order: any) => {
+  const source = clean(order.source) || clean(order.utm_source);
+  return source.toLowerCase();
 };
+const platformLabel = (key: string) =>
+  PLATFORM_LABELS[key] ?? (key ? key.replace(/\b\w/g, (c) => c.toUpperCase()) : "Unattributed");
+const mediaBuyerOf = (order: any) => clean(order.form_context?.media_buyer ?? order.form_context?.mediaBuyer);
+
+// Lagos is UTC+1 year-round. A day belongs to Lagos, not to the server's clock.
+const lagosStart = (day: string) => `${day}T00:00:00+01:00`;
+const lagosEnd = (day: string) => `${day}T23:59:59.999+01:00`;
 
 const daysBetween = (from: string, to: string) => {
   const start = Date.parse(`${from}T00:00:00Z`);
@@ -111,170 +169,341 @@ const daysBetween = (from: string, to: string) => {
   return Math.round((end - start) / 86_400_000) + 1;
 };
 
-export async function loadMarketingPerformance(
-  orgId: string,
-  branchId: string | null,
-  from: string,
-  to: string
-): Promise<{ totals: PerformanceTotals; buyers: BuyerRow[] }> {
-  let orderQuery = supabase
+/** The same number of days immediately before `from`. */
+export const previousPeriod = (from: string, to: string) => {
+  const days = daysBetween(from, to);
+  const start = new Date(Date.parse(`${from}T00:00:00Z`) - days * 86_400_000);
+  const end = new Date(Date.parse(`${from}T00:00:00Z`) - 86_400_000);
+  return { from: start.toISOString().slice(0, 10), to: end.toISOString().slice(0, 10) };
+};
+
+type PeriodData = { orders: any[]; companySpend: any[]; buyerSpend: any[]; carts: any[] };
+
+async function fetchPeriod(orgId: string, branchId: string | null, from: string, to: string): Promise<PeriodData> {
+  let orders = supabase
     .from("orders")
-    .select("id, status, amount, logistics_cost, cogs_snapshot, utm_source, utm_campaign, form_context, created_at, delivered_date")
+    .select("id, status, amount, logistics_cost, cogs_snapshot, utm_source, utm_campaign, source, form_context, product_id, product_name")
     .eq("org_id", orgId)
-    .gte("created_at", `${from}T00:00:00Z`)
-    .lte("created_at", `${to}T23:59:59Z`);
-  if (branchId) orderQuery = orderQuery.eq("branch_id", branchId);
-
-  let spendQuery = supabase
-    .from("marketing_spend_records")
-    .select("spend_date, marketer_tag, platform, budget_given, actual_spent")
-    .eq("org_id", orgId)
-    .gte("spend_date", from)
-    .lte("spend_date", to);
-  if (branchId) spendQuery = spendQuery.eq("branch_id", branchId);
-
-  // The company's own advertising, entered from the Ad Spend page.
-  let companySpendQuery = supabase
+    .gte("created_at", lagosStart(from))
+    .lte("created_at", lagosEnd(to));
+  let company = supabase
     .from("expenses")
-    .select("date, amount, product_id, description")
+    .select("date, amount, product_id")
     .eq("org_id", orgId)
     .eq("category", "Ad Spend")
     .gte("date", from)
     .lte("date", to);
-  if (branchId) companySpendQuery = companySpendQuery.eq("branch_id", branchId);
-
-  const [{ data: orders }, { data: spendRows }, { data: companyRows }] =
-    await Promise.all([orderQuery, spendQuery, companySpendQuery]);
-  const orderRows = orders ?? [];
-  const spend = spendRows ?? [];
-  const companySpend = companyRows ?? [];
-
-  // ── Spend, and how much of it we actually believe ──────────────────────────
-  let actualTotal = 0;
-  let budgetOnlyTotal = 0;
-  const spendDays = new Set<string>();
-  const spendByBuyer = new Map<string, number>();
-
-  for (const row of spend as any[]) {
-    const actual = money(row.actual_spent);
-    const budget = money(row.budget_given);
-    const amount = actual > 0 ? actual : budget;
-    if (actual > 0) actualTotal += actual;
-    else if (budget > 0) budgetOnlyTotal += budget;
-    if (amount > 0) {
-      spendDays.add(String(row.spend_date));
-      const key = String(row.marketer_tag ?? "").trim().toLowerCase() || "__unattributed__";
-      spendByBuyer.set(key, (spendByBuyer.get(key) ?? 0) + amount);
-    }
+  let buyer = supabase
+    .from("marketing_spend_records")
+    .select("spend_date, marketer_tag, platform, campaign, product_id, budget_given, actual_spent")
+    .eq("org_id", orgId)
+    .gte("spend_date", from)
+    .lte("spend_date", to);
+  let carts = supabase
+    .from("abandoned_carts")
+    .select("id, product_id")
+    .eq("org_id", orgId)
+    .is("merged_into", null)
+    .gte("created_at", lagosStart(from))
+    .lte("created_at", lagosEnd(to));
+  if (branchId) {
+    orders = orders.eq("branch_id", branchId);
+    company = company.eq("branch_id", branchId);
+    buyer = buyer.eq("branch_id", branchId);
+    carts = carts.eq("branch_id", branchId);
   }
+  const [o, c, b, k] = await Promise.all([orders, company, buyer, carts]);
+  for (const result of [o, c, b, k]) if (result.error) throw new Error(result.error.message);
+  return { orders: o.data ?? [], companySpend: c.data ?? [], buyerSpend: b.data ?? [], carts: k.data ?? [] };
+}
 
-  // ⚠️ COMPANY ADVERTISING COUNTS AS MONEY ACTUALLY SPENT. It is an expense
-  // already paid, not a budget handed to somebody, so it does not weaken the
-  // basis the way an unmatched buyer budget does.
+const matchesFilters = (order: any, f: PerformanceFilters) =>
+  (!f.productId || order.product_id === f.productId)
+  && (!f.campaign || clean(order.utm_campaign) === f.campaign)
+  && (!f.source || sourceKeyOf(order) === f.source.toLowerCase())
+  && (!f.mediaBuyer || mediaBuyerOf(order).toLowerCase() === f.mediaBuyer.toLowerCase());
+
+function computeTotals(data: PeriodData, from: string, to: string, f: PerformanceFilters): PerformanceTotals {
+  const orders = data.orders.filter((order) => matchesFilters(order, f));
+  const splitFilter = Boolean(f.campaign || f.source || f.mediaBuyer);
+  const organicSourceFilter = Boolean(f.source && ORGANIC_SOURCES.has(f.source.toLowerCase()));
+
+  // ── Spend ─────────────────────────────────────────────────────────────────
+  const spendDays = new Set<string>();
   let companyTotal = 0;
-  const companyByProduct = new Map<string, number>();
-  for (const row of companySpend as any[]) {
+  for (const row of data.companySpend) {
+    if (f.productId && row.product_id !== f.productId) continue;
     const amount = money(row.amount);
     if (amount <= 0) continue;
     companyTotal += amount;
     spendDays.add(String(row.date));
-    const key = String(row.product_id ?? "").trim();
-    if (key) companyByProduct.set(key, (companyByProduct.get(key) ?? 0) + amount);
   }
-  actualTotal += companyTotal;
 
-  const adSpendTotal = actualTotal + budgetOnlyTotal;
-  const spendBasis: SpendBasis =
-    adSpendTotal === 0 ? "none"
-      : budgetOnlyTotal === 0 ? "actual"
-      : actualTotal === 0 ? "budget"
-      : "mixed";
-  // ⚠️ NULL, NOT ZERO. Nothing downstream may divide by a spend nobody entered.
-  const adSpend = spendBasis === "none" ? null : adSpendTotal;
+  let buyerActual = 0;
+  let buyerBudgetOnly = 0;
+  let buyerRows = 0;
+  for (const row of data.buyerSpend) {
+    if (f.productId && row.product_id && row.product_id !== f.productId) continue;
+    if (f.campaign && clean(row.campaign) !== f.campaign) continue;
+    if (f.mediaBuyer && clean(row.marketer_tag).toLowerCase() !== f.mediaBuyer.toLowerCase()) continue;
+    if (f.source && clean(row.platform).toLowerCase() !== f.source.toLowerCase()) continue;
+    const actual = money(row.actual_spent);
+    const budget = money(row.budget_given);
+    if (actual > 0) buyerActual += actual;
+    else if (budget > 0) buyerBudgetOnly += budget;
+    else continue;
+    buyerRows += 1;
+    spendDays.add(String(row.spend_date));
+  }
+
+  // Company spend cannot be split by platform, campaign or buyer, so under one
+  // of those filters its share is unknown - unless the filter is an organic
+  // source, whose ad spend is genuinely nothing.
+  const spendNotSplittable = splitFilter && !organicSourceFilter && companyTotal > 0;
+  const usableCompany = splitFilter ? 0 : companyTotal;
+  const buyerSpendTotal = buyerActual + buyerBudgetOnly;
+  const knownTotal = usableCompany + buyerSpendTotal;
+
+  let adSpend: number | null;
+  let spendBasis: SpendBasis;
+  if (organicSourceFilter) {
+    adSpend = 0;
+    spendBasis = "actual";
+  } else if (spendNotSplittable || knownTotal <= 0) {
+    adSpend = null;
+    spendBasis = "none";
+  } else {
+    adSpend = knownTotal;
+    const actualPart = usableCompany + buyerActual;
+    spendBasis = buyerBudgetOnly === 0 ? "actual" : actualPart === 0 ? "budget" : "mixed";
+  }
 
   // ── Orders ────────────────────────────────────────────────────────────────
-  let ordersPlaced = 0, confirmed = 0, delivered = 0, lost = 0;
-  let deliveredRevenue = 0, productCost = 0, deliveryCost = 0;
-  const buyers = new Map<string, BuyerRow>();
-
-  for (const order of orderRows as any[]) {
+  let confirmed = 0, delivered = 0, lost = 0;
+  let placedValue = 0, deliveredRevenue = 0, productCost = 0, deliveryCost = 0;
+  for (const order of orders) {
     const status = String(order.status ?? "");
-    const { key, label } = buyerKeyFor(order);
-    if (!buyers.has(key)) {
-      buyers.set(key, {
-        key, label, ordersPlaced: 0, confirmed: 0, delivered: 0, deliveredRevenue: 0,
-        adSpend: null, trueNetProfit: null, margin: null, roas: null,
-        costPerDeliveredOrder: null, deliveryRate: null
-      });
-    }
-    const buyer = buyers.get(key)!;
-
-    ordersPlaced += 1;
-    buyer.ordersPlaced += 1;
-    if (CONFIRMED_STATUSES.includes(status)) { confirmed += 1; buyer.confirmed += 1; }
+    placedValue += money(order.amount);
+    if (CONFIRMED_STATUSES.includes(status)) confirmed += 1;
     if (LOST_STATUSES.includes(status)) lost += 1;
-
     if (status === DELIVERED) {
       delivered += 1;
-      buyer.delivered += 1;
-      const revenue = money(order.amount);
-      deliveredRevenue += revenue;
-      buyer.deliveredRevenue += revenue;
-      // ⚠️ THE FROZEN COST, NOT TODAY'S. cogs_snapshot is what the order really
-      // cost when it shipped; reading live product cost would restate history
-      // every time somebody edits a price.
+      deliveredRevenue += money(order.amount);
+      // ⚠️ THE FROZEN COST. cogs_snapshot is what the order cost when it
+      // shipped; live product cost would restate history on every price edit.
       productCost += money(order.cogs_snapshot);
       deliveryCost += money(order.logistics_cost);
     }
   }
+  const ordersPlaced = orders.length;
+  const confirmedPending = Math.max(0, confirmed - delivered);
+  const awaitingConfirmation = Math.max(0, ordersPlaced - confirmed - lost);
 
-  const buyerRows = [...buyers.values()].map((buyer) => {
-    const buyerSpend = spendByBuyer.get(buyer.key) ?? null;
-    const spendKnown = buyerSpend !== null && buyerSpend > 0;
-    // A buyer's own costs are not split out per order here, so their profit is
-    // revenue less their ads only when we know what they spent.
-    const profit = spendKnown ? buyer.deliveredRevenue - buyerSpend! : null;
-    return {
-      ...buyer,
-      adSpend: spendKnown ? buyerSpend : null,
-      trueNetProfit: profit,
-      margin: profit !== null ? ratio(profit, buyer.deliveredRevenue) : null,
-      roas: spendKnown ? ratio(buyer.deliveredRevenue, buyerSpend!) : null,
-      costPerDeliveredOrder: spendKnown ? ratio(buyerSpend!, buyer.delivered) : null,
-      deliveryRate: ratio(buyer.delivered, buyer.ordersPlaced)
-    };
-  }).sort((a, b) =>
-    (b.trueNetProfit ?? Number.NEGATIVE_INFINITY) - (a.trueNetProfit ?? Number.NEGATIVE_INFINITY)
-    || b.deliveredRevenue - a.deliveredRevenue);
+  // ── Leads: checkouts started ──────────────────────────────────────────────
+  // A cart knows its product, so leads follow a product filter. It does not
+  // reliably carry a campaign, platform or buyer, so under those filters the
+  // count is unknown rather than wrong.
+  const leads = splitFilter
+    ? null
+    : data.carts.filter((cart) => !f.productId || cart.product_id === f.productId).length;
 
   const grossAfterCosts = deliveredRevenue - productCost - deliveryCost;
   const trueNetProfit = adSpend === null ? null : grossAfterCosts - adSpend;
+  const costPerDeliveredOrder = adSpend === null ? null : ratio(adSpend, delivered);
+  const breakEvenCostPerDelivered = ratio(grossAfterCosts, delivered);
   const periodDays = daysBetween(from, to);
 
   return {
-    totals: {
+    adSpend,
+    spendBasis,
+    spendRecords: data.companySpend.length + buyerRows,
+    companySpend: usableCompany,
+    buyerSpend: buyerSpendTotal,
+    spendNotSplittable,
+    daysWithoutSpend: Math.max(0, periodDays - spendDays.size),
+    periodDays,
+
+    leads,
+    ordersPlaced,
+    placedValue,
+    confirmed,
+    delivered,
+    confirmedPending,
+    awaitingConfirmation,
+    lost,
+    deliveredRevenue,
+    productCost,
+    deliveryCost,
+    trueNetProfit,
+    profitMargin: trueNetProfit === null ? null : ratio(trueNetProfit, deliveredRevenue),
+
+    costPerLead: adSpend === null || leads === null ? null : ratio(adSpend, leads),
+    costPerOrder: adSpend === null ? null : ratio(adSpend, ordersPlaced),
+    costPerConfirmed: adSpend === null ? null : ratio(adSpend, confirmed),
+    costPerDeliveredOrder,
+    placedAov: ratio(placedValue, ordersPlaced),
+    deliveredAov: ratio(deliveredRevenue, delivered),
+    roas: adSpend === null || adSpend === 0 ? null : ratio(deliveredRevenue, adSpend),
+    breakEvenCostPerDelivered,
+    breakEvenHeadroom:
+      costPerDeliveredOrder !== null && breakEvenCostPerDelivered !== null && breakEvenCostPerDelivered > 0
+        ? (breakEvenCostPerDelivered - costPerDeliveredOrder) / breakEvenCostPerDelivered
+        : null,
+
+    leadToOrderRate: leads === null ? null : ratio(ordersPlaced, leads),
+    confirmationRate: ratio(confirmed, ordersPlaced),
+    deliveryRateOfConfirmed: ratio(delivered, confirmed)
+  };
+}
+
+function computeLeaderboard(data: PeriodData, f: PerformanceFilters): LeaderboardRow[] {
+  const orders = data.orders.filter((order) => matchesFilters(order, f));
+  const companySpendInPeriod = data.companySpend.some((row) => money(row.amount) > 0);
+
+  const buyerSpendByPlatform = new Map<string, number>();
+  for (const row of data.buyerSpend) {
+    const amount = money(row.actual_spent) || money(row.budget_given);
+    if (amount <= 0) continue;
+    const key = clean(row.platform).toLowerCase();
+    buyerSpendByPlatform.set(key, (buyerSpendByPlatform.get(key) ?? 0) + amount);
+  }
+
+  type Acc = {
+    key: string; campaigns: Set<string>; products: Set<string>;
+    placed: number; confirmed: number; delivered: number;
+    revenue: number; productCost: number; deliveryCost: number;
+  };
+  const groups = new Map<string, Acc>();
+  for (const order of orders) {
+    const key = sourceKeyOf(order);
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key, campaigns: new Set(), products: new Set(),
+        placed: 0, confirmed: 0, delivered: 0, revenue: 0, productCost: 0, deliveryCost: 0
+      });
+    }
+    const g = groups.get(key)!;
+    const status = String(order.status ?? "");
+    g.placed += 1;
+    if (clean(order.utm_campaign)) g.campaigns.add(clean(order.utm_campaign));
+    if (order.product_id) g.products.add(order.product_id);
+    if (CONFIRMED_STATUSES.includes(status)) g.confirmed += 1;
+    if (status === DELIVERED) {
+      g.delivered += 1;
+      g.revenue += money(order.amount);
+      g.productCost += money(order.cogs_snapshot);
+      g.deliveryCost += money(order.logistics_cost);
+    }
+  }
+
+  const rows: LeaderboardRow[] = [...groups.values()].map((g) => {
+    const kind: LeaderboardRow["kind"] = !g.key ? "unattributed" : ORGANIC_SOURCES.has(g.key) ? "organic" : "paid";
+
+    // Organic spend is a known zero. A paid platform's spend is only known when
+    // it was recorded against that platform AND no unsplit company spend exists
+    // for the period - otherwise part of the company's money is theirs and
+    // nobody wrote down how much.
+    let adSpend: number | null = null;
+    if (kind === "organic") adSpend = 0;
+    else if (kind === "paid" && !companySpendInPeriod) {
+      const recorded = buyerSpendByPlatform.get(g.key) ?? buyerSpendByPlatform.get(platformLabel(g.key).toLowerCase());
+      adSpend = recorded && recorded > 0 ? recorded : null;
+    }
+
+    const netProfit = adSpend === null ? null : g.revenue - g.productCost - g.deliveryCost - adSpend;
+    const status: LeaderboardStatus =
+      kind === "unattributed" ? "check_tag"
+        : kind === "organic" ? "high_value"
+        : adSpend === null ? "spend_unknown"
+        : (netProfit ?? 0) > 0 ? "profitable" : "losing";
+
+    return {
+      key: g.key || "__unattributed__",
+      label: platformLabel(g.key),
+      kind,
+      campaigns: g.campaigns.size,
+      products: g.products.size,
+      ordersPlaced: g.placed,
+      confirmed: g.confirmed,
+      confirmationRate: ratio(g.confirmed, g.placed),
+      delivered: g.delivered,
+      deliveryRate: ratio(g.delivered, g.placed),
       adSpend,
-      spendBasis,
-      spendRecords: spend.length + companySpend.length,
-      companySpend: companyTotal,
-      buyerSpend: adSpendTotal - companyTotal,
-      daysWithoutSpend: Math.max(0, periodDays - spendDays.size),
-      periodDays,
+      costPerDeliveredOrder: adSpend === null ? null : adSpend === 0 ? 0 : ratio(adSpend, g.delivered),
+      deliveredAov: ratio(g.revenue, g.delivered),
+      deliveredRevenue: g.revenue,
+      netProfit,
+      margin: netProfit === null ? null : ratio(netProfit, g.revenue),
+      roas: adSpend ? ratio(g.revenue, adSpend) : null,
+      status
+    };
+  });
 
-      ordersPlaced, confirmed, delivered, lost,
-      deliveredRevenue, productCost, deliveryCost,
-      trueNetProfit,
+  // Ranked by delivered revenue: it is known for every row, whereas profit is
+  // known only where ad spend is. Unattributed always sits last - it is a row
+  // to fix, not a row to rank.
+  return rows.sort((a, b) =>
+    (a.kind === "unattributed" ? 1 : 0) - (b.kind === "unattributed" ? 1 : 0)
+    || b.deliveredRevenue - a.deliveredRevenue);
+}
 
-      confirmationRate: ratio(confirmed, ordersPlaced),
-      deliveryRate: ratio(delivered, ordersPlaced),
-      costPerOrder: adSpend === null ? null : ratio(adSpend, ordersPlaced),
-      costPerDeliveredOrder: adSpend === null ? null : ratio(adSpend, delivered),
-      deliveredAov: ratio(deliveredRevenue, delivered),
-      placedAov: ratio(deliveredRevenue, ordersPlaced),
-      roas: adSpend === null ? null : ratio(deliveredRevenue, adSpend),
-      // What one delivered order can cost in ads before the period stops paying.
-      breakEvenCostPerDelivered: ratio(grossAfterCosts, delivered)
-    },
-    buyers: buyerRows
+function filterOptions(data: PeriodData): FilterOptions {
+  const products = new Map<string, string>();
+  const campaigns = new Set<string>();
+  const sources = new Set<string>();
+  const buyers = new Set<string>();
+  for (const order of data.orders) {
+    if (order.product_id) products.set(order.product_id, clean(order.product_name) || "Unnamed product");
+    if (clean(order.utm_campaign)) campaigns.add(clean(order.utm_campaign));
+    const source = clean(order.source) || clean(order.utm_source);
+    if (source) sources.add(source);
+    const buyer = mediaBuyerOf(order);
+    if (buyer) buyers.add(buyer);
+  }
+  return {
+    products: [...products.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name)),
+    campaigns: [...campaigns].sort(),
+    sources: [...sources].sort(),
+    mediaBuyers: [...buyers].sort()
+  };
+}
+
+const change = (now: number | null, before: number | null) =>
+  now === null || before === null || before === 0 ? null : (now - before) / Math.abs(before);
+
+export async function loadMarketingPerformance(
+  orgId: string,
+  branchId: string | null,
+  from: string,
+  to: string,
+  filters: PerformanceFilters = {}
+) {
+  const prev = previousPeriod(from, to);
+  const [current, before] = await Promise.all([
+    fetchPeriod(orgId, branchId, from, to),
+    fetchPeriod(orgId, branchId, prev.from, prev.to)
+  ]);
+
+  const totals = computeTotals(current, from, to, filters);
+  const previous = computeTotals(before, prev.from, prev.to, filters);
+
+  const deltas: PerformanceDeltas = {
+    adSpend: change(totals.adSpend, previous.adSpend),
+    ordersPlaced: change(totals.ordersPlaced, previous.ordersPlaced),
+    deliveredRevenue: change(totals.deliveredRevenue, previous.deliveredRevenue),
+    costPerOrder: change(totals.costPerOrder, previous.costPerOrder),
+    costPerDeliveredOrder: change(totals.costPerDeliveredOrder, previous.costPerDeliveredOrder),
+    placedAov: change(totals.placedAov, previous.placedAov),
+    deliveredAov: change(totals.deliveredAov, previous.deliveredAov),
+    roas: change(totals.roas, previous.roas)
+  };
+
+  return {
+    previousFrom: prev.from,
+    previousTo: prev.to,
+    totals,
+    deltas,
+    leaderboard: computeLeaderboard(current, filters),
+    options: filterOptions(current)
   };
 }

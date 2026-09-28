@@ -370,8 +370,20 @@ router.get("/performance", requireRole(...READ_ROLES), async (req, res) => {
   }
   if (to < from) { res.status(400).json({ error: "The end date is before the start date." }); return; }
 
+  // The four filters the design shows. Each is optional; an empty value means
+  // "all". Trimmed and capped because they arrive straight from the URL.
+  const pick = (name: string) => {
+    const value = String(req.query[name] ?? "").trim().slice(0, 200);
+    return value || null;
+  };
+
   try {
-    const result = await loadMarketingPerformance(req.user!.orgId, req.user!.branchId ?? null, from, to);
+    const result = await loadMarketingPerformance(req.user!.orgId, req.user!.branchId ?? null, from, to, {
+      productId: pick("productId"),
+      campaign: pick("campaign"),
+      source: pick("source"),
+      mediaBuyer: pick("mediaBuyer")
+    });
     res.json({ from, to, ...result });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not work out marketing performance." });

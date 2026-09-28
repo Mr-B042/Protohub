@@ -3295,57 +3295,103 @@ export const marketingLinkVariantsApi = {
 };
 
 // ── Marketing Spend Ledger ───────────────────────────────
+export type MarketingPerformanceFilters = {
+  productId?: string;
+  campaign?: string;
+  source?: string;
+  mediaBuyer?: string;
+};
+
+export type MarketingLeaderboardRow = {
+  key: string;
+  label: string;
+  kind: "paid" | "organic" | "unattributed";
+  campaigns: number;
+  products: number;
+  ordersPlaced: number;
+  confirmed: number;
+  confirmationRate: number | null;
+  delivered: number;
+  deliveryRate: number | null;
+  adSpend: number | null;
+  costPerDeliveredOrder: number | null;
+  deliveredAov: number | null;
+  deliveredRevenue: number;
+  netProfit: number | null;
+  margin: number | null;
+  roas: number | null;
+  status: "profitable" | "losing" | "high_value" | "check_tag" | "spend_unknown";
+};
+
 export type MarketingPerformance = {
   from: string;
   to: string;
+  previousFrom: string;
+  previousTo: string;
   totals: {
-    /** ⚠️ null means nobody recorded any spend - never treat it as zero. */
+    /** ⚠️ null means the spend is not known - never treat it as zero. */
     adSpend: number | null;
     spendBasis: "actual" | "budget" | "mixed" | "none";
     spendRecords: number;
-    /** The company's own advertising, from the Ad Spend page. */
     companySpend: number;
-    /** What media buyers recorded against their own budgets. */
     buyerSpend: number;
+    /** A filter asked for a split the spend was never recorded at. */
+    spendNotSplittable: boolean;
     daysWithoutSpend: number;
     periodDays: number;
+    leads: number | null;
     ordersPlaced: number;
+    placedValue: number;
     confirmed: number;
     delivered: number;
+    confirmedPending: number;
+    awaitingConfirmation: number;
     lost: number;
     deliveredRevenue: number;
     productCost: number;
     deliveryCost: number;
     trueNetProfit: number | null;
-    confirmationRate: number | null;
-    deliveryRate: number | null;
+    profitMargin: number | null;
+    costPerLead: number | null;
     costPerOrder: number | null;
+    costPerConfirmed: number | null;
     costPerDeliveredOrder: number | null;
-    deliveredAov: number | null;
     placedAov: number | null;
+    deliveredAov: number | null;
     roas: number | null;
     breakEvenCostPerDelivered: number | null;
+    breakEvenHeadroom: number | null;
+    leadToOrderRate: number | null;
+    confirmationRate: number | null;
+    deliveryRateOfConfirmed: number | null;
   };
-  buyers: Array<{
-    key: string;
-    label: string;
-    ordersPlaced: number;
-    confirmed: number;
-    delivered: number;
-    deliveredRevenue: number;
+  /** Change against the same number of days just before; null when not comparable. */
+  deltas: {
     adSpend: number | null;
-    trueNetProfit: number | null;
-    margin: number | null;
-    roas: number | null;
+    ordersPlaced: number | null;
+    deliveredRevenue: number | null;
+    costPerOrder: number | null;
     costPerDeliveredOrder: number | null;
-    deliveryRate: number | null;
-  }>;
+    placedAov: number | null;
+    deliveredAov: number | null;
+    roas: number | null;
+  };
+  leaderboard: MarketingLeaderboardRow[];
+  options: {
+    products: Array<{ id: string; name: string }>;
+    campaigns: string[];
+    sources: string[];
+    mediaBuyers: string[];
+  };
 };
 
 export const marketingSpendApi = {
   /** Ad spend through to profit for one period. */
-  performance: (from: string, to: string) =>
-    get<MarketingPerformance>(`/api/marketing-spend/performance?from=${from}&to=${to}`),
+  performance: (from: string, to: string, filters: MarketingPerformanceFilters = {}) => {
+    const qs = new URLSearchParams({ from, to });
+    for (const [key, value] of Object.entries(filters)) if (value) qs.set(key, value);
+    return get<MarketingPerformance>(`/api/marketing-spend/performance?${qs.toString()}`);
+  },
   list: (params?: { from?: string; to?: string; productId?: string; marketerUserId?: string }) => {
     const qs = new URLSearchParams();
     if (params?.from) qs.set("from", params.from);
@@ -3795,7 +3841,7 @@ export const publicOrdersApi = {
       method: "POST",
       keepalive: true,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ submissionKey: crypto.randomUUID(), ...(body as Record<string, unknown>) })
+      body: JSON.stringify(body)
     });
     if (!res.ok) {
       const payload = await res.json().catch(() => ({ error: res.statusText }));
