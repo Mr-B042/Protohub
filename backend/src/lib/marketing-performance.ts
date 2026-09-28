@@ -505,13 +505,25 @@ function filterOptions(data: PeriodData): FilterOptions {
 const change = (now: number | null, before: number | null) =>
   now === null || before === null || before === 0 ? null : (now - before) / Math.abs(before);
 
+/** Today's date in Lagos (UTC+1, no daylight saving). */
+export const lagosToday = () => new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 10);
+
 export async function loadMarketingPerformance(
   orgId: string,
   branchId: string | null,
   from: string,
-  to: string,
+  requestedTo: string,
   filters: PerformanceFilters = {}
 ) {
+  // ⚠️ COUNT TO TODAY, NOT TO THE END OF THE WINDOW. The shared date presets
+  // return whole periods - "This Month" is the 1st to the 30th, days that have
+  // not happened yet included. That is right for listing orders and wrong here:
+  // 28 real days would be compared with 30 full ones, every "vs previous
+  // period" would read as a fall, and the empty future days would count as
+  // days with no ad spend. So the period stops at today, and the comparison is
+  // the same number of days just before it.
+  const today = lagosToday();
+  const to = requestedTo > today && from <= today ? today : requestedTo;
   const prev = previousPeriod(from, to);
   const [current, before] = await Promise.all([
     fetchPeriod(orgId, branchId, from, to),
@@ -535,6 +547,7 @@ export async function loadMarketingPerformance(
   };
 
   return {
+    countedTo: to,
     previousFrom: prev.from,
     previousTo: prev.to,
     totals,
@@ -542,4 +555,40 @@ export async function loadMarketingPerformance(
     leaderboard: computeLeaderboard(current, filters),
     options: filterOptions(current)
   };
+}
+
+
+/**
+ * Orders placed per Lagos day, under the same filters as the page.
+ *
+ * Feeds the counts on the period shortcuts. The server returns plain days and
+ * the screen adds them up per shortcut, so what "This Week" or "Last Month"
+ * means is defined in ONE place - the shared date presets - and cannot drift
+ * between the count on the button and the period the button opens.
+ */
+export async function loadDailyOrderCounts(
+  orgId: string,
+  branchId: string | null,
+  from: string,
+  to: string,
+  filters: PerformanceFilters = {}
+): Promise<Record<string, number>> {
+  let query = supabase
+    .from("orders")
+    .select("created_at, product_id, source, utm_source, utm_campaign, media_buyer:form_context->>media_buyer")
+    .eq("org_id", orgId)
+    .gte("created_at", lagosStart(from))
+    .lte("created_at", lagosEnd(to));
+  if (branchId) query = query.eq("branch_id", branchId);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+
+  const days: Record<string, number> = {};
+  for (const row of (data ?? []) as any[]) {
+    const order = { ...row, form_context: { media_buyer: row.media_buyer } };
+    if (!matchesFilters(order, filters)) continue;
+    const day = new Date(Date.parse(row.created_at) + 60 * 60 * 1000).toISOString().slice(0, 10);
+    days[day] = (days[day] ?? 0) + 1;
+  }
+  return days;
 }

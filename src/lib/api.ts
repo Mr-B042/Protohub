@@ -3326,6 +3326,8 @@ export type MarketingLeaderboardRow = {
 export type MarketingPerformance = {
   from: string;
   to: string;
+  /** The last day actually counted - today, when the window runs past it. */
+  countedTo: string;
   previousFrom: string;
   previousTo: string;
   totals: {
@@ -3401,6 +3403,12 @@ export const marketingSpendApi = {
     const qs = new URLSearchParams({ from, to });
     for (const [key, value] of Object.entries(filters)) if (value) qs.set(key, value);
     return get<MarketingPerformance>(`/api/marketing-spend/performance?${qs.toString()}`);
+  },
+  /** Orders placed per day under the page's filters - the period shortcut counts. */
+  orderCounts: (from: string, to: string, filters: MarketingPerformanceFilters = {}) => {
+    const qs = new URLSearchParams({ from, to });
+    for (const [key, value] of Object.entries(filters)) if (value) qs.set(key, value);
+    return get<{ days: Record<string, number> }>(`/api/marketing-spend/order-counts?${qs.toString()}`);
   },
   list: (params?: { from?: string; to?: string; productId?: string; marketerUserId?: string }) => {
     const qs = new URLSearchParams();
