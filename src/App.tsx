@@ -88221,6 +88221,10 @@ ${waybillLineItems(w).length > 1
                                 <div className="text-gray-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.revenue, 0))}</div>
                               </div>
                               <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Logistics Fees</span>
+                                <div className="font-semibold text-purple-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.logisticsCost, 0))}</div>
+                              </div>
+                              <div>
                                 <span className="text-[10px] uppercase tracking-wider text-gray-400">Expected</span>
                                 <div className="font-semibold text-blue-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.expected, 0))}</div>
                               </div>
@@ -88241,12 +88245,12 @@ ${waybillLineItems(w).length > 1
                       <table className="w-full text-sm sticky-col-first">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                            {["Logistics Partner", "Orders", "Expected", "Cash Received", "Outstanding", "Last Cash Received", "Aging", "Receipts", "Status", "Action"].map((h) => <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>)}
+                            {["Logistics Partner", "Orders", "Logistics Fees", "Expected", "Cash Received", "Outstanding", "Last Cash Received", "Aging", "Receipts", "Status", "Action"].map((h) => <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>)}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
                           {remittancePartnerPageRows.length === 0 ? (
-                            <tr><td colSpan={10} className="px-4 py-12 text-center text-sm text-gray-400 italic">No partners match this view.</td></tr>
+                            <tr><td colSpan={11} className="px-4 py-12 text-center text-sm text-gray-400 italic">No partners match this view.</td></tr>
                           ) : (
                             remittancePartnerPageRows.map((row) => {
                               const openedCount = row.orders.filter((o) => o.remittanceEditOpen).length;
@@ -88280,6 +88284,7 @@ ${waybillLineItems(w).length > 1
                                     </div>
                                   </td>
                                   <td className="px-4 py-4 text-gray-700">{row.orderCount}</td>
+                                  <td className="px-4 py-4 font-semibold text-purple-600">{formatMoney(row.logisticsCost)}</td>
                                   <td className="px-4 py-4 font-semibold text-[#1F8FE0]">{formatMoney(row.expected)}</td>
                                   <td className="px-4 py-4 font-semibold text-green-600">{formatMoney(row.remitted)}</td>
                                   <td className={`px-4 py-4 font-bold ${row.outstanding > 0 ? "text-orange-600" : "text-gray-400"}`}>{formatMoney(row.outstanding)}</td>
@@ -88374,6 +88379,7 @@ ${waybillLineItems(w).length > 1
                             <tr className="bg-gray-50 font-bold border-t border-gray-200">
                               <td className="px-4 py-3 text-gray-900">Total{filteredRemittanceRows.length > remittancePartnerPageRows.length ? " (all pages)" : ""}</td>
                               <td className="px-4 py-3 text-gray-700">{filteredRemittanceRows.reduce((s, r) => s + r.orderCount, 0)}</td>
+                              <td className="px-4 py-3 text-purple-600">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.logisticsCost, 0))}</td>
                               <td className="px-4 py-3 text-[#1F8FE0]">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.expected, 0))}</td>
                               <td className="px-4 py-3 text-green-600">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.remitted, 0))}</td>
                               <td className="px-4 py-3 text-orange-600">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.outstanding, 0))}</td>
