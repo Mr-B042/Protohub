@@ -24,6 +24,13 @@
  */
 
 import { supabase } from "./supabase.js";
+import {
+  buildProductBonusConfigMap, buildWeeklyBonusContextMap, computeOrderBonus, sundayWeekStartForDateKey,
+  weeklyBonusContextForOrder, type PayrollOrder
+} from "./payroll-calculator.js";
+import {
+  SALES_BONUS_LAUNCH_WEEK_START, attributeRuleSettlementToOrders, getSalesBonusProgress
+} from "./sales-bonus-engine.js";
 
 const DELIVERED = "Delivered";
 const CONFIRMED_STATUSES = ["Confirmed", "In Process", "Dispatched", "Delivered"];
@@ -126,6 +133,23 @@ export type PerformanceTotals = {
    * that needs them is.
    */
   profitPerDeliveredOrder: number | null;
+  /** Rep bonuses earned on these delivered orders - both bonus systems. */
+  repBonuses: number;
+  /**
+   * Running costs dated in the period: salaries, waybill, airtime, other - every
+   * expense except ads, delivery and failed delivery, which are already in
+   * contribution. Under a filter, this selection's share only (see overheadShared).
+   */
+  overheadByCategory: Array<{ category: string; amount: number }>;
+  overheadCost: number;
+  /** True when running costs were split by share of delivered revenue. */
+  overheadShared: boolean;
+  /** True when the bonus rules could not be worked out; net is then unknown. */
+  bonusesUnavailable: boolean;
+  /** Contribution profit less rep bonuses and running costs. */
+  netProfit: number | null;
+  /** Average net profit per delivered order - after salaries and running costs. */
+  netProfitPerDeliveredOrder: number | null;
 
   /** Placed as a share of leads - the funnel's first conversion. */
   leadToOrderRate: number | null;
@@ -185,6 +209,7 @@ export type PerformanceDeltas = {
   avgDeliveryCost: number | null;
   totalCostToDeliver: number | null;
   profitPerDeliveredOrder: number | null;
+  netProfitPerDeliveredOrder: number | null;
   /** Percentage POINTS, not a percent of a percent: 55% -> 60% is +0.05. */
   deliveryRate: number | null;
 };
@@ -227,7 +252,24 @@ type PeriodData = {
   carts: any[];
   /** Failed-delivery fees in the period, each joined to the order it was for. */
   failedDeliveries: Array<{ amount: number; order: any | null }>;
+  /** Every other expense in the period - the running costs. */
+  overhead: Array<{ category: string; amount: number }>;
+  /** Every order in the Sunday weeks the period touches - see fetchPeriod. */
+  weekOrders: PayrollOrder[];
+  /** Rep bonus per order id, filled in by the loader. */
+  bonusByOrderId: Map<string, number>;
+  bonusesUnavailable?: boolean;
 };
+
+/** Expenses already inside contribution, so never counted as running costs. */
+const CONTRIBUTION_CATEGORIES = ["Ad Spend", "Delivery", "Failed Delivery"];
+
+const BONUS_ORDER_COLUMNS =
+  "id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, "
+  + "manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, date";
+
+const addDays = (dateKey: string, days: number) =>
+  new Date(Date.parse(`${dateKey}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 
 /**
  * ⚠️ "Delivery" EXPENSES ARE NOT READ, ON PURPOSE. Each one is the same money
@@ -281,8 +323,34 @@ async function fetchPeriod(orgId: string, branchId: string | null, from: string,
     .lte("date", to);
   if (branchId) failed = failed.eq("branch_id", branchId);
 
-  const [o, c, b, k, f] = await Promise.all([orders, company, buyer, carts, failed]);
-  for (const result of [o, c, b, k, f]) if (result.error) throw new Error(result.error.message);
+  // Running costs. A null category is still money spent, so it is kept -
+  // `not.in` alone would silently drop it.
+  let overhead = supabase
+    .from("expenses")
+    .select("category, amount")
+    .eq("org_id", orgId)
+    .or(`category.is.null,category.not.in.(${CONTRIBUTION_CATEGORIES.map((c) => `"${c}"`).join(",")})`)
+    .gte("date", from)
+    .lte("date", to);
+  if (branchId) overhead = overhead.eq("branch_id", branchId);
+
+  // ⚠️ WHOLE WEEKS, NOT THE PERIOD. The per-product bonus depends on the rep's
+  // delivery rate for the Sunday week the order was placed in - the same rule
+  // payroll pays on. An order placed on the 1st shares its week with orders
+  // from the month before, so the period's orders alone would give the wrong
+  // rate and the wrong bonus. A day either side covers the Lagos/UTC shift.
+  const weekFrom = sundayWeekStartForDateKey(addDays(from, -1));
+  const weekTo = addDays(sundayWeekStartForDateKey(addDays(to, 1)), 7);
+  let weekOrders = supabase
+    .from("orders")
+    .select(BONUS_ORDER_COLUMNS)
+    .eq("org_id", orgId)
+    .gte("created_at", `${weekFrom}T00:00:00.000Z`)
+    .lt("created_at", `${weekTo}T00:00:00.000Z`);
+  if (branchId) weekOrders = weekOrders.eq("branch_id", branchId);
+
+  const [o, c, b, k, f, h, w] = await Promise.all([orders, company, buyer, carts, failed, overhead, weekOrders]);
+  for (const result of [o, c, b, k, f, h, w]) if (result.error) throw new Error(result.error.message);
 
   // The failed order may have been placed before the period began, so it is
   // looked up by id rather than found among this period's orders.
@@ -311,7 +379,13 @@ async function fetchPeriod(orgId: string, branchId: string | null, from: string,
       // An order that has since been deleted still cost the fee; keep the
       // product the expense itself recorded so a product filter still finds it.
       return { amount: money(row.amount), order: order ?? { product_id: row.product_id } };
-    })
+    }),
+    overhead: ((h.data ?? []) as any[]).map((row) => ({
+      category: String(row.category ?? "").trim() || "Uncategorised",
+      amount: money(row.amount)
+    })),
+    weekOrders: (w.data ?? []) as unknown as PayrollOrder[],
+    bonusByOrderId: new Map()
   };
 }
 
@@ -395,6 +469,28 @@ function computeTotals(data: PeriodData, from: string, to: string, f: Performanc
     }
   }
   const ordersPlaced = orders.length;
+
+  // ── Net: rep bonuses and running costs ────────────────────────────────────
+  let repBonuses = 0;
+  for (const order of orders) {
+    if (String(order.status ?? "") === DELIVERED) repBonuses += data.bonusByOrderId.get(String(order.id)) ?? 0;
+  }
+  // ⚠️ RUNNING COSTS BELONG TO THE WHOLE BUSINESS. Salaries and rent are not
+  // spent per product or per campaign, so a filtered view carries its share by
+  // delivered revenue - the same split the rep leaderboard's Net Profit uses.
+  const overheadShared = Boolean(f.productId || f.campaign || f.source || f.mediaBuyer);
+  const allDeliveredRevenue = data.orders
+    .filter((order) => String(order.status ?? "") === DELIVERED)
+    .reduce((sum, order) => sum + money(order.amount), 0);
+  const overheadShare = !overheadShared ? 1 : allDeliveredRevenue > 0 ? deliveredRevenue / allDeliveredRevenue : 0;
+  const byCategory = new Map<string, number>();
+  for (const row of data.overhead) byCategory.set(row.category, (byCategory.get(row.category) ?? 0) + row.amount);
+  const overheadByCategory = [...byCategory.entries()]
+    .map(([category, amount]) => ({ category, amount: amount * overheadShare }))
+    .filter((row) => row.amount !== 0)
+    .sort((a, b) => b.amount - a.amount);
+  const overheadCost = overheadByCategory.reduce((sum, row) => sum + row.amount, 0);
+
   const confirmedPending = Math.max(0, confirmed - delivered);
   const awaitingConfirmation = Math.max(0, ordersPlaced - confirmed - lost);
 
@@ -416,6 +512,8 @@ function computeTotals(data: PeriodData, from: string, to: string, f: Performanc
   // them out, so the cards cannot disagree with each other.
   const grossAfterCosts = deliveredRevenue - productCost - deliveryCost - failedDeliveryCost;
   const trueNetProfit = adSpend === null ? null : grossAfterCosts - adSpend;
+  // Unknown bonuses make net unknown - a guess here would read as a real figure.
+  const netProfit = trueNetProfit === null || data.bonusesUnavailable ? null : trueNetProfit - repBonuses - overheadCost;
   const costPerDeliveredOrder = adSpend === null ? null : ratio(adSpend, delivered);
   const breakEvenCostPerDelivered = ratio(grossAfterCosts, delivered);
   const avgDeliveryCost = ratio(deliveryCost, delivered);
@@ -471,6 +569,13 @@ function computeTotals(data: PeriodData, from: string, to: string, f: Performanc
     deliveredWithoutFee,
     failedDeliveryCost,
     profitPerDeliveredOrder: trueNetProfit === null ? null : ratio(trueNetProfit, delivered),
+    repBonuses,
+    overheadByCategory,
+    overheadCost,
+    overheadShared,
+    bonusesUnavailable: data.bonusesUnavailable === true,
+    netProfit,
+    netProfitPerDeliveredOrder: netProfit === null ? null : ratio(netProfit, delivered),
 
     leadToOrderRate: leads === null ? null : ratio(ordersPlaced, leads),
     confirmationRate: ratio(confirmed, ordersPlaced),
@@ -598,6 +703,115 @@ function filterOptions(data: PeriodData): FilterOptions {
 const change = (now: number | null, before: number | null) =>
   now === null || before === null || before === 0 ? null : (now - before) / Math.abs(before);
 
+/**
+ * The bonus rules for one Sunday week, kept for a few minutes.
+ *
+ * ⚠️ WHY A CACHE. Working out a week's rules takes about 1.5s, and this page
+ * asks again on every filter and date change - while the answer depends on
+ * neither. Five minutes keeps a fresh delivery from waiting long to show. The
+ * promise itself is kept, so two requests at once share one calculation.
+ */
+const RULE_WEEK_TTL_MS = 5 * 60_000;
+const ruleWeekCache = new Map<string, { at: number; progress: ReturnType<typeof getSalesBonusProgress> }>();
+
+function ruleWeekProgress(orgId: string, weekStart: string) {
+  const key = `${orgId}:${weekStart}`;
+  const now = Date.now();
+  const hit = ruleWeekCache.get(key);
+  if (hit && now - hit.at < RULE_WEEK_TTL_MS) return hit.progress;
+  for (const [cachedKey, entry] of ruleWeekCache) {
+    if (now - entry.at >= RULE_WEEK_TTL_MS) ruleWeekCache.delete(cachedKey);
+  }
+  const progress = getSalesBonusProgress(orgId, weekStart);
+  progress.catch(() => ruleWeekCache.delete(key));
+  ruleWeekCache.set(key, { at: now, progress });
+  return progress;
+}
+
+type RuleWeeks = Awaited<ReturnType<typeof getSalesBonusProgress>>[];
+
+/**
+ * The bonus rules for every Sunday week the periods touch, worked out from the
+ * dates alone - so it runs while the orders are still being fetched rather than
+ * after. Order dates are UTC days and a Lagos day starts at 23:00 UTC the day
+ * before, hence the day's margin at the start.
+ */
+async function ruleWeeksFor(orgId: string, periods: Array<{ from: string; to: string }>): Promise<RuleWeeks> {
+  const weeks = new Set<string>();
+  for (const period of periods) {
+    const last = sundayWeekStartForDateKey(period.to);
+    for (let week = sundayWeekStartForDateKey(addDays(period.from, -1)); week <= last; week = addDays(week, 7)) {
+      if (week >= SALES_BONUS_LAUNCH_WEEK_START) weeks.add(week);
+    }
+  }
+  const list = [...weeks];
+  const progresses: RuleWeeks = [];
+  // Four at a time: quick enough, without a burst of queries at the database.
+  for (let i = 0; i < list.length; i += 4) {
+    progresses.push(...await Promise.all(list.slice(i, i + 4).map((week) => ruleWeekProgress(orgId, week))));
+  }
+  return progresses;
+}
+
+/**
+ * Rep bonus per delivered order, from BOTH bonus systems - what the Dashboard's
+ * net profit takes out:
+ *   - the per-product bonus (products.bonus_config), on the rep's week, exactly
+ *     as payroll pays it;
+ *   - the newer bonus rules, attributed to the orders that earned them, by the
+ *     same split as perOrderBonusMapForDeliveredRange.
+ *
+ * ⚠️ ONLY THE WEEKS THIS PAGE'S ORDERS WERE PLACED IN. A rule's bonus belongs
+ * to the week the order was placed, so those weeks are all that is needed.
+ * Asking by delivery date instead meant every week since July - 87 seconds for
+ * one month on the first try.
+ *
+ * ⚠️ THE MANAGER'S WEEKLY BONUS IS NOT HERE. It is decided per week on the whole
+ * company's profit and delivery rate by delivery date, which this page, counting
+ * orders by the day they were placed, does not have. The card says so.
+ */
+async function attachRepBonuses(orgId: string, periods: PeriodData[], ruleWeeks: RuleWeeks | null) {
+  const { data: products, error } = await supabase.from("products").select("id, bonus_config").eq("org_id", orgId);
+  if (error) throw new Error(error.message);
+  const productMap = buildProductBonusConfigMap((products ?? []) as any[]);
+
+  // Delivered orders placed in either period - the only ones a bonus is kept for.
+  const amountById = new Map<string, number>();
+  for (const period of periods) {
+    const inPeriod = new Set(period.orders.map((order) => String(order.id)));
+    for (const order of period.weekOrders) {
+      if (order.status !== DELIVERED || !inPeriod.has(String(order.id))) continue;
+      amountById.set(String(order.id), Math.max(0, Number(order.amount ?? 0) || 0));
+    }
+  }
+
+  const ruleBonuses: Map<string, number> | null = ruleWeeks ? new Map() : null;
+  if (ruleBonuses && ruleWeeks) {
+    for (const progress of ruleWeeks) {
+      for (const rep of progress.reps) {
+        for (const rule of rep.rules) {
+          for (const [orderId, settlement] of attributeRuleSettlementToOrders(rule, amountById)) {
+            if (!amountById.has(orderId)) continue;
+            ruleBonuses.set(orderId, (ruleBonuses.get(orderId) ?? 0) + settlement.payable);
+          }
+        }
+      }
+    }
+  }
+
+  for (const period of periods) {
+    if (ruleBonuses === null) period.bonusesUnavailable = true;
+    const contexts = buildWeeklyBonusContextMap(period.weekOrders);
+    for (const order of period.weekOrders) {
+      if (order.status !== DELIVERED) continue;
+      const week = weeklyBonusContextForOrder(order, contexts);
+      const bonus = computeOrderBonus(order, productMap, week.rate, week.aov, week.count)
+        + (ruleBonuses?.get(String(order.id)) ?? 0);
+      if (bonus) period.bonusByOrderId.set(String(order.id), bonus);
+    }
+  }
+}
+
 /** Today's date in Lagos (UTC+1, no daylight saving). */
 export const lagosToday = () => new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 10);
 
@@ -618,10 +832,14 @@ export async function loadMarketingPerformance(
   const today = lagosToday();
   const to = requestedTo > today && from <= today ? today : requestedTo;
   const prev = previousPeriod(from, to);
-  const [current, before] = await Promise.all([
+  const [current, before, ruleWeeks] = await Promise.all([
     fetchPeriod(orgId, branchId, from, to),
-    fetchPeriod(orgId, branchId, prev.from, prev.to)
+    fetchPeriod(orgId, branchId, prev.from, prev.to),
+    // A failure here blanks net profit only, never the whole page.
+    ruleWeeksFor(orgId, [{ from, to }, prev]).catch(() => null)
   ]);
+
+  await attachRepBonuses(orgId, [current, before], ruleWeeks);
 
   const totals = computeTotals(current, from, to, filters);
   const previous = computeTotals(before, prev.from, prev.to, filters);
@@ -638,6 +856,7 @@ export async function loadMarketingPerformance(
     avgDeliveryCost: change(totals.avgDeliveryCost, previous.avgDeliveryCost),
     totalCostToDeliver: change(totals.totalCostToDeliver, previous.totalCostToDeliver),
     profitPerDeliveredOrder: change(totals.profitPerDeliveredOrder, previous.profitPerDeliveredOrder),
+    netProfitPerDeliveredOrder: change(totals.netProfitPerDeliveredOrder, previous.netProfitPerDeliveredOrder),
     deliveryRate: totals.deliveryRate === null || previous.deliveryRate === null
       ? null
       : totals.deliveryRate - previous.deliveryRate

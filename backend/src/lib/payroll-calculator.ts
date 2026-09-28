@@ -203,7 +203,7 @@ export const weekKeyForDateKey = (dateKey: string) => {
   return `${date.getFullYear()}-W${weekIdx}`;
 };
 
-const sundayWeekStartForDateKey = (dateKey: string) => {
+export const sundayWeekStartForDateKey = (dateKey: string) => {
   if (!dateKey) return "";
   const date = new Date(`${dateKey}T00:00:00Z`);
   if (Number.isNaN(date.getTime())) return "";
@@ -240,7 +240,7 @@ export const buildWeeklyBonusContextMap = (orders: PayrollOrder[]) => {
   return contexts;
 };
 
-const weeklyBonusContextForOrder = (order: PayrollOrder, contexts: Map<string, WeeklyBonusContext>) => {
+export const weeklyBonusContextForOrder = (order: PayrollOrder, contexts: Map<string, WeeklyBonusContext>) => {
   const weekStart = sundayWeekStartForDateKey(orderCreatedKey(order));
   const context = contexts.get(`${order.assigned_rep_id ?? "__none__"}::${weekStart}`);
   if (!context || context.placed === 0) return { rate: 100, count: 0, aov: 0 };
