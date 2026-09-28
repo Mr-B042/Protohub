@@ -4,7 +4,7 @@ import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sanitizeMarketingAttributionTags } from "../lib/marketing-attribution.js";
-import { loadMarketingPerformance } from "../lib/marketing-performance.js";
+import { loadDailyOrderCounts, loadMarketingPerformance } from "../lib/marketing-performance.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -361,6 +361,28 @@ router.delete("/:id", requireRole(...CREATE_ROLES), async (req, res) => {
 // back null when no spend was recorded, so the screen can say so rather than
 // drawing a zero. See ../lib/marketing-performance.js for why that matters
 // more here than anywhere else in the app.
+// Orders per day under the page's filters - the counts on the period
+// shortcuts. Bounded to a year so a stray request cannot walk the whole table.
+router.get("/order-counts", requireRole(...READ_ROLES), async (req, res) => {
+  const from = String(req.query.from ?? "").slice(0, 10);
+  const to = String(req.query.to ?? "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || to < from) {
+    res.status(400).json({ error: "Give a start and end date, both as YYYY-MM-DD." });
+    return;
+  }
+  const spanDays = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000;
+  if (spanDays > 400) { res.status(400).json({ error: "Counts cover at most a year at a time." }); return; }
+  const pick = (name: string) => String(req.query[name] ?? "").trim().slice(0, 200) || null;
+  try {
+    const days = await loadDailyOrderCounts(req.user!.orgId, req.user!.branchId ?? null, from, to, {
+      productId: pick("productId"), campaign: pick("campaign"), source: pick("source"), mediaBuyer: pick("mediaBuyer")
+    });
+    res.json({ days });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not count orders." });
+  }
+});
+
 router.get("/performance", requireRole(...READ_ROLES), async (req, res) => {
   const from = String(req.query.from ?? "").slice(0, 10);
   const to = String(req.query.to ?? "").slice(0, 10);

@@ -14,6 +14,9 @@ import {
 // branch's currency and the topbar "hide money" toggle.
 import { money } from "../lib/money-privacy";
 import { LoadingState } from "../components/ui/loading-state";
+import DateWindowNav from "../components/DateWindowNav";
+import { PRESET_LABEL, presetRange, type DateWindow, type PresetKey } from "../lib/date-window";
+import { formatDateKey } from "../lib/period-bounds";
 
 /**
  * Marketing Performance Center — built to Bright's design, element by element:
@@ -27,42 +30,14 @@ import { LoadingState } from "../components/ui/loading-state";
  * rather than printing a number nobody measured.
  */
 
-type Period = "today" | "yesterday" | "week" | "month" | "last" | "year" | "custom";
+// The same date controls as My Orders: shortcuts that SET a window, and the
+// shared navigator that moves it. Reused rather than rebuilt so every date
+// filter in the app behaves the same way.
+const SHORTCUTS: PresetKey[] = ["today", "yesterday", "thisWeek", "lastWeek", "thisMonth", "lastMonth"];
 
-// Local calendar keys. toISOString() would shift a late-evening date into
-// tomorrow for anyone east of Greenwich - Lagos included.
-const keyOf = (date: Date) =>
-  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-const addDays = (date: Date, days: number) => { const d = new Date(date); d.setDate(d.getDate() + days); return d; };
+const yearRange = (todayKey: string): DateWindow => ({ start: `${todayKey.slice(0, 4)}-01-01`, end: todayKey });
 
-const rangeFor = (period: Exclude<Period, "custom">) => {
-  const today = new Date();
-  switch (period) {
-    case "today": return { from: keyOf(today), to: keyOf(today) };
-    case "yesterday": { const y = addDays(today, -1); return { from: keyOf(y), to: keyOf(y) }; }
-    case "week": {
-      // The week starts on Monday, the way the rest of the business counts it.
-      const offset = (today.getDay() + 6) % 7;
-      return { from: keyOf(addDays(today, -offset)), to: keyOf(today) };
-    }
-    case "month": return { from: keyOf(new Date(today.getFullYear(), today.getMonth(), 1)), to: keyOf(today) };
-    case "last": return {
-      from: keyOf(new Date(today.getFullYear(), today.getMonth() - 1, 1)),
-      to: keyOf(new Date(today.getFullYear(), today.getMonth(), 0))
-    };
-    case "year": return { from: keyOf(new Date(today.getFullYear(), 0, 1)), to: keyOf(today) };
-  }
-};
-
-const PERIODS: Array<{ key: Period; label: string }> = [
-  { key: "today", label: "Today" },
-  { key: "yesterday", label: "Yesterday" },
-  { key: "week", label: "This Week" },
-  { key: "month", label: "This Month" },
-  { key: "last", label: "Last Month" },
-  { key: "year", label: "This Year" },
-  { key: "custom", label: "Custom" }
-];
+const sameWindow = (a: DateWindow, b: DateWindow) => a.start === b.start && a.end === b.end;
 
 const prettyDay = (key: string) =>
   new Date(`${key}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -197,10 +172,10 @@ export type MarketingPerformancePageProps = {
 };
 
 export default function MarketingPerformancePage({ canEnterSpend, onEnterSpend }: MarketingPerformancePageProps) {
-  const [period, setPeriod] = useState<Period>("month");
-  const [custom, setCustom] = useState(() => rangeFor("month"));
-  const [showRange, setShowRange] = useState(false);
+  const todayKey = formatDateKey(new Date());
+  const [window, setWindow] = useState<DateWindow>(() => presetRange("thisMonth", todayKey));
   const [filters, setFilters] = useState<MarketingPerformanceFilters>({});
+  const [dayCounts, setDayCounts] = useState<Record<string, number>>({});
   const [view, setView] = useState<MarketingPerformance | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -209,7 +184,7 @@ export default function MarketingPerformancePage({ canEnterSpend, onEnterSpend }
   const [showCharts, setShowCharts] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
-  const range = period === "custom" ? custom : rangeFor(period);
+  const range = { from: window.start, to: window.end };
 
   useEffect(() => {
     let cancelled = false;
@@ -221,6 +196,21 @@ export default function MarketingPerformancePage({ canEnterSpend, onEnterSpend }
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [range.from, range.to, filters.productId, filters.campaign, filters.source, filters.mediaBuyer]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const year = yearRange(todayKey);
+    // Last month can begin before 1 January, so reach back far enough for it.
+    const lastMonthStart = presetRange("lastMonth", todayKey).start;
+    const from = lastMonthStart < year.start ? lastMonthStart : year.start;
+    marketingSpendApi.orderCounts(from, todayKey, filters)
+      .then((data) => { if (!cancelled) setDayCounts(data.days); })
+      .catch(() => { if (!cancelled) setDayCounts({}); });
+    return () => { cancelled = true; };
+  }, [todayKey, filters.productId, filters.campaign, filters.source, filters.mediaBuyer]);
+
+  const countFor = (w: DateWindow) =>
+    Object.entries(dayCounts).reduce((sum, [day, n]) => (day >= w.start && day <= w.end ? sum + n : sum), 0);
 
   // Close the Columns / Export menus on an outside click.
   useEffect(() => {
@@ -305,45 +295,43 @@ export default function MarketingPerformancePage({ canEnterSpend, onEnterSpend }
             Track every stage from ad spend to profit. See which media buyer, campaign and product is actually making money.
           </p>
         </div>
-        <div className="relative">
-          <button
-            type="button"
-            onClick={() => setShowRange((open) => !open)}
-            className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-          >
-            <CalendarDays className="h-4 w-4 text-gray-400" />
-            {prettyDay(range.from)} – {prettyDay(range.to)}
-            <ChevronDown className="h-4 w-4 text-gray-400" />
-          </button>
-          {showRange && (
-            <div className="absolute right-0 z-20 mt-2 flex items-center gap-2 rounded-xl border border-gray-200 bg-white p-3 shadow-lg dark:border-slate-700 dark:bg-slate-900">
-              <input type="date" value={range.from} max={range.to}
-                onChange={(e) => { setCustom({ from: e.target.value, to: range.to }); setPeriod("custom"); }}
-                className="!min-h-0 rounded-md border border-gray-200 px-2 py-1 text-sm" />
-              <span className="text-xs text-gray-400">to</span>
-              <input type="date" value={range.to} min={range.from}
-                onChange={(e) => { setCustom({ from: range.from, to: e.target.value }); setPeriod("custom"); }}
-                className="!min-h-0 rounded-md border border-gray-200 px-2 py-1 text-sm" />
-            </div>
-          )}
-        </div>
       </header>
 
-      {/* Period + four filters */}
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <div className="flex flex-wrap rounded-xl border border-gray-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-900">
-          {PERIODS.map(({ key, label }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => {
-                if (key === "custom") { setCustom(range); setShowRange(true); }
-                setPeriod(key);
-              }}
-              className={`!min-h-0 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-                period === key ? "bg-[#1F8FE0] text-white shadow-sm" : "text-gray-600 hover:bg-gray-50 dark:text-slate-300"}`}
-            >{label}</button>
-          ))}
+      {/* Dates, the My Orders way: shortcuts with their order counts, then the
+          shared navigator that moves the window a day at a time. */}
+      <div className="rounded-xl border border-gray-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex flex-col gap-3 border-b border-slate-200/80 bg-slate-50/60 px-4 py-3 xl:flex-row xl:items-center xl:justify-between dark:border-slate-800 dark:bg-slate-900">
+        <div className="inline-flex flex-wrap items-center gap-1">
+          {SHORTCUTS.map((preset) => {
+            const shortcut = presetRange(preset, todayKey);
+            const active = sameWindow(window, shortcut);
+            return (
+              <button key={preset} type="button" onClick={() => setWindow(shortcut)}
+                className={`!min-h-0 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold transition-all ${
+                  active ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200" : "text-slate-500 hover:bg-white hover:text-slate-900"}`}>
+                {PRESET_LABEL[preset]}
+                <span className={`rounded-md px-1.5 py-0.5 text-[11px] font-black tabular-nums ${
+                  active ? "bg-emerald-100 text-emerald-800" : "bg-slate-200/70 text-slate-600"}`}>{countFor(shortcut)}</span>
+              </button>
+            );
+          })}
+          {/* ⚠️ "This Year" where My Orders has "All Orders". This page compares
+              every figure with the period before it, and "all time" has no
+              period before it - so it would be the one button whose cards
+              could never show a change. */}
+          {(() => {
+            const year = yearRange(todayKey);
+            const active = sameWindow(window, year);
+            return (
+              <button type="button" onClick={() => setWindow(year)}
+                className={`!min-h-0 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold transition-all ${
+                  active ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200" : "text-slate-500 hover:bg-white hover:text-slate-900"}`}>
+                This Year
+                <span className={`rounded-md px-1.5 py-0.5 text-[11px] font-black tabular-nums ${
+                  active ? "bg-emerald-100 text-emerald-800" : "bg-slate-200/70 text-slate-600"}`}>{countFor(year)}</span>
+              </button>
+            );
+          })()}
         </div>
         <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
           <select aria-label="Product" className={selectClass} value={filters.productId ?? ""}
@@ -367,6 +355,17 @@ export default function MarketingPerformancePage({ canEnterSpend, onEnterSpend }
             {options?.sources.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+        <DateWindowNav value={window} onChange={setWindow} todayKey={todayKey} />
+        {/* Says so when the window runs past today, because the figures stop
+            at today and the comparison is against the same number of days. */}
+        {view && view.countedTo < range.to && (
+          <span className="text-[11px] font-medium text-gray-500">
+            Counted to today — compared with the {prettyDay(view.previousFrom)} to {prettyDay(view.previousTo)} stretch before it.
+          </span>
+        )}
+      </div>
       </div>
 
       {!view && loading && <LoadingState label="Working out marketing performance…" />}
