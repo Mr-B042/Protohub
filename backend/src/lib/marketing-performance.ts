@@ -96,6 +96,26 @@ export type PerformanceTotals = {
   breakEvenCostPerDelivered: number | null;
   /** How far under break-even the current cost per delivered order sits. */
   breakEvenHeadroom: number | null;
+  /** Logistics paid per successful delivery. Known without any ad spend. */
+  avgDeliveryCost: number | null;
+  /**
+   * What it costs to put one delivered order in a customer's hands: the ads
+   * that won it plus the delivery that carried it. CPDO alone is ads only, so
+   * it understated this by the whole delivery fee.
+   */
+  totalCostToDeliver: number | null;
+  /**
+   * The break-even that Total Cost to Deliver should be read against.
+   *
+   * ⚠️ NOT breakEvenCostPerDelivered. That one already has delivery taken out -
+   * it is the most the ADS can cost. Setting ads-plus-delivery beside it counts
+   * delivery twice and shows less room than there really is. This is revenue
+   * less product cost per delivered order: the most ads and delivery together
+   * can cost. The gap to it is the same naira either way.
+   */
+  breakEvenTotalCostToDeliver: number | null;
+  /** Delivered orders whose delivery fee was never entered. */
+  deliveredWithoutFee: number;
 
   /** Placed as a share of leads - the funnel's first conversion. */
   leadToOrderRate: number | null;
@@ -144,6 +164,8 @@ export type PerformanceDeltas = {
   placedAov: number | null;
   deliveredAov: number | null;
   roas: number | null;
+  avgDeliveryCost: number | null;
+  totalCostToDeliver: number | null;
 };
 
 const ratio = (top: number, bottom: number): number | null => (bottom > 0 ? top / bottom : null);
@@ -279,7 +301,7 @@ function computeTotals(data: PeriodData, from: string, to: string, f: Performanc
   }
 
   // ── Orders ────────────────────────────────────────────────────────────────
-  let confirmed = 0, delivered = 0, lost = 0;
+  let confirmed = 0, delivered = 0, lost = 0, deliveredWithoutFee = 0;
   let placedValue = 0, deliveredRevenue = 0, productCost = 0, deliveryCost = 0;
   for (const order of orders) {
     const status = String(order.status ?? "");
@@ -293,6 +315,7 @@ function computeTotals(data: PeriodData, from: string, to: string, f: Performanc
       // shipped; live product cost would restate history on every price edit.
       productCost += money(order.cogs_snapshot);
       deliveryCost += money(order.logistics_cost);
+      if (money(order.logistics_cost) <= 0) deliveredWithoutFee += 1;
     }
   }
   const ordersPlaced = orders.length;
@@ -311,6 +334,12 @@ function computeTotals(data: PeriodData, from: string, to: string, f: Performanc
   const trueNetProfit = adSpend === null ? null : grossAfterCosts - adSpend;
   const costPerDeliveredOrder = adSpend === null ? null : ratio(adSpend, delivered);
   const breakEvenCostPerDelivered = ratio(grossAfterCosts, delivered);
+  const avgDeliveryCost = ratio(deliveryCost, delivered);
+  // ⚠️ NULL WHEN THE ADS ARE UNKNOWN, not "delivery cost alone". Showing just
+  // the delivery half under this name would read as the full cost and look
+  // far cheaper than it is.
+  const totalCostToDeliver =
+    costPerDeliveredOrder === null || avgDeliveryCost === null ? null : costPerDeliveredOrder + avgDeliveryCost;
   const periodDays = daysBetween(from, to);
 
   return {
@@ -349,6 +378,11 @@ function computeTotals(data: PeriodData, from: string, to: string, f: Performanc
       costPerDeliveredOrder !== null && breakEvenCostPerDelivered !== null && breakEvenCostPerDelivered > 0
         ? (breakEvenCostPerDelivered - costPerDeliveredOrder) / breakEvenCostPerDelivered
         : null,
+
+    avgDeliveryCost,
+    totalCostToDeliver,
+    breakEvenTotalCostToDeliver: ratio(deliveredRevenue - productCost, delivered),
+    deliveredWithoutFee,
 
     leadToOrderRate: leads === null ? null : ratio(ordersPlaced, leads),
     confirmationRate: ratio(confirmed, ordersPlaced),
@@ -495,7 +529,9 @@ export async function loadMarketingPerformance(
     costPerDeliveredOrder: change(totals.costPerDeliveredOrder, previous.costPerDeliveredOrder),
     placedAov: change(totals.placedAov, previous.placedAov),
     deliveredAov: change(totals.deliveredAov, previous.deliveredAov),
-    roas: change(totals.roas, previous.roas)
+    roas: change(totals.roas, previous.roas),
+    avgDeliveryCost: change(totals.avgDeliveryCost, previous.avgDeliveryCost),
+    totalCostToDeliver: change(totals.totalCostToDeliver, previous.totalCostToDeliver)
   };
 
   return {

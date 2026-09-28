@@ -3361,6 +3361,14 @@ export type MarketingPerformance = {
     roas: number | null;
     breakEvenCostPerDelivered: number | null;
     breakEvenHeadroom: number | null;
+    /** Logistics paid per successful delivery. Known without any ad spend. */
+    avgDeliveryCost: number | null;
+    /** Ads plus delivery per delivered order - CPDO alone is the ads half. */
+    totalCostToDeliver: number | null;
+    /** The most ads + delivery can cost per delivered order and still break even. */
+    breakEvenTotalCostToDeliver: number | null;
+    /** Delivered orders whose delivery fee was never entered. */
+    deliveredWithoutFee: number;
     leadToOrderRate: number | null;
     confirmationRate: number | null;
     deliveryRateOfConfirmed: number | null;
@@ -3375,6 +3383,8 @@ export type MarketingPerformance = {
     placedAov: number | null;
     deliveredAov: number | null;
     roas: number | null;
+    avgDeliveryCost: number | null;
+    totalCostToDeliver: number | null;
   };
   leaderboard: MarketingLeaderboardRow[];
   options: {

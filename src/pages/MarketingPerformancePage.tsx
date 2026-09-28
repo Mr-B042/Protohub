@@ -4,8 +4,8 @@ import {
 } from "recharts";
 import {
   AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarDays, CheckCircle2, ChevronDown, ChevronRight,
-  Columns3, Crosshair, Download, Link2, Megaphone, MoreHorizontal, Scale, ShoppingBag, ShoppingCart,
-  Target, Truck, Users, Wallet
+  Coins, Columns3, Crosshair, Download, Link2, Megaphone, MoreHorizontal, PackageCheck, Scale, ShoppingBag,
+  ShoppingCart, Target, Truck, Users, Wallet
 } from "lucide-react";
 import {
   marketingSpendApi, type MarketingLeaderboardRow, type MarketingPerformance, type MarketingPerformanceFilters
@@ -496,13 +496,38 @@ export default function MarketingPerformancePage({ canEnterSpend, onEnterSpend }
             </section>
           </div>
 
-          {/* Six cost cards */}
-          <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+          {/* Cost cards - two rows of four. What each delivered order COSTS on
+              top, what it is WORTH and how much room is left underneath. */}
+          <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <StatCard icon={Target} tone="rose" title="Cost Per Order (CPO)" value={asMoney(t.costPerOrder)}>
               <Delta value={d.costPerOrder} lowerIsBetter />
             </StatCard>
             <StatCard icon={Truck} tone="green" title="Cost Per Delivered Order (CPDO)" value={asMoney(t.costPerDeliveredOrder)}>
               <Delta value={d.costPerDeliveredOrder} lowerIsBetter />
+              <p className="m-0 mt-1 text-[11px] font-medium text-gray-400">ads only</p>
+            </StatCard>
+            <StatCard icon={PackageCheck} tone="indigo" title="Avg. Delivery Cost" value={asMoney(t.avgDeliveryCost)}>
+              <Delta value={d.avgDeliveryCost} lowerIsBetter />
+              <p className="m-0 mt-1 text-[11px] font-medium text-gray-400">logistics cost per successful delivery</p>
+              {/* ⚠️ A delivered order with no fee entered counts as ₦0 and drags
+                  this down, so the average is only as good as the fees behind it. */}
+              {t.deliveredWithoutFee > 0 && (
+                <p className="m-0 mt-1.5 rounded-md bg-amber-50 px-2 py-1 text-[11px] font-semibold leading-4 text-amber-800">
+                  {t.deliveredWithoutFee} delivered order{t.deliveredWithoutFee === 1 ? " has" : "s have"} no delivery fee entered, so this reads lower than it should.
+                </p>
+              )}
+            </StatCard>
+            <StatCard icon={Coins} tone="orange" title="Total Cost to Deliver (TCD)" value={asMoney(t.totalCostToDeliver)}>
+              <Delta value={d.totalCostToDeliver} lowerIsBetter />
+              <p className="m-0 mt-1 text-[11px] font-medium text-gray-400">CPDO + average delivery cost</p>
+              {/* ⚠️ Read against its OWN break-even. The Break-even CPDO card
+                  already has delivery taken out; putting TCD beside that would
+                  count delivery twice and show less room than there is. */}
+              {t.breakEvenTotalCostToDeliver !== null && (
+                <p className="m-0 mt-1 text-[11px] font-medium text-gray-500">
+                  Break-even: <strong className="font-bold text-gray-700">{money(t.breakEvenTotalCostToDeliver)}</strong>
+                </p>
+              )}
             </StatCard>
             <StatCard icon={ShoppingCart} tone="blue" title="Placed AOV" value={asMoney(t.placedAov)}>
               <Delta value={d.placedAov} />
