@@ -320,6 +320,7 @@ const NEXT_ACTION_PAGE_SIZE = 5;
 // once someone has cleared it and moved to the unscheduled pile, reopening the
 // page on Overdue every morning is a small daily tax.
 const NEXT_ACTION_STACK_KEY = "protohub.recovery.nextActionStack";
+const LAST_ACTIVE_PAGE_KEY = "protohub.lastActivePage";
 const readNextActionStack = () => {
   try { return window.localStorage.getItem(NEXT_ACTION_STACK_KEY) ?? ""; } catch { return ""; }
 };
@@ -8789,6 +8790,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const u = auth.getUser();
     if (!u) return "Dashboard";
     const role = (u.role as EditableUserRole | undefined) ?? "Viewer";
+    try {
+      const saved = window.localStorage.getItem(`${LAST_ACTIVE_PAGE_KEY}.${u.id}`) as ActivePage | null;
+      if (saved && saved in dashboardHashByPage) return saved;
+    } catch { /* private browsing or unavailable storage */ }
     return defaultLandingByRole[role] ?? "Dashboard";
   });
   // Dashboard UI prefs are persisted to localStorage so each user keeps their
@@ -8808,6 +8813,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (typeof window === "undefined") return;
     try { window.localStorage.setItem(key, value); } catch { /* private mode */ }
   };
+
+  // Keep the last workspace page available when a mobile browser suspends and
+  // recreates the app shell without preserving the in-memory route state.
+  useEffect(() => {
+    if (!authUser?.id) return;
+    try { window.localStorage.setItem(`${LAST_ACTIVE_PAGE_KEY}.${authUser.id}`, activePage); } catch { /* private mode */ }
+  }, [activePage, authUser?.id]);
 
   const [period, setPeriod] = useState<Period>(() =>
     readPref<Period>("protohub.dashboard.period", "Today", (raw) => raw as Period)
