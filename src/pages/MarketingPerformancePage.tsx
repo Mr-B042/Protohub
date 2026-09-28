@@ -99,6 +99,92 @@ function StatCard({ icon: Icon, tone, title, value, children }: {
   );
 }
 
+/**
+ * Contribution Profit per Delivered Order (APDO): delivered revenue less
+ * product cost, ads, delivery and failed deliveries, divided by delivered
+ * orders.
+ *
+ * ⚠️ "CONTRIBUTION", NOT "NET". Salaries, rent and running costs are not taken
+ * out - Bright's rule is that the word "net" is only earned once they are.
+ *
+ * Each line is a per-order average of a figure the server already sends, so
+ * the lines add up to the headline (give or take a naira of rounding) and the
+ * headline times delivered orders is the profit card at the top.
+ */
+function ProfitPerDeliveredOrder({ totals: t, change }: { totals: MarketingPerformance["totals"]; change: number | null }) {
+  const perOrder = (value: number) => (t.delivered > 0 ? value / t.delivered : null);
+  const lines: Array<{ label: string; value: number | null; note?: string; minus?: boolean }> = [
+    { label: "Revenue", value: t.deliveredAov },
+    { label: "Product cost", value: perOrder(t.productCost), note: "free gifts included", minus: true },
+    { label: "Ads", value: t.costPerDeliveredOrder, minus: true },
+    { label: "Delivery", value: t.avgDeliveryCost, minus: true },
+    { label: "Failed deliveries", value: perOrder(t.failedDeliveryCost), minus: true }
+  ];
+  const profit = t.profitPerDeliveredOrder;
+  return (
+    <section className="h-full rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex flex-col gap-4">
+        <div className="flex gap-3">
+          <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${TONES.purple}`}>
+            <Wallet className="h-5 w-5" />
+          </span>
+          <div>
+            <h2 className="m-0 text-[13px] font-semibold text-gray-600 dark:text-slate-300">
+              Contribution Profit per Delivered Order (APDO)
+            </h2>
+            <strong className={`mt-1 block text-2xl font-black leading-tight ${
+              profit === null ? "text-gray-400" : profit < 0 ? "text-rose-600" : "text-gray-900 dark:text-slate-100"}`}>
+              {asMoney(profit)}
+            </strong>
+            <Delta value={change} />
+            <p className="m-0 mt-1 max-w-md text-[11px] font-medium leading-4 text-gray-400">
+              What each delivered order leaves after its own costs, before salaries, rent and running costs.
+            </p>
+          </div>
+        </div>
+
+        {t.delivered === 0 ? (
+          <p className="m-0 text-sm text-gray-500">No delivered orders in this period.</p>
+        ) : (
+          <dl className="m-0 grid min-w-0 grid-cols-2 gap-x-6 gap-y-3 border-t border-gray-100 pt-3 text-[13px] sm:grid-cols-3 lg:grid-cols-6 dark:border-slate-800">
+            {lines.map((line) => (
+              <div key={line.label} className="min-w-0">
+                <dt className="text-[11px] font-semibold text-gray-500">{line.minus ? "− " : ""}{line.label}</dt>
+                <dd className={`m-0 font-bold tabular-nums ${line.value === null ? "text-gray-400" : "text-gray-900 dark:text-slate-100"}`}>
+                  {asMoney(line.value)}
+                </dd>
+                {line.note && <p className="m-0 text-[10px] text-gray-400">{line.note}</p>}
+              </div>
+            ))}
+            <div className="min-w-0">
+              <dt className="text-[11px] font-semibold text-gray-500">− Packaging</dt>
+              <dd className="m-0 font-bold text-gray-400">{NOT_RECORDED}</dd>
+              <p className="m-0 text-[10px] text-gray-400">no packaging cost is entered anywhere yet</p>
+            </div>
+          </dl>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Change in a RATE, shown in percentage points. "+5.0 pts" from 55% to 60% -
+ * a relative "+9.1%" would read as if nine more orders in a hundred arrived.
+ */
+function PointsDelta({ value }: { value: number | null }) {
+  if (value === null) return <p className="m-0 mt-1 text-[11px] font-medium text-gray-400">no earlier period to compare</p>;
+  const Arrow = value >= 0 ? ArrowUp : ArrowDown;
+  return (
+    <div className="mt-1">
+      <span className={`inline-flex items-center gap-1 text-sm font-bold ${value >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+        <Arrow className="h-3.5 w-3.5" />{value >= 0 ? "+" : ""}{(value * 100).toFixed(1)} pts
+      </span>
+      <p className="m-0 text-[11px] font-medium text-gray-400">vs previous period</p>
+    </div>
+  );
+}
+
 function RateLine({ value, label }: { value: string; label: string }) {
   return (
     <div className="mt-1">
@@ -424,7 +510,7 @@ export default function MarketingPerformancePage({ canEnterSpend, onEnterSpend }
               <RateLine value={asPercent(t.confirmationRate)} label="confirmation rate" />
             </StatCard>
             <StatCard icon={Truck} tone="green" title="Delivered Orders" value={asCount(t.delivered)}>
-              <RateLine value={asPercent(t.deliveryRateOfConfirmed)} label="delivery rate" />
+              <RateLine value={asPercent(t.deliveryRateOfConfirmed)} label="of confirmed orders" />
             </StatCard>
             <StatCard icon={Wallet} tone="green" title="Delivered Revenue" value={money(t.deliveredRevenue)}>
               <Delta value={d.deliveredRevenue} />
@@ -547,6 +633,31 @@ export default function MarketingPerformancePage({ canEnterSpend, onEnterSpend }
               )}
             </StatCard>
           </section>
+
+          {/* Delivery rate beside APDO: how many orders arrive, and what each
+              one that arrives is worth. */}
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-4">
+            <StatCard icon={PackageCheck} tone="green" title="Delivery Rate" value={asPercent(t.deliveryRate)}>
+              <PointsDelta value={d.deliveryRate} />
+              <p className="m-0 mt-1 text-[11px] font-medium text-gray-500">
+                {asCount(t.delivered)} delivered of {asCount(t.ordersPlaced)} placed
+              </p>
+              {/* ⚠️ Counted by the day orders were PLACED, so a recent period
+                  reads low until its orders finish. Say so, or a fresh week
+                  looks like a collapse. */}
+              {t.inProgress > 0 && (
+                <p className="m-0 mt-1.5 rounded-md bg-blue-50 px-2 py-1 text-[11px] font-semibold leading-4 text-blue-800">
+                  {asCount(t.inProgress)} still in progress, so this can still rise.
+                </p>
+              )}
+            </StatCard>
+            {/* APDO - what one delivered order actually leaves behind. Laid out
+                as the sum it is, so each line can be checked against the card
+                that shows it above. */}
+            <div className="xl:col-span-3">
+              <ProfitPerDeliveredOrder totals={t} change={d.profitPerDeliveredOrder} />
+            </div>
+          </div>
 
           {/* Leaderboard */}
           <section className="rounded-xl border border-gray-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
