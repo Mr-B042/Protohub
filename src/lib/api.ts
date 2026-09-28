@@ -3371,9 +3371,17 @@ export type MarketingPerformance = {
     breakEvenTotalCostToDeliver: number | null;
     /** Delivered orders whose delivery fee was never entered. */
     deliveredWithoutFee: number;
+    /** Delivery fees paid on orders that failed - spent, nothing sold. */
+    failedDeliveryCost: number;
+    /** APDO: profit per delivered order before salaries, rent and running costs. */
+    profitPerDeliveredOrder: number | null;
     leadToOrderRate: number | null;
     confirmationRate: number | null;
     deliveryRateOfConfirmed: number | null;
+    /** Delivered ÷ placed - the Orders page's "X delivered of Y". */
+    deliveryRate: number | null;
+    /** Placed orders that are neither delivered nor lost yet. */
+    inProgress: number;
   };
   /** Change against the same number of days just before; null when not comparable. */
   deltas: {
@@ -3387,6 +3395,9 @@ export type MarketingPerformance = {
     roas: number | null;
     avgDeliveryCost: number | null;
     totalCostToDeliver: number | null;
+    profitPerDeliveredOrder: number | null;
+    /** Percentage points (0.05 = +5 pts), not a relative change. */
+    deliveryRate: number | null;
   };
   leaderboard: MarketingLeaderboardRow[];
   options: {

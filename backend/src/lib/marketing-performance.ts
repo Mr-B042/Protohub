@@ -116,12 +116,30 @@ export type PerformanceTotals = {
   breakEvenTotalCostToDeliver: number | null;
   /** Delivered orders whose delivery fee was never entered. */
   deliveredWithoutFee: number;
+  /** Delivery fees paid on orders that FAILED - money spent, nothing sold. */
+  failedDeliveryCost: number;
+  /**
+   * Average profit per delivered order (APDO) - contribution profit, BEFORE
+   * salaries, rent and running costs. Revenue less product cost (free gifts
+   * included), ads, delivery and failed-delivery fees, per delivered order.
+   * Null when the ads are unknown, for the same reason every other figure
+   * that needs them is.
+   */
+  profitPerDeliveredOrder: number | null;
 
   /** Placed as a share of leads - the funnel's first conversion. */
   leadToOrderRate: number | null;
   confirmationRate: number | null;
   /** Delivered as a share of CONFIRMED, as the design's top card reads it. */
   deliveryRateOfConfirmed: number | null;
+  /**
+   * DELIVERY RATE: delivered as a share of orders PLACED in the period - the
+   * Orders page's "X delivered of Y", not a new kind of rate. Orders here are
+   * counted by the day they were placed, so a recent period reads low until its
+   * orders finish; `inProgress` says how many still could.
+   */
+  deliveryRate: number | null;
+  inProgress: number;
 };
 
 export type LeaderboardStatus = "profitable" | "losing" | "high_value" | "check_tag" | "spend_unknown";
@@ -166,6 +184,9 @@ export type PerformanceDeltas = {
   roas: number | null;
   avgDeliveryCost: number | null;
   totalCostToDeliver: number | null;
+  profitPerDeliveredOrder: number | null;
+  /** Percentage POINTS, not a percent of a percent: 55% -> 60% is +0.05. */
+  deliveryRate: number | null;
 };
 
 const ratio = (top: number, bottom: number): number | null => (bottom > 0 ? top / bottom : null);
@@ -199,7 +220,24 @@ export const previousPeriod = (from: string, to: string) => {
   return { from: start.toISOString().slice(0, 10), to: end.toISOString().slice(0, 10) };
 };
 
-type PeriodData = { orders: any[]; companySpend: any[]; buyerSpend: any[]; carts: any[] };
+type PeriodData = {
+  orders: any[];
+  companySpend: any[];
+  buyerSpend: any[];
+  carts: any[];
+  /** Failed-delivery fees in the period, each joined to the order it was for. */
+  failedDeliveries: Array<{ amount: number; order: any | null }>;
+};
+
+/**
+ * ⚠️ "Delivery" EXPENSES ARE NOT READ, ON PURPOSE. Each one is the same money
+ * as the fee on a delivered order - "Delivery cost for 1188 - FRANCIS
+ * BAMIDELE" - so reading them as well would count every delivery twice. Only
+ * "Failed Delivery" is separate money: a fee paid on an order that never sold.
+ * Its id carries the order (EXP-DEL-4002 -> order 4002), which is what lets it
+ * follow the page's filters like any other order cost.
+ */
+const FAILED_DELIVERY_ORDER = /^EXP-DEL-(.+)$/;
 
 async function fetchPeriod(orgId: string, branchId: string | null, from: string, to: string): Promise<PeriodData> {
   let orders = supabase
@@ -234,9 +272,47 @@ async function fetchPeriod(orgId: string, branchId: string | null, from: string,
     buyer = buyer.eq("branch_id", branchId);
     carts = carts.eq("branch_id", branchId);
   }
-  const [o, c, b, k] = await Promise.all([orders, company, buyer, carts]);
-  for (const result of [o, c, b, k]) if (result.error) throw new Error(result.error.message);
-  return { orders: o.data ?? [], companySpend: c.data ?? [], buyerSpend: b.data ?? [], carts: k.data ?? [] };
+  let failed = supabase
+    .from("expenses")
+    .select("id, amount, product_id")
+    .eq("org_id", orgId)
+    .eq("category", "Failed Delivery")
+    .gte("date", from)
+    .lte("date", to);
+  if (branchId) failed = failed.eq("branch_id", branchId);
+
+  const [o, c, b, k, f] = await Promise.all([orders, company, buyer, carts, failed]);
+  for (const result of [o, c, b, k, f]) if (result.error) throw new Error(result.error.message);
+
+  // The failed order may have been placed before the period began, so it is
+  // looked up by id rather than found among this period's orders.
+  const failedRows = (f.data ?? []) as any[];
+  const orderIds = [...new Set(failedRows
+    .map((row) => FAILED_DELIVERY_ORDER.exec(String(row.id))?.[1])
+    .filter((id): id is string => Boolean(id)))];
+  const failedOrders = new Map<string, any>();
+  if (orderIds.length > 0) {
+    const { data } = await supabase
+      .from("orders")
+      .select("id, product_id, source, utm_source, utm_campaign, form_context")
+      .eq("org_id", orgId)
+      .in("id", orderIds);
+    for (const row of data ?? []) failedOrders.set(String((row as any).id), row);
+  }
+
+  return {
+    orders: o.data ?? [],
+    companySpend: c.data ?? [],
+    buyerSpend: b.data ?? [],
+    carts: k.data ?? [],
+    failedDeliveries: failedRows.map((row) => {
+      const orderId = FAILED_DELIVERY_ORDER.exec(String(row.id))?.[1];
+      const order = orderId ? failedOrders.get(orderId) ?? null : null;
+      // An order that has since been deleted still cost the fee; keep the
+      // product the expense itself recorded so a product filter still finds it.
+      return { amount: money(row.amount), order: order ?? { product_id: row.product_id } };
+    })
+  };
 }
 
 const matchesFilters = (order: any, f: PerformanceFilters) =>
@@ -330,7 +406,15 @@ function computeTotals(data: PeriodData, from: string, to: string, f: Performanc
     ? null
     : data.carts.filter((cart) => !f.productId || cart.product_id === f.productId).length;
 
-  const grossAfterCosts = deliveredRevenue - productCost - deliveryCost;
+  // Failed-delivery fees under the same filters as the orders.
+  const failedDeliveryCost = data.failedDeliveries
+    .filter((row) => row.order && matchesFilters(row.order, f))
+    .reduce((sum, row) => sum + row.amount, 0);
+
+  // ⚠️ FAILED DELIVERIES ARE A COST OF THE DELIVERED ONES. Every figure built on
+  // this - true profit, both break-evens, profit per delivered order - takes
+  // them out, so the cards cannot disagree with each other.
+  const grossAfterCosts = deliveredRevenue - productCost - deliveryCost - failedDeliveryCost;
   const trueNetProfit = adSpend === null ? null : grossAfterCosts - adSpend;
   const costPerDeliveredOrder = adSpend === null ? null : ratio(adSpend, delivered);
   const breakEvenCostPerDelivered = ratio(grossAfterCosts, delivered);
@@ -381,12 +465,18 @@ function computeTotals(data: PeriodData, from: string, to: string, f: Performanc
 
     avgDeliveryCost,
     totalCostToDeliver,
-    breakEvenTotalCostToDeliver: ratio(deliveredRevenue - productCost, delivered),
+    // Its own break-even: everything but the ads and the successful delivery
+    // fee, so the room it shows matches Break-even CPDO to the naira.
+    breakEvenTotalCostToDeliver: ratio(deliveredRevenue - productCost - failedDeliveryCost, delivered),
     deliveredWithoutFee,
+    failedDeliveryCost,
+    profitPerDeliveredOrder: trueNetProfit === null ? null : ratio(trueNetProfit, delivered),
 
     leadToOrderRate: leads === null ? null : ratio(ordersPlaced, leads),
     confirmationRate: ratio(confirmed, ordersPlaced),
-    deliveryRateOfConfirmed: ratio(delivered, confirmed)
+    deliveryRateOfConfirmed: ratio(delivered, confirmed),
+    deliveryRate: ratio(delivered, ordersPlaced),
+    inProgress: confirmedPending + awaitingConfirmation
   };
 }
 
@@ -444,7 +534,10 @@ function computeLeaderboard(data: PeriodData, f: PerformanceFilters): Leaderboar
       adSpend = recorded && recorded > 0 ? recorded : null;
     }
 
-    const netProfit = adSpend === null ? null : g.revenue - g.productCost - g.deliveryCost - adSpend;
+    const failedHere = data.failedDeliveries
+      .filter((row) => row.order && matchesFilters(row.order, f) && sourceKeyOf(row.order) === g.key)
+      .reduce((sum, row) => sum + row.amount, 0);
+    const netProfit = adSpend === null ? null : g.revenue - g.productCost - g.deliveryCost - failedHere - adSpend;
     const status: LeaderboardStatus =
       kind === "unattributed" ? "check_tag"
         : kind === "organic" ? "high_value"
@@ -543,7 +636,11 @@ export async function loadMarketingPerformance(
     deliveredAov: change(totals.deliveredAov, previous.deliveredAov),
     roas: change(totals.roas, previous.roas),
     avgDeliveryCost: change(totals.avgDeliveryCost, previous.avgDeliveryCost),
-    totalCostToDeliver: change(totals.totalCostToDeliver, previous.totalCostToDeliver)
+    totalCostToDeliver: change(totals.totalCostToDeliver, previous.totalCostToDeliver),
+    profitPerDeliveredOrder: change(totals.profitPerDeliveredOrder, previous.profitPerDeliveredOrder),
+    deliveryRate: totals.deliveryRate === null || previous.deliveryRate === null
+      ? null
+      : totals.deliveryRate - previous.deliveryRate
   };
 
   return {
