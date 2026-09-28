@@ -75193,7 +75193,7 @@ ${waybillLineItems(w).length > 1
           <div className="flex flex-col gap-4 sm:gap-6 pb-4 sm:pb-6 lg:pb-8">
           {activePage === "Dashboard" ? (
             <>
-              <div className="dashboard-sticky sticky top-16 lg:top-[5.5rem] z-20 -mx-4 px-4 lg:-mx-8 lg:px-8 pt-1 pb-4 flex flex-col gap-4 bg-white border-b border-gray-100">
+              <div className="dashboard-sticky lg:sticky lg:top-[5.5rem] lg:z-20 -mx-4 px-4 lg:-mx-8 lg:px-8 pt-1 pb-4 flex flex-col gap-4 bg-white border-b border-gray-100">
                 <header className="dashboard-hero flex flex-col gap-1">
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2">
