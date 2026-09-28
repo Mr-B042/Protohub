@@ -26707,7 +26707,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     });
   const repCustomerRows = Object.values(
     repOrders.reduce<Record<string, { id: string; name: string; phone: string; orders: number; totalSpend: number; lastOrder: string }>>((acc, order) => {
-      const key = (order.phone || order.customer).toLowerCase();
+    const key = String(order.phone || order.customer || "").trim().toLowerCase() || `unknown-${order.id}`;
       const current = acc[key] ?? { id: key, name: order.customer, phone: order.phone, orders: 0, totalSpend: 0, lastOrder: order.date };
       current.orders += 1;
       current.totalSpend += (order.status ?? "New") === "Delivered" ? order.amount : 0;
