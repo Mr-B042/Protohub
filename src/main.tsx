@@ -16,10 +16,27 @@ const PublicAgentApplicationPage = lazy(() => import("./PublicAgentApplicationPa
 const PublicAgentStatusPage = lazy(() => import("./PublicAgentStatusPage"));
 
 function RouteFallback({ message }: { message: string }) {
+  const [stalled, setStalled] = useState(false);
+  useEffect(() => {
+    if (!message.toLowerCase().includes("loading workspace")) return;
+    const timer = window.setTimeout(() => {
+      const key = "protohub.workspace-load-retry";
+      const now = Date.now();
+      const previous = Number(window.sessionStorage.getItem(key) ?? 0);
+      if (!previous || now - previous > 60_000) {
+        window.sessionStorage.setItem(key, String(now));
+        window.location.reload();
+        return;
+      }
+      setStalled(true);
+    }, 12_000);
+    return () => window.clearTimeout(timer);
+  }, [message]);
   return (
     <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#eef1f4", color: "#374151", fontFamily: "Inter, system-ui, sans-serif" }}>
       <div style={{ textAlign: "center", padding: "24px 20px" }}>
-        <div style={{ fontSize: 28, fontWeight: 800, color: "#111827" }}>{message}</div>
+        <div style={{ fontSize: 28, fontWeight: 800, color: "#111827" }}>{stalled ? "Workspace could not finish loading" : message}</div>
+        {stalled && <button type="button" onClick={() => window.location.reload()} style={{ marginTop: 18, border: 0, borderRadius: 10, padding: "10px 16px", background: "#1f8fe0", color: "#fff", fontWeight: 700, cursor: "pointer" }}>Retry workspace</button>}
       </div>
     </div>
   );
