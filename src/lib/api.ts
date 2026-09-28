@@ -3375,6 +3375,18 @@ export type MarketingPerformance = {
     failedDeliveryCost: number;
     /** APDO: profit per delivered order before salaries, rent and running costs. */
     profitPerDeliveredOrder: number | null;
+    /** Rep bonuses earned on these delivered orders - both bonus systems. */
+    repBonuses: number;
+    /** Salaries, waybill, airtime, other - this selection's share under a filter. */
+    overheadByCategory: Array<{ category: string; amount: number }>;
+    overheadCost: number;
+    /** Running costs were split by share of delivered revenue (a filter is on). */
+    overheadShared: boolean;
+    /** The bonus rules could not be worked out, so net is unknown. */
+    bonusesUnavailable: boolean;
+    netProfit: number | null;
+    /** Average net profit per delivered order - after salaries and running costs. */
+    netProfitPerDeliveredOrder: number | null;
     leadToOrderRate: number | null;
     confirmationRate: number | null;
     deliveryRateOfConfirmed: number | null;
@@ -3396,6 +3408,7 @@ export type MarketingPerformance = {
     avgDeliveryCost: number | null;
     totalCostToDeliver: number | null;
     profitPerDeliveredOrder: number | null;
+    netProfitPerDeliveredOrder: number | null;
     /** Percentage points (0.05 = +5 pts), not a relative change. */
     deliveryRate: number | null;
   };

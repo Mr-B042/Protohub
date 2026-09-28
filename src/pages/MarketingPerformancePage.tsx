@@ -99,72 +99,137 @@ function StatCard({ icon: Icon, tone, title, value, children }: {
   );
 }
 
+type ProfitLine = { label: string; value: number | null; note?: string; minus?: boolean };
+
 /**
- * Contribution Profit per Delivered Order (APDO): delivered revenue less
- * product cost, ads, delivery and failed deliveries, divided by delivered
- * orders.
- *
- * ⚠️ "CONTRIBUTION", NOT "NET". Salaries, rent and running costs are not taken
- * out - Bright's rule is that the word "net" is only earned once they are.
- *
- * Each line is a per-order average of a figure the server already sends, so
- * the lines add up to the headline (give or take a naira of rounding) and the
- * headline times delivered orders is the profit card at the top.
+ * A per-order profit laid out as the sum it is: the headline, then each line
+ * that makes it. Each line is a per-order average of a figure the server
+ * already sends, so the lines add up to the headline, give or take a naira of
+ * rounding.
  */
-function ProfitPerDeliveredOrder({ totals: t, change }: { totals: MarketingPerformance["totals"]; change: number | null }) {
-  const perOrder = (value: number) => (t.delivered > 0 ? value / t.delivered : null);
-  const lines: Array<{ label: string; value: number | null; note?: string; minus?: boolean }> = [
-    { label: "Revenue", value: t.deliveredAov },
-    { label: "Product cost", value: perOrder(t.productCost), note: "free gifts included", minus: true },
-    { label: "Ads", value: t.costPerDeliveredOrder, minus: true },
-    { label: "Delivery", value: t.avgDeliveryCost, minus: true },
-    { label: "Failed deliveries", value: perOrder(t.failedDeliveryCost), minus: true }
-  ];
-  const profit = t.profitPerDeliveredOrder;
+function PerOrderProfitCard({ title, value, change, caption, lines, notes, empty }: {
+  title: string;
+  value: number | null;
+  change: number | null;
+  caption: string;
+  lines: ProfitLine[];
+  notes: React.ReactNode[];
+  empty: boolean;
+}) {
   return (
     <section className="h-full rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-      <div className="flex flex-col gap-4">
-        <div className="flex gap-3">
-          <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${TONES.purple}`}>
-            <Wallet className="h-5 w-5" />
-          </span>
-          <div>
-            <h2 className="m-0 text-[13px] font-semibold text-gray-600 dark:text-slate-300">
-              Contribution Profit per Delivered Order (APDO)
-            </h2>
-            <strong className={`mt-1 block text-2xl font-black leading-tight ${
-              profit === null ? "text-gray-400" : profit < 0 ? "text-rose-600" : "text-gray-900 dark:text-slate-100"}`}>
-              {asMoney(profit)}
-            </strong>
-            <Delta value={change} />
-            <p className="m-0 mt-1 max-w-md text-[11px] font-medium leading-4 text-gray-400">
-              What each delivered order leaves after its own costs, before salaries, rent and running costs.
-            </p>
-          </div>
+      <div className="flex gap-3">
+        <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${TONES.purple}`}>
+          <Wallet className="h-5 w-5" />
+        </span>
+        <div className="min-w-0">
+          <h2 className="m-0 text-[13px] font-semibold text-gray-600 dark:text-slate-300">{title}</h2>
+          <strong className={`mt-1 block text-2xl font-black leading-tight ${
+            value === null ? "text-gray-400" : value < 0 ? "text-rose-600" : "text-gray-900 dark:text-slate-100"}`}>
+            {asMoney(value)}
+          </strong>
+          <Delta value={change} />
+          <p className="m-0 mt-1 text-[11px] font-medium leading-4 text-gray-400">{caption}</p>
         </div>
-
-        {t.delivered === 0 ? (
-          <p className="m-0 text-sm text-gray-500">No delivered orders in this period.</p>
-        ) : (
-          <dl className="m-0 grid min-w-0 grid-cols-2 gap-x-6 gap-y-3 border-t border-gray-100 pt-3 text-[13px] sm:grid-cols-3 lg:grid-cols-6 dark:border-slate-800">
-            {lines.map((line) => (
-              <div key={line.label} className="min-w-0">
-                <dt className="text-[11px] font-semibold text-gray-500">{line.minus ? "− " : ""}{line.label}</dt>
-                <dd className={`m-0 font-bold tabular-nums ${line.value === null ? "text-gray-400" : "text-gray-900 dark:text-slate-100"}`}>
-                  {asMoney(line.value)}
-                </dd>
-                {line.note && <p className="m-0 text-[10px] text-gray-400">{line.note}</p>}
-              </div>
-            ))}
-            <div className="min-w-0">
-              <dt className="text-[11px] font-semibold text-gray-500">− Packaging</dt>
-              <dd className="m-0 font-bold text-gray-400">{NOT_RECORDED}</dd>
-              <p className="m-0 text-[10px] text-gray-400">no packaging cost is entered anywhere yet</p>
-            </div>
-          </dl>
-        )}
       </div>
+
+      {empty ? (
+        <p className="m-0 mt-4 text-sm text-gray-500">No delivered orders in this period.</p>
+      ) : (
+        <dl className="m-0 mt-4 space-y-2 border-t border-gray-100 pt-3 text-[13px] dark:border-slate-800">
+          {lines.map((line) => (
+            <div key={line.label} className="flex items-start justify-between gap-3">
+              <dt className="min-w-0 text-gray-600 dark:text-slate-300">
+                {line.minus ? "− " : ""}{line.label}
+                {line.note && <span className="block text-[10px] text-gray-400">{line.note}</span>}
+              </dt>
+              <dd className={`m-0 shrink-0 font-bold tabular-nums ${line.value === null ? "text-gray-400" : "text-gray-900 dark:text-slate-100"}`}>
+                {asMoney(line.value)}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {notes.length > 0 && (
+        <div className="mt-3 space-y-1.5">
+          {notes.map((note, index) => (
+            <p key={index} className="m-0 rounded-md bg-gray-50 px-2 py-1 text-[11px] font-medium leading-4 text-gray-600 dark:bg-slate-800 dark:text-slate-300">
+              {note}
+            </p>
+          ))}
+        </div>
+      )}
     </section>
+  );
+}
+
+/** "Salary" is how the expense is filed; "Salaries" is how it reads here. */
+const OVERHEAD_LABEL: Record<string, string> = { Salary: "Salaries" };
+
+/**
+ * The two profits per delivered order, side by side - Bright's two names:
+ *
+ *   Contribution Profit per Delivered Order (APDO) - after the order's own
+ *   costs: product (free gifts included), ads, delivery, failed deliveries.
+ *
+ *   Average Net Profit per Delivered Order - contribution less rep bonuses and
+ *   the running costs: salaries, waybill, airtime, rent and the rest.
+ *
+ * ⚠️ THE WORD "NET" IS ONLY EARNED ONCE SALARIES AND RUNNING COSTS ARE OUT.
+ * Net starts FROM contribution, so the two cards can be read as one sum.
+ */
+function ProfitPerDeliveredOrder({ totals: t, change, netChange }: {
+  totals: MarketingPerformance["totals"];
+  change: number | null;
+  netChange: number | null;
+}) {
+  const perOrder = (value: number) => (t.delivered > 0 ? value / t.delivered : null);
+  const contributionNotes: React.ReactNode[] = [];
+  const netNotes: React.ReactNode[] = [];
+  if (t.bonusesUnavailable) {
+    netNotes.push("Rep bonuses couldn't be worked out just now, so net is blank. Reload the page to try again.");
+  }
+  if (t.overheadShared) {
+    netNotes.push("Salaries and running costs belong to the whole business, so this selection carries its share of them by delivered revenue.");
+  }
+  netNotes.push("The manager's weekly bonus is not included.");
+
+  return (
+    <>
+      <PerOrderProfitCard
+        title="Contribution Profit per Delivered Order (APDO)"
+        value={t.profitPerDeliveredOrder}
+        change={change}
+        caption="What each delivered order leaves after its own costs, before salaries and running costs."
+        empty={t.delivered === 0}
+        notes={contributionNotes}
+        lines={[
+          { label: "Revenue", value: t.deliveredAov },
+          { label: "Product cost", value: perOrder(t.productCost), note: "free gifts included", minus: true },
+          { label: "Ads", value: t.costPerDeliveredOrder, minus: true },
+          { label: "Delivery", value: t.avgDeliveryCost, minus: true },
+          { label: "Failed deliveries", value: perOrder(t.failedDeliveryCost), minus: true },
+          { label: "Packaging", value: null, note: "no packaging cost is entered anywhere yet", minus: true }
+        ]}
+      />
+      <PerOrderProfitCard
+        title="Average Net Profit per Delivered Order"
+        value={t.netProfitPerDeliveredOrder}
+        change={netChange}
+        caption="What each delivered order leaves after salaries, bonuses and running costs too."
+        empty={t.delivered === 0}
+        notes={netNotes}
+        lines={[
+          { label: "Contribution profit (APDO)", value: t.profitPerDeliveredOrder },
+          { label: "Rep bonuses", value: t.bonusesUnavailable ? null : perOrder(t.repBonuses), minus: true },
+          ...t.overheadByCategory.map((row) => ({
+            label: OVERHEAD_LABEL[row.category] ?? row.category,
+            value: perOrder(row.amount),
+            minus: true
+          }))
+        ]}
+      />
+    </>
   );
 }
 
@@ -634,9 +699,9 @@ export default function MarketingPerformancePage({ canEnterSpend, onEnterSpend }
             </StatCard>
           </section>
 
-          {/* Delivery rate beside APDO: how many orders arrive, and what each
-              one that arrives is worth. */}
-          <div className="grid grid-cols-1 gap-3 xl:grid-cols-4">
+          {/* Delivery rate beside the two profits per delivered order: how many
+              orders arrive, and what each one that arrives is worth. */}
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
             <StatCard icon={PackageCheck} tone="green" title="Delivery Rate" value={asPercent(t.deliveryRate)}>
               <PointsDelta value={d.deliveryRate} />
               <p className="m-0 mt-1 text-[11px] font-medium text-gray-500">
@@ -651,12 +716,7 @@ export default function MarketingPerformancePage({ canEnterSpend, onEnterSpend }
                 </p>
               )}
             </StatCard>
-            {/* APDO - what one delivered order actually leaves behind. Laid out
-                as the sum it is, so each line can be checked against the card
-                that shows it above. */}
-            <div className="xl:col-span-3">
-              <ProfitPerDeliveredOrder totals={t} change={d.profitPerDeliveredOrder} />
-            </div>
+            <ProfitPerDeliveredOrder totals={t} change={d.profitPerDeliveredOrder} netChange={d.netProfitPerDeliveredOrder} />
           </div>
 
           {/* Leaderboard */}
