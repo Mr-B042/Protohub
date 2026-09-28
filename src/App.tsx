@@ -13991,7 +13991,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [batchAllocationOpen, setBatchAllocationOpen] = useState(false);
   // Partner receivable table: status tab, sort and paging.
   const [remittanceStatusTab, setRemittanceStatusTab] = useState<"all" | "owing" | "partial" | "settled" | "nocash">("all");
-  const [remittanceSortBy, setRemittanceSortBy] = useState<"outstandingDesc" | "outstandingAsc" | "receivedDesc" | "ordersDesc" | "nameAsc">("outstandingDesc");
+  const [remittanceSortBy, setRemittanceSortBy] = useState<"outstandingDesc" | "outstandingAsc" | "logisticsDesc" | "logisticsAsc" | "expectedDesc" | "expectedAsc" | "receivedDesc" | "receivedAsc" | "revenueDesc" | "ordersDesc" | "agingDesc" | "receiptsDesc" | "statusAsc" | "nameAsc">("outstandingDesc");
   const [remittancePartnerPage, setRemittancePartnerPage] = useState(1);
   const [remittancePartnerPageSize, setRemittancePartnerPageSize] = useState(10);
   const [remittanceRowMenuKey, setRemittanceRowMenuKey] = useState<string | null>(null);
@@ -22699,8 +22699,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     .sort((a, b) => {
       switch (remittanceSortBy) {
         case "outstandingAsc": return a.outstanding - b.outstanding;
+        case "logisticsDesc": return b.logisticsCost - a.logisticsCost;
+        case "logisticsAsc": return a.logisticsCost - b.logisticsCost;
+        case "expectedDesc": return b.expected - a.expected;
+        case "expectedAsc": return a.expected - b.expected;
         case "receivedDesc": return b.remitted - a.remitted;
+        case "receivedAsc": return a.remitted - b.remitted;
+        case "revenueDesc": return b.revenue - a.revenue;
         case "ordersDesc": return b.orderCount - a.orderCount;
+        case "agingDesc": return b.oldestUnpaidDays - a.oldestUnpaidDays;
+        case "receiptsDesc": return b.transactionCount - a.transactionCount;
+        case "statusAsc": return remittancePartnerStatus(a).localeCompare(remittancePartnerStatus(b));
         case "nameAsc": return a.partnerName.localeCompare(b.partnerName);
         default: return b.outstanding - a.outstanding;
       }
@@ -88101,8 +88110,17 @@ ${waybillLineItems(w).length > 1
                         >
                           <option value="outstandingDesc">Outstanding (High to Low)</option>
                           <option value="outstandingAsc">Outstanding (Low to High)</option>
+                          <option value="logisticsDesc">Logistics fees (High to Low)</option>
+                          <option value="logisticsAsc">Logistics fees (Low to High)</option>
+                          <option value="expectedDesc">Expected (High to Low)</option>
+                          <option value="expectedAsc">Expected (Low to High)</option>
                           <option value="receivedDesc">Cash received (High to Low)</option>
+                          <option value="receivedAsc">Cash received (Low to High)</option>
+                          <option value="revenueDesc">Revenue (High to Low)</option>
                           <option value="ordersDesc">Orders (High to Low)</option>
+                          <option value="agingDesc">Aging (Oldest first)</option>
+                          <option value="receiptsDesc">Receipts (Most to Fewest)</option>
+                          <option value="statusAsc">Status (A-Z)</option>
                           <option value="nameAsc">Partner name (A-Z)</option>
                         </select>
                       </label>
