@@ -20,9 +20,11 @@ import { sendTikTokConversion } from "./tiktok-events.js";
 import { assignOrderRep } from "./order-assignment.js";
 import { notifyOutageRecoveredOrder } from "./order-notifications.js";
 import { buildPackageComponentSnapshot } from "./order-inventory.js";
+import { AUTO_SUBMIT_GIVES_UP_MS } from "./cart-assignment.js";
 
 const MIN_IDLE_MS = 2 * 60 * 1000;   // must be idle at least 2 min
-const MAX_IDLE_MS = 15 * 60 * 1000;  // give up after 15 min
+// give up after 15 min - shared with the cart hand-out, which takes over from here
+const MAX_IDLE_MS = AUTO_SUBMIT_GIVES_UP_MS;
 const SUBMIT_ATTEMPT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 const RECOVERY_CART_COLUMNS = "id, org_id, customer, phone, whatsapp, address, city, state, product_id, package_id, package_name, amount, currency, source, capture_payload, outage_captured, outage_captured_at";
 
