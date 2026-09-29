@@ -160,6 +160,10 @@ import {
   clearDeliveredPushNotifications
 } from "./lib/push-client";
 import {
+  chimeForKind, installAudioUnlock, installServiceWorkerChimes, installVisibilityReporting, playChime,
+  readSoundSettings, writeSoundSettings, type ChimeKind, type SoundSettings
+} from "./lib/notification-sound";
+import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, ordersExtraApi, productCostApi, stockApi as _stockApi,
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, targetPeriodsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
@@ -9516,6 +9520,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [linkDetailRows, setLinkDetailRows] = useState<any[]>([]);
   const [linkDetailLoading, setLinkDetailLoading] = useState(false);
   const [settingsPanel, setSettingsPanel] = useState<SettingsPanel>("workspace");
+  const [soundSettings, setSoundSettings] = useState<SoundSettings>(() => readSoundSettings());
+  const updateSoundSettings = (next: SoundSettings) => {
+    setSoundSettings(next);
+    writeSoundSettings(next);
+  };
   const brandingHydratedRef = useRef(false);
   const brandingSyncedRef = useRef({ name: "", logoUrl: "", androidAppUrl: "" });
   const payrollSyncedRef = useRef({ enabled: false, amount: 0 });
@@ -27281,6 +27290,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return () => window.removeEventListener("hashchange", updateRoute);
   }, []);
 
+  // The Protohub chime: unlock audio on first touch, keep the service worker
+  // told whether this tab is on screen, and play the chimes it hands over.
+  useEffect(() => {
+    installAudioUnlock();
+    installVisibilityReporting();
+    installServiceWorkerChimes();
+  }, []);
+
   // Check push notification status on mount
   useEffect(() => {
     const PUSH_HEALTH_CHECK_MS = 6 * 60 * 60 * 1000;
@@ -29124,6 +29141,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
 
       const nextNotification = row as SystemNotification;
+      // ⚠️ ONLY WHERE NO POP-UP WILL SOUND. With pop-ups allowed, the push
+      // itself brings the sound (the phone's, or the chime via the service
+      // worker); chiming here as well would ring twice. Inside the Android app
+      // the native alert has its own sound too.
+      if (
+        payload.eventType === "INSERT"
+        && nextNotification.recipientId === currentUser?.id
+        && document.visibilityState === "visible"
+        && !(window as any).Capacitor?.isNativePlatform?.()
+        && (typeof Notification === "undefined" || Notification.permission !== "granted")
+      ) {
+        playChime(chimeForKind(nextNotification.type, nextNotification.title), { key: `note:${nextNotification.id}` });
+      }
       setSystemNotifications((prev) => {
         const index = prev.findIndex((notification) => notification.id === nextNotification.id);
         if (index === -1) return [nextNotification, ...prev];
@@ -95912,6 +95942,65 @@ ${waybillLineItems(w).length > 1
                           }
                         }}
                       >{pushTestLoading ? "Sending test push…" : "Send Test Push"}</button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* The Protohub chime - this device only. A web notification
+                    cannot choose its sound, so while Protohub is on screen the
+                    app plays its own (src/lib/notification-sound.ts). */}
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-bold text-gray-900 m-0 mb-1">Notification sound</p>
+                      <p className="text-xs text-gray-500 m-0 leading-relaxed">
+                        While Protohub is open on screen, alerts play the Protohub chime instead of the phone&apos;s usual ding - a
+                        different sound for new orders, assignments, carts and problems. When Protohub isn&apos;t on screen, your
+                        phone&apos;s own sound plays. This setting is for this device only.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={soundSettings.enabled}
+                      aria-label="Play the Protohub chime"
+                      onClick={() => updateSoundSettings({ ...soundSettings, enabled: !soundSettings.enabled })}
+                      className={`!min-h-0 relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${soundSettings.enabled ? "bg-[#1F8FE0]" : "bg-gray-300"}`}
+                    >
+                      <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${soundSettings.enabled ? "translate-x-5" : "translate-x-0.5"}`} />
+                    </button>
+                  </div>
+                  <label className={`flex items-center gap-3 text-sm ${soundSettings.enabled ? "" : "opacity-50"}`}>
+                    <span className="w-16 shrink-0 text-gray-600">Volume</span>
+                    <input
+                      type="range" min={0} max={100} step={5}
+                      disabled={!soundSettings.enabled}
+                      value={Math.round(soundSettings.volume * 100)}
+                      onChange={(event) => updateSoundSettings({ ...soundSettings, volume: Number(event.target.value) / 100 })}
+                      onPointerUp={() => playChime("order", { force: true })}
+                      className="flex-1 accent-[#1F8FE0]"
+                      aria-label="Chime volume"
+                    />
+                    <span className="w-10 text-right tabular-nums text-gray-500">{Math.round(soundSettings.volume * 100)}%</span>
+                  </label>
+                  <div>
+                    <p className="text-xs font-semibold text-gray-500 m-0 mb-2">Hear each sound</p>
+                    <div className="flex flex-wrap gap-2">
+                      {([
+                        ["order", "New order"],
+                        ["assigned", "Assigned to you"],
+                        ["cart", "Cart"],
+                        ["urgent", "Problem"]
+                      ] as Array<[ChimeKind, string]>).map(([kind, label]) => (
+                        <button
+                          key={kind}
+                          type="button"
+                          onClick={() => { if (!playChime(kind, { force: true })) showToast("This browser can't play sound yet - tap anywhere on the page and try again."); }}
+                          className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                        >
+                          <BellRing className="h-3.5 w-3.5 text-[#1F8FE0]" />{label}
+                        </button>
+                      ))}
                     </div>
                   </div>
                 </div>
