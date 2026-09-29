@@ -23984,10 +23984,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     });
   };
 
+  // ⚠️ EDIT THE RULES THE SCREEN SHOWS, NOT THE RAW SAVED ONES. The screen reads
+  // productBonusConfig(), which fills missing sections from the defaults and
+  // gives untagged rules a stand-in id ("upgrade-0"). Editing the raw config
+  // instead meant a keystroke searched for "upgrade-0" among rules with no id
+  // and found nothing - or hit a missing section and threw - so the box never
+  // took a number (Multi Corner Storage Shelf, 5-in-1 Corner Racks and six
+  // more). The first edit now saves the tidied rules, so the product stays
+  // fixed. Pay is unchanged: payroll fills in the same defaults.
   const updateProductBonusConfig = (productId: string, mutator: (cfg: ProductBonusConfig) => ProductBonusConfig) => {
     saveProductSalesSettings(productId, (product) => ({
       ...product,
-      bonusConfig: mutator(product.bonusConfig ?? defaultBonusConfig())
+      bonusConfig: mutator(productBonusConfig(product))
     }), "Failed to save bonus settings");
   };
 
