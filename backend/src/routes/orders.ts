@@ -736,6 +736,29 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery
     return;
   }
   const d = parsed.data;
+
+  // ⚠️ ONE LIVE ORDER PER CART. Converting a cart takes a few seconds, and on
+  // 29 Sept a rep tapped "Convert" again six seconds later: Onoh Amaka's cart
+  // became #4661 AND #4662. So a second request for a cart that already has a
+  // live order gets that order back instead of a new one - a double tap, a
+  // retry on a weak connection, from any screen. A cancelled or failed order
+  // does not count, so a customer who comes back can still be converted again.
+  if (d.sourceCartId) {
+    const { data: existingForCart } = await supabase
+      .from("orders")
+      .select("*")
+      .eq("org_id", req.user!.orgId)
+      .eq("source_cart_id", d.sourceCartId)
+      .not("status", "in", "(Cancelled,Failed)")
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (existingForCart) {
+      res.status(200).json({ ...existingForCart, already_existed: true });
+      return;
+    }
+  }
+
   let packageComponentsSource: unknown = [];
   let packageQuantity = 1;
 
