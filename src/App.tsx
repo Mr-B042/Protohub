@@ -3105,7 +3105,26 @@ const defaultBonusConfig = (): ProductBonusConfig => ({
   poorDeliveryRatePercent: 55
 });
 
-const productBonusConfig = (product?: Product | null): ProductBonusConfig => ({ ...defaultBonusConfig(), ...(product?.bonusConfig ?? {}) });
+const productBonusConfig = (product?: Product | null): ProductBonusConfig => {
+  const merged = { ...defaultBonusConfig(), ...(product?.bonusConfig ?? {}) };
+  const used = new Set<string>();
+  const stableRules = <T extends { id?: string }>(rules: T[], prefix: string): T[] => rules.map((rule, index) => {
+    const existing = typeof rule.id === "string" ? rule.id.trim() : "";
+    let base = existing && !used.has(existing) ? existing : `${prefix}-${index}`;
+    while (used.has(base)) base = `${prefix}-${index}-${used.size}`;
+    used.add(base);
+    return { ...rule, id: base };
+  });
+
+  return {
+    ...merged,
+    baseDelivered: stableRules(merged.baseDelivered ?? [], "base"),
+    upgradeBonuses: stableRules(merged.upgradeBonuses ?? [], "upgrade"),
+    manualOrderBonuses: stableRules(merged.manualOrderBonuses ?? [], "manual"),
+    aovBonuses: stableRules(merged.aovBonuses ?? [], "aov"),
+    deliveryRateBonuses: stableRules(merged.deliveryRateBonuses ?? [], "delivery")
+  };
+};
 const makeSku = (name: string) => {
   const cleanParts = name
     .trim()
