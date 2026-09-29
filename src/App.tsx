@@ -5649,12 +5649,20 @@ const orderHasVerifiedUpsell = (order: TrackedOrder) =>
  * then has ten minutes to make the first call; after that it is overdue and
  * somebody should be chasing. The point is that none of this waits for tomorrow.
  *
- * ⚠️ ONLY FOR CARTS A REP MUST RING. A cart with everything filled in becomes a
- * real order by itself in about two minutes, so counting it down to a phone call
- * would show a deadline for something that is no longer a cart. Those return
- * null and the column stays empty.
+ * ⚠️ MUST AGREE WITH handOutWaitMs AND cartContactNumber ON THE SERVER. A
+ * complete cart becomes an order by itself only under "full" auto-submit; with
+ * it "off" (as it has been since 13 Sept) or "cart", a rep gets it after the
+ * same ten minutes as any other. Under "full" it counts down to the moment the
+ * converter gives up (15 min) and the hand-out takes over. And a cart counts
+ * as reachable on its WhatsApp number when the phone box is junk.
  */
 const CART_ASSIGN_AFTER_MS = 10 * 60 * 1000;
+const CART_AUTO_SUBMIT_GIVES_UP_MS = 15 * 60 * 1000;
+
+const cartHasEveryDetail = (cart: AbandonedCartRecord) =>
+  Boolean(cart.customer) && cart.customer !== "Partial lead"
+  && Boolean(cart.phone) && Boolean(cart.address) && Boolean(cart.city)
+  && Boolean(cart.state) && Boolean(cart.productId) && Boolean(cart.packageId);
 const CART_CONTACT_SLA_MS = 10 * 60 * 1000;
 
 type CartClock =
@@ -5682,22 +5690,26 @@ const cartAssignmentWindowOpen = (now: number) => {
 const cartClockFor = (
   cart: AbandonedCartRecord,
   attempts: number,
-  now: number
+  now: number,
+  autoSubmitMode: "full" | "cart" | "off" = "full"
 ): CartClock | null => {
   if (cart.status !== "Open abandoned" && cart.status !== "In progress" && cart.status !== "Assigned") return null;
 
   // The same test the server uses to decide whether a cart is even in the
   // rotation, kept in step on purpose - a countdown on a cart that will never
   // be assigned is a promise the system does not keep.
-  const digits = String(cart.phone ?? "").replace(/\D/g, "");
-  if (digits.length < 7) return null;
+  const reachable = (value?: string | null) => String(value ?? "").replace(/\D/g, "").length >= 7;
+  if (!reachable(cart.phone) && !reachable(cart.whatsapp)) return null;
 
   if (attempts > 0) return { kind: "contacted" };
 
   if (!cart.assignedRepId) {
     const quietSince = Date.parse(cart.lastActivity || cart.createdAt || "");
     if (!Number.isFinite(quietSince)) return null;
-    const msLeft = quietSince + CART_ASSIGN_AFTER_MS - now;
+    const wait = autoSubmitMode === "full" && cartHasEveryDetail(cart)
+      ? CART_AUTO_SUBMIT_GIVES_UP_MS + 2 * 60 * 1000
+      : CART_ASSIGN_AFTER_MS;
+    const msLeft = quietSince + wait - now;
     // Outside working hours nobody is being handed anything, so a countdown
     // would be a promise the system does not keep. It says so plainly instead.
     if (msLeft <= 0 && !cartAssignmentWindowOpen(now)) return { kind: "closed" };
@@ -79533,7 +79545,7 @@ ${waybillLineItems(w).length > 1
                                 })()}
                                 {conversionStatusLabel && <span className="text-[11px] font-medium text-gray-500">{conversionStatusLabel}</span>}
                                 {(() => {
-                                  const clock = cartClockFor(cart, cartAttemptsById.get(cart.id) ?? 0, cartClockNow);
+                                  const clock = cartClockFor(cart, cartAttemptsById.get(cart.id) ?? 0, cartClockNow, autoSubmitMode);
                                   if (!clock || clock.kind === "contacted") return null;
                                   if (clock.kind === "closed") {
                                     return (

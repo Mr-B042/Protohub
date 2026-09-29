@@ -21,6 +21,16 @@
  * already handled, and 13 half-finished with NOT ONE assigned to anybody.
  *
  * Those 13 are what this picks up.
+ *
+ * ⚠️ …BUT ONLY WHILE AUTO-SUBMIT IS "full". The converter's mode lives in
+ * embed_settings.auto_submit_mode, and on 13 Sept 2026 somebody switched it
+ * "off" - nobody knows who or why. From then on a complete cart was skipped
+ * here because the converter would take it, and skipped by the converter
+ * because it was off. Ten complete carts sat with nobody, the screen counting
+ * each one down to "a rep in 00:00" that never came (Onoh Amaka, 29 Sept).
+ * "cart" mode leaves them as carts too. So a complete cart is handed out
+ * unless the converter is actually going to turn it into an order - and even
+ * then, once the converter has given up on it, it is handed out anyway.
  */
 
 import { supabase } from "./supabase.js";
@@ -44,6 +54,16 @@ export const DEFAULT_ASSIGNMENT_RULES = {
 };
 
 export type AssignmentRules = typeof DEFAULT_ASSIGNMENT_RULES;
+
+/**
+ * The converter (cart-auto-submit.ts) only tries a complete cart while it has
+ * been quiet between 2 and 15 minutes. That file reads this constant, so the
+ * two cannot drift apart.
+ */
+export const AUTO_SUBMIT_GIVES_UP_MS = 15 * 60 * 1000;
+
+/** What embed_settings.auto_submit_mode can be. "full" is the default. */
+export type AutoSubmitMode = "full" | "cart" | "off";
 
 /** Kept for callers that only need the default, e.g. the screen's fallback. */
 export const ASSIGNMENT_DELAY_MS = DEFAULT_ASSIGNMENT_RULES.assignmentDelayMinutes * 60 * 1000;
@@ -126,6 +146,40 @@ export const isAssignmentWindowOpen = (
 export const hasReachablePhone = (phone?: string | null): boolean => {
   const digits = String(phone ?? "").replace(/\D/g, "");
   return digits.length >= 7;
+};
+
+/**
+ * The number a rep can actually reach the customer on - the phone, or failing
+ * that the WhatsApp number.
+ *
+ * ⚠️ THE PHONE BOX ALONE WAS NOT ENOUGH. Edet John (27 Sept) typed "070" in
+ * the phone box and gave up, but his WhatsApp box held a full 07025844645.
+ * Checking only the phone called him unreachable, so nobody was given him.
+ */
+export const cartContactNumber = (cart: { phone?: string | null; whatsapp?: string | null }): string | null => {
+  if (hasReachablePhone(cart.phone)) return String(cart.phone);
+  if (hasReachablePhone(cart.whatsapp)) return String(cart.whatsapp);
+  return null;
+};
+
+/**
+ * How long a cart must be quiet before it is handed out.
+ *
+ * Normally the branch's wait (10 minutes). A complete cart under "full"
+ * auto-submit is the converter's for its whole 2-15 minute window, so it waits
+ * until that has closed - if it is still a cart after that, the converter did
+ * not take it (a stopped product, a missing package) and a rep should.
+ */
+export const handOutWaitMs = (
+  cart: Parameters<typeof cartCanBecomeOrder>[0],
+  rules: AssignmentRules,
+  autoSubmitMode: AutoSubmitMode
+): number => {
+  const wait = rules.assignmentDelayMinutes * 60 * 1000;
+  if (autoSubmitMode === "full" && cartCanBecomeOrder(cart)) {
+    return Math.max(wait, AUTO_SUBMIT_GIVES_UP_MS + 2 * 60 * 1000);
+  }
+  return wait;
 };
 
 /** Whether the converter could turn this cart into an order on its own. */
@@ -236,18 +290,24 @@ export type AssignmentRun = { considered: number; assigned: number; noRepAvailab
  * Hand out every cart that has been waiting long enough. Safe to run often;
  * a cart already carrying a rep is never touched again.
  */
-export async function runCartAutoAssign(): Promise<AssignmentRun> {
+export async function runCartAutoAssign(options: {
+  /**
+   * How far back to look. Only for a one-off catch-up: the regular run keeps
+   * MAX_AGE_MS so last week's carts stay in the recovery queue.
+   */
+  maxAgeMs?: number;
+} = {}): Promise<AssignmentRun> {
   const now = Date.now();
   // ⚠️ THE WIDEST POSSIBLE WINDOW IS READ FIRST, THEN EACH BRANCH DECIDES.
   // Branches keep their own wait, so a single query cannot use one cutoff -
   // it reads anything that could be ready for the most impatient branch, and
   // every cart is then checked against its own branch's rules below.
   const readyBefore = new Date(now - 60 * 1000).toISOString();
-  const notOlderThan = new Date(now - MAX_AGE_MS).toISOString();
+  const notOlderThan = new Date(now - (options.maxAgeMs ?? MAX_AGE_MS)).toISOString();
 
   const { data: carts, error } = await supabase
     .from("abandoned_carts")
-    .select("id, org_id, branch_id, customer, phone, address, city, state, product_id, package_id, product_name, package_name, amount, currency, last_activity, created_at")
+    .select("id, org_id, branch_id, customer, phone, whatsapp, address, city, state, product_id, package_id, product_name, package_name, amount, currency, last_activity, created_at")
     .in("status", OPEN_STATUSES)
     .is("assigned_rep_id", null)
     .is("merged_into", null)
@@ -269,14 +329,26 @@ export async function runCartAutoAssign(): Promise<AssignmentRun> {
     return rulesCache.get(key)!;
   };
 
+  // Auto-submit is set per organisation. Read once per run; "full" if unset,
+  // which is what the converter assumes too.
+  const modeCache = new Map<string, AutoSubmitMode>();
+  const modeFor = async (orgId: string): Promise<AutoSubmitMode> => {
+    if (!modeCache.has(orgId)) {
+      const { data } = await supabase.from("embed_settings").select("auto_submit_mode").eq("org_id", orgId).maybeSingle();
+      const mode = (data as any)?.auto_submit_mode;
+      modeCache.set(orgId, mode === "cart" || mode === "off" ? mode : "full");
+    }
+    return modeCache.get(orgId)!;
+  };
+
   const waiting: any[] = [];
   for (const cart of (carts ?? []) as any[]) {
-    if (!hasReachablePhone(cart.phone) || cartCanBecomeOrder(cart)) continue;
+    if (!cartContactNumber(cart)) continue;
     const rules = await rulesFor(cart.branch_id ?? null);
     if (!isAssignmentWindowOpen(rules, new Date(now))) continue;
     const quietSince = Date.parse(cart.last_activity ?? cart.created_at ?? "");
     if (!Number.isFinite(quietSince)) continue;
-    if (now - quietSince < rules.assignmentDelayMinutes * 60 * 1000) continue;
+    if (now - quietSince < handOutWaitMs(cart, rules, await modeFor(cart.org_id))) continue;
     waiting.push(cart);
   }
 
@@ -328,7 +400,8 @@ export async function runCartAutoAssign(): Promise<AssignmentRun> {
     await notifyCartAssignedToRep(cart.org_id, {
       id: cart.id,
       customer: cart.customer ?? "",
-      phone: cart.phone ?? "",
+      // The number the rep can actually use - WhatsApp when the phone box is junk.
+      phone: cartContactNumber(cart) ?? "",
       product_name: cart.product_name ?? "",
       package_name: cart.package_name ?? null,
       amount: Number(cart.amount ?? 0),
