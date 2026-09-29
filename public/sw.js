@@ -13,6 +13,38 @@ const PUSH_CONFIG_KEY = "/__protohub_push_config__";
 // well under, newest first. The in-app list remains the full record.
 const MAX_LIVE_NOTIFICATIONS = 16;
 const DEFAULT_BRAND_NAME = "Protohub";
+
+// ── The Protohub chime (Chrome) ──────────────────────────
+// A web notification cannot pick its own sound - Chrome always plays the
+// phone's standard ding. So while a Protohub tab is ON SCREEN and able to play
+// audio, the banner is shown silently and that tab plays the Protohub chime
+// instead (src/lib/notification-sound.ts). With no such tab, nothing changes:
+// the phone's own sound plays.
+//
+// ⚠️ DECIDED WITHOUT WAITING. Nothing asynchronous may run before
+// showNotification (see the push handler), so the tabs keep this map current
+// themselves and the push handler only reads it. A report older than a minute
+// is ignored, so a closed or frozen tab can never leave alerts silent. Chrome
+// and Edge only: other browsers may ignore "silent" and ding twice.
+const IS_CHROMIUM = /Chrome\/|Edg\//.test(self.navigator.userAgent || "");
+const CHIME_REPORT_MAX_AGE_MS = 60 * 1000;
+const chimeReadyTabs = new Map();
+
+function aTabWillChime() {
+  if (!IS_CHROMIUM) return false;
+  const now = Date.now();
+  for (const [id, report] of chimeReadyTabs) {
+    if (now - report.at > CHIME_REPORT_MAX_AGE_MS) { chimeReadyTabs.delete(id); continue; }
+    if (report.canChime) return true;
+  }
+  return false;
+}
+
+function askTabsToChime(kind, title, key) {
+  return self.clients.matchAll({ type: "window", includeUncontrolled: true })
+    .then((tabs) => tabs.forEach((tab) => tab.postMessage({ type: "PROTOHUB_CHIME", kind, title, key })))
+    .catch(() => undefined);
+}
 const DEFAULT_BADGE = "/icons/icon-72.png";
 const DYNAMIC_MANIFEST_PATH = "/org-manifest.webmanifest";
 const DYNAMIC_ICON_192_PATH = "/org-icons/app-192";
@@ -246,6 +278,12 @@ self.addEventListener("fetch", (event) => {
 });
 
 self.addEventListener("message", (event) => {
+  if (event.data?.type === "PROTOHUB_VISIBILITY") {
+    const id = event.source && event.source.id ? event.source.id : "unknown";
+    if (event.data.visible) chimeReadyTabs.set(id, { canChime: Boolean(event.data.canChime), at: Date.now() });
+    else chimeReadyTabs.delete(id);
+    return;
+  }
   if (event.data?.type !== "SET_PUSH_BRANDING") return;
   const branding = {
     brandName: event.data.brandName,
@@ -331,11 +369,23 @@ self.addEventListener("push", (event) => {
     }
   };
 
+  // A tab on screen will play the Protohub chime, so the banner stays quiet.
+  // Chrome rejects a silent notification that also asks to vibrate.
+  const chimeInTab = aTabWillChime();
+  if (chimeInTab) {
+    options.silent = true;
+    delete options.vibrate;
+  }
+  const chimeKey = `${options.tag}:${options.timestamp}`;
+
   // Single waitUntil wrapping showNotification directly. Match Ordello's
   // pattern exactly — this is the form Android Chrome reliably honors.
-  // Pruning is chained AFTER the show so nothing async precedes it.
+  // The chime request and pruning are chained AFTER the show so nothing async
+  // precedes it.
   event.waitUntil(
-    self.registration.showNotification(title, options).then(pruneOldNotifications)
+    self.registration.showNotification(title, options)
+      .then(() => (chimeInTab ? askTabsToChime(kind, title, chimeKey) : undefined))
+      .then(pruneOldNotifications)
   );
 });
 
