@@ -13185,6 +13185,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     createdAt: string;
   }>>([]);
   const [selectedCartId, setSelectedCartId] = useState("");
+  // ⚠️ A cart takes seconds to convert. The ref blocks a second tap at once -
+  // state alone updates a render too late - and the state greys the button so
+  // the rep can see it is working (two orders from one cart, 29 Sept).
+  const [cartConverting, setCartConverting] = useState(false);
+  const cartConvertingRef = useRef(false);
   // Live activity is approximate presence, not a customer action log. An
   // eight-second refresh remains responsive without continuously reading the
   // same row while a manager leaves the modal open.
@@ -43578,10 +43583,20 @@ ${waybillLineItems(w).length > 1
   };
 
   const convertSelectedCart = async () => {
-    if (!selectedCart) {
+    if (!selectedCart || cartConvertingRef.current) {
       return;
     }
+    cartConvertingRef.current = true;
+    setCartConverting(true);
+    try {
+      await convertSelectedCartOnce(selectedCart);
+    } finally {
+      cartConvertingRef.current = false;
+      setCartConverting(false);
+    }
+  };
 
+  const convertSelectedCartOnce = async (selectedCart: AbandonedCartRecord) => {
     const draftOrder: Omit<TrackedOrder, "id"> = {
       productId: selectedCart.productId,
       packageId: selectedCart.packageId,
@@ -43609,8 +43624,10 @@ ${waybillLineItems(w).length > 1
     };
     const cartSnapshot = selectedCart;
     let orderId = "";
+    let alreadyExisted = false;
     try {
       const saved = await ordersApi.create({ ...draftOrder, sourceCartId: selectedCart.id });
+      alreadyExisted = Boolean(saved.alreadyExisted);
       const order: TrackedOrder = {
         ...draftOrder,
         id: saved.id,
@@ -43621,14 +43638,29 @@ ${waybillLineItems(w).length > 1
         location: saved.location ?? draftOrder.location
       };
       orderId = order.id;
-      setTrackedOrders((value) => [order, ...value]);
+      // ⚠️ MERGE, DON'T PREPEND. The live update usually delivers the new order
+      // before this reply does, so adding it blindly showed every converted
+      // order twice on the rep's screen - two real orders read as four.
+      setTrackedOrders((value) => {
+        const index = value.findIndex((existing) => existing.id === order.id);
+        if (index === -1) return [order, ...value];
+        const merged = value.slice();
+        merged[index] = { ...order, ...value[index] };
+        return merged;
+      });
       setAbandonedCarts((value) => value.map((cart) => (cart.id === selectedCart.id ? { ...cart, status: "Converted", lastActivity: new Date().toISOString() } : cart)));
       closeModal();
-      showToast(`${selectedCart.id} converted to ${order.id}.`);
+      // The server hands back the existing order when this cart already has
+      // one, rather than making a second.
+      showToast(alreadyExisted
+        ? `${selectedCart.id} was already converted to ${order.id} - no second order made.`
+        : `${selectedCart.id} converted to ${order.id}.`);
     } catch (err: any) {
       showToast(`Failed to convert ${cartSnapshot.id}: ${err?.message ?? "please retry"}.`);
       return;
     }
+    // The first conversion already marked the cart and sent the notice.
+    if (alreadyExisted) return;
 
     // Mark the cart as Converted on the server too so it doesn't keep
     // showing up as Open Abandoned for other admins.
@@ -104621,7 +104653,7 @@ ${waybillLineItems(w).length > 1
 	            )}
 
 	            {modal === "convertCart" && selectedCart && (
-	              <div className="px-6 py-5 flex flex-col gap-4"><p>Convert <strong>{selectedCart.id}</strong> into a new order for {selectedCart.customer}?</p><div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={convertSelectedCart}>Convert</button></div></div>
+	              <div className="px-6 py-5 flex flex-col gap-4"><p>Convert <strong>{selectedCart.id}</strong> into a new order for {selectedCart.customer}?</p><div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors disabled:cursor-wait disabled:opacity-60" onClick={convertSelectedCart} disabled={cartConverting} aria-busy={cartConverting}>{cartConverting ? "Converting…" : "Convert"}</button></div></div>
 	            )}
 
             {modal === "addProduct" && (() => {
