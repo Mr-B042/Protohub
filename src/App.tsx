@@ -238,6 +238,7 @@ import {
   DateWindow, PRESET_LABEL, PresetKey, presetRange, windowContains
 } from "./lib/date-window";
 import RecoveryBonusCalendar from "./components/RecoveryBonusCalendar";
+import UpgradeBonusGrid, { withUpgradeAmount } from "./components/UpgradeBonusGrid";
 import { STALE_TIER_STYLE, staleOrderVerdict, summariseStaleOrders } from "./lib/stale-orders";
 import { indexCostChanges, ProductCostChange, unitCostAsOf } from "./lib/product-cost-history";
 import { spaceNaira } from "./lib/naira-glyph";
@@ -110915,32 +110916,17 @@ ${waybillLineItems(w).length > 1
                     </div>
                   </section>
 
-                  <section className="bg-gray-50 border border-gray-200 rounded-xl p-3 flex flex-col gap-2">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <strong className="text-sm">2. Upgrade Bonus</strong>
-                        <p className="text-[11px] text-gray-500">Paid only when rep upgrades the order AND meets the delivery-rate gate.</p>
-                      </div>
-                      <button className="!min-h-0 w-full sm:w-auto text-xs px-2 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700" onClick={() => updateProductBonusConfig(product.id, (c) => ({ ...c, upgradeBonuses: [...c.upgradeBonuses, { id: makeBonusRuleId(), fromQty: 3, toQty: 5, amount: 1000 }] }))}>+ Add</button>
-                    </div>
-                    <label className="text-xs flex flex-col gap-2 sm:flex-row sm:items-center">
-                      <span className="text-gray-600">Min weekly delivery rate to qualify (%)</span>
-                      <input className="w-16 border border-gray-200 rounded px-2 py-1" inputMode="numeric" value={cfg.upgradeRequiresMinDeliveryRate} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, upgradeRequiresMinDeliveryRate: Number(e.target.value) || 0 }))} />
-                    </label>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {cfg.upgradeBonuses.map((rule) => (
-                        <div key={rule.id} className="flex flex-col gap-2 bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs sm:flex-row sm:items-center sm:gap-1">
-                          <span className="text-gray-500">From</span>
-                          <input className="w-12 border border-gray-200 rounded px-1.5 py-1" inputMode="numeric" value={rule.fromQty} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, upgradeBonuses: c.upgradeBonuses.map((r) => r.id === rule.id ? { ...r, fromQty: Number(e.target.value) || 0 } : r) }))} />
-                          <span className="text-gray-500">→</span>
-                          <input className="w-12 border border-gray-200 rounded px-1.5 py-1" inputMode="numeric" value={rule.toQty} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, upgradeBonuses: c.upgradeBonuses.map((r) => r.id === rule.id ? { ...r, toQty: Number(e.target.value) || 0 } : r) }))} />
-                          <span className="text-gray-500">= ₦</span>
-                          <input className="w-20 border border-gray-200 rounded px-1.5 py-1" inputMode="decimal" value={rule.amount} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, upgradeBonuses: c.upgradeBonuses.map((r) => r.id === rule.id ? { ...r, amount: Number(e.target.value) || 0 } : r) }))} />
-                          <button className="!min-h-0 sm:ml-auto text-left sm:text-right text-red-500 hover:text-red-700" onClick={() => updateProductBonusConfig(product.id, (c) => ({ ...c, upgradeBonuses: c.upgradeBonuses.filter((r) => r.id !== rule.id) }))}>×</button>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
+                  <UpgradeBonusGrid
+                    rules={cfg.upgradeBonuses}
+                    minDeliveryRate={cfg.upgradeRequiresMinDeliveryRate}
+                    packageQuantities={(product.packages ?? []).map((pkg) => Number(pkg.quantity) || 0)}
+                    symbol={productCurrencies[moneyCode as ProductCurrencyCode]?.symbol ?? "₦"}
+                    onMinDeliveryRateChange={(value) => updateProductBonusConfig(product.id, (c) => ({ ...c, upgradeRequiresMinDeliveryRate: value }))}
+                    onSetAmount={(fromQty, toQty, amount) => updateProductBonusConfig(product.id, (c) => ({
+                      ...c,
+                      upgradeBonuses: withUpgradeAmount(c.upgradeBonuses, fromQty, toQty, amount)
+                    }))}
+                  />
 
                   <section className="bg-gray-50 border border-gray-200 rounded-xl p-3 flex flex-col gap-2">
                     <div>
