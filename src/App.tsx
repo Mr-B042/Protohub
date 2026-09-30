@@ -85572,16 +85572,18 @@ ${waybillLineItems(w).length > 1
                                   <span className="mt-1 flex items-center gap-2 text-[11px] font-semibold opacity-80"><span className={`h-1.5 w-1.5 rounded-full ${customerStatusDotClass}`} /> {customerStatusDetail}</span>
                                 </div>
                                 {customer.bigOrders > 0 && (
-                                  <span className="mt-1.5 inline-flex w-fit items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-700 ring-1 ring-amber-200" title={`${customer.bigOrders} order${customer.bigOrders === 1 ? "" : "s"} above the basic package - bigger package, upsell or cross-sell`}>
+                                  <span className="mt-1.5 inline-flex w-fit items-center gap-1 whitespace-nowrap rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-700 ring-1 ring-amber-200" title={`${customer.bigOrders} order${customer.bigOrders === 1 ? "" : "s"} above the basic package - bigger package, upsell or cross-sell`}>
                                     <Coins className="h-3 w-3" /> Big spender · {formatProductMoney(customer.biggestOrder, customer.latestCurrency)}
                                   </span>
                                 )}
                               </td>
                               <td className="px-4 py-4">
-                                <div className="grid grid-cols-3 gap-3 text-center">
-                                  <span><strong className="block text-gray-900">{customer.orders}</strong><span className="text-[10px] uppercase tracking-wide text-gray-400">Orders</span></span>
-                                  <span><strong className="block text-green-600">{customer.successful}</strong><span className="text-[10px] uppercase tracking-wide text-gray-400">Delivered</span></span>
-                                  <span><strong className="block text-red-500">{customer.cancelled}</strong><span className="text-[10px] uppercase tracking-wide text-gray-400">Cancelled</span></span>
+                                {/* ⚠️ A floor on the width. Without it the table squeezed this
+                                    column and "DELIVERED" ran into "CANCELLED". */}
+                                <div className="grid min-w-[216px] grid-cols-3 gap-4 text-center">
+                                  <span><strong className="block text-gray-900">{customer.orders}</strong><span className="whitespace-nowrap text-[10px] uppercase tracking-wide text-gray-400">Orders</span></span>
+                                  <span><strong className="block text-green-600">{customer.successful}</strong><span className="whitespace-nowrap text-[10px] uppercase tracking-wide text-gray-400">Delivered</span></span>
+                                  <span><strong className="block text-red-500">{customer.cancelled}</strong><span className="whitespace-nowrap text-[10px] uppercase tracking-wide text-gray-400">Cancelled</span></span>
                                 </div>
                               </td>
                               <td className="px-4 py-4 whitespace-nowrap">
