@@ -264,23 +264,36 @@ function normalizeNativePermissionState(permission: { receive?: string } | null 
 }
 
 
-// Android stops showing new notifications once an app holds roughly 50 live
-// ones, and keeps dropping them until the tray is cleared by hand - which is
-// the 49 that was reported. The service worker prunes for the browser, but that
-// code never runs in the native app: FCM posts straight to the system tray and
-// the worker is not involved at all.
-const MAX_LIVE_NATIVE_NOTIFICATIONS = 16;
+// Alerts from before 30 Sept carried one of 16 shared labels
+// ("protohub-orders-0" ... "protohub-general-3"). Since then the server gives
+// each phone its own 40 rotating labels ("protohub-slot-N"), so those old ones
+// never get replaced and would sit in the tray counting toward Android's limit
+// of about 50.
+const OLD_SYSTEM_TAG = /^protohub-(orders|customer|operations|general)-[0-3]$/;
 
+/**
+ * Clears leftover alerts from the old system. Nothing else.
+ *
+ * ⚠️ NEVER TRIM BY POSITION. This used to keep "the first 16" of the delivered
+ * list and remove the rest, on the belief that Android lists newest first. It
+ * does not promise any order - getActiveNotifications is unsorted, and on
+ * Bright's phone it came OLDEST first. So every time the app was opened it kept
+ * the 16 oldest alerts and deleted the newest (30 Sept: "the first 15 recent
+ * alerts was scrapped off why leaving the olden ones"). The list carries no
+ * time either, so the app cannot tell old from new.
+ *
+ * It does not need to: the server already bounds the tray. Each phone takes 40
+ * labels in turn, so an alert only ever replaces the one 40 older (see
+ * backend/src/lib/push-policy.ts) - and the server knows the real order.
+ */
 export async function pruneDeliveredNativeNotifications(): Promise<void> {
   if (!isNativeShell) return;
   try {
     const delivered = await PushNotifications.getDeliveredNotifications();
-    const list = delivered?.notifications ?? [];
-    if (list.length <= MAX_LIVE_NATIVE_NOTIFICATIONS) return;
-    // Newest first on Android, so the tail is the oldest.
-    const stale = list.slice(MAX_LIVE_NATIVE_NOTIFICATIONS);
-    if (stale.length === 0) return;
-    await PushNotifications.removeDeliveredNotifications({ notifications: stale });
+    const leftovers = (delivered?.notifications ?? []).filter((notification) =>
+      OLD_SYSTEM_TAG.test(String(notification.tag ?? "")));
+    if (leftovers.length === 0) return;
+    await PushNotifications.removeDeliveredNotifications({ notifications: leftovers });
   } catch {
     // Housekeeping - never let it interfere with a delivered notification.
   }
@@ -324,15 +337,14 @@ async function ensureNativePushListeners(): Promise<void> {
 
   await PushNotifications.addListener("pushNotificationReceived", (_notification: PushNotificationSchema) => {
     // Keep the listener attached so native registration remains active.
-    // Only fires in the FOREGROUND on Android, so this trims while somebody is
-    // using the app; the backlog that builds while it is closed is handled on
-    // resume below.
+    // Only fires in the FOREGROUND on Android; clears any old-system leftovers
+    // (see pruneDeliveredNativeNotifications - it never removes current alerts).
     void pruneDeliveredNativeNotifications();
   });
 
-  // Android never fires the listener above while the app is closed, so a tray
-  // that filled overnight would stay full and keep dropping new arrivals. Trim
-  // whenever the app comes back to the foreground.
+  // Android never fires the listener above while the app is closed, so old-
+  // system leftovers are also cleared whenever the app comes back to the
+  // foreground.
   await CapacitorApp.addListener("appStateChange", ({ isActive }) => {
     if (isActive) void pruneDeliveredNativeNotifications();
   }).catch(() => undefined);
