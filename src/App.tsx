@@ -10,6 +10,7 @@ import {
   ArrowLeftRight,
   Bell,
   BellRing,
+  Coins,
   Check,
   ChevronRight,
   CalendarDays,
@@ -2411,7 +2412,7 @@ const payrollTabs: PayrollTab[] = ["Pay Rates", "Run Payroll", "History"];
 const customerSources: CustomerSource[] = ["Source: All", "TikTok", "Facebook", "WhatsApp", "Website"];
 const customerQuantityFilters = ["Qty: All", "Qty: 1", "Qty: 2-4", "Qty: 5+"] as const;
 type CustomerQuantityFilter = (typeof customerQuantityFilters)[number];
-const customerTypeFilters = ["Customer Type: All", "New Customers", "Repeat Buyers", "Delivered Customers", "High-Risk Customers"] as const;
+const customerTypeFilters = ["Customer Type: All", "New Customers", "Repeat Buyers", "Repeat Buyers · All Delivered", "Big Spenders", "Delivered Customers", "High-Risk Customers"] as const;
 type CustomerTypeFilter = (typeof customerTypeFilters)[number];
 const customerDeliveryFilters = ["Delivery History: All", "Has Delivered", "No Delivered Yet", "Has Cancelled", "Needs Attention"] as const;
 type CustomerDeliveryFilter = (typeof customerDeliveryFilters)[number];
@@ -26122,6 +26123,36 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     latestQuantity: number;
     latestAmount: number;
     latestCurrency: ProductCurrencyCode;
+    /** Live orders (not cancelled or failed) that cost more than the basic package. */
+    bigOrders: number;
+    /** The customer's largest live order, upsells and cross-sells included. */
+    biggestOrder: number;
+    /** Everything the customer ordered and did not cancel, upsells and cross-sells included. */
+    orderValue: number;
+  };
+  // ⚠️ "BIG SPENDER" = PAID MORE THAN THE BASIC PACKAGE (Bright, 30 Sept: "customer
+  // that spent big like buyer with higher price including upsell and cross sell").
+  // An order counts when it cost more than the product's cheapest active package
+  // in the same currency - a bigger package, an upsell or a cross-sell all do
+  // that - or carries an upsell or cross-sell outright. Compared per product, so
+  // a customer of a cheap product is not measured against an expensive one.
+  // Cancelled and failed orders never count: they were not spent.
+  const customerStarterPrice = new Map<string, number>();
+  for (const product of products) {
+    for (const pkg of product.packages ?? []) {
+      if (pkg.active === false || !(Number(pkg.price) > 0)) continue;
+      const key = `${product.id}:${pkg.currency}`;
+      const known = customerStarterPrice.get(key);
+      if (known === undefined || Number(pkg.price) < known) customerStarterPrice.set(key, Number(pkg.price));
+    }
+  }
+  const customerOrderIsBig = (order: TrackedOrder) => {
+    const status = order.status ?? "New";
+    if (status === "Cancelled" || status === "Failed") return false;
+    if ((order.crossSellLines?.length ?? 0) > 0) return true;
+    if ((order.upsellToQty ?? 0) > (order.upsellFromQty ?? 0)) return true;
+    const starter = customerStarterPrice.get(`${order.productId}:${order.currency}`);
+    return starter !== undefined && order.amount > starter;
   };
   const customerRecords = Object.values(
     trackedOrders
@@ -26148,9 +26179,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         latestPackageName: order.packageName,
         latestQuantity: Math.max(1, order.quantity ?? order.originalQuantity ?? 1),
         latestAmount: order.amount,
-        latestCurrency: order.currency
+        latestCurrency: order.currency,
+        bigOrders: 0,
+        biggestOrder: 0,
+        orderValue: 0
       };
       current.orders += 1;
+      if (status !== "Cancelled" && status !== "Failed") {
+        current.orderValue += order.amount;
+        current.biggestOrder = Math.max(current.biggestOrder, order.amount);
+      }
+      if (customerOrderIsBig(order)) current.bigOrders += 1;
       current.successful += status === "Delivered" ? 1 : 0;
       current.cancelled += status === "Cancelled" ? 1 : 0;
       current.totalSpend += status === "Delivered" ? order.amount : 0;
@@ -26193,6 +26232,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       customerTypeFilter === "Customer Type: All"
         || (customerTypeFilter === "New Customers" && customer.orders <= 1)
         || (customerTypeFilter === "Repeat Buyers" && customer.orders > 1)
+        // Every order came through: 2 of 2, 3 of 3. An order still on its way
+        // keeps them out until it is delivered.
+        || (customerTypeFilter === "Repeat Buyers · All Delivered" && customer.orders > 1 && customer.successful === customer.orders)
+        || (customerTypeFilter === "Big Spenders" && customer.bigOrders > 0)
         || (customerTypeFilter === "Delivered Customers" && customer.successful > 0)
         || (customerTypeFilter === "High-Risk Customers" && canSeeCustomerRisk && flagged);
     const matchesDelivery =
@@ -26203,6 +26246,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         || (customerDeliveryFilter === "Needs Attention" && ((canSeeCustomerRisk && flagged) || (customer.cancelled > 0 && customer.successful === 0)));
     return matchesSearch && matchesSource && matchesState && matchesQuantity && matchesType && matchesDelivery;
   });
+  // Big Spenders read from the top: whoever spent most first.
+  if (customerTypeFilter === "Big Spenders") {
+    filteredCustomers.sort((a, b) => b.orderValue - a.orderValue || b.biggestOrder - a.biggestOrder);
+  }
   const deliveredCustomerCount = customerRecords.filter((customer) => customer.successful > 0).length;
   const repeatBuyerCount = customerRecords.filter((customer) => customer.orders > 1).length;
   const returningRate = customerRecords.length === 0 ? 0 : Math.round((repeatBuyerCount / customerRecords.length) * 1000) / 10;
@@ -85379,7 +85426,7 @@ ${waybillLineItems(w).length > 1
                       const customerStatusLabel = flagged && canSeeCustomerRisk ? "High-risk" : customer.orders > 1 ? "Repeat Buyer" : customer.successful > 0 ? "Delivered Buyer" : "New Customer";
                       const customerStatusClass = flagged && canSeeCustomerRisk ? "bg-red-50 text-red-700 border-red-100" : customer.orders > 1 ? "bg-green-50 text-green-700 border-green-100" : customer.successful > 0 ? "bg-blue-50 text-blue-700 border-blue-100" : "bg-sky-50 text-sky-700 border-sky-100";
                       const customerStatusDotClass = flagged && canSeeCustomerRisk ? "bg-red-500" : customer.orders > 1 ? "bg-green-500" : customer.successful > 0 ? "bg-blue-500" : "bg-sky-500";
-                      const customerStatusDetail = flagged && canSeeCustomerRisk ? (flagData?.reason || "Flagged for attention") : customer.orders > 1 ? "2+ orders" : customer.successful > 0 ? "Has delivered once" : "First time buyer";
+                      const customerStatusDetail = flagged && canSeeCustomerRisk ? (flagData?.reason || "Flagged for attention") : customer.orders > 1 ? `${customer.successful}/${customer.orders} delivered` : customer.successful > 0 ? "Has delivered once" : "First time buyer";
                       const reliabilityLabel = customer.successful === 0 ? "No delivered order yet" : reliability >= 70 ? "Reliable buyer" : reliability >= 40 ? "Mixed delivery history" : "Needs follow-up";
                       const whatsappUrl = buildWhatsAppTargets(customer.phone, `Hello ${customer.name}, thank you for ordering from us.`).normalUrl;
                       return (
@@ -85412,6 +85459,11 @@ ${waybillLineItems(w).length > 1
                             <div className="mt-1 flex items-center gap-2 text-xs font-semibold opacity-80"><span className={`h-1.5 w-1.5 rounded-full ${customerStatusDotClass}`} /> {customerStatusDetail}</div>
                           </div>
                           {flagged && canSeeCustomerRisk && <span className="inline-flex items-center gap-1 self-start px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700" title={flagData?.reason || "Flagged"}><AlertTriangle className="w-3 h-3" /> Flagged</span>}
+                          {customer.bigOrders > 0 && (
+                                  <span className="inline-flex w-fit self-start items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-700 ring-1 ring-amber-200" title={`${customer.bigOrders} order${customer.bigOrders === 1 ? "" : "s"} above the basic package - bigger package, upsell or cross-sell`}>
+                                    <Coins className="h-3 w-3" /> Big spender · {formatProductMoney(customer.biggestOrder, customer.latestCurrency)}
+                                  </span>
+                                )}
                           <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 grid grid-cols-2 gap-3 text-xs">
                             <div className="flex flex-col gap-0.5 col-span-2">
                               <span className="font-semibold uppercase tracking-wide text-gray-400">Latest order</span>
@@ -85478,7 +85530,7 @@ ${waybillLineItems(w).length > 1
                           const customerStatusLabel = flagged && canSeeCustomerRisk ? "High-risk" : customer.orders > 1 ? "Repeat Buyer" : customer.successful > 0 ? "Delivered Buyer" : "New Customer";
                           const customerStatusClass = flagged && canSeeCustomerRisk ? "bg-red-50 text-red-700 border-red-100" : customer.orders > 1 ? "bg-green-50 text-green-700 border-green-100" : customer.successful > 0 ? "bg-blue-50 text-blue-700 border-blue-100" : "bg-sky-50 text-sky-700 border-sky-100";
                           const customerStatusDotClass = flagged && canSeeCustomerRisk ? "bg-red-500" : customer.orders > 1 ? "bg-green-500" : customer.successful > 0 ? "bg-blue-500" : "bg-sky-500";
-                          const customerStatusDetail = flagged && canSeeCustomerRisk ? (flagData?.reason || "Flagged for attention") : customer.orders > 1 ? "2+ orders" : customer.successful > 0 ? "Has delivered once" : "First time buyer";
+                          const customerStatusDetail = flagged && canSeeCustomerRisk ? (flagData?.reason || "Flagged for attention") : customer.orders > 1 ? `${customer.successful}/${customer.orders} delivered` : customer.successful > 0 ? "Has delivered once" : "First time buyer";
                           const reliabilityLabel = customer.successful === 0 ? "No delivered order yet" : reliability >= 70 ? "Reliable buyer" : reliability >= 40 ? "Mixed delivery history" : "Needs follow-up";
                           const whatsappUrl = buildWhatsAppTargets(customer.phone, `Hello ${customer.name}, thank you for ordering from us.`).normalUrl;
                           return (
@@ -85519,6 +85571,11 @@ ${waybillLineItems(w).length > 1
                                   <span className="flex items-center gap-2 text-xs font-black"><span className={`h-2 w-2 rounded-full ${customerStatusDotClass}`} /> {customerStatusLabel}</span>
                                   <span className="mt-1 flex items-center gap-2 text-[11px] font-semibold opacity-80"><span className={`h-1.5 w-1.5 rounded-full ${customerStatusDotClass}`} /> {customerStatusDetail}</span>
                                 </div>
+                                {customer.bigOrders > 0 && (
+                                  <span className="mt-1.5 inline-flex w-fit items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-700 ring-1 ring-amber-200" title={`${customer.bigOrders} order${customer.bigOrders === 1 ? "" : "s"} above the basic package - bigger package, upsell or cross-sell`}>
+                                    <Coins className="h-3 w-3" /> Big spender · {formatProductMoney(customer.biggestOrder, customer.latestCurrency)}
+                                  </span>
+                                )}
                               </td>
                               <td className="px-4 py-4">
                                 <div className="grid grid-cols-3 gap-3 text-center">
