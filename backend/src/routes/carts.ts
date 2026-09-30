@@ -16,6 +16,7 @@ import {
 } from "../lib/cart-log-penalty.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 import {
+  CLOSING_RUSH_WAIT_MINUTES, CLOSING_RUSH_WINDOW_MINUTES,
   DEFAULT_ASSIGNMENT_RULES, assignmentRulesForBranch, cartCanBecomeOrder,
   eligibleReps, hasReachablePhone, isAssignmentWindowOpen, nextRepInLine
 } from "../lib/cart-assignment.js";
@@ -2924,6 +2925,27 @@ router.post("/log-penalties/review", requireRole("Owner"), async (req, res) => {
 // ⚠️ ONLINE STATUS IS OWNER-ONLY. Bright was explicit: only the Owner sees who
 // is online. Everybody else gets the workload numbers without the presence
 // dots, so a rep cannot use this screen to watch their colleagues.
+/**
+ * The branch's hand-out rules, for EVERY role. The rep's countdown on each cart
+ * has to use the same wait, hours and closing-hour fast lane as the job, or it
+ * promises a rep who is not coming - it used a fixed 10 minutes and 17:30
+ * while Nigeria waited 15. Rules only: who is online and the queue stay on the
+ * managers' panel below.
+ */
+router.get("/assignment-rules", async (req, res) => {
+  try {
+    const branchId = req.user!.branchId ?? null;
+    const rules = branchId ? await assignmentRulesForBranch(branchId) : DEFAULT_ASSIGNMENT_RULES;
+    res.json({
+      ...rules,
+      closingRushWindowMinutes: CLOSING_RUSH_WINDOW_MINUTES,
+      closingRushWaitMinutes: CLOSING_RUSH_WAIT_MINUTES
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not read the hand-out rules." });
+  }
+});
+
 router.get("/assignment-panel", requireRole("Owner", "Admin", "Manager"), async (req, res) => {
   try {
     const orgId = req.user!.orgId;

@@ -49,7 +49,9 @@ export const DEFAULT_ASSIGNMENT_RULES = {
   assignmentDelayMinutes: 10,
   contactSlaMinutes: 10,
   workStartMinute: 8 * 60 + 30,
-  workEndMinute: 17 * 60 + 30,
+  // 17:00 since 30 Sept 2026: Bright - the reps close at 5pm, so a cart after
+  // 5 waits for the morning.
+  workEndMinute: 17 * 60,
   worksSunday: false
 };
 
@@ -173,13 +175,36 @@ export const cartContactNumber = (cart: { phone?: string | null; whatsapp?: stri
 export const handOutWaitMs = (
   cart: Parameters<typeof cartCanBecomeOrder>[0],
   rules: AssignmentRules,
-  autoSubmitMode: AutoSubmitMode
+  autoSubmitMode: AutoSubmitMode,
+  now: number = Date.now()
 ): number => {
-  const wait = rules.assignmentDelayMinutes * 60 * 1000;
+  // In the last hour before closing, a cart goes out after 2 minutes instead
+  // of the branch's usual wait - see inClosingRush.
+  const wait = inClosingRush(rules, now)
+    ? Math.min(rules.assignmentDelayMinutes, CLOSING_RUSH_WAIT_MINUTES) * 60 * 1000
+    : rules.assignmentDelayMinutes * 60 * 1000;
   if (autoSubmitMode === "full" && cartCanBecomeOrder(cart)) {
     return Math.max(wait, AUTO_SUBMIT_GIVES_UP_MS + 2 * 60 * 1000);
   }
   return wait;
+};
+
+/**
+ * ⚠️ THE LAST HOUR BEFORE CLOSING IS A FAST LANE (Bright, 30 Sept 2026: "any
+ * abond cart that comes around 4pm should be assigned fast as possible before
+ * the sale reps close ... 5pm"). With the usual wait - 15 minutes in Nigeria -
+ * a cart that went quiet at 4:50 reached nobody before 5, and at 5 the window
+ * shut, so a warm lead waited until the next morning. From an hour before the
+ * branch closes, a cart is handed out once the customer has been quiet for 2
+ * minutes: long enough that they have stopped typing, and one job cycle.
+ */
+export const CLOSING_RUSH_WINDOW_MINUTES = 60;
+export const CLOSING_RUSH_WAIT_MINUTES = 2;
+
+export const inClosingRush = (rules: AssignmentRules, now: number = Date.now()): boolean => {
+  const lagos = new Date(now + LAGOS_OFFSET_MS);
+  const minute = lagos.getUTCHours() * 60 + lagos.getUTCMinutes();
+  return minute >= rules.workEndMinute - CLOSING_RUSH_WINDOW_MINUTES && minute < rules.workEndMinute;
 };
 
 /** Whether the converter could turn this cart into an order on its own. */
@@ -348,7 +373,7 @@ export async function runCartAutoAssign(options: {
     if (!isAssignmentWindowOpen(rules, new Date(now))) continue;
     const quietSince = Date.parse(cart.last_activity ?? cart.created_at ?? "");
     if (!Number.isFinite(quietSince)) continue;
-    if (now - quietSince < handOutWaitMs(cart, rules, await modeFor(cart.org_id))) continue;
+    if (now - quietSince < handOutWaitMs(cart, rules, await modeFor(cart.org_id), now)) continue;
     waiting.push(cart);
   }
 

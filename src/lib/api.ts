@@ -3763,7 +3763,22 @@ export type CartAssignmentPanel = {
   recentAssignments: Array<{ cartId: string; customer: string; repName: string; assignedAt: string }>;
 };
 
+/** The branch's cart hand-out rules - readable by every role (the rep's countdown uses them). */
+export type CartHandOutRules = {
+  enabled: boolean;
+  assignmentDelayMinutes: number;
+  contactSlaMinutes: number;
+  workStartMinute: number;
+  workEndMinute: number;
+  worksSunday: boolean;
+  /** From this many minutes before closing, a cart goes out after closingRushWaitMinutes. */
+  closingRushWindowMinutes: number;
+  closingRushWaitMinutes: number;
+};
+
 export const cartsApi = {
+  /** The branch's hand-out rules, for any role. */
+  assignmentRules: () => get<CartHandOutRules>("/api/carts/assignment-rules"),
   /** Who the rotation would pick next, and what each rep is carrying. */
   assignmentPanel: () => get<CartAssignmentPanel>("/api/carts/assignment-panel"),
   saveAssignmentRules: (body: {

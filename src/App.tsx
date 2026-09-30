@@ -168,7 +168,7 @@ import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, ordersExtraApi, productCostApi, stockApi as _stockApi,
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, targetPeriodsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
-  branchesApi, setApiSpyUserId, type CartAssignmentPanel,
+  branchesApi, setApiSpyUserId, type CartAssignmentPanel, type CartHandOutRules,
   setApiPreviewReadOnly,
   PreviewReadOnlyError, type BranchWorkspace
 } from "./lib/api";
@@ -5661,15 +5661,27 @@ const orderHasVerifiedUpsell = (order: TrackedOrder) =>
  * converter gives up (15 min) and the hand-out takes over. And a cart counts
  * as reachable on its WhatsApp number when the phone box is junk.
  */
-const CART_ASSIGN_AFTER_MS = 10 * 60 * 1000;
 const CART_AUTO_SUBMIT_GIVES_UP_MS = 15 * 60 * 1000;
+
+/**
+ * Used until the branch's own rules arrive (GET /api/carts/assignment-rules),
+ * and if they cannot be read. Mirrors DEFAULT_ASSIGNMENT_RULES on the server.
+ */
+const DEFAULT_CART_HANDOUT_RULES: CartHandOutRules = {
+  enabled: true,
+  assignmentDelayMinutes: 10,
+  contactSlaMinutes: 10,
+  workStartMinute: 8 * 60 + 30,
+  workEndMinute: 17 * 60,
+  worksSunday: false,
+  closingRushWindowMinutes: 60,
+  closingRushWaitMinutes: 2
+};
 
 const cartHasEveryDetail = (cart: AbandonedCartRecord) =>
   Boolean(cart.customer) && cart.customer !== "Partial lead"
   && Boolean(cart.phone) && Boolean(cart.address) && Boolean(cart.city)
   && Boolean(cart.state) && Boolean(cart.productId) && Boolean(cart.packageId);
-const CART_CONTACT_SLA_MS = 10 * 60 * 1000;
-
 type CartClock =
   | { kind: "waiting"; msLeft: number }
   | { kind: "closed" }
@@ -5685,18 +5697,38 @@ type CartClock =
  * rep who is not coming. Same hours, same no-Sundays rule.
  */
 const CART_LAGOS_OFFSET_MS = 60 * 60 * 1000;
-const cartAssignmentWindowOpen = (now: number) => {
+const cartLagosMinute = (now: number) => {
   const lagos = new Date(now + CART_LAGOS_OFFSET_MS);
-  if (lagos.getUTCDay() === 0) return false; // no work on Sundays
-  const minute = lagos.getUTCHours() * 60 + lagos.getUTCMinutes();
-  return minute >= 8 * 60 + 30 && minute < 17 * 60 + 30;
+  return lagos.getUTCHours() * 60 + lagos.getUTCMinutes();
+};
+const cartAssignmentWindowOpen = (now: number, rules: CartHandOutRules = DEFAULT_CART_HANDOUT_RULES) => {
+  if (!rules.enabled) return false;
+  const lagos = new Date(now + CART_LAGOS_OFFSET_MS);
+  if (!rules.worksSunday && lagos.getUTCDay() === 0) return false; // no work on Sundays
+  const minute = cartLagosMinute(now);
+  return minute >= rules.workStartMinute && minute < rules.workEndMinute;
+};
+
+/**
+ * How long a cart waits before a rep gets it - the same as handOutWaitMs on
+ * the server: the branch's wait, cut to 2 minutes in the last hour before
+ * closing so a 4:50pm cart still reaches somebody before 5.
+ */
+const cartHandOutWaitMs = (cart: AbandonedCartRecord, rules: CartHandOutRules, now: number, autoSubmitMode: "full" | "cart" | "off") => {
+  const minute = cartLagosMinute(now);
+  const rush = minute >= rules.workEndMinute - rules.closingRushWindowMinutes && minute < rules.workEndMinute;
+  const wait = (rush ? Math.min(rules.assignmentDelayMinutes, rules.closingRushWaitMinutes) : rules.assignmentDelayMinutes) * 60 * 1000;
+  return autoSubmitMode === "full" && cartHasEveryDetail(cart)
+    ? Math.max(wait, CART_AUTO_SUBMIT_GIVES_UP_MS + 2 * 60 * 1000)
+    : wait;
 };
 
 const cartClockFor = (
   cart: AbandonedCartRecord,
   attempts: number,
   now: number,
-  autoSubmitMode: "full" | "cart" | "off" = "full"
+  autoSubmitMode: "full" | "cart" | "off" = "full",
+  rules: CartHandOutRules = DEFAULT_CART_HANDOUT_RULES
 ): CartClock | null => {
   if (cart.status !== "Open abandoned" && cart.status !== "In progress" && cart.status !== "Assigned") return null;
 
@@ -5711,13 +5743,14 @@ const cartClockFor = (
   if (!cart.assignedRepId) {
     const quietSince = Date.parse(cart.lastActivity || cart.createdAt || "");
     if (!Number.isFinite(quietSince)) return null;
-    const wait = autoSubmitMode === "full" && cartHasEveryDetail(cart)
-      ? CART_AUTO_SUBMIT_GIVES_UP_MS + 2 * 60 * 1000
-      : CART_ASSIGN_AFTER_MS;
-    const msLeft = quietSince + wait - now;
+    const msLeft = quietSince + cartHandOutWaitMs(cart, rules, now, autoSubmitMode) - now;
     // Outside working hours nobody is being handed anything, so a countdown
-    // would be a promise the system does not keep. It says so plainly instead.
-    if (msLeft <= 0 && !cartAssignmentWindowOpen(now)) return { kind: "closed" };
+    // would be a promise the system does not keep. It says so plainly instead:
+    // after closing - or when the wait would run past closing - the cart is
+    // "waiting for the morning", not counting down to a rep who has gone home.
+    if (!cartAssignmentWindowOpen(Math.max(now, now + msLeft), rules) || (msLeft <= 0 && !cartAssignmentWindowOpen(now, rules))) {
+      return { kind: "closed" };
+    }
     // Past the mark but still unassigned: the job runs every two minutes, so
     // this is the normal gap, not a fault. Shown as waiting rather than a
     // negative number.
@@ -5726,7 +5759,7 @@ const cartClockFor = (
 
   const handedOver = Date.parse(cart.assignedAt || "");
   if (!Number.isFinite(handedOver)) return null;
-  const msLeft = handedOver + CART_CONTACT_SLA_MS - now;
+  const msLeft = handedOver + rules.contactSlaMinutes * 60 * 1000 - now;
   return msLeft >= 0 ? { kind: "due", msLeft } : { kind: "overdue", msOver: -msLeft };
 };
 
@@ -8693,6 +8726,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // pushed: the numbers move when the 2-minute job runs, so a slow refresh is
   // honest and a live socket would be noise.
   const [cartAssignmentPanel, setCartAssignmentPanel] = useState<CartAssignmentPanel | null>(null);
+  // The branch's hand-out rules for EVERY role - the rep's countdown on each
+  // cart must use the same wait, hours and 4pm fast lane as the job.
+  const [cartHandOutRules, setCartHandOutRules] = useState<CartHandOutRules>(DEFAULT_CART_HANDOUT_RULES);
   const [cartAssignmentSidebarCollapsed, setCartAssignmentSidebarCollapsed] = useState(false);
   const [cartRulesDraft, setCartRulesDraft] = useState({
     enabled: true, assignmentDelayMinutes: 10, contactSlaMinutes: 10,
@@ -8753,6 +8789,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       .then(() => {
         showToast("Assignment rules saved.");
         closeModal();
+        void cartsApi.assignmentRules().then(setCartHandOutRules).catch(() => undefined);
         return cartsApi.assignmentPanel().then(setCartAssignmentPanel).catch(() => undefined);
       })
       .catch((err: any) => showToast(`Could not save the rules: ${err?.message ?? "please retry"}.`))
@@ -11182,6 +11219,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const currentRole: EditableUserRole = isSpying
     ? (spiedUser!.role)
     : isPreviewingRole ? previewRole! : realRole;
+
+  // Every role, every branch switch: the rules the rep's countdown follows.
+  useEffect(() => {
+    if (!auth.isLoggedIn()) return;
+    let cancelled = false;
+    cartsApi.assignmentRules()
+      .then((rules) => { if (!cancelled) setCartHandOutRules(rules); })
+      .catch(() => { /* the defaults below stay - a countdown, never a blocker */ });
+    return () => { cancelled = true; };
+  }, [activeBranch?.id]);
 
   useEffect(() => {
     if (activePage !== "Abandoned Carts") return;
@@ -79654,7 +79701,7 @@ ${waybillLineItems(w).length > 1
                                 })()}
                                 {conversionStatusLabel && <span className="text-[11px] font-medium text-gray-500">{conversionStatusLabel}</span>}
                                 {(() => {
-                                  const clock = cartClockFor(cart, cartAttemptsById.get(cart.id) ?? 0, cartClockNow, autoSubmitMode);
+                                  const clock = cartClockFor(cart, cartAttemptsById.get(cart.id) ?? 0, cartClockNow, autoSubmitMode, cartHandOutRules);
                                   if (!clock || clock.kind === "contacted") return null;
                                   if (clock.kind === "closed") {
                                     return (
@@ -109189,6 +109236,9 @@ ${waybillLineItems(w).length > 1
                       />
                       <span className="text-xs text-gray-500">minutes quiet</span>
                     </div>
+                    <span className="text-[11px] leading-4 text-gray-500">
+                      In the last hour before closing this drops to {DEFAULT_CART_HANDOUT_RULES.closingRushWaitMinutes} minutes, so a late cart still reaches a rep the same day.
+                    </span>
                   </label>
 
                   <label className="flex flex-col gap-1.5">
