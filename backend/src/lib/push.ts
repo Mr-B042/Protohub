@@ -1,7 +1,7 @@
 import jwt from "jsonwebtoken";
 import webpush from "web-push";
 import { supabase } from "./supabase.js";
-import { deliveryPolicyForPush, preparePushPayload } from "./push-policy.js";
+import { deliveryPolicyForPush, preparePushPayload, trayTagFor } from "./push-policy.js";
 
 // VAPID config — set these in .env
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY ?? "";
@@ -221,13 +221,15 @@ export async function sendPushToSubscriptions(
 
   const preparedPayload = preparePushPayload(payload);
   const policy = deliveryPolicyForPush(preparedPayload);
-  const message = JSON.stringify(preparedPayload);
 
   const results = await Promise.allSettled(
     subscriptions.map(async (sub) => {
       const endpointHost = (() => {
         try { return new URL(sub.endpoint).host; } catch { return "unknown"; }
       })();
+      // Each phone takes its next tray place in turn (see push-policy.ts), so
+      // a new alert only ever replaces the one 40 alerts older on that phone.
+      const message = JSON.stringify({ ...preparedPayload, tag: trayTagFor(`web:${sub.endpoint}`) });
       try {
         const sendResult = await webpush.sendNotification(
           {
@@ -236,14 +238,12 @@ export async function sendPushToSubscriptions(
           },
           message,
           {
-            // Push is an immediate prompt, not the durable business record.
-            // Short TTLs prevent a stale order event from appearing hours or
-            // days later; Topic keeps only the newest waiting event in each
-            // class while the device is offline. The complete history remains
-            // in system_notifications.
+            // Waits up to 24 hours for a phone with its data off, and there is
+            // deliberately NO Topic: a Topic keeps only the newest waiting
+            // alert of a kind, which is how older alerts used to vanish
+            // (Bright, 30 Sept). The complete history is in system_notifications.
             TTL: policy.ttlSeconds,
-            urgency: "high",
-            topic: policy.collapseGroup
+            urgency: "high"
           }
         );
         // Verbose logging — every attempt prints the push-service response so
@@ -357,6 +357,8 @@ export async function sendNativePushToDevices(
 
   const results = await Promise.allSettled(
     fcmDevices.map(async (device) => {
+      // This device's next tray place, in turn - see push-policy.ts.
+      const trayTag = trayTagFor(`native:${device.id}`);
       const res = await fetch(`https://fcm.googleapis.com/v1/projects/${FIREBASE_ACCOUNT!.projectId}/messages:send`, {
         method: "POST",
         headers: {
@@ -373,8 +375,9 @@ export async function sendNativePushToDevices(
             data,
             android: {
               priority: "high",
+              // Up to 24 hours, and no collapseKey: that kept only the newest
+              // waiting alert of a kind while the phone was offline.
               ttl: `${policy.ttlSeconds}s`,
-              collapseKey: policy.collapseGroup,
               notification: {
                 // MUST match the channel the app registers in src/lib/native-push.ts
                 // (createChannel id "protohub-alerts", importance MAX). Posting to a
@@ -382,11 +385,12 @@ export async function sendNativePushToDevices(
                 // silent fallback channel or drop it — FCM still returns 200, so it
                 // looks "delivered" while the phone shows nothing.
                 channelId: "protohub-alerts",
-                // Four fixed slots per category keep the OS tray at 16 live
-                // notifications maximum even while the app is fully closed.
-                // Without this, Android stops accepting new notifications at
-                // roughly 49-50 until a person clears the tray.
-                tag: preparedPayload.tag,
+                // 40 places taken in turn keep the OS tray at 40 live
+                // notifications at most, even while the app is fully closed -
+                // the newest 40, since each alert replaces the one 40 older.
+                // Without a bound, Android stops accepting new notifications
+                // at roughly 49-50 until a person clears the tray.
+                tag: trayTag,
                 // Per-event status-bar glyph + accent colour (tints it) + the brand
                 // logo as the image — premium, recognisable per notification type.
                 icon: nativeIconForKind(preparedPayload.kind),
@@ -408,8 +412,7 @@ export async function sendNativePushToDevices(
               headers: {
                 "apns-priority": "10",
                 "apns-push-type": "alert",
-                "apns-expiration": String(expiresAtSeconds),
-                "apns-collapse-id": policy.collapseGroup
+                "apns-expiration": String(expiresAtSeconds)
               },
               payload: {
                 aps: {
