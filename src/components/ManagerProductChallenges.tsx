@@ -5,6 +5,7 @@ import {
   Eye,
   Check,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   Circle,
   CircleDollarSign,
@@ -173,6 +174,13 @@ type Props = {
 const fieldControlClass = "w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm font-bold text-gray-900 outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100";
 
 const DAY_MS = 86_400_000;
+
+/**
+ * "September 2026" - how the history groups ended challenges. By the month a
+ * challenge ENDS in: they run 30 Aug - 30 Sep, which is September's.
+ */
+const challengeMonthLabel = (endDate: string) =>
+  new Date(`${endDate}T00:00:00`).toLocaleDateString("en-GB", { month: "long", year: "numeric" });
 
 const dateKey = (date: Date) => {
   const year = date.getFullYear();
@@ -651,10 +659,27 @@ export function ManagerProductChallenges({
   const [showAllProducts, setShowAllProducts] = useState(false);
 
   const productMap = useMemo(() => new Map(products.map((product) => [product.id, product])), [products]);
+  // ⚠️ THIS MONTH IS OPEN, ENDED CHALLENGES ARE HISTORY - NEVER DELETED. A
+  // challenge that has ended folds into "Past months" by its own end date, so
+  // September moves there by itself on 1 October; only the Owner's Delete
+  // removes one. A challenge set up ahead for next month counts as current.
+  const challengeTodayKey = dateKey(new Date());
+  const currentChallenges = useMemo(
+    () => challenges.filter((challenge) => challenge.endDate >= challengeTodayKey),
+    [challenges, challengeTodayKey]
+  );
+  const pastChallenges = useMemo(
+    () => challenges.filter((challenge) => challenge.endDate < challengeTodayKey).sort((a, b) => b.startDate.localeCompare(a.startDate)),
+    [challenges, challengeTodayKey]
+  );
+  const [showPastChallenges, setShowPastChallenges] = useState(false);
   useEffect(() => {
-    if (!challenges.some((challenge) => challenge.id === selectedChallengeId)) setSelectedChallengeId(challenges[0]?.id ?? null);
-  }, [challenges, selectedChallengeId]);
-  const orderedChallenges = useMemo(() => [...challenges].sort((a, b) => {
+    // Open on this month's challenge, not on history.
+    if (!challenges.some((challenge) => challenge.id === selectedChallengeId)) {
+      setSelectedChallengeId(currentChallenges[0]?.id ?? challenges[0]?.id ?? null);
+    }
+  }, [challenges, currentChallenges, selectedChallengeId]);
+  const orderedChallenges = useMemo(() => [...currentChallenges].sort((a, b) => {
     const rank = (challenge: ManagerProductChallenge) => {
       if (challenge.progressUnits >= challenge.targetUnits) return 3;
       const totalDays = Math.max(1, Math.ceil((parseDateKey(challenge.endDate).getTime() - parseDateKey(challenge.startDate).getTime()) / DAY_MS) + 1);
@@ -665,7 +690,21 @@ export function ManagerProductChallenges({
       return pace < 0.8 ? 0 : pace < 0.95 ? 1 : 2;
     };
     return rank(a) - rank(b);
-  }), [challenges]);
+  }), [currentChallenges]);
+  const renderChallengeCard = (challenge: ManagerProductChallenge) => (
+    <ChallengeCard
+      key={challenge.id}
+      challenge={challenge}
+      product={productMap.get(challenge.productId)}
+      canEdit={canEdit}
+      repMode={role === "Sales Rep"}
+      formatMoney={formatMoney}
+      onEdit={() => openEdit(challenge)}
+      onDelete={() => void onDelete(challenge.id)}
+      onToggleStatus={() => void onSave({ ...challenge, status: challenge.status === "active" ? "paused" : "active" }, challenge.id)}
+      onSaveAllocations={onSaveAllocations}
+    />
+  );
   const previewProduct = productMap.get(draft.productId);
   const draftCount = milestoneCount(draft.cadence);
   const visibleTargets = draft.milestoneDistribution === "custom"
@@ -994,9 +1033,20 @@ export function ManagerProductChallenges({
               </p>
               {canEdit && <button type="button" className="!min-h-0 mt-4 inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-black text-indigo-700" onClick={openNew}><Plus className="h-3.5 w-3.5" /> Create first challenge</button>}
             </div>
-          ) : challenges.length >= 2 ? (
+          ) : (
             <>
-              <ChallengeSummaryStrip challenges={challenges} formatMoney={formatMoney} />
+              {currentChallenges.length === 0 ? (
+                <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-indigo-200 bg-white/70 px-5 py-6 text-center">
+                  <Target className="h-6 w-6 text-indigo-300" />
+                  <h3 className="mt-2 text-sm font-black text-gray-900">No challenge for this month yet</h3>
+                  <p className="mt-1 max-w-lg text-xs font-medium leading-5 text-gray-500">
+                    {canEdit ? "Last month's challenges are kept below as history." : "The Owner has not set this month's challenge yet."}
+                  </p>
+                  {canEdit && <button type="button" className="!min-h-0 mt-3 inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-black text-indigo-700" onClick={openNew}><Plus className="h-3.5 w-3.5" /> New challenge</button>}
+                </div>
+              ) : currentChallenges.length >= 2 ? (
+                <>
+                  <ChallengeSummaryStrip challenges={currentChallenges} formatMoney={formatMoney} />
               <div className="relative rounded-xl border border-gray-100 bg-white p-3 shadow-sm">
                 <div className="flex items-center gap-3">
                   <button type="button" aria-label="Previous products" className="!min-h-0 hidden h-9 w-9 shrink-0 items-center justify-center rounded-full border border-gray-200 text-gray-500 sm:flex" onClick={() => document.querySelector('.challenge-selector-track')?.scrollBy({ left: -320, behavior: 'smooth' })}>‹</button>
@@ -1007,23 +1057,46 @@ export function ManagerProductChallenges({
                   <button type="button" className="!min-h-0 hidden shrink-0 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-black text-blue-700 xl:block" onClick={() => setShowAllProducts(true)}>View all products</button>
                 </div>
               </div>
-              {(() => { const selected = challenges.find((challenge) => challenge.id === selectedChallengeId) ?? orderedChallenges[0]; return selected ? <ChallengeCard key={selected.id} challenge={selected} product={productMap.get(selected.productId)} canEdit={canEdit} repMode={role === "Sales Rep"} formatMoney={formatMoney} onEdit={() => openEdit(selected)} onDelete={() => void onDelete(selected.id)} onToggleStatus={() => void onSave({ ...selected, status: selected.status === "active" ? "paused" : "active" }, selected.id)} onSaveAllocations={onSaveAllocations} /> : null; })()}
+                  {(() => { const selected = currentChallenges.find((challenge) => challenge.id === selectedChallengeId) ?? orderedChallenges[0]; return selected ? renderChallengeCard(selected) : null; })()}
+                </>
+              ) : (
+                currentChallenges.map(renderChallengeCard)
+              )}
+
+              {pastChallenges.length > 0 && (
+                <div className="rounded-xl border border-gray-200 bg-white/80">
+                  <button
+                    type="button"
+                    aria-expanded={showPastChallenges}
+                    onClick={() => setShowPastChallenges((open) => !open)}
+                    className="!min-h-0 flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+                  >
+                    <span>
+                      <span className="block text-sm font-black text-gray-900">Past months · history</span>
+                      <span className="block text-xs text-gray-500">
+                        {pastChallenges.length} challenge{pastChallenges.length === 1 ? "" : "s"} that ended - kept until you delete them
+                      </span>
+                    </span>
+                    <ChevronDown className={`h-5 w-5 shrink-0 text-gray-400 transition-transform ${showPastChallenges ? "rotate-180" : ""}`} />
+                  </button>
+                  {showPastChallenges && (
+                    <div className="space-y-4 border-t border-gray-100 px-4 py-4">
+                      {Array.from(new Set(pastChallenges.map((challenge) => challengeMonthLabel(challenge.endDate)))).map((month) => (
+                        <div key={month}>
+                          <p className="m-0 mb-2 text-xs font-black uppercase tracking-wide text-gray-500">{month}</p>
+                          <div className="flex gap-3 overflow-x-auto pb-1">
+                            {pastChallenges.filter((challenge) => challengeMonthLabel(challenge.endDate) === month).map((challenge, index) => (
+                              <ChallengeSelector key={challenge.id} challenge={challenge} product={productMap.get(challenge.productId)} selected={selectedChallengeId === challenge.id} onClick={() => setSelectedChallengeId(challenge.id)} accent={CARD_ACCENTS[index % CARD_ACCENTS.length]} />
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                      {(() => { const selectedPast = pastChallenges.find((challenge) => challenge.id === selectedChallengeId); return selectedPast ? renderChallengeCard(selectedPast) : <p className="m-0 text-xs text-gray-500">Pick one to see how it ended.</p>; })()}
+                    </div>
+                  )}
+                </div>
+              )}
             </>
-          ) : (
-            challenges.map((challenge) => (
-              <ChallengeCard
-                key={challenge.id}
-                challenge={challenge}
-                product={productMap.get(challenge.productId)}
-                canEdit={canEdit}
-                repMode={role === "Sales Rep"}
-                formatMoney={formatMoney}
-                onEdit={() => openEdit(challenge)}
-                onDelete={() => void onDelete(challenge.id)}
-                onToggleStatus={() => void onSave({ ...challenge, status: challenge.status === "active" ? "paused" : "active" }, challenge.id)}
-                onSaveAllocations={onSaveAllocations}
-              />
-            ))
           )}
         </div>
       </section>

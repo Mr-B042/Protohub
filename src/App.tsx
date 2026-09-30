@@ -9740,6 +9740,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [managerDashboardTab, setManagerDashboardTab] = useState<ManagerDashboardTab>("Overview");
   const [targetPeriods, setTargetPeriods] = useState<TargetPeriod[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
+  // Past months' targets are folded away by default - see renderTargetsPanel.
+  const [showPastTargets, setShowPastTargets] = useState(false);
   const [targetProgress, setTargetProgress] = useState<TargetProgressView | null>(null);
   const [targetProgressOverview, setTargetProgressOverview] = useState<Record<string, TargetProgressView>>({});
   const [targetsLoading, setTargetsLoading] = useState(false);
@@ -9870,8 +9872,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         const { targets } = await targetPeriodsApi.list();
         if (cancelled) return;
         setTargetPeriods(targets);
-        // Prefer whatever is already selected, else the newest period.
-        const next = targets.find((t) => t.id === selectedTargetId) ?? targets[0] ?? null;
+        // Prefer whatever is already selected, else one of THIS month's targets,
+        // else the newest - so the tab opens on the month in hand, not history.
+        const openKey = todayKey();
+        const next = targets.find((t) => t.id === selectedTargetId)
+          ?? targets.find((t) => t.periodEnd >= openKey)
+          ?? targets[0] ?? null;
         setSelectedTargetId(next?.id ?? null);
         const progressRows = await Promise.all(targets.map(async (target) => [target.id, await targetPeriodsApi.progress(target.id)] as const));
         if (cancelled) return;
@@ -31894,10 +31900,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
   const renderTargetsPanel = () => {
     const target = targetPeriods.find((t) => t.id === selectedTargetId) ?? null;
+    // This month (and any month already set up ahead) is what's open; a month
+    // that has ended is history. Decided by the period's own end date, so
+    // September moves into history by itself at midnight on 1 October.
+    const targetTodayKey = todayKey();
+    const currentTargetPeriods = targetPeriods.filter((t) => t.periodEnd >= targetTodayKey);
+    const pastTargetPeriods = targetPeriods
+      .filter((t) => t.periodEnd < targetTodayKey)
+      .sort((a, b) => b.periodStart.localeCompare(a.periodStart));
     const p = targetProgress;
 
+    // Named by the month the period ENDS in: the targets run 30 Aug - 30 Sep,
+    // which is September's target, not August's.
     const periodLabel = (t: TargetPeriod) => {
-      const d = new Date(`${t.periodStart}T00:00:00Z`);
+      const d = new Date(`${t.periodEnd}T00:00:00Z`);
       return `${d.toLocaleString("en-NG", { month: "long", timeZone: "UTC" })} ${d.getUTCFullYear()}`;
     };
 
@@ -31983,11 +31999,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 value={selectedTargetId ?? ""}
                 onChange={(event) => void selectTargetPeriod(event.target.value)}
               >
-                {targetPeriods.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.productName ?? "Product"} — {periodLabel(t)}
-                  </option>
-                ))}
+                {currentTargetPeriods.length > 0 && (
+                  <optgroup label="This month">
+                    {currentTargetPeriods.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.productName ?? "Product"} — {periodLabel(t)}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {pastTargetPeriods.length > 0 && (
+                  <optgroup label="Past months">
+                    {pastTargetPeriods.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.productName ?? "Product"} — {periodLabel(t)}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             )}
             {/* Owner only. A target is what the team is judged against and the
@@ -32024,15 +32053,61 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
         {!targetEditorOpen && targetPeriods.length > 0 && (
           <section className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50/60 via-white to-white p-5 shadow-sm" aria-label="Target overview">
-            <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="m-0 text-xs font-black uppercase tracking-[0.16em] text-indigo-600">Target overview</p><h3 className="mt-1 text-2xl font-black text-gray-950">Every target at a glance</h3><p className="m-0 mt-1 text-sm text-gray-500">Compare contribution, orders, deliveries, pieces and ad spend.</p></div><span className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-black text-gray-600">{targetPeriods.filter((item) => item.status === "active").length} active targets</span></div>
-            <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {targetPeriods.map((item) => { const progress = targetProgressOverview[item.id]; const product = products.find((entry) => entry.id === item.productId); const contribution = progress?.contribution.percentAchieved ?? 0; const justStarted = Boolean(progress && progress.forecast.daysElapsed <= 2 && progress.contribution.actual <= 0); const statusKey = justStarted ? "just_started" : (progress?.forecast.status ?? "at_risk"); const statusText = justStarted ? "Just started" : statusLabel(statusKey as TargetProgressView["forecast"]["status"]); const statusClass = justStarted ? "border-blue-200 bg-blue-50 text-blue-700" : statusTone(statusKey as TargetProgressView["forecast"]["status"]); return <article key={item.id} className={`rounded-2xl border bg-white p-4 shadow-sm transition hover:shadow-md ${item.id === selectedTargetId ? "border-violet-500 ring-2 ring-violet-100" : "border-gray-200"}`}>
+            <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="m-0 text-xs font-black uppercase tracking-[0.16em] text-indigo-600">Target overview</p><h3 className="mt-1 text-2xl font-black text-gray-950">Every target at a glance</h3><p className="m-0 mt-1 text-sm text-gray-500">Compare contribution, orders, deliveries, pieces and ad spend.</p></div><span className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-black text-gray-600">{currentTargetPeriods.filter((item) => item.status === "active").length} active this month</span></div>
+            {(() => {
+              const renderOverviewCard = (item: TargetPeriod) => { const progress = targetProgressOverview[item.id]; const product = products.find((entry) => entry.id === item.productId); const contribution = progress?.contribution.percentAchieved ?? 0; const justStarted = Boolean(progress && progress.forecast.daysElapsed <= 2 && progress.contribution.actual <= 0); const statusKey = justStarted ? "just_started" : (progress?.forecast.status ?? "at_risk"); const statusText = justStarted ? "Just started" : statusLabel(statusKey as TargetProgressView["forecast"]["status"]); const statusClass = justStarted ? "border-blue-200 bg-blue-50 text-blue-700" : statusTone(statusKey as TargetProgressView["forecast"]["status"]); return <article key={item.id} className={`rounded-2xl border bg-white p-4 shadow-sm transition hover:shadow-md ${item.id === selectedTargetId ? "border-violet-500 ring-2 ring-violet-100" : "border-gray-200"}`}>
                 <div className="flex items-start gap-3">{product?.packages?.find((pack) => pack.imageUrl)?.imageUrl ? <img src={product.packages.find((pack) => pack.imageUrl)?.imageUrl} alt="" className="h-14 w-14 shrink-0 rounded-xl border border-gray-100 object-cover" /> : <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-violet-50 text-violet-500"><Target className="h-6 w-6" /></span>}<div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><div><h4 className="m-0 truncate text-base font-black text-gray-950">{item.productName ?? item.name}</h4><p className="m-0 mt-0.5 text-xs text-gray-400">{new Date(`${item.periodStart}T00:00:00Z`).toLocaleString("en-NG", { month: "long", year: "numeric", timeZone: "UTC" })}</p></div><span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-black ${statusClass}`}>{statusText}</span></div></div></div>
                 <div className="mt-4 flex items-end justify-between gap-2"><div><p className="m-0 text-[10px] font-black uppercase tracking-wide text-gray-500">Net contribution</p><p className="m-0 mt-1 text-xl font-black text-gray-950">{formatMoney(progress?.contribution.actual ?? 0)} <span className="text-sm font-semibold text-gray-400">/ {formatMoney(item.contributionTarget)}</span></p></div><span className="text-sm font-black text-gray-500">{contribution}%</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-gray-100"><div className="h-full rounded-full bg-violet-500" style={{ width: `${Math.min(100, Math.max(0, contribution))}%` }} /></div>
                 <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-b border-gray-100 pb-4 text-xs"><div><span className="block text-gray-400">Orders</span><b>{progress?.ordersPlaced.actual ?? 0} / {item.orderTarget}</b></div><div><span className="block text-gray-400">Delivered</span><b>{progress?.delivered.actual ?? 0} / {item.deliveredTarget}</b></div><div><span className="block text-gray-400">Pieces</span><b>{progress?.pieces.actual ?? 0} / {item.piecesTarget}</b></div><div><span className="block text-gray-400">Delivery rate</span><b>{progress?.deliveryRate.actual ?? 0}% / {item.deliveryRateTarget}%</b></div></div>
                 <div className="mt-3 flex items-center justify-between gap-2 text-xs"><span className="text-gray-500">Ad spend <b className="text-gray-800">{formatMoney(progress?.adSpend.actual ?? 0)} / {formatMoney(item.adSpendCeiling)}</b></span><span className="text-gray-500">Pace <b className="text-gray-800">{progress?.requiredPace?.piecesPerDay ?? 0} pcs/day</b></span><button type="button" className="!min-h-0 shrink-0 font-black text-violet-700 hover:underline" onClick={() => void selectTargetPeriod(item.id)}>View target →</button></div>
-              </article>; })}
-            </div>
+              </article>; };
+              return (
+                <>
+                  {currentTargetPeriods.length > 0 ? (
+                    <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      {currentTargetPeriods.map(renderOverviewCard)}
+                    </div>
+                  ) : (
+                    <p className="m-0 mt-4 rounded-xl border border-dashed border-indigo-200 bg-white/70 px-4 py-5 text-center text-sm font-semibold text-gray-500">
+                      No target for this month yet.{currentRole === "Owner" ? " Set one with New target." : ""}
+                    </p>
+                  )}
+                  {/* ⚠️ HISTORY, FOLDED - NEVER DELETED. Past months stay exactly as
+                      they ended, for looking back; only the Owner's Delete removes
+                      one. Folded by default so the month in hand is what's open. */}
+                  {pastTargetPeriods.length > 0 && (
+                    <div className="mt-5 rounded-xl border border-gray-200 bg-white/80">
+                      <button
+                        type="button"
+                        aria-expanded={showPastTargets}
+                        onClick={() => setShowPastTargets((open) => !open)}
+                        className="!min-h-0 flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+                      >
+                        <span>
+                          <span className="block text-sm font-black text-gray-900">Past months · history</span>
+                          <span className="block text-xs text-gray-500">
+                            {pastTargetPeriods.length} target{pastTargetPeriods.length === 1 ? "" : "s"} from {Array.from(new Set(pastTargetPeriods.map((item) => periodLabel(item)))).length} month{Array.from(new Set(pastTargetPeriods.map((item) => periodLabel(item)))).length === 1 ? "" : "s"} - kept until you delete them
+                          </span>
+                        </span>
+                        <ChevronDown className={`h-5 w-5 shrink-0 text-gray-400 transition-transform ${showPastTargets ? "rotate-180" : ""}`} />
+                      </button>
+                      {showPastTargets && (
+                        <div className="space-y-4 border-t border-gray-100 px-4 py-4">
+                          {Array.from(new Set(pastTargetPeriods.map((item) => periodLabel(item)))).map((month) => (
+                            <div key={month}>
+                              <p className="m-0 mb-2 text-xs font-black uppercase tracking-wide text-gray-500">{month}</p>
+                              <div className="grid gap-4 opacity-90 md:grid-cols-2 xl:grid-cols-3">
+                                {pastTargetPeriods.filter((item) => periodLabel(item) === month).map(renderOverviewCard)}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </section>
         )}
 
