@@ -240,7 +240,8 @@ import CartLogOwedBanner from "./components/CartLogOwedBanner";
 import OrderHistoryModal from "./components/OrderHistoryModal";
 import DateWindowNav from "./components/DateWindowNav";
 import {
-  DateWindow, PRESET_LABEL, PresetKey, presetRange, windowContains
+  DateWindow, PRESET_LABEL, PresetKey, presetRange, windowContains,
+  formatWindow as formatDateWindow, shiftDay as windowShiftDay, weekStart as windowWeekStart, windowLabel as dateWindowLabel
 } from "./lib/date-window";
 import RecoveryBonusCalendar from "./components/RecoveryBonusCalendar";
 import UpgradeBonusGrid, { withUpgradeAmount } from "./components/UpgradeBonusGrid";
@@ -10164,12 +10165,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [upsellBonusWeekStart, setUpsellBonusWeekStart] = useState<string>(getSundayKey);
   // null = the single-week view. A range = the period report (a month, the
   // year, or a picked range), built from the same weekly maths week by week.
-  const [upsellBonusPeriod, setUpsellBonusPeriod] = useState<{ start: string; end: string; label: string } | null>(null);
+  // The shared date bar's range (the same control as My Orders and Marketing
+  // Performance). One week → the full weekly view; more → the period report.
+  const [upsellBonusWindow, setUpsellBonusWindow] = useState<DateWindow>(() => {
+    const start = getSundayKey();
+    return { start, end: windowShiftDay(start, 6) };
+  });
   const [upsellPeriodGates, setUpsellPeriodGates] = useState<Record<string, { netProfitOps: number; deliveryRate: number } | null>>({});
   const [upsellPeriodAttribution, setUpsellPeriodAttribution] = useState<Record<string, SalesBonusOrderAttribution[]> | null>(null);
   const [upsellPeriodLoading, setUpsellPeriodLoading] = useState(false);
   const [upsellPeriodError, setUpsellPeriodError] = useState("");
-  const [upsellRangeDraft, setUpsellRangeDraft] = useState<{ open: boolean; start: string; end: string }>({ open: false, start: "", end: "" });
   const [upsellPeriodReload, setUpsellPeriodReload] = useState(0);
   const [upsellBonusSettings, setUpsellBonusSettings] = useState<UpsellBonusSettings | null>(null);
   const [upsellBonusDraft, setUpsellBonusDraft] = useState<UpsellBonusSettings | null>(null);
@@ -30885,11 +30890,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     date.setDate(date.getDate() + 6);
     return formatDateKey(date);
   };
-  const shiftUpsellBonusWeek = (days: number) => {
-    const date = new Date(`${upsellBonusWeekStart}T00:00:00`);
-    date.setDate(date.getDate() + days);
-    setUpsellBonusWeekStart(formatDateKey(date));
-  };
   const canViewUpsellBonus = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager";
   /**
    * The Sunday weeks a period covers. ⚠️ A week belongs to the period its
@@ -30898,29 +30898,29 @@ export function App({ onLogout }: { onLogout?: () => void }) {
    * read the same weeks as the salary spread and the targets, and no week is
    * counted in two months. Weeks that have not started yet are left out.
    */
-  const upsellPeriodWeekStarts = (period: { start: string; end: string }) => {
-    const todayKey = formatDateKey(new Date());
-    const first = new Date(`${period.start}T00:00:00`);
-    first.setDate(first.getDate() - first.getDay());
+  const upsellSaturdayWeekStarts = (period: { start: string; end: string }) => {
     const weeks: string[] = [];
-    for (const cursor = new Date(first); formatDateKey(cursor) <= period.end; cursor.setDate(cursor.getDate() + 7)) {
-      const weekStart = formatDateKey(cursor);
-      const saturday = new Date(cursor);
-      saturday.setDate(saturday.getDate() + 6);
-      const weekEnd = formatDateKey(saturday);
-      if (weekEnd >= period.start && weekEnd <= period.end && weekStart <= todayKey) weeks.push(weekStart);
+    for (let weekStart = windowWeekStart(period.start); weekStart <= period.end; weekStart = windowShiftDay(weekStart, 7)) {
+      const saturday = windowShiftDay(weekStart, 6);
+      if (saturday >= period.start && saturday <= period.end) weeks.push(weekStart);
     }
     return weeks;
   };
-  const upsellMonthPeriod = (offset: number) => {
-    const now = new Date();
-    const first = new Date(now.getFullYear(), now.getMonth() + offset, 1);
-    const last = new Date(now.getFullYear(), now.getMonth() + offset + 1, 0);
-    return {
-      start: formatDateKey(first),
-      end: formatDateKey(last),
-      label: first.toLocaleDateString("en-GB", { month: "long", year: "numeric" })
-    };
+  const upsellPeriodWeekStarts = (period: { start: string; end: string }) => {
+    const todayKey = formatDateKey(new Date());
+    return upsellSaturdayWeekStarts(period).filter((weekStart) => weekStart <= todayKey);
+  };
+  // More than one week in the bar → the week-by-week report. One week, or a
+  // few days with no Saturday in them (Today, Yesterday) → that week's full view.
+  const upsellReportWindow = upsellSaturdayWeekStarts(upsellBonusWindow).length > 1 ? upsellBonusWindow : null;
+  const showUpsellWeek = (weekStart: string) => {
+    setUpsellBonusWeekStart(weekStart);
+    setUpsellBonusWindow({ start: weekStart, end: windowShiftDay(weekStart, 6) });
+  };
+  const changeUpsellBonusWindow = (next: DateWindow) => {
+    setUpsellBonusWindow(next);
+    const weeks = upsellSaturdayWeekStarts(next);
+    if (weeks.length <= 1) setUpsellBonusWeekStart(weeks[0] ?? windowWeekStart(next.end));
   };
   const refreshUpsellGateMetrics = (options?: { quiet?: boolean }) => {
     if (!canViewUpsellBonus || activePage !== "Manager Dashboard") return Promise.resolve();
@@ -31019,9 +31019,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // The period report: one attribution map for the whole range, then each
   // week's two gates. Four weeks at a time - a year is 40+ weekly summaries.
   useEffect(() => {
-    if (!upsellBonusPeriod || activePage !== "Manager Dashboard" || !canViewUpsellBonus) return;
+    if (!upsellReportWindow || activePage !== "Manager Dashboard" || !canViewUpsellBonus) return;
     let cancelled = false;
-    const weeks = upsellPeriodWeekStarts(upsellBonusPeriod);
+    const weeks = upsellPeriodWeekStarts(upsellReportWindow);
     setUpsellPeriodGates({});
     setUpsellPeriodAttribution(null);
     setUpsellPeriodError("");
@@ -31055,7 +31055,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [upsellBonusPeriod?.start, upsellBonusPeriod?.end, upsellPeriodReload, activePage, currentRole, managerProductFilterKeys]);
+  }, [upsellReportWindow?.start, upsellReportWindow?.end, upsellPeriodReload, activePage, currentRole, managerProductFilterKeys]);
 
   useEffect(() => {
     if (!canViewUpsellBonus || upsellBonusSettings) return;
@@ -31341,8 +31341,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // single-week view judges it. Adding the month's profit up and running it
     // through the tiers once would pay a different amount than the weeks did.
     const renderUpsellPeriodReport = () => {
-      if (!upsellBonusPeriod) return null;
-      const weeks = upsellPeriodWeekStarts(upsellBonusPeriod);
+      if (!upsellReportWindow) return null;
+      const weeks = upsellPeriodWeekStarts(upsellReportWindow);
       const todayKey = formatDateKey(new Date());
       const rows = weeks.map((weekStart) => {
         const weekEndKey = upsellBonusWeekEnd(weekStart);
@@ -31389,7 +31389,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           {upsellPeriodError && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{upsellPeriodError}</div>}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {[
-              { label: "Bonus earned", value: formatUpsellMoney(totalBonus), helper: `${upsellBonusPeriod.label}${upsellPeriodLoading ? " · still adding weeks…" : ""}`, tone: "bg-emerald-600 text-white border-emerald-600" },
+              { label: "Bonus earned", value: formatUpsellMoney(totalBonus), helper: `${upsellWindowLabel}${upsellPeriodLoading ? " · still adding weeks…" : ""}`, tone: "bg-emerald-600 text-white border-emerald-600" },
               { label: "Weeks with a bonus", value: `${paidWeeks} of ${weeks.length}`, helper: "Each week is judged on its own gates", tone: "bg-white text-gray-900 border-gray-200" },
               { label: "Upsell & cross-sell profit", value: formatUpsellMoney(totalContribution), helper: "Contribution profit from upsells, upgrades and add-ons", tone: "bg-white text-gray-900 border-gray-200" },
               { label: "Delivered sales expansion", value: `${periodExpansionRate}%`, helper: `${totalQualifying} of ${totalDelivered} delivered orders had an upsell or add-on`, tone: "bg-white text-gray-900 border-gray-200" }
@@ -31452,7 +31452,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           <button
                             type="button"
                             className="!min-h-0 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-50"
-                            onClick={() => { setUpsellBonusPeriod(null); setUpsellBonusWeekStart(row.weekStart); }}
+                            onClick={() => showUpsellWeek(row.weekStart)}
                           >
                             Open week
                           </button>
@@ -31468,25 +31468,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       );
     };
 
-    const lastWeekStartKey = (() => {
-      const date = new Date(`${getSundayKey()}T00:00:00`);
-      date.setDate(date.getDate() - 7);
-      return formatDateKey(date);
-    })();
-    const thisYear = new Date().getFullYear();
-    const upsellShortcuts: Array<{ label: string; active: boolean; onClick: () => void }> = [
-      { label: "This week", active: !upsellBonusPeriod && upsellBonusWeekStart === getSundayKey(), onClick: () => { setUpsellBonusPeriod(null); setUpsellBonusWeekStart(getSundayKey()); } },
-      { label: "Last week", active: !upsellBonusPeriod && upsellBonusWeekStart === lastWeekStartKey, onClick: () => { setUpsellBonusPeriod(null); setUpsellBonusWeekStart(lastWeekStartKey); } },
-      ...([
-        ["This month", upsellMonthPeriod(0)],
-        ["Last month", upsellMonthPeriod(-1)],
-        ["This year", { start: `${thisYear}-01-01`, end: `${thisYear}-12-31`, label: String(thisYear) }]
-      ] as Array<[string, { start: string; end: string; label: string }]>).map(([label, period]) => ({
-        label,
-        active: upsellBonusPeriod?.start === period.start && upsellBonusPeriod?.end === period.end,
-        onClick: () => setUpsellBonusPeriod(period)
-      }))
-    ];
+    const upsellTodayKey = formatDateKey(new Date());
+    const upsellWindowLabel = dateWindowLabel(upsellBonusWindow, upsellTodayKey);
+    // The bonus only exists in whole Sunday-Saturday weeks. When the bar's
+    // dates don't line up with them, say which weeks are actually shown.
+    const upsellShownWeeks = upsellSaturdayWeekStarts(upsellBonusWindow);
+    const upsellShownSpan = upsellShownWeeks.length > 0
+      ? { start: upsellShownWeeks[0], end: windowShiftDay(upsellShownWeeks[upsellShownWeeks.length - 1], 6) }
+      : { start: upsellBonusWeekStart, end: weekEnd };
+    const upsellWindowNote = upsellShownSpan.start === upsellBonusWindow.start && upsellShownSpan.end === upsellBonusWindow.end
+      ? null
+      : `The bonus is paid in whole weeks, Sunday to Saturday. Showing ${formatDateWindow(upsellShownSpan)}: ${upsellShownWeeks.length > 1 ? "every week whose Saturday falls in your dates" : "the week your dates fall in"}.`;
 
     return (
       <div className="manager-upsell-panel space-y-5">
@@ -31500,17 +31492,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <p className="mt-2 text-sm leading-6 text-gray-600">{settings?.description ?? "Loading bonus rules..."}</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <button className="!min-h-0 rounded-xl border border-white bg-white px-3 py-2 text-sm font-bold text-gray-700 shadow-sm hover:bg-gray-50" onClick={() => { setUpsellBonusPeriod(null); shiftUpsellBonusWeek(-7); }}>
+              <button className="!min-h-0 rounded-xl border border-white bg-white px-3 py-2 text-sm font-bold text-gray-700 shadow-sm hover:bg-gray-50" onClick={() => showUpsellWeek(windowShiftDay(upsellBonusWeekStart, -7))}>
                 <ChevronLeft className="inline w-4 h-4" /> Prev
               </button>
-              <button className="!min-h-0 rounded-xl border border-white bg-white px-3 py-2 text-sm font-bold text-gray-700 shadow-sm hover:bg-gray-50" onClick={() => { setUpsellBonusPeriod(null); setUpsellBonusWeekStart(getSundayKey()); }}>
+              <button className="!min-h-0 rounded-xl border border-white bg-white px-3 py-2 text-sm font-bold text-gray-700 shadow-sm hover:bg-gray-50" onClick={() => showUpsellWeek(getSundayKey())}>
                 This week
               </button>
-              <button className="!min-h-0 rounded-xl border border-white bg-white px-3 py-2 text-sm font-bold text-gray-700 shadow-sm hover:bg-gray-50" onClick={() => { setUpsellBonusPeriod(null); shiftUpsellBonusWeek(7); }}>
+              <button className="!min-h-0 rounded-xl border border-white bg-white px-3 py-2 text-sm font-bold text-gray-700 shadow-sm hover:bg-gray-50" onClick={() => showUpsellWeek(windowShiftDay(upsellBonusWeekStart, 7))}>
                 Next <ChevronRight className="inline w-4 h-4" />
               </button>
               <button className="!min-h-0 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm font-bold text-emerald-700 shadow-sm hover:bg-emerald-50" onClick={() => {
-                if (upsellBonusPeriod) { setUpsellPeriodReload((count) => count + 1); return; }
+                if (upsellReportWindow) { setUpsellPeriodReload((count) => count + 1); return; }
                 void refreshUpsellGateMetrics(); void refreshRepWeeklyTargets(); void refreshUpsellBonusExpansionAttribution();
               }}>
                 <RefreshCw className={`inline w-4 h-4 ${upsellGateLoading || upsellBonusExpansionAttributionLoading || upsellPeriodLoading ? "animate-spin" : ""}`} /> Refresh
@@ -31518,8 +31510,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             </div>
           </div>
           <div className="mt-4 flex flex-wrap gap-2 text-xs font-bold text-gray-600">
-            {upsellBonusPeriod ? (
-              <span className="rounded-full bg-white/80 border border-white px-3 py-1">Period: {upsellBonusPeriod.label} · week by week</span>
+            {upsellReportWindow ? (
+              <span className="rounded-full bg-white/80 border border-white px-3 py-1">Period: {upsellWindowLabel} · week by week</span>
             ) : (
               <>
                 <span className="rounded-full bg-white/80 border border-white px-3 py-1">Week: {upsellBonusWeekStart} to {weekEnd}</span>
@@ -31535,50 +31527,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </span>
             )}
           </div>
-          {/* Period shortcuts, the same set as the other reports. A week shows
-              its full detail; a month, the year or a picked range shows the
-              weeks inside it, each judged as its own week. */}
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            {upsellShortcuts.map((shortcut) => (
-              <button
-                key={shortcut.label}
-                type="button"
-                onClick={shortcut.onClick}
-                className={`!min-h-0 rounded-xl border px-3 py-1.5 text-sm font-bold transition-colors ${shortcut.active ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-white bg-white/80 text-gray-600 hover:bg-white"}`}
-              >
-                {shortcut.label}
-              </button>
-            ))}
-            <button
-              type="button"
-              onClick={() => setUpsellRangeDraft((draft) => ({ ...draft, open: !draft.open }))}
-              className={`!min-h-0 inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-bold transition-colors ${upsellBonusPeriod && !upsellShortcuts.some((item) => item.active) ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-white bg-white/80 text-gray-600 hover:bg-white"}`}
-            >
-              <CalendarDays className="h-4 w-4" /> Pick a date range
-            </button>
-            {upsellRangeDraft.open && (
-              <span className="inline-flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-sm">
-                <input type="date" aria-label="From" value={upsellRangeDraft.start} onChange={(event) => setUpsellRangeDraft((draft) => ({ ...draft, start: event.target.value }))} className="!min-h-0 rounded-md border border-gray-200 px-2 py-1 text-sm" />
-                <span className="text-gray-400">to</span>
-                <input type="date" aria-label="To" value={upsellRangeDraft.end} onChange={(event) => setUpsellRangeDraft((draft) => ({ ...draft, end: event.target.value }))} className="!min-h-0 rounded-md border border-gray-200 px-2 py-1 text-sm" />
-                <button
-                  type="button"
-                  disabled={!upsellRangeDraft.start || !upsellRangeDraft.end || upsellRangeDraft.end < upsellRangeDraft.start}
-                  onClick={() => {
-                    const pretty = (key: string) => new Date(`${key}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-                    setUpsellBonusPeriod({ start: upsellRangeDraft.start, end: upsellRangeDraft.end, label: `${pretty(upsellRangeDraft.start)} – ${pretty(upsellRangeDraft.end)}` });
-                    setUpsellRangeDraft((draft) => ({ ...draft, open: false }));
-                  }}
-                  className="!min-h-0 rounded-md bg-emerald-600 px-3 py-1 text-xs font-bold text-white disabled:opacity-40"
-                >
-                  Show
-                </button>
-              </span>
+          {/* The shared date bar (My Orders, Marketing Performance). One week
+              shows that week's full detail; a month, the year or a custom
+              range shows the weeks inside it, each judged as its own week. */}
+          <div className="mt-4 rounded-xl border border-white/80 bg-white/60 px-4 py-3">
+            <DateWindowNav value={upsellBonusWindow} onChange={changeUpsellBonusWindow} todayKey={upsellTodayKey} />
+            {upsellWindowNote && (
+              <p className="m-0 mt-2 text-xs font-semibold text-slate-500">{upsellWindowNote}</p>
             )}
           </div>
         </section>
 
-        {upsellBonusPeriod ? renderUpsellPeriodReport() : (<>
+        {upsellReportWindow ? renderUpsellPeriodReport() : (<>
 
         {managerProductFilterKeys.size > 0 && managerProductFilterIds(managerProductFilterKeys).length === 0 && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">

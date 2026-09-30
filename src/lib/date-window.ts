@@ -49,19 +49,20 @@ export function resizeWindow(window: DateWindow, days: number): DateWindow {
 
 export type PresetKey =
   | "today" | "yesterday" | "last7" | "last14" | "last30"
-  | "thisWeek" | "lastWeek" | "thisMonth" | "lastMonth";
+  | "thisWeek" | "lastWeek" | "thisMonth" | "lastMonth" | "thisYear";
 
 export const PRESET_LABEL: Record<PresetKey, string> = {
   today: "Today", yesterday: "Yesterday",
   last7: "Last 7 Days", last14: "Last 14 Days", last30: "Last 30 Days",
   thisWeek: "This Week", lastWeek: "Last Week",
-  thisMonth: "This Month", lastMonth: "Last Month"
+  thisMonth: "This Month", lastMonth: "Last Month",
+  thisYear: "This Year"
 };
 
 /** Quick-range order, as it appears in the picker. */
 export const PRESET_ORDER: PresetKey[] = [
   "today", "yesterday", "last7", "last14", "last30",
-  "thisWeek", "lastWeek", "thisMonth", "lastMonth"
+  "thisWeek", "lastWeek", "thisMonth", "lastMonth", "thisYear"
 ];
 
 /** Sunday-anchored, matching every other week in this app. */
@@ -92,6 +93,10 @@ export function presetRange(preset: PresetKey, todayKey: string): DateWindow {
       const date = parse(start);
       const end = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0));
       return { start, end: key(end) };
+    }
+    case "thisYear": {
+      const year = todayKey.slice(0, 4);
+      return { start: `${year}-01-01`, end: `${year}-12-31` };
     }
     case "lastMonth":
     default: {
