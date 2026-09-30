@@ -44236,7 +44236,15 @@ ${waybillLineItems(w).length > 1
     const [y, m] = monthKey.split("-").map(Number);
     return new Date(y, (m || 1) - 1, 1).toLocaleDateString("en-GB", { month: "short", year: "numeric" });
   };
-  const salaryMonthOptions = Array.from({ length: 6 }, (_, i) => {
+  // ⚠️ THE NEXT TWO MONTHS TOO, newest first (Bright, 30 Sept: "why cant i see
+  // the future months?"). A month's week 1 starts on the Sunday on/before the
+  // 1st, so next month's first week is often already running - October's began
+  // Sun 27 Sept - and it could not be picked to spread. Weeks that have not
+  // started show "Starts ..." and the server refuses them, so listing a future
+  // month cannot record anything early.
+  const SALARY_FUTURE_MONTHS = 2;
+  const salaryMonthOptions = Array.from({ length: 6 + SALARY_FUTURE_MONTHS }, (_, index) => {
+    const i = index - SALARY_FUTURE_MONTHS;
     const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     return { key, label: d.toLocaleDateString("en-GB", { month: "long", year: "numeric" }) };
