@@ -10,8 +10,10 @@ const PUSH_CONFIG_CACHE = "protohub-push-config-v1";
 const PUSH_CONFIG_KEY = "/__protohub_push_config__";
 // Android caps an app at roughly 50 live notifications and silently drops new
 // ones past it - which is why nothing arrived until the tray was cleared. Keep
-// well under, newest first. The in-app list remains the full record.
-const MAX_LIVE_NOTIFICATIONS = 16;
+// under it, newest first. The in-app list remains the full record.
+// 40 since 30 Sept (was 16): Bright wants alerts kept like WhatsApp keeps them,
+// not replaced after a handful. Matches TRAY_PLACES on the server.
+const MAX_LIVE_NOTIFICATIONS = 40;
 const DEFAULT_BRAND_NAME = "Protohub";
 
 // ── The Protohub chime (Chrome) ──────────────────────────
@@ -83,29 +85,18 @@ function presentationForKind(kind) {
   return PUSH_PRESENTATION[kind] || PUSH_PRESENTATION.info;
 }
 
+// ⚠️ EVERY ALERT KEEPS ITS OWN PLACE (30 Sept). The server hands each phone
+// its next tray place in turn ("protohub-slot-N", N < 40), so a new alert only
+// replaces the one 40 alerts older. Until 30 Sept each kind shared 4 places and
+// a new alert pushed out a recent one - Bright: "i cant get to see the oldens".
+// With no place from the server (a test push, or a server not yet updated) the
+// alert gets a place of its own, and pruneOldNotifications keeps the tray at
+// the newest MAX_LIVE_NOTIFICATIONS.
 function boundedNotificationTag(payload, kind) {
   const supplied = typeof payload.tag === "string" ? payload.tag : "";
-  if (/^protohub-(orders|customer|operations|general)-[0-3]$/.test(supplied)) {
-    return supplied;
-  }
-
-  const orderKinds = new Set(["order_new", "order_assigned", "order_confirmed", "order_delivered", "order_failed", "order_cancelled", "order_rescheduled"]);
-  const customerKinds = new Set(["abandoned_cart_new", "order_follow_up", "stale_carts"]);
-  const operationsKinds = new Set(["low_stock", "remittance_overdue", "needs_attention", "waybill_dispatched", "waybill_updated", "waybill_status_changed"]);
-  const group = orderKinds.has(kind)
-    ? "orders"
-    : customerKinds.has(kind)
-      ? "customer"
-      : operationsKinds.has(kind)
-        ? "operations"
-        : "general";
-  const eventKey = supplied || `${kind}:${payload.title || DEFAULT_BRAND_NAME}`;
-  let hash = 2166136261;
-  for (let index = 0; index < eventKey.length; index += 1) {
-    hash ^= eventKey.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return `protohub-${group}-${(hash >>> 0) % 4}`;
+  if (/^protohub-slot-\d{1,2}$/.test(supplied)) return supplied;
+  const stamp = typeof payload.timestamp === "number" ? payload.timestamp : Date.now();
+  return `protohub-${kind}-${stamp}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function withBrandTitle(title, brandName) {
