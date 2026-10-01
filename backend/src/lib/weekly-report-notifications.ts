@@ -303,23 +303,12 @@ export async function notifyLogMiss(orgId: string, branchId: string, event: LogM
 
 // Head of Sales script + bonus release (Bright, 1 Oct 2026).
 export type HeadOfSalesEvent =
-  | { kind: "script_submitted"; headName: string; weekStart: string; repIds: string[] }
   | { kind: "bonus_held"; headName: string; weekStart: string; amount: number; reasons: string[] }
   | { kind: "bonus_decided"; headId: string; weekStart: string; amount: number; released: boolean; note: string | null };
 
 export async function notifyHeadOfSales(orgId: string, branchId: string, event: HeadOfSalesEvent): Promise<void> {
   try {
     const naira = (value: number) => `₦${Math.round(value).toLocaleString("en-NG")}`;
-    if (event.kind === "script_submitted") {
-      await deliver(orgId, branchId, event.repIds.map((id) => ({ id, role: "Sales Rep" as UserRole })), {
-        title: "This week's upsell & cross-sell script is ready",
-        message: `${event.headName} shared the script for the week of ${event.weekStart}. Open any order with an upsell or cross-sell to read it, and tick it when you use it.`,
-        kind: "sales_script",
-        tag: `sales-script-${event.weekStart}`,
-        type: "info"
-      });
-      return;
-    }
     if (event.kind === "bonus_held") {
       await deliver(orgId, branchId, (await leadershipRecipients(orgId, branchId)).filter((user) => user.role === "Owner"), {
         title: `${event.headName}'s Head of Sales bonus is on hold`,
@@ -341,5 +330,51 @@ export async function notifyHeadOfSales(orgId: string, branchId: string, event: 
     });
   } catch (error: any) {
     console.warn("[weekly-report-notifications] head of sales alert failed:", error?.message ?? error);
+  }
+}
+
+// Sales Scripting (Bright, 1 Oct 2026): submitted -> approvers; decided -> the
+// Head of Sales; approved -> every sales rep (a new script is live).
+export type SalesScriptEvent =
+  | { kind: "submitted"; headName: string; productName: string; category: string; title: string; versionNo: number }
+  | { kind: "approved" | "returned" | "rejected"; headId: string | null; deciderName: string; productName: string; category: string; title: string; versionNo: number; note: string | null };
+
+export async function notifySalesScript(orgId: string, branchId: string, event: SalesScriptEvent): Promise<void> {
+  try {
+    const where = `${event.productName} → ${event.category} → ${event.title}${event.versionNo > 1 ? ` (version ${event.versionNo})` : ""}`;
+    if (event.kind === "submitted") {
+      await deliver(orgId, branchId, await leadershipRecipients(orgId, branchId), {
+        title: "New sales script waiting for approval",
+        message: `${where}. Written by ${event.headName}.`,
+        kind: "sales_script_submitted",
+        tag: `sales-script-submitted-${Date.now()}`,
+        type: "info"
+      });
+      return;
+    }
+    if (event.headId) {
+      await deliver(orgId, branchId, [{ id: event.headId, role: "Sales Rep" }], {
+        title: event.kind === "approved" ? "Your sales script is live" : event.kind === "returned" ? "Your sales script was returned for correction" : "Your sales script was rejected",
+        message: `${where}.${event.note ? ` ${event.deciderName}: "${event.note}"` : ""}`,
+        kind: `sales_script_${event.kind}`,
+        tag: `sales-script-${event.kind}-${Date.now()}`,
+        type: event.kind === "approved" ? "success" : "warning"
+      });
+    }
+    if (event.kind === "approved") {
+      const { data: reps } = await supabase.from("users").select("id").eq("org_id", orgId).eq("role", "Sales Rep").eq("active", true).eq("is_demo", false);
+      const repIds = (reps ?? []).map((row: any) => row.id as string).filter((id) => id !== event.headId);
+      if (repIds.length > 0) {
+        await deliver(orgId, branchId, repIds.map((id) => ({ id, role: "Sales Rep" })), {
+          title: "New sales script ready to use",
+          message: `${where}. Open any ${event.productName} order to read it.`,
+          kind: "sales_script_live",
+          tag: `sales-script-live-${Date.now()}`,
+          type: "info"
+        });
+      }
+    }
+  } catch (error: any) {
+    console.warn("[weekly-report-notifications] sales script alert failed:", error?.message ?? error);
   }
 }
