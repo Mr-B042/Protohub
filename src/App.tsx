@@ -167,7 +167,7 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, ordersExtraApi, productCostApi, stockApi as _stockApi,
-  weeklyReportsApi, managerFundsApi, logMissApi, embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, upsellPerformanceApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, targetPeriodsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
+  weeklyReportsApi, managerFundsApi, logMissApi, salesScriptApi, embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, upsellPerformanceApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, targetPeriodsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
   branchesApi, setApiSpyUserId, type CartAssignmentPanel, type CartHandOutRules,
   setApiPreviewReadOnly,
   PreviewReadOnlyError, type BranchWorkspace
@@ -242,6 +242,7 @@ import DateWindowNav from "./components/DateWindowNav";
 import UpsellPerformancePage, { type UpsellPerfOrder } from "./pages/UpsellPerformancePage";
 import RepWeeklyReportPage from "./pages/RepWeeklyReportPage";
 import type { ManagerFundTxn, WeeklyLogMissRow } from "./lib/api";
+import { HeadOfSalesReviewPanel, OrderScriptTick, WeeklyScriptCard, headOfSalesBonusStatus, useHeadOfSalesReview } from "./components/HeadOfSalesParts";
 import ManagerFundsTab from "./pages/ManagerFundsTab";
 import ManagerWeeklyReviewPage, { type ReviewRepRow } from "./pages/ManagerWeeklyReviewPage";
 import OwnerWeeklyApprovalPage, { type WeeklyFinancialSummary } from "./pages/OwnerWeeklyApprovalPage";
@@ -24382,7 +24383,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     });
   };
 
-  const renderOrderItemsReceipt = (order: TrackedOrder, options?: { className?: string; actions?: boolean }) => {
+  const renderOrderItemsReceipt = (order: TrackedOrder, options?: { className?: string; actions?: boolean; scriptTick?: boolean }) => {
     const actions = options?.actions ?? true;
     const crossSellTotal = orderAddOnTotals(order).crossSell;
     const mainQty = Math.max(1, quantityForOrder(order));
@@ -24616,6 +24617,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </div>
             </div>
           </div>
+
+          {/* Head of Sales weekly script: the rep ticks it on orders where they
+              used it (Bright, 1 Oct 2026). Only on the open order, so a list of
+              order cards never fires one request each. */}
+          {options?.scriptTick ? (
+            <OrderScriptTick orderId={order.id} version={`${order.upsellFromQty ?? ""}-${order.upsellToQty ?? ""}-${(order.crossSellLines ?? []).length}`} />
+          ) : null}
 
           {actions ? (
             <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -25660,6 +25668,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const weeklyAreaOpen = activePage === "Weekly Reports"
     || (activePage === "Manager Dashboard" && managerDashboardTab === "Weekly Reports");
+  // Head of Sales bonus, script and who it helped (Bright, 1 Oct 2026):
+  // leadership sees it on the weekly report; the head sees her own.
+  const weeklyHeadOfSales = useHeadOfSalesReview(weeklyReportWeekStart, weeklyAreaOpen && (!weeklyIsRep || Boolean(currentManagedUser?.isHeadOfSalesRep)));
+  const renderWeeklyHeadOfSales = (isOwner: boolean) => (
+    <HeadOfSalesReviewPanel review={weeklyHeadOfSales.review} loading={weeklyHeadOfSales.loading} error={weeklyHeadOfSales.error} isOwner={isOwner}
+      onDecide={isOwner ? async (body) => {
+        const next = await salesScriptApi.release({ weekStart: weeklyReportWeekStart, ...body, note: body.note || undefined });
+        weeklyHeadOfSales.setReview(next);
+        showToast(body.decision === "release" ? "Head of Sales bonus released." : "Head of Sales bonus withheld.");
+      } : undefined} />
+  );
   useEffect(() => {
     if (!weeklyAreaOpen) return;
     let cancelled = false;
@@ -31578,6 +31597,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           onCheckLogMiss={(kind, ref) => logMissApi.check(kind, ref)}
           onEscalateLogMiss={async (kind, ref, reason) => { await logMissApi.escalate(kind, ref, reason); showToast("Sent to your manager."); weeklyRefresh(); }}
           onLogMissChecked={() => weeklyRefresh()}
+          isHeadOfSales={Boolean(me?.isHeadOfSalesRep)}
+          renderHeadOfSales={() => renderWeeklyHeadOfSales(false)}
           onRunBonusCheck={(orderRefs) => (live && me ? runBonusCheck({
             weekStart: weeklyReportWeekStart,
             weekEnd: weeklyReportWeekEnd,
@@ -31611,6 +31632,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return {
         repId,
         repName: repName(repId),
+        isHeadOfSales: Boolean(users.find((user) => user.id === repId)?.isHeadOfSalesRep),
         expected: week.expectedRepIds.includes(repId),
         report,
         live,
@@ -31680,6 +31702,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           logMisses={week?.logMisses ?? []}
           logMissDisputes={week?.logMissDisputes ?? []}
           onDecideLogMiss={(id, outcome, note) => weeklyRun(() => logMissApi.decide(id, outcome, note), outcome === "cancel" ? "Charge cancelled." : "Charge kept.")}
+          headOfSales={weeklyHeadOfSales.review}
+          renderHeadOfSales={() => renderWeeklyHeadOfSales(true)}
           funds={(week?.funds ?? []).map((item) => ({ managerName: item.managerName, totals: item.totals, readiness: item.readiness, varianceExplanation: item.varianceExplanation, returned: item.returned }))}
           renderFunds={() => renderManagerFunds("owner", undefined, (txn, comment) => weeklyRun(
             () => weeklyReportsApi.returnCompany({ weekStart: weeklyReportWeekStart, section: "funds", problem: `${txn.kindLabel} ${txn.categoryLabel ?? ""} ₦${Math.round(txn.amount).toLocaleString("en-NG")}`.replace(/\s+/g, " ").trim(), comment, fundTransactionId: txn.id }),
@@ -31705,6 +31729,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         onSaveDraftNote={async (note) => { await managerFundsApi.saveWeek({ weekStart: weeklyReportWeekStart, notes: note || null }); showToast("Draft saved."); }}
         logMissDisputes={week?.logMissDisputes ?? []}
         onDecideLogMiss={(id, outcome, note) => weeklyRun(() => logMissApi.decide(id, outcome, note), outcome === "cancel" ? "Charge cancelled. The rep has been notified." : "Charge kept. The rep has been notified.")}
+        renderHeadOfSales={() => renderWeeklyHeadOfSales(currentRole === "Owner")}
+        headOfSalesAttention={headOfSalesBonusStatus(weeklyHeadOfSales.review)?.key === "held"}
         bonusQueries={week?.bonusQueries ?? []}
         canResolveQueries={currentRole === "Manager" || currentRole === "Admin" || currentRole === "Owner"}
         onResolveBonusQuery={(id, body) => weeklyRun(() => weeklyReportsApi.resolveBonusQuery(id, body), body.outcome === "corrected" ? "Correction added. The rep has been notified." : "Answer sent to the rep.")}
@@ -47456,7 +47482,7 @@ ${waybillLineItems(w).length > 1
           </div>
         </article>
 
-        {renderOrderItemsReceipt(order, { className: "h-full" })}
+        {renderOrderItemsReceipt(order, { className: "h-full", scriptTick: true })}
       </div>
 
       {/* Bonus & Upsell Tracking */}
@@ -67296,6 +67322,7 @@ ${waybillLineItems(w).length > 1
 
     return (
       <div className="space-y-5">
+        <WeeklyScriptCard />
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex flex-wrap items-center gap-2">
@@ -103372,7 +103399,7 @@ ${waybillLineItems(w).length > 1
 	                  </section>
 	
 		                {/* Section 4: Order Items */}
-		                {renderOrderItemsReceipt(selectedOrder)}
+		                {renderOrderItemsReceipt(selectedOrder, { scriptTick: true })}
 
                 {(() => {
                   const fulfilmentLines: Array<OrderInventoryComponentSnapshot & { groupLabel: string }> = [

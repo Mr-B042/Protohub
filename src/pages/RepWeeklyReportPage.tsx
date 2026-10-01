@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, ArrowLeft, Box, Download, FileSpreadsheet, MoreVertical, Search, Send, ShoppingCart, Target, Wallet } from "lucide-react";
 import {
@@ -10,6 +10,7 @@ import { CORRECTION_SECTION_LABEL, type BonusCheckFinding, type WeeklyReportSnap
 import type { LogMissDispute, WeeklyLogMissRow, WeeklyBonusQuery, WeeklyReportCorrection, WeeklyRepReport, WeeklyCompanyReportStatus, WeeklyReportResponseInput } from "../lib/api";
 import { Modal } from "../components/WeeklyReportParts";
 import { MyMissedLogsPanel } from "../components/LogMissParts";
+import { HeadOfSalesBadge } from "../components/HeadOfSalesParts";
 import { CheckCircle2, Info, SearchCheck } from "lucide-react";
 import { currencySymbol } from "../lib/money-privacy";
 
@@ -26,6 +27,7 @@ export default function RepWeeklyReportPage({
   live, report, companyStatus, corrections, loading, error, canSubmitNow, dueDate, todayKey, submittedLate, productImageByKey,
   bonusQueries, onRunBonusCheck, onSendBonusQuery,
   logMisses = [], logMissDisputes = [], canDispute = true, onCheckLogMiss, onEscalateLogMiss, onLogMissChecked,
+  isHeadOfSales = false, renderHeadOfSales,
   onSubmit, onOpenOrder, onBack
 }: {
   /** Missed follow-up / cart log charges this week, and the rep's disputes. */
@@ -35,6 +37,9 @@ export default function RepWeeklyReportPage({
   onCheckLogMiss?: (kind: WeeklyLogMissRow["kind"], ref: string) => Promise<{ verdict: "miss_confirmed" | "miss_wrong"; findings: Array<{ level: "issue" | "info" | "ok"; text: string }>; disputeId: string | null }>;
   onEscalateLogMiss?: (kind: WeeklyLogMissRow["kind"], ref: string, reason: string) => Promise<void>;
   onLogMissChecked?: () => void;
+  /** This rep is Head of Sales: lilac badge, and her Head of Sales bonus card. */
+  isHeadOfSales?: boolean;
+  renderHeadOfSales?: () => ReactNode;
   /** This rep's bonus queries (any week). */
   bonusQueries: WeeklyBonusQuery[];
   /** Runs the system check for this week. Null while figures are loading. */
@@ -138,6 +143,7 @@ export default function RepWeeklyReportPage({
               <div className="flex flex-wrap items-center gap-3">
                 <h1 className="m-0 text-2xl font-black tracking-tight text-gray-900 dark:text-slate-50">My Weekly Report</h1>
                 <RepStatusPill status={status} />
+                {isHeadOfSales && <HeadOfSalesBadge />}
                 {submittedLate && <span className="inline-flex items-center rounded-md bg-rose-50 px-2 py-0.5 text-[11px] font-bold text-rose-700 ring-1 ring-inset ring-rose-200">Late</span>}
               </div>
               <p className="m-0 mt-1 text-[13px] text-gray-500 dark:text-slate-400">Select the week, review your data, confirm and submit for manager review.</p>
@@ -437,6 +443,8 @@ export default function RepWeeklyReportPage({
           )}
         </div>
       </div>
+
+      {isHeadOfSales && renderHeadOfSales ? renderHeadOfSales() : null}
 
       {onCheckLogMiss && onEscalateLogMiss && (
         <MyMissedLogsPanel misses={logMisses} disputes={logMissDisputes} canDispute={canDispute}

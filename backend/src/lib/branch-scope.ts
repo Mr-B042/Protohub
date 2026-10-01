@@ -68,7 +68,7 @@ const BRANCH_TABLES = new Set([
   "manager_bonus_settings", "manager_product_challenges",
   "manager_product_challenge_allocations", "manager_activity_logs",
   "head_of_sales_settings", "head_of_sales_weekly_reports",
-  "head_of_sales_bonus_weekly_records",
+  "head_of_sales_bonus_weekly_records", "sales_scripts", "order_script_uses", "head_of_sales_bonus_releases",
   "rep_weekly_targets", "rep_coaching_plans", "rep_coaching_action_items",
   "target_periods", "daily_target_snapshots", "incentive_rules",
   "upsell_bonus_settings", "sales_expansion_settings",

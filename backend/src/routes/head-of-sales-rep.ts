@@ -60,7 +60,7 @@ function resolveRange(parsed: { weekStart?: string; dateFrom?: string; dateTo?: 
 // a head of sales who still carries a book is still part of it.
 //
 // Demo accounts never enter the team.
-async function loadTeam(orgId: string) {
+export async function loadTeam(orgId: string) {
   const { data, error } = await supabase
     .from("users")
     .select("id, name")
@@ -107,7 +107,7 @@ async function loadRepAndTeam(orgId: string, repId: string, requestingUser: { id
 // window is stable between requests.
 const ORDER_PAGE_SIZE = 1000;
 
-async function loadOrdersSince(orgId: string, repIds: string[], sinceDateKey: string, throughDateKey: string): Promise<HeadOfSalesOrder[]> {
+export async function loadOrdersSince(orgId: string, repIds: string[], sinceDateKey: string, throughDateKey: string): Promise<HeadOfSalesOrder[]> {
   if (repIds.length === 0) return [];
   const all: HeadOfSalesOrder[] = [];
   for (let page = 0; ; page += 1) {
@@ -247,7 +247,7 @@ async function loadScorecardSettings(orgId: string): Promise<ScorecardMetricSett
     })) as ScorecardMetricSetting[];
 }
 
-async function loadHeadOfSalesBonusSettings(orgId: string) {
+export async function loadHeadOfSalesBonusSettings(orgId: string) {
   const { data, error } = await supabase
     .from("head_of_sales_settings")
     .select("currency, tiers, updated_at")
@@ -2147,6 +2147,10 @@ router.put("/bonus-payouts", async (req, res) => {
       res.status(409).json({ error: "This week's bonus is already marked Paid and locked." });
       return;
     }
+    if (await ownerReleaseFor(orgId, rep.id, parsed.data.weekStart)) {
+      res.status(409).json({ error: "The Owner has already decided this week's bonus on the weekly report." });
+      return;
+    }
 
     const weekEnd = weekEndFromStart(parsed.data.weekStart);
     const orders = await loadOrdersSince(orgId, repIds, addDaysToDateKey(parsed.data.weekStart, -28), weekEnd);
@@ -2190,6 +2194,20 @@ router.put("/bonus-payouts", async (req, res) => {
   }
 });
 
+// The Owner's release / withhold decision from the weekly report (Bright,
+// 1 Oct 2026). A bonus is only paid once the Owner has released it.
+async function ownerReleaseFor(orgId: string, headId: string, weekStart: string) {
+  const { data, error } = await supabase
+    .from("head_of_sales_bonus_releases")
+    .select("decision")
+    .eq("org_id", orgId)
+    .eq("head_of_sales_rep_id", headId)
+    .eq("week_start", weekStart)
+    .maybeSingle();
+  if (error) throw error;
+  return data as { decision: "released" | "withheld" } | null;
+}
+
 const MarkBonusPaidSchema = z.object({ repId: z.string().min(1), weekStart: z.string().regex(DATE_KEY_PATTERN) });
 
 router.post("/bonus-payouts/mark-paid", async (req, res) => {
@@ -2209,6 +2227,11 @@ router.post("/bonus-payouts/mark-paid", async (req, res) => {
     if (existingError) throw existingError;
     if (!existing) { res.status(404).json({ error: "Save the bonus before marking it paid." }); return; }
     if (existing.status === "Paid") { res.status(409).json({ error: "Already marked Paid." }); return; }
+    const release = await ownerReleaseFor(orgId, rep.id, parsed.data.weekStart);
+    if (release?.decision !== "released") {
+      res.status(409).json({ error: release ? "The Owner withheld this week's bonus." : "The Owner must release this week's bonus on the weekly report before it can be paid." });
+      return;
+    }
     if (Number(existing.amount) <= 0) {
       res.status(400).json({ error: "This week didn't qualify for a bonus - nothing to mark paid." });
       return;

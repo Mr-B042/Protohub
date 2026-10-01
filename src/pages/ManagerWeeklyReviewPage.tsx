@@ -10,6 +10,7 @@ import {
   dailyChartRows, deltaPct, downloadCsv, longDate, nf, pctText, shortDateTime, shortDay, type CorrectionDraft, type WorkflowStep
 } from "../components/WeeklyReportParts";
 import { LogMissDisputesPanel } from "../components/LogMissParts";
+import { HeadOfSalesBadge } from "../components/HeadOfSalesParts";
 import {
   CORRECTION_SECTION_LABEL, buildCompanySnapshot, type ManagerBonusPreview, type SnapshotDifference, type WeeklyReportSnapshot
 } from "./weekly-report-model";
@@ -18,7 +19,7 @@ import type {
 } from "../lib/api";
 import { currencySymbol } from "../lib/money-privacy";
 
-export type TopTab = "overview" | "reps" | "bonus" | "funds" | "financial" | "orders" | "audit";
+export type TopTab = "overview" | "reps" | "bonus" | "headOfSales" | "funds" | "financial" | "orders" | "audit";
 
 export type ReviewRepRow = {
   repId: string;
@@ -37,6 +38,8 @@ export type ReviewRepRow = {
   submittedLate?: boolean;
   /** Expected, still not submitted, and the due Tuesday has passed. */
   overdue?: boolean;
+  /** The Head of Sales Rep: shown with the lilac crown badge. */
+  isHeadOfSales?: boolean;
 };
 
 /** The figures a row shows: what was submitted, or today's if not submitted yet. */
@@ -60,6 +63,7 @@ export default function ManagerWeeklyReviewPage({
   rows, company, corrections, audit, managerBonus, canAct, readOnlyReason, dueDate, onOpenHistory,
   bonusQueries = [], canResolveQueries = false, onResolveBonusQuery,
   renderFunds, fundsPending, fundsSummary, onSaveDraftNote, initialTab, logMissDisputes = [], onDecideLogMiss,
+  renderHeadOfSales, headOfSalesAttention = false,
   onApprove, onReturn, onFlag, onSubmitToOwner, onBack, onEditManagerBonus
 }: {
   bonusQueries?: WeeklyBonusQuery[];
@@ -67,6 +71,10 @@ export default function ManagerWeeklyReviewPage({
   onDecideLogMiss?: (id: string, outcome: "cancel" | "keep", note: string) => Promise<void>;
   /** The Funds & Expenses tab, rendered by the parent; receives the notes/submit bar. */
   renderFunds?: (footer: ReactNode) => ReactNode;
+  /** The Head of Sales tab: her bonus, the week's script and who it helped. */
+  renderHeadOfSales?: () => ReactNode;
+  /** Her bonus is on hold for the Owner (dot on the tab). */
+  headOfSalesAttention?: boolean;
   /** Funds entries needing proof or a correction (badge on the tab). */
   fundsPending?: number;
   /** One line per manager wallet for the summary card. */
@@ -269,6 +277,7 @@ export default function ManagerWeeklyReviewPage({
     { key: "overview", label: "Overview", icon: ClipboardList },
     { key: "reps", label: "Sales Reps", icon: Users },
     { key: "bonus", label: "Manager Bonus", icon: Crown },
+    ...(renderHeadOfSales ? [{ key: "headOfSales" as TopTab, label: "Head of Sales", icon: Crown }] : []),
     { key: "funds", label: "Funds & Expenses", icon: Wallet },
     { key: "financial", label: "Financial Summary", icon: BarChart3 },
     { key: "orders", label: "Order Details", icon: FileText },
@@ -343,12 +352,15 @@ export default function ManagerWeeklyReviewPage({
             className={`!min-h-0 inline-flex items-center gap-2 whitespace-nowrap rounded-xl px-4 py-2.5 text-[13px] font-semibold ${topTab === key ? "bg-[#1F6FEB] text-white shadow-sm" : "text-gray-600 hover:text-gray-900 dark:text-slate-300"}`}>
             <Icon className="h-4 w-4" />{label}
             {key === "reps" && openQueries + logMissDisputes.filter((item) => item.status === "open").length > 0 && <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[11px] font-bold text-white">{openQueries + logMissDisputes.filter((item) => item.status === "open").length}</span>}
+            {key === "headOfSales" && headOfSalesAttention && <span className="inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" aria-label="Needs a decision" />}
             {key === "funds" && (fundsPending ?? 0) > 0 && <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[11px] font-bold text-white">{fundsPending}</span>}
           </button>
         ))}
       </div>
 
-      {topTab === "funds" ? (
+      {topTab === "headOfSales" && renderHeadOfSales ? (
+        renderHeadOfSales()
+      ) : topTab === "funds" ? (
         renderFunds ? renderFunds(fundsFooter) : <p className="m-0 text-[13px] text-gray-500">Funds & Expenses is not available.</p>
       ) : (
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_280px]">
@@ -444,7 +456,7 @@ export default function ManagerWeeklyReviewPage({
                           return (
                             <tr key={row.repId} className="border-t border-gray-100 dark:border-slate-800">
                               <td className="px-2 py-3 text-gray-600">{index + 1}</td>
-                              <td className="px-2 py-3"><span className="flex items-center gap-2 whitespace-nowrap font-semibold text-gray-900 dark:text-slate-100"><Avatar name={row.repName} />{row.repName}</span></td>
+                              <td className="px-2 py-3"><span className="flex items-center gap-2 whitespace-nowrap font-semibold text-gray-900 dark:text-slate-100"><Avatar name={row.repName} />{row.repName}{row.isHeadOfSales ? <HeadOfSalesBadge /> : null}</span></td>
                               <td className="px-2 py-3">
                                 <RepStatusPill status={status} approvedLabel="Approved" />
                                 <span className="mt-0.5 block text-[11px] text-gray-500">{row.report?.submittedAt ? shortDateTime(row.report.submittedAt) : "Not submitted"}</span>
