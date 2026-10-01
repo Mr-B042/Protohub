@@ -44,18 +44,30 @@ test("variance is actual minus expected: short money is negative", () => {
   const totals = fundTotals(0, [txn({ kind: "customer_payment", category: null, amount: 48500, orderIds: ["1"] })], 46500, DEFAULT_FUND_SETTINGS);
   assert.equal(totals.variance, -2000);
   assert.deepEqual(fundsReadiness(totals, ""), ["Explain the difference between the expected and actual balance."]);
+  // A big expense with no receipt does not hold the week up by default.
+  const withExpense = fundTotals(60000, [txn({ amount: 50000 })], 10000, DEFAULT_FUND_SETTINGS);
+  assert.equal(withExpense.pending, 0);
   assert.deepEqual(fundsReadiness(totals, "Paid a rider in cash, receipt lost"), []);
 });
 
-test("proof rules", () => {
-  assert.equal(missingProof(txn({ amount: 9999 }), DEFAULT_FUND_SETTINGS), null);
-  assert.equal(missingProof(txn({ amount: 10000 }), DEFAULT_FUND_SETTINGS), "Receipt required");
-  assert.equal(missingProof(txn({ amount: 10000, evidenceCount: 1 }), DEFAULT_FUND_SETTINGS), null);
-  assert.equal(missingProof(txn({ kind: "remittance_out", category: null }), DEFAULT_FUND_SETTINGS), "Transfer proof required");
-  assert.equal(missingProof(txn({ kind: "owner_funding", category: null }), DEFAULT_FUND_SETTINGS), "Transfer reference or proof required");
-  assert.equal(missingProof(txn({ kind: "owner_funding", category: null, reference: "TRF-9" }), DEFAULT_FUND_SETTINGS), null);
-  assert.equal(missingProof(txn({ kind: "other_in", category: null, description: "refund", evidenceCount: 1 }), DEFAULT_FUND_SETTINGS), "Explanation required");
+test("by default receipts are optional: nothing blocks for a missing receipt", () => {
+  assert.equal(missingProof(txn({ amount: 500000 }), DEFAULT_FUND_SETTINGS), null);
+  assert.equal(missingProof(txn({ kind: "remittance_out", category: null }), DEFAULT_FUND_SETTINGS), null);
+  assert.equal(missingProof(txn({ kind: "owner_funding", category: null }), DEFAULT_FUND_SETTINGS), null);
+  assert.equal(missingProof(txn({ kind: "other_in", category: null, description: "Refund from packaging supplier" }), DEFAULT_FUND_SETTINGS), null);
+  // Explanations are not receipts and are still needed.
+  assert.equal(missingProof(txn({ kind: "other_in", category: null, description: "refund" }), DEFAULT_FUND_SETTINGS), "Explanation required");
   assert.equal(missingProof(txn({ kind: "customer_payment", category: null }), DEFAULT_FUND_SETTINGS), "Order number required");
+  assert.equal(missingProof(txn({ category: "other", description: "" }), DEFAULT_FUND_SETTINGS), "Explain what 'Other' was");
+});
+
+test("if the owner switches the rules on, receipts become required", () => {
+  const strict = { expenseProofMin: 10000, remittanceProofRequired: true, ownerFundingReferenceRequired: true, otherInProofRequired: true };
+  assert.equal(missingProof(txn({ amount: 9999 }), strict), null);
+  assert.equal(missingProof(txn({ amount: 10000 }), strict), "Receipt required");
+  assert.equal(missingProof(txn({ amount: 10000, evidenceCount: 1 }), strict), null);
+  assert.equal(missingProof(txn({ kind: "remittance_out", category: null }), strict), "Transfer proof required");
+  assert.equal(missingProof(txn({ kind: "owner_funding", category: null, reference: "TRF-9" }), strict), null);
 });
 
 test("nothing changes once the week is with the owner or locked", () => {
