@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, ArrowLeftRight, Lightbulb } from "lucide-react";
 import {
   DateWindow, PRESET_LABEL, PRESET_ORDER, PresetKey, WINDOW_SIZES,
-  formatWindow, normaliseWindow, presetRange, resizeWindow, shiftDay, shiftWindow,
+  formatWindow, matchPreset, normaliseWindow, presetRange, resizeWindow, shiftDay, shiftWindow,
   windowLabel, windowSize, windowSizeLabel
 } from "../lib/date-window";
 
@@ -11,6 +11,14 @@ type Props = {
   value: DateWindow;
   onChange: (next: DateWindow) => void;
   todayKey: string;
+  /**
+   * "toolbar" (default): arrows, quick-range menu, date and Window - My Orders,
+   * Marketing Performance, the bonus tab. "compact": one "📅 This Month: 1 Oct –
+   * 31 Oct ▾" button plus the Window size, for a page header (Upsell & Cross-
+   * Selling Performance). Both open the SAME calendar with the same quick
+   * ranges, so there is still only one date picker in the app.
+   */
+  variant?: "toolbar" | "compact";
 };
 
 const WEEKDAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
@@ -39,7 +47,7 @@ function monthCells(monthKey: string): Array<string | null> {
  * ⚠️ The RANGE is the source of truth. The preset name is derived from it, not
  * stored, so a window nudged off "Last Week" renames itself instead of lying.
  */
-export default function DateWindowNav({ value, onChange, todayKey }: Props) {
+export default function DateWindowNav({ value, onChange, todayKey, variant = "toolbar" }: Props) {
   const [openPresets, setOpenPresets] = useState(false);
   const [openCalendar, setOpenCalendar] = useState(false);
   const [draft, setDraft] = useState<DateWindow>(value);
@@ -146,80 +154,7 @@ export default function DateWindowNav({ value, onChange, todayKey }: Props) {
 
   const months = useMemo(() => [leftMonth, addMonths(leftMonth, 1)], [leftMonth]);
 
-  return (
-    <div ref={rootRef} tabIndex={0} onKeyDown={onToolbarKey}
-      className="relative flex flex-wrap items-center gap-2 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-slate-900/20">
-      <button type="button" aria-label="Move back one day" title="Back one day (←)"
-        onClick={() => onChange(shiftWindow(value, -1))}
-        className="!min-h-0 inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200/80 bg-white text-slate-600 shadow-sm transition-colors hover:bg-slate-50">
-        <ChevronLeft className="h-4 w-4" />
-      </button>
-
-      <div className="relative" ref={presetAnchorRef}>
-        <button type="button"
-          onClick={() => {
-            const next = !openPresets;
-            setOpenCalendar(false);
-            if (next) positionFrom(presetAnchorRef.current, 208);
-            setOpenPresets(next);
-          }}
-          className="!min-h-0 inline-flex h-9 items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white px-3 text-sm font-bold text-[#1F8FE0] shadow-sm transition-colors hover:bg-slate-50">
-          {label}
-          <ChevronDown className="h-3.5 w-3.5" />
-        </button>
-        {openPresets && anchorRect && createPortal((
-          <div ref={panelRef} style={{ left: anchorRect.left, top: anchorRect.top }}
-            className="fixed z-[80] w-52 rounded-xl border border-slate-200/80 bg-white p-1.5 shadow-2xl">
-            <p className="m-0 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-400">Quick ranges</p>
-            {PRESET_ORDER.map((preset) => (
-              <button key={preset} type="button" onClick={() => applyPreset(preset)}
-                className={`!min-h-0 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm font-semibold transition-colors ${
-                  label === PRESET_LABEL[preset] ? "bg-sky-50 text-sky-700" : "text-slate-600 hover:bg-slate-50"}`}>
-                <CalendarDays className="h-3.5 w-3.5 shrink-0 text-slate-400" />{PRESET_LABEL[preset]}
-              </button>
-            ))}
-            <button type="button" onClick={() => { setOpenPresets(false); setOpenCalendar(true); }}
-              className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-50">
-              <CalendarDays className="h-3.5 w-3.5 shrink-0 text-slate-400" />Custom Range
-            </button>
-          </div>
-        ), document.body)}
-      </div>
-
-      <button type="button" aria-label="Move forward one day" title="Forward one day (→)"
-        onClick={() => onChange(shiftWindow(value, 1))}
-        className="!min-h-0 inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200/80 bg-white text-slate-600 shadow-sm transition-colors hover:bg-slate-50">
-        <ChevronRight className="h-4 w-4" />
-      </button>
-
-      <button type="button" ref={calendarAnchorRef}
-        onClick={() => {
-          const next = !openCalendar;
-          setOpenPresets(false);
-          if (next) positionFrom(calendarAnchorRef.current, Math.min(window.innerWidth * 0.92, 704));
-          setOpenCalendar(next);
-        }}
-        className="!min-h-0 inline-flex h-9 items-center gap-2 rounded-xl border-b-2 border-slate-200/80 px-2 text-sm font-bold text-slate-600 transition-colors hover:bg-slate-50">
-        {formatWindow(value)}
-        <CalendarDays className="h-4 w-4 text-slate-400" />
-      </button>
-
-      <label className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-500">
-        Window:
-        <select value={size} onChange={(event) => onChange(resizeWindow(value, Number(event.target.value)))}
-          className="!min-h-0 h-9 rounded-xl border border-slate-200/80 bg-white px-2 text-sm font-bold text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/20">
-          {/* The current width always appears, even when it is not a preset -
-              otherwise a custom 5-day window would show the wrong size. */}
-          {(WINDOW_SIZES.some((option) => option.days === size)
-            ? WINDOW_SIZES
-            : [...WINDOW_SIZES, { days: size, label: windowSizeLabel(size) }].sort((a, b) => a.days - b.days)
-          ).map((option) => (
-            <option key={option.days} value={option.days}>{option.label}</option>
-          ))}
-        </select>
-      </label>
-
-      {openCalendar && anchorRect && createPortal((
+  const calendarPanel = openCalendar && anchorRect ? createPortal((
         <div ref={panelRef} style={{ left: anchorRect.left, top: anchorRect.top }}
           className="fixed z-[80] max-h-[80vh] w-[min(92vw,44rem)] overflow-y-auto rounded-2xl border border-slate-200/80 bg-white shadow-2xl">
           <div className="flex flex-col sm:flex-row">
@@ -318,7 +253,110 @@ export default function DateWindowNav({ value, onChange, todayKey }: Props) {
             </span>
           </div>
         </div>
-      ), document.body)}
+      ), document.body) : null;
+
+  const sizeOptions = WINDOW_SIZES.some((option) => option.days === size)
+    ? WINDOW_SIZES
+    : [...WINDOW_SIZES, { days: size, label: windowSizeLabel(size) }].sort((a, b) => a.days - b.days);
+
+  if (variant === "compact") {
+    const preset = matchPreset(value, todayKey);
+    return (
+      <div ref={rootRef} className="relative flex flex-wrap items-center gap-2">
+        <button type="button" ref={calendarAnchorRef}
+          onClick={() => {
+            const next = !openCalendar;
+            if (next) positionFrom(calendarAnchorRef.current, Math.min(window.innerWidth * 0.92, 704));
+            setOpenCalendar(next);
+          }}
+          className="!min-h-0 inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200/80 bg-white px-3 text-sm font-bold text-slate-800 shadow-sm transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+          <CalendarDays className="h-4 w-4 text-slate-500" />
+          <span>{preset ? PRESET_LABEL[preset] : "Custom"}: {formatWindow(value)}</span>
+          <ChevronDown className="h-3.5 w-3.5 text-slate-500" />
+        </button>
+        <select aria-label="Window size" value={size} onChange={(event) => onChange(resizeWindow(value, Number(event.target.value)))}
+          className="!min-h-0 h-10 rounded-xl border border-slate-200/80 bg-white px-3 text-sm font-bold text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+          {sizeOptions.map((option) => <option key={option.days} value={option.days}>{option.label}</option>)}
+        </select>
+        {calendarPanel}
+      </div>
+    );
+  }
+
+  return (
+    <div ref={rootRef} tabIndex={0} onKeyDown={onToolbarKey}
+      className="relative flex flex-wrap items-center gap-2 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-slate-900/20">
+      <button type="button" aria-label="Move back one day" title="Back one day (←)"
+        onClick={() => onChange(shiftWindow(value, -1))}
+        className="!min-h-0 inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200/80 bg-white text-slate-600 shadow-sm transition-colors hover:bg-slate-50">
+        <ChevronLeft className="h-4 w-4" />
+      </button>
+
+      <div className="relative" ref={presetAnchorRef}>
+        <button type="button"
+          onClick={() => {
+            const next = !openPresets;
+            setOpenCalendar(false);
+            if (next) positionFrom(presetAnchorRef.current, 208);
+            setOpenPresets(next);
+          }}
+          className="!min-h-0 inline-flex h-9 items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white px-3 text-sm font-bold text-[#1F8FE0] shadow-sm transition-colors hover:bg-slate-50">
+          {label}
+          <ChevronDown className="h-3.5 w-3.5" />
+        </button>
+        {openPresets && anchorRect && createPortal((
+          <div ref={panelRef} style={{ left: anchorRect.left, top: anchorRect.top }}
+            className="fixed z-[80] w-52 rounded-xl border border-slate-200/80 bg-white p-1.5 shadow-2xl">
+            <p className="m-0 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-400">Quick ranges</p>
+            {PRESET_ORDER.map((preset) => (
+              <button key={preset} type="button" onClick={() => applyPreset(preset)}
+                className={`!min-h-0 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm font-semibold transition-colors ${
+                  label === PRESET_LABEL[preset] ? "bg-sky-50 text-sky-700" : "text-slate-600 hover:bg-slate-50"}`}>
+                <CalendarDays className="h-3.5 w-3.5 shrink-0 text-slate-400" />{PRESET_LABEL[preset]}
+              </button>
+            ))}
+            <button type="button" onClick={() => { setOpenPresets(false); setOpenCalendar(true); }}
+              className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-50">
+              <CalendarDays className="h-3.5 w-3.5 shrink-0 text-slate-400" />Custom Range
+            </button>
+          </div>
+        ), document.body)}
+      </div>
+
+      <button type="button" aria-label="Move forward one day" title="Forward one day (→)"
+        onClick={() => onChange(shiftWindow(value, 1))}
+        className="!min-h-0 inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200/80 bg-white text-slate-600 shadow-sm transition-colors hover:bg-slate-50">
+        <ChevronRight className="h-4 w-4" />
+      </button>
+
+      <button type="button" ref={calendarAnchorRef}
+        onClick={() => {
+          const next = !openCalendar;
+          setOpenPresets(false);
+          if (next) positionFrom(calendarAnchorRef.current, Math.min(window.innerWidth * 0.92, 704));
+          setOpenCalendar(next);
+        }}
+        className="!min-h-0 inline-flex h-9 items-center gap-2 rounded-xl border-b-2 border-slate-200/80 px-2 text-sm font-bold text-slate-600 transition-colors hover:bg-slate-50">
+        {formatWindow(value)}
+        <CalendarDays className="h-4 w-4 text-slate-400" />
+      </button>
+
+      <label className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-500">
+        Window:
+        <select value={size} onChange={(event) => onChange(resizeWindow(value, Number(event.target.value)))}
+          className="!min-h-0 h-9 rounded-xl border border-slate-200/80 bg-white px-2 text-sm font-bold text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/20">
+          {/* The current width always appears, even when it is not a preset -
+              otherwise a custom 5-day window would show the wrong size. */}
+          {(WINDOW_SIZES.some((option) => option.days === size)
+            ? WINDOW_SIZES
+            : [...WINDOW_SIZES, { days: size, label: windowSizeLabel(size) }].sort((a, b) => a.days - b.days)
+          ).map((option) => (
+            <option key={option.days} value={option.days}>{option.label}</option>
+          ))}
+        </select>
+      </label>
+
+      {calendarPanel}
 
       <p className="m-0 hidden w-full items-center gap-2 text-[11px] font-semibold text-slate-400 xl:flex">
         <Lightbulb className="h-3.5 w-3.5 shrink-0" />
