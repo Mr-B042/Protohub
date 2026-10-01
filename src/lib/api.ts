@@ -4162,9 +4162,8 @@ export const logMissApi = {
   decide: (id: string, outcome: "cancel" | "keep", note: string) => post<{ ok: true; status: string }>(`/api/log-misses/disputes/${encodeURIComponent(id)}/decide`, { outcome, note })
 };
 
-// Head of Sales weekly script, the rep's script tick, and the Owner's release
-// of the Head of Sales bonus (Bright, 1 Oct 2026).
-export type SalesScript = { id: string; weekStart: string; headId: string; upsellScript: string; crossSellScript: string; submittedAt: string; updatedAt: string };
+// The Head of Sales bonus on the weekly report and the Owner's release
+// (Bright, 1 Oct 2026). "Was a script used" reads the Sales Scripting library.
 export type HeadOfSalesRepInfluence = {
   repId: string; repName: string; isHead: boolean;
   upsellRate: number; baselineUpsellRate: number; crossSellRate: number; baselineCrossSellRate: number;
@@ -4174,7 +4173,7 @@ export type HeadOfSalesRepInfluence = {
 export type HeadOfSalesReview = {
   weekStart: string;
   head: { id: string; name: string } | null;
-  script?: SalesScript | null;
+  scripts?: { live: number; used: Array<{ scriptId: string; title: string; productName: string; category: string; used: number; accepted: number; byOthers: number }> };
   team?: { aov: number; deliveryRate: number; upsellRate: number; crossSellRate: number; baselineUpsellRate: number; baselineCrossSellRate: number };
   evaluation?: { level: string; label: string; amount: number };
   qualitative?: { upsellImprovement: boolean; initiativeSuccess: boolean };
@@ -4187,13 +4186,114 @@ export type HeadOfSalesReview = {
   weekOver?: boolean;
 };
 export const salesScriptApi = {
-  week: (weekStart?: string) =>
-    get<{ weekStart: string; script: SalesScript | null; head: { id: string; name: string } | null; canEdit: boolean }>(`/api/sales-scripts/week${weekStart ? `?weekStart=${encodeURIComponent(weekStart)}` : ""}`),
-  save: (body: { weekStart: string; upsellScript: string; crossSellScript: string }) => put<{ script: SalesScript }>("/api/sales-scripts/week", body),
-  forOrder: (orderId: string) =>
-    get<{ weekStart: string; eligible: boolean; script: SalesScript | null; used: boolean; usedAt: string | null; canTick: boolean }>(`/api/sales-scripts/orders/${encodeURIComponent(orderId)}`),
-  tick: (orderId: string, used: boolean) => post<{ used: boolean }>(`/api/sales-scripts/orders/${encodeURIComponent(orderId)}/use`, { used }),
   headReview: (weekStart: string) => get<HeadOfSalesReview>(`/api/sales-scripts/head-review?weekStart=${encodeURIComponent(weekStart)}`),
   release: (body: { weekStart: string; decision: "release" | "withhold"; upsellImprovement?: boolean; initiativeSuccess?: boolean; note?: string }) =>
     post<HeadOfSalesReview>("/api/sales-scripts/head-review/release", body)
+};
+
+// Sales Scripting (Bright, 1 Oct 2026): the Head of Sales script library,
+// manager approval with versions, the rep's view on an order, usage report.
+export type ScriptCategory = "closing" | "upsell" | "cross_sell" | "objection";
+// ⚠️ request() camelCases every response KEY, so a map keyed by category
+// arrives with "crossSell", not "cross_sell" (the values stay "cross_sell").
+// Read category-keyed maps through this.
+export const byCategory = <T,>(map: Record<string, T> | undefined, category: ScriptCategory): T | undefined =>
+  map ? (map[category] ?? map[category.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase())]) : undefined;
+export type ScriptVersion = {
+  id: string; versionNo: number; status: "draft" | "submitted" | "returned" | "rejected" | "approved" | "archived";
+  title: string; scenario: string; objective: string; whenToUse: string; trigger: string; whatToSay: string;
+  keyPoints: string[]; mustSay: string[]; neverSay: string[]; desiredAction: string;
+  priority: "primary" | "alternative" | "experimental"; impact: "high" | "medium" | "low";
+  closingStyle: "direct" | "choice" | "delivery" | "urgency" | "confirmation" | null; objection: string | null;
+  upsellFromQty: number | null; upsellToQty: number | null; crossSellProductId: string | null;
+  createdByName: string | null; createdAt: string; submittedAt: string | null;
+  decidedByName: string | null; decidedAt: string | null; decisionNote: string | null;
+  approvedAt: string | null; archivedAt: string | null; replacedByVersionId: string | null;
+};
+export type ScriptSummary = {
+  id: string; productId: string; category: ScriptCategory;
+  status: "approved" | "pending" | "draft" | "returned" | "rejected" | "deactivated" | "archived";
+  live: ScriptVersion | null; latest: ScriptVersion | null; hasPendingChange: boolean; versionsCount: number;
+  createdByName: string | null; createdAt: string;
+  deactivatedAt: string | null; deactivatedByName: string | null; deactivationNote: string | null; archivedAt: string | null;
+  outdatedPrices: number[];
+};
+export type ScriptSettings = {
+  minPerCategory: number; minUses: number; highRatio: number; performingRatio: number; underRatio: number; dropPoints: number;
+  deliveryOffer: string; productDeliveryOffers: Record<string, string>; defaultMustSay: string[]; defaultNeverSay: string[];
+};
+export type ScriptProduct = {
+  id: string; name: string; imageUrl: string | null; currency: string; scriptCount: number;
+  readiness: { percent: number; categories: Record<string, { count: number; min: number; ok: boolean }> };
+  packages: Array<{ quantity: number; price: number; name: string }>;
+  crossSellProducts: Array<{ id: string; name: string }>;
+  deliveryOffer: string;
+};
+export type ScriptLibrary = {
+  canAuthor: boolean; canApprove: boolean; settings: ScriptSettings;
+  products: ScriptProduct[]; allProducts: Array<{ id: string; name: string }>;
+  scripts: ScriptSummary[]; archivedCount: number;
+  kpis: { total: number; approved: number; approvedLast7: number; pending: number; drafts: number };
+};
+export type ScriptFields = {
+  title: string; scenario: string; objective: string; whenToUse: string; trigger: string; whatToSay: string;
+  keyPoints: string[]; mustSay: string[]; neverSay: string[]; desiredAction: string;
+  priority: ScriptVersion["priority"]; impact: ScriptVersion["impact"];
+  closingStyle?: ScriptVersion["closingStyle"]; objection?: string | null;
+  upsellFromQty?: number | null; upsellToQty?: number | null; crossSellProductId?: string | null;
+};
+export type ScriptWarnings = {
+  preview: { whatToSay: string; keyPoints: string[]; mustSay: string[] };
+  missingPlaceholders: string[]; outdatedPrices: number[];
+  duplicates: Array<{ id: string; title: string; reason: "same_purpose" | "same_wording" }>;
+};
+export type ScriptAuditEntry = { action: string; actorName: string | null; actorRole: string | null; detail: any; at: string; versionId: string | null };
+export type RepScript = {
+  id: string; versionId: string; versionNo: number; category: ScriptCategory; title: string; scenario: string;
+  priority: string; impact: string; whenToUse: string; trigger: string; objection: string | null; closingStyle: string | null;
+  whatToSay: string; keyPoints: string[]; mustSay: string[]; neverSay: string[]; desiredAction: string;
+  upsellFromQty: number | null; upsellToQty: number | null; crossSellProductName: string | null; extraAmount: string | null; suggested: boolean;
+};
+export type ScriptFunnel = { shown: number; used: number; accepted: number; delivered: number; acceptanceRate: number; deliveredConversion: number; incrementalRevenue: number };
+export type ScriptHealth = "high" | "performing" | "needs_review" | "underperforming" | "insufficient";
+export type ScriptUsageReport = {
+  period: { from: string; to: string; previousFrom: string; previousTo: string };
+  settings: ScriptSettings;
+  kpis: { activeApproved: number; pending: number; needsReview: number; used: number; scriptAssistedSales: number; upsellConversion: number; crossSellConversion: number; incrementalRevenue: number };
+  scripts: Array<{
+    scriptId: string; productId: string; productName: string; category: ScriptCategory; categoryLabel: string; title: string; versionNo: number; live: boolean;
+    pairName: string | null; upgradePath: string | null; funnel: ScriptFunnel; previousFunnel: ScriptFunnel; categoryAverage: number;
+    health: ScriptHealth; healthLabel: string; healthReason: string; outdatedPrices: number[];
+  }>;
+  leaders: Array<{
+    productName: string; category: ScriptCategory; categoryLabel: string; early: boolean;
+    best: { scriptId: string; title: string; used: number; acceptanceRate: number; deliveredConversion: number };
+    others: Array<{ scriptId: string; title: string; used: number; acceptanceRate: number; deliveredConversion: number }>;
+  }>;
+  pairs: Array<ScriptFunnel & { productName: string; pairName: string }>;
+};
+const scriptQuery = (period?: { from?: string; to?: string }) => {
+  const params = new URLSearchParams();
+  if (period?.from) params.set("from", period.from);
+  if (period?.to) params.set("to", period.to);
+  const text = params.toString();
+  return text ? `?${text}` : "";
+};
+export const salesScriptingApi = {
+  library: () => get<ScriptLibrary>("/api/sales-scripting/library"),
+  archived: () => get<{ scripts: ScriptSummary[] }>("/api/sales-scripting/archived"),
+  script: (id: string) => get<{ script: ScriptSummary; versions: Array<ScriptVersion & { used: number; accepted: number }>; audit: ScriptAuditEntry[] }>(`/api/sales-scripting/scripts/${encodeURIComponent(id)}`),
+  preview: (body: { scriptId?: string | null; productId: string; category: ScriptCategory; fields: Partial<ScriptFields> }) => post<ScriptWarnings>("/api/sales-scripting/preview", body),
+  create: (body: { productId: string; category: ScriptCategory; fields: ScriptFields; submit?: boolean }) => post<{ id: string; warnings: ScriptWarnings }>("/api/sales-scripting/scripts", body),
+  update: (id: string, body: { fields: ScriptFields; submit?: boolean }) => put<{ id: string; warnings: ScriptWarnings }>(`/api/sales-scripting/scripts/${encodeURIComponent(id)}`, body),
+  submit: (id: string) => post<{ ok: true }>(`/api/sales-scripting/scripts/${encodeURIComponent(id)}/submit`, {}),
+  remove: (id: string) => del<{ ok: true }>(`/api/sales-scripting/scripts/${encodeURIComponent(id)}`),
+  decide: (id: string, action: "approve" | "return" | "reject", note?: string) => post<{ ok: true }>(`/api/sales-scripting/scripts/${encodeURIComponent(id)}/decide`, { action, note }),
+  retire: (id: string, action: "deactivate" | "reactivate" | "archive", note?: string) => post<{ ok: true }>(`/api/sales-scripting/scripts/${encodeURIComponent(id)}/retire`, { action, note }),
+  forOrder: (orderId: string) => get<{ orderId: string; product: { id: string; name: string } | null; quantity: number; sections: Record<string, RepScript[]>; uses: Record<string, { outcome: "accepted" | "declined"; usedAt: string }>; canRecord: boolean }>(`/api/sales-scripting/for-order/${encodeURIComponent(orderId)}`),
+  shown: (orderId: string, scriptId: string) => post<{ ok: true }>(`/api/sales-scripting/for-order/${encodeURIComponent(orderId)}/shown`, { scriptId }),
+  use: (orderId: string, scriptId: string, outcome: "accepted" | "declined" | null) => post<{ ok: true }>(`/api/sales-scripting/for-order/${encodeURIComponent(orderId)}/use`, { scriptId, outcome }),
+  usage: (period?: { from?: string; to?: string }) => get<ScriptUsageReport>(`/api/sales-scripting/usage${scriptQuery(period)}`),
+  usageReps: (scriptId: string, period?: { from?: string; to?: string }) => get<{ rows: Array<ScriptFunnel & { repId: string; repName: string }>; categoryAverage: number; diagnosis: string | null; versions: Array<ScriptFunnel & { versionNo: number; status: string }> }>(`/api/sales-scripting/usage/${encodeURIComponent(scriptId)}/reps${scriptQuery(period)}`),
+  saveSettings: (settings: Partial<ScriptSettings>) => put<{ settings: ScriptSettings }>("/api/sales-scripting/settings", settings)
 };

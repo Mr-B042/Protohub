@@ -17,9 +17,11 @@ import { classifyRepInfluence, headBonusHold, HOLD_REASON_TEXT, orderHasRepExpan
 import { loadHeadOfSalesBonusSettings, loadOrdersSince, loadTeam } from "./head-of-sales-rep.js";
 import { notifyHeadOfSales } from "../lib/weekly-report-notifications.js";
 
-// Head of Sales weekly script, the rep's "I used the script" tick, and the
-// Owner's release of the Head of Sales bonus (Bright, 1 Oct 2026). The rules
-// live in lib/head-of-sales-script.ts; this file only loads and saves.
+// The Head of Sales bonus on the weekly report and the Owner's release of it
+// (Bright, 1 Oct 2026). Since Sales Scripting replaced the single weekly
+// script, "was a script used" reads the script library's usage records
+// (sales_script_uses); the old weekly script tables (276) are no longer used.
+// Rules live in lib/head-of-sales-script.ts.
 const router = Router();
 router.use(requireAuth);
 
@@ -27,7 +29,6 @@ const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
 const LEADERSHIP = ["Owner", "Admin", "Manager"];
 const httpError = (status: number, message: string) => Object.assign(new Error(message), { status });
 const fail = (res: any, error: any, fallback: string) => res.status(error?.status ?? 500).json({ error: error?.message ?? fallback });
-const thisWeekStart = () => sundayWeekStartForDateKey(lagosDateKey());
 const weekOf = (value: unknown) => {
   const raw = typeof value === "string" && DATE_KEY.test(value) ? value : lagosDateKey();
   return sundayWeekStartForDateKey(raw);
@@ -46,7 +47,7 @@ async function audit(req: Request, branchId: string, weekStart: string, action: 
   });
 }
 
-async function activeHead(orgId: string) {
+export async function activeHead(orgId: string) {
   const { data, error } = await supabase
     .from("users")
     .select("id, name, head_of_sales_rep_appointed_at")
@@ -60,27 +61,7 @@ async function activeHead(orgId: string) {
   return (data?.[0] ?? null) as { id: string; name: string } | null;
 }
 
-async function scriptFor(orgId: string, branchId: string, weekStart: string) {
-  const { data, error } = await supabase
-    .from("sales_scripts")
-    .select("id, head_of_sales_rep_id, week_start, upsell_script, cross_sell_script, submitted_at, updated_at")
-    .eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart)
-    .maybeSingle();
-  if (error) throw error;
-  return data;
-}
-
-const mapScript = (row: any) => row ? {
-  id: row.id,
-  weekStart: row.week_start,
-  headId: row.head_of_sales_rep_id,
-  upsellScript: row.upsell_script ?? "",
-  crossSellScript: row.cross_sell_script ?? "",
-  submittedAt: row.submitted_at,
-  updatedAt: row.updated_at
-} : null;
-
-async function releaseFor(orgId: string, headId: string, weekStart: string) {
+export async function releaseFor(orgId: string, headId: string, weekStart: string) {
   const { data, error } = await supabase
     .from("head_of_sales_bonus_releases")
     .select("decision, was_held, hold_reasons, bonus_level, amount, note, decided_by_name, decided_at")
@@ -90,145 +71,36 @@ async function releaseFor(orgId: string, headId: string, weekStart: string) {
   return data;
 }
 
-// ---------------------------------------------------------------- the script
-
-router.get("/week", async (req, res) => {
-  try {
-    const orgId = req.user!.orgId;
-    const branchId = branchOf(req);
-    const weekStart = weekOf(req.query.weekStart);
-    const [script, head] = await Promise.all([scriptFor(orgId, branchId, weekStart), activeHead(orgId)]);
-    const isHead = req.user!.role === "Sales Rep" && head?.id === req.user!.id;
-    res.json({
-      weekStart,
-      script: mapScript(script),
-      head,
-      // Only this week or next: a script written after the week is over could
-      // not have helped anyone sell.
-      canEdit: isHead && weekStart >= thisWeekStart() && weekStart <= addDaysToDateKey(thisWeekStart(), 7)
-    });
-  } catch (error: any) {
-    fail(res, error, "Could not load the script.");
-  }
-});
-
-const ScriptSchema = z.object({
-  weekStart: z.string().regex(DATE_KEY),
-  upsellScript: z.string().trim().max(4000),
-  crossSellScript: z.string().trim().max(4000)
-});
-
-router.put("/week", requireRole("Sales Rep"), async (req, res) => {
-  const parsed = ScriptSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: "Write the upsell and cross-sell script." }); return; }
-  try {
-    const orgId = req.user!.orgId;
-    const branchId = branchOf(req);
-    const head = await activeHead(orgId);
-    if (head?.id !== req.user!.id) throw httpError(403, "Only the Head of Sales Rep writes the weekly script.");
-    const weekStart = sundayWeekStartForDateKey(parsed.data.weekStart);
-    if (weekStart < thisWeekStart() || weekStart > addDaysToDateKey(thisWeekStart(), 7)) {
-      throw httpError(400, "You can only write the script for this week or next week.");
-    }
-    if (parsed.data.upsellScript.length < 10 && parsed.data.crossSellScript.length < 10) {
-      throw httpError(400, "Write at least one of the two scripts (10 characters or more).");
-    }
-    const existing = await scriptFor(orgId, branchId, weekStart);
-    const now = new Date().toISOString();
-    if (existing) {
-      const { error } = await supabase.from("sales_scripts")
-        .update({ upsell_script: parsed.data.upsellScript, cross_sell_script: parsed.data.crossSellScript, updated_at: now })
-        .eq("id", existing.id);
-      if (error) throw error;
-    } else {
-      const { error } = await supabase.from("sales_scripts").insert({
-        org_id: orgId, branch_id: branchId, head_of_sales_rep_id: req.user!.id, week_start: weekStart,
-        upsell_script: parsed.data.upsellScript, cross_sell_script: parsed.data.crossSellScript, submitted_at: now
-      });
-      if (error) throw error;
-    }
-    await audit(req, branchId, weekStart, existing ? "sales_script_updated" : "sales_script_submitted", { repId: req.user!.id });
-    if (!existing) {
-      const team = (await loadTeam(orgId)).map((user) => user.id).filter((id) => id !== req.user!.id);
-      void notifyHeadOfSales(orgId, branchId, { kind: "script_submitted", headName: head.name, weekStart, repIds: team });
-    }
-    res.json({ script: mapScript(await scriptFor(orgId, branchId, weekStart)) });
-  } catch (error: any) {
-    fail(res, error, "Could not save the script.");
-  }
-});
-
-// ------------------------------------------------------- the rep's order tick
-
-async function loadOrder(orgId: string, orderId: string) {
-  const { data, error } = await supabase
-    .from("orders")
-    .select("id, assigned_rep_id, created_at, upsell_from_qty, upsell_to_qty, cross_sell_lines")
-    .eq("org_id", orgId).eq("id", orderId)
-    .maybeSingle();
-  if (error) throw error;
-  if (!data) throw httpError(404, "Order not found.");
-  return data;
-}
-
-router.get("/orders/:orderId", async (req, res) => {
-  try {
-    const orgId = req.user!.orgId;
-    const branchId = branchOf(req);
-    const order = await loadOrder(orgId, String(req.params.orderId));
-    const weekStart = sundayWeekStartForDateKey(order.created_at ? lagosDateKey(order.created_at) : lagosDateKey());
-    const [script, useRow] = await Promise.all([
-      scriptFor(orgId, branchId, weekStart),
-      supabase.from("order_script_uses").select("created_at, rep_id").eq("org_id", orgId).eq("order_id", order.id).maybeSingle()
-    ]);
-    if (useRow.error) throw useRow.error;
-    res.json({
-      weekStart,
-      eligible: orderHasRepExpansion(order),
-      script: mapScript(script),
-      used: Boolean(useRow.data),
-      usedAt: useRow.data?.created_at ?? null,
-      canTick: req.user!.role === "Sales Rep" && order.assigned_rep_id === req.user!.id
-    });
-  } catch (error: any) {
-    fail(res, error, "Could not load the script for this order.");
-  }
-});
-
-router.post("/orders/:orderId/use", requireRole("Sales Rep"), async (req, res) => {
-  const parsed = z.object({ used: z.boolean() }).safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: "Say whether you used the script." }); return; }
-  try {
-    const orgId = req.user!.orgId;
-    const branchId = branchOf(req);
-    const order = await loadOrder(orgId, String(req.params.orderId));
-    if (order.assigned_rep_id !== req.user!.id) throw httpError(403, "Only the rep on this order can tick it.");
-    if (!orderHasRepExpansion(order)) throw httpError(400, "Add the upsell or cross-sell first, then tick the script.");
-    const weekStart = sundayWeekStartForDateKey(order.created_at ? lagosDateKey(order.created_at) : lagosDateKey());
-    const script = await scriptFor(orgId, branchId, weekStart);
-    if (!script) throw httpError(400, "There is no script for this order's week yet.");
-    const head = await activeHead(orgId);
-    if (head && await releaseFor(orgId, head.id, weekStart)) throw httpError(409, "This week's Head of Sales bonus is already decided, so script ticks are closed.");
-
-    if (parsed.data.used) {
-      const { error } = await supabase.from("order_script_uses").upsert({
-        org_id: orgId, branch_id: branchId, order_id: order.id, rep_id: req.user!.id, script_id: script.id, week_start: weekStart
-      }, { onConflict: "org_id,order_id", ignoreDuplicates: true });
-      if (error) throw error;
-    } else {
-      const { error } = await supabase.from("order_script_uses").delete().eq("org_id", orgId).eq("order_id", order.id);
-      if (error) throw error;
-    }
-    await audit(req, branchId, weekStart, parsed.data.used ? "sales_script_used" : "sales_script_unticked", { repId: req.user!.id, orderId: order.id });
-    res.json({ used: parsed.data.used });
-  } catch (error: any) {
-    fail(res, error, "Could not save the script tick.");
-  }
-});
-
 // ------------------------------------------ the bonus review on the weekly report
 
 const cohortWeekKey = (order: HeadOfSalesOrder) => order.created_at ? lagosDateKey(order.created_at) : "";
+
+// Scripts that were live (approved, not switched off) at some point in the week.
+async function liveScriptsDuring(orgId: string, branchId: string, weekStart: string, weekEnd: string) {
+  const { data, error } = await supabase.from("sales_script_versions")
+    .select("script_id, title, approved_at, archived_at, sales_script_items!inner(product_id, deactivated_at, products(name))")
+    .eq("org_id", orgId).eq("branch_id", branchId).not("approved_at", "is", null)
+    .lte("approved_at", `${weekEnd}T23:59:59+01:00`);
+  if (error) throw error;
+  const startIso = new Date(`${weekStart}T00:00:00+01:00`).toISOString();
+  const seen = new Map<string, { scriptId: string; title: string; productName: string }>();
+  for (const row of (data ?? []) as any[]) {
+    const item = row.sales_script_items;
+    if (row.archived_at && row.archived_at < startIso) continue;
+    if (item?.deactivated_at && item.deactivated_at < startIso) continue;
+    seen.set(row.script_id, { scriptId: row.script_id, title: row.title, productName: item?.products?.name ?? "" });
+  }
+  return Array.from(seen.values());
+}
+
+async function scriptTitles(ids: string[]) {
+  const { data, error } = await supabase.from("sales_script_versions")
+    .select("script_id, title, version_no, sales_script_items!inner(products(name))").in("script_id", ids).order("version_no", { ascending: false });
+  if (error) throw error;
+  const out = new Map<string, { scriptId: string; title: string; productName: string }>();
+  for (const row of (data ?? []) as any[]) if (!out.has(row.script_id)) out.set(row.script_id, { scriptId: row.script_id, title: row.title, productName: row.sales_script_items?.products?.name ?? "" });
+  return Array.from(out.values());
+}
 
 export async function buildHeadReview(orgId: string, branchId: string, weekStart: string) {
   const head = await activeHead(orgId);
@@ -237,20 +109,23 @@ export async function buildHeadReview(orgId: string, branchId: string, weekStart
   const team = await loadTeam(orgId);
   const repIds = team.map((user) => user.id);
   const nameOf = new Map(team.map((user) => [user.id, String(user.name ?? "")]));
-  const [orders, settings, script, release, recordRes, usesRes] = await Promise.all([
+  const [orders, settings, liveScripts, release, recordRes, usesRes] = await Promise.all([
     loadOrdersSince(orgId, repIds, addDaysToDateKey(weekStart, -28), weekEnd),
     loadHeadOfSalesBonusSettings(orgId),
-    scriptFor(orgId, branchId, weekStart),
+    liveScriptsDuring(orgId, branchId, weekStart, weekEnd),
     releaseFor(orgId, head.id, weekStart),
     supabase.from("head_of_sales_bonus_weekly_records")
       .select("upsell_improvement, initiative_success, bonus_level, amount, status, paid_at")
       .eq("org_id", orgId).eq("head_of_sales_rep_id", head.id).eq("week_start", weekStart).maybeSingle(),
-    supabase.from("order_script_uses").select("order_id, rep_id").eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart)
+    supabase.from("sales_script_uses").select("order_id, rep_id, script_id, version_id, category, outcome").eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart)
   ]);
   if (recordRes.error) throw recordRes.error;
   if (usesRes.error) throw usesRes.error;
   const record = recordRes.data;
-  const tickedOrderIds = new Set((usesRes.data ?? []).map((row) => String(row.order_id)));
+  const uses = usesRes.data ?? [];
+  // Orders where the rep recorded an approved upsell or cross-sell script
+  // (Bright: the influence question is about upsell and cross-sell).
+  const tickedOrderIds = new Set(uses.filter((row) => row.category === "upsell" || row.category === "cross_sell").map((row) => String(row.order_id)));
 
   const teamWeek = computeTeamWeekMetrics(orders, repIds, weekStart);
   const teamBaseline = computeTrailingBaseline(orders, repIds, weekStart, 4);
@@ -279,12 +154,32 @@ export async function buildHeadReview(orgId: string, branchId: string, weekStart
   // Her own book is in the team numbers (Bright, 20 Aug), but the question
   // here is whether she lifted the OTHERS, so script use counts other reps.
   const othersUses = reps.filter((rep) => !rep.isHead).reduce((sum, rep) => sum + rep.scriptOrders, 0);
-  const hold = headBonusHold({ amount: evaluation.amount, scriptSubmitted: Boolean(script), scriptUses: othersUses });
+  const hold = headBonusHold({ amount: evaluation.amount, scriptSubmitted: liveScripts.length > 0, scriptUses: othersUses });
+
+  // Which approved scripts the reps used this week, and how often the customer said yes.
+  const usedScripts = new Map<string, { scriptId: string; category: string; used: number; accepted: number; byOthers: number }>();
+  for (const use of uses) {
+    const entry = usedScripts.get(use.script_id) ?? { scriptId: use.script_id, category: use.category, used: 0, accepted: 0, byOthers: 0 };
+    entry.used += 1;
+    if (use.outcome === "accepted") entry.accepted += 1;
+    if (use.rep_id !== head.id) entry.byOthers += 1;
+    usedScripts.set(use.script_id, entry);
+  }
+  const titleOf = new Map(liveScripts.map((row) => [row.scriptId, row]));
+  const missingIds = Array.from(usedScripts.keys()).filter((id) => !titleOf.has(id));
+  if (missingIds.length > 0) {
+    for (const row of await scriptTitles(missingIds)) titleOf.set(row.scriptId, row);
+  }
 
   return {
     weekStart,
     head,
-    script: mapScript(script),
+    scripts: {
+      live: liveScripts.length,
+      used: Array.from(usedScripts.values()).map((entry) => ({
+        ...entry, title: titleOf.get(entry.scriptId)?.title ?? "Script", productName: titleOf.get(entry.scriptId)?.productName ?? ""
+      })).sort((a, b) => b.used - a.used)
+    },
     team: {
       aov: teamWeek.team.aov, deliveryRate: teamWeek.team.deliveryRate,
       upsellRate: teamWeek.team.upsellRate, crossSellRate: teamWeek.team.crossSellRate,

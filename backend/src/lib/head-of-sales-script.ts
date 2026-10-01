@@ -2,12 +2,12 @@
 // tested in head-of-sales-script.test.ts.
 //
 // Bright's question before the Head of Sales bonus is released: did she make
-// the team better, or did the reps do it on their own? Each week she submits
-// an upsell + cross-sell script. When a rep adds an upsell or cross-sell to an
-// order, they tick "I used this week's script". So for every rep:
+// the team better, or did the reps do it on their own? She writes the sales
+// scripts (Sales Scripting); once approved, reps record on the order WHICH
+// upsell / cross-sell script they used. So for every rep:
 //   improved vs their own last 4 weeks, mostly on ticked orders -> her influence
 //   improved, but on orders without the tick                    -> own effort
-// If she reaches a bonus level but no script was submitted, or no rep used it,
+// If she reaches a bonus level but no approved script was live, or no rep used one,
 // the bonus is HELD for the Owner to release or withhold.
 
 export type RepInfluenceInput = {
@@ -50,8 +50,8 @@ export function headBonusHold(input: { amount: number; scriptSubmitted: boolean;
 }
 
 export const HOLD_REASON_TEXT: Record<HoldReason, string> = {
-  no_script: "No upsell & cross-sell script was submitted for this week.",
-  script_not_used: "A script was submitted, but no rep ticked that they used it on an order."
+  no_script: "No approved sales script was live this week.",
+  script_not_used: "Approved scripts were live, but no rep recorded using an upsell or cross-sell script on an order."
 };
 
 type CrossSellLineLike = { selectionSource?: unknown; selection_source?: unknown } | null | undefined;
