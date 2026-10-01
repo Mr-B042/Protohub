@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  Bar, CartesianGrid, Cell, ComposedChart, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis
+  Bar, CartesianGrid, Cell, ComposedChart, LabelList, Line, Pie, PieChart, ReferenceArea, ReferenceLine, ResponsiveContainer,
+  Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis
 } from "recharts";
 import {
-  AlertTriangle, ArrowLeft, ArrowUp, ArrowDown, Dices, Download, Filter, HandCoins, Inbox, MoreVertical,
-  RefreshCw, Search, Target, TrendingUp, Trophy, UsersRound, X
+  AlertTriangle, ArrowLeft, ArrowUp, ArrowDown, Coins, Dices, Download, Filter, HandCoins, Inbox, MoreVertical, Percent,
+  RefreshCw, Search, Tag, Target, TrendingUp, Trophy, Truck, UsersRound, X
 } from "lucide-react";
 import DateWindowNav from "../components/DateWindowNav";
 import { shiftDay, shiftWindow, weekStart as sundayOf, windowSize, type DateWindow } from "../lib/date-window";
@@ -58,6 +59,11 @@ export type UpsellPerfOrder = {
   /** "1 to 2 pcs · Shelf + Edge Brusher Max" - what the rep added. */
   description: string;
   extraRevenue: number;
+  /** extraRevenue split by kind - cross-sell has its own columns (1 Oct 2026). */
+  upsellRevenue: number;
+  crossSellRevenue: number;
+  /** The cross-sell products on the order, with what each brought in. */
+  addOns: Array<{ name: string; revenue: number }>;
   contributionProfit: number;
   bonus: number;
 };
@@ -98,25 +104,31 @@ const TABS: Array<{ key: Tab; label: string }> = [
   { key: "customers", label: "Customer Insights" }
 ];
 
-type PerformanceLabel = "Excellent" | "Good" | "Average" | "Needs Focus" | "Poor";
+// Statuses say what the manager should DO, not what the rep IS. The image had
+// Excellent / Good / Average / Needs Focus / Poor; Bright switched to these on
+// 1 Oct 2026 - nobody gets permanently labelled "Poor", and the numbers next
+// to the label already show who is behind.
+type PerformanceLabel = "Strong" | "On Target" | "Below Target" | "Needs Attention";
 const PERFORMANCE_TONE: Record<PerformanceLabel, string> = {
-  Excellent: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-200",
-  Good: "border-green-200 bg-green-50 text-green-700 dark:border-green-500/30 dark:bg-green-500/15 dark:text-green-200",
-  Average: "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200",
-  "Needs Focus": "border-rose-200 bg-rose-50 text-rose-600 dark:border-rose-500/30 dark:bg-rose-500/15 dark:text-rose-200",
-  Poor: "border-red-200 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/15 dark:text-red-200"
+  Strong: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-200",
+  "On Target": "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/15 dark:text-sky-200",
+  "Below Target": "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200",
+  "Needs Attention": "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/15 dark:text-rose-200"
 };
-const PERFORMANCE_LABELS: PerformanceLabel[] = ["Excellent", "Good", "Average", "Needs Focus", "Poor"];
+const PERFORMANCE_LABELS: PerformanceLabel[] = ["Strong", "On Target", "Below Target", "Needs Attention"];
 
-/** Bands around the rep's own target - the same target the bonus tab sets. */
+/**
+ * Bands around the rep's own target - the same target the bonus tab sets.
+ * "Needs Attention" (under half the target) is the same line the Needs
+ * Improvement card counts.
+ */
 const performanceFor = (conversion: number | null, targetPct: number | null): PerformanceLabel | null => {
   if (conversion === null || !targetPct) return null;
   const pct = conversion * 100;
-  if (pct >= targetPct * 1.5) return "Excellent";
-  if (pct >= targetPct) return "Good";
-  if (pct >= targetPct * 0.75) return "Average";
-  if (pct >= targetPct * 0.5) return "Needs Focus";
-  return "Poor";
+  if (pct >= targetPct * 1.5) return "Strong";
+  if (pct >= targetPct) return "On Target";
+  if (pct >= targetPct * 0.5) return "Below Target";
+  return "Needs Attention";
 };
 
 const REFUSAL_LABEL: Record<string, string> = {
@@ -180,6 +192,16 @@ function RangeTick({ x, y, payload }: { x?: number; y?: number; payload?: { valu
   );
 }
 
+/** Upsell (more pieces), Cross-sell (another product) or Both. */
+function TypePill({ order }: { order: UpsellPerfOrder }) {
+  const [label, tone] = order.hasUpsell && order.hasCrossSell
+    ? ["Both", "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/15 dark:text-violet-200"]
+    : order.hasCrossSell
+      ? ["Cross-sell", "border-teal-200 bg-teal-50 text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/15 dark:text-teal-200"]
+      : ["Upsell", "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-200"];
+  return <span className={`inline-flex whitespace-nowrap rounded-md border px-2 py-0.5 text-xs font-bold ${tone}`}>{label}</span>;
+}
+
 function SelectPill<T extends string>({ value, options, onChange, label }: { value: T; options: T[]; onChange: (next: T) => void; label: string }) {
   return (
     <select aria-label={label} value={value} onChange={(event) => onChange(event.target.value as T)}
@@ -207,24 +229,49 @@ type Totals = {
   handled: number;
   delivered: number;
   withUpsell: number;
+  /** Delivered orders with a piece upgrade / with a cross-sell. An order with
+   *  both counts in each, so these two can add up to more than withUpsell. */
+  upsells: number;
+  crossSells: number;
+  upsellRevenue: number;
+  crossSellRevenue: number;
   revenue: number;
   profit: number;
   bonus: number;
   conversion: number | null;
+  /** Upsold orders PLACED in the period that delivered / that finished. */
+  upsoldDelivered: number;
+  upsoldFinished: number;
 };
 const totalsFor = (orders: UpsellPerfOrder[], window: DateWindow): Totals => {
   const delivered = orders.filter((order) => order.status === "Delivered" && inWindow(order.deliveredKey, window));
   const expanded = delivered.filter(isExpanded);
+  const placedExpanded = orders.filter((order) => inWindow(order.createdKey, window) && isExpanded(order));
   return {
     handled: orders.filter((order) => inWindow(order.createdKey, window)).length,
     delivered: delivered.length,
     withUpsell: expanded.length,
+    upsells: expanded.filter((order) => order.hasUpsell).length,
+    crossSells: expanded.filter((order) => order.hasCrossSell).length,
+    upsellRevenue: sum(expanded, (order) => order.upsellRevenue),
+    crossSellRevenue: sum(expanded, (order) => order.crossSellRevenue),
     revenue: sum(expanded, (order) => order.extraRevenue),
     profit: sum(expanded, (order) => order.contributionProfit),
     bonus: sum(expanded, (order) => order.bonus),
-    conversion: delivered.length > 0 ? expanded.length / delivered.length : null
+    conversion: delivered.length > 0 ? expanded.length / delivered.length : null,
+    // ⚠️ By the day the order was PLACED, not delivered: "do upsold orders
+    // actually deliver" needs the failures too, and a failed order has no
+    // delivery date. An upsell only shows on an order once it has delivered
+    // or failed, so "finished" is exactly the set that can be judged.
+    upsoldDelivered: placedExpanded.filter((order) => order.status === "Delivered").length,
+    upsoldFinished: placedExpanded.filter((order) => order.status === "Delivered" || order.status === "Failed").length
   };
 };
+const ratio = (part: number, whole: number) => (whole > 0 ? part / whole : null);
+const pointsChange = (current: number | null, previous: number | null) =>
+  (current !== null && previous !== null ? (current - previous) * 100 : null);
+const ratioChangePct = (current: number | null, previous: number | null) =>
+  (current !== null && previous !== null && previous > 0 ? ((current - previous) / previous) * 100 : null);
 const changePct = (current: number, previous: number) => (previous > 0 ? ((current - previous) / previous) * 100 : null);
 
 export default function UpsellPerformancePage({
@@ -308,7 +355,8 @@ export default function UpsellPerformancePage({
       const expanded = delivered.filter(isExpanded);
       return {
         label: bucket.label,
-        revenue: Math.round(sum(expanded, (order) => order.extraRevenue)),
+        upsellRevenue: Math.round(sum(expanded, (order) => order.upsellRevenue)),
+        crossSellRevenue: Math.round(sum(expanded, (order) => order.crossSellRevenue)),
         orders: expanded.length,
         // No deliveries is "no rate", not 0% - a gap, not a dive to the floor.
         conversion: delivered.length > 0 ? Math.round((expanded.length / delivered.length) * 1000) / 10 : null
@@ -346,7 +394,7 @@ export default function UpsellPerformancePage({
     const addOn = expandedInWindow.filter((order) => !order.hasUpsell && order.hasCrossSell);
     const rows = [
       { label: "2 Pieces / Bulk", hint: "Moved up from 1 piece to 2 or more", color: "bg-emerald-500", value: metricValue(twoPieces, packageMetric) },
-      { label: "Add-on Product", hint: "Took an extra product (cross-sell) without more pieces", color: "bg-indigo-500", value: metricValue(addOn, packageMetric) },
+      { label: "Cross-sell (Add-on)", hint: "Took an extra product (cross-sell) without more pieces", color: "bg-indigo-500", value: metricValue(addOn, packageMetric) },
       { label: "Higher Tier Pack", hint: "Already on a pack of 2 or more, moved to a bigger one", color: "bg-orange-400", value: metricValue(higherTier, packageMetric) }
     ];
     const total = sum(rows, (row) => row.value);
@@ -419,6 +467,10 @@ export default function UpsellPerformancePage({
     handled: sum(visibleRepRows, (row) => row.handled),
     delivered: sum(visibleRepRows, (row) => row.delivered),
     withUpsell: sum(visibleRepRows, (row) => row.withUpsell),
+    upsells: sum(visibleRepRows, (row) => row.upsells),
+    crossSells: sum(visibleRepRows, (row) => row.crossSells),
+    upsellRevenue: sum(visibleRepRows, (row) => row.upsellRevenue),
+    crossSellRevenue: sum(visibleRepRows, (row) => row.crossSellRevenue),
     revenue: sum(visibleRepRows, (row) => row.revenue),
     bonus: sum(visibleRepRows, (row) => row.bonus)
   }), [visibleRepRows]);
@@ -458,13 +510,39 @@ export default function UpsellPerformancePage({
         name: group.name,
         delivered: group.rows.length,
         withUpsell: expanded.length,
+        upsells: expanded.filter((order) => order.hasUpsell).length,
+        crossSells: expanded.filter((order) => order.hasCrossSell).length,
         conversion: group.rows.length > 0 ? expanded.length / group.rows.length : null,
+        upsellRevenue: sum(expanded, (order) => order.upsellRevenue),
+        crossSellRevenue: sum(expanded, (order) => order.crossSellRevenue),
         revenue: sum(expanded, (order) => order.extraRevenue),
         profit: sum(expanded, (order) => order.contributionProfit),
         bonus: sum(expanded, (order) => order.bonus)
       };
     }).filter((row) => !query || row.name.toLowerCase().includes(query))
       .sort((a, b) => b.revenue - a.revenue || b.delivered - a.delivered);
+  }, [scopedOrders, window, search]);
+
+  // Which products were cross-sold. An order with two add-ons counts once for
+  // each product, so the Orders column can add up to more than Cross-sells.
+  const addOnRows = useMemo(() => {
+    const groups = new Map<string, { orders: number; revenue: number }>();
+    for (const order of scopedOrders) {
+      if (order.status !== "Delivered" || !inWindow(order.deliveredKey, window) || !order.hasCrossSell) continue;
+      for (const addOn of order.addOns) {
+        const name = addOn.name || "Unnamed product";
+        const group = groups.get(name) ?? { orders: 0, revenue: 0 };
+        group.orders += 1;
+        group.revenue += addOn.revenue;
+        groups.set(name, group);
+      }
+    }
+    const total = sum([...groups.values()], (group) => group.revenue);
+    const query = search.trim().toLowerCase();
+    return [...groups.entries()]
+      .map(([name, group]) => ({ name, ...group, share: total > 0 ? group.revenue / total : null }))
+      .filter((row) => !query || row.name.toLowerCase().includes(query))
+      .sort((a, b) => b.revenue - a.revenue);
   }, [scopedOrders, window, search]);
 
   // Upgrade paths come from the CALLS: each call that offered "1 → 2 pcs" on a
@@ -560,16 +638,16 @@ export default function UpsellPerformancePage({
     const stamp = `${window.start}_to_${window.end}`;
     if (tab === "reps") {
       downloadCsv(`upsell-performance-reps-${stamp}.csv`,
-        ["Sales rep", "Orders handled", "Delivered orders", "Orders with upsell", "Conversion rate", "Upsell revenue", "Upsell profit", "Bonus earned", "Target", "Performance"],
-        visibleRepRows.map((row) => [row.name, row.handled, row.delivered, row.withUpsell, percent(row.conversion), Math.round(row.revenue), Math.round(row.profit), Math.round(row.bonus), row.targetPct ? `${row.targetPct}%` : "", row.performance ?? ""]));
+        ["Sales rep", "Orders handled", "Delivered orders", "Upsells", "Cross-sells", "Conversion rate", "Upsell revenue", "Cross-sell revenue", "Profit", "Bonus earned", "Target", "Performance"],
+        visibleRepRows.map((row) => [row.name, row.handled, row.delivered, row.upsells, row.crossSells, percent(row.conversion), Math.round(row.upsellRevenue), Math.round(row.crossSellRevenue), Math.round(row.profit), Math.round(row.bonus), row.targetPct ? `${row.targetPct}%` : "", row.performance ?? ""]));
     } else if (tab === "products") {
       downloadCsv(`upsell-performance-products-${stamp}.csv`,
-        ["Product", "Delivered orders", "Orders with upsell", "Conversion rate", "Upsell revenue", "Upsell profit", "Bonus earned"],
-        productRows.map((row) => [row.name, row.delivered, row.withUpsell, percent(row.conversion), Math.round(row.revenue), Math.round(row.profit), Math.round(row.bonus)]));
+        ["Product", "Delivered orders", "Upsells", "Cross-sells", "Conversion rate", "Upsell revenue", "Cross-sell revenue", "Profit", "Bonus earned"],
+        productRows.map((row) => [row.name, row.delivered, row.upsells, row.crossSells, percent(row.conversion), Math.round(row.upsellRevenue), Math.round(row.crossSellRevenue), Math.round(row.profit), Math.round(row.bonus)]));
     } else if (tab === "orders") {
       downloadCsv(`upsell-performance-orders-${stamp}.csv`,
-        ["Order", "Delivered", "Sales rep", "Customer", "Product", "What was added", "Upsell revenue", "Upsell profit", "Bonus"],
-        orderRows.map((order) => [order.id, order.deliveredKey ?? "", repName(order.repId), order.customerName, order.productName, order.description, Math.round(order.extraRevenue), Math.round(order.contributionProfit), Math.round(order.bonus)]));
+        ["Order", "Delivered", "Sales rep", "Customer", "Product", "Type", "What was added", "Upsell revenue", "Cross-sell revenue", "Profit", "Bonus"],
+        orderRows.map((order) => [order.id, order.deliveredKey ?? "", repName(order.repId), order.customerName, order.productName, order.hasUpsell && order.hasCrossSell ? "Both" : order.hasCrossSell ? "Cross-sell" : "Upsell", order.description, Math.round(order.upsellRevenue), Math.round(order.crossSellRevenue), Math.round(order.contributionProfit), Math.round(order.bonus)]));
     } else {
       downloadCsv(`upsell-performance-customers-${stamp}.csv`,
         ["Group", "Label", "Delivered orders", "Orders with upsell", "Conversion rate"],
@@ -587,8 +665,8 @@ export default function UpsellPerformancePage({
   const money0 = (value: number) => (moneyReady ? money(value) : "…");
   const headlineCards = [
     {
-      title: "Total Upsell Revenue", value: money(current.revenue), delta: changePct(current.revenue, previous.revenue), unit: "%" as const,
-      sub: `From ${count(current.withUpsell)} delivered orders`, icon: Dices,
+      title: "Upsell & Cross-sell Revenue", value: money(current.revenue), delta: changePct(current.revenue, previous.revenue), unit: "%" as const,
+      sub: `${money(current.upsellRevenue)} upsell · ${money(current.crossSellRevenue)} cross-sell`, icon: Dices,
       card: "border-emerald-100 bg-emerald-50/40 dark:border-emerald-500/20 dark:bg-emerald-500/5", tile: "bg-emerald-100 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-200"
     },
     {
@@ -599,15 +677,68 @@ export default function UpsellPerformancePage({
     {
       title: "Upsell Conversion Rate", value: percent(current.conversion),
       delta: current.conversion !== null && previous.conversion !== null ? (current.conversion - previous.conversion) * 100 : null, unit: "pts" as const,
-      sub: `${count(current.withUpsell)} of ${count(current.delivered)} delivered orders`, icon: TrendingUp,
+      sub: `${count(current.withUpsell)} of ${count(current.delivered)} delivered orders took an upsell or cross-sell`, icon: TrendingUp,
       card: "border-sky-100 bg-sky-50/40 dark:border-sky-500/20 dark:bg-sky-500/5", tile: "bg-sky-100 text-sky-600 dark:bg-sky-500/20 dark:text-sky-200"
     },
     {
-      title: "Orders with Upsell", value: count(current.withUpsell), delta: changePct(current.withUpsell, previous.withUpsell), unit: "%" as const,
-      sub: `Out of ${count(current.delivered)} delivered orders`, icon: Inbox,
+      title: "Orders with Upsell or Cross-sell", value: count(current.withUpsell), delta: changePct(current.withUpsell, previous.withUpsell), unit: "%" as const,
+      sub: `${count(current.upsells)} upsell · ${count(current.crossSells)} cross-sell · of ${count(current.delivered)} delivered`, icon: Inbox,
       card: "border-orange-100 bg-orange-50/40 dark:border-orange-500/20 dark:bg-orange-500/5", tile: "bg-orange-100 text-orange-500 dark:bg-orange-500/20 dark:text-orange-200"
     }
   ];
+
+  const profitPerUpsell = ratio(current.profit, current.withUpsell);
+  const avgUpsellValue = ratio(current.revenue, current.withUpsell);
+  // Bonus as a share of the profit BEFORE bonuses (contribution profit is
+  // already after them), so 100% would mean every naira went to the reps.
+  const bonusShare = ratio(current.bonus, current.profit + current.bonus);
+  const previousBonusShare = ratio(previous.bonus, previous.profit + previous.bonus);
+  const upsoldDeliveryRate = ratio(current.upsoldDelivered, current.upsoldFinished);
+  const moreCards = [
+    {
+      title: "Profit per Upsell", value: profitPerUpsell === null ? "—" : money0(profitPerUpsell),
+      delta: moneyReady ? ratioChangePct(profitPerUpsell, ratio(previous.profit, previous.withUpsell)) : null, unit: "%" as const,
+      sub: "Profit on each order with an upsell or cross-sell, after cost and rep bonus", icon: Coins,
+      card: "border-teal-100 bg-teal-50/40 dark:border-teal-500/20 dark:bg-teal-500/5", tile: "bg-teal-100 text-teal-600 dark:bg-teal-500/20 dark:text-teal-200"
+    },
+    {
+      title: "Average Upsell Value", value: avgUpsellValue === null ? "—" : money(avgUpsellValue),
+      delta: ratioChangePct(avgUpsellValue, ratio(previous.revenue, previous.withUpsell)), unit: "%" as const,
+      sub: "Extra revenue on each order with an upsell or cross-sell", icon: Tag,
+      card: "border-indigo-100 bg-indigo-50/40 dark:border-indigo-500/20 dark:bg-indigo-500/5", tile: "bg-indigo-100 text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-200"
+    },
+    {
+      title: "Bonus Share of Profit", value: moneyReady ? percent(bonusShare) : "…",
+      delta: moneyReady ? pointsChange(bonusShare, previousBonusShare) : null, unit: "pts" as const, lowerIsBetter: true,
+      sub: "Of upsell and cross-sell profit, the part paid out as rep bonus", icon: Percent,
+      card: "border-rose-100 bg-rose-50/40 dark:border-rose-500/20 dark:bg-rose-500/5", tile: "bg-rose-100 text-rose-600 dark:bg-rose-500/20 dark:text-rose-200"
+    },
+    {
+      title: "Upsell Delivery Rate", value: percent(upsoldDeliveryRate),
+      delta: pointsChange(upsoldDeliveryRate, ratio(previous.upsoldDelivered, previous.upsoldFinished)), unit: "pts" as const,
+      sub: `${count(current.upsoldDelivered)} of ${count(current.upsoldFinished)} upsold orders placed in this period delivered`, icon: Truck,
+      card: "border-lime-100 bg-lime-50/40 dark:border-lime-500/20 dark:bg-lime-500/5", tile: "bg-lime-100 text-lime-700 dark:bg-lime-500/20 dark:text-lime-200"
+    }
+  ];
+
+  // Profit vs conversion: each Sales Rep as a bubble, split at the team
+  // average both ways. Other staff stay out - they aren't being coached here.
+  const matrix = useMemo(() => {
+    const points = repRows
+      .filter((row) => row.repId !== OTHER_STAFF && row.delivered > 0)
+      .map((row) => ({ name: row.name, repId: row.repId, x: Math.round((row.conversion ?? 0) * 1000) / 10, y: Math.round(row.profit), z: row.delivered }));
+    if (points.length === 0) return null;
+    const teamDelivered = sum(points, (point) => point.z);
+    const teamWithUpsell = sum(repRows.filter((row) => row.repId !== OTHER_STAFF), (row) => row.withUpsell);
+    const avgX = teamDelivered > 0 ? Math.round((teamWithUpsell / teamDelivered) * 1000) / 10 : 0;
+    const avgY = Math.round(sum(points, (point) => point.y) / points.length);
+    const xMax = Math.ceil(Math.max(avgX * 2, ...points.map((point) => point.x)) * 1.15) || 10;
+    const yMin = Math.min(0, ...points.map((point) => point.y));
+    const yMax = Math.max(avgY * 2, ...points.map((point) => point.y)) * 1.15 || 1000;
+    const zone = (point: { x: number; y: number }) =>
+      point.x >= avgX ? (point.y >= avgY ? "#10b981" : "#0ea5e9") : (point.y >= avgY ? "#f59e0b" : "#f43f5e");
+    return { points: points.map((point) => ({ ...point, color: zone(point) })), avgX, avgY, xMax, yMin, yMax };
+  }, [repRows]);
 
   const drawerRow = repRows.find((row) => row.repId === drawerRepId) ?? null;
 
@@ -645,9 +776,9 @@ export default function UpsellPerformancePage({
         </p>
       )}
 
-      {/* ── Four headline cards ────────────────────────────────────── */}
+      {/* ── Headline cards: the image's four, then four more ───────── */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {headlineCards.map((card) => (
+        {[...headlineCards, ...moreCards].map((card) => (
           <article key={card.title} className={`flex gap-4 rounded-2xl border p-5 shadow-sm ${card.card}`}>
             <span className={`inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${card.tile}`}>
               <card.icon className="h-6 w-6" />
@@ -656,7 +787,7 @@ export default function UpsellPerformancePage({
               <p className="m-0 text-sm font-semibold text-gray-700 dark:text-slate-300">{card.title}</p>
               <div className="mt-1 flex items-center justify-between gap-2">
                 <strong className="whitespace-nowrap text-[22px] font-black leading-tight text-gray-900 dark:text-slate-50">{card.value}</strong>
-                <DeltaPill value={card.delta} unit={card.unit} />
+                <DeltaPill value={card.delta} unit={card.unit} lowerIsBetter={Boolean((card as { lowerIsBetter?: boolean }).lowerIsBetter)} />
               </div>
               <p className="m-0 mt-1 text-xs text-gray-500 dark:text-slate-400">{card.sub}</p>
             </div>
@@ -673,7 +804,8 @@ export default function UpsellPerformancePage({
           </div>
           <div className="mt-3 flex flex-wrap gap-4 text-xs text-gray-600 dark:text-slate-400">
             <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />Upsell Revenue</span>
-            <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-indigo-500" />Orders with Upsell</span>
+            <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-teal-300" />Cross-sell Revenue</span>
+            <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-indigo-500" />Orders with Upsell or Cross-sell</span>
             <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-orange-500" />Conversion Rate</span>
           </div>
           <div className="mt-3 h-56">
@@ -684,9 +816,10 @@ export default function UpsellPerformancePage({
                 <YAxis yAxisId="money" tickFormatter={(value) => shortMoney(Number(value))} tick={{ fontSize: 10, fill: "#6b7280" }} tickLine={false} axisLine={false} width={52} />
                 <YAxis yAxisId="orders" hide />
                 <YAxis yAxisId="rate" orientation="right" tickFormatter={(value) => `${value}%`} tick={{ fontSize: 10, fill: "#6b7280" }} tickLine={false} axisLine={false} width={36} />
-                <Tooltip formatter={(value: number, name: string) => name === "Upsell Revenue" ? money(value) : name === "Conversion Rate" ? `${value}%` : count(value)} />
-                <Bar yAxisId="money" dataKey="revenue" name="Upsell Revenue" fill="#22c55e" radius={[3, 3, 0, 0]} maxBarSize={22} />
-                <Bar yAxisId="orders" dataKey="orders" name="Orders with Upsell" fill="#6366f1" radius={[3, 3, 0, 0]} maxBarSize={22} />
+                <Tooltip formatter={(value: number, name: string) => name.endsWith("Revenue") ? money(value) : name === "Conversion Rate" ? `${value}%` : count(value)} />
+                <Bar yAxisId="money" dataKey="upsellRevenue" name="Upsell Revenue" stackId="revenue" fill="#22c55e" maxBarSize={22} />
+                <Bar yAxisId="money" dataKey="crossSellRevenue" name="Cross-sell Revenue" stackId="revenue" fill="#5eead4" radius={[3, 3, 0, 0]} maxBarSize={22} />
+                <Bar yAxisId="orders" dataKey="orders" name="Orders with Upsell or Cross-sell" fill="#6366f1" radius={[3, 3, 0, 0]} maxBarSize={22} />
                 <Line yAxisId="rate" type="monotone" dataKey="conversion" name="Conversion Rate" stroke="#f97316" strokeWidth={2} dot={{ r: 3 }} />
               </ComposedChart>
             </ResponsiveContainer>
@@ -715,7 +848,7 @@ export default function UpsellPerformancePage({
                     {productMetric === "Orders" ? count(byProduct.total) : productMetric === "Profit" ? money0(byProduct.total) : money(byProduct.total)}
                   </strong>
                   <span className="mt-0.5 text-[10px] leading-tight text-gray-500 dark:text-slate-400">
-                    {productMetric === "Orders" ? "Orders with Upsell" : productMetric === "Profit" ? "Total Upsell Profit" : "Total Upsell Revenue"}
+                    {productMetric === "Orders" ? "Orders with either" : productMetric === "Profit" ? "Upsell + Cross-sell Profit" : "Upsell + Cross-sell Revenue"}
                   </span>
                 </div>
               </div>
@@ -874,14 +1007,18 @@ export default function UpsellPerformancePage({
               <table className="w-full !min-w-[960px] text-sm">
                 <thead>
                   <tr className="text-left text-xs font-bold text-gray-700 dark:text-slate-300">
-                    {["#", "Sales Rep", "Orders Handled", "Delivered Orders", "Orders with Upsell", "Conversion Rate", `Upsell Revenue (${currencySymbol()})`, `Bonus Earned (${currencySymbol()})`, "Target", "Performance", ""].map((header, index) => (
-                      <th key={`${header}-${index}`} className="whitespace-nowrap bg-gray-50 px-2.5 py-3 font-bold dark:bg-slate-800/60">{header}</th>
+                    {["#", "Sales Rep", "Orders Handled", "Delivered Orders", "Upsells", "Cross-sells", "Conversion Rate", `Upsell Revenue (${currencySymbol()})`, `Cross-sell Revenue (${currencySymbol()})`, `Bonus Earned (${currencySymbol()})`, "Target", "Performance", ""].map((header, index) => (
+                      // Long headings wrap to two lines so all 13 columns fit.
+                      <th key={`${header}-${index}`} className="bg-gray-50 px-2.5 py-3 align-bottom font-bold leading-tight dark:bg-slate-800/60"
+                        title={header === "Conversion Rate" ? "Delivered orders with an upsell or a cross-sell ÷ delivered orders" : header === "Upsells" ? "Delivered orders where the customer took more pieces" : header === "Cross-sells" ? "Delivered orders where the customer added another product" : undefined}>
+                        {header}
+                      </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {visibleRepRows.length === 0 ? (
-                    <tr><td colSpan={11} className="!text-gray-400 px-4 py-10 text-center text-sm text-gray-400">No sales rep handled or delivered an order in this period.</td></tr>
+                    <tr><td colSpan={13} className="!text-gray-400 px-4 py-10 text-center text-sm text-gray-400">No sales rep handled or delivered an order in this period.</td></tr>
                   ) : visibleRepRows.map((row, index) => {
                     const conversionPct = (row.conversion ?? 0) * 100;
                     const barTone = !row.targetPct ? "bg-gray-300" : conversionPct >= row.targetPct ? "bg-emerald-500" : conversionPct >= row.targetPct / 2 ? "bg-amber-400" : "bg-rose-500";
@@ -901,7 +1038,8 @@ export default function UpsellPerformancePage({
                         </td>
                         <td className="px-2.5 py-3">{count(row.handled)}</td>
                         <td className="px-2.5 py-3">{count(row.delivered)}</td>
-                        <td className="px-2.5 py-3">{count(row.withUpsell)}</td>
+                        <td className="px-2.5 py-3">{count(row.upsells)}</td>
+                        <td className="px-2.5 py-3">{count(row.crossSells)}</td>
                         <td className="px-2.5 py-3">
                           <span className="flex items-center gap-2">
                             <span className="w-11">{percent(row.conversion)}</span>
@@ -910,12 +1048,13 @@ export default function UpsellPerformancePage({
                             </span>
                           </span>
                         </td>
-                        <td className="px-2.5 py-3">{money(row.revenue)}</td>
-                        <td className="px-2.5 py-3">{money0(row.bonus)}</td>
+                        <td className="whitespace-nowrap px-2.5 py-3">{money(row.upsellRevenue)}</td>
+                        <td className="whitespace-nowrap px-2.5 py-3">{money(row.crossSellRevenue)}</td>
+                        <td className="whitespace-nowrap px-2.5 py-3">{money0(row.bonus)}</td>
                         <td className="px-2.5 py-3">{row.targetPct ? `≥ ${row.targetPct}%` : "—"}</td>
                         <td className="px-2.5 py-3">
                           {row.performance
-                            ? <span className={`inline-flex rounded-md border px-2.5 py-1 text-xs font-bold ${PERFORMANCE_TONE[row.performance]}`}>{row.performance}</span>
+                            ? <span className={`inline-flex whitespace-nowrap rounded-md border px-2 py-1 text-xs font-bold ${PERFORMANCE_TONE[row.performance]}`}>{row.performance}</span>
                             : <span className="text-xs text-gray-400">{row.delivered === 0 ? "No deliveries" : "No target"}</span>}
                         </td>
                         <td className="relative px-1 py-3 text-right" data-rep-menu onClick={(event) => event.stopPropagation()}>
@@ -930,7 +1069,7 @@ export default function UpsellPerformancePage({
                                   className="!min-h-0 block w-full rounded-lg px-3 py-2 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:text-slate-200 dark:hover:bg-slate-800">View performance</button>
                               )}
                               <button type="button" onClick={() => { setRepFilter(row.repId); setTab("orders"); setSearch(""); setMenuRepId(null); }}
-                                className="!min-h-0 block w-full rounded-lg px-3 py-2 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:text-slate-200 dark:hover:bg-slate-800">View upsold orders</button>
+                                className="!min-h-0 block w-full rounded-lg px-3 py-2 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:text-slate-200 dark:hover:bg-slate-800">View their orders</button>
                             </div>
                           )}
                         </td>
@@ -944,10 +1083,12 @@ export default function UpsellPerformancePage({
                       <td className="px-2.5 py-3" colSpan={2}>Total</td>
                       <td className="px-2.5 py-3">{count(repTotals.handled)}</td>
                       <td className="px-2.5 py-3">{count(repTotals.delivered)}</td>
-                      <td className="px-2.5 py-3">{count(repTotals.withUpsell)}</td>
+                      <td className="px-2.5 py-3">{count(repTotals.upsells)}</td>
+                      <td className="px-2.5 py-3">{count(repTotals.crossSells)}</td>
                       <td className="px-2.5 py-3">{percent(repTotals.delivered > 0 ? repTotals.withUpsell / repTotals.delivered : null)}</td>
-                      <td className="px-2.5 py-3">{money(repTotals.revenue)}</td>
-                      <td className="px-2.5 py-3">{money0(repTotals.bonus)}</td>
+                      <td className="whitespace-nowrap px-2.5 py-3">{money(repTotals.upsellRevenue)}</td>
+                      <td className="whitespace-nowrap px-2.5 py-3">{money(repTotals.crossSellRevenue)}</td>
+                      <td className="whitespace-nowrap px-2.5 py-3">{money0(repTotals.bonus)}</td>
                       <td className="px-2.5 py-3">-</td>
                       <td className="px-2.5 py-3">-</td>
                       <td />
@@ -956,6 +1097,54 @@ export default function UpsellPerformancePage({
                 )}
               </table>
             </div>
+
+            <section className="rounded-xl border border-gray-100 p-4 dark:border-slate-800">
+              <h3 className="m-0 text-sm font-black text-gray-900 dark:text-slate-100">Profit vs Conversion</h3>
+              <p className="m-0 mt-0.5 text-xs text-gray-500 dark:text-slate-400">
+                Each bubble is a sales rep; a bigger bubble means more delivered orders. The dashed lines are the team average.
+              </p>
+              {!matrix ? (
+                <p className="m-0 py-10 text-center text-sm text-gray-400">No sales rep delivered an order in this period.</p>
+              ) : (
+                <div className="mt-3 h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ScatterChart margin={{ top: 16, right: 24, bottom: 24, left: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                      <ReferenceArea x1={matrix.avgX} x2={matrix.xMax} y1={matrix.avgY} y2={matrix.yMax} fill="#10b981" fillOpacity={0.06}
+                        label={{ value: "Strong performers", position: "insideTopRight", fontSize: 11, fill: "#059669" }} />
+                      <ReferenceArea x1={0} x2={matrix.avgX} y1={matrix.avgY} y2={matrix.yMax} fill="#f59e0b" fillOpacity={0.06}
+                        label={{ value: "High profit, converts less", position: "insideTopLeft", fontSize: 11, fill: "#d97706" }} />
+                      <ReferenceArea x1={matrix.avgX} x2={matrix.xMax} y1={matrix.yMin} y2={matrix.avgY} fill="#0ea5e9" fillOpacity={0.06}
+                        label={{ value: "Converts well, needs more orders", position: "insideBottomRight", fontSize: 11, fill: "#0284c7" }} />
+                      <ReferenceArea x1={0} x2={matrix.avgX} y1={matrix.yMin} y2={matrix.avgY} fill="#f43f5e" fillOpacity={0.06}
+                        label={{ value: "Needs coaching", position: "insideBottomLeft", fontSize: 11, fill: "#e11d48" }} />
+                      <ReferenceLine x={matrix.avgX} stroke="#94a3b8" strokeDasharray="4 4" />
+                      <ReferenceLine y={matrix.avgY} stroke="#94a3b8" strokeDasharray="4 4" />
+                      <XAxis type="number" dataKey="x" domain={[0, matrix.xMax]} tickFormatter={(value) => `${value}%`} tick={{ fontSize: 10, fill: "#6b7280" }}
+                        label={{ value: "Conversion rate", position: "insideBottom", offset: -14, fontSize: 11, fill: "#6b7280" }} />
+                      <YAxis type="number" dataKey="y" domain={[matrix.yMin, matrix.yMax]} tickFormatter={(value) => shortMoney(Number(value))} tick={{ fontSize: 10, fill: "#6b7280" }} width={56}
+                        label={{ value: "Upsell profit", angle: -90, position: "insideLeft", offset: 4, fontSize: 11, fill: "#6b7280" }} />
+                      <ZAxis type="number" dataKey="z" range={[90, 700]} />
+                      <Tooltip cursor={{ strokeDasharray: "3 3" }} content={({ payload }) => {
+                        const point = payload?.[0]?.payload as { name: string; x: number; y: number; z: number } | undefined;
+                        if (!point) return null;
+                        return (
+                          <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                            <p className="m-0 font-black text-gray-900 dark:text-slate-100">{point.name}</p>
+                            <p className="m-0 mt-1 text-gray-600 dark:text-slate-300">{point.x}% conversion · {money0(point.y)} upsell profit</p>
+                            <p className="m-0 text-gray-500 dark:text-slate-400">{count(point.z)} delivered orders</p>
+                          </div>
+                        );
+                      }} />
+                      <Scatter data={matrix.points} onClick={(point: any) => point?.repId && setDrawerRepId(point.repId)} className="cursor-pointer">
+                        {matrix.points.map((point) => <Cell key={point.repId} fill={point.color} fillOpacity={0.75} stroke={point.color} />)}
+                        <LabelList dataKey="name" position="top" offset={10} className="fill-gray-700 dark:fill-slate-200" style={{ fontSize: 11, fontWeight: 700 }} />
+                      </Scatter>
+                    </ScatterChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </section>
           </div>
         )}
 
@@ -965,27 +1154,57 @@ export default function UpsellPerformancePage({
               <table className="w-full !min-w-[760px] text-sm">
                 <thead>
                   <tr className="text-left text-xs font-bold text-gray-700 dark:text-slate-300">
-                    {["Product", "Delivered Orders", "Orders with Upsell", "Conversion Rate", `Upsell Revenue (${currencySymbol()})`, `Upsell Profit (${currencySymbol()})`, `Bonus Earned (${currencySymbol()})`].map((header) => (
+                    {["Product", "Delivered Orders", "Upsells", "Cross-sells", "Conversion Rate", `Upsell Revenue (${currencySymbol()})`, `Cross-sell Revenue (${currencySymbol()})`, `Profit (${currencySymbol()})`, `Bonus Earned (${currencySymbol()})`].map((header) => (
                       <th key={header} className="whitespace-nowrap bg-gray-50 px-4 py-3 font-bold dark:bg-slate-800/60">{header}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {productRows.length === 0 ? (
-                    <tr><td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-400">No delivered orders in this period.</td></tr>
+                    <tr><td colSpan={9} className="px-4 py-10 text-center text-sm text-gray-400">No delivered orders in this period.</td></tr>
                   ) : productRows.map((row) => (
                     <tr key={row.key} className="border-t border-gray-100 dark:border-slate-800 [&>td]:align-middle [&>td]:text-gray-800 dark:[&>td]:text-slate-200">
                       <td className="px-4 py-3 font-bold">{row.name}</td>
                       <td className="px-4 py-3">{count(row.delivered)}</td>
-                      <td className="px-4 py-3">{count(row.withUpsell)}</td>
+                      <td className="px-4 py-3">{count(row.upsells)}</td>
+                      <td className="px-4 py-3">{count(row.crossSells)}</td>
                       <td className="px-4 py-3">{percent(row.conversion)}</td>
-                      <td className="px-4 py-3">{money(row.revenue)}</td>
+                      <td className="px-4 py-3">{money(row.upsellRevenue)}</td>
+                      <td className="px-4 py-3">{money(row.crossSellRevenue)}</td>
                       <td className="px-4 py-3">{money0(row.profit)}</td>
                       <td className="px-4 py-3">{money0(row.bonus)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+            </div>
+
+            <div>
+              <h3 className="m-0 text-sm font-black text-gray-900 dark:text-slate-100">Cross-sell products</h3>
+              <p className="m-0 mt-0.5 text-xs text-gray-500 dark:text-slate-400">The extra products reps added to orders delivered in this period.</p>
+              <div className="mt-3 overflow-x-auto rounded-xl border border-gray-100 dark:border-slate-800">
+                <table className="w-full !min-w-[560px] text-sm">
+                  <thead>
+                    <tr className="text-left text-xs font-bold text-gray-700 dark:text-slate-300">
+                      {["Cross-sell product", "Orders", `Cross-sell Revenue (${currencySymbol()})`, "Share of cross-sell revenue"].map((header) => (
+                        <th key={header} className="whitespace-nowrap bg-gray-50 px-4 py-3 font-bold dark:bg-slate-800/60">{header}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {addOnRows.length === 0 ? (
+                      <tr><td colSpan={4} className="px-4 py-8 text-center text-sm text-gray-400">No cross-sells were delivered in this period.</td></tr>
+                    ) : addOnRows.map((row) => (
+                      <tr key={row.name} className="border-t border-gray-100 dark:border-slate-800 [&>td]:align-middle [&>td]:text-gray-800 dark:[&>td]:text-slate-200">
+                        <td className="px-4 py-3 font-bold">{row.name}</td>
+                        <td className="px-4 py-3">{count(row.orders)}</td>
+                        <td className="px-4 py-3">{money(row.revenue)}</td>
+                        <td className="px-4 py-3">{percent(row.share)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
             <div>
@@ -1029,7 +1248,7 @@ export default function UpsellPerformancePage({
           <div className="space-y-3 px-4 pb-4">
             {repFilter && (
               <p className="m-0 inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700">
-                Showing {repFilter === OTHER_STAFF ? "other staff" : `${repName(repFilter)}'s`} upsold orders
+                Showing {repFilter === OTHER_STAFF ? "other staff" : `${repName(repFilter)}'s`} upsells and cross-sells
                 <button type="button" aria-label="Show every rep" onClick={() => setRepFilter(null)} className="!min-h-0"><X className="h-3.5 w-3.5" /></button>
               </p>
             )}
@@ -1037,14 +1256,14 @@ export default function UpsellPerformancePage({
               <table className="w-full !min-w-[960px] text-sm">
                 <thead>
                   <tr className="text-left text-xs font-bold text-gray-700 dark:text-slate-300">
-                    {["Order", "Delivered", "Sales Rep", "Customer", "Product", "What was added", `Upsell Revenue (${currencySymbol()})`, `Upsell Profit (${currencySymbol()})`, `Bonus (${currencySymbol()})`].map((header) => (
+                    {["Order", "Delivered", "Sales Rep", "Customer", "Product", "Type", "What was added", `Upsell Revenue (${currencySymbol()})`, `Cross-sell Revenue (${currencySymbol()})`, `Profit (${currencySymbol()})`, `Bonus (${currencySymbol()})`].map((header) => (
                       <th key={header} className="whitespace-nowrap bg-gray-50 px-4 py-3 font-bold dark:bg-slate-800/60">{header}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {orderRows.length === 0 ? (
-                    <tr><td colSpan={9} className="px-4 py-10 text-center text-sm text-gray-400">No upsold orders were delivered in this period.</td></tr>
+                    <tr><td colSpan={11} className="px-4 py-10 text-center text-sm text-gray-400">No orders with an upsell or cross-sell were delivered in this period.</td></tr>
                   ) : orderRows.map((order) => (
                     <tr key={order.id} className="border-t border-gray-100 dark:border-slate-800 [&>td]:align-middle [&>td]:text-gray-800 dark:[&>td]:text-slate-200">
                       <td className="px-4 py-3">
@@ -1054,8 +1273,10 @@ export default function UpsellPerformancePage({
                       <td className="px-4 py-3">{repName(order.repId)}</td>
                       <td className="px-4 py-3">{order.customerName}</td>
                       <td className="px-4 py-3">{order.productName}</td>
+                      <td className="px-4 py-3"><TypePill order={order} /></td>
                       <td className="px-4 py-3 text-gray-600 dark:text-slate-400">{order.description}</td>
-                      <td className="px-4 py-3">{money(order.extraRevenue)}</td>
+                      <td className="whitespace-nowrap px-4 py-3">{money(order.upsellRevenue)}</td>
+                      <td className="whitespace-nowrap px-4 py-3">{money(order.crossSellRevenue)}</td>
                       <td className="px-4 py-3">{money0(order.contributionProfit)}</td>
                       <td className="px-4 py-3">{money0(order.bonus)}</td>
                     </tr>
@@ -1205,14 +1426,14 @@ function RepDrawer({ row, calls, orders, orderById, window, logLoading, logError
 
   return createPortal((
     <div className="fixed inset-0 z-[70] flex justify-end bg-slate-900/30" onClick={onClose}>
-      <aside role="dialog" aria-label={`${row.name} upsell performance`} onClick={(event) => event.stopPropagation()}
+      <aside role="dialog" aria-label={`${row.name} upsell and cross-sell performance`} onClick={(event) => event.stopPropagation()}
         className="h-full w-full max-w-md overflow-y-auto bg-white shadow-2xl dark:bg-slate-900">
         <header className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-gray-100 bg-white px-5 py-4 dark:border-slate-800 dark:bg-slate-900">
           <div className="flex items-center gap-3">
             <Avatar name={row.name} size="h-11 w-11 text-sm" />
             <div>
-              <h2 className="m-0 text-base font-black text-gray-900 dark:text-slate-50">{row.name} — Upsell Performance</h2>
-              <p className="m-0 text-xs text-gray-500 dark:text-slate-400">{count(row.withUpsell)} successful / {count(row.delivered)} delivered orders</p>
+              <h2 className="m-0 text-base font-black text-gray-900 dark:text-slate-50">{row.name} — Upsell &amp; Cross-sell Performance</h2>
+              <p className="m-0 text-xs text-gray-500 dark:text-slate-400">{count(row.upsells)} upsells · {count(row.crossSells)} cross-sells · {count(row.delivered)} delivered orders</p>
             </div>
           </div>
           <button type="button" aria-label="Close" onClick={onClose} className="!min-h-0 rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-slate-800"><X className="h-4 w-4" /></button>
@@ -1222,8 +1443,9 @@ function RepDrawer({ row, calls, orders, orderById, window, logLoading, logError
           <div className="grid grid-cols-2 gap-3">
             {[
               { label: "Conversion rate", value: percent(row.conversion) },
-              { label: "Upsell revenue", value: money(row.revenue) },
-              { label: "Upsell profit", value: money0(row.profit) },
+              { label: "Upsell revenue", value: money(row.upsellRevenue) },
+              { label: "Cross-sell revenue", value: money(row.crossSellRevenue) },
+              { label: "Profit", value: money0(row.profit) },
               { label: "Bonus earned", value: money0(row.bonus) }
             ].map((stat) => (
               <div key={stat.label} className="rounded-xl border border-gray-100 p-3 dark:border-slate-800">
@@ -1288,13 +1510,16 @@ function RepDrawer({ row, calls, orders, orderById, window, logLoading, logError
           </section>
 
           <section>
-            <h3 className="m-0 text-sm font-black text-gray-900 dark:text-slate-100">Recent upsold orders</h3>
+            <h3 className="m-0 text-sm font-black text-gray-900 dark:text-slate-100">Recent upsells and cross-sells</h3>
             {recent.length === 0 ? <p className="m-0 mt-2 text-sm text-gray-400">None delivered in this period.</p> : (
               <ul className="m-0 mt-2 list-none space-y-2 p-0">
                 {recent.map((order) => (
                   <li key={order.id} className="rounded-lg border border-gray-100 px-3 py-2 text-sm dark:border-slate-800">
                     <div className="flex items-center justify-between gap-2">
-                      <button type="button" onClick={() => onOpenOrder(order.id)} className="!min-h-0 font-black text-[#1F8FE0] hover:underline">#{order.id}</button>
+                      <span className="inline-flex items-center gap-2">
+                        <button type="button" onClick={() => onOpenOrder(order.id)} className="!min-h-0 font-black text-[#1F8FE0] hover:underline">#{order.id}</button>
+                        <TypePill order={order} />
+                      </span>
                       <span className="font-bold text-gray-900 dark:text-slate-100">{money(order.extraRevenue)}</span>
                     </div>
                     <p className="m-0 mt-0.5 text-xs text-gray-500 dark:text-slate-400">{order.description}</p>
