@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   Bar, CartesianGrid, Cell, ComposedChart, LabelList, Line, Pie, PieChart, ReferenceArea, ReferenceLine, ResponsiveContainer,
   Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis
 } from "recharts";
 import {
-  AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Download, Filter, HandCoins, Layers, MoreVertical, PackagePlus,
+  AlertTriangle, ArrowDown, ArrowLeft, ArrowUp, Download, Filter, HandCoins, Layers, MoreVertical, PackagePlus,
   RefreshCw, Search, Target, TrendingUp, Trophy, UsersRound, X
 } from "lucide-react";
 import DateWindowNav from "../components/DateWindowNav";
@@ -312,63 +312,70 @@ const bestAndWeakest = (rows: RepRow[], kind: Kind): { best: Ranked; weakest: Ra
 };
 
 // ── Scorecard ──────────────────────────────────────────────────────────────
+type ScoreStat = { label: string; value: string; hint: string };
+
+/**
+ * One of the three cards at the top: Both (upsell + cross-sell together),
+ * Upsell, Cross-sell. Same layout for all three so they read side by side.
+ * The selected one is outlined - it is what everything below is showing.
+ */
 function ScoreCard({
-  kind, icon: Icon, subtitle, current, previous, delivered, moneyReady, offerLine, best, weakest, onFocus
+  kind, icon: Icon, title, subtitle, current, previous, delivered, stats, footnote, best, weakest, selected, onSelect
 }: {
-  kind: "upsell" | "cross";
+  kind: Kind;
   icon: ComponentType<{ className?: string }>;
+  title: string;
   subtitle: string;
   current: KindTotals;
   previous: KindTotals;
   delivered: number;
-  moneyReady: boolean;
-  offerLine: string;
+  stats: ScoreStat[];
+  footnote: ReactNode;
   best: Ranked;
   weakest: Ranked;
-  onFocus: () => void;
+  selected: boolean;
+  onSelect: () => void;
 }) {
   const accent = kind === "upsell"
-    ? { ring: "border-emerald-200 dark:border-emerald-500/30", band: "bg-emerald-500", tile: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200", text: "text-emerald-700 dark:text-emerald-200" }
-    : { ring: "border-indigo-200 dark:border-indigo-500/30", band: "bg-indigo-500", tile: "bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-200", text: "text-indigo-700 dark:text-indigo-200" };
-  const money0 = (value: number) => (moneyReady ? money(value) : "…");
-  const deliveryRate = ratio(current.placedDelivered, current.placedFinished);
-  const stats = [
-    { label: "Profit", value: money0(current.profit), hint: "After product cost and rep bonus" },
-    { label: "Rep bonus", value: money0(current.bonus), hint: "Bonus paid on these orders, from the bonus rules" },
-    { label: "Avg per order", value: current.orders > 0 ? money(current.revenue / current.orders) : "—", hint: "Extra revenue on each order" },
-    { label: "Delivered", value: percent(deliveryRate, 0), hint: `${current.placedDelivered} of ${current.placedFinished} such orders placed in this period delivered` }
-  ];
+    ? { ring: "border-emerald-200 dark:border-emerald-500/30", selected: "ring-2 ring-emerald-500", band: "bg-emerald-500", tile: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200", text: "text-emerald-700 dark:text-emerald-200" }
+    : kind === "cross"
+      ? { ring: "border-indigo-200 dark:border-indigo-500/30", selected: "ring-2 ring-indigo-500", band: "bg-indigo-500", tile: "bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-200", text: "text-indigo-700 dark:text-indigo-200" }
+      : { ring: "border-violet-200 dark:border-violet-500/30", selected: "ring-2 ring-violet-500", band: "bg-gradient-to-r from-emerald-500 to-indigo-500", tile: "bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-200", text: "text-violet-700 dark:text-violet-200" };
   return (
-    <article className={`relative overflow-hidden rounded-2xl border bg-white shadow-sm dark:bg-slate-900 ${accent.ring}`}>
+    <article className={`relative flex flex-col overflow-hidden rounded-2xl border bg-white shadow-sm transition-shadow dark:bg-slate-900 ${accent.ring} ${selected ? accent.selected : ""}`}>
       <span className={`absolute inset-x-0 top-0 h-1 ${accent.band}`} />
-      <div className="p-5">
+      <div className="flex-1 p-5">
         <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <span className={`inline-flex h-10 w-10 items-center justify-center rounded-xl ${accent.tile}`}><Icon className="h-5 w-5" /></span>
-            <div>
-              <h2 className="m-0 text-base font-black text-gray-900 dark:text-slate-50">{KIND_LABEL[kind]}</h2>
+          <div className="flex min-w-0 items-center gap-3">
+            <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${accent.tile}`}><Icon className="h-5 w-5" /></span>
+            <div className="min-w-0">
+              <h2 className="m-0 text-base font-black text-gray-900 dark:text-slate-50">{title}</h2>
               <p className="m-0 text-xs text-gray-500 dark:text-slate-400">{subtitle}</p>
             </div>
           </div>
-          <button type="button" onClick={onFocus}
-            className={`!min-h-0 inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-bold hover:bg-gray-50 dark:hover:bg-slate-800 ${accent.text}`}>
-            Show only {KIND_LABEL[kind].toLowerCase()} <ArrowRight className="h-3.5 w-3.5" />
-          </button>
+          {selected ? (
+            <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-black ${accent.tile}`}>Showing below</span>
+          ) : (
+            <button type="button" onClick={onSelect}
+              className={`!min-h-0 inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-bold hover:bg-gray-50 dark:hover:bg-slate-800 ${accent.text}`}>
+              Show below <ArrowDown className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
 
         <div className="mt-5 grid grid-cols-2 gap-4">
-          <div>
+          <div className="min-w-0">
             <p className="m-0 text-[11px] font-bold uppercase tracking-wider text-gray-400">Extra revenue</p>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <strong className="text-[26px] font-black leading-none text-gray-900 dark:text-slate-50">{money(current.revenue)}</strong>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+              <strong className="text-[22px] font-black leading-none text-gray-900 dark:text-slate-50">{money(current.revenue)}</strong>
               <DeltaPill value={changePct(current.revenue, previous.revenue)} />
             </div>
             <p className="m-0 mt-1.5 text-xs text-gray-500 dark:text-slate-400">{count(current.orders)} {current.orders === 1 ? "order" : "orders"}</p>
           </div>
-          <div>
+          <div className="min-w-0">
             <p className="m-0 text-[11px] font-bold uppercase tracking-wider text-gray-400">{KIND_RATE[kind]}</p>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <strong className="text-[26px] font-black leading-none text-gray-900 dark:text-slate-50">{percent(current.rate)}</strong>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+              <strong className="text-[22px] font-black leading-none text-gray-900 dark:text-slate-50">{percent(current.rate)}</strong>
               <DeltaPill value={pointsChange(current.rate, previous.rate)} unit="pts" />
             </div>
             <p className="m-0 mt-1.5 text-xs text-gray-500 dark:text-slate-400">of {count(delivered)} delivered orders</p>
@@ -377,13 +384,13 @@ function ScoreCard({
 
         <dl className="m-0 mt-5 grid grid-cols-2 gap-3 border-t border-gray-100 pt-4 sm:grid-cols-4 dark:border-slate-800">
           {stats.map((stat) => (
-            <div key={stat.label} title={stat.hint}>
-              <dt className="text-[11px] font-semibold text-gray-500 dark:text-slate-400">{stat.label}</dt>
+            <div key={stat.label} title={stat.hint} className="min-w-0">
+              <dt className="truncate text-[11px] font-semibold text-gray-500 dark:text-slate-400">{stat.label}</dt>
               <dd className="m-0 mt-0.5 text-sm font-black text-gray-900 dark:text-slate-100">{stat.value}</dd>
             </div>
           ))}
         </dl>
-        <p className="m-0 mt-3 text-xs text-gray-500 dark:text-slate-400">{offerLine}</p>
+        <div className="mt-3 text-xs text-gray-500 dark:text-slate-400">{footnote}</div>
       </div>
 
       <div className="grid grid-cols-2 border-t border-gray-100 dark:border-slate-800">
@@ -391,21 +398,20 @@ function ScoreCard({
           { label: "Best rate", entry: best, tone: "text-emerald-700 dark:text-emerald-200", icon: Trophy },
           { label: "Lowest rate", entry: weakest, tone: "text-rose-700 dark:text-rose-200", icon: AlertTriangle }
         ].map(({ label, entry, tone, icon: RowIcon }, index) => (
-          <div key={label} className={`flex items-center gap-2.5 px-5 py-3 ${index === 0 ? "border-r border-gray-100 dark:border-slate-800" : ""}`}>
+          <div key={label} className={`flex min-w-0 items-center gap-2 px-4 py-3 ${index === 0 ? "border-r border-gray-100 dark:border-slate-800" : ""}`}>
             <RowIcon className={`h-4 w-4 shrink-0 ${tone}`} />
             {entry ? (
               <>
                 <Avatar name={entry.row.name} size="h-7 w-7 text-[10px]" />
                 <div className="min-w-0">
                   <p className="m-0 text-[11px] font-semibold text-gray-500 dark:text-slate-400">{label}</p>
-                  <p className="m-0 truncate text-sm font-bold text-gray-900 dark:text-slate-100">
+                  <p className="m-0 truncate text-sm font-bold text-gray-900 dark:text-slate-100" title={`${entry.row.name} · ${percent(entry.rate)} (${entry.row[kind].orders})`}>
                     {entry.row.name} <span className={tone}>{percent(entry.rate)}</span>
-                    <span className="ml-1 text-xs font-medium text-gray-400">({entry.row[kind].orders})</span>
                   </p>
                 </div>
               </>
             ) : (
-              <p className="m-0 text-xs text-gray-400">{label}: not enough orders to rank</p>
+              <p className="m-0 text-xs text-gray-400">{label}: not enough orders</p>
             )}
           </div>
         ))}
@@ -431,7 +437,6 @@ export default function UpsellPerformancePage({
   const [menuRepId, setMenuRepId] = useState<string | null>(null);
   const [drawerRepId, setDrawerRepId] = useState<string | null>(null);
   const filterRef = useRef<HTMLDivElement | null>(null);
-  const kindSwitchRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!filterOpen && !menuRepId) return;
@@ -461,10 +466,6 @@ export default function UpsellPerformancePage({
   const salesRepIds = useMemo(() => new Set(reps.filter((rep) => rep.role === "Sales Rep").map((rep) => rep.id)), [reps]);
   const rowIdFor = (repId: string | null) => (repId && salesRepIds.has(repId) ? repId : OTHER_STAFF);
   const money0 = (value: number) => (moneyReady ? money(value) : "…");
-  const focusKind = (next: Kind) => {
-    setKind(next);
-    kindSwitchRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
 
   // ── Whole business (the strip and the two scorecards) ─────────────────
   const current = useMemo(() => totalsFor(orders, window), [orders, window]);
@@ -885,14 +886,33 @@ export default function UpsellPerformancePage({
   const previousBonusShare = ratio(previous.both.bonus, previous.both.profit + previous.both.bonus);
   const kindTitle = kind === "both" ? "Upsell & Cross-sell" : KIND_LABEL[kind];
 
-  // The strip: the whole business in one line, before the two sides.
-  const strip = [
-    { label: "Extra revenue", value: money(current.both.revenue), delta: changePct(current.both.revenue, previous.both.revenue), unit: "%" as const, lowerIsBetter: false },
-    { label: "Orders with either", value: count(current.both.orders), delta: changePct(current.both.orders, previous.both.orders), unit: "%" as const, lowerIsBetter: false },
-    { label: "Conversion rate", value: percent(current.both.rate), delta: pointsChange(current.both.rate, previous.both.rate), unit: "pts" as const, lowerIsBetter: false },
-    { label: "Rep bonus", value: money0(current.both.bonus), delta: moneyReady ? changePct(current.both.bonus, previous.both.bonus) : null, unit: "%" as const, lowerIsBetter: false },
-    { label: "Bonus share of profit", value: moneyReady ? percent(bonusShare) : "…", delta: moneyReady ? pointsChange(bonusShare, previousBonusShare) : null, unit: "pts" as const, lowerIsBetter: true }
-  ];
+  // The three cards. Same four stats each, so they compare line for line;
+  // the Both card swaps "Avg per order" for the bonus share of profit.
+  const statsFor = (k: Kind): ScoreStat[] => {
+    const t = current[k];
+    const deliveryRate = ratio(t.placedDelivered, t.placedFinished);
+    return [
+      { label: "Profit", value: money0(t.profit), hint: "After product cost and rep bonus" },
+      { label: "Rep bonus", value: money0(t.bonus), hint: "Bonus paid on these orders, from the bonus rules" },
+      k === "both"
+        ? { label: "Bonus share", value: moneyReady ? percent(bonusShare) : "…", hint: "Of the profit before bonuses, the part paid out as rep bonus" }
+        : { label: "Avg per order", value: t.orders > 0 ? money(t.revenue / t.orders) : "—", hint: "Extra revenue on each order" },
+      { label: "Delivered", value: percent(deliveryRate, 0), hint: `${t.placedDelivered} of ${t.placedFinished} such orders placed in this period delivered` }
+    ];
+  };
+  const revenueSplit = ratio(current.upsell.revenue, current.upsell.revenue + current.cross.revenue);
+  const bothFootnote = (
+    <div>
+      <div className="flex justify-between gap-2">
+        <span><span className="font-bold text-emerald-700 dark:text-emerald-300">Upsell</span> {money(current.upsell.revenue)}</span>
+        <span><span className="font-bold text-indigo-700 dark:text-indigo-300">Cross-sell</span> {money(current.cross.revenue)}</span>
+      </div>
+      <div className="mt-1.5 flex h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-slate-800">
+        <span className="h-full bg-emerald-500" style={{ width: `${(revenueSplit ?? 0) * 100}%` }} />
+        <span className="h-full flex-1 bg-indigo-400" />
+      </div>
+    </div>
+  );
 
   const th = "whitespace-nowrap bg-gray-50 px-2.5 py-3 font-bold dark:bg-slate-800/60";
   const td = "px-2.5 py-3";
@@ -935,50 +955,48 @@ export default function UpsellPerformancePage({
         </p>
       )}
 
-      {/* ── Totals strip ───────────────────────────────────────────── */}
-      <section className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-gray-200 bg-gray-200 shadow-sm sm:grid-cols-3 xl:grid-cols-5 dark:border-slate-800 dark:bg-slate-800">
-        {strip.map((item) => (
-          <div key={item.label} className="bg-white px-5 py-4 dark:bg-slate-900">
-            <p className="m-0 text-[11px] font-bold uppercase tracking-wider text-gray-400">{item.label}</p>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <strong className="text-xl font-black text-gray-900 dark:text-slate-50">{item.value}</strong>
-              <DeltaPill value={item.delta} unit={item.unit} lowerIsBetter={item.lowerIsBetter} />
-            </div>
-          </div>
-        ))}
-      </section>
-
-      {/* ── Upsell | Cross-sell ────────────────────────────────────── */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <ScoreCard
-          kind="upsell" icon={Layers} subtitle="Customer took more pieces"
-          current={current.upsell} previous={previous.upsell} delivered={current.delivered} moneyReady={moneyReady}
-          offerLine={upsellOfferRate === null ? "Offer rate: no confirmation calls logged in this period." : `Offered on ${percent(upsellOfferRate, 0)} of confirmation calls.`}
-          best={ranked.upsell.best} weakest={ranked.upsell.weakest} onFocus={() => focusKind("upsell")}
-        />
-        <ScoreCard
-          kind="cross" icon={PackagePlus} subtitle="Customer added another product"
-          current={current.cross} previous={previous.cross} delivered={current.delivered} moneyReady={moneyReady}
-          offerLine="Offer rate: reps don't log cross-sell offers yet."
-          best={ranked.cross.best} weakest={ranked.cross.weakest} onFocus={() => focusKind("cross")}
-        />
-      </div>
-
-      {/* ── The switch: everything below follows it ────────────────── */}
-      <div ref={kindSwitchRef} className="flex scroll-mt-20 flex-col gap-3 rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between dark:border-slate-800 dark:bg-slate-900">
+      {/* ── One switch for the whole page ───────────────────────────── */}
+      <div className="flex flex-col gap-3 rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between dark:border-slate-800 dark:bg-slate-900">
         <p className="m-0 text-sm text-gray-600 dark:text-slate-300">
-          Charts, rep cards and tables below are showing <strong className="text-gray-900 dark:text-slate-50">{kind === "both" ? "upsell and cross-sell" : KIND_LABEL[kind].toLowerCase()}</strong>.
+          Showing <strong className="text-gray-900 dark:text-slate-50">{kind === "both" ? "upsell and cross-sell combined" : `${KIND_LABEL[kind].toLowerCase()} only`}</strong> in the charts, rep cards and tables below.
         </p>
-        <div className="inline-flex rounded-xl bg-gray-100 p-1 dark:bg-slate-800" role="tablist" aria-label="Upsell or cross-sell">
+        <div className="inline-flex rounded-xl bg-gray-100 p-1 dark:bg-slate-800" role="tablist" aria-label="Both, upsell or cross-sell">
           {KINDS.map((item) => (
             <button key={item} type="button" role="tab" aria-selected={kind === item} onClick={() => setKind(item)}
               className={`!min-h-0 rounded-lg px-4 py-1.5 text-sm font-bold transition-colors ${kind === item
-                ? item === "upsell" ? "bg-emerald-600 text-white shadow-sm" : item === "cross" ? "bg-indigo-600 text-white shadow-sm" : "bg-white text-gray-900 shadow-sm dark:bg-slate-700 dark:text-white"
+                ? item === "upsell" ? "bg-emerald-600 text-white shadow-sm" : item === "cross" ? "bg-indigo-600 text-white shadow-sm" : "bg-violet-600 text-white shadow-sm"
                 : "text-gray-600 hover:text-gray-900 dark:text-slate-300 dark:hover:text-white"}`}>
               {KIND_LABEL[item]}
             </button>
           ))}
         </div>
+      </div>
+
+      {/* ── Both | Upsell | Cross-sell ─────────────────────────────── */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <ScoreCard
+          kind="both" icon={Layers} title="Both" subtitle="Upsell and cross-sell combined"
+          current={current.both} previous={previous.both} delivered={current.delivered}
+          stats={statsFor("both")} footnote={bothFootnote}
+          best={ranked.both.best} weakest={ranked.both.weakest}
+          selected={kind === "both"} onSelect={() => setKind("both")}
+        />
+        <ScoreCard
+          kind="upsell" icon={TrendingUp} title="Upsell" subtitle="Customer took more pieces"
+          current={current.upsell} previous={previous.upsell} delivered={current.delivered}
+          stats={statsFor("upsell")}
+          footnote={upsellOfferRate === null ? "Offer rate: no confirmation calls logged in this period." : `Offered on ${percent(upsellOfferRate, 0)} of confirmation calls.`}
+          best={ranked.upsell.best} weakest={ranked.upsell.weakest}
+          selected={kind === "upsell"} onSelect={() => setKind("upsell")}
+        />
+        <ScoreCard
+          kind="cross" icon={PackagePlus} title="Cross-sell" subtitle="Customer added another product"
+          current={current.cross} previous={previous.cross} delivered={current.delivered}
+          stats={statsFor("cross")}
+          footnote="Offer rate: reps don't log cross-sell offers yet."
+          best={ranked.cross.best} weakest={ranked.cross.weakest}
+          selected={kind === "cross"} onSelect={() => setKind("cross")}
+        />
       </div>
 
       {/* ── Three charts ───────────────────────────────────────────── */}
