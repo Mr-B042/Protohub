@@ -5,6 +5,7 @@ import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { expectedRepIdsForWeek } from "../lib/weekly-report-data.js";
 import { notifyWeeklyReport } from "../lib/weekly-report-notifications.js";
+import { branchFundManagers, loadFundWeek } from "./manager-funds.js";
 import { addDaysToDateKey, sundayWeekStartForDateKey, lagosDateKey, weekEndFromStart } from "../lib/sales-bonus-engine.js";
 import {
   CORRECTION_SECTIONS,
@@ -51,8 +52,17 @@ const correctionBodySchema = z.object({
   section: z.enum(CORRECTION_SECTIONS as [string, ...string[]]),
   problem: z.string().trim().min(3, "Say what the problem is.").max(300),
   comment: z.string().trim().min(3, "Add a comment.").max(2000),
-  orderRef: z.string().trim().max(60).optional()
+  orderRef: z.string().trim().max(60).optional(),
+  // The owner can return the week over one Funds & Expenses entry.
+  fundTransactionId: z.string().uuid().optional()
 });
+
+/** Every manager wallet's money side for the week (only the ones with anything in them). */
+async function fundsForWeek(orgId: string, branchId: string, weekStart: string) {
+  const managers = await branchFundManagers(orgId, branchId);
+  const weeks = await Promise.all(managers.map(async (manager) => ({ manager, fund: await loadFundWeek(orgId, branchId, manager.id, weekStart) })));
+  return weeks.filter((item) => item.fund.hasActivity);
+}
 
 const httpError = (status: number, message: string) => Object.assign(new Error(message), { status });
 
@@ -89,7 +99,7 @@ async function audit(req: Request, entry: {
 
 const REP_COLUMNS = "id, rep_id, week_start, status, snapshot, rep_note, submit_count, submitted_at, manager_reviewed_by, manager_reviewed_at, owner_approved_by, owner_approved_at, locked_at, created_at, updated_at";
 const COMPANY_COLUMNS = "id, week_start, status, manager_note, owner_note, company_snapshot, manager_bonus_snapshot, submit_count, submitted_by, submitted_at, locked_by, locked_at, reopened_by, reopened_at, reopen_reason, created_at, updated_at";
-const CORRECTION_COLUMNS = "id, week_start, rep_report_id, company_report_id, kind, section, problem, comment, order_ref, raised_by, raised_by_name, raised_by_role, status, response, resolved_by, resolved_at, created_at";
+const CORRECTION_COLUMNS = "id, week_start, rep_report_id, company_report_id, fund_transaction_id, kind, section, problem, comment, order_ref, raised_by, raised_by_name, raised_by_role, status, response, resolved_by, resolved_at, created_at";
 const AUDIT_COLUMNS = "id, week_start, rep_report_id, company_report_id, rep_id, actor_id, actor_name, actor_role, action, detail, created_at";
 
 const BONUS_QUERY_COLUMNS = "id, rep_id, week_start, order_refs, rep_message, check_verdict, check_result, sent_despite_accurate, status, manager_response, correction_amount, correction_week_start, resolved_by, resolved_by_name, resolved_at, created_at";
@@ -154,7 +164,8 @@ const mapCorrection = (row: any) => ({
   repReportId: row.rep_report_id ?? null,
   companyReportId: row.company_report_id ?? null,
   kind: row.kind,
-  section: row.section,
+  section: row.fund_transaction_id ? "funds" : row.section,
+  fundTransactionId: row.fund_transaction_id ?? null,
   problem: row.problem,
   comment: row.comment,
   orderRef: row.order_ref ?? null,
@@ -659,7 +670,17 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
       previousFines,
       adjustments,
       previousAdjustments,
-      bonusQueries: (bonusQueries.data ?? []).map(mapBonusQuery)
+      bonusQueries: (bonusQueries.data ?? []).map(mapBonusQuery),
+      funds: (await fundsForWeek(orgId, branchId, weekStart)).map(({ manager, fund }) => ({
+        managerId: manager.id,
+        managerName: manager.name,
+        totals: fund.totals,
+        readiness: fund.readiness,
+        locked: fund.locked,
+        varianceExplanation: fund.week?.variance_explanation ?? null,
+        notes: fund.week?.notes ?? null,
+        returned: fund.rows.filter((row: any) => row.status === "returned").length
+      }))
     });
   } catch (error: any) {
     sendError(res, error, "Could not load this week's reports.");
@@ -826,6 +847,12 @@ router.post("/company/submit", requireRole(...REVIEWERS), async (req, res) => {
     if (reportsError) throw reportsError;
     const verdict = canSubmitToOwner(company.status, expectedRepIds, (reports ?? []).map((row: any) => ({ repId: row.rep_id, status: row.status })));
     if (!verdict.ok) throw httpError(409, verdict.error);
+    // The money side must be ready too: counted balance, any variance
+    // explained, every required proof attached, nothing still returned.
+    const funds = await fundsForWeek(orgId, branchId, weekStart);
+    const fundProblems = funds.filter(({ fund }) => fund.readiness.length > 0)
+      .map(({ manager, fund }) => `${manager.name}: ${fund.readiness.join(" ")}`);
+    if (fundProblems.length > 0) throw httpError(409, `Funds & Expenses is not ready. ${fundProblems.join(" ")}`);
 
     const { data: openReturns, error: openError } = await supabase.from("weekly_report_corrections").select("id")
       .eq("org_id", orgId).eq("company_report_id", company.id).eq("kind", "return").eq("status", "open");
@@ -839,7 +866,11 @@ router.post("/company/submit", requireRole(...REVIEWERS), async (req, res) => {
       .update({
         status: "submitted_to_owner",
         manager_note: managerNote ?? null,
-        company_snapshot: companySnapshot,
+        // The money side is worked out on the server, so it is frozen from there.
+        company_snapshot: {
+          ...companySnapshot,
+          funds: funds.map(({ manager, fund }) => ({ managerId: manager.id, managerName: manager.name, totals: fund.totals, varianceExplanation: fund.week?.variance_explanation ?? null }))
+        },
         manager_bonus_snapshot: managerBonusSnapshot ?? null,
         submit_count: Number(company.submit_count ?? 0) + 1,
         submitted_by: req.user!.id,
@@ -896,6 +927,16 @@ router.post("/company/approve-lock", requireRole("Owner"), async (req, res) => {
       branchId, weekStart, action: "owner_approved_locked", companyReportId: company.id,
       detail: { note: note ?? null, repReportsLocked: (lockedReps ?? []).length }
     });
+    // Freeze each wallet's week. Its counted closing opens next week.
+    for (const { manager, fund } of await fundsForWeek(orgId, branchId, weekStart)) {
+      if (!fund.wallet) continue;
+      const { error: fundError } = await supabase.from("manager_fund_weeks").upsert({
+        org_id: orgId, branch_id: branchId, manager_id: manager.id, wallet_account_id: fund.wallet.id, week_start: weekStart,
+        opening_balance: fund.totals.opening, opening_source: fund.openingSource,
+        actual_closing: fund.totals.actual, closing_snapshot: fund.totals, locked_at: now, updated_at: now
+      }, { onConflict: "branch_id,manager_id,week_start" });
+      if (fundError) throw fundError;
+    }
     void notifyWeeklyReport(orgId, branchId, weekStart, { kind: "owner_locked", repIds: (lockedReps ?? []).map((row: any) => row.rep_id as string) });
     res.json({ ok: true });
   } catch (error: any) {
@@ -920,9 +961,19 @@ router.post("/company/return", requireRole("Owner"), async (req, res) => {
       .eq("id", company.id).eq("status", "submitted_to_owner").select("id");
     if (error) throw error;
     if (!updated || updated.length === 0) throw httpError(409, "This week changed while you were returning it. Reload and try again.");
+    const fundTransactionId = parsed.data.fundTransactionId;
+    if (fundTransactionId) {
+      const { data: txn, error: txnError } = await supabase.from("manager_fund_transactions").update({
+        status: "returned", return_reason: comment, updated_at: new Date().toISOString()
+      }).eq("id", fundTransactionId).eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart).neq("status", "voided").select("id");
+      if (txnError) throw txnError;
+      if (!txn || txn.length === 0) throw httpError(404, "That Funds & Expenses entry is not in this week.");
+    }
     const { data: correction, error: correctionError } = await supabase.from("weekly_report_corrections").insert({
       org_id: orgId, branch_id: branchId, week_start: weekStart, company_report_id: company.id,
-      kind: "return", section, problem, comment, order_ref: orderRef || null,
+      // The table's section list predates Funds; the link is what marks it.
+      kind: "return", section: section === "funds" ? "other" : section, problem, comment, order_ref: orderRef || null,
+      fund_transaction_id: fundTransactionId ?? null,
       raised_by: req.user!.id, raised_by_name: req.user!.name ?? null, raised_by_role: req.user!.role
     }).select("id").single();
     if (correctionError) throw correctionError;
@@ -960,6 +1011,9 @@ router.post("/company/reopen", requireRole("Owner"), async (req, res) => {
       .update({ status: "manager_approved", locked_at: null, owner_approved_by: null, owner_approved_at: null, updated_at: now })
       .eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart).eq("status", "locked");
     if (repError) throw repError;
+    const { error: fundError } = await supabase.from("manager_fund_weeks").update({ locked_at: null, updated_at: now })
+      .eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart);
+    if (fundError) throw fundError;
     await audit(req, { branchId, weekStart, action: "owner_reopened", companyReportId: company.id, detail: { reason } });
     void notifyWeeklyReport(orgId, branchId, weekStart, { kind: "owner_reopened", reason });
     res.json({ ok: true });

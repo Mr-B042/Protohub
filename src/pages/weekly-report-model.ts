@@ -360,6 +360,7 @@ export const CORRECTION_SECTION_LABEL: Record<string, string> = {
   product_breakdown: "Product Breakdown",
   upsell_cross_sell: "Upsell / Cross-sell",
   bonus: "Bonus",
+  funds: "Funds & Expenses",
   other: "Other"
 };
 
@@ -370,6 +371,7 @@ export const CORRECTION_PROBLEMS: Record<string, string[]> = {
   product_breakdown: ["Product recorded wrongly", "Package or quantity is wrong"],
   upsell_cross_sell: ["Cross-sell needs verification", "Upsell needs verification", "Add-on not actually sold by the rep"],
   bonus: ["Bonus amount looks wrong", "Manual bonus change needs a reason", "Fine missing or wrong"],
+  funds: ["Proof missing or unclear", "Amount looks wrong", "Wrong category", "Balance does not reconcile"],
   other: []
 };
 
@@ -386,7 +388,15 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   owner_reopened: "Week reopened by owner",
   bonus_check_accurate: "Checked bonus: accurate",
   bonus_query_opened: "Bonus query sent to manager",
-  bonus_query_resolved: "Bonus query answered"
+  bonus_query_resolved: "Bonus query answered",
+  fund_logged: "Funds: transaction logged",
+  fund_edited: "Funds: transaction changed",
+  fund_voided: "Funds: transaction removed",
+  fund_evidence_added: "Funds: proof uploaded",
+  fund_balance_counted: "Funds: actual balance counted",
+  fund_adjustment_requested: "Funds: adjustment requested",
+  fund_adjustment_approved: "Funds: adjustment approved",
+  fund_adjustment_rejected: "Funds: adjustment rejected"
 };
 
 // ── Company week ────────────────────────────────────────────────────────────

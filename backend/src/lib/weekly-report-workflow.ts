@@ -13,10 +13,10 @@
 
 export type RepReportStatus = "draft" | "submitted" | "returned" | "manager_approved" | "owner_approved" | "locked";
 export type CompanyReportStatus = "open" | "submitted_to_owner" | "returned_to_manager" | "locked";
-export type CorrectionSection = "orders" | "delivery" | "product_breakdown" | "upsell_cross_sell" | "bonus" | "other";
+export type CorrectionSection = "orders" | "delivery" | "product_breakdown" | "upsell_cross_sell" | "bonus" | "funds" | "other";
 
 export const CORRECTION_SECTIONS: CorrectionSection[] = [
-  "orders", "delivery", "product_breakdown", "upsell_cross_sell", "bonus", "other"
+  "orders", "delivery", "product_breakdown", "upsell_cross_sell", "bonus", "funds", "other"
 ];
 
 export const REVIEWER_ROLES = ["Manager", "Admin"] as const;
