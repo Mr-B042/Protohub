@@ -21,7 +21,7 @@ import { notifyOrderEvent } from "../lib/order-notifications.js";
 import { assignOrderRep } from "../lib/order-assignment.js";
 import { buildPackageComponentSnapshot } from "../lib/order-inventory.js";
 import { packageAllowsState, packageHasAgentStateStock } from "../lib/package-availability.js";
-import { resolveMetaTrackingConfig, sendMetaCapiPurchase, type MetaTrackingConfig } from "../lib/meta-capi.js";
+import { metaIdsFromFormContext, recordMetaCapiEvent, resolveMetaTrackingConfig, sendMetaCapiPurchase, type MetaTrackingConfig } from "../lib/meta-capi.js";
 import { readSettings } from "./embed-settings.js";
 import {
   sendNewOrderEmail,
@@ -103,7 +103,7 @@ async function readStoredMetaCapiConfig(
 
   const { data, error } = await supabase
     .from("meta_capi_configs")
-    .select("mode, pixel_id, access_token")
+    .select("mode, pixel_id, access_token, test_event_code")
     .eq("org_id", orgId)
     .eq("tracking_key", key)
     .eq("active", true)
@@ -122,7 +122,10 @@ async function readStoredMetaCapiConfig(
   return {
     mode: data.mode,
     pixelId: data.pixel_id,
-    accessToken: data.access_token
+    accessToken: data.access_token,
+    // The saved Test Event Code sends to Meta's Test Events tab instead of
+    // live reporting - what makes a safe first test possible (1 Oct 2026).
+    ...(data.test_event_code ? { testEventCode: data.test_event_code } : {})
   };
 }
 
@@ -1310,9 +1313,13 @@ router.post("/", submitRateLimit, async (req, res) => {
       .eq("org_id", product.org_id).eq("source_cart_id", d.cartId)
       .order("created_at", { ascending: true }).limit(1).maybeSingle();
     if (existing) {
+      // The browser re-fires its Pixel Purchase for a replay; handing back the
+      // ORIGINAL event id lets Meta count it once (Bright, 1 Oct 2026). The
+      // server does not send a second Conversions API Purchase for a replay.
+      const originalPurchaseEventId = typeof existing.form_context?.metaPurchaseEventId === "string" ? existing.form_context.metaPurchaseEventId : null;
       res.status(200).json({ id: existing.id, amount: existing.amount, currency: existing.currency,
         crossSellLines: existing.cross_sell_lines ?? [], reviewHold: Boolean(existing.review_hold),
-        upsellOffer: null, upsellToken: null, replayed: true });
+        upsellOffer: null, upsellToken: null, replayed: true, metaPurchaseEventId: originalPurchaseEventId });
       return;
     }
   }
@@ -1500,6 +1507,9 @@ router.post("/", submitRateLimit, async (req, res) => {
     testModeOverride: contextString(formContext, "metaTestMode", "metaTest", "trackingTestMode"),
     testEventCodeOverride: contextString(formContext, "metaTestEventCode", "testEventCode", "meta_test_event_code", "test_event_code")
   });
+  // fbp / fbc / fbclid, recovered from the form's address when the form
+  // dropped them (see metaIdsFromFormContext).
+  const metaIds = metaIdsFromFormContext(formContext);
   if (!reviewHold) {
     void sendMetaCapiPurchase({
       config: metaConfig,
@@ -1513,9 +1523,9 @@ router.post("/", submitRateLimit, async (req, res) => {
       city: d.city || null,
       state: d.state || null,
       country: "ng",
-      fbp: contextString(formContext, "fbp", "_fbp", "Fbp") || null,
-      fbc: contextString(formContext, "fbc", "_fbc", "Fbc") || null,
-      fbclid: contextString(formContext, "fbclid") || null,
+      fbp: metaIds.fbp,
+      fbc: metaIds.fbc,
+      fbclid: metaIds.fbclid,
       value: Number(order.amount ?? amount),
       currency: String(order.currency ?? pkg.currency),
       orderId: String(order.id),
@@ -1524,7 +1534,11 @@ router.post("/", submitRateLimit, async (req, res) => {
       packageId: String(pkg.id),
       packageName: String(pkg.name),
       quantity: Number(pkg.quantity ?? 1)
-    });
+    }).then((result) => recordMetaCapiEvent(supabase, {
+      orgId: product.org_id, branchId: (order as any).branch_id ?? null, orderId: String(order.id),
+      eventName: "Purchase", metaEventName: "Purchase", eventId: metaPurchaseEventId, result,
+      testMode: Boolean(metaConfig.testMode || metaConfig.testEventCode), value: Number(order.amount ?? amount), currency: String(order.currency ?? pkg.currency)
+    })).catch(() => undefined);
   }
 
   // 6. Audit, in-app notification, emails (fire-and-forget).

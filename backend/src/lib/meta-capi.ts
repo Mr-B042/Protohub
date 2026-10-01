@@ -51,9 +51,12 @@ const META_GRAPH_VERSION = (process.env.META_GRAPH_VERSION || process.env.FACEBO
 const META_DEDUPE_TTL_MS = Math.max(60_000, Number(process.env.META_CAPI_DEDUPE_TTL_MS || 24 * 60 * 60 * 1000));
 const sentMetaEventIds = new Map<string, number>();
 
-type MetaCapiSendResult = {
+export type MetaCapiSendResult = {
   status: "off" | "missing_config" | "dry_run" | "sent" | "rejected" | "failed" | "duplicate";
   duplicate?: boolean;
+  /** Meta's HTTP status and error text, kept on the order's record. */
+  httpStatus?: number;
+  message?: string;
 };
 
 function parseMode(value: unknown): MetaTrackingMode | null {
@@ -229,6 +232,25 @@ export async function sendMetaCapiPurchase(args: SendMetaPurchaseArgs): Promise<
   if (args.config.mode === "off" || args.config.mode === "landing_page") {
     return { status: "off" };
   }
+  return sendMetaCapiEvent({ ...args, eventName: "Purchase", actionSource: "website" });
+}
+
+/**
+ * The delivered sale (Bright, 1 Oct 2026). Sent from the server when an order
+ * is marked Delivered, so ads can be optimised on customers who actually pay
+ * rather than everyone who submits. Its own event name and event id, so Meta
+ * never mixes it up with the Purchase sent at order creation.
+ */
+export async function sendMetaCapiDelivered(args: SendMetaPurchaseArgs & { eventName: string; eventTime: number }): Promise<MetaCapiSendResult> {
+  return sendMetaCapiEvent({
+    ...args,
+    // A website event needs the browser it came from; without it Meta treats
+    // the event as coming from our own system.
+    actionSource: args.userAgent && args.eventSourceUrl ? "website" : "system_generated"
+  });
+}
+
+async function sendMetaCapiEvent(args: SendMetaPurchaseArgs & { eventName: string; actionSource: string; eventTime?: number }): Promise<MetaCapiSendResult> {
   if (!args.config.pixelId || !args.config.accessToken) {
     logger.warn("meta-capi: purchase not sent because config is incomplete", {
       orderId: args.orderId,
@@ -237,11 +259,11 @@ export async function sendMetaCapiPurchase(args: SendMetaPurchaseArgs): Promise<
       hasAccessToken: Boolean(args.config.accessToken),
       testMode: Boolean(args.config.testMode)
     });
-    return { status: "missing_config" };
+    return { status: "missing_config", message: "Pixel ID or access token missing." };
   }
-  const duplicate = markDuplicate(args.config.pixelId, args.eventId, "Purchase");
+  const duplicate = markDuplicate(args.config.pixelId, args.eventId, args.eventName);
   if (duplicate) {
-    logger.warn("meta-capi: duplicate Purchase event_id blocked", {
+    logger.warn(`meta-capi: duplicate ${args.eventName} event_id blocked`, {
       orderId: args.orderId,
       pixelId: args.config.pixelId,
       eventId: args.eventId,
@@ -273,10 +295,10 @@ export async function sendMetaCapiPurchase(args: SendMetaPurchaseArgs): Promise<
 
   const payload: Record<string, unknown> = {
     data: [{
-      event_name: "Purchase",
-      event_time: Math.floor(Date.now() / 1000),
+      event_name: args.eventName,
+      event_time: args.eventTime ?? Math.floor(Date.now() / 1000),
       event_id: args.eventId,
-      action_source: "website",
+      action_source: args.actionSource,
       event_source_url: args.eventSourceUrl || undefined,
       user_data: userData,
       custom_data: {
@@ -293,7 +315,7 @@ export async function sendMetaCapiPurchase(args: SendMetaPurchaseArgs): Promise<
   if (args.config.testEventCode) payload.test_event_code = args.config.testEventCode;
 
   if (args.config.testMode && !args.config.testEventCode) {
-    logger.info("meta-capi: test-mode dry run, Purchase not sent to Meta", {
+    logger.info(`meta-capi: test-mode dry run, ${args.eventName} not sent to Meta`, {
       orderId: args.orderId,
       pixelId: args.config.pixelId,
       eventId: args.eventId,
@@ -314,28 +336,111 @@ export async function sendMetaCapiPurchase(args: SendMetaPurchaseArgs): Promise<
     });
     if (!response.ok) {
       const body = await response.text().catch(() => "");
-      logger.warn("meta-capi: purchase rejected", {
+      logger.warn("meta-capi: event rejected", {
         orderId: args.orderId,
+        eventName: args.eventName,
         status: response.status,
         testMode: Boolean(args.config.testMode),
         body: body.slice(0, 500)
       });
-      return { status: "rejected" };
+      let message = body.slice(0, 300);
+      try { const parsed = JSON.parse(body); message = parsed?.error?.error_user_msg || parsed?.error?.message || message; } catch { /* keep the raw text */ }
+      return { status: "rejected", httpStatus: response.status, message };
     }
-    logger.info("meta-capi: purchase sent", {
+    logger.info("meta-capi: event sent", {
+      eventName: args.eventName,
       orderId: args.orderId,
       pixelId: args.config.pixelId,
       eventId: args.eventId,
       testMode: Boolean(args.config.testMode),
       testEventCode: Boolean(args.config.testEventCode)
     });
-    return { status: "sent" };
+    return { status: "sent", httpStatus: response.status };
   } catch (error: any) {
-    logger.warn("meta-capi: purchase send failed", {
+    logger.warn("meta-capi: event send failed", {
       orderId: args.orderId,
+      eventName: args.eventName,
       testMode: Boolean(args.config.testMode),
       error: error?.message ?? String(error)
     });
-    return { status: "failed" };
+    // Nothing reached Meta, so let a later retry through the repeat guard.
+    sentMetaEventIds.delete(`${args.config.pixelId || "no_pixel"}:${args.eventName}:${args.eventId}`);
+    return { status: "failed", message: String(error?.message ?? error).slice(0, 300) };
   }
+}
+
+/**
+ * One row per order per event (Purchase / Delivered) in meta_capi_events, so
+ * the order shows whether Meta got it. "off" is not recorded: nothing was
+ * meant to be sent. A later attempt for the same order and event replaces the
+ * earlier result and counts the attempt.
+ */
+export async function recordMetaCapiEvent(supabase: any, args: {
+  orgId: string; branchId: string | null | undefined; orderId: string;
+  eventName: "Purchase" | "Delivered"; metaEventName: string; eventId: string;
+  result: MetaCapiSendResult; testMode: boolean; value: number; currency: string;
+}) {
+  if (args.result.status === "off" || !args.branchId) return;
+  try {
+    const { data: existing } = await supabase.from("meta_capi_events").select("id, attempts")
+      .eq("org_id", args.orgId).eq("order_id", args.orderId).eq("event_name", args.eventName).maybeSingle();
+    const row = {
+      org_id: args.orgId, branch_id: args.branchId, order_id: args.orderId,
+      event_name: args.eventName, meta_event_name: args.metaEventName, event_id: args.eventId,
+      status: args.result.status, http_status: args.result.httpStatus ?? null, message: args.result.message ?? null,
+      test_mode: args.testMode, value: args.value, currency: args.currency, sent_at: new Date().toISOString()
+    };
+    if (existing) {
+      // A blocked repeat must not overwrite the real result it repeated.
+      if (args.result.status === "duplicate") return;
+      await supabase.from("meta_capi_events").update({ ...row, attempts: Number(existing.attempts ?? 1) + 1 }).eq("id", existing.id);
+    } else {
+      await supabase.from("meta_capi_events").insert(row);
+    }
+  } catch (error: any) {
+    logger.warn("meta-capi: could not record the event", { orderId: args.orderId, eventName: args.eventName, error: error?.message ?? String(error) });
+  }
+}
+
+/**
+ * Meta's browser id (fbp), click id (fbc) and fbclid for an order. The
+ * WordPress embed passes them in the form's address; forms opened before the
+ * 1 Oct 2026 fix dropped fbp/fbc on the way into formContext, so fall back to
+ * reading them from the saved address (search part or the #/route?query part).
+ */
+export function metaIdsFromFormContext(formContext: Record<string, unknown> | null | undefined) {
+  const context = formContext ?? {};
+  const pick = (...keys: string[]) => {
+    for (const key of keys) {
+      const value = context[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+    }
+    return "";
+  };
+  const fromAddress = (() => {
+    const raw = pick("landingUrl");
+    if (!raw) return new URLSearchParams();
+    try {
+      const url = new URL(raw);
+      const merged = new URLSearchParams(url.search);
+      new URLSearchParams(url.hash.split("?")[1] ?? "").forEach((value, key) => merged.set(key, value));
+      return merged;
+    } catch {
+      return new URLSearchParams();
+    }
+  })();
+  const address = (...keys: string[]) => keys.map((key) => fromAddress.get(key)?.trim() ?? "").find(Boolean) ?? "";
+  return {
+    fbp: pick("fbp", "_fbp", "Fbp") || address("fbp", "_fbp") || null,
+    fbc: pick("fbc", "_fbc", "Fbc") || address("fbc", "_fbc") || null,
+    fbclid: pick("fbclid") || address("fbclid") || null
+  };
+}
+
+/** Noon (Lagos) on the delivered date, never in the future. */
+export function deliveredEventTime(deliveredDate: string | null | undefined, nowMs = Date.now()) {
+  const day = (deliveredDate ?? "").slice(0, 10);
+  const noon = day ? Date.parse(`${day}T12:00:00+01:00`) : NaN;
+  const ms = Number.isFinite(noon) ? Math.min(noon, nowMs) : nowMs;
+  return Math.floor(ms / 1000);
 }

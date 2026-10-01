@@ -1,3 +1,4 @@
+import { runMetaDeliveredEvents } from "./lib/meta-capi-delivered.js";
 import "./lib/load-env.js";
 import express from "express";
 import compression from "compression";
@@ -656,6 +657,16 @@ cron.schedule("0 6 * * *", async () => {
     }
   } catch (e) {
     logger.error("cron: phantom-stock audit crashed", { error: (e as Error).message });
+  }
+});
+
+// ── Meta delivered-sale events — every 10 minutes ────────
+// Off unless a Meta setting switches it on (send_delivered_event).
+cron.schedule("*/10 * * * *", async () => {
+  try {
+    await runMetaDeliveredEvents();
+  } catch (e) {
+    logger.error("cron: meta delivered events crashed", { error: (e as Error).message });
   }
 });
 

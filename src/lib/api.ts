@@ -3490,7 +3490,15 @@ export const metaCapiSettingsApi = {
     post<{ ok: boolean; message: string; eventsReceived?: number }>("/api/meta-capi-settings/test", body),
   testTiktok: (body: { id?: string; trackingKey?: string; pixelId?: string; accessToken?: string; testEventCode?: string }) =>
     post<{ ok: boolean; message: string }>("/api/meta-capi-settings/test-tiktok", body),
-  delete: (id: string) => del<{ ok: boolean }>(`/api/meta-capi-settings/${encodeURIComponent(id)}`)
+  delete: (id: string) => del<{ ok: boolean }>(`/api/meta-capi-settings/${encodeURIComponent(id)}`),
+  // What Meta got for one order, and the last 7 days (1 Oct 2026).
+  events: (orderId: string) => get<MetaCapiEventRow[]>(`/api/meta-capi-settings/events?orderId=${encodeURIComponent(orderId)}`),
+  eventsSummary: () => get<{ since: string; counts: Record<string, Record<string, number>>; topProblems: Array<{ message: string; count: number }> }>("/api/meta-capi-settings/events/summary")
+};
+export type MetaCapiEventRow = {
+  eventName: "Purchase" | "Delivered"; metaEventName: string; eventId: string;
+  status: "sent" | "dry_run" | "rejected" | "failed" | "duplicate" | "missing_config";
+  httpStatus: number | null; message: string | null; testMode: boolean; value: number; currency: string | null; attempts: number; sentAt: string;
 };
 
 export const emailSettingsApi = {
@@ -3943,6 +3951,10 @@ export const publicOrdersApi = {
       amount: number;
       currency: string;
       crossSellLines: any[];
+      /** True when this repeats an order already recorded for the same cart. */
+      replayed?: boolean;
+      /** On a replay, the original order's Purchase event id (so Meta counts it once). */
+      metaPurchaseEventId?: string | null;
       upsellOffer?: {
         companionId?: string;
         productId: string;

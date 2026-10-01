@@ -244,6 +244,7 @@ import RepWeeklyReportPage from "./pages/RepWeeklyReportPage";
 import type { ManagerFundTxn, WeeklyLogMissRow } from "./lib/api";
 import { HeadOfSalesReviewPanel, headOfSalesBonusStatus, useHeadOfSalesReview } from "./components/HeadOfSalesParts";
 import RepScriptsPanel from "./components/RepScriptsPanel";
+import { MetaCapiSummary, MetaOrderEventsCard } from "./components/MetaCapiParts";
 import SalesScriptingPage, { SalesScriptingOverviewCard } from "./pages/SalesScriptingPage";
 import ScriptUsageReportPage from "./pages/ScriptUsageReportPage";
 import ManagerFundsTab from "./pages/ManagerFundsTab";
@@ -9574,7 +9575,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [metaCapiConfigsLoading, setMetaCapiConfigsLoading] = useState(false);
   const [metaCapiSavingProductId, setMetaCapiSavingProductId] = useState<string | null>(null);
   const [metaCapiAccessTokenDrafts, setMetaCapiAccessTokenDrafts] = useState<Record<string, string>>({});
-  const [metaDefaultDraft, setMetaDefaultDraft] = useState({ pixelId: "", accessToken: "", thankYouUrl: "", testEventCode: "", tiktokPixelId: "", tiktokAccessToken: "" });
+  const [metaDefaultDraft, setMetaDefaultDraft] = useState({ pixelId: "", accessToken: "", thankYouUrl: "", testEventCode: "", tiktokPixelId: "", tiktokAccessToken: "", sendDeliveredEvent: false, deliveredEventName: "OrderDelivered" });
   const [metaDefaultTtTesting, setMetaDefaultTtTesting] = useState(false);
   const [metaDefaultTtTestResult, setMetaDefaultTtTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [metaDefaultSaving, setMetaDefaultSaving] = useState(false);
@@ -11867,7 +11868,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           setMetaCapiConfigs(Array.isArray(configs) ? configs : []);
           // Pre-fill the Meta settings panel from the __default__ config if it exists
           const def = (Array.isArray(configs) ? configs : []).find((c: MetaCapiConfigRecord) => c.trackingKey === "__default__");
-          if (def) setMetaDefaultDraft(d => ({ ...d, pixelId: def.pixelId ?? "", tiktokPixelId: (def as any).tiktokPixelId ?? "", testEventCode: "" }));
+          if (def) setMetaDefaultDraft(d => ({ ...d, pixelId: def.pixelId ?? "", tiktokPixelId: (def as any).tiktokPixelId ?? "", testEventCode: "", sendDeliveredEvent: (def as any).sendDeliveredEvent === true, deliveredEventName: (def as any).deliveredEventName || "OrderDelivered" }));
         }
       })
       .catch((err: any) => {
@@ -24627,6 +24628,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           {/* Sales Scripting: approved scripts for this product, and the rep
               records which one they used (Bright, 1 Oct 2026). Only on the open
               order, so a list of order cards never fires one request each. */}
+          {options?.scriptTick && realRole === "Owner" ? <MetaOrderEventsCard orderId={order.id} /> : null}
           {options?.scriptTick ? (
             <RepScriptsPanel className="mt-4" orderId={order.id} version={`${order.productId ?? ""}-${order.quantity ?? ""}-${(order.crossSellLines ?? []).length}`} />
           ) : null}
@@ -94382,6 +94384,7 @@ ${waybillLineItems(w).length > 1
                       <h2 className="text-base font-bold text-gray-800">Meta Pixel & Conversions API</h2>
                       <p className="text-sm text-gray-500 mt-1">Set up once. Live customers fire the landing-page pixel only; this CAPI is the fallback used <strong>only when the customer leaves</strong> (server-side auto-submit, no browser/pixel). Exactly one Purchase event per order - never double-counted.</p>
                     </div>
+                    <MetaCapiSummary />
                     <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
                       <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-gray-50/50">
                         <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-100 text-blue-600"><BarChart3 className="h-4 w-4" /></span>
@@ -94479,6 +94482,29 @@ ${waybillLineItems(w).length > 1
                             ))}
                           </div>
                         </div>
+                        {/* Delivered-sale event (1 Oct 2026): Purchase counts every
+                            submitted order; this tells Meta which ones paid. */}
+                        <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 px-4 py-3.5">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="m-0 text-[11px] font-black uppercase tracking-wider text-emerald-800">Send a delivered-sale event</p>
+                              <p className="m-0 mt-1 text-[11px] text-gray-600">When an order from a Protohub form is marked Delivered, send Meta one extra event with the amount collected (within Meta's 7-day limit). Lets you optimise ads on customers who actually pay, not everyone who submits. Purchase is not changed. Save to apply.</p>
+                            </div>
+                            <button type="button" aria-label="Send a delivered-sale event"
+                              className={`!min-h-0 relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${metaDefaultDraft.sendDeliveredEvent ? "bg-emerald-500" : "bg-gray-300"}`}
+                              onClick={()=>setMetaDefaultDraft(d=>({...d,sendDeliveredEvent:!d.sendDeliveredEvent}))}>
+                              <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${metaDefaultDraft.sendDeliveredEvent?"translate-x-6":"translate-x-1"}`}/>
+                            </button>
+                          </div>
+                          {metaDefaultDraft.sendDeliveredEvent ? (
+                            <label className="mt-3 block">
+                              <span className="text-[11px] font-black uppercase tracking-wider text-gray-500">Event name in Meta</span>
+                              <input className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-200" value={metaDefaultDraft.deliveredEventName}
+                                onChange={e=>setMetaDefaultDraft(d=>({...d,deliveredEventName:e.target.value.replace(/[^A-Za-z0-9_]/g,"")}))} placeholder="OrderDelivered" />
+                              <span className="mt-1 block text-[11px] text-gray-500">In Meta Events Manager, make a custom conversion from this event to optimise or report on it.</span>
+                            </label>
+                          ) : null}
+                        </div>
                         <div className="flex items-center gap-2 flex-wrap">
                           <button type="button" className="!min-h-0 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-black text-white hover:bg-blue-700 disabled:opacity-50"
                             disabled={metaDefaultSaving||!metaDefaultDraft.pixelId}
@@ -94486,7 +94512,7 @@ ${waybillLineItems(w).length > 1
                               if(!metaDefaultDraft.pixelId){showToast("Enter your Pixel ID first.");return;}
                               setMetaDefaultSaving(true);
                               try {
-                                await metaCapiSettingsApi.save({trackingKey:"__default__",label:"Default (org-wide)",mode:"hybrid",pixelId:metaDefaultDraft.pixelId,accessToken:metaDefaultDraft.accessToken||undefined,tiktokPixelId:metaDefaultDraft.tiktokPixelId||undefined,tiktokAccessToken:metaDefaultDraft.tiktokAccessToken||undefined,active:true});
+                                await metaCapiSettingsApi.save({trackingKey:"__default__",label:"Default (org-wide)",mode:"hybrid",pixelId:metaDefaultDraft.pixelId,accessToken:metaDefaultDraft.accessToken||undefined,sendDeliveredEvent:metaDefaultDraft.sendDeliveredEvent,deliveredEventName:(metaDefaultDraft.deliveredEventName||"OrderDelivered").trim(),tiktokPixelId:metaDefaultDraft.tiktokPixelId||undefined,tiktokAccessToken:metaDefaultDraft.tiktokAccessToken||undefined,active:true});
                                 setMetaDefaultSaved(true);setMetaDefaultDraft(d=>({...d,accessToken:""}));showToast("✓ Saved.");setTimeout(()=>setMetaDefaultSaved(false),4000);
                               } catch(e:any){showToast(e?.message??"Could not save.");}
                               finally{setMetaDefaultSaving(false);}
