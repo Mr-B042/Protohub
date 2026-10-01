@@ -2437,6 +2437,160 @@ router.get("/:id/live", async (req, res) => {
 // cart_log_misses table stores only the Owner's decision, so a pending miss
 // cannot drift out of step with the board and nothing is ever auto-deducted.
 
+// The cart-log board: which carts each rep owed a log on, day by day, and the
+// misses with the Owner's decisions. Lifted out of GET /log-penalties unchanged
+// so the Weekly Report reads EXACTLY the same misses (Bright, 1 Oct 2026) -
+// a second copy of these rules would drift, as the 3-place fix in PR #521 showed.
+export async function computeCartLogBoard(orgId: string, repFilter: string | null, from: string, to: string) {
+    const days = to >= from ? chargeableDaysIn(from, to) : [];
+    let cartQuery = supabase.from("abandoned_carts")
+      .select("id, status, assigned_rep_id, assigned_at, created_at")
+      .eq("org_id", orgId).not("assigned_rep_id", "is", null);
+    if (repFilter) cartQuery = cartQuery.eq("assigned_rep_id", repFilter);
+    const { data: cartRows } = await cartQuery.limit(REPORT_ROW_CEILING);
+    const carts = (cartRows ?? []) as any[];
+    const cartIds = carts.map((row) => row.id);
+
+    const [{ data: repRows }, { data: attemptRows }, { data: orderRows }, { data: decisionRows }] =
+      await Promise.all([
+        supabase.from("users").select("id, name").eq("org_id", orgId).limit(REPORT_ROW_CEILING),
+        days.length > 0
+          ? supabase.from(CART_ATTEMPTS)
+            .select("cart_id, attempted_at, rep_id")
+            .eq("org_id", orgId)
+            .gte("attempted_at", lagosStartOfDayUtc(from))
+            .lt("attempted_at", lagosStartOfDayUtc(addDays(to, 1)))
+            .limit(REPORT_ROW_CEILING)
+          : Promise.resolve({ data: [] } as any),
+        supabase.from("orders").select("source_cart_id, status")
+          .eq("org_id", orgId).not("source_cart_id", "is", null).limit(REPORT_ROW_CEILING),
+        supabase.from("cart_log_misses")
+          .select("*").eq("org_id", orgId)
+          .gte("miss_date", from).lte("miss_date", to).limit(REPORT_ROW_CEILING)
+      ]);
+
+    // Terminal outcomes are valid completed follow-ups, not untouched carts.
+    // Keep this lookup outside the selected date range: once a cart is
+    // delivered, converted, interested, rescheduled, declined or invalid,
+    // it must never create a cart-log charge merely because the source-order
+    // link was written late or is missing on an older conversion.
+    const { data: allOutcomeRows } = await supabase.from(CART_ATTEMPTS)
+      .select("cart_id, outcome_code")
+      .eq("org_id", orgId).in("cart_id", cartIds)
+      .in("outcome_code", ["Interested", "Rescheduled", "Not interested", "Wrong number"]);
+    const terminalOutcomeCartIds = new Set((allOutcomeRows ?? []).map((row: any) => String(row.cart_id).trim()));
+
+    const repName = new Map(((repRows ?? []) as any[]).map((row) => [row.id, row.name]));
+    const deliveredCart = new Set(((orderRows ?? []) as any[])
+      .filter((row) => row.status === "Delivered")
+      .map((row) => String(row.source_cart_id ?? "").trim())
+      .filter(Boolean));
+    const terminalCartStatuses = new Set(["delivered", "converted", "closed", "not interested", "wrong number", "cancelled", "canceled"]);
+
+    // ⚠️ A cart currently closed is exempt from EVERY day in the range, not
+    // just the days after it closed. There is no reliable timestamp for when
+    // a cart went closed, so this errs toward the rep rather than inventing
+    // one - a penalty built on a guessed date would not survive a dispute.
+    const openCarts = carts.filter((row) =>
+      !deliveredCart.has(String(row.id).trim())
+      && !terminalOutcomeCartIds.has(String(row.id).trim())
+      && !terminalCartStatuses.has(String(row.status ?? "").trim().toLowerCase()));
+
+    // Logs per rep per day, counted BOTH ways. The charge is per cart, so it
+    // needs distinct carts touched - five attempts on one cart clears one
+    // cart, not five - while the raw attempt count still drives the
+    // activity figures shown alongside it.
+    const logged = new Map<string, number>();
+    const loggedCarts = new Map<string, Set<string>>();
+    ((attemptRows ?? []) as any[]).forEach((row) => {
+      if (!row.rep_id) return;
+      const key = `${row.rep_id}|${lagosDateKey(row.attempted_at)}`;
+      logged.set(key, (logged.get(key) ?? 0) + 1);
+      if (!row.cart_id) return;
+      const seen = loggedCarts.get(key);
+      if (seen) seen.add(row.cart_id);
+      else loggedCarts.set(key, new Set([row.cart_id]));
+    });
+
+    const repIds = [...new Set(openCarts.map((row) => row.assigned_rep_id).filter(Boolean))] as string[];
+    const inputs: RepDayInput[] = [];
+    // ⚠️ cartsLogged MUST be the intersection with the due set, not a raw
+    // count of everything the rep touched. The two are different populations:
+    // a rep logs carts that later convert or close, and those drop out of
+    // "due" while remaining in the attempts table. Chelsea logged 37 distinct
+    // carts on 24 Aug 2026 against 11 due, of which only 8 were actually
+    // hers-and-due - a raw count cleared all 11 and hid a real ₦1,500 debt on
+    // the 3 she never touched.
+    const dueCartIdsFor = (theirCarts: any[], dateKey: string) => new Set(
+      theirCarts
+        .filter((row) => lagosDateKey(row.assigned_at ?? row.created_at) <= dateKey)
+        .map((row) => row.id as string)
+    );
+    const loggedDueCount = (repId: string, dateKey: string, dueIds: Set<string>) => {
+      const touched = loggedCarts.get(`${repId}|${dateKey}`);
+      if (!touched) return 0;
+      let count = 0;
+      touched.forEach((cartId) => { if (dueIds.has(cartId)) count += 1; });
+      return count;
+    };
+    const affectedCartsFor = (repId: string, dateKey: string, dueIds: Set<string>) => {
+      const touched = loggedCarts.get(`${repId}|${dateKey}`) ?? new Set<string>();
+      return openCarts.filter((cart) => cart.assigned_rep_id === repId && dueIds.has(cart.id) && !touched.has(cart.id)).map((cart) => ({
+        id: String(cart.id), customer: String(cart.customer ?? "Unknown customer"), phone: String(cart.phone ?? ""),
+        productName: String(cart.product_name ?? cart.package_name ?? "Cart"), assignedAt: cart.assigned_at ?? cart.created_at ?? null,
+        reason: "No follow-up activity logged"
+      }));
+    };
+    repIds.forEach((repId) => {
+      const theirCarts = openCarts.filter((row) => row.assigned_rep_id === repId);
+      days.forEach((dateKey) => {
+        // Only carts they already had that day count against them.
+        const dueIds = dueCartIdsFor(theirCarts, dateKey);
+        inputs.push({
+          repId,
+          repName: repName.get(repId) ?? "Unknown",
+          dateKey,
+          cartsDue: dueIds.size,
+          logsMade: logged.get(`${repId}|${dateKey}`) ?? 0,
+          cartsLogged: loggedDueCount(repId, dateKey, dueIds)
+        });
+      });
+    });
+
+    const decisions = new Map(((decisionRows ?? []) as any[])
+      .map((row) => [`${row.rep_id}|${row.miss_date}`, row]));
+
+    const misses = inputs
+      .filter((input) => repDayStatus(input) === "missed")
+      .map((input) => {
+        const decision = decisions.get(`${input.repId}|${input.dateKey}`);
+        return {
+          id: decision?.id ?? null,
+          repId: input.repId,
+          repName: input.repName,
+          missDate: input.dateKey,
+          cartsDue: input.cartsDue,
+          cartsLogged: input.cartsLogged ?? 0,
+          cartsMissed: missedCartCount(input),
+          // A saved decision keeps the amount it was reviewed at. The Owner
+          // approved a specific figure; recomputing it here would silently
+          // change what was already agreed if the board or the rate moved.
+          // Recalculate against the now-exempt due set. This waives the
+          // Interested cart's share without erasing a same-day charge for
+          // other carts still assigned to the rep.
+          amount: decision ? Math.min(Number(decision.amount ?? 0), dayPenaltyAmount(input)) : dayPenaltyAmount(input),
+          status: decision && dayPenaltyAmount(input) === 0 ? "waived" : (decision?.status ?? "pending") as "pending" | "approved" | "waived",
+          reviewedByName: decision?.reviewed_by_name ?? "",
+          reviewedAt: decision?.reviewed_at ?? null,
+          reviewNote: decision?.review_note ?? ""
+          ,affectedCarts: affectedCartsFor(input.repId, input.dateKey, new Set(openCarts.filter((row) => row.assigned_rep_id === input.repId && lagosDateKey(row.assigned_at ?? row.created_at) <= input.dateKey).map((row) => row.id)))
+        };
+      })
+      .sort((left, right) => right.missDate.localeCompare(left.missDate));
+
+    return { days, openCarts, repIds, repName, decisions, dueCartIdsFor, affectedCartsFor, logged, loggedDueCount, misses, inputs };
+}
+
 // ── GET /api/carts/log-penalties?range= ───────────────────
 
 // ── GET /api/carts/recovery-summary?from=&to=&productId= ──
@@ -2585,150 +2739,8 @@ router.get("/log-penalties",
       const to = range.to;
       const days = to >= from ? chargeableDaysIn(from, to) : [];
 
-      let cartQuery = supabase.from("abandoned_carts")
-        .select("id, status, assigned_rep_id, assigned_at, created_at")
-        .eq("org_id", orgId).not("assigned_rep_id", "is", null);
-      if (repFilter) cartQuery = cartQuery.eq("assigned_rep_id", repFilter);
-      const { data: cartRows } = await cartQuery.limit(REPORT_ROW_CEILING);
-      const carts = (cartRows ?? []) as any[];
-      const cartIds = carts.map((row) => row.id);
-
-      const [{ data: repRows }, { data: attemptRows }, { data: orderRows }, { data: decisionRows }] =
-        await Promise.all([
-          supabase.from("users").select("id, name").eq("org_id", orgId).limit(REPORT_ROW_CEILING),
-          days.length > 0
-            ? supabase.from(CART_ATTEMPTS)
-              .select("cart_id, attempted_at, rep_id")
-              .eq("org_id", orgId)
-              .gte("attempted_at", lagosStartOfDayUtc(from))
-              .lt("attempted_at", lagosStartOfDayUtc(addDays(to, 1)))
-              .limit(REPORT_ROW_CEILING)
-            : Promise.resolve({ data: [] } as any),
-          supabase.from("orders").select("source_cart_id, status")
-            .eq("org_id", orgId).not("source_cart_id", "is", null).limit(REPORT_ROW_CEILING),
-          supabase.from("cart_log_misses")
-            .select("*").eq("org_id", orgId)
-            .gte("miss_date", from).lte("miss_date", to).limit(REPORT_ROW_CEILING)
-        ]);
-
-      // Terminal outcomes are valid completed follow-ups, not untouched carts.
-      // Keep this lookup outside the selected date range: once a cart is
-      // delivered, converted, interested, rescheduled, declined or invalid,
-      // it must never create a cart-log charge merely because the source-order
-      // link was written late or is missing on an older conversion.
-      const { data: allOutcomeRows } = await supabase.from(CART_ATTEMPTS)
-        .select("cart_id, outcome_code")
-        .eq("org_id", orgId).in("cart_id", cartIds)
-        .in("outcome_code", ["Interested", "Rescheduled", "Not interested", "Wrong number"]);
-      const terminalOutcomeCartIds = new Set((allOutcomeRows ?? []).map((row: any) => String(row.cart_id).trim()));
-
-      const repName = new Map(((repRows ?? []) as any[]).map((row) => [row.id, row.name]));
-      const deliveredCart = new Set(((orderRows ?? []) as any[])
-        .filter((row) => row.status === "Delivered")
-        .map((row) => String(row.source_cart_id ?? "").trim())
-        .filter(Boolean));
-      const terminalCartStatuses = new Set(["delivered", "converted", "closed", "not interested", "wrong number", "cancelled", "canceled"]);
-
-      // ⚠️ A cart currently closed is exempt from EVERY day in the range, not
-      // just the days after it closed. There is no reliable timestamp for when
-      // a cart went closed, so this errs toward the rep rather than inventing
-      // one - a penalty built on a guessed date would not survive a dispute.
-      const openCarts = carts.filter((row) =>
-        !deliveredCart.has(String(row.id).trim())
-        && !terminalOutcomeCartIds.has(String(row.id).trim())
-        && !terminalCartStatuses.has(String(row.status ?? "").trim().toLowerCase()));
-
-      // Logs per rep per day, counted BOTH ways. The charge is per cart, so it
-      // needs distinct carts touched - five attempts on one cart clears one
-      // cart, not five - while the raw attempt count still drives the
-      // activity figures shown alongside it.
-      const logged = new Map<string, number>();
-      const loggedCarts = new Map<string, Set<string>>();
-      ((attemptRows ?? []) as any[]).forEach((row) => {
-        if (!row.rep_id) return;
-        const key = `${row.rep_id}|${lagosDateKey(row.attempted_at)}`;
-        logged.set(key, (logged.get(key) ?? 0) + 1);
-        if (!row.cart_id) return;
-        const seen = loggedCarts.get(key);
-        if (seen) seen.add(row.cart_id);
-        else loggedCarts.set(key, new Set([row.cart_id]));
-      });
-
-      const repIds = [...new Set(openCarts.map((row) => row.assigned_rep_id).filter(Boolean))] as string[];
-      const inputs: RepDayInput[] = [];
-      // ⚠️ cartsLogged MUST be the intersection with the due set, not a raw
-      // count of everything the rep touched. The two are different populations:
-      // a rep logs carts that later convert or close, and those drop out of
-      // "due" while remaining in the attempts table. Chelsea logged 37 distinct
-      // carts on 24 Aug 2026 against 11 due, of which only 8 were actually
-      // hers-and-due - a raw count cleared all 11 and hid a real ₦1,500 debt on
-      // the 3 she never touched.
-      const dueCartIdsFor = (theirCarts: any[], dateKey: string) => new Set(
-        theirCarts
-          .filter((row) => lagosDateKey(row.assigned_at ?? row.created_at) <= dateKey)
-          .map((row) => row.id as string)
-      );
-      const loggedDueCount = (repId: string, dateKey: string, dueIds: Set<string>) => {
-        const touched = loggedCarts.get(`${repId}|${dateKey}`);
-        if (!touched) return 0;
-        let count = 0;
-        touched.forEach((cartId) => { if (dueIds.has(cartId)) count += 1; });
-        return count;
-      };
-      const affectedCartsFor = (repId: string, dateKey: string, dueIds: Set<string>) => {
-        const touched = loggedCarts.get(`${repId}|${dateKey}`) ?? new Set<string>();
-        return openCarts.filter((cart) => cart.assigned_rep_id === repId && dueIds.has(cart.id) && !touched.has(cart.id)).map((cart) => ({
-          id: String(cart.id), customer: String(cart.customer ?? "Unknown customer"), phone: String(cart.phone ?? ""),
-          productName: String(cart.product_name ?? cart.package_name ?? "Cart"), assignedAt: cart.assigned_at ?? cart.created_at ?? null,
-          reason: "No follow-up activity logged"
-        }));
-      };
-      repIds.forEach((repId) => {
-        const theirCarts = openCarts.filter((row) => row.assigned_rep_id === repId);
-        days.forEach((dateKey) => {
-          // Only carts they already had that day count against them.
-          const dueIds = dueCartIdsFor(theirCarts, dateKey);
-          inputs.push({
-            repId,
-            repName: repName.get(repId) ?? "Unknown",
-            dateKey,
-            cartsDue: dueIds.size,
-            logsMade: logged.get(`${repId}|${dateKey}`) ?? 0,
-            cartsLogged: loggedDueCount(repId, dateKey, dueIds)
-          });
-        });
-      });
-
-      const decisions = new Map(((decisionRows ?? []) as any[])
-        .map((row) => [`${row.rep_id}|${row.miss_date}`, row]));
-
-      const misses = inputs
-        .filter((input) => repDayStatus(input) === "missed")
-        .map((input) => {
-          const decision = decisions.get(`${input.repId}|${input.dateKey}`);
-          return {
-            id: decision?.id ?? null,
-            repId: input.repId,
-            repName: input.repName,
-            missDate: input.dateKey,
-            cartsDue: input.cartsDue,
-            cartsLogged: input.cartsLogged ?? 0,
-            cartsMissed: missedCartCount(input),
-            // A saved decision keeps the amount it was reviewed at. The Owner
-            // approved a specific figure; recomputing it here would silently
-            // change what was already agreed if the board or the rate moved.
-            // Recalculate against the now-exempt due set. This waives the
-            // Interested cart's share without erasing a same-day charge for
-            // other carts still assigned to the rep.
-            amount: decision ? Math.min(Number(decision.amount ?? 0), dayPenaltyAmount(input)) : dayPenaltyAmount(input),
-            status: decision && dayPenaltyAmount(input) === 0 ? "waived" : (decision?.status ?? "pending") as "pending" | "approved" | "waived",
-            reviewedByName: decision?.reviewed_by_name ?? "",
-            reviewedAt: decision?.reviewed_at ?? null,
-            reviewNote: decision?.review_note ?? ""
-            ,affectedCarts: affectedCartsFor(input.repId, input.dateKey, new Set(openCarts.filter((row) => row.assigned_rep_id === input.repId && lagosDateKey(row.assigned_at ?? row.created_at) <= input.dateKey).map((row) => row.id)))
-          };
-        })
-        .sort((left, right) => right.missDate.localeCompare(left.missDate));
+      const { days: _boardDays, openCarts, repIds, repName, decisions, dueCartIdsFor, affectedCartsFor, logged, loggedDueCount, misses, inputs } =
+        await computeCartLogBoard(orgId, repFilter, from, to);
 
       // ⚠️ Closed days in the CURRENT week, computed OUTSIDE the range filter -
       // the same reason `today` is. A rep who switches the filter to "Today"

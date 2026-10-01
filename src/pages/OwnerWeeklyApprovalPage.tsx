@@ -9,8 +9,9 @@ import {
   downloadCsv, longDate, nf, pctText, shortDateTime, type CorrectionDraft, type WorkflowStep
 } from "../components/WeeklyReportParts";
 import { CompanyProductTable, OrdersTable, RepBonusTable, RepReviewModal, shownSnapshot, type ReviewRepRow } from "./ManagerWeeklyReviewPage";
+import { LogMissDisputesPanel } from "../components/LogMissParts";
 import { buildCompanySnapshot, type CompanyWeeklySnapshot, type ManagerBonusPreview, type WeeklyReportSnapshot } from "./weekly-report-model";
-import type { ManagerFundTotals, WeeklyBonusQuery, WeeklyCompanyReport, WeeklyReportAuditEntry, WeeklyReportCorrection } from "../lib/api";
+import type { LogMissDispute, WeeklyLogMissRow, ManagerFundTotals, WeeklyBonusQuery, WeeklyCompanyReport, WeeklyReportAuditEntry, WeeklyReportCorrection } from "../lib/api";
 import { currencySymbol } from "../lib/money-privacy";
 
 export type WeeklyFinancialSummary = {
@@ -41,7 +42,7 @@ type RedFlag = { severity: "high" | "medium"; title: string; detail: string; rep
 export default function OwnerWeeklyApprovalPage({
   weekStart, weekEnd, onShiftWeek, onPickWeek, canGoNext, loading, error,
   rows, company, corrections, audit, managerBonus, managerName, financial, lowRateThreshold, dueDate, bonusQueries = [],
-  funds = [], renderFunds,
+  funds = [], renderFunds, logMisses = [], logMissDisputes = [], onDecideLogMiss,
   onApproveLock, onReturnToManager, onReopen, onBack
 }: {
   weekStart: string;
@@ -62,6 +63,9 @@ export default function OwnerWeeklyApprovalPage({
   /** The Tuesday the reps' reports are due. */
   dueDate?: string;
   bonusQueries?: WeeklyBonusQuery[];
+  logMisses?: WeeklyLogMissRow[];
+  logMissDisputes?: LogMissDispute[];
+  onDecideLogMiss?: (id: string, outcome: "cancel" | "keep", note: string) => Promise<void>;
   /** Each manager wallet's week (Funds & Expenses). */
   funds?: Array<{ managerName: string; totals: ManagerFundTotals; readiness: string[]; varianceExplanation: string | null; returned: number }>;
   /** The Funds & Expenses tab (transactions, receipts, return, adjustments). */
@@ -143,6 +147,16 @@ export default function OwnerWeeklyApprovalPage({
     for (const row of paidHere) {
       flags.push({ severity: "medium", repId: row.repId, title: `${row.repName}: bonus correction of ${sym}${nf(shownSnapshot(row)?.totals.adjustments ?? 0)} paid this week`, detail: (shownSnapshot(row)?.adjustments ?? []).map((item) => item.label).join("; ") });
     }
+    const pendingMisses = logMisses.filter((miss) => miss.status === "pending");
+    if (pendingMisses.length > 0) {
+      const byRep = new Map<string, number>();
+      for (const miss of pendingMisses) byRep.set(miss.repId, (byRep.get(miss.repId) ?? 0) + miss.amount);
+      flags.push({ severity: "medium", title: `${sym}${nf(pendingMisses.reduce((sum, miss) => sum + miss.amount, 0))} of missed-log charges wait for your approval`, detail: `${Array.from(byRep.entries()).map(([repId, amount]) => `${rows.find((row) => row.repId === repId)?.repName ?? "a rep"} ${sym}${nf(amount)}`).join(", ")}. Not deducted until you approve them (Follow-up Queue / Abandoned Carts).` });
+    }
+    const ownerDisputes = logMissDisputes.filter((dispute) => dispute.status === "awaiting_owner");
+    if (ownerDisputes.length > 0) {
+      flags.push({ severity: "high", title: `${ownerDisputes.length} approved charge${ownerDisputes.length === 1 ? "" : "s"}: the manager asks you to cancel`, detail: "Only you can cancel a charge you already approved. See Sales Rep Reports → Missed-Log Disputes." });
+    }
     for (const item of funds) {
       const variance = item.totals.variance;
       if (variance !== null && Math.abs(variance) >= 0.01) {
@@ -159,7 +173,7 @@ export default function OwnerWeeklyApprovalPage({
       }
     }
     return flags.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "high" ? -1 : 1));
-  }, [rows, expectedRows, corrections, frozenCompany, liveCompany, lowRateThreshold, sym, dueDate, bonusQueries, funds]);
+  }, [rows, expectedRows, corrections, frozenCompany, liveCompany, lowRateThreshold, sym, dueDate, bonusQueries, funds, logMisses, logMissDisputes]);
 
   const approvedCount = expectedRows.filter((row) => row.report && ["manager_approved", "owner_approved", "locked"].includes(row.report.status)).length;
   const submittedCount = expectedRows.filter((row) => row.report && row.report.status !== "draft").length;
@@ -439,6 +453,11 @@ export default function OwnerWeeklyApprovalPage({
                 <button type="button" onClick={exportReps} className="!min-h-0 mr-5 mt-4 inline-flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-[13px] font-semibold text-gray-800 dark:border-slate-700 dark:text-slate-100"><Download className="h-4 w-4" /> Export</button>
               } />
               {repTable}
+              {onDecideLogMiss && (
+                <div className="border-t border-gray-100 p-3 dark:border-slate-800">
+                  <LogMissDisputesPanel disputes={logMissDisputes} repName={(id) => rows.find((row) => row.repId === id)?.repName ?? "A rep"} canDecide isOwner onDecide={onDecideLogMiss} />
+                </div>
+              )}
               <div className="border-t border-gray-100 pt-3 dark:border-slate-800">
                 <p className="m-0 px-5 text-[13px] font-bold text-gray-900 dark:text-slate-100">Returns, flags and answers</p>
                 <div className="pt-2"><CorrectionList corrections={corrections.filter((item) => item.repReportId)} repNameById={repNameByReportId} empty={<p className="m-0 px-5 pb-5 text-[12px] text-gray-500">No returns or flags this week.</p>} /></div>
