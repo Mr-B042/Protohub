@@ -81,3 +81,29 @@ test("a correction is added to the bonus, a fine taken off", () => {
 test("a week's report is due on the Tuesday after it", () => {
   expect(reportDueDate("2026-09-20")).toBe("2026-09-29");
 });
+
+test("approved missed-log charges are deducted; pending ones are shown, not deducted", () => {
+  const live = snapshot([order({ id: "1" })], { "1": { base: 5000, upsell: 0, crossSell: 0 } }, {
+    logMisses: [
+      { kind: "follow_up", ref: "a", missDate: "2026-09-23", amount: 50, status: "approved", label: "", orderId: "4307" },
+      { kind: "follow_up", ref: "b", missDate: "2026-09-23", amount: 50, status: "approved", label: "", orderId: "4308" },
+      { kind: "cart_log", ref: "r|2026-09-24", missDate: "2026-09-24", amount: 1500, status: "pending", label: "", cartsMissed: 3 },
+      { kind: "cart_log", ref: "r|2026-09-25", missDate: "2026-09-25", amount: 500, status: "waived", label: "", cartsMissed: 1 }
+    ]
+  });
+  expect(live.totals.logMissFines).toBe(100);
+  expect(live.totals.pendingLogMisses).toBe(1500);
+  expect(live.totals.finalBonus).toBe(4900);
+  expect(live.fines.some((fine) => fine.label.includes("2 orders"))).toBe(true);
+});
+
+test("fines bigger than the bonus carry into next week, and last week's leftover comes off first", () => {
+  const big = snapshot([order({ id: "1" })], { "1": { base: 200, upsell: 0, crossSell: 0 } }, {
+    logMisses: [{ kind: "cart_log", ref: "r|2026-09-24", missDate: "2026-09-24", amount: 1500, status: "approved", label: "", cartsMissed: 3 }]
+  });
+  expect(big.totals.finalBonus).toBe(0);
+  expect(big.totals.unpaidFines).toBe(1300);
+  const next = snapshot([order({ id: "1" })], { "1": { base: 5000, upsell: 0, crossSell: 0 } }, { carriedFines: 1300 });
+  expect(next.totals.finalBonus).toBe(3700);
+  expect(next.totals.unpaidFines).toBe(0);
+});

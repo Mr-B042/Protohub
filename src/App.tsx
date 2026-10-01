@@ -167,7 +167,7 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, ordersExtraApi, productCostApi, stockApi as _stockApi,
-  weeklyReportsApi, managerFundsApi, embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, upsellPerformanceApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, targetPeriodsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
+  weeklyReportsApi, managerFundsApi, logMissApi, embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, upsellPerformanceApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, targetPeriodsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
   branchesApi, setApiSpyUserId, type CartAssignmentPanel, type CartHandOutRules,
   setApiPreviewReadOnly,
   PreviewReadOnlyError, type BranchWorkspace
@@ -241,7 +241,7 @@ import OrderHistoryModal from "./components/OrderHistoryModal";
 import DateWindowNav from "./components/DateWindowNav";
 import UpsellPerformancePage, { type UpsellPerfOrder } from "./pages/UpsellPerformancePage";
 import RepWeeklyReportPage from "./pages/RepWeeklyReportPage";
-import type { ManagerFundTxn } from "./lib/api";
+import type { ManagerFundTxn, WeeklyLogMissRow } from "./lib/api";
 import ManagerFundsTab from "./pages/ManagerFundsTab";
 import ManagerWeeklyReviewPage, { type ReviewRepRow } from "./pages/ManagerWeeklyReviewPage";
 import OwnerWeeklyApprovalPage, { type WeeklyFinancialSummary } from "./pages/OwnerWeeklyApprovalPage";
@@ -25718,13 +25718,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     fines: Array<{ id: string; repId: string; label: string; amount: number; date: string }>,
     previousFines: Array<{ id: string; repId: string; label: string; amount: number; date: string }>,
     adjustments: Array<{ id: string; repId: string; label: string; amount: number }> = [],
-    previousAdjustments: Array<{ id: string; repId: string; label: string; amount: number }> = []
+    previousAdjustments: Array<{ id: string; repId: string; label: string; amount: number }> = [],
+    logMisses: WeeklyLogMissRow[] = [],
+    previousLogMisses: WeeklyLogMissRow[] = [],
+    carriedFines = 0
   ): WeeklyReportSnapshot | null => {
     if (!weeklyBonusMaps || weeklyBonusMaps.weekStart !== weekStart) return null;
     const settlementByOrderId = { ...newEngineBonusSettlementByOrderId, ...weeklyBonusMaps.settlement };
     const repOrders = trackedOrders.filter((order) => order.assignedRepId === rep.id);
     const inRange = (key: string | undefined, start: string, end: string) => !!key && key >= start && key <= end;
-    const one = (start: string, weekFines: typeof fines, weekAdjustments: typeof adjustments, previous: WeeklyReportSnapshot["previous"]) => {
+    const one = (start: string, weekFines: typeof fines, weekAdjustments: typeof adjustments, weekMisses: WeeklyLogMissRow[], carried: number, previous: WeeklyReportSnapshot["previous"]) => {
       const end = windowShiftDay(start, 6);
       const placed = repOrders.filter((order) => !order.reviewHold && inRange(orderCreatedKey(order), start, end));
       const delivered = repOrders.filter((order) => (order.status ?? "New") === "Delivered" && inRange(orderDeliveredKey(order), start, end));
@@ -25759,11 +25762,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         bonus: { base: row?.base ?? 0, upsell: row?.upsell ?? 0, crossSell: row?.crossSell ?? 0, total: row?.total ?? 0, perOrder },
         fines: weekFines.filter((fine) => fine.repId === rep.id).map((fine) => ({ id: fine.id, label: fine.label, amount: fine.amount, date: fine.date })),
         adjustments: weekAdjustments.filter((item) => item.repId === rep.id).map((item) => ({ id: item.id, label: item.label, amount: item.amount, date: start })),
+        logMisses: weekMisses.filter((item) => item.repId === rep.id),
+        carriedFines: carried,
         previous
       });
     };
-    const before = one(windowShiftDay(weekStart, -7), previousFines, previousAdjustments, null);
-    return one(weekStart, fines, adjustments, {
+    const before = one(windowShiftDay(weekStart, -7), previousFines, previousAdjustments, previousLogMisses, 0, null);
+    return one(weekStart, fines, adjustments, logMisses, carriedFines, {
       orders: before.totals.orders,
       delivered: before.totals.delivered,
       deliveryRate: before.totals.deliveryRate,
@@ -31554,7 +31559,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
       const me = currentManagedUser;
       const mine = weeklyMine && weeklyMine.weekStart === weeklyReportWeekStart ? weeklyMine : null;
-      const live = me && mine ? buildWeeklyRepSnapshot({ id: me.id, name: me.name }, weeklyReportWeekStart, mine.fines ?? [], mine.previousFines ?? [], mine.adjustments ?? [], mine.previousAdjustments ?? []) : null;
+      const live = me && mine ? buildWeeklyRepSnapshot({ id: me.id, name: me.name }, weeklyReportWeekStart, mine.fines ?? [], mine.previousFines ?? [], mine.adjustments ?? [], mine.previousAdjustments ?? [], mine.logMisses ?? [], mine.previousLogMisses ?? [], mine.carriedFines ?? 0) : null;
       return (
         <RepWeeklyReportPage
           {...weekProps}
@@ -31567,6 +31572,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           todayKey={todayKey}
           submittedLate={me ? isLateSubmission(weeklyReportWeekStart, firstSubmittedAt(mine?.audit ?? [], me.id)) : false}
           bonusQueries={mine?.bonusQueries ?? []}
+          logMisses={mine?.logMisses ?? []}
+          logMissDisputes={mine?.logMissDisputes ?? []}
+          canDispute={!isSpying}
+          onCheckLogMiss={(kind, ref) => logMissApi.check(kind, ref)}
+          onEscalateLogMiss={async (kind, ref, reason) => { await logMissApi.escalate(kind, ref, reason); showToast("Sent to your manager."); weeklyRefresh(); }}
+          onLogMissChecked={() => weeklyRefresh()}
           onRunBonusCheck={(orderRefs) => (live && me ? runBonusCheck({
             weekStart: weeklyReportWeekStart,
             weekEnd: weeklyReportWeekEnd,
@@ -31595,7 +31606,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const repIds = Array.from(new Set([...(week?.expectedRepIds ?? []), ...(week?.repReports ?? []).map((report) => report.repId)]));
     const reviewRows: ReviewRepRow[] = week ? repIds.map((repId) => {
       const report = week.repReports.find((item) => item.repId === repId) ?? null;
-      const live = buildWeeklyRepSnapshot({ id: repId, name: repName(repId) }, weeklyReportWeekStart, week.fines ?? [], week.previousFines ?? [], week.adjustments ?? [], week.previousAdjustments ?? []);
+      const live = buildWeeklyRepSnapshot({ id: repId, name: repName(repId) }, weeklyReportWeekStart, week.fines ?? [], week.previousFines ?? [], week.adjustments ?? [], week.previousAdjustments ?? [], week.logMisses ?? [], week.previousLogMisses ?? [], week.carriedFines?.[repId] ?? 0);
       const frozen = report && report.status !== "draft" && report.snapshot ? report.snapshot as WeeklyReportSnapshot : null;
       return {
         repId,
@@ -31666,6 +31677,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           lowRateThreshold={rateGate ?? 50}
           dueDate={dueDate}
           bonusQueries={week?.bonusQueries ?? []}
+          logMisses={week?.logMisses ?? []}
+          logMissDisputes={week?.logMissDisputes ?? []}
+          onDecideLogMiss={(id, outcome, note) => weeklyRun(() => logMissApi.decide(id, outcome, note), outcome === "cancel" ? "Charge cancelled." : "Charge kept.")}
           funds={(week?.funds ?? []).map((item) => ({ managerName: item.managerName, totals: item.totals, readiness: item.readiness, varianceExplanation: item.varianceExplanation, returned: item.returned }))}
           renderFunds={() => renderManagerFunds("owner", undefined, (txn, comment) => weeklyRun(
             () => weeklyReportsApi.returnCompany({ weekStart: weeklyReportWeekStart, section: "funds", problem: `${txn.kindLabel} ${txn.categoryLabel ?? ""} ₦${Math.round(txn.amount).toLocaleString("en-NG")}`.replace(/\s+/g, " ").trim(), comment, fundTransactionId: txn.id }),
@@ -31689,6 +31703,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         fundsPending={weeklyFunds?.weekStart === weeklyReportWeekStart ? weeklyFunds?.totals?.pending : undefined}
         fundsSummary={(week?.funds ?? []).map((item) => ({ managerName: item.managerName, totals: item.totals, readiness: item.readiness }))}
         onSaveDraftNote={async (note) => { await managerFundsApi.saveWeek({ weekStart: weeklyReportWeekStart, notes: note || null }); showToast("Draft saved."); }}
+        logMissDisputes={week?.logMissDisputes ?? []}
+        onDecideLogMiss={(id, outcome, note) => weeklyRun(() => logMissApi.decide(id, outcome, note), outcome === "cancel" ? "Charge cancelled. The rep has been notified." : "Charge kept. The rep has been notified.")}
         bonusQueries={week?.bonusQueries ?? []}
         canResolveQueries={currentRole === "Manager" || currentRole === "Admin" || currentRole === "Owner"}
         onResolveBonusQuery={(id, body) => weeklyRun(() => weeklyReportsApi.resolveBonusQuery(id, body), body.outcome === "corrected" ? "Correction added. The rep has been notified." : "Answer sent to the rep.")}

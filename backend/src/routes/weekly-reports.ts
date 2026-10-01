@@ -6,6 +6,7 @@ import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { expectedRepIdsForWeek } from "../lib/weekly-report-data.js";
 import { notifyWeeklyReport } from "../lib/weekly-report-notifications.js";
 import { branchFundManagers, loadFundWeek } from "./manager-funds.js";
+import { disputesForWeek, logMissesForWeek } from "./log-misses.js";
 import { addDaysToDateKey, sundayWeekStartForDateKey, lagosDateKey, weekEndFromStart } from "../lib/sales-bonus-engine.js";
 import {
   CORRECTION_SECTIONS,
@@ -285,6 +286,10 @@ async function finesForWeek(orgId: string, repIds: string[] | null, weekStart: s
   let query = supabase.from("rep_penalties")
     .select("id, rep_id, type, amount, reason, remove_all_bonuses, created_at")
     .eq("org_id", orgId)
+    // Missed follow-up fines are counted by the day they were MISSED (from
+    // follow_up_misses), not the day the Owner approved them - so their
+    // rep_penalties rows are left out here or they would count twice.
+    .neq("type", "follow_up_miss")
     .gte("created_at", lagosDayStartIso(weekStart))
     .lte("created_at", lagosDayEndIso(weekEndFromStart(weekStart)))
     .order("created_at", { ascending: true })
@@ -314,6 +319,25 @@ export function requireScopedRep(req: Request, res: any, next: () => void) {
     return;
   }
   next();
+}
+
+/**
+ * Fines still owed from last week: the previous week's report froze how much
+ * was left over after the bonus hit N0 (Bright: "carry the rest to next week").
+ * Read from what the rep submitted, so a figure the manager approved never moves.
+ */
+async function carriedFinesFor(orgId: string, branchId: string, repIds: string[] | null, weekStart: string) {
+  let query = supabase.from("rep_weekly_reports").select("rep_id, status, snapshot")
+    .eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", addDaysToDateKey(weekStart, -7)).neq("status", "draft");
+  if (repIds) query = query.in("rep_id", repIds);
+  const { data, error } = await query;
+  if (error) throw error;
+  const out: Record<string, number> = {};
+  for (const row of data ?? []) {
+    const unpaid = Number((row.snapshot as any)?.totals?.unpaidFines ?? 0);
+    if (unpaid > 0) out[row.rep_id] = unpaid;
+  }
+  return out;
 }
 
 /** Bonus corrections paid IN this week (from resolved bonus queries). */
@@ -359,6 +383,12 @@ router.get("/mine", requireScopedRep, async (req, res) => {
         .order("created_at", { ascending: false }).limit(50)
     ]);
     if (bonusQueries.error) throw bonusQueries.error;
+    const [logMisses, previousLogMisses, logMissDisputes, carried] = await Promise.all([
+      logMissesForWeek(orgId, [repId], weekStart),
+      logMissesForWeek(orgId, [repId], addDaysToDateKey(weekStart, -7)),
+      disputesForWeek(orgId, branchId, [repId], weekStart),
+      carriedFinesFor(orgId, branchId, [repId], weekStart)
+    ]);
     const [corrections, auditRows] = report
       ? await Promise.all([
           supabase.from("weekly_report_corrections").select(CORRECTION_COLUMNS)
@@ -379,6 +409,10 @@ router.get("/mine", requireScopedRep, async (req, res) => {
       adjustments,
       previousAdjustments,
       bonusQueries: (bonusQueries.data ?? []).map(mapBonusQuery),
+      logMisses,
+      previousLogMisses,
+      logMissDisputes,
+      carriedFines: carried[repId] ?? 0,
       // Flags are for the owner. The rep sees returns, not flags.
       corrections: (corrections.data ?? []).filter((row: any) => row.kind === "return").map(mapCorrection),
       audit: (auditRows.data ?? []).filter((row: any) => row.action !== "rep_flagged").map(mapAudit)
@@ -671,6 +705,10 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
       adjustments,
       previousAdjustments,
       bonusQueries: (bonusQueries.data ?? []).map(mapBonusQuery),
+      logMisses: await logMissesForWeek(orgId, null, weekStart),
+      previousLogMisses: await logMissesForWeek(orgId, null, addDaysToDateKey(weekStart, -7)),
+      logMissDisputes: await disputesForWeek(orgId, branchId, null, weekStart),
+      carriedFines: await carriedFinesFor(orgId, branchId, null, weekStart),
       funds: (await fundsForWeek(orgId, branchId, weekStart)).map(({ manager, fund }) => ({
         managerId: manager.id,
         managerName: manager.name,

@@ -80,6 +80,8 @@ const BRANCH_TABLES = new Set([
   "weekly_report_corrections", "weekly_report_audit", "weekly_bonus_queries",
   // Manager Funds & Expenses (migration 271), branch_id NOT NULL from the first row.
   "manager_fund_settings", "manager_fund_transactions", "manager_fund_weeks", "manager_fund_adjustment_requests",
+  // Missed-log disputes (migration 272), branch_id NOT NULL from the first row.
+  "log_miss_disputes",
 
   // Retention and marketing.
   "customer_retention_touchpoints", "customer_retention_action_events",

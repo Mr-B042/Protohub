@@ -4035,6 +4035,16 @@ export type WeeklyReportAuditEntry = {
 };
 export type WeeklyReportFineRow = { id: string; repId: string; label: string; amount: number; date: string };
 export type WeeklyReportAdjustmentRow = { id: string; repId: string; label: string; amount: number };
+export type WeeklyLogMissRow = {
+  kind: "follow_up" | "cart_log"; ref: string; repId: string; missDate: string; amount: number;
+  status: "pending" | "approved" | "waived"; label: string; orderId?: string | null; cartsMissed?: number;
+};
+export type LogMissDispute = {
+  id: string; repId: string; kind: "follow_up" | "cart_log"; ref: string; missDate: string; amount: number; orderId: string | null;
+  checkVerdict: "miss_confirmed" | "miss_wrong"; checkResult: { findings?: Array<{ level: "issue" | "info" | "ok"; text: string }> };
+  repReason: string | null; status: "open" | "cancelled" | "kept" | "awaiting_owner";
+  decidedByName: string | null; decidedAt: string | null; decisionNote: string | null; createdAt: string;
+};
 export type WeeklyBonusQuery = {
   id: string; repId: string; weekStart: string; orderRefs: string[]; repMessage: string | null;
   checkVerdict: "accurate" | "issues";
@@ -4049,7 +4059,8 @@ export type WeeklyReportResponseInput = { correctionId: string; response: string
 export const weeklyReportsApi = {
   mine: (weekStart: string) =>
     get<{ weekStart: string; weekEnd: string; report: WeeklyRepReport | null; companyStatus: WeeklyCompanyReportStatus; corrections: WeeklyReportCorrection[]; audit: WeeklyReportAuditEntry[]; fines: WeeklyReportFineRow[]; previousFines: WeeklyReportFineRow[];
-      adjustments: WeeklyReportAdjustmentRow[]; previousAdjustments: WeeklyReportAdjustmentRow[]; bonusQueries: WeeklyBonusQuery[] }>(
+      adjustments: WeeklyReportAdjustmentRow[]; previousAdjustments: WeeklyReportAdjustmentRow[]; bonusQueries: WeeklyBonusQuery[];
+      logMisses: WeeklyLogMissRow[]; previousLogMisses: WeeklyLogMissRow[]; logMissDisputes: LogMissDispute[]; carriedFines: number }>(
       `/api/weekly-reports/mine?${new URLSearchParams({ weekStart }).toString()}`
     ),
   myHistory: () => get<{ rows: Array<WeeklyRepReport & { openReturns: number }> }>("/api/weekly-reports/mine/history"),
@@ -4062,6 +4073,7 @@ export const weeklyReportsApi = {
       editedAfterSubmit: Array<{ repId: string; orderId: string; editedAt: string; what: string; by: string | null }>;
       fines: WeeklyReportFineRow[]; previousFines: WeeklyReportFineRow[];
       adjustments: WeeklyReportAdjustmentRow[]; previousAdjustments: WeeklyReportAdjustmentRow[]; bonusQueries: WeeklyBonusQuery[];
+      logMisses: WeeklyLogMissRow[]; previousLogMisses: WeeklyLogMissRow[]; logMissDisputes: LogMissDispute[]; carriedFines: Record<string, number>;
       funds?: Array<{ managerId: string; managerName: string; totals: ManagerFundTotals; readiness: string[]; locked: boolean; varianceExplanation: string | null; notes: string | null; returned: number }>;
     }>(`/api/weekly-reports/week?${new URLSearchParams({ weekStart }).toString()}`),
   history: () => get<{ rows: Array<{ weekStart: string; weekEnd: string; company: WeeklyCompanyReport | null; repStatusCounts: Record<string, number> }> }>("/api/weekly-reports/history"),
@@ -4140,4 +4152,12 @@ export const managerFundsApi = {
   decideAdjustment: (id: string, body: { approve: boolean; note?: string }) => post<{ ok: true }>(`/api/manager-funds/adjustments/${encodeURIComponent(id)}/decide`, body),
   saveSettings: (body: { expenseProofMin: number; remittanceProofRequired: boolean; ownerFundingReferenceRequired: boolean; otherInProofRequired: boolean }) =>
     request<{ ok: true }>("PUT", "/api/manager-funds/settings", body)
+};
+
+// ── Missed-log charges: check and dispute ────────────────────────────────────
+export const logMissApi = {
+  check: (kind: "follow_up" | "cart_log", ref: string) =>
+    post<{ verdict: "miss_confirmed" | "miss_wrong"; findings: Array<{ level: "issue" | "info" | "ok"; text: string }>; status: string; amount: number; disputeId: string | null }>("/api/log-misses/check", { kind, ref }),
+  escalate: (kind: "follow_up" | "cart_log", ref: string, reason: string) => post<{ id: string }>("/api/log-misses/escalate", { kind, ref, reason }),
+  decide: (id: string, outcome: "cancel" | "keep", note: string) => post<{ ok: true; status: string }>(`/api/log-misses/disputes/${encodeURIComponent(id)}/decide`, { outcome, note })
 };

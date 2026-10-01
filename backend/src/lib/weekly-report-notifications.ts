@@ -255,3 +255,48 @@ export async function notifyFunds(orgId: string, branchId: string, event: FundsE
     console.warn("[weekly-report-notifications] funds alert failed:", error?.message ?? error);
   }
 }
+
+export type LogMissEvent =
+  | { kind: "dispute_opened"; repName: string; amount: number; missDate: string; systemSupportsRep: boolean }
+  | { kind: "dispute_decided"; repId: string; cancelled: boolean; amount: number; missDate: string }
+  | { kind: "needs_owner"; amount: number; missDate: string };
+
+/** Missed-log charge disputes. */
+export async function notifyLogMiss(orgId: string, branchId: string, event: LogMissEvent): Promise<void> {
+  try {
+    const naira = (value: number) => `₦${Math.round(value).toLocaleString("en-NG")}`;
+    if (event.kind === "dispute_opened") {
+      await deliver(orgId, branchId, await leadershipRecipients(orgId, branchId, ["Admin", "Manager"]), {
+        title: `${event.repName} disputed a missed-log charge`,
+        message: event.systemSupportsRep
+          ? `${naira(event.amount)} on ${event.missDate}: the system check says the charge looks wrong. Please cancel or keep it.`
+          : `${naira(event.amount)} on ${event.missDate}: the system confirmed the miss, but the rep disagrees. Please decide.`,
+        kind: "log_miss_dispute",
+        tag: `log-miss-dispute-${Date.now()}`,
+        type: "warning"
+      });
+      return;
+    }
+    if (event.kind === "needs_owner") {
+      await deliver(orgId, branchId, (await leadershipRecipients(orgId, branchId)).filter((user) => user.role === "Owner"), {
+        title: "A manager wants an approved charge cancelled",
+        message: `${naira(event.amount)} missed-log charge on ${event.missDate}. Only you can cancel an approved charge.`,
+        kind: "log_miss_needs_owner",
+        tag: `log-miss-owner-${Date.now()}`,
+        type: "warning"
+      });
+      return;
+    }
+    await deliver(orgId, branchId, [{ id: event.repId, role: "Sales Rep" }], {
+      title: event.cancelled ? "Your missed-log charge was cancelled" : "Your missed-log charge stays",
+      message: event.cancelled
+        ? `${naira(event.amount)} on ${event.missDate} will not be deducted.`
+        : `${naira(event.amount)} on ${event.missDate}: your manager checked and kept it. Open your weekly report to see why.`,
+      kind: "log_miss_decided",
+      tag: `log-miss-decided-${Date.now()}`,
+      type: event.cancelled ? "success" : "info"
+    });
+  } catch (error: any) {
+    console.warn("[weekly-report-notifications] log-miss alert failed:", error?.message ?? error);
+  }
+}

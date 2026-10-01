@@ -48,6 +48,18 @@ export type WeeklyReportBonusInput = {
 
 export type WeeklyReportFine = { id: string; label: string; amount: number; date: string };
 
+/** A missed follow-up / cart log charge, in the week it happened. */
+export type WeeklyLogMiss = {
+  kind: "follow_up" | "cart_log";
+  ref: string;
+  missDate: string;
+  amount: number;
+  status: "pending" | "approved" | "waived";
+  label: string;
+  orderId?: string | null;
+  cartsMissed?: number;
+};
+
 export type WeeklyReportProductRow = {
   key: string;
   name: string;
@@ -94,6 +106,14 @@ export type WeeklyReportSnapshot = {
     fines: number;
     /** Bonus corrections from answered bonus queries, paid in this week. */
     adjustments?: number;
+    /** Approved missed-log fines for this week (already inside `fines`). */
+    logMissFines?: number;
+    /** Missed-log charges still waiting for the Owner: shown, NOT deducted. */
+    pendingLogMisses?: number;
+    /** Fines left over from last week, taken off this week first. */
+    carriedFines?: number;
+    /** Fines this week's bonus could not cover: carried into next week. */
+    unpaidFines?: number;
     finalBonus: number;
     upsellOrders: number;
     crossSellOrders: number;
@@ -112,6 +132,8 @@ export type WeeklyReportSnapshot = {
   };
   fines: WeeklyReportFine[];
   adjustments?: WeeklyReportFine[];
+  /** Every missed-log charge of the week, any status. */
+  logMisses?: WeeklyLogMiss[];
   orders: WeeklyReportOrderRow[];
   /** Every order the report covers. The server checks these for edits made after submit. */
   orderIds: string[];
@@ -175,6 +197,10 @@ export function buildRepWeeklySnapshot(input: {
   fines: WeeklyReportFine[];
   /** Corrections paid in this week (answered bonus queries). Added on top. */
   adjustments?: WeeklyReportFine[];
+  /** Missed-log charges of the week. Only approved ones are deducted. */
+  logMisses?: WeeklyLogMiss[];
+  /** Fines left over from last week (frozen on last week's report). */
+  carriedFines?: number;
   previous: WeeklyReportSnapshot["previous"];
   now?: Date;
 }): WeeklyReportSnapshot {
@@ -247,7 +273,31 @@ export function buildRepWeeklySnapshot(input: {
   }
   orders.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
 
-  const fineTotal = input.fines.reduce((sum, fine) => sum + Math.max(0, fine.amount), 0);
+  // Approved missed-log charges become fine lines, one per day and kind, so
+  // the bonus box reads "Missed cart logs Tue 23 Sept: N1,500" rather than
+  // thirty N50 rows.
+  const logMisses = input.logMisses ?? [];
+  const approvedMissLines = new Map<string, WeeklyReportFine & { count: number; kind: string }>();
+  for (const miss of logMisses.filter((item) => item.status === "approved" && item.amount > 0)) {
+    const key = `${miss.kind}|${miss.missDate}`;
+    const line = approvedMissLines.get(key) ?? { id: `logmiss:${key}`, label: "", amount: 0, date: miss.missDate, count: 0, kind: miss.kind };
+    line.amount += miss.amount;
+    line.count += miss.kind === "cart_log" ? (miss.cartsMissed ?? 1) : 1;
+    approvedMissLines.set(key, line);
+  }
+  const missFineLines: WeeklyReportFine[] = Array.from(approvedMissLines.values()).map((line) => ({
+    id: line.id,
+    date: line.date,
+    amount: line.amount,
+    label: line.kind === "cart_log"
+      ? `Missed cart logs ${dayLabel(line.date)}: ${line.count} cart${line.count === 1 ? "" : "s"}`
+      : `Missed follow-up logs ${dayLabel(line.date)}: ${line.count} order${line.count === 1 ? "" : "s"}`
+  }));
+  const allFines = [...input.fines, ...missFineLines];
+  const fineTotal = allFines.reduce((sum, fine) => sum + Math.max(0, fine.amount), 0);
+  const logMissFineTotal = missFineLines.reduce((sum, fine) => sum + fine.amount, 0);
+  const pendingLogMissTotal = logMisses.filter((item) => item.status === "pending").reduce((sum, item) => sum + item.amount, 0);
+  const carriedFines = Math.max(0, Math.round(input.carriedFines ?? 0));
   const baseBonus = Math.round(input.bonus.base);
   const upsellBonus = Math.round(input.bonus.upsell);
   const crossSellBonus = Math.round(input.bonus.crossSell);
@@ -272,7 +322,13 @@ export function buildRepWeeklySnapshot(input: {
       crossSellBonus,
       fines: Math.round(fineTotal),
       adjustments: adjustmentTotal,
-      finalBonus: Math.max(0, earned + adjustmentTotal - Math.round(fineTotal)),
+      logMissFines: Math.round(logMissFineTotal),
+      pendingLogMisses: Math.round(pendingLogMissTotal),
+      carriedFines,
+      // Last week's leftover comes off first; whatever this week cannot
+      // cover carries on (Bright, 1 Oct 2026).
+      finalBonus: Math.max(0, earned + adjustmentTotal - Math.round(fineTotal) - carriedFines),
+      unpaidFines: Math.max(0, Math.round(fineTotal) + carriedFines - earned - adjustmentTotal),
       upsellOrders: upsellPlaced.length,
       crossSellOrders: crossPlaced.length,
       manuallyAdjustedOrders: orders.filter((order) => order.bonusManuallyAdjusted && order.bonus > 0).length,
@@ -283,8 +339,9 @@ export function buildRepWeeklySnapshot(input: {
     products,
     daily,
     expansion,
-    fines: input.fines,
+    fines: allFines,
     adjustments,
+    logMisses,
     orders,
     orderIds: orders.map((order) => order.id)
   };
@@ -302,6 +359,7 @@ export const SNAPSHOT_CHECKS: Array<{ key: keyof WeeklyReportSnapshot["totals"];
   { key: "baseBonus", label: "Base bonus", money: true },
   { key: "fines", label: "Fines / deductions", money: true },
   { key: "adjustments", label: "Bonus corrections", money: true },
+  { key: "carriedFines", label: "Fines carried from last week", money: true },
   { key: "finalBonus", label: "Final bonus payable", money: true }
 ];
 
@@ -389,6 +447,9 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   bonus_check_accurate: "Checked bonus: accurate",
   bonus_query_opened: "Bonus query sent to manager",
   bonus_query_resolved: "Bonus query answered",
+  log_miss_checked: "Missed-log charge checked",
+  log_miss_disputed: "Missed-log charge disputed",
+  log_miss_decided: "Missed-log dispute decided",
   fund_logged: "Funds: transaction logged",
   fund_edited: "Funds: transaction changed",
   fund_voided: "Funds: transaction removed",

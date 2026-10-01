@@ -7,8 +7,9 @@ import {
   pctText, shortDateTime, topProductsWithOthers, type WorkflowStep
 } from "../components/WeeklyReportParts";
 import { CORRECTION_SECTION_LABEL, type BonusCheckFinding, type WeeklyReportSnapshot } from "./weekly-report-model";
-import type { WeeklyBonusQuery, WeeklyReportCorrection, WeeklyRepReport, WeeklyCompanyReportStatus, WeeklyReportResponseInput } from "../lib/api";
+import type { LogMissDispute, WeeklyLogMissRow, WeeklyBonusQuery, WeeklyReportCorrection, WeeklyRepReport, WeeklyCompanyReportStatus, WeeklyReportResponseInput } from "../lib/api";
 import { Modal } from "../components/WeeklyReportParts";
+import { MyMissedLogsPanel } from "../components/LogMissParts";
 import { CheckCircle2, Info, SearchCheck } from "lucide-react";
 import { currencySymbol } from "../lib/money-privacy";
 
@@ -24,8 +25,16 @@ export default function RepWeeklyReportPage({
   weekStart, weekEnd, onShiftWeek, onPickWeek, canGoNext,
   live, report, companyStatus, corrections, loading, error, canSubmitNow, dueDate, todayKey, submittedLate, productImageByKey,
   bonusQueries, onRunBonusCheck, onSendBonusQuery,
+  logMisses = [], logMissDisputes = [], canDispute = true, onCheckLogMiss, onEscalateLogMiss, onLogMissChecked,
   onSubmit, onOpenOrder, onBack
 }: {
+  /** Missed follow-up / cart log charges this week, and the rep's disputes. */
+  logMisses?: WeeklyLogMissRow[];
+  logMissDisputes?: LogMissDispute[];
+  canDispute?: boolean;
+  onCheckLogMiss?: (kind: WeeklyLogMissRow["kind"], ref: string) => Promise<{ verdict: "miss_confirmed" | "miss_wrong"; findings: Array<{ level: "issue" | "info" | "ok"; text: string }>; disputeId: string | null }>;
+  onEscalateLogMiss?: (kind: WeeklyLogMissRow["kind"], ref: string, reason: string) => Promise<void>;
+  onLogMissChecked?: () => void;
   /** This rep's bonus queries (any week). */
   bonusQueries: WeeklyBonusQuery[];
   /** Runs the system check for this week. Null while figures are loading. */
@@ -317,12 +326,27 @@ export default function RepWeeklyReportPage({
                       <td className="px-3 py-2">Fines / Deductions{snap?.fines?.length ? <span className="block text-[11px] text-gray-500">{snap.fines.map((fine) => fine.label).join("; ")}</span> : null}</td>
                       <td className="px-3 py-2 text-right">{nf(totals?.fines ?? 0)}</td>
                     </tr>
+                    {(totals?.carriedFines ?? 0) > 0 && (
+                      <tr className="border-t border-gray-100 dark:border-slate-800">
+                        <td className="px-3 py-2">Fines carried from last week<span className="block text-[11px] text-gray-500">Last week's bonus could not cover them</span></td>
+                        <td className="px-3 py-2 text-right text-rose-600">-{nf(totals?.carriedFines ?? 0)}</td>
+                      </tr>
+                    )}
+                    {(totals?.pendingLogMisses ?? 0) > 0 && (
+                      <tr className="border-t border-gray-100 bg-amber-50/50 text-[11px] dark:border-slate-800 dark:bg-amber-500/10 [&>td]:[color:inherit]">
+                        <td className="px-3 py-1.5 italic text-amber-800 dark:text-amber-200">Missed logs waiting for owner approval (not deducted yet)</td>
+                        <td className="px-3 py-1.5 text-right italic text-amber-800 dark:text-amber-200">{nf(totals?.pendingLogMisses ?? 0)}</td>
+                      </tr>
+                    )}
                     <tr className="bg-emerald-50 font-bold text-gray-900 dark:bg-emerald-500/10 dark:text-slate-50 [&>td]:[color:inherit]">
                       <td className="px-3 py-2.5">Final Bonus Payable</td>
                       <td className="px-3 py-2.5 text-right text-[15px] text-emerald-700 dark:text-emerald-300">{sym}{nf(totals?.finalBonus ?? 0)}</td>
                     </tr>
                   </tbody>
                 </table>
+                {(totals?.unpaidFines ?? 0) > 0 && (
+                  <p className="m-0 mt-2 rounded-lg bg-rose-50 px-2 py-1.5 text-[11px] font-semibold text-rose-700">₦{nf(totals?.unpaidFines ?? 0)} of fines is more than this week's bonus. It will come off next week's bonus.</p>
+                )}
                 <p className="m-0 mt-2 px-1 text-[11px] text-gray-500 dark:text-slate-400">
                   Bonus is paid on the {nf(totals?.deliveredForBonus ?? 0)} orders delivered between {longDate(weekStart)} and {longDate(weekEnd)}.
                 </p>
@@ -413,6 +437,11 @@ export default function RepWeeklyReportPage({
           )}
         </div>
       </div>
+
+      {onCheckLogMiss && onEscalateLogMiss && (
+        <MyMissedLogsPanel misses={logMisses} disputes={logMissDisputes} canDispute={canDispute}
+          onCheck={onCheckLogMiss} onEscalate={onEscalateLogMiss} onChecked={() => onLogMissChecked?.()} />
+      )}
 
       {/* ── 5 Order Details ───────────────────────────────────────── */}
       <Panel>
