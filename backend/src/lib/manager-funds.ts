@@ -49,11 +49,16 @@ export type FundSettings = {
   otherInProofRequired: boolean;
 };
 
+/**
+ * Receipts are OPTIONAL by default (Bright, 1 Oct 2026: "they can provide it
+ * if available, not strict"). A missing receipt never blocks the week. The
+ * owner can still switch a rule on per branch; expenseProofMin 0 = off.
+ */
 export const DEFAULT_FUND_SETTINGS: FundSettings = {
-  expenseProofMin: 10000,
-  remittanceProofRequired: true,
-  ownerFundingReferenceRequired: true,
-  otherInProofRequired: true
+  expenseProofMin: 0,
+  remittanceProofRequired: false,
+  ownerFundingReferenceRequired: false,
+  otherInProofRequired: false
 };
 
 export type FundTxn = {
@@ -85,7 +90,7 @@ export function missingProof(txn: FundTxn, settings: FundSettings): string | nul
       return settings.remittanceProofRequired && txn.evidenceCount === 0 ? "Transfer proof required" : null;
     case "expense":
       if (txn.category === "other" && String(txn.description ?? "").trim().length < 5) return "Explain what 'Other' was";
-      return txn.amount >= settings.expenseProofMin && txn.evidenceCount === 0 ? "Receipt required" : null;
+      return settings.expenseProofMin > 0 && txn.amount >= settings.expenseProofMin && txn.evidenceCount === 0 ? "Receipt required" : null;
     default:
       return null;
   }

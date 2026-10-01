@@ -317,7 +317,7 @@ export default function ManagerFundsTab({
         <FundCard icon={ArrowDownLeft} tone="green" label="Funds Received (Cash + Transfer)" value={`${sym}${nf(totals?.received ?? 0)}`} sub={`From ${totals?.counts.in ?? 0} transaction${totals?.counts.in === 1 ? "" : "s"}`} />
         <FundCard icon={Receipt} tone="blue" label="Total Expenses" value={`${sym}${nf(totals?.spent ?? 0)}`} sub={`From ${totals?.counts.expense ?? 0} transaction${totals?.counts.expense === 1 ? "" : "s"}`} />
         <FundCard icon={ArrowUpRight} tone="purple" label="Remitted to Company" value={`${sym}${nf(totals?.remitted ?? 0)}`} sub="Not an expense: still company money" />
-        <FundCard icon={ClipboardList} tone="orange" label="Pending Items" value={String(totals?.pending ?? 0)} sub={(totals?.pending ?? 0) === 0 ? "Every entry has its proof" : "Need proof or a correction"} />
+        <FundCard icon={ClipboardList} tone="orange" label="Pending Items" value={String(totals?.pending ?? 0)} sub={(totals?.pending ?? 0) === 0 ? "Nothing waiting" : "Need an explanation or a correction"} />
       </div>
 
       {/* ── Reconciliation ─────────────────────────────────────── */}
@@ -592,7 +592,7 @@ export default function ManagerFundsTab({
 
       {mode === "owner" && onSaveSettings && data?.settings && (
         <div className="text-right">
-          <button type="button" onClick={() => setSettingsOpen(true)} className="!min-h-0 text-[12px] font-semibold text-[#1F8FE0] hover:underline">Proof rules: receipts from {sym}{nf(data.settings.expenseProofMin)} · change</button>
+          <button type="button" onClick={() => setSettingsOpen(true)} className="!min-h-0 text-[12px] font-semibold text-[#1F8FE0] hover:underline">Proof rules: {data.settings.expenseProofMin > 0 || data.settings.remittanceProofRequired || data.settings.otherInProofRequired || data.settings.ownerFundingReferenceRequired ? "some receipts required" : "receipts optional"} · change</button>
         </div>
       )}
 
@@ -668,7 +668,16 @@ export default function ManagerFundsTab({
               <input type="file" accept="image/png,image/jpeg,image/webp,application/pdf" onChange={(event) => setDraft({ ...draft, file: event.target.files?.[0] ?? null })} className="block w-full text-[12px]" />
               {data?.settings && !(editing && !draft.amount) && (
                 <span className="mt-1 block text-[11px] text-gray-500">
-                  {draft.kind === "expense" ? `Required for expenses of ${sym}${nf(data.settings.expenseProofMin)} or more.` : draft.kind === "remittance_out" ? "Transfer proof is required." : draft.kind === "other_in" ? "Proof is required." : draft.kind === "owner_funding" ? "A reference number or proof is required." : "Optional."} You can add it later, but the week can't go to the owner without it.
+                  {(() => {
+                    const rules = data.settings;
+                    const required = draft.kind === "expense" ? rules.expenseProofMin > 0 && Number(draft.amount.replace(/[^0-9.]/g, "")) >= rules.expenseProofMin
+                      : draft.kind === "remittance_out" ? rules.remittanceProofRequired
+                      : draft.kind === "other_in" ? rules.otherInProofRequired
+                      : draft.kind === "owner_funding" ? rules.ownerFundingReferenceRequired : false;
+                    return required
+                      ? "Required for this entry. You can add it later, but the week can't go to the owner without it."
+                      : "Optional — attach it if you have it.";
+                  })()}
                 </span>
               )}</label>
             {formError && <p className="m-0 rounded-lg bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700">{formError}</p>}
@@ -764,7 +773,7 @@ function SettingsModal({ settings, sym, onClose, onSave }: {
   return (
     <Modal title="Proof rules" subtitle="What the manager must attach before the week can come to you." onClose={onClose}>
       <div className="space-y-3 px-6 py-5">
-        <label className="block"><span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Receipt required for expenses from ({sym})</span>
+        <label className="block"><span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Receipt required for expenses from ({sym}) — 0 = never required</span>
           <input inputMode="decimal" value={min} onChange={(event) => setMin(event.target.value)} className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-[13px] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" /></label>
         {toggle("remittanceProofRequired", "Every remittance needs transfer proof")}
         {toggle("ownerFundingReferenceRequired", "Owner funding needs a reference or proof")}
