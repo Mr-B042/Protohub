@@ -4161,3 +4161,39 @@ export const logMissApi = {
   escalate: (kind: "follow_up" | "cart_log", ref: string, reason: string) => post<{ id: string }>("/api/log-misses/escalate", { kind, ref, reason }),
   decide: (id: string, outcome: "cancel" | "keep", note: string) => post<{ ok: true; status: string }>(`/api/log-misses/disputes/${encodeURIComponent(id)}/decide`, { outcome, note })
 };
+
+// Head of Sales weekly script, the rep's script tick, and the Owner's release
+// of the Head of Sales bonus (Bright, 1 Oct 2026).
+export type SalesScript = { id: string; weekStart: string; headId: string; upsellScript: string; crossSellScript: string; submittedAt: string; updatedAt: string };
+export type HeadOfSalesRepInfluence = {
+  repId: string; repName: string; isHead: boolean;
+  upsellRate: number; baselineUpsellRate: number; crossSellRate: number; baselineCrossSellRate: number;
+  expansionOrders: number; scriptOrders: number;
+  verdict: "influenced" | "mixed" | "own_effort" | "no_improvement" | "no_sales"; label: string;
+};
+export type HeadOfSalesReview = {
+  weekStart: string;
+  head: { id: string; name: string } | null;
+  script?: SalesScript | null;
+  team?: { aov: number; deliveryRate: number; upsellRate: number; crossSellRate: number; baselineUpsellRate: number; baselineCrossSellRate: number };
+  evaluation?: { level: string; label: string; amount: number };
+  qualitative?: { upsellImprovement: boolean; initiativeSuccess: boolean };
+  teamImproved?: boolean;
+  reps?: HeadOfSalesRepInfluence[];
+  scriptUses?: number;
+  hold?: { held: boolean; reasons: string[] };
+  record?: { status: string; amount: number; level: string; paidAt: string | null } | null;
+  release?: { decision: "released" | "withheld"; wasHeld: boolean; level: string; amount: number; note: string | null; decidedBy: string | null; decidedAt: string } | null;
+  weekOver?: boolean;
+};
+export const salesScriptApi = {
+  week: (weekStart?: string) =>
+    get<{ weekStart: string; script: SalesScript | null; head: { id: string; name: string } | null; canEdit: boolean }>(`/api/sales-scripts/week${weekStart ? `?weekStart=${encodeURIComponent(weekStart)}` : ""}`),
+  save: (body: { weekStart: string; upsellScript: string; crossSellScript: string }) => put<{ script: SalesScript }>("/api/sales-scripts/week", body),
+  forOrder: (orderId: string) =>
+    get<{ weekStart: string; eligible: boolean; script: SalesScript | null; used: boolean; usedAt: string | null; canTick: boolean }>(`/api/sales-scripts/orders/${encodeURIComponent(orderId)}`),
+  tick: (orderId: string, used: boolean) => post<{ used: boolean }>(`/api/sales-scripts/orders/${encodeURIComponent(orderId)}/use`, { used }),
+  headReview: (weekStart: string) => get<HeadOfSalesReview>(`/api/sales-scripts/head-review?weekStart=${encodeURIComponent(weekStart)}`),
+  release: (body: { weekStart: string; decision: "release" | "withhold"; upsellImprovement?: boolean; initiativeSuccess?: boolean; note?: string }) =>
+    post<HeadOfSalesReview>("/api/sales-scripts/head-review/release", body)
+};

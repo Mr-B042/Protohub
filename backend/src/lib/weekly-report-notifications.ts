@@ -300,3 +300,46 @@ export async function notifyLogMiss(orgId: string, branchId: string, event: LogM
     console.warn("[weekly-report-notifications] log-miss alert failed:", error?.message ?? error);
   }
 }
+
+// Head of Sales script + bonus release (Bright, 1 Oct 2026).
+export type HeadOfSalesEvent =
+  | { kind: "script_submitted"; headName: string; weekStart: string; repIds: string[] }
+  | { kind: "bonus_held"; headName: string; weekStart: string; amount: number; reasons: string[] }
+  | { kind: "bonus_decided"; headId: string; weekStart: string; amount: number; released: boolean; note: string | null };
+
+export async function notifyHeadOfSales(orgId: string, branchId: string, event: HeadOfSalesEvent): Promise<void> {
+  try {
+    const naira = (value: number) => `₦${Math.round(value).toLocaleString("en-NG")}`;
+    if (event.kind === "script_submitted") {
+      await deliver(orgId, branchId, event.repIds.map((id) => ({ id, role: "Sales Rep" as UserRole })), {
+        title: "This week's upsell & cross-sell script is ready",
+        message: `${event.headName} shared the script for the week of ${event.weekStart}. Open any order with an upsell or cross-sell to read it, and tick it when you use it.`,
+        kind: "sales_script",
+        tag: `sales-script-${event.weekStart}`,
+        type: "info"
+      });
+      return;
+    }
+    if (event.kind === "bonus_held") {
+      await deliver(orgId, branchId, (await leadershipRecipients(orgId, branchId)).filter((user) => user.role === "Owner"), {
+        title: `${event.headName}'s Head of Sales bonus is on hold`,
+        message: `${naira(event.amount)} for the week of ${event.weekStart}. ${event.reasons.join(" ")} Release or withhold it on the weekly report.`,
+        kind: "head_of_sales_bonus_held",
+        tag: `hos-bonus-held-${event.weekStart}`,
+        type: "warning"
+      });
+      return;
+    }
+    await deliver(orgId, branchId, [{ id: event.headId, role: "Sales Rep" }], {
+      title: event.released ? "Your Head of Sales bonus was released" : "Your Head of Sales bonus was withheld",
+      message: event.released
+        ? `${naira(event.amount)} for the week of ${event.weekStart} is approved for payment.${event.note ? ` Note: ${event.note}` : ""}`
+        : `The week of ${event.weekStart} will not be paid.${event.note ? ` Reason: ${event.note}` : ""}`,
+      kind: "head_of_sales_bonus_decided",
+      tag: `hos-bonus-decided-${event.weekStart}`,
+      type: event.released ? "success" : "warning"
+    });
+  } catch (error: any) {
+    console.warn("[weekly-report-notifications] head of sales alert failed:", error?.message ?? error);
+  }
+}

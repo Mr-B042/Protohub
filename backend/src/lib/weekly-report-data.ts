@@ -1,6 +1,7 @@
 import { supabase } from "./supabase.js";
+import { buildHeadReview } from "../routes/sales-scripts.js";
 import { addDaysToDateKey, lagosDateKey, sundayWeekStartForDateKey, weekEndFromStart } from "./sales-bonus-engine.js";
-import { notifyManagersOverdue, notifyReportReminder } from "./weekly-report-notifications.js";
+import { notifyHeadOfSales, notifyManagersOverdue, notifyReportReminder } from "./weekly-report-notifications.js";
 
 // Shared by the weekly-report routes and the Tuesday/Wednesday reminder job.
 
@@ -68,6 +69,18 @@ export async function runWeeklyReportReminders(when: "due_today" | "overdue"): P
   if (error) throw error;
   let reminded = 0;
   for (const branch of branches ?? []) {
+    // Tuesday: tell the Owner if last week's Head of Sales bonus is on hold
+    // (no script, or nobody used it) and still waiting for a decision.
+    if (when === "due_today") {
+      try {
+        const review: any = await buildHeadReview(branch.org_id, branch.id, weekStart);
+        if (review.head && review.hold?.held && !review.release) {
+          await notifyHeadOfSales(branch.org_id, branch.id, { kind: "bonus_held", headName: review.head.name, weekStart, amount: review.evaluation.amount, reasons: review.hold.reasons });
+        }
+      } catch (error: any) {
+        console.warn("[weekly-report-data] head of sales hold check failed:", error?.message ?? error);
+      }
+    }
     const expected = await expectedRepIdsForWeek(branch.org_id, branch.id, weekStart);
     if (expected.length === 0) continue;
     const submitted = await submittedRepIds(branch.org_id, branch.id, weekStart);

@@ -10,8 +10,9 @@ import {
 } from "../components/WeeklyReportParts";
 import { CompanyProductTable, OrdersTable, RepBonusTable, RepReviewModal, shownSnapshot, type ReviewRepRow } from "./ManagerWeeklyReviewPage";
 import { LogMissDisputesPanel } from "../components/LogMissParts";
+import { HeadOfSalesBadge, headOfSalesBonusStatus } from "../components/HeadOfSalesParts";
 import { buildCompanySnapshot, type CompanyWeeklySnapshot, type ManagerBonusPreview, type WeeklyReportSnapshot } from "./weekly-report-model";
-import type { LogMissDispute, WeeklyLogMissRow, ManagerFundTotals, WeeklyBonusQuery, WeeklyCompanyReport, WeeklyReportAuditEntry, WeeklyReportCorrection } from "../lib/api";
+import type { HeadOfSalesReview, LogMissDispute, WeeklyLogMissRow, ManagerFundTotals, WeeklyBonusQuery, WeeklyCompanyReport, WeeklyReportAuditEntry, WeeklyReportCorrection } from "../lib/api";
 import { currencySymbol } from "../lib/money-privacy";
 
 export type WeeklyFinancialSummary = {
@@ -43,6 +44,7 @@ export default function OwnerWeeklyApprovalPage({
   weekStart, weekEnd, onShiftWeek, onPickWeek, canGoNext, loading, error,
   rows, company, corrections, audit, managerBonus, managerName, financial, lowRateThreshold, dueDate, bonusQueries = [],
   funds = [], renderFunds, logMisses = [], logMissDisputes = [], onDecideLogMiss,
+  headOfSales = null, renderHeadOfSales,
   onApproveLock, onReturnToManager, onReopen, onBack
 }: {
   weekStart: string;
@@ -70,13 +72,17 @@ export default function OwnerWeeklyApprovalPage({
   funds?: Array<{ managerName: string; totals: ManagerFundTotals; readiness: string[]; varianceExplanation: string | null; returned: number }>;
   /** The Funds & Expenses tab (transactions, receipts, return, adjustments). */
   renderFunds?: () => ReactNode;
+  /** The Head of Sales bonus review for this week (for the red flags). */
+  headOfSales?: HeadOfSalesReview | null;
+  /** The Head of Sales tab: her bonus, the script, who it helped, release/withhold. */
+  renderHeadOfSales?: () => ReactNode;
   onApproveLock: (note: string) => Promise<void>;
   onReturnToManager: (draft: CorrectionDraft) => Promise<void>;
   onReopen: (reason: string) => Promise<void>;
   onBack: () => void;
 }) {
   const sym = currencySymbol();
-  const [tab, setTab] = useState<"overview" | "reps" | "manager" | "bonus" | "funds" | "products" | "audit">("overview");
+  const [tab, setTab] = useState<"overview" | "reps" | "manager" | "headOfSales" | "bonus" | "funds" | "products" | "audit">("overview");
   const [viewing, setViewing] = useState<string | null>(null);
   const [requestChanges, setRequestChanges] = useState("");
   const [returning, setReturning] = useState(false);
@@ -166,6 +172,12 @@ export default function OwnerWeeklyApprovalPage({
       if (item.totals.pending > 0) flags.push({ severity: "medium", title: `${item.managerName}: ${item.totals.pending} wallet entr${item.totals.pending === 1 ? "y needs" : "ies need"} proof or a correction`, detail: item.readiness.join(" ") });
       if (item.totals.otherIn > 0) flags.push({ severity: "medium", title: `${item.managerName}: ${sym}${nf(item.totals.otherIn)} of "other money in"`, detail: "Not a customer payment or company transfer. Check the proof." });
     }
+    const hosStatus = headOfSalesBonusStatus(headOfSales);
+    if (headOfSales?.head && hosStatus?.key === "held") {
+      flags.push({ severity: "high", title: `${headOfSales.head.name}'s Head of Sales bonus (${sym}${nf(headOfSales.evaluation?.amount ?? 0)}) is on hold`, detail: `${(headOfSales.hold?.reasons ?? []).join(" ")} Release or withhold it in the Head of Sales tab.` });
+    } else if (headOfSales?.head && hosStatus?.key === "ready" && headOfSales.weekOver) {
+      flags.push({ severity: "medium", title: `${headOfSales.head.name}'s Head of Sales bonus (${sym}${nf(headOfSales.evaluation?.amount ?? 0)}) waits for your release`, detail: `Script submitted; used on ${nf(headOfSales.scriptUses ?? 0)} order${headOfSales.scriptUses === 1 ? "" : "s"} by other reps. See the Head of Sales tab.` });
+    }
     if (frozenCompany) {
       const liveTotal = liveCompany.totals.totalBonus;
       if (Math.abs(liveTotal - frozenCompany.totals.totalBonus) > 0.5 || liveCompany.totals.orders !== frozenCompany.totals.orders) {
@@ -173,7 +185,7 @@ export default function OwnerWeeklyApprovalPage({
       }
     }
     return flags.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "high" ? -1 : 1));
-  }, [rows, expectedRows, corrections, frozenCompany, liveCompany, lowRateThreshold, sym, dueDate, bonusQueries, funds, logMisses, logMissDisputes]);
+  }, [rows, expectedRows, corrections, frozenCompany, liveCompany, lowRateThreshold, sym, dueDate, bonusQueries, funds, logMisses, logMissDisputes, headOfSales]);
 
   const approvedCount = expectedRows.filter((row) => row.report && ["manager_approved", "owner_approved", "locked"].includes(row.report.status)).length;
   const submittedCount = expectedRows.filter((row) => row.report && row.report.status !== "draft").length;
@@ -205,7 +217,7 @@ export default function OwnerWeeklyApprovalPage({
             return (
               <tr key={row.repId} className="border-t border-gray-100 dark:border-slate-800">
                 <td className="px-2 py-3 text-gray-600">{index + 1}</td>
-                <td className="px-2 py-3"><span className="flex items-center gap-2 whitespace-nowrap font-semibold text-gray-900 dark:text-slate-100"><Avatar name={row.repName} />{row.repName}</span></td>
+                <td className="px-2 py-3"><span className="flex items-center gap-2 whitespace-nowrap font-semibold text-gray-900 dark:text-slate-100"><Avatar name={row.repName} />{row.repName}{row.isHeadOfSales ? <HeadOfSalesBadge /> : null}</span></td>
                 <td className="px-2 py-3">
                   <RepStatusPill status={rowStatus} approvedLabel="Approved" />
                   <span className="mt-0.5 block text-[11px] text-gray-500">{row.report?.managerReviewedAt ? shortDateTime(row.report.managerReviewedAt) : row.report?.submittedAt ? shortDateTime(row.report.submittedAt) : "Not submitted"}</span>
@@ -392,7 +404,7 @@ export default function OwnerWeeklyApprovalPage({
 
       {/* ── Tabs ───────────────────────────────────────────── */}
       <div className="flex gap-1 overflow-x-auto" role="tablist">
-        {([["overview", "Company Overview"], ["reps", "Sales Rep Reports"], ["manager", "Manager Report"], ["bonus", "Bonus Breakdown"], ["funds", "Funds & Expenses"], ["products", "Product Performance"], ["audit", "Audit Trail"]] as const).map(([key, label]) => (
+        {([["overview", "Company Overview"], ["reps", "Sales Rep Reports"], ["manager", "Manager Report"], ...(renderHeadOfSales ? [["headOfSales", "Head of Sales"]] as const : []), ["bonus", "Bonus Breakdown"], ["funds", "Funds & Expenses"], ["products", "Product Performance"], ["audit", "Audit Trail"]] as const).map(([key, label]) => (
           <button key={key} type="button" role="tab" aria-selected={tab === key} onClick={() => setTab(key)}
             className={`!min-h-0 whitespace-nowrap rounded-lg px-5 py-2.5 text-[13px] font-semibold ${tab === key ? "bg-[#1F6FEB] text-white shadow-sm" : "bg-white text-gray-600 hover:text-gray-900 dark:bg-slate-900 dark:text-slate-300"}`}>
             {label}
@@ -493,6 +505,8 @@ export default function OwnerWeeklyApprovalPage({
           )}
 
           {tab === "funds" && (renderFunds ? renderFunds() : null)}
+
+          {tab === "headOfSales" && (renderHeadOfSales ? renderHeadOfSales() : null)}
 
           {tab === "audit" && <Panel className="p-2"><AuditTable entries={audit} repName={repNameById} /></Panel>}
         </div>
