@@ -69,6 +69,9 @@ export type WeeklyReportOrderRow = {
   status: string;
   placedThisWeek: boolean;
   bonus: number;
+  /** The upsell and cross-sell parts of `bonus` (0 if none). */
+  upsellBonus?: number;
+  crossSellBonus?: number;
   bonusManuallyAdjusted: boolean;
 };
 
@@ -89,6 +92,8 @@ export type WeeklyReportSnapshot = {
     upsellBonus: number;
     crossSellBonus: number;
     fines: number;
+    /** Bonus corrections from answered bonus queries, paid in this week. */
+    adjustments?: number;
     finalBonus: number;
     upsellOrders: number;
     crossSellOrders: number;
@@ -106,6 +111,7 @@ export type WeeklyReportSnapshot = {
     upsell: { orders: number; delivered: number; deliveryRate: number; bonus: number };
   };
   fines: WeeklyReportFine[];
+  adjustments?: WeeklyReportFine[];
   orders: WeeklyReportOrderRow[];
   /** Every order the report covers. The server checks these for edits made after submit. */
   orderIds: string[];
@@ -167,6 +173,8 @@ export function buildRepWeeklySnapshot(input: {
   orders: WeeklyReportOrderInput[];
   bonus: WeeklyReportBonusInput;
   fines: WeeklyReportFine[];
+  /** Corrections paid in this week (answered bonus queries). Added on top. */
+  adjustments?: WeeklyReportFine[];
   previous: WeeklyReportSnapshot["previous"];
   now?: Date;
 }): WeeklyReportSnapshot {
@@ -232,6 +240,8 @@ export function buildRepWeeklySnapshot(input: {
       status: order.status,
       placedThisWeek: inWeek(order.createdKey, weekStart, weekEnd),
       bonus: deliveredThisWeek ? Math.round(bonusFor(order.id)) : 0,
+      upsellBonus: deliveredThisWeek ? Math.round(input.bonus.perOrder[order.id]?.upsell ?? 0) : 0,
+      crossSellBonus: deliveredThisWeek ? Math.round(input.bonus.perOrder[order.id]?.crossSell ?? 0) : 0,
       bonusManuallyAdjusted: order.bonusManuallyAdjusted
     });
   }
@@ -242,6 +252,8 @@ export function buildRepWeeklySnapshot(input: {
   const upsellBonus = Math.round(input.bonus.upsell);
   const crossSellBonus = Math.round(input.bonus.crossSell);
   const earned = baseBonus + upsellBonus + crossSellBonus;
+  const adjustments = input.adjustments ?? [];
+  const adjustmentTotal = Math.round(adjustments.reduce((sum, item) => sum + Math.max(0, item.amount), 0));
 
   return {
     version: WEEKLY_REPORT_SNAPSHOT_VERSION,
@@ -259,7 +271,8 @@ export function buildRepWeeklySnapshot(input: {
       upsellBonus,
       crossSellBonus,
       fines: Math.round(fineTotal),
-      finalBonus: Math.max(0, earned - Math.round(fineTotal)),
+      adjustments: adjustmentTotal,
+      finalBonus: Math.max(0, earned + adjustmentTotal - Math.round(fineTotal)),
       upsellOrders: upsellPlaced.length,
       crossSellOrders: crossPlaced.length,
       manuallyAdjustedOrders: orders.filter((order) => order.bonusManuallyAdjusted && order.bonus > 0).length,
@@ -271,6 +284,7 @@ export function buildRepWeeklySnapshot(input: {
     daily,
     expansion,
     fines: input.fines,
+    adjustments,
     orders,
     orderIds: orders.map((order) => order.id)
   };
@@ -287,6 +301,7 @@ export const SNAPSHOT_CHECKS: Array<{ key: keyof WeeklyReportSnapshot["totals"];
   { key: "upsellBonus", label: "Upsell bonus", money: true },
   { key: "baseBonus", label: "Base bonus", money: true },
   { key: "fines", label: "Fines / deductions", money: true },
+  { key: "adjustments", label: "Bonus corrections", money: true },
   { key: "finalBonus", label: "Final bonus payable", money: true }
 ];
 
@@ -368,7 +383,10 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   company_resubmitted: "Resubmitted to owner",
   owner_approved_locked: "Approved & locked by owner",
   owner_returned: "Returned to manager",
-  owner_reopened: "Week reopened by owner"
+  owner_reopened: "Week reopened by owner",
+  bonus_check_accurate: "Checked bonus: accurate",
+  bonus_query_opened: "Bonus query sent to manager",
+  bonus_query_resolved: "Bonus query answered"
 };
 
 // ── Company week ────────────────────────────────────────────────────────────
@@ -465,4 +483,112 @@ export function buildCompanySnapshot(weekStart: string, weekEnd: string, reps: W
       finalBonus: snap.totals.finalBonus
     }))
   };
+}
+
+// ── Check My Bonus (Bright, 1 Oct 2026) ─────────────────────────────────────
+// A rep who feels underpaid asks the system first. Anything it finds goes to
+// the manager; if it finds nothing, the rep sees why and can still send it
+// with a reason. "issue" = something a manager must look at; "info" = an
+// explanation (carried over, not delivered yet, fines); "ok" = checked fine.
+
+export type BonusCheckFinding = { level: "issue" | "info" | "ok"; text: string; orderId?: string };
+
+/** What the app knows about an order the rep named. */
+export type NamedOrderLookup = {
+  ref: string;
+  found: boolean;
+  /** Assigned to this rep. */
+  mine: boolean;
+  status: string;
+  createdKey: string | null;
+  deliveredKey: string | null;
+};
+
+const naira = (value: number) => `\u20a6${Math.round(value).toLocaleString("en-NG")}`;
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sept", "Oct", "Nov", "Dec"];
+/** "2026-09-20" -> "20 Sept" (the year is obvious from the week). */
+const dayLabel = (key: string | null | undefined) => {
+  if (!key) return "";
+  const [, month, day] = key.split("-").map(Number);
+  return `${day} ${MONTH_NAMES[(month || 1) - 1]}`;
+};
+
+export function runBonusCheck(input: {
+  weekStart: string;
+  weekEnd: string;
+  live: WeeklyReportSnapshot;
+  /** What the rep submitted, if they have. */
+  frozen: WeeklyReportSnapshot | null;
+  named: NamedOrderLookup[];
+}): { verdict: "accurate" | "issues"; findings: BonusCheckFinding[] } {
+  const { weekStart, weekEnd, live, frozen } = input;
+  const findings: BonusCheckFinding[] = [];
+  const inWeek = (key: string | null) => !!key && key >= weekStart && key <= weekEnd;
+  const deliveredHere = live.orders.filter((order) => order.status === "Delivered" && inWeek(order.deliveredDate));
+
+  // 1. Every delivered order earns something.
+  const unpaid = deliveredHere.filter((order) => order.bonus <= 0);
+  for (const order of unpaid) {
+    findings.push({ level: "issue", orderId: order.id, text: `Order #${order.id} was delivered on ${dayLabel(order.deliveredDate)} but shows no bonus.` });
+  }
+  if (deliveredHere.length > 0 && unpaid.length === 0) {
+    findings.push({ level: "ok", text: `All ${deliveredHere.length} orders delivered this week have a bonus.` });
+  }
+
+  // 2. Upsells and add-ons earned their part.
+  const upsells = deliveredHere.filter((order) => order.type === "Upsell" || order.type === "Upsell + Cross-Sell");
+  const crossSells = deliveredHere.filter((order) => order.type === "Cross-Sell" || order.type === "Upsell + Cross-Sell");
+  const upsellUnpaid = upsells.filter((order) => (order.upsellBonus ?? 0) <= 0);
+  const crossUnpaid = crossSells.filter((order) => (order.crossSellBonus ?? 0) <= 0);
+  for (const order of upsellUnpaid) findings.push({ level: "issue", orderId: order.id, text: `The upsell on order #${order.id} earned no upsell bonus.` });
+  for (const order of crossUnpaid) findings.push({ level: "issue", orderId: order.id, text: `The add-on on order #${order.id} earned no cross-sell bonus.` });
+  if (upsells.length > 0 && upsellUnpaid.length === 0) findings.push({ level: "ok", text: `All ${upsells.length} upsells were paid (${naira(live.totals.upsellBonus)}).` });
+  if (crossSells.length > 0 && crossUnpaid.length === 0) findings.push({ level: "ok", text: `All ${crossSells.length} cross-sells were paid (${naira(live.totals.crossSellBonus)}).` });
+
+  // 3. Bonuses set by hand need a manager's eye.
+  for (const order of deliveredHere.filter((item) => item.bonusManuallyAdjusted)) {
+    findings.push({ level: "issue", orderId: order.id, text: `The bonus on order #${order.id} was set by hand (${naira(order.bonus)}). Your manager should confirm it.` });
+  }
+
+  // 4. Has the bonus moved since the rep submitted?
+  if (frozen?.totals) {
+    if (live.totals.finalBonus > frozen.totals.finalBonus + 0.5) {
+      findings.push({ level: "issue", text: `Your bonus is now ${naira(live.totals.finalBonus)}, but the report you submitted says ${naira(frozen.totals.finalBonus)}.` });
+    } else if (live.totals.finalBonus < frozen.totals.finalBonus - 0.5) {
+      findings.push({ level: "info", text: `Your bonus went down from ${naira(frozen.totals.finalBonus)} to ${naira(live.totals.finalBonus)} since you submitted, because an order changed.` });
+    } else {
+      findings.push({ level: "ok", text: `Your bonus matches the report you submitted (${naira(frozen.totals.finalBonus)}).` });
+    }
+  }
+
+  // 5. Explain what lowered it.
+  for (const fine of live.fines ?? []) findings.push({ level: "info", text: `A fine of ${naira(fine.amount)} was taken: ${fine.label}.` });
+  if ((live.totals.carryOverOrders ?? 0) > 0) {
+    findings.push({ level: "info", text: `${live.totals.carryOverOrders} order(s) placed in an earlier week were delivered this week and paid here (${naira(live.totals.carryOverBonus ?? 0)}).` });
+  }
+
+  // 6. The orders the rep named.
+  for (const named of input.named) {
+    const ref = named.ref;
+    if (!named.found || !named.mine) {
+      findings.push({ level: "issue", orderId: ref, text: `Order #${ref} is not on your list. It may be assigned to another rep.` });
+      continue;
+    }
+    if (named.status !== "Delivered") {
+      findings.push({ level: "info", orderId: ref, text: `Order #${ref} is "${named.status}", not delivered yet. Its bonus is paid in the week it is delivered.` });
+      continue;
+    }
+    if (!inWeek(named.deliveredKey)) {
+      findings.push({ level: "info", orderId: ref, text: `Order #${ref} was delivered on ${dayLabel(named.deliveredKey)}, so its bonus is paid in that week's report, not this one.` });
+      continue;
+    }
+    const row = live.orders.find((order) => order.id === ref);
+    if (!row || row.bonus <= 0) {
+      if (!unpaid.some((order) => order.id === ref)) findings.push({ level: "issue", orderId: ref, text: `Order #${ref} was delivered this week but shows no bonus.` });
+    } else {
+      findings.push({ level: "ok", orderId: ref, text: `Order #${ref} was delivered on ${dayLabel(row.deliveredDate)} and paid ${naira(row.bonus)}.` });
+    }
+  }
+
+  return { verdict: findings.some((finding) => finding.level === "issue") ? "issues" : "accurate", findings };
 }

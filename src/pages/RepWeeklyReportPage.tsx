@@ -6,8 +6,10 @@ import {
   RepStatusPill, StepBadge, WeekPicker, WorkflowSteps, dailyChartRows, dateTimeText, deltaPct, downloadCsv, longDate, nf,
   pctText, shortDateTime, topProductsWithOthers, type WorkflowStep
 } from "../components/WeeklyReportParts";
-import { CORRECTION_SECTION_LABEL, type WeeklyReportSnapshot } from "./weekly-report-model";
-import type { WeeklyReportCorrection, WeeklyRepReport, WeeklyCompanyReportStatus, WeeklyReportResponseInput } from "../lib/api";
+import { CORRECTION_SECTION_LABEL, type BonusCheckFinding, type WeeklyReportSnapshot } from "./weekly-report-model";
+import type { WeeklyBonusQuery, WeeklyReportCorrection, WeeklyRepReport, WeeklyCompanyReportStatus, WeeklyReportResponseInput } from "../lib/api";
+import { Modal } from "../components/WeeklyReportParts";
+import { CheckCircle2, Info, SearchCheck } from "lucide-react";
 import { currencySymbol } from "../lib/money-privacy";
 
 /**
@@ -21,8 +23,14 @@ import { currencySymbol } from "../lib/money-privacy";
 export default function RepWeeklyReportPage({
   weekStart, weekEnd, onShiftWeek, onPickWeek, canGoNext,
   live, report, companyStatus, corrections, loading, error, canSubmitNow, dueDate, todayKey, submittedLate, productImageByKey,
+  bonusQueries, onRunBonusCheck, onSendBonusQuery,
   onSubmit, onOpenOrder, onBack
 }: {
+  /** This rep's bonus queries (any week). */
+  bonusQueries: WeeklyBonusQuery[];
+  /** Runs the system check for this week. Null while figures are loading. */
+  onRunBonusCheck: (orderRefs: string[]) => { verdict: "accurate" | "issues"; findings: BonusCheckFinding[] } | null;
+  onSendBonusQuery: (body: { orderRefs: string[]; message?: string; check: { verdict: "accurate" | "issues"; findings: BonusCheckFinding[]; checkedFinalBonus?: number }; sendDespiteAccurate?: boolean }) => Promise<{ sent: boolean }>;
   weekStart: string;
   weekEnd: string;
   onShiftWeek: (weeks: number) => void;
@@ -58,6 +66,7 @@ export default function RepWeeklyReportPage({
   const [statusFilter, setStatusFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [menuFor, setMenuFor] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [checkOpen, setCheckOpen] = useState(false);
   const [orderPage, setOrderPage] = useState(0);
   const PAGE_SIZE = 10;
 
@@ -274,7 +283,12 @@ export default function RepWeeklyReportPage({
 
             {/* ── 4 Bonus Breakdown ──────────────────────────────── */}
             <Panel>
-              <NumberedHeader n={4} title="Bonus Breakdown" subtitle="Calculated from your orders, upsells and cross-sells." />
+              <NumberedHeader n={4} title="Bonus Breakdown" subtitle="Calculated from your orders, upsells and cross-sells." right={
+                <button type="button" onClick={() => setCheckOpen(true)} disabled={!live}
+                  className="!min-h-0 mr-5 mt-4 inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-[12px] font-bold text-violet-700 hover:bg-violet-100 disabled:opacity-40 dark:border-violet-500/30 dark:bg-violet-500/15 dark:text-violet-200">
+                  <SearchCheck className="h-4 w-4" /> Check My Bonus
+                </button>
+              } />
               <div className="px-3 pb-4 pt-3">
                 <table className="!min-w-0 w-full text-left text-[12px]">
                   <thead className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-slate-400 [&_th]:[color:inherit]">
@@ -291,6 +305,12 @@ export default function RepWeeklyReportPage({
                       <tr className="border-t border-gray-100 bg-blue-50/50 text-[11px] dark:border-slate-800 dark:bg-blue-500/10 [&>td]:[color:inherit]">
                         <td className="px-3 py-1.5 italic text-blue-800 dark:text-blue-200">of which carried over from earlier weeks ({nf(totals?.carryOverOrders ?? 0)} order{totals?.carryOverOrders === 1 ? "" : "s"} placed before {longDate(weekStart)}, delivered this week)</td>
                         <td className="px-3 py-1.5 text-right italic text-blue-800 dark:text-blue-200">{nf(totals?.carryOverBonus ?? 0)}</td>
+                      </tr>
+                    )}
+                    {(totals?.adjustments ?? 0) > 0 && (
+                      <tr className="border-t border-gray-100 dark:border-slate-800">
+                        <td className="px-3 py-2">Bonus corrections{snap?.adjustments?.length ? <span className="block text-[11px] text-gray-500">{snap.adjustments.map((item) => item.label).join("; ")}</span> : null}</td>
+                        <td className="px-3 py-2 text-right text-emerald-700 dark:text-emerald-300">+{nf(totals?.adjustments ?? 0)}</td>
                       </tr>
                     )}
                     <tr className="border-t border-gray-100 dark:border-slate-800">
@@ -368,6 +388,29 @@ export default function RepWeeklyReportPage({
               />
             </div>
           </Panel>
+
+          {bonusQueries.length > 0 && (
+            <Panel className="p-5">
+              <h3 className="m-0 text-[14px] font-bold text-gray-900 dark:text-slate-50">My Bonus Queries</h3>
+              <ul className="m-0 mt-3 list-none space-y-3 p-0">
+                {bonusQueries.slice(0, 6).map((query) => (
+                  <li key={query.id} className="rounded-xl border border-gray-100 p-3 text-[12px] dark:border-slate-800">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-gray-900 dark:text-slate-100">Week of {longDate(query.weekStart)}</span>
+                      <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${query.status === "open" ? "bg-amber-50 text-amber-700" : query.status === "corrected" ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-600"}`}>
+                        {query.status === "open" ? "With manager" : query.status === "corrected" ? "Corrected" : "No change"}
+                      </span>
+                    </div>
+                    {query.orderRefs.length > 0 && <p className="m-0 mt-1 text-gray-500">Orders: {query.orderRefs.map((ref) => `#${ref}`).join(", ")}</p>}
+                    {query.managerResponse && <p className="m-0 mt-1 text-gray-700 dark:text-slate-300">"{query.managerResponse}" — {query.resolvedByName ?? "Manager"}</p>}
+                    {query.status === "corrected" && query.correctionWeekStart && (
+                      <p className="m-0 mt-1 font-semibold text-emerald-700 dark:text-emerald-300">+{nf(query.correctionAmount)} added to your bonus for the week of {longDate(query.correctionWeekStart)}.</p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+          )}
         </div>
       </div>
 
@@ -466,6 +509,17 @@ export default function RepWeeklyReportPage({
         </div>
       </Panel>
 
+      {checkOpen && (
+        <BonusCheckModal
+          weekStart={weekStart}
+          weekEnd={weekEnd}
+          onClose={() => setCheckOpen(false)}
+          onRun={onRunBonusCheck}
+          onSend={onSendBonusQuery}
+          finalBonus={totals?.finalBonus ?? 0}
+        />
+      )}
+
       {menuFor && createPortal(
         <div className="fixed inset-0 z-[70]" onClick={() => setMenuFor(null)}>
           <div
@@ -486,5 +540,124 @@ export default function RepWeeklyReportPage({
         document.body
       )}
     </div>
+  );
+}
+
+/**
+ * Check My Bonus (Bright, 1 Oct 2026): the system checks first. Problems go
+ * to the manager automatically; if it finds none, the rep sees why and can
+ * still send it with a reason.
+ */
+function BonusCheckModal({ weekStart, weekEnd, finalBonus, onClose, onRun, onSend }: {
+  weekStart: string;
+  weekEnd: string;
+  finalBonus: number;
+  onClose: () => void;
+  onRun: (orderRefs: string[]) => { verdict: "accurate" | "issues"; findings: BonusCheckFinding[] } | null;
+  onSend: (body: { orderRefs: string[]; message?: string; check: { verdict: "accurate" | "issues"; findings: BonusCheckFinding[]; checkedFinalBonus?: number }; sendDespiteAccurate?: boolean }) => Promise<{ sent: boolean }>;
+}) {
+  const [refsText, setRefsText] = useState("");
+  const [note, setNote] = useState("");
+  const [result, setResult] = useState<{ verdict: "accurate" | "issues"; findings: BonusCheckFinding[] } | null>(null);
+  const [sent, setSent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [disagree, setDisagree] = useState("");
+  const refs = refsText.split(/[\s,]+/).map((ref) => ref.replace(/^#/, "").trim()).filter(Boolean).slice(0, 20);
+  const field = "w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-[13px] text-gray-800 outline-none focus:border-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
+
+  const run = async () => {
+    setError("");
+    const check = onRun(refs);
+    if (!check) { setError("Your figures are still loading. Try again in a moment."); return; }
+    setResult(check);
+    setBusy(true);
+    try {
+      // Problems go straight to the manager; an "accurate" result is only recorded.
+      const response = await onSend({ orderRefs: refs, message: note.trim() || undefined, check: { ...check, checkedFinalBonus: finalBonus } });
+      setSent(response.sent);
+    } catch (err: any) {
+      setError(err?.message ?? "Could not record the check.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendAnyway = async () => {
+    if (!result) return;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await onSend({ orderRefs: refs, message: disagree.trim(), check: { ...result, checkedFinalBonus: finalBonus }, sendDespiteAccurate: true });
+      setSent(response.sent);
+    } catch (err: any) {
+      setError(err?.message ?? "Could not send it.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const icon = (level: BonusCheckFinding["level"]) => level === "issue"
+    ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />
+    : level === "ok" ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> : <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />;
+
+  return (
+    <Modal title="Check My Bonus" subtitle={`Week ${longDate(weekStart)} – ${longDate(weekEnd)}. The system checks your bonus first.`} onClose={onClose}>
+      <div className="space-y-4 px-6 py-5">
+        {!result ? (
+          <>
+            <label className="block">
+              <span className="mb-1.5 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Which orders do you think were underpaid? (optional)</span>
+              <input className={field} value={refsText} onChange={(event) => setRefsText(event.target.value)} placeholder="e.g. 4307, 4312 — leave empty to check the whole week" />
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-[12px] font-bold text-gray-700 dark:text-slate-300">What do you think is wrong? (optional)</span>
+              <textarea className={`${field} resize-none`} rows={3} maxLength={1000} value={note} onChange={(event) => setNote(event.target.value)} placeholder="e.g. I sold an Edge Brusher add-on on #4307 but got no cross-sell bonus" />
+            </label>
+            {error && <p className="m-0 rounded-lg bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700">{error}</p>}
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={onClose} className="!min-h-0 rounded-xl border border-gray-200 px-4 py-2 text-[13px] font-semibold text-gray-700 dark:border-slate-700 dark:text-slate-200">Cancel</button>
+              <button type="button" onClick={run} disabled={busy} className="!min-h-0 inline-flex items-center gap-1.5 rounded-xl bg-violet-600 px-4 py-2 text-[13px] font-bold text-white hover:bg-violet-700 disabled:opacity-50"><SearchCheck className="h-4 w-4" /> Run the check</button>
+            </div>
+          </>
+        ) : (
+          <>
+            {result.verdict === "accurate" ? (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 dark:border-emerald-500/30 dark:bg-emerald-500/10">
+                <p className="m-0 flex items-center gap-2 text-[14px] font-bold text-emerald-800 dark:text-emerald-200"><CheckCircle2 className="h-5 w-5" /> Accurate — nothing is missing</p>
+                <p className="m-0 mt-1 text-[12px] text-emerald-800 dark:text-emerald-200">Your bonus of ₦{nf(finalBonus)} matches your orders. Here is what was checked:</p>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-500/30 dark:bg-amber-500/10">
+                <p className="m-0 flex items-center gap-2 text-[14px] font-bold text-amber-800 dark:text-amber-200"><AlertTriangle className="h-5 w-5" /> The check found {result.findings.filter((f) => f.level === "issue").length} problem{result.findings.filter((f) => f.level === "issue").length === 1 ? "" : "s"}</p>
+                <p className="m-0 mt-1 text-[12px] text-amber-800 dark:text-amber-200">{busy ? "Sending it to your manager…" : sent ? "Sent to your manager to review and correct. You'll get a notification when they answer." : "It could not be sent yet."}</p>
+              </div>
+            )}
+            <ul className="m-0 max-h-[40vh] list-none space-y-2 overflow-y-auto p-0">
+              {result.findings.map((finding, index) => (
+                <li key={index} className="flex items-start gap-2 text-[13px] text-gray-800 dark:text-slate-200">{icon(finding.level)}<span>{finding.text}</span></li>
+              ))}
+              {result.findings.length === 0 && <li className="text-[13px] text-gray-500">No delivered orders this week, so there is nothing to pay yet.</li>}
+            </ul>
+            {result.verdict === "accurate" && !sent && (
+              <div className="space-y-2 border-t border-gray-100 pt-4 dark:border-slate-800">
+                <p className="m-0 text-[12px] font-bold text-gray-700 dark:text-slate-300">Still think something is wrong?</p>
+                <textarea className={`${field} resize-none`} rows={3} maxLength={1000} value={disagree} onChange={(event) => setDisagree(event.target.value)} placeholder="Explain what the system missed, e.g. order #4307 is mine but shows under another rep" />
+                <div className="flex justify-end">
+                  <button type="button" disabled={busy || disagree.trim().length < 5} onClick={sendAnyway} className="!min-h-0 rounded-xl border border-amber-300 px-4 py-2 text-[13px] font-bold text-amber-700 hover:bg-amber-50 disabled:opacity-40 dark:text-amber-200">Send to my manager anyway</button>
+                </div>
+              </div>
+            )}
+            {result.verdict === "accurate" && sent && (
+              <p className="m-0 rounded-lg bg-blue-50 px-3 py-2 text-[12px] font-semibold text-blue-800">Sent to your manager, marked "system says accurate". You'll get a notification when they answer.</p>
+            )}
+            {error && <p className="m-0 rounded-lg bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700">{error}</p>}
+            <div className="flex justify-end">
+              <button type="button" onClick={onClose} className="!min-h-0 rounded-xl bg-gray-900 px-4 py-2 text-[13px] font-bold text-white dark:bg-slate-700">Done</button>
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
   );
 }

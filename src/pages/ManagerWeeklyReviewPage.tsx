@@ -13,7 +13,7 @@ import {
   CORRECTION_SECTION_LABEL, buildCompanySnapshot, type ManagerBonusPreview, type SnapshotDifference, type WeeklyReportSnapshot
 } from "./weekly-report-model";
 import type {
-  WeeklyCompanyReport, WeeklyRepReport, WeeklyReportAuditEntry, WeeklyReportCorrection, WeeklyReportResponseInput
+  WeeklyBonusQuery, WeeklyCompanyReport, WeeklyRepReport, WeeklyReportAuditEntry, WeeklyReportCorrection, WeeklyReportResponseInput
 } from "../lib/api";
 import { currencySymbol } from "../lib/money-privacy";
 
@@ -55,8 +55,12 @@ const isSubmittedish = (status?: string) => status === "submitted" || isApproved
 export default function ManagerWeeklyReviewPage({
   mode, weekStart, weekEnd, onShiftWeek, onPickWeek, canGoNext, loading, error,
   rows, company, corrections, audit, managerBonus, canAct, readOnlyReason, dueDate, onOpenHistory,
+  bonusQueries = [], canResolveQueries = false, onResolveBonusQuery,
   onApprove, onReturn, onFlag, onSubmitToOwner, onBack, onEditManagerBonus
 }: {
+  bonusQueries?: WeeklyBonusQuery[];
+  canResolveQueries?: boolean;
+  onResolveBonusQuery?: (id: string, body: { outcome: "corrected" | "no_change"; response: string; amount?: number }) => Promise<void>;
   /** The Tuesday the reps' reports are due. */
   dueDate?: string;
   onOpenHistory?: () => void;
@@ -83,7 +87,9 @@ export default function ManagerWeeklyReviewPage({
   onEditManagerBonus?: () => void;
 }) {
   const sym = currencySymbol();
-  const [tab, setTab] = useState<"reps" | "company" | "bonus" | "orders" | "audit">("reps");
+  const [tab, setTab] = useState<"reps" | "company" | "bonus" | "orders" | "queries" | "audit">("reps");
+  const [answering, setAnswering] = useState<WeeklyBonusQuery | null>(null);
+  const openQueries = bonusQueries.filter((query) => query.status === "open").length;
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [returning, setReturning] = useState<string | null>(null);
   const [flagging, setFlagging] = useState<string | null>(null);
@@ -279,10 +285,11 @@ export default function ManagerWeeklyReviewPage({
             <Panel className="overflow-hidden">
               {/* ── Tabs ─────────────────────────────────────────── */}
               <div className="flex gap-1 overflow-x-auto border-b border-gray-100 px-3 pt-3 dark:border-slate-800" role="tablist">
-                {([["reps", "Sales Rep Reports"], ["company", "Company Breakdown"], ["bonus", "Bonus Breakdown"], ["orders", "Order Details"], ["audit", "Audit Trail"]] as const).map(([key, label]) => (
+                {([["reps", "Sales Rep Reports"], ["company", "Company Breakdown"], ["bonus", "Bonus Breakdown"], ["orders", "Order Details"], ["queries", "Bonus Queries"], ["audit", "Audit Trail"]] as const).map(([key, label]) => (
                   <button key={key} type="button" role="tab" aria-selected={tab === key} onClick={() => setTab(key)}
-                    className={`!min-h-0 whitespace-nowrap rounded-t-lg px-5 py-2.5 text-[13px] font-semibold ${tab === key ? "bg-[#1F6FEB] text-white" : "bg-gray-50 text-gray-600 hover:text-gray-900 dark:bg-slate-800 dark:text-slate-300"}`}>
+                    className={`!min-h-0 inline-flex items-center gap-1.5 whitespace-nowrap rounded-t-lg px-5 py-2.5 text-[13px] font-semibold ${tab === key ? "bg-[#1F6FEB] text-white" : "bg-gray-50 text-gray-600 hover:text-gray-900 dark:bg-slate-800 dark:text-slate-300"}`}>
                     {label}
+                    {key === "queries" && openQueries > 0 && <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[11px] font-bold text-white">{openQueries}</span>}
                   </button>
                 ))}
               </div>
@@ -397,6 +404,45 @@ export default function ManagerWeeklyReviewPage({
                 </div>
               )}
 
+              {tab === "queries" && (
+                <div className="space-y-3 p-4">
+                  <p className="m-0 text-[12px] text-gray-500 dark:text-slate-400">Reps who feel underpaid run "Check My Bonus". Anything the system finds, or anything a rep still disputes, lands here. A correction is paid with the week that is running now, never written into a locked week.</p>
+                  {bonusQueries.length === 0 && <p className="m-0 rounded-xl bg-gray-50 px-4 py-6 text-center text-[13px] text-gray-500 dark:bg-slate-800">No bonus queries.</p>}
+                  {bonusQueries.map((query) => {
+                    const issues = (query.checkResult?.findings ?? []).filter((finding) => finding.level === "issue");
+                    return (
+                      <div key={query.id} className="rounded-xl border border-gray-200 p-4 dark:border-slate-700">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="flex items-center gap-2 font-semibold text-gray-900 dark:text-slate-100"><Avatar name={repNameById(query.repId)} size={28} />{repNameById(query.repId)} <span className="text-[12px] font-normal text-gray-500">· week of {longDate(query.weekStart)} · {shortDateTime(query.createdAt)}</span></span>
+                          <span className="flex items-center gap-2">
+                            <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${query.sentDespiteAccurate ? "bg-blue-50 text-blue-700" : "bg-amber-50 text-amber-700"}`}>{query.sentDespiteAccurate ? "System says accurate · rep disagrees" : `System found ${issues.length} problem${issues.length === 1 ? "" : "s"}`}</span>
+                            <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${query.status === "open" ? "bg-rose-50 text-rose-700" : query.status === "corrected" ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-600"}`}>{query.status === "open" ? "Open" : query.status === "corrected" ? `Corrected +${sym}${nf(query.correctionAmount)}` : "No change"}</span>
+                          </span>
+                        </div>
+                        {query.orderRefs.length > 0 && <p className="m-0 mt-2 text-[12px] text-gray-600 dark:text-slate-300">Orders named: {query.orderRefs.map((ref) => `#${ref}`).join(", ")}</p>}
+                        {query.repMessage && <p className="m-0 mt-1 text-[13px] text-gray-800 dark:text-slate-200">"{query.repMessage}"</p>}
+                        {(query.checkResult?.findings ?? []).filter((finding) => finding.level !== "ok").length > 0 && (
+                          <ul className="m-0 mt-2 list-none space-y-1 p-0">
+                            {(query.checkResult?.findings ?? []).filter((finding) => finding.level !== "ok").map((finding, index) => (
+                              <li key={index} className="flex items-start gap-1.5 text-[12px] text-gray-700 dark:text-slate-300">
+                                {finding.level === "issue" ? <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-600" /> : <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />}
+                                {finding.text}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {query.managerResponse && <p className="m-0 mt-2 rounded-lg bg-gray-50 px-3 py-2 text-[12px] text-gray-700 dark:bg-slate-800 dark:text-slate-200">Answer from {query.resolvedByName ?? "manager"}: "{query.managerResponse}"{query.correctionWeekStart ? ` · paid with the week of ${longDate(query.correctionWeekStart)}` : ""}</p>}
+                        {query.status === "open" && canResolveQueries && onResolveBonusQuery && (
+                          <div className="mt-3 flex justify-end">
+                            <button type="button" onClick={() => setAnswering(query)} className="!min-h-0 rounded-lg bg-[#1F6FEB] px-4 py-2 text-[12px] font-bold text-white hover:bg-blue-700">Answer</button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
               {tab === "audit" && <div className="p-2"><AuditTable entries={audit} repName={repNameById} /></div>}
             </Panel>
           )}
@@ -481,6 +527,12 @@ export default function ManagerWeeklyReviewPage({
           onReturn={() => { setReturning(reviewRow.repId); setReviewing(null); }}
           onFlag={() => { setFlagging(reviewRow.repId); setReviewing(null); }}
         />
+      )}
+
+      {answering && onResolveBonusQuery && (
+        <ResolveQueryModal query={answering} repName={repNameById(answering.repId)} sym={sym}
+          onCancel={() => setAnswering(null)}
+          onSubmit={async (body) => { await onResolveBonusQuery(answering.id, body); setAnswering(null); }} />
       )}
 
       {returning && (
@@ -576,7 +628,7 @@ export function RepBonusTable({ snaps, sym }: { snaps: WeeklyReportSnapshot[]; s
       <table className="w-full !min-w-[640px] text-left text-[12px]">
         <thead className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-slate-400 [&_th]:[color:inherit]">
           <tr className="bg-gray-50 dark:bg-slate-800/60 [&>th]:bg-transparent [&>th]:[color:inherit]">
-            {["Sales Rep", "Delivered (bonus)", `Base (${sym})`, `Cross-Sell (${sym})`, `Upsell (${sym})`, `Fines (${sym})`, `Final (${sym})`].map((h) => <th key={h} className="px-3 py-2.5 font-bold">{h}</th>)}
+            {["Sales Rep", "Delivered (bonus)", `Base (${sym})`, `Cross-Sell (${sym})`, `Upsell (${sym})`, `Corrections (${sym})`, `Fines (${sym})`, `Final (${sym})`].map((h) => <th key={h} className="px-3 py-2.5 font-bold">{h}</th>)}
           </tr>
         </thead>
         <tbody>
@@ -587,6 +639,7 @@ export function RepBonusTable({ snaps, sym }: { snaps: WeeklyReportSnapshot[]; s
               <td className="px-3 py-2.5">{nf(snap.totals.baseBonus)}</td>
               <td className="px-3 py-2.5">{nf(snap.totals.crossSellBonus)}</td>
               <td className="px-3 py-2.5">{nf(snap.totals.upsellBonus)}</td>
+              <td className="px-3 py-2.5">{(snap.totals.adjustments ?? 0) > 0 ? `+${nf(snap.totals.adjustments ?? 0)}` : "0"}</td>
               <td className="px-3 py-2.5">{snap.totals.fines > 0 ? `-${nf(snap.totals.fines)}` : "0"}</td>
               <td className="px-3 py-2.5 font-bold">{nf(snap.totals.finalBonus)}</td>
             </tr>
@@ -597,6 +650,7 @@ export function RepBonusTable({ snaps, sym }: { snaps: WeeklyReportSnapshot[]; s
             <td className="px-3 py-2.5">{nf(sum((snap) => snap.totals.baseBonus))}</td>
             <td className="px-3 py-2.5">{nf(sum((snap) => snap.totals.crossSellBonus))}</td>
             <td className="px-3 py-2.5">{nf(sum((snap) => snap.totals.upsellBonus))}</td>
+            <td className="px-3 py-2.5">{nf(sum((snap) => snap.totals.adjustments ?? 0))}</td>
             <td className="px-3 py-2.5">{nf(sum((snap) => snap.totals.fines))}</td>
             <td className="px-3 py-2.5">{nf(sum((snap) => snap.totals.finalBonus))}</td>
           </tr>
@@ -753,6 +807,59 @@ export function RepReviewModal({ row, weekStart, weekEnd, sym, canAct, canFlag, 
             )}
           </div>
         )}
+      </div>
+    </Modal>
+  );
+}
+
+function ResolveQueryModal({ query, repName, sym, onCancel, onSubmit }: {
+  query: WeeklyBonusQuery;
+  repName: string;
+  sym: string;
+  onCancel: () => void;
+  onSubmit: (body: { outcome: "corrected" | "no_change"; response: string; amount?: number }) => Promise<void>;
+}) {
+  const [outcome, setOutcome] = useState<"corrected" | "no_change">("corrected");
+  const [amount, setAmount] = useState("");
+  const [response, setResponse] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const value = Number(amount.replace(/[^0-9.]/g, ""));
+  const ready = response.trim().length >= 3 && (outcome === "no_change" || value > 0);
+  const field = "w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-[13px] text-gray-800 outline-none focus:border-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
+  return (
+    <Modal title={`Answer ${repName}'s bonus query`} subtitle={`Week of ${longDate(query.weekStart)}. The rep is notified of your answer.`} onClose={onCancel}>
+      <div className="space-y-4 px-6 py-5">
+        <div className="grid grid-cols-2 gap-2">
+          {([["corrected", "Add a correction"], ["no_change", "No change needed"]] as const).map(([key, label]) => (
+            <button key={key} type="button" onClick={() => setOutcome(key)}
+              className={`!min-h-0 rounded-xl border px-3 py-2.5 text-[13px] font-bold ${outcome === key ? "border-[#1F6FEB] bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-200" : "border-gray-200 text-gray-600 dark:border-slate-700 dark:text-slate-300"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        {outcome === "corrected" && (
+          <label className="block">
+            <span className="mb-1.5 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Amount to add ({sym})</span>
+            <input className={field} inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="e.g. 745" />
+            <span className="mt-1 block text-[11px] text-gray-500">Paid with the week that is running now and shown on that week's report. The week asked about is not changed.</span>
+          </label>
+        )}
+        <label className="block">
+          <span className="mb-1.5 block text-[12px] font-bold text-gray-700 dark:text-slate-300">What you found</span>
+          <textarea className={`${field} resize-none`} rows={3} maxLength={1000} value={response} onChange={(event) => setResponse(event.target.value)}
+            placeholder={outcome === "corrected" ? "e.g. Cross-sell on #4307 was missed; adding the ₦745" : "e.g. #4307 was delivered on 29 Sept, so it is paid in next week's report"} />
+        </label>
+        {error && <p className="m-0 rounded-lg bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onCancel} className="!min-h-0 rounded-xl border border-gray-200 px-4 py-2 text-[13px] font-semibold text-gray-700 dark:border-slate-700 dark:text-slate-200">Cancel</button>
+          <button type="button" disabled={!ready || saving} onClick={async () => {
+            setSaving(true);
+            setError("");
+            try { await onSubmit({ outcome, response: response.trim(), ...(outcome === "corrected" ? { amount: value } : {}) }); }
+            catch (err: any) { setError(err?.message ?? "Could not save."); setSaving(false); }
+          }} className="!min-h-0 rounded-xl bg-[#1F6FEB] px-4 py-2 text-[13px] font-bold text-white disabled:opacity-40">{saving ? "Saving…" : "Send answer"}</button>
+        </div>
       </div>
     </Modal>
   );

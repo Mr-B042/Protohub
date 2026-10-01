@@ -246,7 +246,7 @@ import OwnerWeeklyApprovalPage, { type WeeklyFinancialSummary } from "./pages/Ow
 import { CompanyReportHistoryPage, MyReportsHistoryPage, WeeklyAuditLogPage } from "./pages/WeeklyReportHistoryPages";
 import {
   buildCompanySnapshot, buildRepWeeklySnapshot, compareSnapshots, firstSubmittedAt, isLateSubmission,
-  reportDueDate, reportOpensOn, type ManagerBonusPreview, type WeeklyReportSnapshot
+  reportDueDate, reportOpensOn, runBonusCheck, type ManagerBonusPreview, type NamedOrderLookup, type WeeklyReportSnapshot
 } from "./pages/weekly-report-model";
 import type { CorrectionDraft } from "./components/WeeklyReportParts";
 import {
@@ -25704,13 +25704,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     rep: { id: string; name: string },
     weekStart: string,
     fines: Array<{ id: string; repId: string; label: string; amount: number; date: string }>,
-    previousFines: Array<{ id: string; repId: string; label: string; amount: number; date: string }>
+    previousFines: Array<{ id: string; repId: string; label: string; amount: number; date: string }>,
+    adjustments: Array<{ id: string; repId: string; label: string; amount: number }> = [],
+    previousAdjustments: Array<{ id: string; repId: string; label: string; amount: number }> = []
   ): WeeklyReportSnapshot | null => {
     if (!weeklyBonusMaps || weeklyBonusMaps.weekStart !== weekStart) return null;
     const settlementByOrderId = { ...newEngineBonusSettlementByOrderId, ...weeklyBonusMaps.settlement };
     const repOrders = trackedOrders.filter((order) => order.assignedRepId === rep.id);
     const inRange = (key: string | undefined, start: string, end: string) => !!key && key >= start && key <= end;
-    const one = (start: string, weekFines: typeof fines, previous: WeeklyReportSnapshot["previous"]) => {
+    const one = (start: string, weekFines: typeof fines, weekAdjustments: typeof adjustments, previous: WeeklyReportSnapshot["previous"]) => {
       const end = windowShiftDay(start, 6);
       const placed = repOrders.filter((order) => !order.reviewHold && inRange(orderCreatedKey(order), start, end));
       const delivered = repOrders.filter((order) => (order.status ?? "New") === "Delivered" && inRange(orderDeliveredKey(order), start, end));
@@ -25744,17 +25746,32 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         })),
         bonus: { base: row?.base ?? 0, upsell: row?.upsell ?? 0, crossSell: row?.crossSell ?? 0, total: row?.total ?? 0, perOrder },
         fines: weekFines.filter((fine) => fine.repId === rep.id).map((fine) => ({ id: fine.id, label: fine.label, amount: fine.amount, date: fine.date })),
+        adjustments: weekAdjustments.filter((item) => item.repId === rep.id).map((item) => ({ id: item.id, label: item.label, amount: item.amount, date: start })),
         previous
       });
     };
-    const before = one(windowShiftDay(weekStart, -7), previousFines, null);
-    return one(weekStart, fines, {
+    const before = one(windowShiftDay(weekStart, -7), previousFines, previousAdjustments, null);
+    return one(weekStart, fines, adjustments, {
       orders: before.totals.orders,
       delivered: before.totals.delivered,
       deliveryRate: before.totals.deliveryRate,
       finalBonus: before.totals.finalBonus
     });
   };
+
+  /** For "Check My Bonus": what the app knows about each order the rep named. */
+  const lookupNamedOrders = (repId: string, refs: string[]): NamedOrderLookup[] => refs.map((raw) => {
+    const ref = raw.replace(/^#/, "").trim();
+    const order = trackedOrders.find((item) => item.id === ref);
+    return {
+      ref,
+      found: !!order,
+      mine: order?.assignedRepId === repId,
+      status: order?.status ?? "",
+      createdKey: order ? orderCreatedKey(order) ?? null : null,
+      deliveredKey: order && (order.status ?? "New") === "Delivered" ? orderDeliveredKey(order) ?? null : null
+    };
+  });
 
   const toManagerBonusPreview = (summary: ManagerBonusSummary | null): ManagerBonusPreview | null => {
     if (!summary?.evaluation) return null;
@@ -28348,6 +28365,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     const nextPage = adminRouteToPage[section];
     if (nextPage) {
+      // A weekly-report alert for a manager links here: open the Manager
+      // Dashboard straight on its Weekly Reports tab.
+      if ((section === "manager-overview" || section === "manager-dashboard") && parts[3] === "weekly-reports") {
+        setWeeklyReportSubPage("Manager Review");
+        setManagerDashboardTab("Weekly Reports");
+      }
       if (section === "orders" && parts[3] !== "new" && (!parts[4] || !["edit", "edit-customer", "reassign", "send-to-agent", "delete", "change-status", "add-cross-sell", "add-free-gift", "manual-bonus"].includes(parts[4])) && modal && ["editOrderItems", "editOrderCustomer", "reassignOrder", "sendToAgent", "deleteOrder", "changeOrderStatus", "addCrossSell", "addFreeGift", "manualBonus"].includes(modal)) {
         setModal(null);
       }
@@ -31480,7 +31503,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
       const me = currentManagedUser;
       const mine = weeklyMine && weeklyMine.weekStart === weeklyReportWeekStart ? weeklyMine : null;
-      const live = me && mine ? buildWeeklyRepSnapshot({ id: me.id, name: me.name }, weeklyReportWeekStart, mine.fines ?? [], mine.previousFines ?? []) : null;
+      const live = me && mine ? buildWeeklyRepSnapshot({ id: me.id, name: me.name }, weeklyReportWeekStart, mine.fines ?? [], mine.previousFines ?? [], mine.adjustments ?? [], mine.previousAdjustments ?? []) : null;
       return (
         <RepWeeklyReportPage
           {...weekProps}
@@ -31492,6 +31515,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           dueDate={dueDate}
           todayKey={todayKey}
           submittedLate={me ? isLateSubmission(weeklyReportWeekStart, firstSubmittedAt(mine?.audit ?? [], me.id)) : false}
+          bonusQueries={mine?.bonusQueries ?? []}
+          onRunBonusCheck={(orderRefs) => (live && me ? runBonusCheck({
+            weekStart: weeklyReportWeekStart,
+            weekEnd: weeklyReportWeekEnd,
+            live,
+            frozen: mine?.report && mine.report.status !== "draft" && mine.report.snapshot ? mine.report.snapshot as WeeklyReportSnapshot : null,
+            named: lookupNamedOrders(me.id, orderRefs)
+          }) : null)}
+          onSendBonusQuery={async (body) => {
+            const response = await weeklyReportsApi.sendBonusQuery({ weekStart: weeklyReportWeekStart, ...body });
+            if (response.sent) showToast("Bonus query sent to your manager.");
+            weeklyRefresh();
+            return response;
+          }}
           productImageByKey={productImageByKey}
           onBack={() => handleNavClick("Sales Rep Workspace")}
           onSubmit={async (note, responses) => {
@@ -31507,7 +31544,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const repIds = Array.from(new Set([...(week?.expectedRepIds ?? []), ...(week?.repReports ?? []).map((report) => report.repId)]));
     const reviewRows: ReviewRepRow[] = week ? repIds.map((repId) => {
       const report = week.repReports.find((item) => item.repId === repId) ?? null;
-      const live = buildWeeklyRepSnapshot({ id: repId, name: repName(repId) }, weeklyReportWeekStart, week.fines ?? [], week.previousFines ?? []);
+      const live = buildWeeklyRepSnapshot({ id: repId, name: repName(repId) }, weeklyReportWeekStart, week.fines ?? [], week.previousFines ?? [], week.adjustments ?? [], week.previousAdjustments ?? []);
       const frozen = report && report.status !== "draft" && report.snapshot ? report.snapshot as WeeklyReportSnapshot : null;
       return {
         repId,
@@ -31577,6 +31614,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           financial={week ? financial : null}
           lowRateThreshold={rateGate ?? 50}
           dueDate={dueDate}
+          bonusQueries={week?.bonusQueries ?? []}
           onBack={() => handleNavClick("Dashboard")}
           onApproveLock={(note) => weeklyRun(() => weeklyReportsApi.approveLock({ weekStart: weeklyReportWeekStart, ...(note ? { note } : {}) }), "Week approved and locked.")}
           onReturnToManager={(draft) => weeklyRun(() => weeklyReportsApi.returnCompany(correctionBody(draft)), "Returned to the manager.")}
@@ -31591,6 +31629,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         {...weekProps}
         mode="review"
         dueDate={dueDate}
+        bonusQueries={week?.bonusQueries ?? []}
+        canResolveQueries={currentRole === "Manager" || currentRole === "Admin" || currentRole === "Owner"}
+        onResolveBonusQuery={(id, body) => weeklyRun(() => weeklyReportsApi.resolveBonusQuery(id, body), body.outcome === "corrected" ? "Correction added. The rep has been notified." : "Answer sent to the rep.")}
         onOpenHistory={() => setWeeklyReportSubPage("Report History")}
         rows={reviewRows}
         company={week?.company ?? null}

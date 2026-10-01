@@ -55,6 +55,7 @@ import upsellBonusRoutes from "./routes/upsell-bonuses.js";
 import repWeeklyTargetRoutes from "./routes/rep-weekly-targets.js";
 import upsellPerformanceRoutes from "./routes/upsell-performance.js";
 import weeklyReportRoutes from "./routes/weekly-reports.js";
+import { runWeeklyReportReminders } from "./lib/weekly-report-data.js";
 import recoveryRepKpiRoutes from "./routes/recovery-rep-kpi.js";
 import recoveryTemplateRoutes from "./routes/recovery-templates.js";
 import personalDeliveryAgentRoutes from "./routes/personal-delivery-agents.js";
@@ -910,6 +911,27 @@ cron.schedule("0 7 * * 0", async () => {
     logger.error("cron: weekly report job crashed", { error: (e as Error).message });
   }
 });
+
+// ── Weekly Report reminders (Bright, 1 Oct 2026) ─────────
+// Reports are due at the end of the Tuesday after the week. Tuesday 09:00
+// Lagos: "due today" to reps who have not submitted. Wednesday 09:00:
+// "overdue" to those reps, and the list to the managers.
+cron.schedule("0 9 * * 2", async () => {
+  try {
+    const result = await runWeeklyReportReminders("due_today");
+    logger.info("cron: weekly report due reminders sent", result);
+  } catch (e) {
+    logger.error("cron: weekly report due reminders crashed", { error: (e as Error).message });
+  }
+}, { timezone: "Africa/Lagos" });
+cron.schedule("0 9 * * 3", async () => {
+  try {
+    const result = await runWeeklyReportReminders("overdue");
+    logger.info("cron: weekly report overdue reminders sent", result);
+  } catch (e) {
+    logger.error("cron: weekly report overdue reminders crashed", { error: (e as Error).message });
+  }
+}, { timezone: "Africa/Lagos" });
 } else {
   logger.info("background jobs disabled by env");
 }
