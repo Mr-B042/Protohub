@@ -1215,7 +1215,12 @@ function buildPublicFormHiddenContext(params: URLSearchParams | null): PublicFor
   };
 
   for (const key of PUBLIC_FORM_CLICK_PARAM_KEYS) {
-    context[hiddenContextParamKey(key)] = safeHiddenContextValue(hiddenParams.get(key), 180);
+    // "fbp" and "_fbp" (and fbc/_fbc) land on the same name. An empty alias
+    // must not wipe out a value already read - it did, and every order lost
+    // Meta's browser id even when the WordPress embed passed it (1 Oct 2026).
+    const name = hiddenContextParamKey(key);
+    const value = safeHiddenContextValue(hiddenParams.get(key), 180);
+    if (value !== null || context[name] === undefined) context[name] = value;
   }
   context.fbp = context.fbp || safeHiddenContextValue(publicCookieValue("_fbp"), 180);
   context.fbc = context.fbc || safeHiddenContextValue(publicCookieValue("_fbc"), 180);
@@ -3369,8 +3374,11 @@ export default function PublicOrderFormPage() {
         : null;
       const hasAfterSubmitOffer = Boolean(created.upsellToken && created.upsellOffer && upsellCompanion && upsellProduct);
       if (!created.reviewHold) {
-        lastMetaPurchaseEventIdRef.current = purchaseEventId;
-        postMetaBrowserEvent("Purchase", purchaseEventId, {
+        // A replay of an order already recorded for this cart gets back the
+        // original Purchase event id, so the Pixel's repeat is counted once.
+        const browserPurchaseEventId = (created.replayed && created.metaPurchaseEventId) || purchaseEventId;
+        lastMetaPurchaseEventIdRef.current = browserPurchaseEventId;
+        postMetaBrowserEvent("Purchase", browserPurchaseEventId, {
           value: Number(created.amount || 0),
           currency: created.currency || chosenPackageCurrency,
           content_name: `${publicProduct?.name ?? "Product"} - ${submittedPackageName}`,

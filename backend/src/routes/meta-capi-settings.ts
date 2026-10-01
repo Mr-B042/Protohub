@@ -29,7 +29,10 @@ const ConfigSchema = z.object({
   utmMedium:       z.string().trim().max(120).optional().default(""),
   utmCampaign:     z.string().trim().max(120).optional().default(""),
   testEventCode:   z.string().trim().max(80).optional().default(""),
-  active:          z.boolean().default(true)
+  active:          z.boolean().default(true),
+  // Delivered-sale event (1 Oct 2026). Left out = keep what is saved.
+  sendDeliveredEvent: z.boolean().optional(),
+  deliveredEventName: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_]{1,49}$/, "Use letters, numbers and _ only.").optional()
 });
 
 function cleanTrackingKey(value: string) {
@@ -55,6 +58,8 @@ function presentConfig(row: Record<string, any>) {
     utmMedium:      row.utm_medium ?? "",
     utmCampaign:    row.utm_campaign ?? "",
     testEventCode:  row.test_event_code ?? "",
+    sendDeliveredEvent: row.send_delivered_event === true,
+    deliveredEventName: row.delivered_event_name ?? "OrderDelivered",
     active:         row.active !== false,
     createdAt:      row.created_at ?? null,
     updatedAt:      row.updated_at ?? null
@@ -122,6 +127,8 @@ router.post("/", async (req, res) => {
   };
   if (accessToken) payload.access_token = accessToken;
   if (tiktokAccessToken) payload.tiktok_access_token = tiktokAccessToken;
+  if (d.sendDeliveredEvent !== undefined) payload.send_delivered_event = d.sendDeliveredEvent;
+  if (d.deliveredEventName !== undefined) payload.delivered_event_name = d.deliveredEventName;
 
   const { data, error } = await supabase
     .from("meta_capi_configs")
@@ -205,6 +212,38 @@ router.post("/test-tiktok", async (req, res) => {
 });
 
 // ── DELETE /api/meta-capi-settings/:id ──────────────────
+// ── Conversions API record (1 Oct 2026) ─────────────────
+// GET /events?orderId=  -> what Meta got for one order
+// GET /events/summary   -> last 7 days, by event and result
+router.get("/events", async (req, res) => {
+  const orderId = String(req.query.orderId ?? "").trim();
+  if (!orderId) { res.status(400).json({ error: "orderId is required." }); return; }
+  const { data, error } = await supabase.from("meta_capi_events")
+    .select("event_name, meta_event_name, event_id, status, http_status, message, test_mode, value, currency, attempts, sent_at")
+    .eq("org_id", req.user!.orgId).eq("order_id", orderId).order("sent_at");
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json((data ?? []).map((row) => ({
+    eventName: row.event_name, metaEventName: row.meta_event_name, eventId: row.event_id, status: row.status,
+    httpStatus: row.http_status, message: row.message, testMode: row.test_mode, value: Number(row.value ?? 0),
+    currency: row.currency, attempts: row.attempts, sentAt: row.sent_at
+  })));
+});
+
+router.get("/events/summary", async (req, res) => {
+  const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const { data, error } = await supabase.from("meta_capi_events")
+    .select("event_name, status, message").eq("org_id", req.user!.orgId).gte("sent_at", since).limit(20000);
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  const counts: Record<string, Record<string, number>> = {};
+  const problems = new Map<string, number>();
+  for (const row of data ?? []) {
+    counts[row.event_name] = counts[row.event_name] ?? {};
+    counts[row.event_name][row.status] = (counts[row.event_name][row.status] ?? 0) + 1;
+    if ((row.status === "rejected" || row.status === "failed") && row.message) problems.set(row.message, (problems.get(row.message) ?? 0) + 1);
+  }
+  res.json({ since, counts, topProblems: Array.from(problems.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([message, count]) => ({ message, count })) });
+});
+
 router.delete("/:id", async (req, res) => {
   const id = String(req.params.id ?? "").trim();
   if (!id) { res.status(400).json({ error: "Missing config id." }); return; }

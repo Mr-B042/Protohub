@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { sendOrderNewCustomerWhatsApp, sendOrderNewRepWhatsApp, sendOrderUpsellWhatsApp } from "./whatsapp.js";
-import { resolveMetaTrackingConfig, sendMetaCapiPurchase } from "./meta-capi.js";
+import { resolveMetaTrackingConfig, recordMetaCapiEvent, sendMetaCapiPurchase } from "./meta-capi.js";
 import { sendTikTokConversion } from "./tiktok-events.js";
 import { assignOrderRep } from "./order-assignment.js";
 import { notifyOutageRecoveredOrder } from "./order-notifications.js";
@@ -401,7 +401,11 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
       packageId: pkg.id,
       packageName: pkg.name,
       quantity: pkg.quantity ?? 1
-    }).catch(() => {});
+    }).then((result) => recordMetaCapiEvent(supabase, {
+      orgId, branchId: (order as any).branch_id ?? (cart as any).branch_id ?? null, orderId: String(order.id),
+      eventName: "Purchase", metaEventName: "Purchase", eventId: `protohub_purchase_${order.id}`, result,
+      testMode: Boolean(metaConfig.testMode || metaConfig.testEventCode), value: amount, currency: cart.currency ?? "NGN"
+    })).catch(() => {});
 
     // TikTok Events API — fire for TikTok-sourced orders (customer left, no pixel).
     // Uses the same config row's TikTok credentials + the captured ttclid.
