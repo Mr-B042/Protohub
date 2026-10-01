@@ -40,7 +40,7 @@ type RedFlag = { severity: "high" | "medium"; title: string; detail: string; rep
  */
 export default function OwnerWeeklyApprovalPage({
   weekStart, weekEnd, onShiftWeek, onPickWeek, canGoNext, loading, error,
-  rows, company, corrections, audit, managerBonus, managerName, financial, lowRateThreshold,
+  rows, company, corrections, audit, managerBonus, managerName, financial, lowRateThreshold, dueDate,
   onApproveLock, onReturnToManager, onReopen, onBack
 }: {
   weekStart: string;
@@ -58,6 +58,8 @@ export default function OwnerWeeklyApprovalPage({
   managerName: string | null;
   financial: WeeklyFinancialSummary | null;
   lowRateThreshold: number;
+  /** The Tuesday the reps' reports are due. */
+  dueDate?: string;
   onApproveLock: (note: string) => Promise<void>;
   onReturnToManager: (draft: CorrectionDraft) => Promise<void>;
   onReopen: (reason: string) => Promise<void>;
@@ -92,7 +94,11 @@ export default function OwnerWeeklyApprovalPage({
   const redFlags = useMemo<RedFlag[]>(() => {
     const flags: RedFlag[] = [];
     const missing = rows.filter((row) => row.expected && (!row.report || row.report.status === "draft"));
-    if (missing.length > 0) flags.push({ severity: "high", title: `${missing.length} report${missing.length === 1 ? "" : "s"} missing`, detail: missing.map((row) => row.repName).join(", ") });
+    const overdue = missing.filter((row) => row.overdue);
+    if (overdue.length > 0) flags.push({ severity: "high", title: `${overdue.length} report${overdue.length === 1 ? "" : "s"} overdue`, detail: `${overdue.map((row) => row.repName).join(", ")}: not submitted by the end of Tuesday${dueDate ? `, ${longDate(dueDate)}` : ""}.` });
+    else if (missing.length > 0) flags.push({ severity: "high", title: `${missing.length} report${missing.length === 1 ? "" : "s"} missing`, detail: missing.map((row) => row.repName).join(", ") });
+    const late = rows.filter((row) => row.submittedLate);
+    if (late.length > 0) flags.push({ severity: "medium", title: `${late.length} report${late.length === 1 ? "" : "s"} submitted late`, detail: `${late.map((row) => row.repName).join(", ")}: after the end of Tuesday${dueDate ? `, ${longDate(dueDate)}` : ""}.` });
     for (const row of expectedRows) {
       if (row.differences.length > 0) {
         flags.push({
@@ -129,7 +135,7 @@ export default function OwnerWeeklyApprovalPage({
       }
     }
     return flags.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "high" ? -1 : 1));
-  }, [rows, expectedRows, corrections, frozenCompany, liveCompany, lowRateThreshold, sym]);
+  }, [rows, expectedRows, corrections, frozenCompany, liveCompany, lowRateThreshold, sym, dueDate]);
 
   const approvedCount = expectedRows.filter((row) => row.report && ["manager_approved", "owner_approved", "locked"].includes(row.report.status)).length;
   const submittedCount = expectedRows.filter((row) => row.report && row.report.status !== "draft").length;
@@ -165,6 +171,8 @@ export default function OwnerWeeklyApprovalPage({
                 <td className="px-2 py-3">
                   <RepStatusPill status={rowStatus} approvedLabel="Approved" />
                   <span className="mt-0.5 block text-[11px] text-gray-500">{row.report?.managerReviewedAt ? shortDateTime(row.report.managerReviewedAt) : row.report?.submittedAt ? shortDateTime(row.report.submittedAt) : "Not submitted"}</span>
+                  {row.submittedLate && <span className="mt-0.5 inline-block rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">Late</span>}
+                  {row.overdue && <span className="mt-0.5 inline-block rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">Overdue</span>}
                 </td>
                 <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.orders ?? 0)}</td>
                 <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.delivered ?? 0)}</td>

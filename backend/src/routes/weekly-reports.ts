@@ -10,6 +10,7 @@ import {
   canOwnerAct,
   canRepSubmit,
   canSubmitToOwner,
+  reportDueDate,
   type CompanyReportStatus,
   type RepReportStatus
 } from "../lib/weekly-report-workflow.js";
@@ -388,8 +389,12 @@ router.post("/mine/submit", requireRole("Sales Rep"), async (req, res) => {
     const branchId = requireBranch(req);
     const orgId = req.user!.orgId;
     const today = lagosDateKey();
-    // A report covers a whole week, so it opens on the week's last day.
-    if (weekEndFromStart(weekStart) > today) throw httpError(400, "You can submit this week's report from Saturday, the last day of the week.");
+    // Reports open on the TUESDAY after the week (Bright, 1 Oct 2026), so the
+    // weekend's orders are attended to before the week is reported. Due by
+    // the end of that Tuesday; later is allowed but recorded as late.
+    const dueDate = reportDueDate(weekStart);
+    if (today < dueDate) throw httpError(400, `This week's report opens on Tuesday ${dueDate}. Submit it that day.`);
+    const late = today > dueDate;
 
     const company = await loadCompanyReport(orgId, branchId, weekStart);
     const report = await ensureRepReport(orgId, branchId, req.user!.id, weekStart);
@@ -445,7 +450,9 @@ router.post("/mine/submit", requireRole("Sales Rep"), async (req, res) => {
         deliveryRate: totals.deliveryRate ?? null,
         finalBonus: totals.finalBonus ?? null,
         note: note ?? null,
-        answered: (openReturns ?? []).length
+        answered: (openReturns ?? []).length,
+        dueDate,
+        late: isResubmit ? false : late
       }
     });
     res.json({ ok: true });

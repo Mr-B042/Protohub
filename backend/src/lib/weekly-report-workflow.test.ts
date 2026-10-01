@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canManagerAct, canOwnerAct, canRepSubmit, canSubmitToOwner } from "./weekly-report-workflow.js";
+import { canManagerAct, canOwnerAct, canRepSubmit, canSubmitToOwner, reportDueDate } from "./weekly-report-workflow.js";
 
 test("a rep submits a draft or a returned report, nothing else", () => {
   assert.equal(canRepSubmit(null, null).ok, true);
@@ -61,4 +61,11 @@ test("the owner acts only on a week the manager submitted, and reopens only a lo
   assert.equal(canOwnerAct("approve_lock", "returned_to_manager").ok, false);
   assert.equal(canOwnerAct("reopen", "locked").ok, true);
   assert.equal(canOwnerAct("reopen", "submitted_to_owner").ok, false);
+});
+
+test("a week's report is due on the Tuesday after it ends", () => {
+  assert.equal(reportDueDate("2026-09-20"), "2026-09-29");
+  assert.equal(reportDueDate("2026-09-27"), "2026-10-06");
+  // Across a month and a year end.
+  assert.equal(reportDueDate("2026-12-27"), "2027-01-05");
 });

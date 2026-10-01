@@ -107,5 +107,12 @@ export function canOwnerAct(action: OwnerAction, company: CompanyReportStatus | 
   return no("The manager has not submitted this week yet.");
 }
 
+/** The Tuesday after the week (week Sun 20 - Sat 26 Sept -> Tue 29 Sept). */
+export const reportDueDate = (weekStart: string) => {
+  const date = new Date(`${weekStart}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + 9);
+  return date.toISOString().slice(0, 10);
+};
+
 export const isCorrectionSection = (value: unknown): value is CorrectionSection =>
   typeof value === "string" && (CORRECTION_SECTIONS as string[]).includes(value);

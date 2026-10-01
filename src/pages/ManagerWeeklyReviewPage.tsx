@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   AlertTriangle, Box, Check, CheckCircle2, ChevronRight, ClipboardList, Download, FileText, Inbox, MessageCircle, MoreVertical,
-  RotateCcw, Search, Send, ShoppingCart, Target, Undo2, Wallet, X, Crown, Flag
+  RotateCcw, Search, Send, ShoppingCart, Target, Undo2, Wallet, X, Crown, Flag, History
 } from "lucide-react";
 import {
   Avatar, AuditTable, ChartLegend, CorrectionForm, CorrectionList, KpiCard, Modal, NoteBox, NumberedHeader, OrderStatusPill,
@@ -30,6 +30,10 @@ export type ReviewRepRow = {
   /** Frozen vs live. Empty = everything still matches. */
   differences: SnapshotDifference[];
   editedAfterSubmit: Array<{ orderId: string; editedAt: string; what: string; by: string | null }>;
+  /** First submitted after the end of the due Tuesday. */
+  submittedLate?: boolean;
+  /** Expected, still not submitted, and the due Tuesday has passed. */
+  overdue?: boolean;
 };
 
 /** The figures a row shows: what was submitted, or today's if not submitted yet. */
@@ -50,9 +54,12 @@ const isSubmittedish = (status?: string) => status === "submitted" || isApproved
  */
 export default function ManagerWeeklyReviewPage({
   mode, weekStart, weekEnd, onShiftWeek, onPickWeek, canGoNext, loading, error,
-  rows, company, corrections, audit, managerBonus, canAct, readOnlyReason,
+  rows, company, corrections, audit, managerBonus, canAct, readOnlyReason, dueDate, onOpenHistory,
   onApprove, onReturn, onFlag, onSubmitToOwner, onBack, onEditManagerBonus
 }: {
+  /** The Tuesday the reps' reports are due. */
+  dueDate?: string;
+  onOpenHistory?: () => void;
   mode: "review" | "submit";
   weekStart: string;
   weekEnd: string;
@@ -125,7 +132,7 @@ export default function ManagerWeeklyReviewPage({
           : "";
 
   const steps: WorkflowStep[] = [
-    { title: "Sales Reps Submit", detail: "Reps submit their weekly reports", state: total > 0 && inCount === total ? "done" : "current", badge: <StepBadge tone="green">{inCount} of {total} submitted</StepBadge> },
+    { title: "Sales Reps Submit", detail: dueDate ? `Due by the end of Tuesday, ${longDate(dueDate)}` : "Reps submit their weekly reports", state: total > 0 && inCount === total ? "done" : "current", badge: <StepBadge tone="green">{inCount} of {total} submitted</StepBadge> },
     { title: "Manager Review", detail: "Review all reports, verify data and request corrections if needed", state: frozenWeek || (allApproved && companyStatus !== "returned_to_manager") ? "done" : "current", badge: frozenWeek ? <StepBadge tone="green">Done</StepBadge> : <StepBadge tone="blue">In Progress</StepBadge> },
     { title: "Submit to Owner", detail: "Send complete weekly report to owner", state: frozenWeek ? "done" : allApproved ? "current" : "pending", badge: <StepBadge tone={frozenWeek ? "green" : "gray"}>{frozenWeek ? "Submitted" : "Pending"}</StepBadge> },
     { title: "Owner Approval", detail: "Final approval and bonus lock", state: companyStatus === "locked" ? "done" : companyStatus === "submitted_to_owner" ? "current" : "pending", badge: <StepBadge tone={companyStatus === "locked" ? "green" : companyStatus === "submitted_to_owner" ? "blue" : "gray"}>{companyStatus === "locked" ? "Approved" : companyStatus === "submitted_to_owner" ? "In Progress" : "Pending"}</StepBadge> }
@@ -235,6 +242,11 @@ export default function ManagerWeeklyReviewPage({
             Change Week
             <input type="date" aria-label="Change week" className="absolute inset-0 cursor-pointer opacity-0" value={weekStart} onChange={(event) => event.target.value && onPickWeek(event.target.value)} />
           </label>
+          {onOpenHistory && (
+            <button type="button" onClick={onOpenHistory} className="!min-h-0 inline-flex h-11 items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 text-[13px] font-semibold text-gray-800 shadow-sm hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+              <History className="h-4 w-4" /> Report History
+            </button>
+          )}
         </div>
       </div>
 
@@ -311,6 +323,8 @@ export default function ManagerWeeklyReviewPage({
                               <td className="px-2 py-3">
                                 <RepStatusPill status={status} approvedLabel="Approved" />
                                 <span className="mt-0.5 block text-[11px] text-gray-500">{row.report?.submittedAt ? shortDateTime(row.report.submittedAt) : "Not submitted"}</span>
+                                {row.submittedLate && <span className="mt-0.5 inline-block rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">Late</span>}
+                                {row.overdue && <span className="mt-0.5 inline-block rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">Overdue</span>}
                                 {row.differences.length > 0 && <span className="mt-0.5 flex items-center gap-1 text-[11px] font-bold text-amber-600"><AlertTriangle className="h-3 w-3" />{row.differences.length} figure{row.differences.length === 1 ? "" : "s"} changed</span>}
                               </td>
                               <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.orders ?? 0)}</td>

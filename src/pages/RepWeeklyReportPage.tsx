@@ -20,7 +20,7 @@ import { currencySymbol } from "../lib/money-privacy";
  */
 export default function RepWeeklyReportPage({
   weekStart, weekEnd, onShiftWeek, onPickWeek, canGoNext,
-  live, report, companyStatus, corrections, loading, error, canSubmitNow, productImageByKey,
+  live, report, companyStatus, corrections, loading, error, canSubmitNow, dueDate, todayKey, submittedLate, productImageByKey,
   onSubmit, onOpenOrder, onBack
 }: {
   weekStart: string;
@@ -34,8 +34,12 @@ export default function RepWeeklyReportPage({
   corrections: WeeklyReportCorrection[];
   loading: boolean;
   error: string;
-  /** False until the week's last day (Saturday). */
+  /** False until the Tuesday after the week (the due date). */
   canSubmitNow: boolean;
+  /** The Tuesday after the week. Submitting after it is allowed but marked Late. */
+  dueDate: string;
+  todayKey: string;
+  submittedLate: boolean;
   productImageByKey: Record<string, string | undefined>;
   onSubmit: (note: string, responses: WeeklyReportResponseInput[]) => Promise<void>;
   onOpenOrder?: (orderId: string) => void;
@@ -116,6 +120,7 @@ export default function RepWeeklyReportPage({
               <div className="flex flex-wrap items-center gap-3">
                 <h1 className="m-0 text-2xl font-black tracking-tight text-gray-900 dark:text-slate-50">My Weekly Report</h1>
                 <RepStatusPill status={status} />
+                {submittedLate && <span className="inline-flex items-center rounded-md bg-rose-50 px-2 py-0.5 text-[11px] font-bold text-rose-700 ring-1 ring-inset ring-rose-200">Late</span>}
               </div>
               <p className="m-0 mt-1 text-[13px] text-gray-500 dark:text-slate-400">Select the week, review your data, confirm and submit for manager review.</p>
             </div>
@@ -282,6 +287,12 @@ export default function RepWeeklyReportPage({
                     <tr className="border-t border-gray-100 dark:border-slate-800"><td className="px-3 py-2">Base Bonus</td><td className="px-3 py-2 text-right">{nf(totals?.baseBonus ?? 0)}</td></tr>
                     <tr className="border-t border-gray-100 dark:border-slate-800"><td className="px-3 py-2">Cross-Sell Bonus ({nf(totals?.crossSellOrders ?? 0)} order{totals?.crossSellOrders === 1 ? "" : "s"})</td><td className="px-3 py-2 text-right">{nf(totals?.crossSellBonus ?? 0)}</td></tr>
                     <tr className="border-t border-gray-100 dark:border-slate-800"><td className="px-3 py-2">Upsell Bonus ({nf(totals?.upsellOrders ?? 0)} order{totals?.upsellOrders === 1 ? "" : "s"})</td><td className="px-3 py-2 text-right">{nf(totals?.upsellBonus ?? 0)}</td></tr>
+                    {(totals?.carryOverOrders ?? 0) > 0 && (
+                      <tr className="border-t border-gray-100 bg-blue-50/50 text-[11px] dark:border-slate-800 dark:bg-blue-500/10 [&>td]:[color:inherit]">
+                        <td className="px-3 py-1.5 italic text-blue-800 dark:text-blue-200">of which carried over from earlier weeks ({nf(totals?.carryOverOrders ?? 0)} order{totals?.carryOverOrders === 1 ? "" : "s"} placed before {longDate(weekStart)}, delivered this week)</td>
+                        <td className="px-3 py-1.5 text-right italic text-blue-800 dark:text-blue-200">{nf(totals?.carryOverBonus ?? 0)}</td>
+                      </tr>
+                    )}
                     <tr className="border-t border-gray-100 dark:border-slate-800">
                       <td className="px-3 py-2">Fines / Deductions{snap?.fines?.length ? <span className="block text-[11px] text-gray-500">{snap.fines.map((fine) => fine.label).join("; ")}</span> : null}</td>
                       <td className="px-3 py-2 text-right">{nf(totals?.fines ?? 0)}</td>
@@ -324,8 +335,14 @@ export default function RepWeeklyReportPage({
             >
               <Send className="h-4 w-4" /> {submitting ? "Submitting…" : status === "returned" ? "Resubmit to Manager" : "Submit to Manager"}
             </button>
-            {!canSubmitNow && (status === "draft" || status === "returned") && (
-              <p className="m-0 mt-2 text-[11px] text-gray-500">You can submit from Saturday, {longDate(weekEnd)}.</p>
+            {(status === "draft" || status === "returned") && (
+              <p className={`m-0 mt-2 text-[11px] ${!canSubmitNow ? "text-gray-500" : todayKey > dueDate && status === "draft" ? "font-semibold text-rose-600" : "text-gray-600 dark:text-slate-300"}`}>
+                {!canSubmitNow
+                  ? `Opens on Tuesday, ${longDate(dueDate)}. Submit it that day, after the weekend's orders are attended to.`
+                  : todayKey > dueDate && status === "draft"
+                    ? `Late: this was due by the end of Tuesday, ${longDate(dueDate)}. You can still submit; it will be marked late.`
+                    : status === "draft" ? `Due today, by the end of Tuesday ${longDate(dueDate)}.` : "Answer each comment, then resubmit."}
+              </p>
             )}
             {status === "returned" && openReturns.some((row) => !(responses[row.id] ?? "").trim()) && (
               <p className="m-0 mt-2 text-[11px] text-rose-600">Answer each comment above before you resubmit.</p>
@@ -407,7 +424,10 @@ export default function RepWeeklyReportPage({
                 <tr key={row.id} className="border-t border-gray-100 dark:border-slate-800">
                   <td className="px-3 py-2.5 text-gray-600 dark:text-slate-300">{index + 1}</td>
                   <td className="px-3 py-2.5 font-bold text-gray-900 dark:text-slate-100">#{row.id}</td>
-                  <td className="whitespace-nowrap px-3 py-2.5 text-gray-700 dark:text-slate-300">{longDate(row.date)}</td>
+                  <td className="whitespace-nowrap px-3 py-2.5 text-gray-700 dark:text-slate-300">
+                    {longDate(row.date)}
+                    {!row.placedThisWeek && <span className="mt-0.5 block text-[10px] font-bold text-blue-700 dark:text-blue-300">Carried over · delivered {row.deliveredDate ? longDate(row.deliveredDate) : ""}</span>}
+                  </td>
                   <td className="px-3 py-2.5 text-gray-800 dark:text-slate-200">{row.customer}</td>
                   <td className="px-3 py-2.5 text-gray-800 dark:text-slate-200">{row.product}</td>
                   <td className="px-3 py-2.5"><OrderTypePill type={row.type} /></td>
