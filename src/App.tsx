@@ -167,7 +167,7 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, ordersExtraApi, productCostApi, stockApi as _stockApi,
-  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, upsellPerformanceApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, targetPeriodsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
+  weeklyReportsApi, embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, upsellPerformanceApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, targetPeriodsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
   branchesApi, setApiSpyUserId, type CartAssignmentPanel, type CartHandOutRules,
   setApiPreviewReadOnly,
   PreviewReadOnlyError, type BranchWorkspace
@@ -240,6 +240,15 @@ import CartLogOwedBanner from "./components/CartLogOwedBanner";
 import OrderHistoryModal from "./components/OrderHistoryModal";
 import DateWindowNav from "./components/DateWindowNav";
 import UpsellPerformancePage, { type UpsellPerfOrder } from "./pages/UpsellPerformancePage";
+import RepWeeklyReportPage from "./pages/RepWeeklyReportPage";
+import ManagerWeeklyReviewPage, { type ReviewRepRow } from "./pages/ManagerWeeklyReviewPage";
+import OwnerWeeklyApprovalPage, { type WeeklyFinancialSummary } from "./pages/OwnerWeeklyApprovalPage";
+import { CompanyReportHistoryPage, MyReportsHistoryPage, WeeklyAuditLogPage } from "./pages/WeeklyReportHistoryPages";
+import {
+  buildCompanySnapshot, buildRepWeeklySnapshot, compareSnapshots,
+  type ManagerBonusPreview, type WeeklyReportSnapshot
+} from "./pages/weekly-report-model";
+import type { CorrectionDraft } from "./components/WeeklyReportParts";
 import {
   DateWindow, PRESET_LABEL, PresetKey, presetRange, windowContains,
   formatWindow as formatDateWindow, shiftDay as windowShiftDay, weekStart as windowWeekStart, windowLabel as dateWindowLabel,
@@ -292,7 +301,7 @@ type CurrencyCode = "NGN" | "GHS" | "KES" | "ZMW" | "XOF" | "XAF" | "TZS" | "MWK
 // currency no product can be priced in.
 type ProductCurrencyCode = CurrencyCode;
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "addBranch" | "cartAssignmentRules" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addExtraItems" | "addFreeGift" | "salesBonusFullReport" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | "pdaPortalCredentials" | null;
-type ActivePage = "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "Marketing Performance" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers";
+type ActivePage = "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "Marketing Performance" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers" | "Weekly Reports";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type PendingSalesExpansionAction =
@@ -430,6 +439,20 @@ const HEAD_OF_SALES_SUBNAV_ITEMS: Array<{ key: HeadOfSalesSubPage; label: string
   { key: "Weekly Report", label: "Weekly Report", icon: FileText },
   { key: "Bonus & Payouts", label: "Bonus & Payouts", icon: HandCoins }
 ];
+// Weekly Report approvals (Bright, 1 Oct 2026): one sidebar entry, and the
+// sub-pages each role sees under it - the same nesting as Head of Sales Rep.
+type WeeklyReportSubPage =
+  | "Send Weekly Report" | "My Reports History"
+  | "Submit My Report" | "Manager Review" | "Report History"
+  | "Owner Approval" | "Audit Logs";
+const weeklyReportSubPagesForRole = (role: string): WeeklyReportSubPage[] =>
+  role === "Owner"
+    ? ["Owner Approval", "Report History", "Audit Logs"]
+    : role === "Manager" || role === "Admin"
+      ? ["Submit My Report", "Manager Review", "Report History"]
+      : ["Send Weekly Report", "My Reports History"];
+const defaultWeeklyReportSubPage = (role: string): WeeklyReportSubPage =>
+  role === "Owner" ? "Owner Approval" : role === "Manager" || role === "Admin" ? "Manager Review" : "Send Weekly Report";
 const HEAD_OF_SALES_INITIATIVE_STATUSES = ["Idea", "Planned", "In Progress", "Completed", "Abandoned"] as const;
 const HEAD_OF_SALES_INITIATIVE_TYPES = ["Upsell", "Cross-sell", "Retention", "Promotion", "Training", "Process", "Offer"] as const;
 const LEARNING_TAG_OPTIONS = ["Use & Scale", "Test More", "Adjust Approach", "Keep Doing"] as const;
@@ -2845,24 +2868,24 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
     "Dashboard", "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
-    "Ad Tracking", "Marketing", "Marketing Performance", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
+    "Ad Tracking", "Marketing", "Marketing Performance", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp", "Weekly Reports"
   ],
   "Admin": [
     "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
-    "Ad Tracking", "Marketing", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
+    "Ad Tracking", "Marketing", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp", "Weekly Reports"
   ],
   "Manager": [
     "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
-    "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Weekend Stock Summary", "Customers", "Personal Delivery Agents", "Round-Robin", "Notifications", "Settings", "WhatsApp"
+    "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Weekend Stock Summary", "Customers", "Personal Delivery Agents", "Round-Robin", "Notifications", "Settings", "WhatsApp", "Weekly Reports"
   ],
   // "Head of Sales Rep" is NOT listed here - a Sales Rep only gets it at
   // runtime when currentManagedUser?.isHeadOfSalesRep is true (see
   // currentAllowedPages), the same way extraPages layers on top of this
   // static list. Most Sales Reps must never see the page in their sidebar.
   "Sales Rep": [
-    "Sales Rep Workspace", "My Targets & Incentives", "Products & Stock", "Bonuses", "Call Rep Console", "Weekend Stock Summary", "Personal Delivery Agents", "Notifications", "Settings", "WhatsApp"
+    "Sales Rep Workspace", "My Targets & Incentives", "Products & Stock", "Bonuses", "Weekly Reports", "Call Rep Console", "Weekend Stock Summary", "Personal Delivery Agents", "Notifications", "Settings", "WhatsApp"
   ],
   "Inventory Manager": [
     "Inventory & Logistics Operations", "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Expenses", "Notifications", "Settings", "WhatsApp"
@@ -2962,6 +2985,7 @@ const dashboardHashByPage: Record<ActivePage, string> = {
   "Ad Tracking": "#/dashboard/admin/utm-tracking",
   Marketing: "#/dashboard/admin/marketing",
   "Marketing Performance": "#/dashboard/admin/marketing-performance",
+  "Weekly Reports": "#/dashboard/admin/weekly-reports",
   "User Management": "#/dashboard/admin/users",
   "Round-Robin": "#/dashboard/admin/round-robin",
   "Embed Form": "#/dashboard/admin/embed",
@@ -13608,6 +13632,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [headOfSalesLearningTag, setHeadOfSalesLearningTag] = useState("");
   const [headOfSalesLearningDraft, setHeadOfSalesLearningDraft] = useState("");
   const [headOfSalesLearningSaving, setHeadOfSalesLearningSaving] = useState(false);
+  const [weeklyReportSubPage, setWeeklyReportSubPage] = useState<WeeklyReportSubPage>("Send Weekly Report");
   const [headOfSalesWeeklyReport, setHeadOfSalesWeeklyReport] = useState<any | null>(null);
   const [headOfSalesWeeklyReportLivePreview, setHeadOfSalesWeeklyReportLivePreview] = useState<any | null>(null);
   const [headOfSalesWeeklyReportWeekSummary, setHeadOfSalesWeeklyReportWeekSummary] = useState<any | null>(null);
@@ -25427,11 +25452,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const buildManagerBonusRepRows = (
     deliveredInPeriod: TrackedOrder[],
     placedInPeriod: TrackedOrder[],
-    periodRange: DateRange
+    periodRange: DateRange,
+    // Weekly Reports pass their own week's bonus data and reps. Left out, the
+    // Manager Dashboard's own (its period's maps, every sales rep) is used,
+    // exactly as before.
+    overrides?: {
+      users?: Array<{ id: string; name: string; role: EditableUserRole }>;
+      attributionByOrderId?: Record<string, SalesBonusOrderAttribution[]> | null;
+      settlementByOrderId?: Record<string, SalesBonusOrderSettlement>;
+    }
   ) => {
     const weekRange: DateRange = periodRange;
+    const settlementByOrderId = overrides?.settlementByOrderId ?? newEngineBonusSettlementByOrderId;
+    const attributionByOrderId = overrides && "attributionByOrderId" in overrides
+      ? overrides.attributionByOrderId
+      : managerBonusAttributionByOrderId;
 
-    return salesRepUsers.map((u) => {
+    return (overrides?.users ?? salesRepUsers).map((u) => {
       const progressRow = salesBonusProgress?.reps.find((r) => r.repId === u.id) ?? null;
       const deliveredThisWeek = deliveredInPeriod.filter((o) => o.assignedRepId === u.id);
       // ⚠️ Rate is placed-vs-delivered for THIS period, the identical cohort
@@ -25445,7 +25482,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const repCount = placedThisPeriod.length;
 
       const orderLines = deliveredThisWeek.map((order) =>
-        buildOrderBonusBreakdownLine(order, repRate, repCount, weekRange, newEngineBonusSettlementByOrderId[order.id])
+        buildOrderBonusBreakdownLine(order, repRate, repCount, weekRange, settlementByOrderId[order.id])
       );
 
       let base = 0, upsell = 0, crossSell = 0;
@@ -25457,7 +25494,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       // under-count against the very total it is supposed to explain.
       const orderComponents = orderLines.map((line, index) => {
         const order = deliveredThisWeek[index];
-        const attributions = managerBonusAttributionByOrderId?.[order.id] ?? [];
+        const attributions = attributionByOrderId?.[order.id] ?? [];
         const attributionEarned = (item: SalesBonusOrderAttribution) => Math.max(
           0,
           Number(item.earnedBeforeCompliance ?? item.amount ?? 0)
@@ -25577,6 +25614,174 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       };
     }).sort((a, b) => b.total - a.total || b.revenue - a.revenue || a.repName.localeCompare(b.repName));
   };
+
+  // ===== Weekly Report approvals (Bright, 1 Oct 2026) =====
+  // Rep submits -> Manager/Admin approves or returns -> Owner approves & locks.
+  // ⚠️ Every figure comes from buildManagerBonusRepRows, the Manager
+  // Dashboard's own bonus table, run for ONE rep and ONE week with that
+  // week's bonus maps. The rep's report, the manager's review and the bonus
+  // table therefore cannot disagree. See src/pages/weekly-report-model.ts.
+  const weeklyReportDefaultWeek = () => {
+    const today = lagosDateKeyNow();
+    const thisWeek = windowWeekStart(today);
+    // A report covers a finished week: on Saturday it is this week, any
+    // other day the week that just ended.
+    return windowShiftDay(thisWeek, 6) === today ? thisWeek : windowShiftDay(thisWeek, -7);
+  };
+  const [weeklyReportWeekStart, setWeeklyReportWeekStart] = useState<string>(() => weeklyReportDefaultWeek());
+  const [weeklyBonusMaps, setWeeklyBonusMaps] = useState<{
+    weekStart: string;
+    attribution: Record<string, SalesBonusOrderAttribution[]> | null;
+    settlement: Record<string, SalesBonusOrderSettlement>;
+  } | null>(null);
+  const [weeklyMine, setWeeklyMine] = useState<Awaited<ReturnType<typeof weeklyReportsApi.mine>> | null>(null);
+  const [weeklyWeek, setWeeklyWeek] = useState<Awaited<ReturnType<typeof weeklyReportsApi.week>> | null>(null);
+  const [weeklyMyHistory, setWeeklyMyHistory] = useState<Awaited<ReturnType<typeof weeklyReportsApi.myHistory>>["rows"]>([]);
+  const [weeklyHistory, setWeeklyHistory] = useState<Awaited<ReturnType<typeof weeklyReportsApi.history>>["rows"]>([]);
+  const [weeklyManagerBonus, setWeeklyManagerBonus] = useState<ManagerBonusSummary | null>(null);
+  const [weeklyLoading, setWeeklyLoading] = useState(false);
+  const [weeklyError, setWeeklyError] = useState("");
+  const [weeklyReload, setWeeklyReload] = useState(0);
+  const weeklyReportWeekEnd = windowShiftDay(weeklyReportWeekStart, 6);
+  const weeklyIsRep = currentRole === "Sales Rep";
+  const weeklySubPage = weeklyReportSubPagesForRole(currentRole).includes(weeklyReportSubPage)
+    ? weeklyReportSubPage
+    : defaultWeeklyReportSubPage(currentRole);
+
+  useEffect(() => {
+    if (activePage !== "Weekly Reports") return;
+    let cancelled = false;
+    const weekStart = weeklyReportWeekStart;
+    const previousStart = windowShiftDay(weekStart, -7);
+    const weekEnd = windowShiftDay(weekStart, 6);
+    setWeeklyLoading(true);
+    setWeeklyError("");
+    (async () => {
+      try {
+        const [attribution, settlement] = await Promise.all([
+          salesBonusesApi.orderExpansionAttributionMap(weekEnd, previousStart).catch(() => null),
+          salesBonusesApi.orderBonusSettlementMap(weekEnd, previousStart).catch(() => ({}))
+        ]);
+        if (cancelled) return;
+        setWeeklyBonusMaps({ weekStart, attribution: (attribution ?? null) as any, settlement: (settlement ?? {}) as any });
+        if (weeklyIsRep) {
+          const [mine, history] = await Promise.all([
+            weeklyReportsApi.mine(weekStart),
+            weeklySubPage === "My Reports History" ? weeklyReportsApi.myHistory() : Promise.resolve(null)
+          ]);
+          if (cancelled) return;
+          setWeeklyMine(mine);
+          if (history) setWeeklyMyHistory(history.rows ?? []);
+        } else {
+          const [week, history, bonus] = await Promise.all([
+            weeklyReportsApi.week(weekStart),
+            weeklySubPage === "Report History" ? weeklyReportsApi.history() : Promise.resolve(null),
+            managerBonusApi.summary(weekStart).catch(() => null)
+          ]);
+          if (cancelled) return;
+          setWeeklyWeek(week);
+          if (history) setWeeklyHistory(history.rows ?? []);
+          setWeeklyManagerBonus(bonus as ManagerBonusSummary | null);
+        }
+      } catch (error: any) {
+        if (!cancelled) setWeeklyError(error?.message ?? "Could not load the weekly report.");
+      } finally {
+        if (!cancelled) setWeeklyLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, weeklyReportWeekStart, weeklyReload, weeklySubPage, currentRole]);
+
+  /** One rep's week, worked out the way the Manager Dashboard bonus table does it. */
+  const buildWeeklyRepSnapshot = (
+    rep: { id: string; name: string },
+    weekStart: string,
+    fines: Array<{ id: string; repId: string; label: string; amount: number; date: string }>,
+    previousFines: Array<{ id: string; repId: string; label: string; amount: number; date: string }>
+  ): WeeklyReportSnapshot | null => {
+    if (!weeklyBonusMaps || weeklyBonusMaps.weekStart !== weekStart) return null;
+    const settlementByOrderId = { ...newEngineBonusSettlementByOrderId, ...weeklyBonusMaps.settlement };
+    const repOrders = trackedOrders.filter((order) => order.assignedRepId === rep.id);
+    const inRange = (key: string | undefined, start: string, end: string) => !!key && key >= start && key <= end;
+    const one = (start: string, weekFines: typeof fines, previous: WeeklyReportSnapshot["previous"]) => {
+      const end = windowShiftDay(start, 6);
+      const placed = repOrders.filter((order) => !order.reviewHold && inRange(orderCreatedKey(order), start, end));
+      const delivered = repOrders.filter((order) => (order.status ?? "New") === "Delivered" && inRange(orderDeliveredKey(order), start, end));
+      const [row] = buildManagerBonusRepRows(delivered, placed, { start, end }, {
+        users: [{ id: rep.id, name: rep.name, role: "Sales Rep" }],
+        attributionByOrderId: weeklyBonusMaps.attribution,
+        settlementByOrderId
+      });
+      const perOrder: Record<string, { base: number; upsell: number; crossSell: number }> = {};
+      for (const part of row?.orderComponents ?? []) perOrder[part.orderId] = { base: part.base, upsell: part.upsell, crossSell: part.crossSell };
+      const seen = new Set<string>();
+      const orders = [...placed, ...delivered].filter((order) => (seen.has(order.id) ? false : (seen.add(order.id), true)));
+      return buildRepWeeklySnapshot({
+        repId: rep.id,
+        repName: rep.name,
+        weekStart: start,
+        weekEnd: end,
+        orders: orders.map((order) => ({
+          id: order.id,
+          createdKey: orderCreatedKey(order) ?? "",
+          deliveredKey: orderDeliveredKey(order) ?? null,
+          status: order.status ?? "New",
+          productKey: productKeyForOrder(order),
+          productName: order.productName,
+          packageName: order.packageName,
+          customer: order.customer,
+          amount: Number(order.amount || 0),
+          hasUpsell: orderHasVerifiedUpsell(order),
+          hasCrossSell: (order.crossSellLines?.length ?? 0) > 0,
+          bonusManuallyAdjusted: !!order.bonusManuallyAdjusted
+        })),
+        bonus: { base: row?.base ?? 0, upsell: row?.upsell ?? 0, crossSell: row?.crossSell ?? 0, total: row?.total ?? 0, perOrder },
+        fines: weekFines.filter((fine) => fine.repId === rep.id).map((fine) => ({ id: fine.id, label: fine.label, amount: fine.amount, date: fine.date })),
+        previous
+      });
+    };
+    const before = one(windowShiftDay(weekStart, -7), previousFines, null);
+    return one(weekStart, fines, {
+      orders: before.totals.orders,
+      delivered: before.totals.delivered,
+      deliveryRate: before.totals.deliveryRate,
+      finalBonus: before.totals.finalBonus
+    });
+  };
+
+  const toManagerBonusPreview = (summary: ManagerBonusSummary | null): ManagerBonusPreview | null => {
+    if (!summary?.evaluation) return null;
+    const evaluation = summary.evaluation;
+    const rate = Number(summary.metrics?.deliveryRate ?? 0);
+    const firstTier = (summary.settings?.tiers ?? []).reduce<number | null>((low, tier) => (low === null ? tier.minRate : Math.min(low, tier.minRate)), null);
+    // The manager gets EITHER the support bonus (profit target missed) OR the
+    // delivery-rate bonus - never both (lib/manager-bonus.ts). One row is ₦0.
+    if (evaluation.status === "support_only") {
+      return { performanceBonus: 0, performanceNote: "Profit target not met this week", supportBonus: evaluation.amount, supportNote: "Paid when the profit target is missed", total: evaluation.amount, deliveryRate: rate };
+    }
+    if (evaluation.status === "delivery_bonus") {
+      return { performanceBonus: evaluation.amount, performanceNote: `Delivery rate ${rate.toFixed(1)}% (${evaluation.label})`, supportBonus: 0, supportNote: "Replaced by the performance bonus", total: evaluation.amount, deliveryRate: rate };
+    }
+    return { performanceBonus: evaluation.amount, performanceNote: firstTier !== null ? `Delivery rate below ${firstTier}%` : "Delivery rate below the first tier", supportBonus: 0, supportNote: "Not paid once the profit target is met", total: evaluation.amount, deliveryRate: rate };
+  };
+
+  const weeklyShiftWeek = (weeks: number) => setWeeklyReportWeekStart((current) => windowShiftDay(current, weeks * 7));
+  const weeklyPickWeek = (dateKey: string) => setWeeklyReportWeekStart(windowWeekStart(dateKey));
+  const weeklyCanGoNext = windowShiftDay(weeklyReportWeekStart, 7) <= windowWeekStart(lagosDateKeyNow());
+  const weeklyRefresh = () => setWeeklyReload((value) => value + 1);
+  const weeklyRun = async (action: () => Promise<unknown>, done: string) => {
+    await action();
+    showToast(done);
+    weeklyRefresh();
+  };
+  const correctionBody = (draft: CorrectionDraft) => ({
+    weekStart: weeklyReportWeekStart,
+    section: draft.section,
+    problem: draft.problem,
+    comment: draft.comment,
+    ...(draft.orderRef ? { orderRef: draft.orderRef } : {})
+  });
 
   // Projected bonus: what the rep would earn IF this order is delivered - ignores status check
   const projectedOrderBonus = (order: TrackedOrder) => {
@@ -27675,6 +27880,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       "ad-tracking": "Ad Tracking",
       marketing: "Marketing",
       "marketing-performance": "Marketing Performance",
+      "weekly-reports": "Weekly Reports",
       users: "User Management",
       "user-management": "User Management",
       "round-robin": "Round-Robin",
@@ -36585,6 +36791,7 @@ ${waybillLineItems(w).length > 1
       "Ad Tracking": "#/dashboard/admin/utm-tracking",
       Marketing: "#/dashboard/admin/marketing",
   "Marketing Performance": "#/dashboard/admin/marketing-performance",
+  "Weekly Reports": "#/dashboard/admin/weekly-reports",
       "User Management": "#/dashboard/admin/users",
       "Round-Robin": "#/dashboard/admin/round-robin",
       "Embed Form": "#/dashboard/admin/embed",
@@ -36670,7 +36877,7 @@ ${waybillLineItems(w).length > 1
       return;
     }
 
-    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory & Logistics Operations" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Head of Sales Rep" || label === "Sales Closers" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Marketing" || label === "Marketing Performance" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp") {
+    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory & Logistics Operations" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Head of Sales Rep" || label === "Sales Closers" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Marketing" || label === "Marketing Performance" || label === "Weekly Reports" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp") {
       if (label === "Inventory & Logistics Operations") {
         setInventoryOperationsSection("dashboard");
       }
@@ -36687,6 +36894,9 @@ ${waybillLineItems(w).length > 1
       }
       if (label === "Head of Sales Rep") {
         setHeadOfSalesSubPage("Overview");
+      }
+      if (label === "Weekly Reports") {
+        setWeeklyReportSubPage(defaultWeeklyReportSubPage(currentRole));
       }
       if (label === "Call Rep Console") {
         setCallQueueIndex(0);
@@ -75360,6 +75570,9 @@ ${waybillLineItems(w).length > 1
             const showHeadOfSalesSubnav = item.label === "Head of Sales Rep"
               && activePage === "Head of Sales Rep"
               && !collapsed;
+            const showWeeklyReportSubnav = item.label === "Weekly Reports"
+              && activePage === "Weekly Reports"
+              && !collapsed;
             const showSalesCloserSubnav = item.label === "Sales Closer Workspace"
               && activePage === "Sales Closer Workspace"
               && !collapsed;
@@ -75474,6 +75687,26 @@ ${waybillLineItems(w).length > 1
                         >
                           <sub.icon className="w-4 h-4 shrink-0" />
                           <span className="flex-1 truncate text-left">{sub.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {showWeeklyReportSubnav && (
+                  <div className="ml-4 mt-1 mb-1.5 pl-3.5 border-l border-white/10 space-y-1">
+                    {weeklyReportSubPagesForRole(currentRole).map((sub) => {
+                      const subActive = weeklyReportSubPage === sub;
+                      return (
+                        <button
+                          key={sub}
+                          type="button"
+                          onClick={() => {
+                            setWeeklyReportSubPage(sub);
+                            if (window.matchMedia("(max-width: 1024px)").matches) setMobileMenuOpen(false);
+                          }}
+                          className={`w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] transition-colors ${subActive ? "bg-[#1F8FE0]/15 text-[#1F8FE0] font-bold" : "text-gray-400 font-medium hover:bg-white/5 hover:text-white"}`}
+                        >
+                          <span className="flex-1 truncate text-left">{sub}</span>
                         </button>
                       );
                     })}
@@ -90354,6 +90587,162 @@ ${waybillLineItems(w).length > 1
               })()}
               </div>
             </div>
+          ) : activePage === "Weekly Reports" ? (
+            (() => {
+              // Weekly Report approvals (Bright's three designs, 1 Oct 2026).
+              const weekProps = {
+                weekStart: weeklyReportWeekStart,
+                weekEnd: weeklyReportWeekEnd,
+                onShiftWeek: weeklyShiftWeek,
+                onPickWeek: weeklyPickWeek,
+                canGoNext: weeklyCanGoNext,
+                loading: weeklyLoading,
+                error: weeklyError
+              };
+              const productImageByKey: Record<string, string | undefined> = Object.fromEntries(
+                (products as any[]).map((product) => [`id:${product.id}`, product.packages?.[0]?.imageUrl || undefined])
+              );
+
+              if (weeklyIsRep) {
+                if (weeklySubPage === "My Reports History") {
+                  return (
+                    <MyReportsHistoryPage rows={weeklyMyHistory} loading={weeklyLoading} error={weeklyError}
+                      onOpenWeek={(week) => { setWeeklyReportWeekStart(week); setWeeklyReportSubPage("Send Weekly Report"); }} />
+                  );
+                }
+                const me = currentManagedUser;
+                const mine = weeklyMine && weeklyMine.weekStart === weeklyReportWeekStart ? weeklyMine : null;
+                const live = me && mine ? buildWeeklyRepSnapshot({ id: me.id, name: me.name }, weeklyReportWeekStart, mine.fines ?? [], mine.previousFines ?? []) : null;
+                return (
+                  <RepWeeklyReportPage
+                    {...weekProps}
+                    live={live}
+                    report={mine?.report ?? null}
+                    companyStatus={mine?.companyStatus ?? "open"}
+                    corrections={mine?.corrections ?? []}
+                    canSubmitNow={weeklyReportWeekEnd <= lagosDateKeyNow()}
+                    productImageByKey={productImageByKey}
+                    onBack={() => handleNavClick("Sales Rep Workspace")}
+                    onSubmit={async (note, responses) => {
+                      if (!live) throw new Error("Your figures are still loading.");
+                      await weeklyRun(() => weeklyReportsApi.submitMine({ weekStart: weeklyReportWeekStart, snapshot: live, note: note || undefined, responses }), "Weekly report submitted to your manager.");
+                    }}
+                  />
+                );
+              }
+
+              const week = weeklyWeek && weeklyWeek.weekStart === weeklyReportWeekStart ? weeklyWeek : null;
+              const repName = (id: string | null) => users.find((user) => user.id === id)?.name ?? "Former staff";
+              const repIds = Array.from(new Set([...(week?.expectedRepIds ?? []), ...(week?.repReports ?? []).map((report) => report.repId)]));
+              const reviewRows: ReviewRepRow[] = week ? repIds.map((repId) => {
+                const report = week.repReports.find((item) => item.repId === repId) ?? null;
+                const live = buildWeeklyRepSnapshot({ id: repId, name: repName(repId) }, weeklyReportWeekStart, week.fines ?? [], week.previousFines ?? []);
+                const frozen = report && report.status !== "draft" && report.snapshot ? report.snapshot as WeeklyReportSnapshot : null;
+                return {
+                  repId,
+                  repName: repName(repId),
+                  expected: week.expectedRepIds.includes(repId),
+                  report,
+                  live,
+                  frozen,
+                  differences: frozen && report?.status !== "returned" ? compareSnapshots(frozen, live) : [],
+                  editedAfterSubmit: (week.editedAfterSubmit ?? []).filter((edit) => edit.repId === repId)
+                };
+              }).sort((a, b) => a.repName.localeCompare(b.repName)) : [];
+              const managerBonus = toManagerBonusPreview(weeklyManagerBonus && weeklyManagerBonus.weekStart === weeklyReportWeekStart ? weeklyManagerBonus : null);
+
+              if (weeklySubPage === "Report History") {
+                return (
+                  <CompanyReportHistoryPage rows={weeklyHistory} loading={weeklyLoading} error={weeklyError}
+                    onOpenWeek={(weekStart) => { setWeeklyReportWeekStart(weekStart); setWeeklyReportSubPage(defaultWeeklyReportSubPage(currentRole)); }} />
+                );
+              }
+              if (weeklySubPage === "Audit Logs") {
+                return <WeeklyAuditLogPage {...weekProps} entries={week?.audit ?? []} repName={repName} />;
+              }
+
+              if (weeklySubPage === "Owner Approval") {
+                const inWeek = (key: string | undefined, start: string) => !!key && key >= start && key <= windowShiftDay(start, 6);
+                const financialFor = (start: string) => {
+                  const delivered = trackedOrders.filter((order) => (order.status ?? "New") === "Delivered" && inWeek(orderDeliveredKey(order), start));
+                  const placed = trackedOrders.filter((order) => !order.reviewHold && inWeek(orderCreatedKey(order), start));
+                  const weekExpenses = expenses.filter((expense) => inWeek(normalizeDateKey(expense.date), start));
+                  const econ = summarizeRecognizedProfit(delivered, weekExpenses, { placedRows: placed, includeManagerBonus: true });
+                  const adSpend = weekExpenses.filter((expense) => expense.type === "Ad Spend").reduce((sum, expense) => sum + expense.amount, 0);
+                  return { econ, adSpend };
+                };
+                const current = financialFor(weeklyReportWeekStart);
+                const previous = financialFor(windowShiftDay(weeklyReportWeekStart, -7));
+                const financial: WeeklyFinancialSummary = {
+                  revenue: current.econ.revenue,
+                  cogs: current.econ.cogs,
+                  logistics: current.econ.recognizedLogistics,
+                  adSpend: current.adSpend,
+                  staffBonuses: current.econ.totalBonusExpense,
+                  otherExpenses: Math.max(0, current.econ.recordedOperatingExpense - current.adSpend),
+                  contributionProfit: current.econ.revenue - current.econ.cogs - current.econ.recognizedLogistics - current.econ.bonusEstimate,
+                  netProfit: current.econ.netProfit,
+                  previousNetProfit: previous.econ.netProfit
+                };
+                const rateGate = activeSalesBonusRules
+                  .filter((rule) => rule.type === "delivery_rate_per_delivered")
+                  .reduce<number | null>((worst, rule) => {
+                    const target = Number(rule.config?.targetRatePercent ?? 0);
+                    return worst === null ? target : Math.max(worst, target);
+                  }, null);
+                return (
+                  <OwnerWeeklyApprovalPage
+                    {...weekProps}
+                    rows={reviewRows}
+                    company={week?.company ?? null}
+                    corrections={week?.corrections ?? []}
+                    audit={week?.audit ?? []}
+                    managerBonus={managerBonus}
+                    managerName={week?.company?.submittedBy ? repName(week.company.submittedBy) : null}
+                    financial={week ? financial : null}
+                    lowRateThreshold={rateGate ?? 50}
+                    onBack={() => handleNavClick("Dashboard")}
+                    onApproveLock={(note) => weeklyRun(() => weeklyReportsApi.approveLock({ weekStart: weeklyReportWeekStart, ...(note ? { note } : {}) }), "Week approved and locked.")}
+                    onReturnToManager={(draft) => weeklyRun(() => weeklyReportsApi.returnCompany(correctionBody(draft)), "Returned to the manager.")}
+                    onReopen={(reason) => weeklyRun(() => weeklyReportsApi.reopen({ weekStart: weeklyReportWeekStart, reason }), "Week reopened.")}
+                  />
+                );
+              }
+
+              const canAct = currentRole === "Manager" || currentRole === "Admin";
+              return (
+                <ManagerWeeklyReviewPage
+                  {...weekProps}
+                  mode={weeklySubPage === "Submit My Report" ? "submit" : "review"}
+                  rows={reviewRows}
+                  company={week?.company ?? null}
+                  corrections={week?.corrections ?? []}
+                  audit={week?.audit ?? []}
+                  managerBonus={managerBonus}
+                  canAct={canAct}
+                  readOnlyReason="Only a Manager or Admin can approve and submit."
+                  onBack={() => handleNavClick("Manager Dashboard")}
+                  onEditManagerBonus={currentRole === "Owner" ? () => handleNavClick("Manager Dashboard") : undefined}
+                  onApprove={(repId, note) => weeklyRun(() => weeklyReportsApi.approveRep(repId, { weekStart: weeklyReportWeekStart, ...(note ? { note } : {}) }), `${repName(repId)}'s report approved.`)}
+                  onReturn={(repId, draft) => weeklyRun(() => weeklyReportsApi.returnRep(repId, correctionBody(draft)), `Returned to ${repName(repId)} for correction.`)}
+                  onFlag={(repId, draft) => weeklyRun(() => weeklyReportsApi.flagRep(repId, correctionBody(draft)), "Issue flagged for the owner.")}
+                  onSubmitToOwner={async (note, responses) => {
+                    const approved = reviewRows
+                      .filter((row) => row.expected || row.report)
+                      .map((row) => row.frozen ?? row.live)
+                      .filter((snap): snap is WeeklyReportSnapshot => !!snap);
+                    const companySnapshot = buildCompanySnapshot(weeklyReportWeekStart, weeklyReportWeekEnd, approved);
+                    await weeklyRun(() => weeklyReportsApi.submitCompany({
+                      weekStart: weeklyReportWeekStart,
+                      managerNote: note || undefined,
+                      companySnapshot,
+                      managerBonusSnapshot: managerBonus ?? undefined,
+                      responses
+                    }), "Weekly report submitted to the owner.");
+                  }}
+                />
+              );
+            })()
           ) : activePage === "Marketing Performance" ? (
             // ⚠️ OWNER ONLY WHILE THIS IS STILL BEING BUILT.
             // Bright's call: "Marketing Performance is a future module."

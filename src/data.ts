@@ -12,6 +12,7 @@ import {
   Code2,
   CreditCard,
   Crown,
+  FileText,
   HandCoins,
   Handshake,
   Headphones,
@@ -81,6 +82,7 @@ export const navItems = [
   { label: "Recovery Rep Dashboard", icon: RotateCcw },
   { label: "Head of Sales Rep", icon: Crown },
   { label: "Bonuses", icon: HandCoins },
+  { label: "Weekly Reports", icon: FileText },
   { label: "Settings", icon: Settings }
 ];
 

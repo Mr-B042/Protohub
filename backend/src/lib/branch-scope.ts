@@ -74,6 +74,10 @@ const BRANCH_TABLES = new Set([
   "upsell_bonus_settings", "sales_expansion_settings",
   "sales_expansion_compliance_waivers", "recovery_rep_kpi_settings",
   "recovery_templates", "sales_initiatives", "sales_initiative_learnings",
+  // Weekly Report approvals (migration 269). branch_id is NOT NULL from the
+  // first row and every key is per branch, so these are safe to list at once.
+  "rep_weekly_reports", "company_weekly_reports",
+  "weekly_report_corrections", "weekly_report_audit",
 
   // Retention and marketing.
   "customer_retention_touchpoints", "customer_retention_action_events",
