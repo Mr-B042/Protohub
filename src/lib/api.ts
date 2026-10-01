@@ -4043,7 +4043,7 @@ export type WeeklyBonusQuery = {
   managerResponse: string | null; correctionAmount: number; correctionWeekStart: string | null;
   resolvedBy: string | null; resolvedByName: string | null; resolvedAt: string | null; createdAt: string;
 };
-export type WeeklyReportCorrectionInput = { weekStart: string; section: string; problem: string; comment: string; orderRef?: string };
+export type WeeklyReportCorrectionInput = { weekStart: string; section: string; problem: string; comment: string; orderRef?: string; fundTransactionId?: string };
 export type WeeklyReportResponseInput = { correctionId: string; response: string };
 
 export const weeklyReportsApi = {
@@ -4062,6 +4062,7 @@ export const weeklyReportsApi = {
       editedAfterSubmit: Array<{ repId: string; orderId: string; editedAt: string; what: string; by: string | null }>;
       fines: WeeklyReportFineRow[]; previousFines: WeeklyReportFineRow[];
       adjustments: WeeklyReportAdjustmentRow[]; previousAdjustments: WeeklyReportAdjustmentRow[]; bonusQueries: WeeklyBonusQuery[];
+      funds?: Array<{ managerId: string; managerName: string; totals: ManagerFundTotals; readiness: string[]; locked: boolean; varianceExplanation: string | null; notes: string | null; returned: number }>;
     }>(`/api/weekly-reports/week?${new URLSearchParams({ weekStart }).toString()}`),
   history: () => get<{ rows: Array<{ weekStart: string; weekEnd: string; company: WeeklyCompanyReport | null; repStatusCounts: Record<string, number> }> }>("/api/weekly-reports/history"),
   approveRep: (repId: string, body: { weekStart: string; note?: string }) =>
@@ -4082,4 +4083,61 @@ export const weeklyReportsApi = {
   }) => post<{ sent: boolean; id?: string }>("/api/weekly-reports/mine/bonus-queries", body),
   resolveBonusQuery: (id: string, body: { outcome: "corrected" | "no_change"; response: string; amount?: number }) =>
     post<{ ok: true; paidWeekStart: string | null }>(`/api/weekly-reports/bonus-queries/${encodeURIComponent(id)}/resolve`, body)
+};
+
+// ── Manager Funds & Expenses (manager wallet) ────────────────────────────────
+export type FundKindKey = "customer_payment" | "owner_funding" | "company_transfer_in" | "other_in" | "expense" | "remittance_out";
+export type ManagerFundTxn = {
+  id: string; managerId: string; weekStart: string; kind: FundKindKey; kindLabel: string;
+  category: string | null; categoryLabel: string | null; amount: number; occurredAt: string;
+  description: string | null; paidTo: string | null; paymentMethod: string | null; reference: string | null;
+  orderIds: string[]; counterpartyAccountId: string | null;
+  evidence: Array<{ path: string; name: string; mime: string; size: number; uploadedAt: string }>;
+  status: "recorded" | "returned" | "voided"; returnReason: string | null; voidReason: string | null;
+  adjustsTransactionId: string | null; version: number; createdByName: string | null; createdAt: string; updatedAt: string;
+  missingProof: string | null;
+};
+export type ManagerFundTotals = {
+  opening: number; received: number; receivedBySource: Record<string, number>; spent: number; spentByCategory: Record<string, number>;
+  remitted: number; expected: number; actual: number | null; variance: number | null; otherIn: number;
+  counts: { in: number; expense: number; out: number }; pending: number;
+};
+export type ManagerFundWeek = {
+  weekStart: string; weekEnd: string;
+  manager: { id: string; name: string } | null;
+  managers: Array<{ id: string; name: string }>;
+  wallet?: { id: string; name: string } | null;
+  week?: { opening: number; openingSource: string; actualClosing: number | null; varianceExplanation: string | null; notes: string | null; locked: boolean; closingSnapshot: ManagerFundTotals | null };
+  companyStatus?: string; editable?: boolean; editableReason?: string | null;
+  settings?: { expenseProofMin: number; remittanceProofRequired: boolean; ownerFundingReferenceRequired: boolean; otherInProofRequired: boolean };
+  totals?: ManagerFundTotals; readiness?: string[];
+  transactions: ManagerFundTxn[];
+  companyAccounts?: Array<{ id: string; name: string; bankName: string }>;
+  adjustments?: Array<{ id: string; transactionId: string; originalAmount: number; requestedAmount: number; reason: string; status: "pending" | "approved" | "rejected"; decidedByName: string | null; decidedAt: string | null; decisionNote: string | null; createdAt: string }>;
+  daily?: Array<{ date: string; moneyIn: number; expenses: number; remitted: number }>;
+  categories?: Array<{ key: string; label: string }>;
+};
+export type ManagerFundLogInput = {
+  kind: FundKindKey; category?: string; amount: number; occurredAt: string; description?: string; paidTo?: string;
+  paymentMethod?: "cash" | "transfer" | "pos" | "other"; reference?: string; orderId?: string; relatedOrderIds?: string[];
+  counterpartyAccountId?: string; varianceReason?: string;
+};
+
+export const managerFundsApi = {
+  week: (weekStart: string, managerId?: string) => {
+    const qs = new URLSearchParams({ weekStart });
+    if (managerId) qs.set("managerId", managerId);
+    return get<ManagerFundWeek>(`/api/manager-funds/week?${qs.toString()}`);
+  },
+  log: (body: ManagerFundLogInput) => post<{ id: string }>("/api/manager-funds/transactions", body),
+  edit: (id: string, body: Partial<Omit<ManagerFundLogInput, "kind" | "orderId">>) => patch<{ ok: true }>(`/api/manager-funds/transactions/${encodeURIComponent(id)}`, body),
+  void: (id: string, reason: string) => post<{ ok: true }>(`/api/manager-funds/transactions/${encodeURIComponent(id)}/void`, { reason }),
+  uploadEvidence: (id: string, dataUrl: string, name: string) => post<{ ok: true }>(`/api/manager-funds/transactions/${encodeURIComponent(id)}/evidence`, { dataUrl, name }),
+  evidenceUrl: (transactionId: string, path: string) => get<{ url: string }>(`/api/manager-funds/evidence-url?${new URLSearchParams({ transactionId, path }).toString()}`),
+  saveWeek: (body: { weekStart: string; actualClosing?: number | null; varianceExplanation?: string | null; notes?: string | null }) =>
+    request<{ ok: true }>("PUT", "/api/manager-funds/week", body),
+  requestAdjustment: (body: { transactionId: string; requestedAmount: number; reason: string }) => post<{ id: string }>("/api/manager-funds/adjustments", body),
+  decideAdjustment: (id: string, body: { approve: boolean; note?: string }) => post<{ ok: true }>(`/api/manager-funds/adjustments/${encodeURIComponent(id)}/decide`, body),
+  saveSettings: (body: { expenseProofMin: number; remittanceProofRequired: boolean; ownerFundingReferenceRequired: boolean; otherInProofRequired: boolean }) =>
+    request<{ ok: true }>("PUT", "/api/manager-funds/settings", body)
 };

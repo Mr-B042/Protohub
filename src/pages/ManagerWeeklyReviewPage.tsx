@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   AlertTriangle, Box, Check, CheckCircle2, ChevronRight, ClipboardList, Download, FileText, Inbox, MessageCircle, MoreVertical,
-  RotateCcw, Search, Send, ShoppingCart, Target, Undo2, Wallet, X, Crown, Flag, History
+  RotateCcw, Search, Send, ShoppingCart, Target, Undo2, Wallet, X, Crown, Flag, History, Users, BarChart3, ChevronLeft
 } from "lucide-react";
 import {
   Avatar, AuditTable, ChartLegend, CorrectionForm, CorrectionList, KpiCard, Modal, NoteBox, NumberedHeader, OrderStatusPill,
@@ -13,9 +13,11 @@ import {
   CORRECTION_SECTION_LABEL, buildCompanySnapshot, type ManagerBonusPreview, type SnapshotDifference, type WeeklyReportSnapshot
 } from "./weekly-report-model";
 import type {
-  WeeklyBonusQuery, WeeklyCompanyReport, WeeklyRepReport, WeeklyReportAuditEntry, WeeklyReportCorrection, WeeklyReportResponseInput
+  ManagerFundTotals, WeeklyBonusQuery, WeeklyCompanyReport, WeeklyRepReport, WeeklyReportAuditEntry, WeeklyReportCorrection, WeeklyReportResponseInput
 } from "../lib/api";
 import { currencySymbol } from "../lib/money-privacy";
+
+export type TopTab = "overview" | "reps" | "bonus" | "funds" | "financial" | "orders" | "audit";
 
 export type ReviewRepRow = {
   repId: string;
@@ -56,9 +58,18 @@ export default function ManagerWeeklyReviewPage({
   mode, weekStart, weekEnd, onShiftWeek, onPickWeek, canGoNext, loading, error,
   rows, company, corrections, audit, managerBonus, canAct, readOnlyReason, dueDate, onOpenHistory,
   bonusQueries = [], canResolveQueries = false, onResolveBonusQuery,
+  renderFunds, fundsPending, fundsSummary, onSaveDraftNote, initialTab,
   onApprove, onReturn, onFlag, onSubmitToOwner, onBack, onEditManagerBonus
 }: {
   bonusQueries?: WeeklyBonusQuery[];
+  /** The Funds & Expenses tab, rendered by the parent; receives the notes/submit bar. */
+  renderFunds?: (footer: ReactNode) => ReactNode;
+  /** Funds entries needing proof or a correction (badge on the tab). */
+  fundsPending?: number;
+  /** One line per manager wallet for the summary card. */
+  fundsSummary?: Array<{ managerName: string; totals: ManagerFundTotals; readiness: string[] }>;
+  onSaveDraftNote?: (note: string) => Promise<void>;
+  initialTab?: TopTab;
   canResolveQueries?: boolean;
   onResolveBonusQuery?: (id: string, body: { outcome: "corrected" | "no_change"; response: string; amount?: number }) => Promise<void>;
   /** The Tuesday the reps' reports are due. */
@@ -87,7 +98,7 @@ export default function ManagerWeeklyReviewPage({
   onEditManagerBonus?: () => void;
 }) {
   const sym = currencySymbol();
-  const [tab, setTab] = useState<"reps" | "company" | "bonus" | "orders" | "queries" | "audit">("reps");
+  const [topTab, setTopTab] = useState<TopTab>(initialTab ?? "overview");
   const [answering, setAnswering] = useState<WeeklyBonusQuery | null>(null);
   const openQueries = bonusQueries.filter((query) => query.status === "open").length;
   const [reviewing, setReviewing] = useState<string | null>(null);
@@ -125,7 +136,8 @@ export default function ManagerWeeklyReviewPage({
   const repNameByReportId = (id: string | null) => rows.find((row) => row.report?.id === id)?.repName ?? "-";
   const repNameById = (id: string | null) => rows.find((row) => row.repId === id)?.repName ?? "-";
 
-  const canSubmit = canAct && allApproved && (companyStatus === "open" || companyStatus === "returned_to_manager")
+  const fundsProblems = (fundsSummary ?? []).filter((item) => item.readiness.length > 0);
+  const canSubmit = canAct && allApproved && fundsProblems.length === 0 && (companyStatus === "open" || companyStatus === "returned_to_manager")
     && ownerReturns.every((row) => (ownerResponses[row.id] ?? "").trim().length >= 2);
   const submitBlocker = !canAct
     ? readOnlyReason ?? "Only a Manager or Admin can submit."
@@ -133,6 +145,8 @@ export default function ManagerWeeklyReviewPage({
       ? companyStatus === "locked" ? "This week is approved and locked." : "Submitted. Waiting for the owner."
       : !allApproved
         ? `${total - approvedCount} of ${total} report${total === 1 ? "" : "s"} still need${total - approvedCount === 1 ? "s" : ""} your approval.`
+        : fundsProblems.length > 0
+          ? `Funds & Expenses: ${fundsProblems.map((item) => `${item.managerName}: ${item.readiness.join(" ")}`).join(" ")}`
         : ownerReturns.length > 0 && !ownerReturns.every((row) => (ownerResponses[row.id] ?? "").trim())
           ? "Answer the owner's comments first."
           : "";
@@ -151,6 +165,44 @@ export default function ManagerWeeklyReviewPage({
     return !q || `${order.id} ${order.customer} ${order.repName} ${order.product}`.toLowerCase().includes(q);
   });
   const repChartRows = shown.map((snap) => ({ label: snap.repName.split(" ")[0], orders: snap.totals.orders, delivered: snap.totals.delivered, deliveryRate: snap.totals.deliveryRate }));
+
+  const submitToOwner = async () => {
+    setSubmitting(true);
+    setSubmitError("");
+    try {
+      await onSubmitToOwner(managerNote.trim(), ownerReturns.map((row) => ({ correctionId: row.id, response: (ownerResponses[row.id] ?? "").trim() })));
+    } catch (err: any) {
+      setSubmitError(err?.message ?? "Could not submit.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // The money side, one card for every manager wallet (Funds & Expenses).
+  const fundsSummaryPanel = (
+    <Panel>
+      <NumberedHeader icon={Wallet} title="Manager Funds & Expenses" subtitle="Opening + received − spent − remitted = expected; actual − expected = variance." />
+      <div className="space-y-3 px-5 pb-5 pt-3">
+        {(fundsSummary ?? []).length === 0 && <p className="m-0 text-[12px] text-gray-500">No manager wallet activity this week.</p>}
+        {(fundsSummary ?? []).map((item) => (
+          <div key={item.managerName} className="rounded-xl border border-gray-100 p-3 text-[12px] dark:border-slate-800">
+            <p className="m-0 font-bold text-gray-900 dark:text-slate-100">{item.managerName}</p>
+            <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-gray-700 dark:text-slate-300">
+              <span>Opening</span><span className="text-right">{sym}{nf(item.totals.opening)}</span>
+              <span>Received</span><span className="text-right text-emerald-700">+{sym}{nf(item.totals.received)}</span>
+              <span>Spent</span><span className="text-right text-rose-600">−{sym}{nf(item.totals.spent)}</span>
+              <span>Remitted</span><span className="text-right text-violet-700">−{sym}{nf(item.totals.remitted)}</span>
+              <span className="font-bold">Expected balance</span><span className="text-right font-bold">{sym}{nf(item.totals.expected)}</span>
+              <span>Actual balance</span><span className="text-right">{item.totals.actual === null ? "Not counted" : `${sym}${nf(item.totals.actual)}`}</span>
+              <span className="font-bold">Variance</span>
+              <span className={`text-right font-bold ${item.totals.variance === null ? "text-gray-400" : Math.abs(item.totals.variance) < 0.01 ? "text-emerald-700" : "text-rose-600"}`}>{item.totals.variance === null ? "—" : Math.abs(item.totals.variance) < 0.01 ? `${sym}0 ✓` : `${item.totals.variance < 0 ? "−" : "+"}${sym}${nf(Math.abs(item.totals.variance))}`}</span>
+            </div>
+            {item.readiness.length > 0 && <p className="m-0 mt-2 text-[11px] font-semibold text-rose-600">{item.readiness.join(" ")}</p>}
+          </div>
+        ))}
+      </div>
+    </Panel>
+  );
 
   const submitPanel = (
     <div className="space-y-4">
@@ -172,17 +224,7 @@ export default function ManagerWeeklyReviewPage({
         <button
           type="button"
           disabled={!canSubmit || submitting}
-          onClick={async () => {
-            setSubmitting(true);
-            setSubmitError("");
-            try {
-              await onSubmitToOwner(managerNote.trim(), ownerReturns.map((row) => ({ correctionId: row.id, response: (ownerResponses[row.id] ?? "").trim() })));
-            } catch (err: any) {
-              setSubmitError(err?.message ?? "Could not submit.");
-            } finally {
-              setSubmitting(false);
-            }
-          }}
+          onClick={submitToOwner}
           className="!min-h-0 mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#1F6FEB] px-4 py-3 text-[13px] font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {submitting ? "Submitting…" : companyStatus === "returned_to_manager" ? "Resubmit to Owner for Final Approval" : "Submit to Owner for Final Approval"}
@@ -220,34 +262,67 @@ export default function ManagerWeeklyReviewPage({
     </Panel>
   );
 
+  const TOP_TABS: Array<{ key: TopTab; label: string; icon: typeof Check }> = [
+    { key: "overview", label: "Overview", icon: ClipboardList },
+    { key: "reps", label: "Sales Reps", icon: Users },
+    { key: "bonus", label: "Manager Bonus", icon: Crown },
+    { key: "funds", label: "Funds & Expenses", icon: Wallet },
+    { key: "financial", label: "Financial Summary", icon: BarChart3 },
+    { key: "orders", label: "Order Details", icon: FileText },
+    { key: "audit", label: "Audit Trail", icon: History }
+  ];
+  const statusLabel = companyStatus === "locked" ? "Locked" : companyStatus === "submitted_to_owner" ? "With Owner" : companyStatus === "returned_to_manager" ? "Correction Required" : "In Progress";
+  const statusTone = companyStatus === "locked" ? "bg-slate-100 text-slate-700" : companyStatus === "submitted_to_owner" ? "bg-amber-50 text-amber-700" : companyStatus === "returned_to_manager" ? "bg-rose-50 text-rose-700" : "bg-blue-50 text-blue-700";
+
+  const fundsFooter = (
+    <Panel className="p-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
+        <div className="flex-1">
+          <NoteBox label="Manager Notes (Optional)" value={managerNote} onChange={setManagerNote} disabled={!canAct || frozenWeek} placeholder="Add any notes about this week's income and expenses..." />
+        </div>
+        <div className="flex shrink-0 flex-col gap-2 pb-6 sm:flex-row">
+          {onSaveDraftNote && (
+            <button type="button" disabled={!canAct || frozenWeek} onClick={() => void onSaveDraftNote(managerNote.trim())}
+              className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-xl border border-rose-300 bg-white px-5 py-3 text-[13px] font-bold text-rose-600 hover:bg-rose-50 disabled:opacity-40 dark:bg-slate-900">
+              <FileText className="h-4 w-4" /> Save as Draft
+            </button>
+          )}
+          <button type="button" disabled={!canSubmit || submitting} onClick={submitToOwner}
+            className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-xl bg-[#1F6FEB] px-5 py-3 text-[13px] font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40">
+            <Send className="h-4 w-4" /> {submitting ? "Submitting…" : "Submit to Owner for Final Approval"}
+          </button>
+        </div>
+      </div>
+      {submitBlocker && <p className="m-0 text-right text-[11px] text-gray-500">{submitBlocker}</p>}
+      {submitError && <p className="m-0 mt-2 rounded-lg bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700">{submitError}</p>}
+    </Panel>
+  );
+
   return (
     <div className="space-y-5">
-      {/* ── Header ─────────────────────────────────────────────── */}
+      {/* ── Header (Bright's Manager Weekly Report design) ───────── */}
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div>
           <nav className="flex items-center gap-2 text-[12px] text-gray-600 dark:text-slate-400" aria-label="Breadcrumb">
             <button type="button" onClick={onBack} className="!min-h-0 inline-flex items-center gap-1.5 font-medium text-[#1F8FE0] hover:underline">← Manager Dashboard</button>
-            <ChevronRight className="h-3.5 w-3.5" />
-            <span>Weekly Reports</span>
+            <ChevronRight className="h-3.5 w-3.5" /><span>Weekly Reports</span>
+            <ChevronRight className="h-3.5 w-3.5" /><span>Manager Review</span>
           </nav>
           <div className="mt-3 flex items-start gap-3">
             <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-300"><ClipboardList className="h-7 w-7" /></span>
             <div>
-              <h1 className="m-0 text-2xl font-black tracking-tight text-gray-900 dark:text-slate-50">{mode === "submit" ? "Submit My Report" : "Manager Weekly Report Review"}</h1>
-              <p className="m-0 mt-1 text-[13px] text-gray-500 dark:text-slate-400">
-                {mode === "submit"
-                  ? "Check the company week and your own bonus, then submit to the owner."
-                  : "Review, verify and approve weekly reports from sales reps. Check for accuracy, request corrections if needed, and submit to owner."}
-              </p>
+              <div className="flex flex-wrap items-center gap-2.5">
+                <h1 className="m-0 text-2xl font-black tracking-tight text-gray-900 dark:text-slate-50">Manager Weekly Report</h1>
+                <span className="rounded-lg bg-blue-50 px-2.5 py-1 text-[12px] font-bold text-blue-700 dark:bg-blue-500/15 dark:text-blue-200">Week: {longDate(weekStart)} – {longDate(weekEnd)}</span>
+                <span className={`rounded-lg px-2.5 py-1 text-[12px] font-bold ${statusTone}`}>{statusLabel}</span>
+              </div>
+              <p className="m-0 mt-1 text-[13px] text-gray-500 dark:text-slate-400">Review all sections, verify data, manage expenses, and submit to owner for final approval.</p>
             </div>
           </div>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2 xl:flex-nowrap">
-          <WeekPicker weekStart={weekStart} weekEnd={weekEnd} onShift={onShiftWeek} canGoNext={canGoNext} />
-          <label className="relative !min-h-0 inline-flex h-11 cursor-pointer items-center rounded-xl border border-gray-200 bg-white px-4 text-[13px] font-semibold text-gray-800 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
-            Change Week
-            <input type="date" aria-label="Change week" className="absolute inset-0 cursor-pointer opacity-0" value={weekStart} onChange={(event) => event.target.value && onPickWeek(event.target.value)} />
-          </label>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <button type="button" onClick={() => onShiftWeek(-1)} className="!min-h-0 inline-flex h-11 items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 text-[13px] font-semibold text-gray-800 shadow-sm hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"><ChevronLeft className="h-4 w-4" /> Previous Week</button>
+          <button type="button" disabled={!canGoNext} onClick={() => onShiftWeek(1)} className="!min-h-0 inline-flex h-11 items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 text-[13px] font-semibold text-gray-800 shadow-sm hover:bg-gray-50 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">Next Week <ChevronRight className="h-4 w-4" /></button>
           {onOpenHistory && (
             <button type="button" onClick={onOpenHistory} className="!min-h-0 inline-flex h-11 items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 text-[13px] font-semibold text-gray-800 shadow-sm hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
               <History className="h-4 w-4" /> Report History
@@ -258,44 +333,84 @@ export default function ManagerWeeklyReviewPage({
 
       {error && <p className="m-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-[13px] font-semibold text-rose-700">{error}</p>}
 
+      {/* ── Top tabs ──────────────────────────────────────────── */}
+      <div className="flex gap-1 overflow-x-auto rounded-2xl bg-gray-100 p-1 dark:bg-slate-800" role="tablist">
+        {TOP_TABS.map(({ key, label, icon: Icon }) => (
+          <button key={key} type="button" role="tab" aria-selected={topTab === key} onClick={() => setTopTab(key)}
+            className={`!min-h-0 inline-flex items-center gap-2 whitespace-nowrap rounded-xl px-4 py-2.5 text-[13px] font-semibold ${topTab === key ? "bg-[#1F6FEB] text-white shadow-sm" : "text-gray-600 hover:text-gray-900 dark:text-slate-300"}`}>
+            <Icon className="h-4 w-4" />{label}
+            {key === "reps" && openQueries > 0 && <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[11px] font-bold text-white">{openQueries}</span>}
+            {key === "funds" && (fundsPending ?? 0) > 0 && <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[11px] font-bold text-white">{fundsPending}</span>}
+          </button>
+        ))}
+      </div>
+
+      {topTab === "funds" ? (
+        renderFunds ? renderFunds(fundsFooter) : <p className="m-0 text-[13px] text-gray-500">Funds & Expenses is not available.</p>
+      ) : (
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_280px]">
         <div className="min-w-0 space-y-5">
+          {(topTab === "overview" || topTab === "reps") && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 2xl:grid-cols-4">
             <KpiCard tone="blue" icon={ShoppingCart} label="Company Total Orders" value={nf(totals.orders)} delta={deltaPct(totals.orders, prev?.orders)} sub={`vs previous week (${nf(prev?.orders ?? 0)})`} />
             <KpiCard tone="green" icon={Box} label="Delivered Orders" value={nf(totals.delivered)} delta={deltaPct(totals.delivered, prev?.delivered)} sub={`vs previous week (${nf(prev?.delivered ?? 0)})`} />
             <KpiCard tone="orange" icon={Target} label="Delivery Rate" value={pctText(totals.deliveryRate)} delta={prev ? Math.round((totals.deliveryRate - prev.deliveryRate) * 10) / 10 : null} sub={`vs previous week (${pctText(prev?.deliveryRate ?? 0)})`} />
             <KpiCard tone="purple" icon={Wallet} label="Total Bonus Payable" labelTone="text-violet-700 dark:text-violet-300" value={`${sym}${nf(totals.totalBonus)}`} delta={deltaPct(totals.totalBonus, prev?.totalBonus)} sub={`vs previous week (${sym}${nf(prev?.totalBonus ?? 0)})`} />
           </div>
+          )}
 
-          {mode === "submit" ? (
+          {topTab === "overview" && (
             <>
               <div className="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                 <Panel>
-                  <NumberedHeader n={1} title="Company Breakdown" subtitle="Orders and delivery rate per product, all reps." />
-                  <CompanyProductTable products={companySnap.products} totals={totals} />
+                  <NumberedHeader n={1} title="Delivery Rate by Sales Rep" right={
+                    <select value={chartMode} onChange={(event) => setChartMode(event.target.value as "bar" | "rate")} style={{ width: "auto" }} className="mr-5 mt-4 !h-9 !w-auto shrink-0 rounded-lg border border-gray-200 bg-white px-2 text-[12px] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+                      <option value="bar">Bar Chart</option>
+                      <option value="rate">Delivery Rate Only</option>
+                    </select>
+                  } />
+                  <ChartLegend items={chartMode === "bar"
+                    ? [{ label: "Orders", color: "#3b82f6" }, { label: "Delivered", color: "#10b981" }, { label: "Delivery Rate", color: "#f97316" }]
+                    : [{ label: "Delivery Rate", color: "#f97316" }]} />
+                  <div className="px-3 pb-4 pt-2">
+                    <OrdersRateChart rows={chartMode === "bar" ? repChartRows : repChartRows.map((row) => ({ ...row, orders: 0, delivered: 0 }))} ordersColor="#3b82f6" deliveredColor="#10b981" />
+                  </div>
+                </Panel>
+                <Panel>
+                  <NumberedHeader n={2} title="Orders by Product" right={
+                    <select value={donutMetric} onChange={(event) => setDonutMetric(event.target.value as "orders" | "delivered")} style={{ width: "auto" }} className="mr-5 mt-4 !h-9 !w-auto shrink-0 rounded-lg border border-gray-200 bg-white px-2 text-[12px] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+                      <option value="orders">Orders</option>
+                      <option value="delivered">Delivered</option>
+                    </select>
+                  } />
+                  <ProductDonut products={companySnap.products} metric={donutMetric} />
+                </Panel>
+              </div>
+              <div className="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
+                <Panel>
+                  <div className="flex items-center gap-2 px-5 pt-4">
+                    <MessageCircle className="h-5 w-5 text-violet-600" />
+                    <h2 className="m-0 text-[15px] font-bold text-gray-900 dark:text-slate-50">Reported Issues &amp; Corrections</h2>
+                    <span className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-bold text-white ${repCorrections.filter((row) => row.status === "open").length > 0 ? "bg-rose-500" : "bg-rose-500"}`}>{repCorrections.filter((row) => row.status === "open").length}</span>
+                  </div>
+                  <div className="pt-3">
+                    <CorrectionList corrections={repCorrections} repNameById={repNameByReportId} empty={
+                      <div className="flex flex-col items-center px-5 pb-8 pt-6 text-center">
+                        <FileText className="h-8 w-8 text-gray-400" />
+                        <p className="m-0 mt-2 text-[13px] font-semibold text-gray-800 dark:text-slate-200">No issues or corrections</p>
+                        <p className="m-0 mt-0.5 text-[12px] text-gray-500">All reports are clear and ready for final submission.</p>
+                      </div>
+                    } />
+                  </div>
                 </Panel>
                 {managerBonusPanel}
               </div>
-              <Panel>
-                <NumberedHeader n={2} title="Bonus Breakdown" subtitle="Every rep's approved bonus for the week." />
-                <RepBonusTable snaps={shown} sym={sym} />
-              </Panel>
             </>
-          ) : (
-            <Panel className="overflow-hidden">
-              {/* ── Tabs ─────────────────────────────────────────── */}
-              <div className="flex gap-1 overflow-x-auto border-b border-gray-100 px-3 pt-3 dark:border-slate-800" role="tablist">
-                {([["reps", "Sales Rep Reports"], ["company", "Company Breakdown"], ["bonus", "Bonus Breakdown"], ["orders", "Order Details"], ["queries", "Bonus Queries"], ["audit", "Audit Trail"]] as const).map(([key, label]) => (
-                  <button key={key} type="button" role="tab" aria-selected={tab === key} onClick={() => setTab(key)}
-                    className={`!min-h-0 inline-flex items-center gap-1.5 whitespace-nowrap rounded-t-lg px-5 py-2.5 text-[13px] font-semibold ${tab === key ? "bg-[#1F6FEB] text-white" : "bg-gray-50 text-gray-600 hover:text-gray-900 dark:bg-slate-800 dark:text-slate-300"}`}>
-                    {label}
-                    {key === "queries" && openQueries > 0 && <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[11px] font-bold text-white">{openQueries}</span>}
-                  </button>
-                ))}
-              </div>
+          )}
 
-              {tab === "reps" && (
-                <div>
+          {topTab === "reps" && (
+            <>
+              <Panel className="overflow-hidden">
                   <div className="grid grid-cols-2 gap-3 p-4 lg:grid-cols-[repeat(4,minmax(0,1fr))_minmax(0,1.6fr)]">
                     <StatusTile tone="green" icon={ShoppingCart} n={submittedCount} label="Submitted" sub="Waiting for review" />
                     <StatusTile tone="gray" icon={Inbox} n={draftCount} label="Draft" sub="Not yet submitted" />
@@ -371,40 +486,9 @@ export default function ManagerWeeklyReviewPage({
                       </tbody>
                     </table>
                   </div>
-                </div>
-              )}
-
-              {tab === "company" && (
-                <div className="grid grid-cols-1 gap-4 p-4 2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-                  <div className="rounded-xl border border-gray-100 dark:border-slate-800">
-                    <NumberedHeader title="Product Breakdown" subtitle="All reps, orders placed this week." />
-                    <CompanyProductTable products={companySnap.products} totals={totals} />
-                  </div>
-                  <div className="rounded-xl border border-gray-100 dark:border-slate-800">
-                    <NumberedHeader title="Daily Orders & Delivery" subtitle="Orders placed each day, and how many delivered." />
-                    <ChartLegend items={[{ label: "Orders", color: "#3b82f6" }, { label: "Delivered", color: "#10b981" }, { label: "Delivery Rate", color: "#f97316" }]} />
-                    <div className="px-3 pb-4 pt-2"><OrdersRateChart rows={dailyChartRows(companySnap.daily)} ordersColor="#3b82f6" deliveredColor="#10b981" /></div>
-                  </div>
-                </div>
-              )}
-
-              {tab === "bonus" && <RepBonusTable snaps={shown} sym={sym} />}
-
-              {tab === "orders" && (
-                <div className="p-4">
-                  <div className="mb-3 flex flex-wrap gap-2">
-                    <label className="flex h-10 min-w-[240px] flex-1 items-center gap-2 rounded-xl border border-gray-200 px-3 dark:border-slate-700">
-                      <Search className="h-4 w-4 text-gray-400" />
-                      <input value={orderSearch} onChange={(event) => setOrderSearch(event.target.value)} placeholder="Search order ID, customer, rep or product..." className="w-full border-0 bg-transparent text-[12px] outline-none dark:text-slate-100" />
-                    </label>
-                    <button type="button" onClick={() => downloadCsv(`weekly-orders-${weekStart}.csv`, ["Order ID", "Rep", "Date", "Customer", "Product", "Type", "Amount", "Status", "Bonus"], filteredOrders.map((row) => [row.id, row.repName, row.date, row.customer, row.product, row.type, row.amount, row.status, row.bonus]))}
-                      className="!min-h-0 inline-flex h-10 items-center gap-2 rounded-xl border border-gray-200 px-4 text-[13px] font-semibold text-gray-800 dark:border-slate-700 dark:text-slate-100"><Download className="h-4 w-4" /> Export</button>
-                  </div>
-                  <OrdersTable rows={filteredOrders} sym={sym} />
-                </div>
-              )}
-
-              {tab === "queries" && (
+              </Panel>
+              <Panel>
+                <NumberedHeader title="Bonus Queries" subtitle="Reps who ran Check My Bonus and still need an answer." />
                 <div className="space-y-3 p-4">
                   <p className="m-0 text-[12px] text-gray-500 dark:text-slate-400">Reps who feel underpaid run "Check My Bonus". Anything the system finds, or anything a rep still disputes, lands here. A correction is paid with the week that is running now, never written into a locked week.</p>
                   {bonusQueries.length === 0 && <p className="m-0 rounded-xl bg-gray-50 px-4 py-6 text-center text-[13px] text-gray-500 dark:bg-slate-800">No bonus queries.</p>}
@@ -441,64 +525,64 @@ export default function ManagerWeeklyReviewPage({
                     );
                   })}
                 </div>
-              )}
+              </Panel>
+            </>
+          )}
 
-              {tab === "audit" && <div className="p-2"><AuditTable entries={audit} repName={repNameById} /></div>}
+          {topTab === "bonus" && (
+            <>
+              <div className="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                {managerBonusPanel}
+                {fundsSummaryPanel}
+              </div>
+              <Panel>
+                <NumberedHeader title="Sales Rep Bonus Breakdown" subtitle="Every rep's bonus for the week." />
+                <RepBonusTable snaps={shown} sym={sym} />
+              </Panel>
+            </>
+          )}
+
+          {topTab === "financial" && (
+            <>
+              {fundsSummaryPanel}
+              <Panel>
+                <div className="grid grid-cols-1 gap-4 p-4 2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                  <div className="rounded-xl border border-gray-100 dark:border-slate-800">
+                    <NumberedHeader title="Product Breakdown" subtitle="All reps, orders placed this week." />
+                    <CompanyProductTable products={companySnap.products} totals={totals} />
+                  </div>
+                  <div className="rounded-xl border border-gray-100 dark:border-slate-800">
+                    <NumberedHeader title="Daily Orders & Delivery" subtitle="Orders placed each day, and how many delivered." />
+                    <ChartLegend items={[{ label: "Orders", color: "#3b82f6" }, { label: "Delivered", color: "#10b981" }, { label: "Delivery Rate", color: "#f97316" }]} />
+                    <div className="px-3 pb-4 pt-2"><OrdersRateChart rows={dailyChartRows(companySnap.daily)} ordersColor="#3b82f6" deliveredColor="#10b981" /></div>
+                  </div>
+                </div>
+              </Panel>
+            </>
+          )}
+
+          {topTab === "orders" && (
+            <Panel>
+                <div className="p-4">
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    <label className="flex h-10 min-w-[240px] flex-1 items-center gap-2 rounded-xl border border-gray-200 px-3 dark:border-slate-700">
+                      <Search className="h-4 w-4 text-gray-400" />
+                      <input value={orderSearch} onChange={(event) => setOrderSearch(event.target.value)} placeholder="Search order ID, customer, rep or product..." className="w-full border-0 bg-transparent text-[12px] outline-none dark:text-slate-100" />
+                    </label>
+                    <button type="button" onClick={() => downloadCsv(`weekly-orders-${weekStart}.csv`, ["Order ID", "Rep", "Date", "Customer", "Product", "Type", "Amount", "Status", "Bonus"], filteredOrders.map((row) => [row.id, row.repName, row.date, row.customer, row.product, row.type, row.amount, row.status, row.bonus]))}
+                      className="!min-h-0 inline-flex h-10 items-center gap-2 rounded-xl border border-gray-200 px-4 text-[13px] font-semibold text-gray-800 dark:border-slate-700 dark:text-slate-100"><Download className="h-4 w-4" /> Export</button>
+                  </div>
+                  <OrdersTable rows={filteredOrders} sym={sym} />
+                </div>
             </Panel>
           )}
 
-          {mode === "review" && tab === "reps" && (
-            <>
-              <div className="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-                <Panel>
-                  <NumberedHeader n={1} title="Delivery Rate by Sales Rep" right={
-                    <select value={chartMode} onChange={(event) => setChartMode(event.target.value as "bar" | "rate")} style={{ width: "auto" }} className="mr-5 mt-4 !h-9 !w-auto shrink-0 rounded-lg border border-gray-200 bg-white px-2 text-[12px] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
-                      <option value="bar">Bar Chart</option>
-                      <option value="rate">Delivery Rate Only</option>
-                    </select>
-                  } />
-                  <ChartLegend items={chartMode === "bar"
-                    ? [{ label: "Orders", color: "#3b82f6" }, { label: "Delivered", color: "#10b981" }, { label: "Delivery Rate", color: "#f97316" }]
-                    : [{ label: "Delivery Rate", color: "#f97316" }]} />
-                  <div className="px-3 pb-4 pt-2">
-                    <OrdersRateChart rows={chartMode === "bar" ? repChartRows : repChartRows.map((row) => ({ ...row, orders: 0, delivered: 0 }))} ordersColor="#3b82f6" deliveredColor="#10b981" />
-                  </div>
-                </Panel>
-                <Panel>
-                  <NumberedHeader n={2} title="Orders by Product" right={
-                    <select value={donutMetric} onChange={(event) => setDonutMetric(event.target.value as "orders" | "delivered")} style={{ width: "auto" }} className="mr-5 mt-4 !h-9 !w-auto shrink-0 rounded-lg border border-gray-200 bg-white px-2 text-[12px] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
-                      <option value="orders">Orders</option>
-                      <option value="delivered">Delivered</option>
-                    </select>
-                  } />
-                  <ProductDonut products={companySnap.products} metric={donutMetric} />
-                </Panel>
-              </div>
-              <div className="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
-                <Panel>
-                  <div className="flex items-center gap-2 px-5 pt-4">
-                    <MessageCircle className="h-5 w-5 text-violet-600" />
-                    <h2 className="m-0 text-[15px] font-bold text-gray-900 dark:text-slate-50">Reported Issues &amp; Corrections</h2>
-                    <span className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-bold text-white ${repCorrections.filter((row) => row.status === "open").length > 0 ? "bg-rose-500" : "bg-rose-500"}`}>{repCorrections.filter((row) => row.status === "open").length}</span>
-                  </div>
-                  <div className="pt-3">
-                    <CorrectionList corrections={repCorrections} repNameById={repNameByReportId} empty={
-                      <div className="flex flex-col items-center px-5 pb-8 pt-6 text-center">
-                        <FileText className="h-8 w-8 text-gray-400" />
-                        <p className="m-0 mt-2 text-[13px] font-semibold text-gray-800 dark:text-slate-200">No issues or corrections</p>
-                        <p className="m-0 mt-0.5 text-[12px] text-gray-500">All reports are clear and ready for final submission.</p>
-                      </div>
-                    } />
-                  </div>
-                </Panel>
-                {managerBonusPanel}
-              </div>
-            </>
-          )}
+          {topTab === "audit" && <Panel className="p-2"><AuditTable entries={audit} repName={repNameById} /></Panel>}
         </div>
 
         {submitPanel}
       </div>
+      )}
 
       {/* ── Row menu ────────────────────────────────────────────── */}
       {menuFor && createPortal(

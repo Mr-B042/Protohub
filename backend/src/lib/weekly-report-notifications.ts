@@ -224,3 +224,34 @@ export async function notifyManagersOverdue(orgId: string, branchId: string, wee
     console.warn("[weekly-report-notifications] overdue summary failed:", error?.message ?? error);
   }
 }
+
+export type FundsEvent =
+  | { kind: "adjustment_requested"; managerName: string; amountFrom: number; amountTo: number; weekStart: string }
+  | { kind: "adjustment_decided"; managerId: string; approved: boolean; amountTo: number; weekStart: string };
+
+/** Manager Funds & Expenses alerts. */
+export async function notifyFunds(orgId: string, branchId: string, event: FundsEvent): Promise<void> {
+  try {
+    const naira = (value: number) => `\u20a6${Math.round(value).toLocaleString("en-NG")}`;
+    const week = weekLabel(event.weekStart);
+    if (event.kind === "adjustment_requested") {
+      await deliver(orgId, branchId, (await leadershipRecipients(orgId, branchId)).filter((user) => user.role === "Owner"), {
+        title: `${event.managerName} asked to change a locked entry`,
+        message: `Week ${week}: ${naira(event.amountFrom)} -> ${naira(event.amountTo)}. Needs your decision.`,
+        kind: "manager_funds_adjustment",
+        tag: `manager-funds-adjustment-${Date.now()}`,
+        type: "warning"
+      });
+      return;
+    }
+    await deliver(orgId, branchId, [{ id: event.managerId, role: "Manager" }], {
+      title: event.approved ? "Your adjustment was approved" : "Your adjustment was rejected",
+      message: event.approved ? `Week ${week}: the entry is now ${naira(event.amountTo)}.` : `Week ${week}: the entry stays as it was.`,
+      kind: "manager_funds_adjustment_decided",
+      tag: `manager-funds-adjustment-decided-${Date.now()}`,
+      type: event.approved ? "success" : "info"
+    });
+  } catch (error: any) {
+    console.warn("[weekly-report-notifications] funds alert failed:", error?.message ?? error);
+  }
+}

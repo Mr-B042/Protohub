@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlertTriangle, BarChart3, Box, ChevronDown, ChevronRight, ClipboardList, Download, Eye, Lock, MoreVertical, RotateCcw,
   ShieldAlert, ShoppingCart, Target, Unlock, Wallet, CheckCircle2, Clock3
@@ -10,7 +10,7 @@ import {
 } from "../components/WeeklyReportParts";
 import { CompanyProductTable, OrdersTable, RepBonusTable, RepReviewModal, shownSnapshot, type ReviewRepRow } from "./ManagerWeeklyReviewPage";
 import { buildCompanySnapshot, type CompanyWeeklySnapshot, type ManagerBonusPreview, type WeeklyReportSnapshot } from "./weekly-report-model";
-import type { WeeklyBonusQuery, WeeklyCompanyReport, WeeklyReportAuditEntry, WeeklyReportCorrection } from "../lib/api";
+import type { ManagerFundTotals, WeeklyBonusQuery, WeeklyCompanyReport, WeeklyReportAuditEntry, WeeklyReportCorrection } from "../lib/api";
 import { currencySymbol } from "../lib/money-privacy";
 
 export type WeeklyFinancialSummary = {
@@ -41,6 +41,7 @@ type RedFlag = { severity: "high" | "medium"; title: string; detail: string; rep
 export default function OwnerWeeklyApprovalPage({
   weekStart, weekEnd, onShiftWeek, onPickWeek, canGoNext, loading, error,
   rows, company, corrections, audit, managerBonus, managerName, financial, lowRateThreshold, dueDate, bonusQueries = [],
+  funds = [], renderFunds,
   onApproveLock, onReturnToManager, onReopen, onBack
 }: {
   weekStart: string;
@@ -61,13 +62,17 @@ export default function OwnerWeeklyApprovalPage({
   /** The Tuesday the reps' reports are due. */
   dueDate?: string;
   bonusQueries?: WeeklyBonusQuery[];
+  /** Each manager wallet's week (Funds & Expenses). */
+  funds?: Array<{ managerName: string; totals: ManagerFundTotals; readiness: string[]; varianceExplanation: string | null; returned: number }>;
+  /** The Funds & Expenses tab (transactions, receipts, return, adjustments). */
+  renderFunds?: () => ReactNode;
   onApproveLock: (note: string) => Promise<void>;
   onReturnToManager: (draft: CorrectionDraft) => Promise<void>;
   onReopen: (reason: string) => Promise<void>;
   onBack: () => void;
 }) {
   const sym = currencySymbol();
-  const [tab, setTab] = useState<"overview" | "reps" | "manager" | "bonus" | "products" | "audit">("overview");
+  const [tab, setTab] = useState<"overview" | "reps" | "manager" | "bonus" | "funds" | "products" | "audit">("overview");
   const [viewing, setViewing] = useState<string | null>(null);
   const [requestChanges, setRequestChanges] = useState("");
   const [returning, setReturning] = useState(false);
@@ -138,6 +143,15 @@ export default function OwnerWeeklyApprovalPage({
     for (const row of paidHere) {
       flags.push({ severity: "medium", repId: row.repId, title: `${row.repName}: bonus correction of ${sym}${nf(shownSnapshot(row)?.totals.adjustments ?? 0)} paid this week`, detail: (shownSnapshot(row)?.adjustments ?? []).map((item) => item.label).join("; ") });
     }
+    for (const item of funds) {
+      const variance = item.totals.variance;
+      if (variance !== null && Math.abs(variance) >= 0.01) {
+        flags.push({ severity: "high", title: `${item.managerName}'s wallet is ${variance < 0 ? "short" : "over"} by ${sym}${nf(Math.abs(variance))}`, detail: item.varianceExplanation ? `Her explanation: "${item.varianceExplanation}"` : "No explanation given yet." });
+      }
+      if (item.totals.actual === null) flags.push({ severity: "medium", title: `${item.managerName} has not counted her wallet balance`, detail: `Expected ${sym}${nf(item.totals.expected)}.` });
+      if (item.totals.pending > 0) flags.push({ severity: "medium", title: `${item.managerName}: ${item.totals.pending} wallet entr${item.totals.pending === 1 ? "y needs" : "ies need"} proof or a correction`, detail: item.readiness.join(" ") });
+      if (item.totals.otherIn > 0) flags.push({ severity: "medium", title: `${item.managerName}: ${sym}${nf(item.totals.otherIn)} of "other money in"`, detail: "Not a customer payment or company transfer. Check the proof." });
+    }
     if (frozenCompany) {
       const liveTotal = liveCompany.totals.totalBonus;
       if (Math.abs(liveTotal - frozenCompany.totals.totalBonus) > 0.5 || liveCompany.totals.orders !== frozenCompany.totals.orders) {
@@ -145,7 +159,7 @@ export default function OwnerWeeklyApprovalPage({
       }
     }
     return flags.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "high" ? -1 : 1));
-  }, [rows, expectedRows, corrections, frozenCompany, liveCompany, lowRateThreshold, sym, dueDate, bonusQueries]);
+  }, [rows, expectedRows, corrections, frozenCompany, liveCompany, lowRateThreshold, sym, dueDate, bonusQueries, funds]);
 
   const approvedCount = expectedRows.filter((row) => row.report && ["manager_approved", "owner_approved", "locked"].includes(row.report.status)).length;
   const submittedCount = expectedRows.filter((row) => row.report && row.report.status !== "draft").length;
@@ -246,6 +260,33 @@ export default function OwnerWeeklyApprovalPage({
     </Panel>
   );
 
+  // Manager Funds & Expenses, as Bright drew it in his notes: the six lines,
+  // and a way into the transactions only when something looks wrong.
+  const fundsCard = funds.length === 0 ? null : (
+    <Panel>
+      <NumberedHeader n={5} title="Manager Funds & Expenses" right={
+        <button type="button" onClick={() => setTab("funds")} className="!min-h-0 mr-5 mt-4 rounded-lg border border-blue-200 px-3 py-1.5 text-[12px] font-semibold text-blue-700 hover:bg-blue-50 dark:border-blue-500/30 dark:text-blue-200">View transactions & receipts</button>
+      } />
+      <div className="grid grid-cols-1 gap-3 px-5 pb-5 pt-3 lg:grid-cols-2">
+        {funds.map((item) => (
+          <div key={item.managerName} className="rounded-xl border border-gray-100 p-3 text-[12px] dark:border-slate-800">
+            <p className="m-0 font-bold text-gray-900 dark:text-slate-100">{item.managerName}</p>
+            <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-gray-700 dark:text-slate-300">
+              <span>Opening</span><span className="text-right">{sym}{nf(item.totals.opening)}</span>
+              <span>Received</span><span className="text-right">{sym}{nf(item.totals.received)}</span>
+              <span>Spent</span><span className="text-right">{sym}{nf(item.totals.spent)}</span>
+              <span>Remitted</span><span className="text-right">{sym}{nf(item.totals.remitted)}</span>
+              <span className="font-bold">Expected Balance</span><span className="text-right font-bold">{sym}{nf(item.totals.expected)}</span>
+              <span>Actual Balance</span><span className="text-right">{item.totals.actual === null ? "Not counted" : `${sym}${nf(item.totals.actual)}`}</span>
+              <span className="font-bold">Variance</span>
+              <span className={`text-right font-bold ${item.totals.variance === null ? "text-gray-400" : Math.abs(item.totals.variance) < 0.01 ? "text-emerald-700" : "text-rose-600"}`}>{item.totals.variance === null ? "—" : Math.abs(item.totals.variance) < 0.01 ? `${sym}0 ✓` : `${item.totals.variance < 0 ? "−" : "+"}${sym}${nf(Math.abs(item.totals.variance))}`}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </Panel>
+  );
+
   const financialPanel = (
     <Panel>
       <NumberedHeader n={4} title="Financial Summary (Estimated)" right={<button type="button" onClick={() => setTab("bonus")} className="!min-h-0 mr-5 mt-4 rounded-lg border border-blue-200 px-3 py-1.5 text-[12px] font-semibold text-blue-700 hover:bg-blue-50 dark:border-blue-500/30 dark:text-blue-200">View Details</button>} />
@@ -337,7 +378,7 @@ export default function OwnerWeeklyApprovalPage({
 
       {/* ── Tabs ───────────────────────────────────────────── */}
       <div className="flex gap-1 overflow-x-auto" role="tablist">
-        {([["overview", "Company Overview"], ["reps", "Sales Rep Reports"], ["manager", "Manager Report"], ["bonus", "Bonus Breakdown"], ["products", "Product Performance"], ["audit", "Audit Trail"]] as const).map(([key, label]) => (
+        {([["overview", "Company Overview"], ["reps", "Sales Rep Reports"], ["manager", "Manager Report"], ["bonus", "Bonus Breakdown"], ["funds", "Funds & Expenses"], ["products", "Product Performance"], ["audit", "Audit Trail"]] as const).map(([key, label]) => (
           <button key={key} type="button" role="tab" aria-selected={tab === key} onClick={() => setTab(key)}
             className={`!min-h-0 whitespace-nowrap rounded-lg px-5 py-2.5 text-[13px] font-semibold ${tab === key ? "bg-[#1F6FEB] text-white shadow-sm" : "bg-white text-gray-600 hover:text-gray-900 dark:bg-slate-900 dark:text-slate-300"}`}>
             {label}
@@ -388,6 +429,7 @@ export default function OwnerWeeklyApprovalPage({
                 {managerReportPanel}
                 {financialPanel}
               </div>
+              {fundsCard}
             </>
           )}
 
@@ -430,6 +472,8 @@ export default function OwnerWeeklyApprovalPage({
               <Panel><NumberedHeader title="All Orders" subtitle="Every order in the reps' reports." /><div className="px-3 pb-4 pt-3"><OrdersTable rows={allOrders} sym={sym} /></div></Panel>
             </div>
           )}
+
+          {tab === "funds" && (renderFunds ? renderFunds() : null)}
 
           {tab === "audit" && <Panel className="p-2"><AuditTable entries={audit} repName={repNameById} /></Panel>}
         </div>

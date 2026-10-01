@@ -167,7 +167,7 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, ordersExtraApi, productCostApi, stockApi as _stockApi,
-  weeklyReportsApi, embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, upsellPerformanceApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, targetPeriodsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
+  weeklyReportsApi, managerFundsApi, embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, upsellPerformanceApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, targetPeriodsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
   branchesApi, setApiSpyUserId, type CartAssignmentPanel, type CartHandOutRules,
   setApiPreviewReadOnly,
   PreviewReadOnlyError, type BranchWorkspace
@@ -241,6 +241,8 @@ import OrderHistoryModal from "./components/OrderHistoryModal";
 import DateWindowNav from "./components/DateWindowNav";
 import UpsellPerformancePage, { type UpsellPerfOrder } from "./pages/UpsellPerformancePage";
 import RepWeeklyReportPage from "./pages/RepWeeklyReportPage";
+import type { ManagerFundTxn } from "./lib/api";
+import ManagerFundsTab from "./pages/ManagerFundsTab";
 import ManagerWeeklyReviewPage, { type ReviewRepRow } from "./pages/ManagerWeeklyReviewPage";
 import OwnerWeeklyApprovalPage, { type WeeklyFinancialSummary } from "./pages/OwnerWeeklyApprovalPage";
 import { CompanyReportHistoryPage, MyReportsHistoryPage, WeeklyAuditLogPage } from "./pages/WeeklyReportHistoryPages";
@@ -25643,6 +25645,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [weeklyMyHistory, setWeeklyMyHistory] = useState<Awaited<ReturnType<typeof weeklyReportsApi.myHistory>>["rows"]>([]);
   const [weeklyHistory, setWeeklyHistory] = useState<Awaited<ReturnType<typeof weeklyReportsApi.history>>["rows"]>([]);
   const [weeklyManagerBonus, setWeeklyManagerBonus] = useState<ManagerBonusSummary | null>(null);
+  // Manager Funds & Expenses (the manager's wallet) for the same week.
+  const [weeklyFunds, setWeeklyFunds] = useState<Awaited<ReturnType<typeof managerFundsApi.week>> | null>(null);
+  const [weeklyFundsManagerId, setWeeklyFundsManagerId] = useState<string | undefined>(undefined);
+  const [weeklyFundsError, setWeeklyFundsError] = useState("");
   const [weeklyLoading, setWeeklyLoading] = useState(false);
   const [weeklyError, setWeeklyError] = useState("");
   const [weeklyReload, setWeeklyReload] = useState(0);
@@ -25688,6 +25694,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           setWeeklyWeek(week);
           if (history) setWeeklyHistory(history.rows ?? []);
           setWeeklyManagerBonus(bonus as ManagerBonusSummary | null);
+          try {
+            const funds = await managerFundsApi.week(weekStart, weeklyFundsManagerId);
+            if (!cancelled) { setWeeklyFunds(funds); setWeeklyFundsError(""); }
+          } catch (fundsError: any) {
+            if (!cancelled) setWeeklyFundsError(fundsError?.message ?? "Could not load Funds & Expenses.");
+          }
         }
       } catch (error: any) {
         if (!cancelled) setWeeklyError(error?.message ?? "Could not load the weekly report.");
@@ -25697,7 +25709,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [weeklyAreaOpen, weeklyReportWeekStart, weeklyReload, weeklySubPage, currentRole]);
+  }, [weeklyAreaOpen, weeklyReportWeekStart, weeklyReload, weeklySubPage, currentRole, weeklyFundsManagerId]);
 
   /** One rep's week, worked out the way the Manager Dashboard bonus table does it. */
   const buildWeeklyRepSnapshot = (
@@ -25757,6 +25769,45 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       deliveryRate: before.totals.deliveryRate,
       finalBonus: before.totals.finalBonus
     });
+  };
+
+  /** The Funds & Expenses tab for the manager (her wallet) or the owner (any wallet). */
+  const renderManagerFunds = (mode: "manager" | "owner", footer?: ReactNode, onReturnTransaction?: (txn: ManagerFundTxn, comment: string) => Promise<void>) => {
+    const funds = weeklyFunds && weeklyFunds.weekStart === weeklyReportWeekStart ? weeklyFunds : null;
+    const mine = !!funds?.manager && funds.manager.id === (realManagedUser?.id ?? authUser?.id);
+    const run = async (action: () => Promise<unknown>, done?: string) => { await action(); if (done) showToast(done); weeklyRefresh(); };
+    return (
+      <ManagerFundsTab
+        data={funds}
+        loading={weeklyLoading}
+        error={weeklyFundsError}
+        mode={mode}
+        canWrite={mode === "manager" && mine && !!funds?.editable && !isSpying}
+        onSelectManager={(id) => setWeeklyFundsManagerId(id)}
+        onLog={async (body) => { const result = await managerFundsApi.log(body); showToast("Logged."); weeklyRefresh(); return result; }}
+        onUpload={async (id, file) => {
+          const dataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result));
+            reader.onerror = () => reject(new Error("Could not read the file."));
+            reader.readAsDataURL(file);
+          });
+          await run(() => managerFundsApi.uploadEvidence(id, dataUrl, file.name), "Proof uploaded.");
+        }}
+        onEdit={(id, body) => run(() => managerFundsApi.edit(id, body), "Saved.")}
+        onVoid={(id, reason) => run(() => managerFundsApi.void(id, reason), "Removed.")}
+        onOpenEvidence={async (transactionId, path) => {
+          const { url } = await managerFundsApi.evidenceUrl(transactionId, path);
+          window.open(url, "_blank", "noopener,noreferrer");
+        }}
+        onSaveWeek={(body) => run(() => managerFundsApi.saveWeek({ weekStart: weeklyReportWeekStart, ...body }))}
+        onRequestAdjustment={(body) => run(() => managerFundsApi.requestAdjustment(body), "Sent to the owner.")}
+        onDecideAdjustment={mode === "owner" ? (id, approve, note) => run(() => managerFundsApi.decideAdjustment(id, { approve, note }), approve ? "Adjustment approved." : "Adjustment rejected.") : undefined}
+        onReturnTransaction={onReturnTransaction}
+        onSaveSettings={mode === "owner" ? (body) => run(() => managerFundsApi.saveSettings(body), "Proof rules saved.") : undefined}
+        footer={footer}
+      />
+    );
   };
 
   /** For "Check My Bonus": what the app knows about each order the rep named. */
@@ -31615,6 +31666,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           lowRateThreshold={rateGate ?? 50}
           dueDate={dueDate}
           bonusQueries={week?.bonusQueries ?? []}
+          funds={(week?.funds ?? []).map((item) => ({ managerName: item.managerName, totals: item.totals, readiness: item.readiness, varianceExplanation: item.varianceExplanation, returned: item.returned }))}
+          renderFunds={() => renderManagerFunds("owner", undefined, (txn, comment) => weeklyRun(
+            () => weeklyReportsApi.returnCompany({ weekStart: weeklyReportWeekStart, section: "funds", problem: `${txn.kindLabel} ${txn.categoryLabel ?? ""} ₦${Math.round(txn.amount).toLocaleString("en-NG")}`.replace(/\s+/g, " ").trim(), comment, fundTransactionId: txn.id }),
+            "Returned to the manager."
+          ))}
           onBack={() => handleNavClick("Dashboard")}
           onApproveLock={(note) => weeklyRun(() => weeklyReportsApi.approveLock({ weekStart: weeklyReportWeekStart, ...(note ? { note } : {}) }), "Week approved and locked.")}
           onReturnToManager={(draft) => weeklyRun(() => weeklyReportsApi.returnCompany(correctionBody(draft)), "Returned to the manager.")}
@@ -31629,6 +31685,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         {...weekProps}
         mode="review"
         dueDate={dueDate}
+        renderFunds={(footer) => renderManagerFunds(currentRole === "Owner" ? "owner" : "manager", footer)}
+        fundsPending={weeklyFunds?.weekStart === weeklyReportWeekStart ? weeklyFunds?.totals?.pending : undefined}
+        fundsSummary={(week?.funds ?? []).map((item) => ({ managerName: item.managerName, totals: item.totals, readiness: item.readiness }))}
+        onSaveDraftNote={async (note) => { await managerFundsApi.saveWeek({ weekStart: weeklyReportWeekStart, notes: note || null }); showToast("Draft saved."); }}
         bonusQueries={week?.bonusQueries ?? []}
         canResolveQueries={currentRole === "Manager" || currentRole === "Admin" || currentRole === "Owner"}
         onResolveBonusQuery={(id, body) => weeklyRun(() => weeklyReportsApi.resolveBonusQuery(id, body), body.outcome === "corrected" ? "Correction added. The rep has been notified." : "Answer sent to the rep.")}
