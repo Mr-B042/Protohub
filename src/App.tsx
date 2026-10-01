@@ -167,13 +167,13 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, ordersExtraApi, productCostApi, stockApi as _stockApi,
-  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, targetPeriodsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
+  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, upsellPerformanceApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, targetPeriodsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
   branchesApi, setApiSpyUserId, type CartAssignmentPanel, type CartHandOutRules,
   setApiPreviewReadOnly,
   PreviewReadOnlyError, type BranchWorkspace
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid,CartRecoverySummary, CartGridRow, CartLogPenaltiesView, CartLogRangePreset, RecoveryCalendarView, RecoveryFollowUpPairs, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, TargetPeriod, TargetProgressView, TargetSuggestion, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, CostChangeImpact, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView } from "./lib/api";
+import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid,CartRecoverySummary, CartGridRow, CartLogPenaltiesView, CartLogRangePreset, RecoveryCalendarView, RecoveryFollowUpPairs, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, TargetPeriod, TargetProgressView, TargetSuggestion, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, CostChangeImpact, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView, UpsellPerformanceLog } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -239,9 +239,11 @@ import ChargeRiskBanner from "./components/ChargeRiskBanner";
 import CartLogOwedBanner from "./components/CartLogOwedBanner";
 import OrderHistoryModal from "./components/OrderHistoryModal";
 import DateWindowNav from "./components/DateWindowNav";
+import UpsellPerformancePage, { type UpsellPerfOrder } from "./pages/UpsellPerformancePage";
 import {
   DateWindow, PRESET_LABEL, PresetKey, presetRange, windowContains,
-  formatWindow as formatDateWindow, shiftDay as windowShiftDay, weekStart as windowWeekStart, windowLabel as dateWindowLabel
+  formatWindow as formatDateWindow, shiftDay as windowShiftDay, weekStart as windowWeekStart, windowLabel as dateWindowLabel,
+  shiftWindow as shiftDateWindow, windowSize as dateWindowSize
 } from "./lib/date-window";
 import RecoveryBonusCalendar from "./components/RecoveryBonusCalendar";
 import UpgradeBonusGrid, { withUpgradeAmount } from "./components/UpgradeBonusGrid";
@@ -310,7 +312,7 @@ type AgentStatus = "All Status" | "Active" | "Order in Progress" | "Inactive";
 type PayrollTab = "Pay Rates" | "Run Payroll" | "History";
 type CustomerSource = "Source: All" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
 type FinanceTab = "Cash Flow" | "Financial Overview" | "Reports" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Delivery Fee Audit" | "Remittance" | "Profit & Loss" | "Product Profitability" | "Package Performance" | "State Performance" | "Profitability";
-type ManagerDashboardTab = "Overview" | "Targets" | "Bonus" | "Upsell Bonus" | "Inventory" | "Needs Attention";
+type ManagerDashboardTab = "Overview" | "Targets" | "Bonus" | "Upsell Bonus" | "Upsell Performance" | "Inventory" | "Needs Attention";
 type RecoveryRepDashboardTab = "Overview" | "Work Queue" | "Activity Sheet" | "Customer Retention";
 // One screen of recovery cards. Big enough to be a real batch of calls,
 // small enough that a 618-order tier does not become an endless scroll.
@@ -9739,6 +9741,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [managerNavSpan, setManagerNavSpan] = useState<NavSpan>("1W");
   const [managerRestockThreshold, setManagerRestockThreshold] = useState(7);
   const [managerDashboardTab, setManagerDashboardTab] = useState<ManagerDashboardTab>("Overview");
+  // Upsell & Cross-Selling Performance opens as its own page under the Manager
+  // Dashboard ("← Manager Dashboard" takes you back to the tab you came from).
+  const [managerDashboardReturnTab, setManagerDashboardReturnTab] = useState<ManagerDashboardTab>("Overview");
+  const [upsellPerfWindow, setUpsellPerfWindow] = useState<DateWindow>(() => presetRange("last30", formatDateKey(new Date())));
+  const [upsellPerfLog, setUpsellPerfLog] = useState<UpsellPerformanceLog | null>(null);
+  const [upsellPerfLogLoading, setUpsellPerfLogLoading] = useState(false);
+  const [upsellPerfLogError, setUpsellPerfLogError] = useState("");
+  const [upsellPerfAttribution, setUpsellPerfAttribution] = useState<Record<string, SalesBonusOrderAttribution[]> | null>(null);
+  const [upsellPerfReload, setUpsellPerfReload] = useState(0);
+  const openUpsellPerformance = () => {
+    setManagerDashboardReturnTab(managerDashboardTab === "Upsell Performance" ? "Overview" : managerDashboardTab);
+    setManagerDashboardTab("Upsell Performance");
+  };
   const [targetPeriods, setTargetPeriods] = useState<TargetPeriod[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   // Past months' targets are folded away by default - see renderTargetsPanel.
@@ -31193,6 +31208,105 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     };
   };
 
+  // ── Upsell & Cross-Selling Performance (its own page under the Manager
+  // Dashboard). Loads the current window AND the one before it, for the
+  // "vs previous period" arrows.
+  useEffect(() => {
+    if (activePage !== "Manager Dashboard" || managerDashboardTab !== "Upsell Performance" || !canViewUpsellBonus) return;
+    let cancelled = false;
+    const previous = shiftDateWindow(upsellPerfWindow, -dateWindowSize(upsellPerfWindow));
+    setUpsellPerfLog(null);
+    setUpsellPerfAttribution(null);
+    setUpsellPerfLogError("");
+    setUpsellPerfLogLoading(true);
+    upsellPerformanceApi.log(previous.start, upsellPerfWindow.end)
+      .then((result) => { if (!cancelled) setUpsellPerfLog(result); })
+      .catch((error: any) => { if (!cancelled) setUpsellPerfLogError(error?.message ?? "Could not load the upsell call log."); })
+      .finally(() => { if (!cancelled) setUpsellPerfLogLoading(false); });
+    salesBonusesApi.orderExpansionAttributionMap(upsellPerfWindow.end, previous.start)
+      .then((result) => { if (!cancelled) setUpsellPerfAttribution(result ?? {}); })
+      .catch((error: any) => {
+        if (cancelled) return;
+        // Without it the engine-paid bonuses read as ₦0, so say so rather than
+        // leave the page waiting forever.
+        setUpsellPerfAttribution({});
+        showToast(error?.message ?? "Could not load the bonus engine's amounts; bonuses may read low.");
+      });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, managerDashboardTab, upsellPerfWindow.start, upsellPerfWindow.end, upsellPerfReload, currentRole]);
+
+  const renderUpsellPerformancePage = () => {
+    const previous = shiftDateWindow(upsellPerfWindow, -dateWindowSize(upsellPerfWindow));
+    const rangeStart = previous.start;
+    const rangeEnd = upsellPerfWindow.end;
+    // New vs repeat buyer: the customer's first order ever, keyed the same way
+    // as the Customers page (phone, then WhatsApp, email, name).
+    const firstOrderByCustomer = new Map<string, { at: string; id: string }>();
+    for (const order of trackedOrders) {
+      const key = customerIdentityKeyForOrder(order);
+      const at = order.createdAt ?? order.date ?? "";
+      const first = firstOrderByCustomer.get(key);
+      if (!first || at < first.at || (at === first.at && order.id < first.id)) firstOrderByCustomer.set(key, { at, id: order.id });
+    }
+    const rows: UpsellPerfOrder[] = [];
+    for (const order of trackedOrders) {
+      // Held repeat orders are out of every conversion report.
+      if (order.reviewHold) continue;
+      const status = order.status ?? "New";
+      const createdKey = orderCreatedKey(order);
+      const deliveredKey = normalizeDateKey(orderDeliveredKey(order) ?? "") || null;
+      const placedInRange = createdKey >= rangeStart && createdKey <= rangeEnd;
+      const deliveredInRange = status === "Delivered" && Boolean(deliveredKey) && deliveredKey! >= rangeStart && deliveredKey! <= rangeEnd;
+      if (!placedInRange && !deliveredInRange) continue;
+      const hasUpsell = orderHasVerifiedUpsell(order);
+      const hasCrossSell = (order.crossSellLines?.length ?? 0) > 0;
+      // The bonus tab's own calculation, so both pages show the same naira.
+      const breakdown = status === "Delivered" && (hasUpsell || hasCrossSell)
+        ? expansionProfitBreakdownForOrder(order, upsellPerfAttribution)
+        : null;
+      const crossSellRevenue = (order.crossSellLines ?? []).reduce((total, line) => total + Number(line.amount ?? 0), 0);
+      rows.push({
+        id: order.id,
+        repId: order.assignedRepId ?? null,
+        status,
+        createdKey,
+        deliveredKey,
+        productKey: order.productId ?? `name:${(order.productName ?? "").trim().toLowerCase()}`,
+        productName: order.productName ?? "",
+        state: order.state ?? "",
+        customerName: order.customer ?? "",
+        isRepeatCustomer: firstOrderByCustomer.get(customerIdentityKeyForOrder(order))?.id !== order.id,
+        originalValue: typeof order.originalAmount === "number" ? order.originalAmount : Math.max(0, order.amount - crossSellRevenue),
+        hasUpsell,
+        hasCrossSell,
+        upsellFromQty: order.upsellFromQty ?? null,
+        upsellToQty: order.upsellToQty ?? null,
+        description: breakdown ? breakdown.lines.map((line) => line.description).join(" + ") : "",
+        extraRevenue: breakdown?.revenue ?? 0,
+        contributionProfit: breakdown?.contributionProfit ?? 0,
+        bonus: breakdown?.commission ?? 0
+      });
+    }
+    return (
+      <UpsellPerformancePage
+        orders={rows}
+        reps={users.map((user) => ({ id: user.id, name: user.name, role: user.role }))}
+        log={upsellPerfLog}
+        logLoading={upsellPerfLogLoading}
+        logError={upsellPerfLogError}
+        moneyReady={upsellPerfAttribution !== null}
+        window={upsellPerfWindow}
+        onWindowChange={setUpsellPerfWindow}
+        todayKey={formatDateKey(new Date())}
+        refreshing={upsellPerfLogLoading || upsellPerfAttribution === null}
+        onRefresh={() => setUpsellPerfReload((value) => value + 1)}
+        onBack={() => setManagerDashboardTab(managerDashboardReturnTab)}
+        onOpenOrder={(orderId) => { setSelectedOrderId(orderId); setModal("orderDetails"); }}
+      />
+    );
+  };
+
   const renderUpsellBonusPanel = () => {
     const settings = upsellBonusDraft ?? upsellBonusSettings;
     const currencyCode = settings?.currency ?? "NGN";
@@ -31506,6 +31620,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 void refreshUpsellGateMetrics(); void refreshRepWeeklyTargets(); void refreshUpsellBonusExpansionAttribution();
               }}>
                 <RefreshCw className={`inline w-4 h-4 ${upsellGateLoading || upsellBonusExpansionAttributionLoading || upsellPeriodLoading ? "animate-spin" : ""}`} /> Refresh
+              </button>
+              <button className="!min-h-0 rounded-xl border border-[#1F8FE0] bg-[#1F8FE0] px-3 py-2 text-sm font-bold text-white shadow-sm hover:bg-[#1560a8]" onClick={openUpsellPerformance}>
+                <BarChart3 className="inline w-4 h-4" /> Upsell &amp; Cross-Sell Performance
               </button>
             </div>
           </div>
@@ -78155,6 +78272,7 @@ ${waybillLineItems(w).length > 1
               )}
             </div>
           ) : activePage === "Manager Dashboard" && (currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager") ? (
+              managerDashboardTab === "Upsell Performance" ? renderUpsellPerformancePage() : (
               <div className="manager-dashboard-shell space-y-6">
                 <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 px-5 py-4 bg-gradient-to-r from-indigo-50 to-transparent rounded-2xl border border-indigo-100">
                   <div className="flex flex-col gap-1">
@@ -78171,14 +78289,14 @@ ${waybillLineItems(w).length > 1
                 </header>
 
                 <div className="inline-flex w-full sm:w-auto items-center rounded-2xl bg-gray-100 p-1">
-                  {(["Overview", "Targets", "Bonus", "Upsell Bonus", "Inventory", "Needs Attention"] as ManagerDashboardTab[]).map((tab) => (
+                  {(["Overview", "Targets", "Bonus", "Upsell Bonus", "Upsell Performance", "Inventory", "Needs Attention"] as ManagerDashboardTab[]).map((tab) => (
                     <button
                       key={tab}
                       className={`!min-h-0 flex-1 sm:flex-none rounded-xl px-4 py-2 text-sm font-black transition-colors ${managerDashboardTab === tab ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
-                      onClick={() => setManagerDashboardTab(tab)}
+                      onClick={() => (tab === "Upsell Performance" ? openUpsellPerformance() : setManagerDashboardTab(tab))}
                     >
                       <span className="inline-flex items-center gap-1.5">
-                        {tab === "Targets" ? "Targets & Incentives" : tab === "Bonus" ? "Bonus & Performance" : tab === "Upsell Bonus" ? "Upsell & Cross-Sell Bonus" : tab === "Inventory" ? "Inventory" : tab === "Needs Attention" ? "Needs Attention" : "Overview"}
+                        {tab === "Targets" ? "Targets & Incentives" : tab === "Bonus" ? "Bonus & Performance" : tab === "Upsell Bonus" ? "Upsell & Cross-Sell Bonus" : tab === "Upsell Performance" ? "Upsell Performance" : tab === "Inventory" ? "Inventory" : tab === "Needs Attention" ? "Needs Attention" : "Overview"}
                         {tab === "Needs Attention" && needsAttentionBadgeCount > 0 && (
                           <span
                             className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-rose-600 px-1.5 text-[11px] font-black text-white shadow-[0_0_0_2px_rgba(225,29,72,0.25)] animate-bounce"
@@ -79071,6 +79189,7 @@ ${waybillLineItems(w).length > 1
                   </>
                 )}
               </div>
+              )
           ) : activePage === "Abandoned Carts" ? (
             <div className={cartAssignmentPanel ? `grid min-w-0 grid-cols-1 gap-4 xl:items-start ${cartAssignmentSidebarCollapsed ? "xl:grid-cols-[minmax(0,1fr)_0px] xl:gap-0" : "xl:grid-cols-[minmax(0,1fr)_306px]"}` : "min-w-0"}>
               <div className="min-w-0">

@@ -2316,6 +2316,40 @@ export const headOfSalesApi = {
     post<any>("/api/head-of-sales-rep/bonus-payouts/mark-paid", body)
 };
 
+// Upsell & Cross-Selling Performance (Manager Dashboard). The call log only -
+// upsell offers and answers per confirmation call, plus each rep's latest
+// weekly target. The money is worked out in the browser, by the same
+// calculation as the Upsell & Cross-Sell Bonus tab.
+export type UpsellPerformanceOffer = {
+  response: "accepted" | "declined" | "consider_later" | "not_appropriate" | "waived_no_offer";
+  refusalReason: string | null;
+  offeredQuantity: number | null;
+  offeredPackageName: string | null;
+  offeredProductName: string | null;
+};
+export type UpsellPerformanceLogRow = {
+  orderId: string;
+  repId: string;
+  attemptedAt: string;
+  attemptedKey: string;
+  eligible: boolean;
+  exemptionReason: string | null;
+  productId: string | null;
+  productName: string;
+  originalQuantity: number;
+  upsell: UpsellPerformanceOffer | null;
+};
+export type UpsellPerformanceLog = {
+  dateFrom: string;
+  dateTo: string;
+  attempts: UpsellPerformanceLogRow[];
+  targets: Array<{ repId: string; targetPct: number; weekStart: string }>;
+};
+export const upsellPerformanceApi = {
+  log: (dateFrom: string, dateTo: string) =>
+    get<UpsellPerformanceLog>(`/api/upsell-performance/log?${new URLSearchParams({ dateFrom, dateTo }).toString()}`)
+};
+
 export const repWeeklyTargetsApi = {
   list: (weekStart: string) => get<any>(`/api/rep-weekly-targets?${new URLSearchParams({ weekStart }).toString()}`),
   save: (body: unknown) => patch<any>("/api/rep-weekly-targets", body)
