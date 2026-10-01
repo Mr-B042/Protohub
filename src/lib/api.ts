@@ -4006,3 +4006,62 @@ export const penaltiesApi = {
 };
 
 export { ApiError };
+
+// ── Weekly Report approvals (rep → manager → owner) ──────────────────────────
+export type WeeklyRepReportStatus = "draft" | "submitted" | "returned" | "manager_approved" | "owner_approved" | "locked";
+export type WeeklyCompanyReportStatus = "open" | "submitted_to_owner" | "returned_to_manager" | "locked";
+export type WeeklyRepReport = {
+  id: string; repId: string; weekStart: string; status: WeeklyRepReportStatus;
+  snapshot: any | null; repNote: string | null; submitCount: number; submittedAt: string | null;
+  managerReviewedBy: string | null; managerReviewedAt: string | null;
+  ownerApprovedBy: string | null; ownerApprovedAt: string | null; lockedAt: string | null; updatedAt: string | null;
+};
+export type WeeklyCompanyReport = {
+  id: string; weekStart: string; status: WeeklyCompanyReportStatus;
+  managerNote: string | null; ownerNote: string | null;
+  companySnapshot: any | null; managerBonusSnapshot: any | null; submitCount: number;
+  submittedBy: string | null; submittedAt: string | null; lockedBy: string | null; lockedAt: string | null;
+  reopenedBy: string | null; reopenedAt: string | null; reopenReason: string | null;
+};
+export type WeeklyReportCorrection = {
+  id: string; weekStart: string; repReportId: string | null; companyReportId: string | null;
+  kind: "return" | "flag"; section: string; problem: string; comment: string; orderRef: string | null;
+  raisedBy: string | null; raisedByName: string | null; raisedByRole: string | null;
+  status: "open" | "resolved"; response: string | null; resolvedBy: string | null; resolvedAt: string | null; createdAt: string;
+};
+export type WeeklyReportAuditEntry = {
+  id: string; weekStart: string; repReportId: string | null; companyReportId: string | null; repId: string | null;
+  actorId: string | null; actorName: string | null; actorRole: string | null; action: string; detail: any | null; createdAt: string;
+};
+export type WeeklyReportFineRow = { id: string; repId: string; label: string; amount: number; date: string };
+export type WeeklyReportCorrectionInput = { weekStart: string; section: string; problem: string; comment: string; orderRef?: string };
+export type WeeklyReportResponseInput = { correctionId: string; response: string };
+
+export const weeklyReportsApi = {
+  mine: (weekStart: string) =>
+    get<{ weekStart: string; weekEnd: string; report: WeeklyRepReport | null; companyStatus: WeeklyCompanyReportStatus; corrections: WeeklyReportCorrection[]; audit: WeeklyReportAuditEntry[]; fines: WeeklyReportFineRow[]; previousFines: WeeklyReportFineRow[] }>(
+      `/api/weekly-reports/mine?${new URLSearchParams({ weekStart }).toString()}`
+    ),
+  myHistory: () => get<{ rows: Array<WeeklyRepReport & { openReturns: number }> }>("/api/weekly-reports/mine/history"),
+  submitMine: (body: { weekStart: string; snapshot: unknown; note?: string; responses?: WeeklyReportResponseInput[] }) =>
+    post<{ ok: true }>("/api/weekly-reports/mine/submit", body),
+  week: (weekStart: string) =>
+    get<{
+      weekStart: string; weekEnd: string; company: WeeklyCompanyReport | null; repReports: WeeklyRepReport[];
+      corrections: WeeklyReportCorrection[]; audit: WeeklyReportAuditEntry[]; expectedRepIds: string[];
+      editedAfterSubmit: Array<{ repId: string; orderId: string; editedAt: string; what: string; by: string | null }>;
+      fines: WeeklyReportFineRow[]; previousFines: WeeklyReportFineRow[];
+    }>(`/api/weekly-reports/week?${new URLSearchParams({ weekStart }).toString()}`),
+  history: () => get<{ rows: Array<{ weekStart: string; weekEnd: string; company: WeeklyCompanyReport | null; repStatusCounts: Record<string, number> }> }>("/api/weekly-reports/history"),
+  approveRep: (repId: string, body: { weekStart: string; note?: string }) =>
+    post<{ ok: true }>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/approve`, body),
+  returnRep: (repId: string, body: WeeklyReportCorrectionInput) =>
+    post<{ ok: true }>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/return`, body),
+  flagRep: (repId: string, body: WeeklyReportCorrectionInput) =>
+    post<{ ok: true }>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/flag`, body),
+  submitCompany: (body: { weekStart: string; managerNote?: string; companySnapshot: unknown; managerBonusSnapshot?: unknown; responses?: WeeklyReportResponseInput[] }) =>
+    post<{ ok: true }>("/api/weekly-reports/company/submit", body),
+  approveLock: (body: { weekStart: string; note?: string }) => post<{ ok: true }>("/api/weekly-reports/company/approve-lock", body),
+  returnCompany: (body: WeeklyReportCorrectionInput) => post<{ ok: true }>("/api/weekly-reports/company/return", body),
+  reopen: (body: { weekStart: string; reason: string }) => post<{ ok: true }>("/api/weekly-reports/company/reopen", body)
+};
