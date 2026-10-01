@@ -2,7 +2,9 @@ import { Router, type Request } from "express";
 import { z } from "zod";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
+import { expectedRepIdsForWeek } from "../lib/weekly-report-data.js";
+import { notifyWeeklyReport } from "../lib/weekly-report-notifications.js";
 import { addDaysToDateKey, sundayWeekStartForDateKey, lagosDateKey, weekEndFromStart } from "../lib/sales-bonus-engine.js";
 import {
   CORRECTION_SECTIONS,
@@ -89,6 +91,27 @@ const REP_COLUMNS = "id, rep_id, week_start, status, snapshot, rep_note, submit_
 const COMPANY_COLUMNS = "id, week_start, status, manager_note, owner_note, company_snapshot, manager_bonus_snapshot, submit_count, submitted_by, submitted_at, locked_by, locked_at, reopened_by, reopened_at, reopen_reason, created_at, updated_at";
 const CORRECTION_COLUMNS = "id, week_start, rep_report_id, company_report_id, kind, section, problem, comment, order_ref, raised_by, raised_by_name, raised_by_role, status, response, resolved_by, resolved_at, created_at";
 const AUDIT_COLUMNS = "id, week_start, rep_report_id, company_report_id, rep_id, actor_id, actor_name, actor_role, action, detail, created_at";
+
+const BONUS_QUERY_COLUMNS = "id, rep_id, week_start, order_refs, rep_message, check_verdict, check_result, sent_despite_accurate, status, manager_response, correction_amount, correction_week_start, resolved_by, resolved_by_name, resolved_at, created_at";
+
+const mapBonusQuery = (row: any) => ({
+  id: row.id,
+  repId: row.rep_id,
+  weekStart: row.week_start,
+  orderRefs: row.order_refs ?? [],
+  repMessage: row.rep_message ?? null,
+  checkVerdict: row.check_verdict,
+  checkResult: row.check_result ?? {},
+  sentDespiteAccurate: !!row.sent_despite_accurate,
+  status: row.status,
+  managerResponse: row.manager_response ?? null,
+  correctionAmount: Number(row.correction_amount ?? 0),
+  correctionWeekStart: row.correction_week_start ?? null,
+  resolvedBy: row.resolved_by ?? null,
+  resolvedByName: row.resolved_by_name ?? null,
+  resolvedAt: row.resolved_at ?? null,
+  createdAt: row.created_at
+});
 
 const mapRep = (row: any) => row ? ({
   id: row.id,
@@ -209,39 +232,6 @@ async function ensureRepReport(orgId: string, branchId: string, repId: string, w
 }
 
 /**
- * The reps whose report the week needs: active Sales Reps in this branch who
- * had at least one order placed or delivered that week. A rep with no orders
- * has nothing to report and must not block the week.
- */
-async function expectedRepIdsForWeek(orgId: string, branchId: string, weekStart: string) {
-  const weekEnd = weekEndFromStart(weekStart);
-  const [{ data: members, error: membersError }, { data: reps, error: repsError }] = await Promise.all([
-    supabase.from("branch_memberships").select("user_id").eq("branch_id", branchId),
-    supabase.from("users").select("id").eq("org_id", orgId).eq("role", "Sales Rep").eq("active", true).eq("is_demo", false)
-  ]);
-  if (membersError) throw membersError;
-  if (repsError) throw repsError;
-  const memberIds = new Set((members ?? []).map((row: any) => row.user_id));
-  const repIds = (reps ?? []).map((row: any) => row.id as string).filter((id) => memberIds.has(id));
-  if (repIds.length === 0) return [];
-
-  const [{ data: placed, error: placedError }, { data: delivered, error: deliveredError }] = await Promise.all([
-    supabase.from("orders").select("assigned_rep_id")
-      .eq("org_id", orgId).in("assigned_rep_id", repIds)
-      .gte("created_at", lagosDayStartIso(weekStart)).lte("created_at", lagosDayEndIso(weekEnd))
-      .limit(20000),
-    supabase.from("orders").select("assigned_rep_id")
-      .eq("org_id", orgId).in("assigned_rep_id", repIds)
-      .gte("delivered_date", weekStart).lte("delivered_date", weekEnd)
-      .limit(20000)
-  ]);
-  if (placedError) throw placedError;
-  if (deliveredError) throw deliveredError;
-  const active = new Set([...(placed ?? []), ...(delivered ?? [])].map((row: any) => row.assigned_rep_id as string));
-  return repIds.filter((id) => active.has(id));
-}
-
-/**
  * Orders changed after the rep submitted. The owner's red flags list these:
  * a figure frozen at submit can be wrong if an order moved afterwards.
  */
@@ -300,25 +290,64 @@ async function finesForWeek(orgId: string, repIds: string[] | null, weekStart: s
   }));
 }
 
+/**
+ * Reading "my report": a Sales Rep, or the Owner/Admin using View As on one.
+ * requireRole checks the REAL role, so with it the Owner previewing a rep got
+ * "Requires one of: Sales Rep" (Bright, 1 Oct 2026). Reads go through
+ * scopeOf(req), the same effective user every other rep screen uses. Writes
+ * stay real-rep only: a preview is read-only.
+ */
+export function requireScopedRep(req: Request, res: any, next: () => void) {
+  if (scopeOf(req).role !== "Sales Rep") {
+    res.status(403).json({ error: "Only a sales rep has a weekly report." });
+    return;
+  }
+  next();
+}
+
+/** Bonus corrections paid IN this week (from resolved bonus queries). */
+async function adjustmentsForWeek(orgId: string, branchId: string, repIds: string[] | null, weekStart: string) {
+  let query = supabase.from("weekly_bonus_queries")
+    .select("id, rep_id, week_start, correction_amount, manager_response")
+    .eq("org_id", orgId).eq("branch_id", branchId).eq("status", "corrected").eq("correction_week_start", weekStart)
+    .order("resolved_at", { ascending: true });
+  if (repIds) query = query.in("rep_id", repIds);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    repId: row.rep_id,
+    label: `Bonus correction for week of ${row.week_start}${row.manager_response ? ` - ${row.manager_response}` : ""}`,
+    amount: Number(row.correction_amount ?? 0)
+  }));
+}
+
 const sendError = (res: any, error: any, fallback: string) => {
   res.status(error?.status ?? 500).json({ error: error?.message ?? fallback });
 };
 
 // ── Sales Rep: my report ─────────────────────────────────────────────────────
 
-router.get("/mine", requireRole("Sales Rep"), async (req, res) => {
+router.get("/mine", requireScopedRep, async (req, res) => {
   const parsed = z.object({ weekStart: weekStartSchema.optional() }).safeParse(req.query);
   if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const branchId = requireBranch(req);
     const orgId = req.user!.orgId;
+    const repId = scopeOf(req).id;
     const weekStart = parsed.data.weekStart ?? sundayWeekStartForDateKey(lagosDateKey());
-    const [report, company, fines, previousFines] = await Promise.all([
-      loadRepReport(orgId, branchId, req.user!.id, weekStart),
+    const [report, company, fines, previousFines, adjustments, previousAdjustments, bonusQueries] = await Promise.all([
+      loadRepReport(orgId, branchId, repId, weekStart),
       loadCompanyReport(orgId, branchId, weekStart),
-      finesForWeek(orgId, [req.user!.id], weekStart),
-      finesForWeek(orgId, [req.user!.id], addDaysToDateKey(weekStart, -7))
+      finesForWeek(orgId, [repId], weekStart),
+      finesForWeek(orgId, [repId], addDaysToDateKey(weekStart, -7)),
+      adjustmentsForWeek(orgId, branchId, [repId], weekStart),
+      adjustmentsForWeek(orgId, branchId, [repId], addDaysToDateKey(weekStart, -7)),
+      supabase.from("weekly_bonus_queries").select(BONUS_QUERY_COLUMNS)
+        .eq("org_id", orgId).eq("branch_id", branchId).eq("rep_id", repId)
+        .order("created_at", { ascending: false }).limit(50)
     ]);
+    if (bonusQueries.error) throw bonusQueries.error;
     const [corrections, auditRows] = report
       ? await Promise.all([
           supabase.from("weekly_report_corrections").select(CORRECTION_COLUMNS)
@@ -336,6 +365,9 @@ router.get("/mine", requireRole("Sales Rep"), async (req, res) => {
       companyStatus: (company?.status ?? "open") as CompanyReportStatus,
       fines,
       previousFines,
+      adjustments,
+      previousAdjustments,
+      bonusQueries: (bonusQueries.data ?? []).map(mapBonusQuery),
       // Flags are for the owner. The rep sees returns, not flags.
       corrections: (corrections.data ?? []).filter((row: any) => row.kind === "return").map(mapCorrection),
       audit: (auditRows.data ?? []).filter((row: any) => row.action !== "rep_flagged").map(mapAudit)
@@ -345,16 +377,17 @@ router.get("/mine", requireRole("Sales Rep"), async (req, res) => {
   }
 });
 
-router.get("/mine/history", requireRole("Sales Rep"), async (req, res) => {
+router.get("/mine/history", requireScopedRep, async (req, res) => {
   try {
     const branchId = requireBranch(req);
     const orgId = req.user!.orgId;
+    const repId = scopeOf(req).id;
     const { data, error } = await supabase
       .from("rep_weekly_reports")
       .select(REP_COLUMNS)
       .eq("org_id", orgId)
       .eq("branch_id", branchId)
-      .eq("rep_id", req.user!.id)
+      .eq("rep_id", repId)
       .order("week_start", { ascending: false })
       .limit(104);
     if (error) throw error;
@@ -455,9 +488,131 @@ router.post("/mine/submit", requireRole("Sales Rep"), async (req, res) => {
         late: isResubmit ? false : late
       }
     });
+    void notifyWeeklyReport(orgId, branchId, weekStart, { kind: "rep_submitted", repId: req.user!.id, repName: req.user!.name ?? "A sales rep", resubmitted: isResubmit, late: !isResubmit && late });
     res.json({ ok: true });
   } catch (error: any) {
     sendError(res, error, "Could not submit your weekly report.");
+  }
+});
+
+// ── Bonus queries (Bright, 1 Oct 2026) ─────────────────────────────────────
+// The rep's "Check My Bonus" runs in the browser (the bonus maths lives
+// there, see the header note). Its result is posted here:
+// - verdict "issues"                 -> a query goes to the manager
+// - verdict "accurate"               -> recorded in the audit trail only...
+// - "accurate" + sendDespiteAccurate -> ...unless the rep still disagrees and
+//                                       gives a reason; the query is marked so.
+
+const CheckFindingSchema = z.object({
+  level: z.enum(["issue", "info", "ok"]),
+  text: z.string().max(400),
+  orderId: z.string().max(60).optional()
+});
+
+const BonusQuerySchema = z.object({
+  weekStart: weekStartSchema,
+  orderRefs: z.array(z.string().trim().min(1).max(60)).max(20).default([]),
+  message: z.string().trim().max(1000).optional(),
+  check: z.object({
+    verdict: z.enum(["accurate", "issues"]),
+    findings: z.array(CheckFindingSchema).max(200),
+    checkedFinalBonus: z.number().optional()
+  }),
+  sendDespiteAccurate: z.boolean().optional()
+});
+
+router.post("/mine/bonus-queries", requireRole("Sales Rep"), async (req, res) => {
+  const parsed = BonusQuerySchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+  const { weekStart, orderRefs, message, check, sendDespiteAccurate } = parsed.data;
+  try {
+    const branchId = requireBranch(req);
+    const orgId = req.user!.orgId;
+    const checkResult = { ...check, checkedAt: new Date().toISOString() };
+
+    if (check.verdict === "accurate" && !sendDespiteAccurate) {
+      await audit(req, { branchId, weekStart, action: "bonus_check_accurate", repId: req.user!.id, detail: { orderRefs, findings: check.findings.length } });
+      res.json({ sent: false });
+      return;
+    }
+    if (check.verdict === "accurate" && (!message || message.length < 5)) {
+      throw httpError(400, "Say why you still think your bonus is wrong.");
+    }
+
+    const { data: row, error } = await supabase.from("weekly_bonus_queries").insert({
+      org_id: orgId,
+      branch_id: branchId,
+      rep_id: req.user!.id,
+      week_start: weekStart,
+      order_refs: orderRefs,
+      rep_message: message || null,
+      check_verdict: check.verdict,
+      check_result: checkResult,
+      sent_despite_accurate: check.verdict === "accurate"
+    }).select("id").single();
+    if (error) throw error;
+    await audit(req, {
+      branchId, weekStart, action: "bonus_query_opened", repId: req.user!.id,
+      detail: { queryId: row.id, verdict: check.verdict, orderRefs, note: message || null, issues: check.findings.filter((f) => f.level === "issue").length }
+    });
+    void notifyWeeklyReport(orgId, branchId, weekStart, {
+      kind: "bonus_query_opened",
+      repName: req.user!.name ?? "A sales rep",
+      despiteAccurate: check.verdict === "accurate",
+      findings: check.findings.filter((f) => f.level === "issue").length
+    });
+    res.status(201).json({ sent: true, id: row.id });
+  } catch (error: any) {
+    sendError(res, error, "Could not send your bonus query.");
+  }
+});
+
+const ResolveQuerySchema = z.object({
+  outcome: z.enum(["corrected", "no_change"]),
+  response: z.string().trim().min(3, "Tell the rep what you found.").max(1000),
+  amount: z.number().positive().max(10_000_000).optional()
+}).refine((value) => value.outcome !== "corrected" || (value.amount ?? 0) > 0, { message: "Enter the amount to add." });
+
+router.post("/bonus-queries/:id/resolve", requireRole("Manager", "Admin", "Owner"), async (req, res) => {
+  const parsed = ResolveQuerySchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+  const { outcome, response, amount } = parsed.data;
+  try {
+    const branchId = requireBranch(req);
+    const orgId = req.user!.orgId;
+    const { data: query, error: loadError } = await supabase.from("weekly_bonus_queries").select(BONUS_QUERY_COLUMNS)
+      .eq("id", String(req.params.id)).eq("org_id", orgId).eq("branch_id", branchId).maybeSingle();
+    if (loadError) throw loadError;
+    if (!query) throw httpError(404, "That bonus query was not found.");
+    if (query.status !== "open") throw httpError(409, "This bonus query has already been answered.");
+
+    // A correction is never written into a locked week: it is paid with the
+    // week that is running now, and shows on that week's report.
+    const paidWeekStart = outcome === "corrected" ? sundayWeekStartForDateKey(lagosDateKey()) : null;
+    const now = new Date().toISOString();
+    const { data: updated, error } = await supabase.from("weekly_bonus_queries").update({
+      status: outcome,
+      manager_response: response,
+      correction_amount: outcome === "corrected" ? amount : 0,
+      correction_week_start: paidWeekStart,
+      resolved_by: req.user!.id,
+      resolved_by_name: req.user!.name ?? null,
+      resolved_at: now,
+      updated_at: now
+    }).eq("id", query.id).eq("status", "open").select("id");
+    if (error) throw error;
+    if (!updated || updated.length === 0) throw httpError(409, "This bonus query changed while you were answering it. Reload and try again.");
+
+    await audit(req, {
+      branchId, weekStart: query.week_start, action: "bonus_query_resolved", repId: query.rep_id,
+      detail: { queryId: query.id, outcome, amount: outcome === "corrected" ? amount : 0, paidWeekStart, note: response }
+    });
+    void notifyWeeklyReport(orgId, branchId, query.week_start, {
+      kind: "bonus_query_resolved", repId: query.rep_id, corrected: outcome === "corrected", amount: amount ?? 0, paidWeekStart
+    });
+    res.json({ ok: true, paidWeekStart });
+  } catch (error: any) {
+    sendError(res, error, "Could not answer this bonus query.");
   }
 });
 
@@ -470,16 +625,24 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
     const branchId = requireBranch(req);
     const orgId = req.user!.orgId;
     const weekStart = parsed.data.weekStart ?? sundayWeekStartForDateKey(lagosDateKey());
-    const [company, repReports, corrections, auditRows, expectedRepIds, fines, previousFines] = await Promise.all([
+    const [company, repReports, corrections, auditRows, expectedRepIds, fines, previousFines, adjustments, previousAdjustments, bonusQueries] = await Promise.all([
       loadCompanyReport(orgId, branchId, weekStart),
       supabase.from("rep_weekly_reports").select(REP_COLUMNS).eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart),
       supabase.from("weekly_report_corrections").select(CORRECTION_COLUMNS).eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart).order("created_at", { ascending: true }),
       supabase.from("weekly_report_audit").select(AUDIT_COLUMNS).eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart).order("created_at", { ascending: true }),
       expectedRepIdsForWeek(orgId, branchId, weekStart),
       finesForWeek(orgId, null, weekStart),
-      finesForWeek(orgId, null, addDaysToDateKey(weekStart, -7))
+      finesForWeek(orgId, null, addDaysToDateKey(weekStart, -7)),
+      adjustmentsForWeek(orgId, branchId, null, weekStart),
+      adjustmentsForWeek(orgId, branchId, null, addDaysToDateKey(weekStart, -7)),
+      // Every open query, plus this week's answered ones.
+      supabase.from("weekly_bonus_queries").select(BONUS_QUERY_COLUMNS)
+        .eq("org_id", orgId).eq("branch_id", branchId)
+        .or(`status.eq.open,week_start.eq.${weekStart},correction_week_start.eq.${weekStart}`)
+        .order("created_at", { ascending: false }).limit(200)
     ]);
     if (repReports.error) throw repReports.error;
+    if (bonusQueries.error) throw bonusQueries.error;
     if (corrections.error) throw corrections.error;
     if (auditRows.error) throw auditRows.error;
     const editedAfterSubmit = await ordersEditedAfterSubmit(orgId, repReports.data ?? []);
@@ -493,7 +656,10 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
       expectedRepIds,
       editedAfterSubmit,
       fines,
-      previousFines
+      previousFines,
+      adjustments,
+      previousAdjustments,
+      bonusQueries: (bonusQueries.data ?? []).map(mapBonusQuery)
     });
   } catch (error: any) {
     sendError(res, error, "Could not load this week's reports.");
@@ -557,6 +723,7 @@ router.post("/rep/:repId/approve", requireRole(...REVIEWERS), async (req, res) =
     if (error) throw error;
     if (!updated || updated.length === 0) throw httpError(409, "This report changed while you were approving it. Reload and try again.");
     await audit(req, { branchId, weekStart, action: "manager_approved", repReportId: report.id, repId, detail: { note: note ?? null } });
+    void notifyWeeklyReport(orgId, branchId, weekStart, { kind: "manager_approved", repId });
     res.json({ ok: true });
   } catch (error: any) {
     sendError(res, error, "Could not approve this report.");
@@ -595,6 +762,7 @@ router.post("/rep/:repId/return", requireRole(...REVIEWERS), async (req, res) =>
       branchId, weekStart, action: "manager_returned", repReportId: report.id, repId,
       detail: { correctionId: correction.id, section, problem, comment, orderRef: orderRef || null, previousStatus: report.status }
     });
+    void notifyWeeklyReport(orgId, branchId, weekStart, { kind: "manager_returned", repId, problem, orderRef: orderRef || null });
     res.json({ ok: true });
   } catch (error: any) {
     sendError(res, error, "Could not return this report.");
@@ -626,6 +794,8 @@ router.post("/rep/:repId/flag", requireRole(...REVIEWERS), async (req, res) => {
       branchId, weekStart, action: "rep_flagged", repReportId: report.id, repId,
       detail: { correctionId: correction.id, section, problem, comment, orderRef: orderRef || null }
     });
+    const { data: flaggedRep } = await supabase.from("users").select("name").eq("id", repId).eq("org_id", orgId).maybeSingle();
+    void notifyWeeklyReport(orgId, branchId, weekStart, { kind: "rep_flagged", repName: flaggedRep?.name ?? "a rep", problem });
     res.json({ ok: true });
   } catch (error: any) {
     sendError(res, error, "Could not flag this report.");
@@ -692,6 +862,7 @@ router.post("/company/submit", requireRole(...REVIEWERS), async (req, res) => {
       companyReportId: company.id,
       detail: { orders: totals.orders ?? null, delivered: totals.delivered ?? null, totalBonus: totals.totalBonus ?? null, note: managerNote ?? null }
     });
+    void notifyWeeklyReport(orgId, branchId, weekStart, { kind: "company_submitted", resubmitted: company.status === "returned_to_manager" });
     res.json({ ok: true });
   } catch (error: any) {
     sendError(res, error, "Could not submit this week to the owner.");
@@ -719,12 +890,13 @@ router.post("/company/approve-lock", requireRole("Owner"), async (req, res) => {
     const { data: lockedReps, error: repError } = await supabase.from("rep_weekly_reports")
       .update({ status: "locked", owner_approved_by: req.user!.id, owner_approved_at: now, locked_at: now, updated_at: now })
       .eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart).eq("status", "manager_approved")
-      .select("id");
+      .select("id, rep_id");
     if (repError) throw repError;
     await audit(req, {
       branchId, weekStart, action: "owner_approved_locked", companyReportId: company.id,
       detail: { note: note ?? null, repReportsLocked: (lockedReps ?? []).length }
     });
+    void notifyWeeklyReport(orgId, branchId, weekStart, { kind: "owner_locked", repIds: (lockedReps ?? []).map((row: any) => row.rep_id as string) });
     res.json({ ok: true });
   } catch (error: any) {
     sendError(res, error, "Could not approve and lock this week.");
@@ -758,6 +930,7 @@ router.post("/company/return", requireRole("Owner"), async (req, res) => {
       branchId, weekStart, action: "owner_returned", companyReportId: company.id,
       detail: { correctionId: correction.id, section, problem, comment, orderRef: orderRef || null }
     });
+    void notifyWeeklyReport(orgId, branchId, weekStart, { kind: "owner_returned", problem });
     res.json({ ok: true });
   } catch (error: any) {
     sendError(res, error, "Could not return this week to the manager.");
@@ -788,6 +961,7 @@ router.post("/company/reopen", requireRole("Owner"), async (req, res) => {
       .eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart).eq("status", "locked");
     if (repError) throw repError;
     await audit(req, { branchId, weekStart, action: "owner_reopened", companyReportId: company.id, detail: { reason } });
+    void notifyWeeklyReport(orgId, branchId, weekStart, { kind: "owner_reopened", reason });
     res.json({ ok: true });
   } catch (error: any) {
     sendError(res, error, "Could not reopen this week.");

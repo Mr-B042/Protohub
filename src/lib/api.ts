@@ -4034,12 +4034,22 @@ export type WeeklyReportAuditEntry = {
   actorId: string | null; actorName: string | null; actorRole: string | null; action: string; detail: any | null; createdAt: string;
 };
 export type WeeklyReportFineRow = { id: string; repId: string; label: string; amount: number; date: string };
+export type WeeklyReportAdjustmentRow = { id: string; repId: string; label: string; amount: number };
+export type WeeklyBonusQuery = {
+  id: string; repId: string; weekStart: string; orderRefs: string[]; repMessage: string | null;
+  checkVerdict: "accurate" | "issues";
+  checkResult: { verdict?: string; findings?: Array<{ level: "issue" | "info" | "ok"; text: string; orderId?: string }>; checkedAt?: string; checkedFinalBonus?: number };
+  sentDespiteAccurate: boolean; status: "open" | "corrected" | "no_change";
+  managerResponse: string | null; correctionAmount: number; correctionWeekStart: string | null;
+  resolvedBy: string | null; resolvedByName: string | null; resolvedAt: string | null; createdAt: string;
+};
 export type WeeklyReportCorrectionInput = { weekStart: string; section: string; problem: string; comment: string; orderRef?: string };
 export type WeeklyReportResponseInput = { correctionId: string; response: string };
 
 export const weeklyReportsApi = {
   mine: (weekStart: string) =>
-    get<{ weekStart: string; weekEnd: string; report: WeeklyRepReport | null; companyStatus: WeeklyCompanyReportStatus; corrections: WeeklyReportCorrection[]; audit: WeeklyReportAuditEntry[]; fines: WeeklyReportFineRow[]; previousFines: WeeklyReportFineRow[] }>(
+    get<{ weekStart: string; weekEnd: string; report: WeeklyRepReport | null; companyStatus: WeeklyCompanyReportStatus; corrections: WeeklyReportCorrection[]; audit: WeeklyReportAuditEntry[]; fines: WeeklyReportFineRow[]; previousFines: WeeklyReportFineRow[];
+      adjustments: WeeklyReportAdjustmentRow[]; previousAdjustments: WeeklyReportAdjustmentRow[]; bonusQueries: WeeklyBonusQuery[] }>(
       `/api/weekly-reports/mine?${new URLSearchParams({ weekStart }).toString()}`
     ),
   myHistory: () => get<{ rows: Array<WeeklyRepReport & { openReturns: number }> }>("/api/weekly-reports/mine/history"),
@@ -4051,6 +4061,7 @@ export const weeklyReportsApi = {
       corrections: WeeklyReportCorrection[]; audit: WeeklyReportAuditEntry[]; expectedRepIds: string[];
       editedAfterSubmit: Array<{ repId: string; orderId: string; editedAt: string; what: string; by: string | null }>;
       fines: WeeklyReportFineRow[]; previousFines: WeeklyReportFineRow[];
+      adjustments: WeeklyReportAdjustmentRow[]; previousAdjustments: WeeklyReportAdjustmentRow[]; bonusQueries: WeeklyBonusQuery[];
     }>(`/api/weekly-reports/week?${new URLSearchParams({ weekStart }).toString()}`),
   history: () => get<{ rows: Array<{ weekStart: string; weekEnd: string; company: WeeklyCompanyReport | null; repStatusCounts: Record<string, number> }> }>("/api/weekly-reports/history"),
   approveRep: (repId: string, body: { weekStart: string; note?: string }) =>
@@ -4063,5 +4074,12 @@ export const weeklyReportsApi = {
     post<{ ok: true }>("/api/weekly-reports/company/submit", body),
   approveLock: (body: { weekStart: string; note?: string }) => post<{ ok: true }>("/api/weekly-reports/company/approve-lock", body),
   returnCompany: (body: WeeklyReportCorrectionInput) => post<{ ok: true }>("/api/weekly-reports/company/return", body),
-  reopen: (body: { weekStart: string; reason: string }) => post<{ ok: true }>("/api/weekly-reports/company/reopen", body)
+  reopen: (body: { weekStart: string; reason: string }) => post<{ ok: true }>("/api/weekly-reports/company/reopen", body),
+  sendBonusQuery: (body: {
+    weekStart: string; orderRefs: string[]; message?: string;
+    check: { verdict: "accurate" | "issues"; findings: Array<{ level: "issue" | "info" | "ok"; text: string; orderId?: string }>; checkedFinalBonus?: number };
+    sendDespiteAccurate?: boolean;
+  }) => post<{ sent: boolean; id?: string }>("/api/weekly-reports/mine/bonus-queries", body),
+  resolveBonusQuery: (id: string, body: { outcome: "corrected" | "no_change"; response: string; amount?: number }) =>
+    post<{ ok: true; paidWeekStart: string | null }>(`/api/weekly-reports/bonus-queries/${encodeURIComponent(id)}/resolve`, body)
 };

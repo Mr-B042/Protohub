@@ -10,7 +10,7 @@ import {
 } from "../components/WeeklyReportParts";
 import { CompanyProductTable, OrdersTable, RepBonusTable, RepReviewModal, shownSnapshot, type ReviewRepRow } from "./ManagerWeeklyReviewPage";
 import { buildCompanySnapshot, type CompanyWeeklySnapshot, type ManagerBonusPreview, type WeeklyReportSnapshot } from "./weekly-report-model";
-import type { WeeklyCompanyReport, WeeklyReportAuditEntry, WeeklyReportCorrection } from "../lib/api";
+import type { WeeklyBonusQuery, WeeklyCompanyReport, WeeklyReportAuditEntry, WeeklyReportCorrection } from "../lib/api";
 import { currencySymbol } from "../lib/money-privacy";
 
 export type WeeklyFinancialSummary = {
@@ -40,7 +40,7 @@ type RedFlag = { severity: "high" | "medium"; title: string; detail: string; rep
  */
 export default function OwnerWeeklyApprovalPage({
   weekStart, weekEnd, onShiftWeek, onPickWeek, canGoNext, loading, error,
-  rows, company, corrections, audit, managerBonus, managerName, financial, lowRateThreshold, dueDate,
+  rows, company, corrections, audit, managerBonus, managerName, financial, lowRateThreshold, dueDate, bonusQueries = [],
   onApproveLock, onReturnToManager, onReopen, onBack
 }: {
   weekStart: string;
@@ -60,6 +60,7 @@ export default function OwnerWeeklyApprovalPage({
   lowRateThreshold: number;
   /** The Tuesday the reps' reports are due. */
   dueDate?: string;
+  bonusQueries?: WeeklyBonusQuery[];
   onApproveLock: (note: string) => Promise<void>;
   onReturnToManager: (draft: CorrectionDraft) => Promise<void>;
   onReopen: (reason: string) => Promise<void>;
@@ -128,6 +129,15 @@ export default function OwnerWeeklyApprovalPage({
       const row = rows.find((candidate) => candidate.report?.id === item.repReportId);
       flags.push({ severity: item.section === "upsell_cross_sell" || item.section === "bonus" ? "high" : "medium", repId: row?.repId, title: `Flagged by ${item.raisedByName ?? "manager"}${row ? ` on ${row.repName}` : ""}: ${item.problem}`, detail: `${item.comment}${item.orderRef ? ` (${item.orderRef})` : ""}` });
     }
+    const repNameOf = (id: string) => rows.find((row) => row.repId === id)?.repName ?? "a rep";
+    const openQueries = bonusQueries.filter((query) => query.status === "open");
+    if (openQueries.length > 0) {
+      flags.push({ severity: "high", title: `${openQueries.length} bonus quer${openQueries.length === 1 ? "y" : "ies"} waiting for the manager`, detail: openQueries.map((query) => `${repNameOf(query.repId)} (week of ${longDate(query.weekStart)})`).join(", ") });
+    }
+    const paidHere = rows.filter((row) => (shownSnapshot(row)?.totals.adjustments ?? 0) > 0);
+    for (const row of paidHere) {
+      flags.push({ severity: "medium", repId: row.repId, title: `${row.repName}: bonus correction of ${sym}${nf(shownSnapshot(row)?.totals.adjustments ?? 0)} paid this week`, detail: (shownSnapshot(row)?.adjustments ?? []).map((item) => item.label).join("; ") });
+    }
     if (frozenCompany) {
       const liveTotal = liveCompany.totals.totalBonus;
       if (Math.abs(liveTotal - frozenCompany.totals.totalBonus) > 0.5 || liveCompany.totals.orders !== frozenCompany.totals.orders) {
@@ -135,7 +145,7 @@ export default function OwnerWeeklyApprovalPage({
       }
     }
     return flags.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "high" ? -1 : 1));
-  }, [rows, expectedRows, corrections, frozenCompany, liveCompany, lowRateThreshold, sym, dueDate]);
+  }, [rows, expectedRows, corrections, frozenCompany, liveCompany, lowRateThreshold, sym, dueDate, bonusQueries]);
 
   const approvedCount = expectedRows.filter((row) => row.report && ["manager_approved", "owner_approved", "locked"].includes(row.report.status)).length;
   const submittedCount = expectedRows.filter((row) => row.report && row.report.status !== "draft").length;
