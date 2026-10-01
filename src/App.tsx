@@ -31266,6 +31266,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         ? expansionProfitBreakdownForOrder(order, upsellPerfAttribution)
         : null;
       const crossSellRevenue = (order.crossSellLines ?? []).reduce((total, line) => total + Number(line.amount ?? 0), 0);
+      // Each breakdown line is one kind, so revenue, profit and bonus split
+      // cleanly into upsell vs cross-sell and still add up to the order's totals.
+      const lineTotal = (kind: "Upsell" | "Cross-sell", field: "revenue" | "contributionProfit" | "commission") =>
+        breakdown ? breakdown.lines.filter((line) => line.kind === kind).reduce((total, line) => total + line[field], 0) : 0;
       rows.push({
         id: order.id,
         repId: order.assignedRepId ?? null,
@@ -31286,8 +31290,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         extraRevenue: breakdown?.revenue ?? 0,
         // Split so the page can show cross-sell on its own (Bright, 1 Oct 2026:
         // "I can't find cross sell" - it was folded into the upsell columns).
-        upsellRevenue: breakdown ? breakdown.lines.filter((line) => line.kind === "Upsell").reduce((total, line) => total + line.revenue, 0) : 0,
-        crossSellRevenue: breakdown ? breakdown.lines.filter((line) => line.kind === "Cross-sell").reduce((total, line) => total + line.revenue, 0) : 0,
+        upsellRevenue: lineTotal("Upsell", "revenue"),
+        crossSellRevenue: lineTotal("Cross-sell", "revenue"),
+        upsellProfit: lineTotal("Upsell", "contributionProfit"),
+        crossSellProfit: lineTotal("Cross-sell", "contributionProfit"),
+        upsellBonus: lineTotal("Upsell", "commission"),
+        crossSellBonus: lineTotal("Cross-sell", "commission"),
         addOns: breakdown ? (order.crossSellLines ?? []).map((line) => ({ name: crossSellLineDisplayName(line), revenue: Number(line.amount ?? 0) })) : [],
         contributionProfit: breakdown?.contributionProfit ?? 0,
         bonus: breakdown?.commission ?? 0
