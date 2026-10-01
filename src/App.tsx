@@ -31284,6 +31284,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         upsellToQty: order.upsellToQty ?? null,
         description: breakdown ? breakdown.lines.map((line) => line.description).join(" + ") : "",
         extraRevenue: breakdown?.revenue ?? 0,
+        // Split so the page can show cross-sell on its own (Bright, 1 Oct 2026:
+        // "I can't find cross sell" - it was folded into the upsell columns).
+        upsellRevenue: breakdown ? breakdown.lines.filter((line) => line.kind === "Upsell").reduce((total, line) => total + line.revenue, 0) : 0,
+        crossSellRevenue: breakdown ? breakdown.lines.filter((line) => line.kind === "Cross-sell").reduce((total, line) => total + line.revenue, 0) : 0,
+        addOns: breakdown ? (order.crossSellLines ?? []).map((line) => ({ name: crossSellLineDisplayName(line), revenue: Number(line.amount ?? 0) })) : [],
         contributionProfit: breakdown?.contributionProfit ?? 0,
         bonus: breakdown?.commission ?? 0
       });
