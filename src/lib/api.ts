@@ -85,7 +85,7 @@ const normalizeWhatsappSettingsResponse = (value: any) => ({
 });
 
 class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(public status: number, message: string, public code?: string) {
     super(message);
   }
 }
@@ -312,7 +312,7 @@ async function request<T>(
 
   if (!res.ok) {
     const payload = await res.json().catch(() => ({ error: res.statusText }));
-    throw new ApiError(res.status, extractErrorMessage(payload, res.statusText || "Request failed."));
+    throw new ApiError(res.status, extractErrorMessage(payload, res.statusText || "Request failed."), typeof payload?.code === "string" ? payload.code : undefined);
   }
 
   if (res.status === 204) return undefined as T;

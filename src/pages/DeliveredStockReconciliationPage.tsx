@@ -21,6 +21,21 @@ const outstanding = (row: DeliveredStockReconciliationRow) => row.status === "pe
 const sumQty = (rows: DeliveredStockReconciliationRow[]) => rows.reduce((sum, row) => sum + row.quantity, 0);
 const uniqueOrders = (rows: DeliveredStockReconciliationRow[]) => new Set(rows.map((row) => row.orderId)).size;
 
+const reconciliationFailureMessage = (cause: any) => {
+  switch (cause?.code) {
+    case "INVENTORY_CONFLICT":
+      return "These delivered lines changed before confirmation. Refresh the queue, select them again, and retry.";
+    case "INSUFFICIENT_STOCK":
+      return cause?.message ?? "There is not enough usable stock at the assigned location. Check the location stock and retry.";
+    case "STOCK_LEDGER_ID_CONFLICT":
+      return "This line already has a stock-ledger entry from an earlier reconciliation cycle. Refresh and retry; if it stays pending, contact an administrator for a ledger repair.";
+    case "INVALID_INVENTORY":
+      return cause?.message ?? "The selected stock lines are not valid for reconciliation.";
+    default:
+      return "Stock reconciliation could not be completed. No stock was deducted. Refresh and retry. If it continues, send the error code to an administrator.";
+  }
+};
+
 type Group = { key: string; name: string; rows: DeliveredStockReconciliationRow[] };
 const groupRows = (rows: DeliveredStockReconciliationRow[], key: (row: DeliveredStockReconciliationRow) => string, name: (row: DeliveredStockReconciliationRow) => string): Group[] => {
   const groups = new Map<string, Group>();
@@ -196,7 +211,8 @@ export default function DeliveredStockReconciliationPage() {
     } catch (cause: any) {
       // Stays open, with the reason where the button was pressed. Nothing was
       // posted - the whole reconcile is one transaction.
-      setResult({ tone: "error", message: `${cause?.message ?? "Could not reconcile selected stock."} No stock was deducted.` });
+      const message = reconciliationFailureMessage(cause);
+      setResult({ tone: "error", message: message.includes("No stock was deducted") ? message : `${message} No stock was deducted.` });
     }
     finally { setWorking(false); }
   };

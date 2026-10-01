@@ -30,6 +30,16 @@ const databaseFailure = (message: string) => {
   if (message.startsWith("INVALID_INVENTORY|")) {
     return { status: 400, code: "INVALID_INVENTORY", message: message.split("|").slice(1).join("|") };
   }
+  // A delivered line used to generate the same ledger primary key when it
+  // entered a later delivery cycle. Keep the raw Postgres constraint out of
+  // the UI and make the recovery path explicit while older rows are repaired.
+  if (message.includes("stock_movements_pkey") || message.includes("duplicate key value violates unique constraint")) {
+    return {
+      status: 409,
+      code: "STOCK_LEDGER_ID_CONFLICT",
+      message: "This delivered line already has a stock-ledger entry from an earlier reconciliation cycle. Refresh the queue and retry. If it remains pending, an administrator must repair the line before it can be deducted."
+    };
+  }
   return { status: 500, code: "RECONCILIATION_FAILED", message: message || "Could not reconcile delivered stock." };
 };
 
