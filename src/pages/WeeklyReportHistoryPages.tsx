@@ -83,7 +83,8 @@ const countOf = (counts: Record<string, number>, key: string) => {
   return (counts[key] ?? 0) + (camel !== key ? counts[camel] ?? 0 : 0);
 };
 
-export function CompanyReportHistoryPage({ rows, loading, error, onOpenWeek }: {
+export function CompanyReportHistoryPage({ rows, loading, error, onOpenWeek, onBack }: {
+  onBack?: () => void;
   rows: Array<{ weekStart: string; weekEnd: string; company: WeeklyCompanyReport | null; repStatusCounts: Record<string, number> }>;
   loading: boolean;
   error: string;
@@ -92,6 +93,9 @@ export function CompanyReportHistoryPage({ rows, loading, error, onOpenWeek }: {
   const sym = currencySymbol();
   return (
     <div className="space-y-5">
+      {onBack && (
+        <button type="button" onClick={onBack} className="!min-h-0 inline-flex items-center gap-1.5 text-[12px] font-medium text-[#1F8FE0] hover:underline">← Weekly Report Review</button>
+      )}
       <PageTitle icon={History} title="Report History" subtitle="Every week's report, from the reps' submissions to the owner's lock." />
       {error && <p className="m-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-[13px] font-semibold text-rose-700">{error}</p>}
       <Panel>

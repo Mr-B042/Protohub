@@ -245,8 +245,8 @@ import ManagerWeeklyReviewPage, { type ReviewRepRow } from "./pages/ManagerWeekl
 import OwnerWeeklyApprovalPage, { type WeeklyFinancialSummary } from "./pages/OwnerWeeklyApprovalPage";
 import { CompanyReportHistoryPage, MyReportsHistoryPage, WeeklyAuditLogPage } from "./pages/WeeklyReportHistoryPages";
 import {
-  buildCompanySnapshot, buildRepWeeklySnapshot, compareSnapshots,
-  type ManagerBonusPreview, type WeeklyReportSnapshot
+  buildCompanySnapshot, buildRepWeeklySnapshot, compareSnapshots, firstSubmittedAt, isLateSubmission,
+  reportDueDate, reportOpensOn, type ManagerBonusPreview, type WeeklyReportSnapshot
 } from "./pages/weekly-report-model";
 import type { CorrectionDraft } from "./components/WeeklyReportParts";
 import {
@@ -321,7 +321,7 @@ type AgentStatus = "All Status" | "Active" | "Order in Progress" | "Inactive";
 type PayrollTab = "Pay Rates" | "Run Payroll" | "History";
 type CustomerSource = "Source: All" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
 type FinanceTab = "Cash Flow" | "Financial Overview" | "Reports" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Delivery Fee Audit" | "Remittance" | "Profit & Loss" | "Product Profitability" | "Package Performance" | "State Performance" | "Profitability";
-type ManagerDashboardTab = "Overview" | "Targets" | "Bonus" | "Upsell Bonus" | "Upsell Performance" | "Inventory" | "Needs Attention";
+type ManagerDashboardTab = "Overview" | "Targets" | "Bonus" | "Upsell Bonus" | "Upsell Performance" | "Weekly Reports" | "Inventory" | "Needs Attention";
 type RecoveryRepDashboardTab = "Overview" | "Work Queue" | "Activity Sheet" | "Customer Retention";
 // One screen of recovery cards. Big enough to be a real batch of calls,
 // small enough that a 618-order tier does not become an endless scroll.
@@ -441,15 +441,17 @@ const HEAD_OF_SALES_SUBNAV_ITEMS: Array<{ key: HeadOfSalesSubPage; label: string
 ];
 // Weekly Report approvals (Bright, 1 Oct 2026): one sidebar entry, and the
 // sub-pages each role sees under it - the same nesting as Head of Sales Rep.
+// Managers/Admins have no sidebar entry: their review lives in the Manager
+// Dashboard's "Weekly Reports" tab, with Report History one click away.
 type WeeklyReportSubPage =
   | "Send Weekly Report" | "My Reports History"
-  | "Submit My Report" | "Manager Review" | "Report History"
+  | "Manager Review" | "Report History"
   | "Owner Approval" | "Audit Logs";
 const weeklyReportSubPagesForRole = (role: string): WeeklyReportSubPage[] =>
   role === "Owner"
     ? ["Owner Approval", "Report History", "Audit Logs"]
     : role === "Manager" || role === "Admin"
-      ? ["Submit My Report", "Manager Review", "Report History"]
+      ? ["Manager Review", "Report History"]
       : ["Send Weekly Report", "My Reports History"];
 const defaultWeeklyReportSubPage = (role: string): WeeklyReportSubPage =>
   role === "Owner" ? "Owner Approval" : role === "Manager" || role === "Admin" ? "Manager Review" : "Send Weekly Report";
@@ -2874,11 +2876,11 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
     "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
-    "Ad Tracking", "Marketing", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp", "Weekly Reports"
+    "Ad Tracking", "Marketing", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
   ],
   "Manager": [
     "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
-    "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Weekend Stock Summary", "Customers", "Personal Delivery Agents", "Round-Robin", "Notifications", "Settings", "WhatsApp", "Weekly Reports"
+    "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Weekend Stock Summary", "Customers", "Personal Delivery Agents", "Round-Robin", "Notifications", "Settings", "WhatsApp"
   ],
   // "Head of Sales Rep" is NOT listed here - a Sales Rep only gets it at
   // runtime when currentManagedUser?.isHeadOfSalesRep is true (see
@@ -9777,6 +9779,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const openUpsellPerformance = () => {
     setManagerDashboardReturnTab(managerDashboardTab === "Upsell Performance" ? "Overview" : managerDashboardTab);
     setManagerDashboardTab("Upsell Performance");
+  };
+  // Weekly Reports opens full-page from its Manager Dashboard tab, the same
+  // way Upsell Performance does (Bright, 1 Oct 2026: "use the tab").
+  const openWeeklyReportsTab = () => {
+    if (managerDashboardTab !== "Weekly Reports") setManagerDashboardReturnTab(managerDashboardTab === "Upsell Performance" ? "Overview" : managerDashboardTab);
+    setWeeklyReportSubPage("Manager Review");
+    setManagerDashboardTab("Weekly Reports");
   };
   const [targetPeriods, setTargetPeriods] = useState<TargetPeriod[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
@@ -25621,13 +25630,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Dashboard's own bonus table, run for ONE rep and ONE week with that
   // week's bonus maps. The rep's report, the manager's review and the bonus
   // table therefore cannot disagree. See src/pages/weekly-report-model.ts.
-  const weeklyReportDefaultWeek = () => {
-    const today = lagosDateKeyNow();
-    const thisWeek = windowWeekStart(today);
-    // A report covers a finished week: on Saturday it is this week, any
-    // other day the week that just ended.
-    return windowShiftDay(thisWeek, 6) === today ? thisWeek : windowShiftDay(thisWeek, -7);
-  };
+  // The week that just ended: it is the one due on this week's Tuesday.
+  const weeklyReportDefaultWeek = () => windowShiftDay(windowWeekStart(lagosDateKeyNow()), -7);
   const [weeklyReportWeekStart, setWeeklyReportWeekStart] = useState<string>(() => weeklyReportDefaultWeek());
   const [weeklyBonusMaps, setWeeklyBonusMaps] = useState<{
     weekStart: string;
@@ -25648,8 +25652,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     ? weeklyReportSubPage
     : defaultWeeklyReportSubPage(currentRole);
 
+  const weeklyAreaOpen = activePage === "Weekly Reports"
+    || (activePage === "Manager Dashboard" && managerDashboardTab === "Weekly Reports");
   useEffect(() => {
-    if (activePage !== "Weekly Reports") return;
+    if (!weeklyAreaOpen) return;
     let cancelled = false;
     const weekStart = weeklyReportWeekStart;
     const previousStart = windowShiftDay(weekStart, -7);
@@ -25691,7 +25697,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, weeklyReportWeekStart, weeklyReload, weeklySubPage, currentRole]);
+  }, [weeklyAreaOpen, weeklyReportWeekStart, weeklyReload, weeklySubPage, currentRole]);
 
   /** One rep's week, worked out the way the Manager Dashboard bonus table does it. */
   const buildWeeklyRepSnapshot = (
@@ -31441,6 +31447,180 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, managerDashboardTab, upsellPerfWindow.start, upsellPerfWindow.end, upsellPerfReload, currentRole]);
+
+  const renderWeeklyReportsArea = (context: "sidebar" | "dashboard") => {
+    // Weekly Report approvals (Bright's three designs, 1 Oct 2026).
+    // "sidebar" = the Weekly Reports page (reps and the Owner); "dashboard" =
+    // the Manager Dashboard's Weekly Reports tab (Bright: "use the tab").
+    const inDashboard = context === "dashboard";
+    const sub: WeeklyReportSubPage = inDashboard
+      ? (weeklyReportSubPage === "Report History" ? "Report History" : "Manager Review")
+      : weeklySubPage;
+    const todayKey = lagosDateKeyNow();
+    const dueDate = reportDueDate(weeklyReportWeekStart);
+    const weekProps = {
+      weekStart: weeklyReportWeekStart,
+      weekEnd: weeklyReportWeekEnd,
+      onShiftWeek: weeklyShiftWeek,
+      onPickWeek: weeklyPickWeek,
+      canGoNext: weeklyCanGoNext,
+      loading: weeklyLoading,
+      error: weeklyError
+    };
+    const productImageByKey: Record<string, string | undefined> = Object.fromEntries(
+      (products as any[]).map((product) => [`id:${product.id}`, product.packages?.[0]?.imageUrl || undefined])
+    );
+
+    if (weeklyIsRep) {
+      if (sub === "My Reports History") {
+        return (
+          <MyReportsHistoryPage rows={weeklyMyHistory} loading={weeklyLoading} error={weeklyError}
+            onOpenWeek={(week) => { setWeeklyReportWeekStart(week); setWeeklyReportSubPage("Send Weekly Report"); }} />
+        );
+      }
+      const me = currentManagedUser;
+      const mine = weeklyMine && weeklyMine.weekStart === weeklyReportWeekStart ? weeklyMine : null;
+      const live = me && mine ? buildWeeklyRepSnapshot({ id: me.id, name: me.name }, weeklyReportWeekStart, mine.fines ?? [], mine.previousFines ?? []) : null;
+      return (
+        <RepWeeklyReportPage
+          {...weekProps}
+          live={live}
+          report={mine?.report ?? null}
+          companyStatus={mine?.companyStatus ?? "open"}
+          corrections={mine?.corrections ?? []}
+          canSubmitNow={todayKey >= reportOpensOn(weeklyReportWeekStart)}
+          dueDate={dueDate}
+          todayKey={todayKey}
+          submittedLate={me ? isLateSubmission(weeklyReportWeekStart, firstSubmittedAt(mine?.audit ?? [], me.id)) : false}
+          productImageByKey={productImageByKey}
+          onBack={() => handleNavClick("Sales Rep Workspace")}
+          onSubmit={async (note, responses) => {
+            if (!live) throw new Error("Your figures are still loading.");
+            await weeklyRun(() => weeklyReportsApi.submitMine({ weekStart: weeklyReportWeekStart, snapshot: live, note: note || undefined, responses }), "Weekly report submitted to your manager.");
+          }}
+        />
+      );
+    }
+
+    const week = weeklyWeek && weeklyWeek.weekStart === weeklyReportWeekStart ? weeklyWeek : null;
+    const repName = (id: string | null) => users.find((user) => user.id === id)?.name ?? "Former staff";
+    const repIds = Array.from(new Set([...(week?.expectedRepIds ?? []), ...(week?.repReports ?? []).map((report) => report.repId)]));
+    const reviewRows: ReviewRepRow[] = week ? repIds.map((repId) => {
+      const report = week.repReports.find((item) => item.repId === repId) ?? null;
+      const live = buildWeeklyRepSnapshot({ id: repId, name: repName(repId) }, weeklyReportWeekStart, week.fines ?? [], week.previousFines ?? []);
+      const frozen = report && report.status !== "draft" && report.snapshot ? report.snapshot as WeeklyReportSnapshot : null;
+      return {
+        repId,
+        repName: repName(repId),
+        expected: week.expectedRepIds.includes(repId),
+        report,
+        live,
+        frozen,
+        differences: frozen && report?.status !== "returned" ? compareSnapshots(frozen, live) : [],
+        submittedLate: isLateSubmission(weeklyReportWeekStart, firstSubmittedAt(week.audit ?? [], repId)),
+        overdue: week.expectedRepIds.includes(repId) && (!report || report.status === "draft") && todayKey > dueDate,
+        editedAfterSubmit: (week.editedAfterSubmit ?? []).filter((edit) => edit.repId === repId)
+      };
+    }).sort((a, b) => a.repName.localeCompare(b.repName)) : [];
+    const managerBonus = toManagerBonusPreview(weeklyManagerBonus && weeklyManagerBonus.weekStart === weeklyReportWeekStart ? weeklyManagerBonus : null);
+
+    if (sub === "Report History") {
+      const backToReview = inDashboard ? "Manager Review" : defaultWeeklyReportSubPage(currentRole);
+      return (
+        <CompanyReportHistoryPage rows={weeklyHistory} loading={weeklyLoading} error={weeklyError}
+          onBack={inDashboard ? () => setWeeklyReportSubPage("Manager Review") : undefined}
+          onOpenWeek={(weekStart) => { setWeeklyReportWeekStart(weekStart); setWeeklyReportSubPage(backToReview); }} />
+      );
+    }
+    if (sub === "Audit Logs") {
+      return <WeeklyAuditLogPage {...weekProps} entries={week?.audit ?? []} repName={repName} />;
+    }
+
+    if (sub === "Owner Approval") {
+      const inWeek = (key: string | undefined, start: string) => !!key && key >= start && key <= windowShiftDay(start, 6);
+      const financialFor = (start: string) => {
+        const delivered = trackedOrders.filter((order) => (order.status ?? "New") === "Delivered" && inWeek(orderDeliveredKey(order), start));
+        const placed = trackedOrders.filter((order) => !order.reviewHold && inWeek(orderCreatedKey(order), start));
+        const weekExpenses = expenses.filter((expense) => inWeek(normalizeDateKey(expense.date), start));
+        const econ = summarizeRecognizedProfit(delivered, weekExpenses, { placedRows: placed, includeManagerBonus: true });
+        const adSpend = weekExpenses.filter((expense) => expense.type === "Ad Spend").reduce((sum, expense) => sum + expense.amount, 0);
+        return { econ, adSpend };
+      };
+      const current = financialFor(weeklyReportWeekStart);
+      const previous = financialFor(windowShiftDay(weeklyReportWeekStart, -7));
+      const financial: WeeklyFinancialSummary = {
+        revenue: current.econ.revenue,
+        cogs: current.econ.cogs,
+        logistics: current.econ.recognizedLogistics,
+        adSpend: current.adSpend,
+        staffBonuses: current.econ.totalBonusExpense,
+        otherExpenses: Math.max(0, current.econ.recordedOperatingExpense - current.adSpend),
+        contributionProfit: current.econ.revenue - current.econ.cogs - current.econ.recognizedLogistics - current.econ.bonusEstimate,
+        netProfit: current.econ.netProfit,
+        previousNetProfit: previous.econ.netProfit
+      };
+      const rateGate = activeSalesBonusRules
+        .filter((rule) => rule.type === "delivery_rate_per_delivered")
+        .reduce<number | null>((worst, rule) => {
+          const target = Number(rule.config?.targetRatePercent ?? 0);
+          return worst === null ? target : Math.max(worst, target);
+        }, null);
+      return (
+        <OwnerWeeklyApprovalPage
+          {...weekProps}
+          rows={reviewRows}
+          company={week?.company ?? null}
+          corrections={week?.corrections ?? []}
+          audit={week?.audit ?? []}
+          managerBonus={managerBonus}
+          managerName={week?.company?.submittedBy ? repName(week.company.submittedBy) : null}
+          financial={week ? financial : null}
+          lowRateThreshold={rateGate ?? 50}
+          dueDate={dueDate}
+          onBack={() => handleNavClick("Dashboard")}
+          onApproveLock={(note) => weeklyRun(() => weeklyReportsApi.approveLock({ weekStart: weeklyReportWeekStart, ...(note ? { note } : {}) }), "Week approved and locked.")}
+          onReturnToManager={(draft) => weeklyRun(() => weeklyReportsApi.returnCompany(correctionBody(draft)), "Returned to the manager.")}
+          onReopen={(reason) => weeklyRun(() => weeklyReportsApi.reopen({ weekStart: weeklyReportWeekStart, reason }), "Week reopened.")}
+        />
+      );
+    }
+
+    const canAct = currentRole === "Manager" || currentRole === "Admin";
+    return (
+      <ManagerWeeklyReviewPage
+        {...weekProps}
+        mode="review"
+        dueDate={dueDate}
+        onOpenHistory={() => setWeeklyReportSubPage("Report History")}
+        rows={reviewRows}
+        company={week?.company ?? null}
+        corrections={week?.corrections ?? []}
+        audit={week?.audit ?? []}
+        managerBonus={managerBonus}
+        canAct={canAct}
+        readOnlyReason="Only a Manager or Admin can approve and submit."
+        onBack={() => (inDashboard ? setManagerDashboardTab(managerDashboardReturnTab) : handleNavClick("Manager Dashboard"))}
+        onEditManagerBonus={currentRole === "Owner" ? () => handleNavClick("Manager Dashboard") : undefined}
+        onApprove={(repId, note) => weeklyRun(() => weeklyReportsApi.approveRep(repId, { weekStart: weeklyReportWeekStart, ...(note ? { note } : {}) }), `${repName(repId)}'s report approved.`)}
+        onReturn={(repId, draft) => weeklyRun(() => weeklyReportsApi.returnRep(repId, correctionBody(draft)), `Returned to ${repName(repId)} for correction.`)}
+        onFlag={(repId, draft) => weeklyRun(() => weeklyReportsApi.flagRep(repId, correctionBody(draft)), "Issue flagged for the owner.")}
+        onSubmitToOwner={async (note, responses) => {
+          const approved = reviewRows
+            .filter((row) => row.expected || row.report)
+            .map((row) => row.frozen ?? row.live)
+            .filter((snap): snap is WeeklyReportSnapshot => !!snap);
+          const companySnapshot = buildCompanySnapshot(weeklyReportWeekStart, weeklyReportWeekEnd, approved);
+          await weeklyRun(() => weeklyReportsApi.submitCompany({
+            weekStart: weeklyReportWeekStart,
+            managerNote: note || undefined,
+            companySnapshot,
+            managerBonusSnapshot: managerBonus ?? undefined,
+            responses
+          }), "Weekly report submitted to the owner.");
+        }}
+      />
+    );
+  };
 
   const renderUpsellPerformancePage = () => {
     const previous = shiftDateWindow(upsellPerfWindow, -dateWindowSize(upsellPerfWindow));
@@ -78518,7 +78698,7 @@ ${waybillLineItems(w).length > 1
               )}
             </div>
           ) : activePage === "Manager Dashboard" && (currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager") ? (
-              managerDashboardTab === "Upsell Performance" ? renderUpsellPerformancePage() : (
+              managerDashboardTab === "Weekly Reports" ? renderWeeklyReportsArea("dashboard") : managerDashboardTab === "Upsell Performance" ? renderUpsellPerformancePage() : (
               <div className="manager-dashboard-shell space-y-6">
                 <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 px-5 py-4 bg-gradient-to-r from-indigo-50 to-transparent rounded-2xl border border-indigo-100">
                   <div className="flex flex-col gap-1">
@@ -78535,14 +78715,14 @@ ${waybillLineItems(w).length > 1
                 </header>
 
                 <div className="inline-flex w-full sm:w-auto items-center rounded-2xl bg-gray-100 p-1">
-                  {(["Overview", "Targets", "Bonus", "Upsell Bonus", "Upsell Performance", "Inventory", "Needs Attention"] as ManagerDashboardTab[]).map((tab) => (
+                  {(["Overview", "Targets", "Bonus", "Upsell Bonus", "Upsell Performance", "Weekly Reports", "Inventory", "Needs Attention"] as ManagerDashboardTab[]).map((tab) => (
                     <button
                       key={tab}
                       className={`!min-h-0 flex-1 sm:flex-none rounded-xl px-4 py-2 text-sm font-black transition-colors ${managerDashboardTab === tab ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
-                      onClick={() => (tab === "Upsell Performance" ? openUpsellPerformance() : setManagerDashboardTab(tab))}
+                      onClick={() => (tab === "Upsell Performance" ? openUpsellPerformance() : tab === "Weekly Reports" ? openWeeklyReportsTab() : setManagerDashboardTab(tab))}
                     >
                       <span className="inline-flex items-center gap-1.5">
-                        {tab === "Targets" ? "Targets & Incentives" : tab === "Bonus" ? "Bonus & Performance" : tab === "Upsell Bonus" ? "Upsell & Cross-Sell Bonus" : tab === "Upsell Performance" ? "Upsell Performance" : tab === "Inventory" ? "Inventory" : tab === "Needs Attention" ? "Needs Attention" : "Overview"}
+                        {tab === "Targets" ? "Targets & Incentives" : tab === "Bonus" ? "Bonus & Performance" : tab === "Upsell Bonus" ? "Upsell & Cross-Sell Bonus" : tab === "Upsell Performance" ? "Upsell Performance" : tab === "Weekly Reports" ? "Weekly Reports" : tab === "Inventory" ? "Inventory" : tab === "Needs Attention" ? "Needs Attention" : "Overview"}
                         {tab === "Needs Attention" && needsAttentionBadgeCount > 0 && (
                           <span
                             className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-rose-600 px-1.5 text-[11px] font-black text-white shadow-[0_0_0_2px_rgba(225,29,72,0.25)] animate-bounce"
@@ -90588,161 +90768,7 @@ ${waybillLineItems(w).length > 1
               </div>
             </div>
           ) : activePage === "Weekly Reports" ? (
-            (() => {
-              // Weekly Report approvals (Bright's three designs, 1 Oct 2026).
-              const weekProps = {
-                weekStart: weeklyReportWeekStart,
-                weekEnd: weeklyReportWeekEnd,
-                onShiftWeek: weeklyShiftWeek,
-                onPickWeek: weeklyPickWeek,
-                canGoNext: weeklyCanGoNext,
-                loading: weeklyLoading,
-                error: weeklyError
-              };
-              const productImageByKey: Record<string, string | undefined> = Object.fromEntries(
-                (products as any[]).map((product) => [`id:${product.id}`, product.packages?.[0]?.imageUrl || undefined])
-              );
-
-              if (weeklyIsRep) {
-                if (weeklySubPage === "My Reports History") {
-                  return (
-                    <MyReportsHistoryPage rows={weeklyMyHistory} loading={weeklyLoading} error={weeklyError}
-                      onOpenWeek={(week) => { setWeeklyReportWeekStart(week); setWeeklyReportSubPage("Send Weekly Report"); }} />
-                  );
-                }
-                const me = currentManagedUser;
-                const mine = weeklyMine && weeklyMine.weekStart === weeklyReportWeekStart ? weeklyMine : null;
-                const live = me && mine ? buildWeeklyRepSnapshot({ id: me.id, name: me.name }, weeklyReportWeekStart, mine.fines ?? [], mine.previousFines ?? []) : null;
-                return (
-                  <RepWeeklyReportPage
-                    {...weekProps}
-                    live={live}
-                    report={mine?.report ?? null}
-                    companyStatus={mine?.companyStatus ?? "open"}
-                    corrections={mine?.corrections ?? []}
-                    canSubmitNow={weeklyReportWeekEnd <= lagosDateKeyNow()}
-                    productImageByKey={productImageByKey}
-                    onBack={() => handleNavClick("Sales Rep Workspace")}
-                    onSubmit={async (note, responses) => {
-                      if (!live) throw new Error("Your figures are still loading.");
-                      await weeklyRun(() => weeklyReportsApi.submitMine({ weekStart: weeklyReportWeekStart, snapshot: live, note: note || undefined, responses }), "Weekly report submitted to your manager.");
-                    }}
-                  />
-                );
-              }
-
-              const week = weeklyWeek && weeklyWeek.weekStart === weeklyReportWeekStart ? weeklyWeek : null;
-              const repName = (id: string | null) => users.find((user) => user.id === id)?.name ?? "Former staff";
-              const repIds = Array.from(new Set([...(week?.expectedRepIds ?? []), ...(week?.repReports ?? []).map((report) => report.repId)]));
-              const reviewRows: ReviewRepRow[] = week ? repIds.map((repId) => {
-                const report = week.repReports.find((item) => item.repId === repId) ?? null;
-                const live = buildWeeklyRepSnapshot({ id: repId, name: repName(repId) }, weeklyReportWeekStart, week.fines ?? [], week.previousFines ?? []);
-                const frozen = report && report.status !== "draft" && report.snapshot ? report.snapshot as WeeklyReportSnapshot : null;
-                return {
-                  repId,
-                  repName: repName(repId),
-                  expected: week.expectedRepIds.includes(repId),
-                  report,
-                  live,
-                  frozen,
-                  differences: frozen && report?.status !== "returned" ? compareSnapshots(frozen, live) : [],
-                  editedAfterSubmit: (week.editedAfterSubmit ?? []).filter((edit) => edit.repId === repId)
-                };
-              }).sort((a, b) => a.repName.localeCompare(b.repName)) : [];
-              const managerBonus = toManagerBonusPreview(weeklyManagerBonus && weeklyManagerBonus.weekStart === weeklyReportWeekStart ? weeklyManagerBonus : null);
-
-              if (weeklySubPage === "Report History") {
-                return (
-                  <CompanyReportHistoryPage rows={weeklyHistory} loading={weeklyLoading} error={weeklyError}
-                    onOpenWeek={(weekStart) => { setWeeklyReportWeekStart(weekStart); setWeeklyReportSubPage(defaultWeeklyReportSubPage(currentRole)); }} />
-                );
-              }
-              if (weeklySubPage === "Audit Logs") {
-                return <WeeklyAuditLogPage {...weekProps} entries={week?.audit ?? []} repName={repName} />;
-              }
-
-              if (weeklySubPage === "Owner Approval") {
-                const inWeek = (key: string | undefined, start: string) => !!key && key >= start && key <= windowShiftDay(start, 6);
-                const financialFor = (start: string) => {
-                  const delivered = trackedOrders.filter((order) => (order.status ?? "New") === "Delivered" && inWeek(orderDeliveredKey(order), start));
-                  const placed = trackedOrders.filter((order) => !order.reviewHold && inWeek(orderCreatedKey(order), start));
-                  const weekExpenses = expenses.filter((expense) => inWeek(normalizeDateKey(expense.date), start));
-                  const econ = summarizeRecognizedProfit(delivered, weekExpenses, { placedRows: placed, includeManagerBonus: true });
-                  const adSpend = weekExpenses.filter((expense) => expense.type === "Ad Spend").reduce((sum, expense) => sum + expense.amount, 0);
-                  return { econ, adSpend };
-                };
-                const current = financialFor(weeklyReportWeekStart);
-                const previous = financialFor(windowShiftDay(weeklyReportWeekStart, -7));
-                const financial: WeeklyFinancialSummary = {
-                  revenue: current.econ.revenue,
-                  cogs: current.econ.cogs,
-                  logistics: current.econ.recognizedLogistics,
-                  adSpend: current.adSpend,
-                  staffBonuses: current.econ.totalBonusExpense,
-                  otherExpenses: Math.max(0, current.econ.recordedOperatingExpense - current.adSpend),
-                  contributionProfit: current.econ.revenue - current.econ.cogs - current.econ.recognizedLogistics - current.econ.bonusEstimate,
-                  netProfit: current.econ.netProfit,
-                  previousNetProfit: previous.econ.netProfit
-                };
-                const rateGate = activeSalesBonusRules
-                  .filter((rule) => rule.type === "delivery_rate_per_delivered")
-                  .reduce<number | null>((worst, rule) => {
-                    const target = Number(rule.config?.targetRatePercent ?? 0);
-                    return worst === null ? target : Math.max(worst, target);
-                  }, null);
-                return (
-                  <OwnerWeeklyApprovalPage
-                    {...weekProps}
-                    rows={reviewRows}
-                    company={week?.company ?? null}
-                    corrections={week?.corrections ?? []}
-                    audit={week?.audit ?? []}
-                    managerBonus={managerBonus}
-                    managerName={week?.company?.submittedBy ? repName(week.company.submittedBy) : null}
-                    financial={week ? financial : null}
-                    lowRateThreshold={rateGate ?? 50}
-                    onBack={() => handleNavClick("Dashboard")}
-                    onApproveLock={(note) => weeklyRun(() => weeklyReportsApi.approveLock({ weekStart: weeklyReportWeekStart, ...(note ? { note } : {}) }), "Week approved and locked.")}
-                    onReturnToManager={(draft) => weeklyRun(() => weeklyReportsApi.returnCompany(correctionBody(draft)), "Returned to the manager.")}
-                    onReopen={(reason) => weeklyRun(() => weeklyReportsApi.reopen({ weekStart: weeklyReportWeekStart, reason }), "Week reopened.")}
-                  />
-                );
-              }
-
-              const canAct = currentRole === "Manager" || currentRole === "Admin";
-              return (
-                <ManagerWeeklyReviewPage
-                  {...weekProps}
-                  mode={weeklySubPage === "Submit My Report" ? "submit" : "review"}
-                  rows={reviewRows}
-                  company={week?.company ?? null}
-                  corrections={week?.corrections ?? []}
-                  audit={week?.audit ?? []}
-                  managerBonus={managerBonus}
-                  canAct={canAct}
-                  readOnlyReason="Only a Manager or Admin can approve and submit."
-                  onBack={() => handleNavClick("Manager Dashboard")}
-                  onEditManagerBonus={currentRole === "Owner" ? () => handleNavClick("Manager Dashboard") : undefined}
-                  onApprove={(repId, note) => weeklyRun(() => weeklyReportsApi.approveRep(repId, { weekStart: weeklyReportWeekStart, ...(note ? { note } : {}) }), `${repName(repId)}'s report approved.`)}
-                  onReturn={(repId, draft) => weeklyRun(() => weeklyReportsApi.returnRep(repId, correctionBody(draft)), `Returned to ${repName(repId)} for correction.`)}
-                  onFlag={(repId, draft) => weeklyRun(() => weeklyReportsApi.flagRep(repId, correctionBody(draft)), "Issue flagged for the owner.")}
-                  onSubmitToOwner={async (note, responses) => {
-                    const approved = reviewRows
-                      .filter((row) => row.expected || row.report)
-                      .map((row) => row.frozen ?? row.live)
-                      .filter((snap): snap is WeeklyReportSnapshot => !!snap);
-                    const companySnapshot = buildCompanySnapshot(weeklyReportWeekStart, weeklyReportWeekEnd, approved);
-                    await weeklyRun(() => weeklyReportsApi.submitCompany({
-                      weekStart: weeklyReportWeekStart,
-                      managerNote: note || undefined,
-                      companySnapshot,
-                      managerBonusSnapshot: managerBonus ?? undefined,
-                      responses
-                    }), "Weekly report submitted to the owner.");
-                  }}
-                />
-              );
-            })()
+            renderWeeklyReportsArea("sidebar")
           ) : activePage === "Marketing Performance" ? (
             // ⚠️ OWNER ONLY WHILE THIS IS STILL BEING BUILT.
             // Bright's call: "Marketing Performance is a future module."

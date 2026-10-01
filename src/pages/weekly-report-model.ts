@@ -93,6 +93,10 @@ export type WeeklyReportSnapshot = {
     upsellOrders: number;
     crossSellOrders: number;
     manuallyAdjustedOrders: number;
+    /** Orders placed in an EARLIER week and delivered this week. Their bonus is
+     *  already inside the figures above - this only says how much of it. */
+    carryOverOrders?: number;
+    carryOverBonus?: number;
   };
   previous: { orders: number; delivered: number; deliveryRate: number; finalBonus: number } | null;
   products: WeeklyReportProductRow[];
@@ -114,6 +118,31 @@ export const addDaysKey = (dateKey: string, days: number) => {
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
 };
+
+/**
+ * Reports are submitted on the TUESDAY after the week ends (Bright, 1 Oct
+ * 2026): week Sun 20 - Sat 26 Sept opens and is due on Tue 29 Sept. Waiting
+ * until Tuesday gives the weekend's orders time to be attended to, so they
+ * count in the week they were placed. Orders delivered later still earn: their
+ * bonus lands in the week they are delivered (carry-over).
+ */
+export const reportDueDate = (weekStart: string) => addDaysKey(weekStart, 9);
+/** Submit opens on the due Tuesday itself. */
+export const reportOpensOn = reportDueDate;
+/** Submitted after the end of the due Tuesday (Lagos day). */
+export const isLateSubmission = (weekStart: string, submittedIso: string | null | undefined) => {
+  if (!submittedIso) return false;
+  const lagosDay = new Date(new Date(submittedIso).getTime() + 60 * 60 * 1000).toISOString().slice(0, 10);
+  return lagosDay > reportDueDate(weekStart);
+};
+/** When the rep FIRST submitted, from the audit trail (a resubmission after a return is not late). */
+export const firstSubmittedAt = (
+  audit: Array<{ action: string; repId?: string | null; createdAt: string; detail?: any }>,
+  repId: string
+) => audit
+  .filter((entry) => entry.action === "rep_submitted" && entry.repId === repId)
+  .map((entry) => entry.createdAt)
+  .sort()[0] ?? null;
 
 export const weekDays = (weekStart: string) => Array.from({ length: 7 }, (_, index) => addDaysKey(weekStart, index));
 
@@ -233,7 +262,9 @@ export function buildRepWeeklySnapshot(input: {
       finalBonus: Math.max(0, earned - Math.round(fineTotal)),
       upsellOrders: upsellPlaced.length,
       crossSellOrders: crossPlaced.length,
-      manuallyAdjustedOrders: orders.filter((order) => order.bonusManuallyAdjusted && order.bonus > 0).length
+      manuallyAdjustedOrders: orders.filter((order) => order.bonusManuallyAdjusted && order.bonus > 0).length,
+      carryOverOrders: orders.filter((order) => !order.placedThisWeek && order.bonus > 0).length,
+      carryOverBonus: orders.filter((order) => !order.placedThisWeek).reduce((sum, order) => sum + order.bonus, 0)
     },
     previous: input.previous,
     products,
