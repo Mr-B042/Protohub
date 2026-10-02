@@ -21,7 +21,7 @@ import { notifyOrderEvent } from "../lib/order-notifications.js";
 import { assignOrderRep } from "../lib/order-assignment.js";
 import { buildPackageComponentSnapshot } from "../lib/order-inventory.js";
 import { packageAllowsState, packageHasAgentStateStock } from "../lib/package-availability.js";
-import { withDataSource } from "../lib/tracking-credentials.js";
+import { serverEventsAllowed, withDataSource } from "../lib/tracking-credentials.js";
 import { metaIdsFromFormContext, recordMetaCapiEvent, resolveMetaTrackingConfig, sendMetaCapiPurchase, type MetaTrackingConfig } from "../lib/meta-capi.js";
 import { readSettings } from "./embed-settings.js";
 import {
@@ -1520,7 +1520,7 @@ router.post("/", submitRateLimit, async (req, res) => {
   // Strict registry: one server Purchase per order, ever.
   const { data: alreadyRegistered } = await supabase.from("meta_capi_events").select("status")
     .eq("org_id", product.org_id).eq("order_id", String(order.id)).eq("event_name", "Purchase").in("status", ["sent", "dry_run"]).maybeSingle();
-  if (!reviewHold && !alreadyRegistered) {
+  if (!reviewHold && !alreadyRegistered && await serverEventsAllowed(product.org_id, (order as any).branch_id ?? null)) {
     void sendMetaCapiPurchase({
       config: metaConfig,
       eventId: metaPurchaseEventId,
@@ -1547,7 +1547,7 @@ router.post("/", submitRateLimit, async (req, res) => {
     }).then((result) => recordMetaCapiEvent(supabase, {
       orgId: product.org_id, branchId: (order as any).branch_id ?? null, orderId: String(order.id),
       eventName: "Purchase", metaEventName: "Purchase", eventId: metaPurchaseEventId, result,
-      testMode: Boolean(metaConfig.testMode || metaConfig.testEventCode), value: Number(order.amount ?? amount), currency: String(order.currency ?? pkg.currency)
+      testMode: Boolean(metaConfig.testMode || metaConfig.testEventCode), pixelId: metaConfig.pixelId ?? null, value: Number(order.amount ?? amount), currency: String(order.currency ?? pkg.currency)
     })).catch(() => undefined);
   }
 

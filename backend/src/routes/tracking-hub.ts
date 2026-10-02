@@ -3,17 +3,19 @@ import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { addDaysToDateKey, lagosDateKey } from "../lib/sales-bonus-engine.js";
-import { testMetaCapiConnection } from "../lib/meta-capi.js";
-import { campaignPurchases, checkDataset, datasetEventCounts } from "../lib/meta-graph.js";
+import { sendMetaCapiPurchase, testMetaCapiConnection } from "../lib/meta-capi.js";
+import { testTikTokConnection } from "../lib/tiktok-events.js";
+import { adPurchases, campaignInfo, checkDataset, datasetEventStats, datasetQuality, scanPage } from "../lib/meta-graph.js";
+import { ATTRIBUTION_FIELDS, attributionCapture, domainOf, humanMetaError, orderAdIds, pathOf, reconciliationVerdict } from "../lib/tracking-hub.js";
 import {
-  ATTRIBUTION_FIELDS, PURCHASE_STATUS_LABEL, attributionCapture, domainOf, healthScore, humanMetaError, orderAdIds,
-  pathOf, purchaseStatus, reconciliationVerdict, type HealthItem, type PurchaseStatus
-} from "../lib/tracking-hub.js";
+  DEFAULT_HUB_SETTINGS, MODE_OF_STRATEGY, STRATEGY_OF_MODE, assess, change, dayOfIso, daysBetween, eventsFor, formOrders,
+  hubAudit, journeyCounts, kpisOf, ledgerRow, loadBasics, loadHubSettings, pct, sumVisits, type HubSettings, type JourneyRow, type LedgerRow
+} from "../lib/tracking-hub-data.js";
 
-// Tracking Hub (Bright, 2 Oct 2026): data sources (Meta datasets), websites,
-// tracking profiles, tracking links, the purchase event ledger, Meta-vs-
-// Protohub reconciliation, diagnostics and settings. Owner only - it holds
-// the Meta tokens. Rules in lib/tracking-hub.ts; Meta reads in lib/meta-graph.ts.
+// Tracking Hub (Bright, 2 Oct 2026; redesigned to his seven tab images the
+// same day). Owner only - it holds the Meta tokens. Numbers come from
+// lib/tracking-hub-data.ts; rules from lib/tracking-hub.ts; Meta reads from
+// lib/meta-graph.ts.
 const router = Router();
 router.use(requireAuth, requireRole("Owner"));
 
@@ -26,258 +28,25 @@ const branchOf = (req: Request) => {
   if (!branchId) throw httpError(400, "Open a branch first.");
   return branchId;
 };
-const startIso = (day: string) => new Date(`${day}T00:00:00+01:00`).toISOString();
-const endIso = (day: string) => new Date(`${day}T23:59:59.999+01:00`).toISOString();
-const dayOfIso = (iso: string) => lagosDateKey(iso);
-const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
+const actorOf = (req: Request) => ({ id: req.user!.id, name: req.user!.name ?? null });
 
-function periodOf(query: any) {
+function periodOf(query: any, defaultDays = 1) {
   const today = lagosDateKey();
   const to = typeof query.to === "string" && DATE_KEY.test(query.to) ? query.to : today;
-  const from = typeof query.from === "string" && DATE_KEY.test(query.from) ? query.from : to;
+  const from = typeof query.from === "string" && DATE_KEY.test(query.from) ? query.from : addDaysToDateKey(to, -(defaultDays - 1));
   if (from > to) throw httpError(400, "The start date is after the end date.");
   const length = daysBetween(from, to);
   const compareTo = typeof query.compareTo === "string" && DATE_KEY.test(query.compareTo) ? query.compareTo : addDaysToDateKey(from, -1);
   const compareFrom = typeof query.compareFrom === "string" && DATE_KEY.test(query.compareFrom) ? query.compareFrom : addDaysToDateKey(compareTo, -(length - 1));
-  return { from, to, compareFrom, compareTo };
+  return { from, to, compareFrom, compareTo, length };
 }
 
-// ---------------------------------------------------------------- loading
+const eventsManagerUrl = (pixelId: string) => `https://business.facebook.com/events_manager2/list/pixel/${encodeURIComponent(pixelId)}/overview`;
+const adsManagerUrl = (adAccount: string | null, campaignId: string | null) =>
+  `https://adsmanager.facebook.com/adsmanager/manage/campaigns${adAccount ? `?act=${encodeURIComponent(adAccount.replace(/^act_/, ""))}` : ""}${campaignId ? `${adAccount ? "&" : "?"}selected_campaign_ids=${encodeURIComponent(campaignId)}` : ""}`;
+const lastNDays = (to: string, n: number) => Array.from({ length: n }, (_, index) => addDaysToDateKey(to, index - (n - 1)));
 
-type OrderRow = {
-  id: string; created_at: string; product_id: string | null; product_name: string | null; amount: number | null; currency: string | null; status: string | null;
-  utm_source: string | null; utm_campaign: string | null; utm_content: string | null; utm_term: string | null; referrer: string | null;
-  form_context: Record<string, any> | null; review_hold: boolean | null;
-};
-
-/** Orders that came through a Protohub form (they carry the ad ids and tracking mode). */
-async function formOrders(orgId: string, branchId: string, from: string, to: string): Promise<OrderRow[]> {
-  const rows: OrderRow[] = [];
-  for (let page = 0; page < 40; page += 1) {
-    const { data, error } = await supabase.from("orders")
-      .select("id, created_at, product_id, product_name, amount, currency, status, utm_source, utm_campaign, utm_content, utm_term, referrer, form_context, review_hold")
-      .eq("org_id", orgId).eq("branch_id", branchId).gte("created_at", startIso(from)).lte("created_at", endIso(to))
-      .not("form_context", "is", null).order("id").range(page * 1000, page * 1000 + 999);
-    if (error) throw error;
-    rows.push(...((data ?? []) as OrderRow[]));
-    if ((data ?? []).length < 1000) break;
-  }
-  return rows.filter((row) => row.form_context && Object.keys(row.form_context).length > 0 && row.review_hold !== true);
-}
-
-async function eventsFor(orgId: string, orderIds: string[]) {
-  const server = new Map<string, any>();
-  const delivered = new Map<string, any>();
-  const browser = new Map<string, any>();
-  for (let i = 0; i < orderIds.length; i += 300) {
-    const chunk = orderIds.slice(i, i + 300);
-    const [serverRes, browserRes] = await Promise.all([
-      supabase.from("meta_capi_events").select("order_id, event_name, meta_event_name, event_id, status, http_status, message, test_mode, sent_at, attempts").eq("org_id", orgId).in("order_id", chunk),
-      supabase.from("tracking_browser_events").select("order_id, event_id, pixel_id, page_url, page_domain, pixels_on_page, fired_at").eq("org_id", orgId).in("order_id", chunk)
-    ]);
-    if (serverRes.error) throw serverRes.error;
-    if (browserRes.error) throw browserRes.error;
-    for (const row of serverRes.data ?? []) (row.event_name === "Delivered" ? delivered : server).set(String(row.order_id), row);
-    for (const row of browserRes.data ?? []) browser.set(String(row.order_id), row);
-  }
-  return { server, delivered, browser };
-}
-
-type LedgerStatus = PurchaseStatus | "page_pixel";
-const LEDGER_LABEL: Record<LedgerStatus, string> = { ...PURCHASE_STATUS_LABEL, page_pixel: "Thank-you page" };
-
-function ledgerRow(order: OrderRow, events: Awaited<ReturnType<typeof eventsFor>>) {
-  const server = events.server.get(order.id) ?? null;
-  const browser = events.browser.get(order.id) ?? null;
-  const ctx = order.form_context ?? {};
-  const mode = String(ctx.metaTrackingMode ?? "landing_page");
-  let status: LedgerStatus = purchaseStatus({ serverStatus: server?.status ?? null, serverEventId: server?.event_id ?? null, browserEventId: browser?.event_id ?? null, serverTest: Boolean(server?.test_mode) });
-  if (status === "not_tracked" && (mode === "landing_page" || mode === "")) status = "page_pixel";
-  const ids = orderAdIds(order);
-  return {
-    orderId: order.id, createdAt: order.created_at, product: order.product_name ?? "", productId: order.product_id,
-    website: domainOf(order.referrer) ?? domainOf(ctx.landingPageUrl) ?? null, source: order.utm_source ?? null,
-    campaignId: ids.campaignId, adsetId: ids.adsetId, adId: ids.adId,
-    value: Number(order.amount) || 0, currency: order.currency ?? "NGN", orderStatus: order.status,
-    trackingMode: mode, trackingKey: ctx.metaTrackingKey ? String(ctx.metaTrackingKey) : null,
-    browser: Boolean(browser), serverStatus: server?.status ?? null, serverTest: Boolean(server?.test_mode),
-    eventId: server?.event_id ?? browser?.event_id ?? null,
-    status, statusLabel: LEDGER_LABEL[status]
-  };
-}
-
-function kpisOf(rows: ReturnType<typeof ledgerRow>[]) {
-  const orders = rows.length;
-  const purchaseEvents = rows.filter((row) => row.browser || (row.serverStatus && ["sent", "dry_run"].includes(row.serverStatus))).length;
-  const browserEvents = rows.filter((row) => row.browser).length;
-  const serverEvents = rows.filter((row) => row.serverStatus === "sent" || row.serverStatus === "dry_run").length;
-  const deduped = rows.filter((row) => row.status === "deduped").length;
-  // Orders on a Protohub-tracked link (browser / CAPI) with no Purchase at all.
-  const unmatched = rows.filter((row) => row.trackingMode !== "landing_page" && row.trackingMode !== "" && row.status === "not_tracked").length;
-  const pct = (part: number, whole: number) => (whole ? Math.round((part / whole) * 1000) / 10 : 0);
-  return {
-    orders, purchaseEvents, browserEvents, serverEvents, deduped, unmatched,
-    browserPct: pct(browserEvents, orders), serverPct: pct(serverEvents, orders), dedupRate: pct(deduped, purchaseEvents), unmatchedPct: pct(unmatched, orders)
-  };
-}
-
-const presentSource = (row: any) => ({
-  id: row.id, name: row.name, businessName: row.business_name, adAccountIds: row.ad_account_ids ?? [], pixelId: row.pixel_id,
-  hasToken: Boolean(row.access_token), accessToken: row.access_token ? SECRET_MASK : "", testEventCode: row.test_event_code ?? "",
-  isMain: row.is_main, status: row.status, lastCheckAt: row.last_check_at, lastCheckOk: row.last_check_ok, lastCheckMessage: row.last_check_message,
-  metaStats: row.meta_stats ?? {}, metaStatsAt: row.meta_stats_at
-});
-
-async function loadBasics(orgId: string, branchId: string) {
-  const [sources, websites, profiles, links] = await Promise.all([
-    supabase.from("tracking_data_sources").select("*").eq("org_id", orgId).eq("branch_id", branchId).order("is_main", { ascending: false }).order("name"),
-    supabase.from("tracking_websites").select("*").eq("org_id", orgId).eq("branch_id", branchId).order("domain"),
-    supabase.from("tracking_profiles").select("*").eq("org_id", orgId).eq("branch_id", branchId).order("name"),
-    supabase.from("meta_capi_configs").select("*").eq("org_id", orgId).order("label")
-  ]);
-  for (const result of [sources, websites, profiles, links]) if (result.error) throw result.error;
-  return { sources: sources.data ?? [], websites: websites.data ?? [], profiles: profiles.data ?? [], links: (links.data ?? []).filter((row: any) => !row.branch_id || row.branch_id === branchId) };
-}
-
-const STRATEGY_OF_MODE: Record<string, string> = { hybrid: "browser_capi", protohub: "capi_only", landing_page: "landing_page", off: "off" };
-const MODE_OF_STRATEGY: Record<string, string> = { browser_capi: "hybrid", capi_only: "protohub", landing_page: "landing_page" };
-
-// Health of each data source / website / link, shared by Overview + Diagnostics.
-async function assess(orgId: string, branchId: string) {
-  const basics = await loadBasics(orgId, branchId);
-  const today = lagosDateKey();
-  const weekAgo = addDaysToDateKey(today, -6);
-  const orders = await formOrders(orgId, branchId, weekAgo, today);
-  const events = await eventsFor(orgId, orders.map((order) => order.id));
-  const rows = orders.map((order) => ledgerRow(order, events));
-  const browserRows = Array.from(events.browser.values());
-
-  const sourceRows = basics.sources.map((source: any) => {
-    const serverForPixel = Array.from(events.server.values()).filter((row: any) => row.status === "sent");
-    const healthy = Boolean(source.access_token) && source.last_check_ok !== false && source.status !== "paused";
-    const events7d = typeof source.meta_stats?.counts === "object" ? Object.values(source.meta_stats.counts as Record<string, number>).reduce((sum: number, value) => sum + Number(value || 0), 0) : null;
-    return {
-      ...presentSource(source),
-      events7d, eventsFromMeta: events7d !== null, sentByProtohub7d: serverForPixel.length,
-      health: !source.access_token ? "no_token" : source.last_check_ok === false ? "error" : source.status === "testing" ? "testing" : source.last_check_ok === true ? "healthy" : "unchecked",
-      healthy
-    };
-  });
-
-  const websiteRows = basics.websites.map((site: any) => {
-    const beacons = browserRows.filter((row: any) => row.page_domain === site.domain);
-    const lastBeacon = beacons.map((row: any) => row.fired_at).sort().pop() ?? null;
-    const duplicatePixel = beacons.some((row: any) => (row.pixels_on_page ?? []).length > 1);
-    const forms = basics.links.filter((link: any) => link.website_id === site.id).length;
-    const orders7d = rows.filter((row) => row.website === site.domain).length;
-    const source = basics.sources.find((row: any) => row.id === site.data_source_id);
-    const usesBrowser = basics.links.some((link: any) => link.website_id === site.id && link.mode === "hybrid");
-    const problems: string[] = [];
-    if (!source) problems.push("No data source chosen");
-    if (usesBrowser && !lastBeacon) problems.push("Browser Pixel not detected");
-    if (duplicatePixel) problems.push("More than one Pixel on the page");
-    return {
-      id: site.id, domain: site.domain, platform: site.platform, dataSourceId: site.data_source_id, dataSourceName: source?.name ?? null, notes: site.notes,
-      forms, orders7d, lastBrowserEvent: lastBeacon, duplicatePixel,
-      landingPages: Array.from(new Set(rows.filter((row) => row.website === site.domain).map((row) => pathOf(orders.find((order) => order.id === row.orderId)?.referrer)).filter(Boolean))) as string[],
-      status: problems.length === 0 ? "healthy" : "warning", problems
-    };
-  });
-
-  const linkRows = basics.links.filter((link: any) => link.tracking_key !== "__default__").map((link: any) => {
-    const linkOrders = rows.filter((row) => row.trackingKey && row.trackingKey.toLowerCase() === String(link.tracking_key).toLowerCase());
-    const failures = linkOrders.filter((row) => row.status === "capi_failed").length;
-    const strategy = STRATEGY_OF_MODE[link.mode] ?? "landing_page";
-    const checklist = link.checklist ?? {};
-    const problems: string[] = [];
-    if (!link.data_source_id && !link.pixel_id) problems.push("No data source");
-    if (strategy !== "landing_page" && !(checklist.thankYouPixelRemoved && checklist.testEventSeen)) problems.push("Go-live checklist not finished");
-    if (failures > 0) problems.push(`${failures} CAPI failure${failures === 1 ? "" : "s"} this week`);
-    return { id: link.id, problems, healthy: problems.length === 0 && link.active !== false };
-  });
-
-  const differentIds = rows.filter((row) => row.browser && row.serverStatus === "sent" && row.status === "server_only").length;
-  const capiFailures24h = rows.filter((row) => row.status === "capi_failed" && Date.parse(row.createdAt) > Date.now() - 86_400_000).length;
-  const items: HealthItem[] = [
-    { key: "sources", label: "Data Sources", total: sourceRows.length, healthy: sourceRows.filter((row: any) => row.healthy).length, detail: "" },
-    { key: "websites", label: "Websites", total: websiteRows.length, healthy: websiteRows.filter((row: any) => row.status === "healthy").length, detail: "" },
-    { key: "links", label: "Tracking Links", total: linkRows.length, healthy: linkRows.filter((row: any) => row.healthy).length, detail: "" },
-    { key: "dedup", label: "Event Deduplication", total: 1, healthy: differentIds === 0 ? 1 : 0, detail: differentIds === 0 ? "Working properly" : `${differentIds} order${differentIds === 1 ? "" : "s"} with mismatched ids` },
-    { key: "capi", label: "CAPI Connection", total: 1, healthy: capiFailures24h === 0 && sourceRows.some((row: any) => row.hasToken) ? 1 : 0,
-      detail: !sourceRows.some((row: any) => row.hasToken) ? "No token connected" : capiFailures24h === 0 ? "All active" : `${capiFailures24h} failure${capiFailures24h === 1 ? "" : "s"} in 24h` }
-  ];
-  for (const item of items.slice(0, 3)) item.detail = `${item.healthy} Healthy`;
-  return { basics, rows, orders, events, sourceRows, websiteRows, linkRows, items, score: healthScore(items) };
-}
-
-// ------------------------------------------------------------- diagnostics
-
-type Issue = { severity: "red" | "orange" | "yellow"; title: string; detail: string; action: string; at: string | null; tab: string; orderIds?: string[] };
-
-async function buildIssues(orgId: string, branchId: string, assessment: Awaited<ReturnType<typeof assess>>): Promise<Issue[]> {
-  const issues: Issue[] = [];
-  const { rows, sourceRows, websiteRows, basics } = assessment;
-
-  // CAPI failures, grouped by Meta's reason, in plain words.
-  const failed = rows.filter((row) => row.status === "capi_failed");
-  const byReason = new Map<string, { rows: ReturnType<typeof ledgerRow>[]; message: string; http: number | null; at: string }>();
-  for (const row of failed) {
-    const event = assessment.events.server.get(row.orderId);
-    const key = String(event?.message ?? "");
-    const entry = byReason.get(key) ?? { rows: [] as ReturnType<typeof ledgerRow>[], message: key, http: event?.http_status ?? null, at: event?.sent_at ?? row.createdAt };
-    entry.rows.push(row);
-    if ((event?.sent_at ?? "") > entry.at) entry.at = event.sent_at;
-    byReason.set(key, entry);
-  }
-  for (const entry of byReason.values()) {
-    const human = humanMetaError(entry.message, entry.http);
-    issues.push({ severity: "red", title: human.title, detail: `${entry.rows.length} Purchase event${entry.rows.length === 1 ? " has" : "s have"} not been delivered to Meta.`, action: human.action, at: entry.at, tab: "ledger", orderIds: entry.rows.map((row) => row.orderId) });
-  }
-  for (const source of sourceRows) {
-    if (source.health === "no_token") issues.push({ severity: "orange", title: `${source.name}: no Conversions API token`, detail: "Server Purchase events cannot be sent and Meta's numbers cannot be read.", action: "Add a System User token on the data source.", at: null, tab: "sources" });
-    else if (source.health === "error") {
-      const human = humanMetaError(source.lastCheckMessage, null);
-      issues.push({ severity: "red", title: `${source.name}: ${human.title}`, detail: `Pixel ${source.pixelId}.`, action: human.action, at: source.lastCheckAt, tab: "sources" });
-    } else if (source.health === "unchecked") issues.push({ severity: "yellow", title: `${source.name}: connection not tested`, detail: `Pixel ${source.pixelId}.`, action: "Press Test Connection on the data source.", at: null, tab: "sources" });
-  }
-  for (const site of websiteRows) {
-    for (const problem of site.problems) {
-      issues.push({ severity: problem.startsWith("More than one") ? "orange" : problem.startsWith("Browser") ? "orange" : "yellow", title: site.domain, detail: problem, action: problem.startsWith("Browser") ? "Re-copy the embed code from Tracking Links onto the page; the new code reports each browser Purchase." : problem.startsWith("More than one") ? "Remove the extra Pixel code (theme, plugin or a second snippet) so each Purchase is counted once." : "Choose the data source this website should use.", at: site.lastBrowserEvent, tab: "websites" });
-    }
-  }
-  const linkById = new Map(basics.links.map((link: any) => [link.id, link]));
-  for (const link of assessment.linkRows) {
-    for (const problem of link.problems) {
-      const row: any = linkById.get(link.id);
-      issues.push({ severity: problem.startsWith("Go-live") ? "orange" : problem.includes("CAPI") ? "red" : "yellow", title: row?.label ?? "Tracking link", detail: problem, action: problem.startsWith("Go-live") ? "Remove the Purchase Pixel from the thank-you page and run a test event, then tick the checklist." : "Open the link in Tracking Links.", at: null, tab: "links" });
-    }
-  }
-  // Visitors who arrived from ads but lost their campaign ids.
-  const adOrders = assessment.orders.filter((order) => /^(fb|ig|facebook|instagram|meta|an|msg)$/i.test(String(order.utm_source ?? "")));
-  const lost = adOrders.filter((order) => !orderAdIds(order).campaignId).length;
-  if (lost > 0) issues.push({ severity: "yellow", title: `${lost} visitor${lost === 1 ? "" : "s"} lost campaign parameters`, detail: "Orders from Meta ads with no campaign id this week.", action: "Add the URL parameters from Settings to every ad (campaign_id={{campaign.id}} ...).", at: null, tab: "settings" });
-  const capture = attributionCapture(assessment.orders);
-  if (capture.orders >= 10 && capture.fields.fbp_fbc < 50) issues.push({ severity: "yellow", title: "CAPI Match Quality", detail: `Meta's browser id (_fbp/_fbc) captured on only ${capture.fields.fbp_fbc}% of ad orders.`, action: "Re-copy the embed code onto each landing page so the browser id is passed in.", at: null, tab: "diagnostics" });
-  // Meta vs Protohub, from the last reconciliation refresh (today).
-  const today = lagosDateKey();
-  const { data: insights } = await supabase.from("tracking_meta_insights").select("campaign_id, campaign_name, purchases").eq("org_id", orgId).eq("branch_id", branchId).eq("day", today);
-  const metaByCampaign = new Map<string, { name: string; purchases: number }>();
-  for (const row of insights ?? []) {
-    const entry = metaByCampaign.get(row.campaign_id) ?? { name: row.campaign_name, purchases: 0 };
-    entry.purchases += Number(row.purchases) || 0;
-    metaByCampaign.set(row.campaign_id, entry);
-  }
-  const todayRows = rows.filter((row) => dayOfIso(row.createdAt) === today);
-  for (const [campaignId, meta] of metaByCampaign) {
-    const ours = todayRows.filter((row) => row.campaignId === campaignId).length;
-    const verdict = reconciliationVerdict({ protohubOrders: ours, purchaseEvents: ours, sentToMeta: ours, duplicates: 0, metaPurchases: meta.purchases });
-    if (verdict.tone === "warn") issues.push({ severity: "orange", title: `Campaign ${campaignId}`, detail: `${meta.purchases} Meta purchases / ${ours} Protohub orders today.`, action: verdict.likely, at: null, tab: "reconciliation" });
-  }
-  const order = { red: 0, orange: 1, yellow: 2 };
-  return issues.sort((a, b) => order[a.severity] - order[b.severity]);
-}
-
-// ------------------------------------------------------------------ overview
+// ================================================================ OVERVIEW
 
 router.get("/overview", async (req, res) => {
   try {
@@ -290,134 +59,98 @@ router.get("/overview", async (req, res) => {
     const [assessment, orders] = await Promise.all([assess(orgId, branchId), formOrders(orgId, branchId, loadFrom, period.to)]);
     const events = await eventsFor(orgId, orders.map((order) => order.id));
     const rows = orders.map((order) => ledgerRow(order, events));
-    const inRange = (row: { createdAt: string }, from: string, to: string) => { const day = dayOfIso(row.createdAt); return day >= from && day <= to; };
-    const current = rows.filter((row) => inRange(row, period.from, period.to));
-    const previous = rows.filter((row) => inRange(row, period.compareFrom, period.compareTo));
-    const chart = Array.from({ length: chartDays }, (_, index) => {
-      const day = addDaysToDateKey(chartFrom, index);
-      const dayRows = rows.filter((row) => dayOfIso(row.createdAt) === day);
-      const k = kpisOf(dayRows);
+    const inRange = (iso: string, from: string, to: string) => { const day = dayOfIso(iso); return day >= from && day <= to; };
+    const current = rows.filter((row) => inRange(row.createdAt, period.from, period.to));
+    const previous = rows.filter((row) => inRange(row.createdAt, period.compareFrom, period.compareTo));
+    const chart = lastNDays(period.to, chartDays).map((day) => {
+      const k = kpisOf(rows.filter((row) => dayOfIso(row.createdAt) === day));
       return { day, orders: k.orders, browser: k.browserEvents, server: k.serverEvents };
     });
-    const issues = await buildIssues(orgId, branchId, assessment);
-    const capture = attributionCapture(orders.filter((order) => inRange({ createdAt: order.created_at }, period.from, period.to)));
+    const capture = attributionCapture(orders.filter((order) => inRange(order.created_at, period.from, period.to)));
     res.json({
-      period,
-      kpis: kpisOf(current),
-      previous: kpisOf(previous),
-      chart,
+      period, kpis: kpisOf(current), previous: kpisOf(previous), chart,
       health: { score: assessment.score, items: assessment.items },
       attribution: { orders: capture.orders, fields: ATTRIBUTION_FIELDS.map((field) => ({ ...field, pct: capture.fields[field.key] })) },
-      dataSources: assessment.sourceRows,
-      websites: assessment.websiteRows,
+      dataSources: assessment.sourceRows, websites: assessment.websiteRows,
       recent: current.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 8),
-      attention: issues.slice(0, 5),
-      issueCount: issues.length
+      attention: assessment.issues.slice(0, 5), issueCount: assessment.issues.length
     });
-  } catch (error: any) {
-    fail(res, error, "Could not load the Tracking Hub.");
-  }
+  } catch (error: any) { fail(res, error, "Could not load the Tracking Hub."); }
 });
 
-router.get("/diagnostics", async (req, res) => {
-  try {
-    const orgId = req.user!.orgId;
-    const branchId = branchOf(req);
-    const assessment = await assess(orgId, branchId);
-    const today = lagosDateKey();
-    const todayRows = assessment.rows.filter((row) => dayOfIso(row.createdAt) === today);
-    const k = kpisOf(todayRows);
-    const eventIds = todayRows.map((row) => row.eventId).filter(Boolean) as string[];
-    res.json({
-      score: assessment.score,
-      items: assessment.items,
-      checks: [
-        { ok: true, text: `${k.orders} form order${k.orders === 1 ? "" : "s"} created today` },
-        { ok: new Set(eventIds).size === eventIds.length, text: `${new Set(eventIds).size} unique event IDs` },
-        { ok: k.serverEvents > 0 || k.orders === 0, text: `${k.serverEvents} server Purchase events` },
-        { ok: k.browserEvents > 0 || k.orders === 0, text: `${k.browserEvents} browser Purchase events` },
-        { ok: new Set(todayRows.map((row) => row.orderId)).size === todayRows.length, text: "No duplicate Order IDs" }
-      ],
-      issues: await buildIssues(orgId, branchId, assessment)
-    });
-  } catch (error: any) {
-    fail(res, error, "Could not run the diagnostics.");
-  }
-});
+// ============================================================ DATA SOURCES
 
-// ------------------------------------------------------------------- ledger
-
-router.get("/ledger", async (req, res) => {
-  try {
-    const orgId = req.user!.orgId;
-    const branchId = branchOf(req);
-    const period = periodOf(req.query);
-    const orders = await formOrders(orgId, branchId, period.from, period.to);
-    const events = await eventsFor(orgId, orders.map((order) => order.id));
-    const q = String(req.query.q ?? "").trim().toLowerCase();
-    const status = String(req.query.status ?? "");
-    const rows = orders.map((order) => ledgerRow(order, events))
-      .filter((row) => !status || row.status === status)
-      .filter((row) => !q || `${row.orderId} ${row.product} ${row.website ?? ""} ${row.campaignId ?? ""} ${row.adId ?? ""}`.toLowerCase().includes(q))
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    res.json({ period, kpis: kpisOf(rows), rows: rows.slice(0, 1000), total: rows.length });
-  } catch (error: any) {
-    fail(res, error, "Could not load the event ledger.");
-  }
-});
-
-router.get("/ledger/:orderId", async (req, res) => {
-  try {
-    const orgId = req.user!.orgId;
-    const branchId = branchOf(req);
-    const { data: order, error } = await supabase.from("orders")
-      .select("id, created_at, product_id, product_name, amount, currency, status, utm_source, utm_campaign, utm_content, utm_term, referrer, form_context, review_hold, delivered_date")
-      .eq("org_id", orgId).eq("branch_id", branchId).eq("id", String(req.params.orderId)).maybeSingle();
-    if (error) throw error;
-    if (!order) throw httpError(404, "Order not found.");
-    const events = await eventsFor(orgId, [order.id]);
-    const ctx = (order.form_context ?? {}) as Record<string, any>;
-    const server = events.server.get(order.id) ?? null;
-    const browser = events.browser.get(order.id) ?? null;
-    const delivered = events.delivered.get(order.id) ?? null;
-    const row = ledgerRow(order as OrderRow, events);
-    const fromAddress = (key: string) => { try { const url = new URL(String(ctx.landingUrl ?? "")); return new URLSearchParams(url.hash.split("?")[1] ?? url.search).get(key); } catch { return null; } };
-    res.json({
-      ...row,
-      landingPage: order.referrer ?? ctx.landingPageUrl ?? null,
-      fbclid: ctx.fbclid ?? fromAddress("fbclid"), fbp: ctx.fbp ?? fromAddress("fbp"), fbc: ctx.fbc ?? fromAddress("fbc"),
-      utm: { source: order.utm_source, campaign: order.utm_campaign, content: order.utm_content, term: order.utm_term },
-      device: { deviceType: ctx.deviceType ?? null, userAgent: ctx.userAgent ?? null, locale: ctx.clientLocale ?? null },
-      browserEvent: browser ? { firedAt: browser.fired_at, eventId: browser.event_id, pixelId: browser.pixel_id, pageUrl: browser.page_url, pixelsOnPage: browser.pixels_on_page } : null,
-      serverEvent: server ? { sentAt: server.sent_at, eventId: server.event_id, status: server.status, message: server.message, test: server.test_mode, attempts: server.attempts, human: server.status === "sent" || server.status === "dry_run" ? null : humanMetaError(server.message, server.http_status) } : null,
-      deliveredEvent: delivered ? { sentAt: delivered.sent_at, status: delivered.status, metaEventName: delivered.meta_event_name, message: delivered.message } : null,
-      deliveredDate: order.delivered_date
-    });
-  } catch (error: any) {
-    fail(res, error, "Could not load the order's tracking.");
-  }
-});
-
-// ------------------------------------------------------------ data sources
-
-const SourceSchema = z.object({
-  name: z.string().trim().min(2).max(120),
-  businessName: z.string().trim().max(160).default(""),
-  adAccountIds: z.array(z.string().trim().regex(/^(act_)?\d{5,25}$/, "Ad account ids are numbers (act_ optional).")).max(20).default([]),
-  pixelId: z.string().trim().regex(/^\d{8,25}$/, "The Pixel / dataset id is a number."),
-  accessToken: z.string().trim().max(5000).optional(),
-  testEventCode: z.string().trim().max(80).optional().default(""),
-  isMain: z.boolean().default(false),
-  status: z.enum(["production", "testing", "paused"]).default("production")
-});
+const PLATFORMS = ["meta", "tiktok", "google", "snapchat", "other"] as const;
+const presentProfile = (row: any) => ({ id: row.id, name: row.name, dataSourceId: row.data_source_id, defaultWebsiteId: row.default_website_id, strategy: row.strategy, adAccountLabel: row.ad_account_label, status: row.status });
 
 router.get("/data-sources", async (req, res) => {
   try {
     const assessment = await assess(req.user!.orgId, branchOf(req));
-    res.json({ dataSources: assessment.sourceRows, profiles: assessment.basics.profiles.map(presentProfile), websites: assessment.basics.websites.map((site: any) => ({ id: site.id, domain: site.domain })) });
-  } catch (error: any) {
-    fail(res, error, "Could not load the data sources.");
-  }
+    const rows = assessment.sourceRows;
+    const monthAgo = new Date(Date.now() - 30 * 86_400_000).toISOString();
+    const disconnected = rows.filter((row: any) => row.health === "no_token" || row.health === "disconnected" || row.health === "error").length;
+    const healthy = rows.filter((row: any) => row.health === "healthy").length;
+    res.json({
+      kpis: {
+        total: rows.length, newThisMonth: rows.filter((row: any) => row.createdAt >= monthAgo).length,
+        healthy, healthyPct: pct(healthy, rows.length),
+        needAttention: rows.length - healthy - disconnected, needAttentionPct: pct(rows.length - healthy - disconnected, rows.length),
+        disconnected, disconnectedPct: pct(disconnected, rows.length)
+      },
+      platformCounts: Object.fromEntries(PLATFORMS.map((platform) => [platform, rows.filter((row: any) => row.platform === platform).length])),
+      dataSources: rows,
+      profiles: assessment.basics.profiles.map(presentProfile),
+      websites: assessment.basics.websites.map((site: any) => ({ id: site.id, domain: site.domain })),
+      issues: assessment.issues.filter((issue) => issue.tab === "sources")
+    });
+  } catch (error: any) { fail(res, error, "Could not load the data sources."); }
+});
+
+router.get("/data-sources/:id", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const assessment = await assess(orgId, branchId);
+    const source = assessment.sourceRows.find((row: any) => row.id === String(req.params.id));
+    if (!source) throw httpError(404, "Data source not found.");
+    const [{ data: lastServer }, { data: lastBrowser }, { data: logs }, { data: sends }, { data: raw }] = await Promise.all([
+      supabase.from("meta_capi_events").select("sent_at, status").eq("org_id", orgId).eq("pixel_id", source.pixelId).eq("status", "sent").order("sent_at", { ascending: false }).limit(1),
+      supabase.from("tracking_browser_events").select("fired_at").eq("org_id", orgId).eq("pixel_id", source.pixelId).order("fired_at", { ascending: false }).limit(1),
+      supabase.from("tracking_audit").select("action, subject_label, detail, actor_name, created_at").eq("org_id", orgId).eq("branch_id", branchId).eq("subject_id", source.id).order("created_at", { ascending: false }).limit(50),
+      supabase.from("meta_capi_events").select("order_id, event_name, meta_event_name, status, message, test_mode, sent_at").eq("org_id", orgId).eq("pixel_id", source.pixelId).order("sent_at", { ascending: false }).limit(30),
+      supabase.from("tracking_data_sources").select("meta_stats").eq("id", source.id).maybeSingle()
+    ]);
+    const stats = (raw?.meta_stats ?? {}) as Record<string, any>;
+    const recent = ["Purchase", "ViewContent", "InitiateCheckout", "AddToCart"].map((name) => ({
+      name, count: Number(stats.counts24h?.[name] ?? 0), change: stats.prev24h ? change(Number(stats.counts24h?.[name] ?? 0), Number(stats.prev24h?.[name] ?? 0)) : null
+    }));
+    res.json({
+      ...source,
+      eventsManagerUrl: eventsManagerUrl(source.pixelId),
+      browser: { lastEventAt: lastBrowser?.[0]?.fired_at ?? null, receiving: Boolean(lastBrowser?.[0] && Date.parse(lastBrowser[0].fired_at) > Date.now() - 7 * 86_400_000), emq: source.emq?.PageView ?? source.emq?.Purchase ?? null },
+      capi: { lastEventAt: lastServer?.[0]?.sent_at ?? null, connected: source.hasToken && source.lastCheckOk !== false, emq: source.emq?.Purchase ?? null },
+      counts7d: stats.counts7d ?? null, prev7d: stats.prev7d ?? null, recent, recentLoaded: Boolean(stats.counts24h),
+      issues: assessment.issues.filter((issue) => issue.subjectId === source.id),
+      logs: (logs ?? []).map((row: any) => ({ at: row.created_at, action: row.action, by: row.actor_name, detail: row.detail })),
+      sends: (sends ?? []).map((row: any) => ({ at: row.sent_at, orderId: row.order_id, event: row.meta_event_name, status: row.status, message: row.message, test: row.test_mode }))
+    });
+  } catch (error: any) { fail(res, error, "Could not load the data source."); }
+});
+
+const SourceSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  platform: z.enum(PLATFORMS).default("meta"),
+  description: z.string().trim().max(200).default(""),
+  businessName: z.string().trim().max(160).default(""),
+  adAccountIds: z.array(z.string().trim().regex(/^(act_)?\d{5,25}$/, "Ad account ids are numbers (act_ optional).")).max(20).default([]),
+  adAccountLabel: z.string().trim().max(160).default(""),
+  pixelId: z.string().trim().min(3).max(60),
+  accessToken: z.string().trim().max(5000).optional(),
+  testEventCode: z.string().trim().max(80).optional().default(""),
+  isMain: z.boolean().default(false),
+  status: z.enum(["production", "testing", "paused"]).default("production"),
+  currency: z.string().trim().max(8).default("NGN"),
+  timezone: z.string().trim().max(60).default("Africa/Lagos")
 });
 
 async function saveSource(req: Request, id: string | null) {
@@ -426,30 +159,32 @@ async function saveSource(req: Request, id: string | null) {
   const orgId = req.user!.orgId;
   const branchId = branchOf(req);
   const d = parsed.data;
+  if (d.platform === "meta" && !/^\d{8,25}$/.test(d.pixelId)) throw httpError(400, "A Meta Pixel / dataset id is a number.");
   const row: Record<string, unknown> = {
-    org_id: orgId, branch_id: branchId, name: d.name, business_name: d.businessName,
-    ad_account_ids: d.adAccountIds.map((value) => value.replace(/^act_/, "")), pixel_id: d.pixelId,
-    test_event_code: d.testEventCode || null, is_main: d.isMain, status: d.status, updated_at: new Date().toISOString()
+    org_id: orgId, branch_id: branchId, name: d.name, platform: d.platform, description: d.description, business_name: d.businessName,
+    ad_account_ids: d.adAccountIds.map((value) => value.replace(/^act_/, "")), ad_account_label: d.adAccountLabel, pixel_id: d.pixelId,
+    test_event_code: d.testEventCode || null, is_main: d.isMain, status: d.status, currency: d.currency, timezone: d.timezone, updated_at: new Date().toISOString()
   };
   if (d.accessToken && d.accessToken !== SECRET_MASK) row.access_token = d.accessToken;
-  if (d.isMain) await supabase.from("tracking_data_sources").update({ is_main: false }).eq("org_id", orgId).eq("branch_id", branchId);
+  if (d.isMain) await supabase.from("tracking_data_sources").update({ is_main: false }).eq("org_id", orgId).eq("branch_id", branchId).eq("platform", d.platform);
   const result = id
-    ? await supabase.from("tracking_data_sources").update(row).eq("org_id", orgId).eq("branch_id", branchId).eq("id", id).select("*").single()
-    : await supabase.from("tracking_data_sources").insert({ ...row, created_by: req.user!.id }).select("*").single();
+    ? await supabase.from("tracking_data_sources").update(row).eq("org_id", orgId).eq("branch_id", branchId).eq("id", id).select("id, name").single()
+    : await supabase.from("tracking_data_sources").insert({ ...row, created_by: req.user!.id }).select("id, name").single();
   if (result.error) throw result.error.code === "23505" ? httpError(409, "This Pixel is already a data source.") : result.error;
-  return presentSource(result.data);
+  await hubAudit(orgId, branchId, actorOf(req), id ? "data_source_updated" : "data_source_connected", { type: "data_source", id: result.data.id, label: d.name }, { platform: d.platform, tokenChanged: Boolean(row.access_token) });
+  return result.data;
 }
 
-router.post("/data-sources", async (req, res) => {
-  try { res.status(201).json(await saveSource(req, null)); } catch (error: any) { fail(res, error, "Could not save the data source."); }
-});
-router.put("/data-sources/:id", async (req, res) => {
-  try { res.json(await saveSource(req, String(req.params.id))); } catch (error: any) { fail(res, error, "Could not save the data source."); }
-});
+router.post("/data-sources", async (req, res) => { try { res.status(201).json(await saveSource(req, null)); } catch (error: any) { fail(res, error, "Could not save the data source."); } });
+router.put("/data-sources/:id", async (req, res) => { try { res.json(await saveSource(req, String(req.params.id))); } catch (error: any) { fail(res, error, "Could not save the data source."); } });
 router.delete("/data-sources/:id", async (req, res) => {
   try {
-    const { error } = await supabase.from("tracking_data_sources").delete().eq("org_id", req.user!.orgId).eq("branch_id", branchOf(req)).eq("id", String(req.params.id));
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const { data } = await supabase.from("tracking_data_sources").select("name").eq("org_id", orgId).eq("branch_id", branchId).eq("id", String(req.params.id)).maybeSingle();
+    const { error } = await supabase.from("tracking_data_sources").delete().eq("org_id", orgId).eq("branch_id", branchId).eq("id", String(req.params.id));
     if (error) throw error;
+    await hubAudit(orgId, branchId, actorOf(req), "data_source_deleted", { type: "data_source", id: String(req.params.id), label: data?.name ?? null });
     res.json({ ok: true });
   } catch (error: any) { fail(res, error, "Could not delete the data source."); }
 });
@@ -461,62 +196,176 @@ async function loadSource(req: Request) {
   return data;
 }
 
-/** Test both: Meta accepts a test server event, and the token can read the dataset. */
+/** Disconnect: removes the token (sending and reading stop) and pauses the source. */
+router.post("/data-sources/:id/disconnect", async (req, res) => {
+  try {
+    const source = await loadSource(req);
+    await supabase.from("tracking_data_sources").update({ access_token: null, status: "paused", last_check_ok: null, updated_at: new Date().toISOString() }).eq("id", source.id);
+    await hubAudit(req.user!.orgId, branchOf(req), actorOf(req), "data_source_disconnected", { type: "data_source", id: source.id, label: source.name });
+    res.json({ ok: true });
+  } catch (error: any) { fail(res, error, "Could not disconnect."); }
+});
+
 router.post("/data-sources/:id/test", async (req, res) => {
   try {
     const source = await loadSource(req);
     if (!source.access_token) throw httpError(400, "Add the access token first.");
-    const [send, read] = await Promise.all([
-      testMetaCapiConnection(source.pixel_id, source.access_token, source.test_event_code ?? undefined),
-      checkDataset(source.pixel_id, source.access_token)
-    ]);
-    const ok = send.ok && read.ok;
-    const message = !send.ok ? send.message : !read.ok ? `Sending works, but reading Meta's numbers does not: ${read.message}` : `Connected${read.name ? ` to "${read.name}"` : ""}.`;
-    await supabase.from("tracking_data_sources").update({ last_check_at: new Date().toISOString(), last_check_ok: ok, last_check_message: message }).eq("id", source.id);
-    res.json({ ok, message, canSend: send.ok, canRead: read.ok, lastFiredAt: read.ok ? read.lastFiredAt : null, human: ok ? null : humanMetaError(message, null) });
+    let ok = false;
+    let message = "";
+    let canRead = false;
+    let lastFiredAt: string | null = null;
+    let datasetName: string | null = null;
+    if ((source.platform ?? "meta") === "meta") {
+      const [send, read] = await Promise.all([testMetaCapiConnection(source.pixel_id, source.access_token, source.test_event_code ?? undefined), checkDataset(source.pixel_id, source.access_token)]);
+      ok = send.ok && read.ok;
+      canRead = read.ok;
+      lastFiredAt = read.ok ? read.lastFiredAt : null;
+      datasetName = read.ok ? read.name : null;
+      message = !send.ok ? send.message : !read.ok ? `Sending works, but reading Meta's numbers does not: ${read.message}` : `Connected${read.name ? ` to "${read.name}"` : ""}.`;
+    } else if (source.platform === "tiktok") {
+      const result = await testTikTokConnection(source.pixel_id, source.access_token, source.test_event_code ?? undefined);
+      ok = result.ok;
+      message = result.message;
+    } else {
+      ok = false;
+      message = "Saved. Protohub does not send events to this platform yet.";
+    }
+    await supabase.from("tracking_data_sources").update({ last_check_at: new Date().toISOString(), last_check_ok: ok, last_check_message: message, ...(datasetName ? { dataset_name: datasetName } : {}) }).eq("id", source.id);
+    await hubAudit(req.user!.orgId, branchOf(req), actorOf(req), "connection_tested", { type: "data_source", id: source.id, label: source.name }, { ok, message });
+    res.json({ ok, message, canRead, lastFiredAt, human: ok ? null : humanMetaError(message, null) });
   } catch (error: any) { fail(res, error, "Could not test the connection."); }
 });
 
-/** Events Meta received in the last 7 days, by name. */
+/** Refresh from Meta: event counts (this week vs last, 24h vs the 24h before) and match quality. */
 router.post("/data-sources/:id/refresh", async (req, res) => {
   try {
     const source = await loadSource(req);
     if (!source.access_token) throw httpError(400, "Add the access token first.");
-    const result = await datasetEventCounts(source.pixel_id, source.access_token, 7);
-    if (!result.ok) throw httpError(400, humanMetaError(result.message, null).title);
-    const stats = { counts: result.counts, days: 7 };
-    await supabase.from("tracking_data_sources").update({ meta_stats: stats, meta_stats_at: new Date().toISOString() }).eq("id", source.id);
-    res.json({ metaStats: stats });
+    if ((source.platform ?? "meta") !== "meta") throw httpError(400, "Event counts are read from Meta only.");
+    const [stats, emq] = await Promise.all([datasetEventStats(source.pixel_id, source.access_token), datasetQuality(source.pixel_id, source.access_token)]);
+    if (!stats.ok) throw httpError(400, humanMetaError(stats.message, null).title);
+    const metaStats = { counts7d: stats.counts7d, prev7d: stats.prev7d, counts24h: stats.counts24h, prev24h: stats.prev24h, emq };
+    await supabase.from("tracking_data_sources").update({ meta_stats: metaStats, meta_stats_at: new Date().toISOString() }).eq("id", source.id);
+    res.json({ metaStats });
   } catch (error: any) { fail(res, error, "Could not read Meta's numbers."); }
 });
 
-// ---------------------------------------------------------------- websites
-
-const WebsiteSchema = z.object({
-  domain: z.string().trim().min(3).max(255),
-  platform: z.enum(["WordPress", "Shopify", "Custom", "Other"]).default("WordPress"),
-  dataSourceId: z.string().uuid().nullable().optional(),
-  notes: z.string().trim().max(1000).nullable().optional()
+/** Header "Test Event": a test Purchase to Meta's Test Events tab. */
+router.post("/test-event", async (req, res) => {
+  const parsed = z.object({ dataSourceId: z.string().uuid() }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Choose a data source." }); return; }
+  try {
+    const { data: source } = await supabase.from("tracking_data_sources").select("*").eq("org_id", req.user!.orgId).eq("branch_id", branchOf(req)).eq("id", parsed.data.dataSourceId).maybeSingle();
+    if (!source) throw httpError(404, "Data source not found.");
+    if (!source.access_token) throw httpError(400, "Add the access token first.");
+    if (!source.test_event_code) throw httpError(400, "Add the Test Event Code (Meta Events Manager → Test Events) to this data source first, so the test does not count as a real sale.");
+    const eventId = `protohub_test_${Date.now()}`;
+    const result = await sendMetaCapiPurchase({
+      config: { mode: "hybrid", pixelId: source.pixel_id, accessToken: source.access_token, testEventCode: source.test_event_code, testMode: false },
+      eventId, customer: "Protohub Test", phone: "08000000000", country: "ng", value: 1, currency: source.currency ?? "NGN",
+      orderId: eventId, productId: "test", productName: "Tracking Hub test", packageId: "test", packageName: "Test", quantity: 1, eventSourceUrl: "https://protohub.app/tracking-hub-test"
+    });
+    await hubAudit(req.user!.orgId, branchOf(req), actorOf(req), "test_event_sent", { type: "data_source", id: source.id, label: source.name }, { status: result.status });
+    res.json({ ok: result.status === "sent", status: result.status, eventId, message: result.status === "sent" ? `Sent. Look for event id ${eventId} in Meta Test Events.` : humanMetaError(result.message, result.httpStatus).title });
+  } catch (error: any) { fail(res, error, "Could not send the test event."); }
 });
+
+// ================================================================ WEBSITES
 
 router.get("/websites", async (req, res) => {
   try {
     const orgId = req.user!.orgId;
     const branchId = branchOf(req);
     const assessment = await assess(orgId, branchId);
-    const known = new Set(assessment.websiteRows.map((site: any) => site.domain));
+    const rows = assessment.websiteRows;
+    const monthAgo = new Date(Date.now() - 30 * 86_400_000).toISOString();
+    const known = new Set(rows.map((site: any) => site.domain));
     const recent = await formOrders(orgId, branchId, addDaysToDateKey(lagosDateKey(), -29), lagosDateKey());
     const detected = new Map<string, number>();
     for (const order of recent) {
-      const domain = domainOf(order.referrer);
+      const domain = domainOf(order.form_context?.landingPageUrl) ?? domainOf(order.referrer);
       if (domain && !known.has(domain)) detected.set(domain, (detected.get(domain) ?? 0) + 1);
     }
+    const healthy = rows.filter((row: any) => row.status === "healthy").length;
+    const wordpress = rows.filter((row: any) => row.platform === "WordPress").length;
     res.json({
-      websites: assessment.websiteRows,
+      kpis: {
+        total: rows.length, newThisMonth: rows.filter((row: any) => row.createdAt >= monthAgo).length,
+        wordpress, wordpressPct: pct(wordpress, rows.length),
+        healthy, healthyPct: pct(healthy, rows.length), withIssues: rows.length - healthy, withIssuesPct: pct(rows.length - healthy, rows.length),
+        landingPages: rows.reduce((sum: number, row: any) => sum + row.landingPages.length, 0),
+        externalForms: assessment.basics.links.filter((link: any) => link.active !== false).length
+      },
+      websites: rows,
       detected: Array.from(detected.entries()).sort((a, b) => b[1] - a[1]).map(([domain, orders]) => ({ domain, orders30d: orders })),
-      dataSources: assessment.sourceRows.map((row: any) => ({ id: row.id, name: row.name }))
+      dataSources: assessment.sourceRows.map((row: any) => ({ id: row.id, name: row.name, platform: row.platform, isMain: row.isMain }))
     });
   } catch (error: any) { fail(res, error, "Could not load the websites."); }
+});
+
+router.get("/websites/:id", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const assessment = await assess(orgId, branchId);
+    const site = assessment.websiteRows.find((row: any) => row.id === String(req.params.id));
+    if (!site) throw httpError(404, "Website not found.");
+    const today = lagosDateKey();
+    const [orders60, journey2] = await Promise.all([
+      formOrders(orgId, branchId, addDaysToDateKey(today, -59), today),
+      journeyCounts(orgId, branchId, addDaysToDateKey(today, -1), today).catch(() => [] as JourneyRow[])
+    ]);
+    const siteOrders = orders60.filter((order) => (domainOf(order.form_context?.landingPageUrl) ?? domainOf(order.referrer)) === site.domain);
+    const last30 = siteOrders.filter((order) => dayOfIso(order.created_at) > addDaysToDateKey(today, -30)).length;
+    const prev30 = siteOrders.length - last30;
+    const source = assessment.sourceRows.find((row: any) => row.id === site.dataSourceId);
+    const siteLinks = assessment.basics.links.filter((link: any) => link.website_id === site.id);
+    const capture = attributionCapture(siteOrders.filter((order) => dayOfIso(order.created_at) > addDaysToDateKey(today, -7)));
+    const usesProtohub = siteLinks.some((link: any) => link.mode === "hybrid" || link.mode === "protohub");
+    const yesterday = addDaysToDateKey(today, -1);
+    const onSite = (row: JourneyRow) => row.domain === site.domain;
+    const dayOrders = (day: string) => siteOrders.filter((order) => dayOfIso(order.created_at) === day).length;
+    const recent = [
+      { name: "PageView", type: "form_opened" }, { name: "InitiateCheckout", type: "first_interaction" },
+      { name: "Purchase", type: "orders" }, { name: "AddToCart", type: "submit_attempted" }
+    ].map((item) => {
+      const now = item.type === "orders" ? dayOrders(today) : sumVisits(journey2, item.type, (row) => onSite(row) && row.day === today);
+      const before = item.type === "orders" ? dayOrders(yesterday) : sumVisits(journey2, item.type, (row) => onSite(row) && row.day === yesterday);
+      return { name: item.name, count: now, change: change(now, before) };
+    });
+    const landingStats = (site.landingPages as string[]).map((path) => ({
+      path, orders30d: siteOrders.filter((order) => pathOf(order.form_context?.landingPageUrl) === path).length,
+      link: siteLinks.find((link: any) => pathOf(link.landing_page_url) === path)?.label ?? null
+    }));
+    const dedup = assessment.items.find((item) => item.key === "dedup");
+    const scanPixels = (site.lastScan?.pages ?? []).some((page: any) => page.pixels?.length);
+    res.json({
+      ...site,
+      siteUrl: `https://${site.domain}`,
+      dataSource: source ? { id: source.id, name: source.name, isMain: source.isMain, hasToken: source.hasToken, platform: source.platform } : null,
+      orders30d: last30, orders30dChange: change(last30, prev30),
+      landingStats,
+      forms: siteLinks.map((link: any) => ({ id: link.id, label: link.label, landingPath: pathOf(link.landing_page_url), strategy: STRATEGY_OF_MODE[link.mode] ?? "landing_page", active: link.active !== false })),
+      checks: [
+        { key: "browser", label: "Browser Pixel Detected", ok: Boolean(site.lastBrowserEvent || scanPixels), value: site.lastBrowserEvent || scanPixels ? "Yes" : "Not seen yet" },
+        { key: "capi", label: "Conversions API", ok: Boolean(source?.hasToken), value: source?.hasToken ? "Connected" : "Not connected" },
+        { key: "duplicate", label: "Duplicate Pixel", ok: !site.duplicatePixel, value: site.duplicatePixel ? "More than one Pixel" : "None detected" },
+        { key: "params", label: "Campaign Parameters", ok: capture.orders === 0 || capture.fields.fbclid >= 50, value: capture.orders === 0 ? "No ad orders this week" : capture.fields.fbclid >= 50 ? "Capturing (fbclid, fbp, fbc, utm)" : `Only ${capture.fields.fbclid}% carry fbclid` },
+        { key: "purchase", label: "Purchase Event", ok: true, value: usesProtohub ? "Firing from Protohub orders" : "Thank-you page Pixel" },
+        { key: "dedup", label: "Event Deduplication", ok: dedup?.healthy === 1, value: dedup?.detail ?? "" }
+      ],
+      recent,
+      issues: assessment.issues.filter((issue) => issue.subjectId === site.id)
+    });
+  } catch (error: any) { fail(res, error, "Could not load the website."); }
+});
+
+const WebsiteSchema = z.object({
+  domain: z.string().trim().min(3).max(255),
+  label: z.string().trim().max(120).default(""),
+  platform: z.enum(["WordPress", "Shopify", "Custom", "Other"]).default("WordPress"),
+  dataSourceId: z.string().uuid().nullable().optional(),
+  notes: z.string().trim().max(1000).nullable().optional()
 });
 
 async function saveWebsite(req: Request, id: string | null) {
@@ -524,26 +373,75 @@ async function saveWebsite(req: Request, id: string | null) {
   if (!parsed.success) throw httpError(400, "Check the website.");
   const domain = domainOf(parsed.data.domain);
   if (!domain) throw httpError(400, "That does not look like a website address.");
-  const row = { org_id: req.user!.orgId, branch_id: branchOf(req), domain, platform: parsed.data.platform, data_source_id: parsed.data.dataSourceId ?? null, notes: parsed.data.notes ?? null, updated_at: new Date().toISOString() };
+  const orgId = req.user!.orgId;
+  const branchId = branchOf(req);
+  const row = { org_id: orgId, branch_id: branchId, domain, label: parsed.data.label, platform: parsed.data.platform, data_source_id: parsed.data.dataSourceId ?? null, notes: parsed.data.notes ?? null, updated_at: new Date().toISOString() };
   const result = id
-    ? await supabase.from("tracking_websites").update(row).eq("org_id", row.org_id).eq("branch_id", row.branch_id).eq("id", id).select("id").single()
+    ? await supabase.from("tracking_websites").update(row).eq("org_id", orgId).eq("branch_id", branchId).eq("id", id).select("id").single()
     : await supabase.from("tracking_websites").insert({ ...row, created_by: req.user!.id }).select("id").single();
   if (result.error) throw result.error.code === "23505" ? httpError(409, "This website is already added.") : result.error;
+  await hubAudit(orgId, branchId, actorOf(req), id ? "website_updated" : "website_added", { type: "website", id: result.data.id, label: domain });
   return result.data;
 }
 router.post("/websites", async (req, res) => { try { res.status(201).json(await saveWebsite(req, null)); } catch (error: any) { fail(res, error, "Could not save the website."); } });
 router.put("/websites/:id", async (req, res) => { try { res.json(await saveWebsite(req, String(req.params.id))); } catch (error: any) { fail(res, error, "Could not save the website."); } });
 router.delete("/websites/:id", async (req, res) => {
   try {
-    const { error } = await supabase.from("tracking_websites").delete().eq("org_id", req.user!.orgId).eq("branch_id", branchOf(req)).eq("id", String(req.params.id));
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const { error } = await supabase.from("tracking_websites").delete().eq("org_id", orgId).eq("branch_id", branchId).eq("id", String(req.params.id));
     if (error) throw error;
+    await hubAudit(orgId, branchId, actorOf(req), "website_deleted", { type: "website", id: String(req.params.id) });
     res.json({ ok: true });
   } catch (error: any) { fail(res, error, "Could not delete the website."); }
 });
 
+const isPublicHttpUrl = (raw: string) => {
+  try {
+    const url = new URL(raw);
+    if (!["http:", "https:"].includes(url.protocol)) return false;
+    return !/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|0\.|\[::1\]|169\.254\.)/i.test(url.hostname);
+  } catch { return false; }
+};
+
+/** Scan Website / Test Website: load the home page, each link's landing page and thank-you page. */
+router.post("/websites/:id/scan", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const { data: site } = await supabase.from("tracking_websites").select("*").eq("org_id", orgId).eq("branch_id", branchId).eq("id", String(req.params.id)).maybeSingle();
+    if (!site) throw httpError(404, "Website not found.");
+    const { data: links } = await supabase.from("meta_capi_configs").select("landing_page_url, redirect_url, mode").eq("org_id", orgId).eq("website_id", site.id);
+    const urls = new Map<string, "home" | "landing" | "thank_you">([[`https://${site.domain}/`, "home"]]);
+    for (const link of links ?? []) {
+      if (link.landing_page_url && domainOf(link.landing_page_url) === site.domain) urls.set(link.landing_page_url, "landing");
+      if (link.redirect_url && domainOf(link.redirect_url) === site.domain) urls.set(link.redirect_url, "thank_you");
+    }
+    const pages = [];
+    for (const [url, kind] of Array.from(urls.entries()).slice(0, 12)) {
+      if (!isPublicHttpUrl(url)) continue;
+      pages.push({ ...(await scanPage(url)), kind });
+    }
+    const scan = { pages, at: new Date().toISOString() };
+    await supabase.from("tracking_websites").update({ last_scan: scan, last_scan_at: scan.at }).eq("id", site.id);
+    await hubAudit(orgId, branchId, actorOf(req), "website_scanned", { type: "website", id: site.id, label: site.domain }, { pages: pages.length });
+    const allPixels = Array.from(new Set(pages.flatMap((page) => page.pixels)));
+    const usesProtohub = (links ?? []).some((link: any) => link.mode === "hybrid" || link.mode === "protohub");
+    const thankYouWithPurchase = pages.filter((page) => page.kind === "thank_you" && page.purchaseOnPage);
+    res.json({
+      scan,
+      summary: [
+        allPixels.length === 0 ? (pages.some((page) => page.usesTagManager) ? "No Pixel code in the page itself — it may be loaded by Google Tag Manager." : "No Meta Pixel found on the scanned pages.") : `Pixel${allPixels.length === 1 ? "" : "s"} found: ${allPixels.join(", ")}.`,
+        allPixels.length > 1 ? "More than one Pixel id — check that each page loads only the right one." : null,
+        pages.some((page) => page.protohubForm) ? "Protohub order form found." : "No Protohub order form found on these pages.",
+        usesProtohub && thankYouWithPurchase.length ? `The thank-you page still fires Purchase (${thankYouWithPurchase.map((page) => page.url).join(", ")}) while Protohub also sends it — orders count twice.` : null
+      ].filter(Boolean)
+    });
+  } catch (error: any) { fail(res, error, "Could not scan the website."); }
+});
+
 // ---------------------------------------------------------------- profiles
 
-const presentProfile = (row: any) => ({ id: row.id, name: row.name, dataSourceId: row.data_source_id, defaultWebsiteId: row.default_website_id, strategy: row.strategy, adAccountLabel: row.ad_account_label, status: row.status });
 const ProfileSchema = z.object({
   name: z.string().trim().min(2).max(120),
   dataSourceId: z.string().uuid().nullable().optional(),
@@ -556,11 +454,14 @@ async function saveProfile(req: Request, id: string | null) {
   const parsed = ProfileSchema.safeParse(req.body);
   if (!parsed.success) throw httpError(400, "Check the profile.");
   const d = parsed.data;
-  const row = { org_id: req.user!.orgId, branch_id: branchOf(req), name: d.name, data_source_id: d.dataSourceId ?? null, default_website_id: d.defaultWebsiteId ?? null, strategy: d.strategy, ad_account_label: d.adAccountLabel, status: d.status, updated_at: new Date().toISOString() };
+  const orgId = req.user!.orgId;
+  const branchId = branchOf(req);
+  const row = { org_id: orgId, branch_id: branchId, name: d.name, data_source_id: d.dataSourceId ?? null, default_website_id: d.defaultWebsiteId ?? null, strategy: d.strategy, ad_account_label: d.adAccountLabel, status: d.status, updated_at: new Date().toISOString() };
   const result = id
-    ? await supabase.from("tracking_profiles").update(row).eq("org_id", row.org_id).eq("branch_id", row.branch_id).eq("id", id).select("*").single()
+    ? await supabase.from("tracking_profiles").update(row).eq("org_id", orgId).eq("branch_id", branchId).eq("id", id).select("*").single()
     : await supabase.from("tracking_profiles").insert(row).select("*").single();
   if (result.error) throw result.error;
+  await hubAudit(orgId, branchId, actorOf(req), id ? "profile_updated" : "profile_created", { type: "profile", id: result.data.id, label: d.name });
   return presentProfile(result.data);
 }
 router.post("/profiles", async (req, res) => { try { res.status(201).json(await saveProfile(req, null)); } catch (error: any) { fail(res, error, "Could not save the profile."); } });
@@ -569,51 +470,150 @@ router.delete("/profiles/:id", async (req, res) => {
   try {
     const { error } = await supabase.from("tracking_profiles").delete().eq("org_id", req.user!.orgId).eq("branch_id", branchOf(req)).eq("id", String(req.params.id));
     if (error) throw error;
+    await hubAudit(req.user!.orgId, branchOf(req), actorOf(req), "profile_deleted", { type: "profile", id: String(req.params.id) });
     res.json({ ok: true });
   } catch (error: any) { fail(res, error, "Could not delete the profile."); }
 });
 
-// ------------------------------------------------------------ tracking links
+// ========================================================== TRACKING LINKS
+
+function linkStats(key: string, rows: LedgerRow[], journey: JourneyRow[], days: string[]) {
+  const linkRows = rows.filter((row) => row.trackingKey === key);
+  const viewsOf = (day?: string) => sumVisits(journey, "form_opened", (row) => row.tracking_key === key && (!day || row.day === day));
+  const views = viewsOf();
+  const orders = linkRows.length;
+  return {
+    views, orders, conversionRate: pct(orders, views), revenue: linkRows.reduce((sum, row) => sum + row.value, 0),
+    spark: days.map((day) => ({ day, views: viewsOf(day), orders: linkRows.filter((row) => dayOfIso(row.createdAt) === day).length }))
+  };
+}
+
+const linkStatusOf = (healthy: boolean, conversionRate: number, views: number, low: number) =>
+  !healthy ? "needs_review" : views >= 20 && conversionRate < low ? "low_performance" : "healthy";
+
+const adUrlFor = (link: any) => {
+  const base = String(link.landing_page_url ?? "").trim();
+  if (!base) return null;
+  try { const url = new URL(base); url.searchParams.set("ph_link", link.tracking_key); return url.toString(); } catch { return null; }
+};
 
 router.get("/links", async (req, res) => {
   try {
     const orgId = req.user!.orgId;
     const branchId = branchOf(req);
-    const assessment = await assess(orgId, branchId);
-    const since = addDaysToDateKey(lagosDateKey(), -29);
-    const orders = await formOrders(orgId, branchId, since, lagosDateKey());
-    const { data: products } = await supabase.from("products").select("id, name").eq("org_id", orgId);
-    const productName = new Map((products ?? []).map((row: any) => [row.id, row.name]));
+    const period = periodOf(req.query, 7);
+    const [assessment, settings] = await Promise.all([assess(orgId, branchId), loadHubSettings(orgId, branchId)]);
+    const loadFrom = period.compareFrom < period.from ? period.compareFrom : period.from;
+    const [orders, journey] = await Promise.all([formOrders(orgId, branchId, loadFrom, period.to), journeyCounts(orgId, branchId, loadFrom, period.to).catch(() => [] as JourneyRow[])]);
+    const events = await eventsFor(orgId, orders.map((order) => order.id));
+    const allRows = orders.map((order) => ledgerRow(order, events));
+    const inPeriod = (from: string, to: string) => (row: { createdAt: string }) => { const day = dayOfIso(row.createdAt); return day >= from && day <= to; };
+    const nowRows = allRows.filter(inPeriod(period.from, period.to));
+    const prevRows = allRows.filter(inPeriod(period.compareFrom, period.compareTo));
+    const nowJourney = journey.filter((row) => row.day >= period.from && row.day <= period.to);
+    const prevJourney = journey.filter((row) => row.day >= period.compareFrom && row.day <= period.compareTo);
+    const days = lastNDays(period.to, Math.min(period.length, 31));
     const health = new Map(assessment.linkRows.map((row: any) => [row.id, row]));
-    const links = assessment.basics.links.filter((link: any) => link.tracking_key !== "__default__").map((link: any) => {
-      const source = assessment.basics.sources.find((row: any) => row.id === link.data_source_id);
-      const site = assessment.basics.websites.find((row: any) => row.id === link.website_id);
-      const profile = assessment.basics.profiles.find((row: any) => row.id === link.profile_id);
+    const basics = assessment.basics;
+    const productOf = new Map(basics.products.map((row: any) => [row.id, row]));
+    const links = basics.links.map((link: any) => {
+      const key = String(link.tracking_key).toLowerCase();
+      const source = basics.sources.find((row: any) => row.id === link.data_source_id);
+      const site = basics.websites.find((row: any) => row.id === link.website_id);
+      const profile = basics.profiles.find((row: any) => row.id === link.profile_id);
+      const product: any = productOf.get(link.product_id);
       const linkHealth: any = health.get(link.id);
+      const stats = linkStats(key, nowRows, nowJourney, days);
+      const testCode = source?.status === "testing" ? source?.test_event_code ?? "" : link.test_event_code ?? "";
       return {
         id: link.id, trackingKey: link.tracking_key, label: link.label, active: link.active !== false,
-        productId: link.product_id, productName: productName.get(link.product_id) ?? null,
+        productId: link.product_id, productName: product?.name ?? null, productImage: product?.imageUrl ?? null,
         websiteId: link.website_id, websiteDomain: site?.domain ?? domainOf(link.landing_page_url),
-        landingPageUrl: link.landing_page_url ?? "", landingPath: pathOf(link.landing_page_url),
-        redirectUrl: link.redirect_url ?? "", formLabel: link.form_label ?? "",
-        dataSourceId: link.data_source_id, dataSourceName: source?.name ?? (link.pixel_id ? `Pixel ${link.pixel_id}` : null), pixelId: source?.pixel_id ?? link.pixel_id ?? null,
+        landingPageUrl: link.landing_page_url ?? "", landingPath: pathOf(link.landing_page_url), redirectUrl: link.redirect_url ?? "", formLabel: link.form_label ?? "",
+        dataSourceId: link.data_source_id, dataSourceName: source?.name ?? (link.pixel_id ? `Pixel ${link.pixel_id}` : null), dataSourcePlatform: source?.platform ?? "meta", pixelId: source?.pixel_id ?? link.pixel_id ?? null,
         profileId: link.profile_id, profileName: profile?.name ?? null,
-        strategy: STRATEGY_OF_MODE[link.mode] ?? "landing_page", mode: link.mode,
-        testEventCode: source?.status === "testing" ? source?.test_event_code ?? "" : link.test_event_code ?? "",
-        checklist: link.checklist ?? {},
-        orders30d: orders.filter((order) => String(order.form_context?.metaTrackingKey ?? "").toLowerCase() === String(link.tracking_key).toLowerCase()).length,
-        healthy: Boolean(linkHealth?.healthy), problems: linkHealth?.problems ?? []
+        strategy: STRATEGY_OF_MODE[link.mode] ?? "landing_page", mode: link.mode, testEventCode: testCode,
+        checklist: link.checklist ?? {}, adUrl: adUrlFor(link), createdAt: link.created_at, updatedAt: link.updated_at,
+        stats, healthy: Boolean(linkHealth?.healthy), problems: linkHealth?.problems ?? [],
+        status: link.active === false ? "paused" : linkStatusOf(Boolean(linkHealth?.healthy), stats.conversionRate, stats.views, settings.lowConversionRate)
       };
     });
+    const monthAgo = new Date(Date.now() - 30 * 86_400_000).toISOString();
+    const linkKeys = new Set(links.map((link: any) => String(link.trackingKey).toLowerCase()));
+    const ordersNow = nowRows.filter((row) => row.trackingKey && linkKeys.has(row.trackingKey)).length;
+    const ordersPrev = prevRows.filter((row) => row.trackingKey && linkKeys.has(row.trackingKey)).length;
+    const viewsNow = sumVisits(nowJourney, "form_opened", (row) => Boolean(row.tracking_key && linkKeys.has(row.tracking_key)));
+    const viewsPrev = sumVisits(prevJourney, "form_opened", (row) => Boolean(row.tracking_key && linkKeys.has(row.tracking_key)));
+    const healthyCount = links.filter((link: any) => link.status === "healthy").length;
     res.json({
+      period,
+      kpis: {
+        total: links.length, newThisMonth: links.filter((link: any) => (link.createdAt ?? "") >= monthAgo).length,
+        orders: ordersNow, ordersChange: change(ordersNow, ordersPrev),
+        pageViews: viewsNow, pageViewsChange: change(viewsNow, viewsPrev),
+        conversionRate: pct(ordersNow, viewsNow), conversionRateChange: Math.round((pct(ordersNow, viewsNow) - pct(ordersPrev, viewsPrev)) * 10) / 10,
+        healthy: healthyCount, healthyPct: pct(healthyCount, links.length)
+      },
       links,
-      products: (products ?? []).map((row: any) => ({ id: row.id, name: row.name })).sort((a: any, b: any) => a.name.localeCompare(b.name)),
-      dataSources: assessment.sourceRows.map((row: any) => ({ id: row.id, name: row.name, pixelId: row.pixelId, status: row.status })),
-      websites: assessment.basics.websites.map((row: any) => ({ id: row.id, domain: row.domain, dataSourceId: row.data_source_id })),
-      profiles: assessment.basics.profiles.map(presentProfile),
-      defaultStrategy: (await loadSettings(orgId, branchId)).defaultStrategy
+      products: basics.products.map((row: any) => ({ id: row.id, name: row.name })).sort((a: any, b: any) => a.name.localeCompare(b.name)),
+      dataSources: assessment.sourceRows.map((row: any) => ({ id: row.id, name: row.name, pixelId: row.pixelId, status: row.status, platform: row.platform })),
+      websites: basics.websites.map((row: any) => ({ id: row.id, domain: row.domain, dataSourceId: row.data_source_id })),
+      profiles: basics.profiles.map(presentProfile),
+      defaultStrategy: settings.defaultStrategy,
+      urlParameters: settings.urlParameters
     });
   } catch (error: any) { fail(res, error, "Could not load the tracking links."); }
+});
+
+router.get("/links/:id", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const days = Math.min(30, Math.max(7, Number(req.query.days) || 7));
+    const today = lagosDateKey();
+    const from = addDaysToDateKey(today, -(2 * days - 1));
+    const basics = await loadBasics(orgId, branchId);
+    const link: any = basics.links.find((row: any) => row.id === String(req.params.id));
+    if (!link) throw httpError(404, "Tracking link not found.");
+    const key = String(link.tracking_key).toLowerCase();
+    const [orders, journey, totalRes] = await Promise.all([
+      formOrders(orgId, branchId, from, today), journeyCounts(orgId, branchId, from, today).catch(() => [] as JourneyRow[]),
+      supabase.from("orders").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("form_context->>metaTrackingKey", link.tracking_key)
+    ]);
+    const events = await eventsFor(orgId, orders.map((order) => order.id));
+    const rows = orders.map((order) => ledgerRow(order, events)).filter((row) => row.trackingKey === key);
+    const split = addDaysToDateKey(today, -days);
+    const nowRows = rows.filter((row) => dayOfIso(row.createdAt) > split);
+    const prevRows = rows.filter((row) => dayOfIso(row.createdAt) <= split);
+    const nowViews = sumVisits(journey, "form_opened", (row) => row.tracking_key === key && row.day > split);
+    const prevViews = sumVisits(journey, "form_opened", (row) => row.tracking_key === key && row.day <= split);
+    const revenue = (list: LedgerRow[]) => list.reduce((sum, row) => sum + row.value, 0);
+    const campaigns = new Map<string, { orders: number; views: number }>();
+    for (const row of nowRows) if (row.campaignId) { const entry = campaigns.get(row.campaignId) ?? { orders: 0, views: 0 }; entry.orders += 1; campaigns.set(row.campaignId, entry); }
+    for (const row of journey.filter((item) => item.event_type === "form_opened" && item.tracking_key === key && item.day > split && item.campaign_id)) {
+      const entry = campaigns.get(row.campaign_id!) ?? { orders: 0, views: 0 }; entry.views += row.visits; campaigns.set(row.campaign_id!, entry);
+    }
+    const source = basics.sources.find((row: any) => row.id === link.data_source_id);
+    const site = basics.websites.find((row: any) => row.id === link.website_id);
+    const product: any = basics.products.find((row: any) => row.id === link.product_id);
+    const linkOrders = orders.filter((order) => String(order.form_context?.metaTrackingKey ?? "").toLowerCase() === key && dayOfIso(order.created_at) > split);
+    const capture = attributionCapture(linkOrders);
+    res.json({
+      id: link.id, label: link.label, trackingKey: link.tracking_key, adUrl: adUrlFor(link), landingPageUrl: link.landing_page_url ?? "",
+      productName: product?.name ?? null, productImage: product?.imageUrl ?? null, websiteDomain: site?.domain ?? domainOf(link.landing_page_url), dataSourceName: source?.name ?? null,
+      landingPath: pathOf(link.landing_page_url), formLabel: link.form_label ?? "", redirectPath: pathOf(link.redirect_url) ?? link.redirect_url ?? "",
+      createdAt: link.created_at, updatedAt: link.updated_at, totalOrders: totalRes.count ?? rows.length,
+      kpis: {
+        views: nowViews, viewsChange: change(nowViews, prevViews), orders: nowRows.length, ordersChange: change(nowRows.length, prevRows.length),
+        conversionRate: pct(nowRows.length, nowViews), conversionRateChange: Math.round((pct(nowRows.length, nowViews) - pct(prevRows.length, prevViews)) * 10) / 10,
+        revenue: revenue(nowRows), revenueChange: change(revenue(nowRows), revenue(prevRows))
+      },
+      chart: lastNDays(today, days).map((day) => ({ day, views: sumVisits(journey, "form_opened", (row) => row.tracking_key === key && row.day === day), orders: nowRows.filter((row) => dayOfIso(row.createdAt) === day).length })),
+      campaigns: Array.from(campaigns.entries()).map(([campaignId, value]) => ({ campaignId, ...value })).sort((a, b) => b.orders - a.orders || b.views - a.views),
+      attribution: ATTRIBUTION_FIELDS.map((field) => ({ ...field, pct: capture.fields[field.key] })), attributionOrders: capture.orders,
+      events: nowRows.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 50)
+    });
+  } catch (error: any) { fail(res, error, "Could not load the link."); }
 });
 
 const LinkSchema = z.object({
@@ -629,8 +629,8 @@ const LinkSchema = z.object({
   active: z.boolean().default(true)
 });
 
-async function saveLink(req: Request, id: string | null) {
-  const parsed = LinkSchema.safeParse(req.body);
+async function saveLink(req: Request, id: string | null, body: unknown = req.body) {
+  const parsed = LinkSchema.safeParse(body);
   if (!parsed.success) throw httpError(400, parsed.error.issues[0]?.message ?? "Check the link.");
   const orgId = req.user!.orgId;
   const branchId = branchOf(req);
@@ -647,9 +647,8 @@ async function saveLink(req: Request, id: string | null) {
     dataSourceId = site?.data_source_id ?? null;
   }
   if (d.strategy !== "landing_page" && !dataSourceId) throw httpError(400, "Choose a data source (or a profile / website that has one) for Browser + CAPI.");
-  // The links table requires pixel_id / access_token (it used to hold them).
-  // A hub link keeps the source's Pixel id for the embed code and an empty
-  // token; the real token is read from the data source when sending.
+  // The links table requires pixel_id / access_token; a hub link keeps the
+  // source's Pixel id and an empty token (read from the source when sending).
   let pixelId = "";
   if (dataSourceId) {
     const { data: source } = await supabase.from("tracking_data_sources").select("pixel_id").eq("id", dataSourceId).maybeSingle();
@@ -664,15 +663,43 @@ async function saveLink(req: Request, id: string | null) {
   if (id) {
     const result = await supabase.from("meta_capi_configs").update(row).eq("org_id", orgId).eq("id", id).select("id, tracking_key").single();
     if (result.error) throw result.error;
+    await hubAudit(orgId, branchId, actorOf(req), "link_updated", { type: "link", id, label: d.label }, { strategy: d.strategy });
     return result.data;
   }
   const base = d.label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "link";
   const result = await supabase.from("meta_capi_configs").insert({ ...row, access_token: "", tracking_key: `${base}_${Date.now().toString(36)}`, created_by: req.user!.id }).select("id, tracking_key").single();
   if (result.error) throw result.error;
+  await hubAudit(orgId, branchId, actorOf(req), "link_created", { type: "link", id: result.data.id, label: d.label }, { strategy: d.strategy });
   return result.data;
 }
 router.post("/links", async (req, res) => { try { res.status(201).json(await saveLink(req, null)); } catch (error: any) { fail(res, error, "Could not save the link."); } });
+router.post("/links/bulk", async (req, res) => {
+  const parsed = z.object({ ids: z.array(z.string().uuid()).min(1).max(200), action: z.enum(["activate", "pause", "delete"]) }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Choose links and an action." }); return; }
+  try {
+    const orgId = req.user!.orgId;
+    const query = parsed.data.action === "delete"
+      ? supabase.from("meta_capi_configs").delete().eq("org_id", orgId).in("id", parsed.data.ids).neq("tracking_key", "__default__")
+      : supabase.from("meta_capi_configs").update({ active: parsed.data.action === "activate", updated_at: new Date().toISOString() }).eq("org_id", orgId).in("id", parsed.data.ids);
+    const { error } = await query;
+    if (error) throw error;
+    await hubAudit(orgId, branchOf(req), actorOf(req), `links_${parsed.data.action}`, { type: "link", label: `${parsed.data.ids.length} links` });
+    res.json({ ok: true });
+  } catch (error: any) { fail(res, error, "Could not update the links."); }
+});
 router.put("/links/:id", async (req, res) => { try { res.json(await saveLink(req, String(req.params.id))); } catch (error: any) { fail(res, error, "Could not save the link."); } });
+router.post("/links/:id/duplicate", async (req, res) => {
+  try {
+    const { data: link } = await supabase.from("meta_capi_configs").select("*").eq("org_id", req.user!.orgId).eq("id", String(req.params.id)).maybeSingle();
+    if (!link) throw httpError(404, "Tracking link not found.");
+    const strategy = STRATEGY_OF_MODE[link.mode];
+    res.status(201).json(await saveLink(req, null, {
+      label: `${link.label} (copy)`, productId: link.product_id, websiteId: link.website_id, profileId: link.profile_id, dataSourceId: link.data_source_id,
+      strategy: !strategy || strategy === "off" ? "landing_page" : strategy,
+      landingPageUrl: link.landing_page_url ?? "", redirectUrl: link.redirect_url ?? "", formLabel: link.form_label ?? "", active: false
+    }));
+  } catch (error: any) { fail(res, error, "Could not duplicate the link."); }
+});
 router.put("/links/:id/checklist", async (req, res) => {
   const parsed = z.object({ thankYouPixelRemoved: z.boolean(), testEventSeen: z.boolean() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Tick the checklist items." }); return; }
@@ -680,6 +707,7 @@ router.put("/links/:id/checklist", async (req, res) => {
     const checklist = { ...parsed.data, confirmedBy: req.user!.name ?? null, confirmedAt: new Date().toISOString() };
     const { error } = await supabase.from("meta_capi_configs").update({ checklist, updated_at: new Date().toISOString() }).eq("org_id", req.user!.orgId).eq("id", String(req.params.id));
     if (error) throw error;
+    await hubAudit(req.user!.orgId, branchOf(req), actorOf(req), "link_checklist", { type: "link", id: String(req.params.id) }, parsed.data);
     res.json({ checklist });
   } catch (error: any) { fail(res, error, "Could not save the checklist."); }
 });
@@ -687,58 +715,334 @@ router.delete("/links/:id", async (req, res) => {
   try {
     const { error } = await supabase.from("meta_capi_configs").delete().eq("org_id", req.user!.orgId).eq("id", String(req.params.id)).neq("tracking_key", "__default__");
     if (error) throw error;
+    await hubAudit(req.user!.orgId, branchOf(req), actorOf(req), "link_deleted", { type: "link", id: String(req.params.id) });
     res.json({ ok: true });
   } catch (error: any) { fail(res, error, "Could not delete the link."); }
 });
 
-// ----------------------------------------------------------- reconciliation
+// ============================================================ EVENT LEDGER
+
+const LEDGER_TABS: Record<string, (row: LedgerRow) => boolean> = {
+  all: () => true,
+  purchase: (row) => row.browser || row.serverStatus === "sent" || row.serverStatus === "dry_run",
+  browser: (row) => row.browser,
+  server: (row) => row.serverStatus === "sent" || row.serverStatus === "dry_run",
+  deduplicated: (row) => row.status === "deduped",
+  failed: (row) => row.status === "capi_failed" || row.status === "not_tracked",
+  test: (row) => row.status === "test"
+};
+
+async function ledgerQuery(req: Request) {
+  const orgId = req.user!.orgId;
+  const branchId = branchOf(req);
+  const period = periodOf(req.query);
+  const loadFrom = period.compareFrom < period.from ? period.compareFrom : period.from;
+  const [orders, basics] = await Promise.all([formOrders(orgId, branchId, loadFrom, period.to), loadBasics(orgId, branchId)]);
+  const events = await eventsFor(orgId, orders.map((order) => order.id));
+  const all = orders.map((order) => ledgerRow(order, events));
+  const inRange = (from: string, to: string) => (row: LedgerRow) => { const day = dayOfIso(row.createdAt); return day >= from && day <= to; };
+  const current = all.filter(inRange(period.from, period.to));
+  const previous = all.filter(inRange(period.compareFrom, period.compareTo));
+  const q = String(req.query.q ?? "").trim().toLowerCase();
+  const status = String(req.query.status ?? "");
+  const tab = String(req.query.tab ?? "all");
+  const dataSourceId = String(req.query.dataSourceId ?? "");
+  const websiteId = String(req.query.websiteId ?? "");
+  const productId = String(req.query.productId ?? "");
+  const orderIds = String(req.query.orderIds ?? "").split(",").map((value) => value.trim()).filter(Boolean);
+  const linkKeysForSource = new Set(basics.links.filter((link: any) => link.data_source_id === dataSourceId).map((link: any) => String(link.tracking_key).toLowerCase()));
+  const sourcePixel = basics.sources.find((row: any) => row.id === dataSourceId)?.pixel_id;
+  const websiteDomain = basics.websites.find((row: any) => row.id === websiteId)?.domain;
+  const filtered = current
+    .filter(LEDGER_TABS[tab] ?? LEDGER_TABS.all)
+    .filter((row) => !status || row.status === status)
+    .filter((row) => !dataSourceId || (row.trackingKey && linkKeysForSource.has(row.trackingKey)) || Boolean(sourcePixel && row.serverPixel === sourcePixel))
+    .filter((row) => !websiteId || row.website === websiteDomain)
+    .filter((row) => !productId || row.productId === productId)
+    .filter((row) => orderIds.length === 0 || orderIds.includes(row.orderId))
+    .filter((row) => !q || `${row.orderId} ${row.product} ${row.website ?? ""} ${row.campaignId ?? ""} ${row.adId ?? ""}`.toLowerCase().includes(q))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return { period, current, previous, filtered, basics };
+}
+
+router.get("/ledger", async (req, res) => {
+  try {
+    const { period, current, previous, filtered, basics } = await ledgerQuery(req);
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(100, Math.max(5, Number(req.query.pageSize) || 15));
+    const productImage = new Map(basics.products.map((row: any) => [row.id, row.imageUrl]));
+    const main: any = basics.sources.find((row: any) => row.is_main) ?? basics.sources[0];
+    res.json({
+      period, kpis: kpisOf(current), previous: kpisOf(previous),
+      rows: filtered.slice((page - 1) * pageSize, page * pageSize).map((row) => ({ ...row, productImage: row.productId ? productImage.get(row.productId) ?? null : null })),
+      total: filtered.length, page, pageSize,
+      tabCounts: Object.fromEntries(Object.entries(LEDGER_TABS).map(([key, test]) => [key, current.filter(test).length])),
+      filters: {
+        dataSources: basics.sources.map((row: any) => ({ id: row.id, name: row.name })),
+        websites: basics.websites.map((row: any) => ({ id: row.id, domain: row.domain })),
+        products: basics.products.map((row: any) => ({ id: row.id, name: row.name }))
+      },
+      mainPixelUrl: main ? eventsManagerUrl(main.pixel_id) : "https://business.facebook.com/events_manager2"
+    });
+  } catch (error: any) { fail(res, error, "Could not load the event ledger."); }
+});
+
+router.get("/ledger/export", async (req, res) => {
+  try {
+    const { filtered } = await ledgerQuery(req);
+    const head = ["Order ID", "Created", "Product", "Website", "Source", "Campaign ID", "Ad Set ID", "Ad ID", "Value", "Currency", "Browser", "CAPI", "Event ID", "Status"];
+    const escape = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const body = filtered.map((row) => [row.orderId, row.createdAt, row.product, row.website, row.source, row.campaignId, row.adsetId, row.adId, row.value, row.currency, row.browser ? "yes" : "no", row.serverStatus ?? "", row.eventId ?? "", row.statusLabel].map(escape).join(","));
+    res.json({ filename: "event-ledger.csv", csv: [head.map(escape).join(","), ...body].join("\n") });
+  } catch (error: any) { fail(res, error, "Could not export."); }
+});
+
+router.get("/ledger/:orderId", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const { data: order, error } = await supabase.from("orders")
+      .select("id, created_at, product_id, product_name, package_name, amount, currency, status, customer, phone, state, city, utm_source, utm_campaign, utm_content, utm_term, utm_medium, referrer, form_context, review_hold, delivered_date")
+      .eq("org_id", orgId).eq("branch_id", branchId).eq("id", String(req.params.orderId)).maybeSingle();
+    if (error) throw error;
+    if (!order) throw httpError(404, "Order not found.");
+    const [events, basics, { data: audit }] = await Promise.all([
+      eventsFor(orgId, [order.id]), loadBasics(orgId, branchId),
+      supabase.from("order_audit").select("to_status, note, created_at").eq("order_id", order.id).order("created_at")
+    ]);
+    const ctx = (order.form_context ?? {}) as Record<string, any>;
+    const server = events.server.get(order.id) ?? null;
+    const browser = events.browser.get(order.id) ?? null;
+    const delivered = events.delivered.get(order.id) ?? null;
+    const row = ledgerRow(order as any, events);
+    const link: any = basics.links.find((item: any) => String(item.tracking_key).toLowerCase() === row.trackingKey);
+    const product: any = basics.products.find((item: any) => item.id === order.product_id);
+    const fromAddress = (key: string) => { try { const url = new URL(String(ctx.landingUrl ?? "")); return new URLSearchParams(url.hash.split("?")[1] ?? url.search).get(key); } catch { return null; } };
+    const timeline = [
+      { at: order.created_at, label: "Order created", detail: `Order ${order.id} from ${row.website ?? "the form"}` },
+      browser ? { at: browser.fired_at, label: "Browser Pixel Purchase", detail: `Event ${browser.event_id}${(browser.pixels_on_page ?? []).length ? ` · ${(browser.pixels_on_page ?? []).length} Pixel(s) on page` : ""}` } : null,
+      server ? { at: server.sent_at, label: `CAPI Purchase ${server.status === "sent" ? "sent" : server.status}`, detail: server.message ?? `Event ${server.event_id}` } : null,
+      ...((audit ?? []).filter((entry: any) => entry.to_status && entry.to_status !== "New").map((entry: any) => ({ at: entry.created_at, label: `Status: ${entry.to_status}`, detail: entry.note ?? "" }))),
+      delivered ? { at: delivered.sent_at, label: `Delivered sale (${delivered.meta_event_name}) ${delivered.status}`, detail: delivered.message ?? "" } : null
+    ].filter(Boolean).sort((a: any, b: any) => String(a.at).localeCompare(String(b.at)));
+    res.json({
+      ...row,
+      productImage: product?.imageUrl ?? null, sku: product?.sku ?? null, packageName: order.package_name ?? null,
+      landingPage: ctx.landingPageUrl || link?.landing_page_url || order.referrer || null, referralUrl: order.referrer ?? null, thankYouPage: link?.redirect_url ?? null,
+      fbclid: ctx.fbclid ?? fromAddress("fbclid"), fbp: ctx.fbp ?? fromAddress("fbp"), fbc: ctx.fbc ?? fromAddress("fbc"),
+      utm: { source: order.utm_source, campaign: order.utm_campaign, content: order.utm_content, term: order.utm_term, medium: order.utm_medium ?? null },
+      customer: { name: order.customer, phone: order.phone, state: order.state, city: order.city },
+      device: { deviceType: ctx.deviceType ?? null, userAgent: ctx.userAgent ?? null, locale: ctx.clientLocale ?? null },
+      browserEvent: browser ? { firedAt: browser.fired_at, eventId: browser.event_id, pixelId: browser.pixel_id, pageUrl: browser.page_url, pixelsOnPage: browser.pixels_on_page } : null,
+      serverEvent: server ? { sentAt: server.sent_at, eventId: server.event_id, status: server.status, message: server.message, test: server.test_mode, attempts: server.attempts, human: server.status === "sent" || server.status === "dry_run" ? null : humanMetaError(server.message, server.http_status) } : null,
+      deliveredEvent: delivered ? { sentAt: delivered.sent_at, status: delivered.status, metaEventName: delivered.meta_event_name, message: delivered.message } : null,
+      deliveredDate: order.delivered_date, timeline
+    });
+  } catch (error: any) { fail(res, error, "Could not load the order's tracking."); }
+});
+
+// ========================================================== RECONCILIATION
+
+type ReconView = "campaign" | "adset" | "ad" | "landing_page" | "product" | "website";
+const RECON_VIEWS: ReconView[] = ["campaign", "adset", "ad", "landing_page", "product", "website"];
+
+async function reconData(orgId: string, branchId: string, from: string, to: string) {
+  const [orders, basics, insightsRes, campaignsRes, notesRes, journey] = await Promise.all([
+    formOrders(orgId, branchId, from, to), loadBasics(orgId, branchId),
+    supabase.from("tracking_meta_ad_insights").select("data_source_id, ad_account_id, day, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name, purchases, purchase_value, spend, fetched_at").eq("org_id", orgId).eq("branch_id", branchId).gte("day", from).lte("day", to).limit(20000),
+    supabase.from("tracking_meta_campaigns").select("*").eq("org_id", orgId).eq("branch_id", branchId),
+    supabase.from("tracking_reconciliation_notes").select("scope, scope_id, note, resolved, created_by_name, created_at").eq("org_id", orgId).eq("branch_id", branchId).order("created_at", { ascending: false }),
+    journeyCounts(orgId, branchId, addDaysToDateKey(to, -29), to).catch(() => [] as JourneyRow[])
+  ]);
+  if (insightsRes.error) throw insightsRes.error;
+  const events = await eventsFor(orgId, orders.map((order) => order.id));
+  const rows = orders.map((order) => ledgerRow(order, events));
+  // Each ad's landing page / product / website, from where its visitors landed (most visits wins).
+  const adHome = new Map<string, { key: string | null; productId: string | null; domain: string | null; path: string | null; visits: number }>();
+  for (const row of journey.filter((item) => item.event_type === "form_opened" && item.ad_id)) {
+    const current = adHome.get(row.ad_id!);
+    if (!current || row.visits > current.visits) adHome.set(row.ad_id!, { key: row.tracking_key, productId: row.product_id, domain: row.domain, path: row.path, visits: row.visits });
+  }
+  for (const row of rows.filter((item) => item.adId && !adHome.has(item.adId))) adHome.set(row.adId!, { key: row.trackingKey, productId: row.productId, domain: row.website, path: row.landingPath, visits: 1 });
+  return { orders, basics, insights: insightsRes.data ?? [], campaigns: campaignsRes.data ?? [], notes: notesRes.data ?? [], rows, events, adHome };
+}
+type ReconData = Awaited<ReturnType<typeof reconData>>;
+
+function reconKey(view: ReconView, order: LedgerRow | null, insight: any | null, adHome: ReconData["adHome"]): { id: string; name: string } | null {
+  if (order) {
+    if (view === "campaign") return order.campaignId ? { id: order.campaignId, name: "" } : null;
+    if (view === "adset") return order.adsetId ? { id: order.adsetId, name: "" } : null;
+    if (view === "ad") return order.adId ? { id: order.adId, name: "" } : null;
+    if (view === "landing_page") return order.website ? { id: `${order.website}${order.landingPath && order.landingPath !== "/" ? order.landingPath : ""}`, name: "" } : null;
+    if (view === "product") return order.productId ? { id: order.productId, name: order.product } : null;
+    return order.website ? { id: order.website, name: order.website } : null;
+  }
+  if (view === "campaign") return { id: insight.campaign_id, name: insight.campaign_name };
+  if (view === "adset") return insight.adset_id ? { id: insight.adset_id, name: insight.adset_name } : null;
+  if (view === "ad") return { id: insight.ad_id, name: insight.ad_name };
+  const home = adHome.get(insight.ad_id);
+  if (!home) return null;
+  if (view === "landing_page") return home.domain ? { id: `${home.domain}${home.path && home.path !== "/" ? home.path : ""}`, name: "" } : null;
+  if (view === "product") return home.productId ? { id: home.productId, name: "" } : null;
+  return home.domain ? { id: home.domain, name: home.domain } : null;
+}
+
+function reconRows(view: ReconView, data: ReconData, settings: HubSettings) {
+  const groups = new Map<string, { id: string; name: string; orders: LedgerRow[]; meta: number; value: number; spend: number; accounts: Set<string>; sourceIds: Set<string> }>();
+  const get = (key: { id: string; name: string }) => {
+    const entry = groups.get(key.id) ?? { id: key.id, name: key.name, orders: [] as LedgerRow[], meta: 0, value: 0, spend: 0, accounts: new Set<string>(), sourceIds: new Set<string>() };
+    if (!entry.name && key.name) entry.name = key.name;
+    groups.set(key.id, entry);
+    return entry;
+  };
+  for (const row of data.rows) { const key = reconKey(view, row, null, data.adHome); if (key) get(key).orders.push(row); }
+  for (const insight of data.insights) {
+    const key = reconKey(view, null, insight, data.adHome);
+    if (!key) continue;
+    const entry = get(key);
+    entry.meta += Number(insight.purchases) || 0; entry.value += Number(insight.purchase_value) || 0; entry.spend += Number(insight.spend) || 0;
+    entry.accounts.add(insight.ad_account_id); entry.sourceIds.add(insight.data_source_id);
+  }
+  const metaLoaded = data.insights.length > 0;
+  const productOf = new Map(data.basics.products.map((row: any) => [row.id, row]));
+  const resolved = new Set(data.notes.filter((note: any) => note.scope === view && note.resolved).map((note: any) => note.scope_id));
+  return Array.from(groups.values()).map((group) => {
+    const protohub = group.orders.length;
+    const meta = metaLoaded ? Math.round(group.meta) : null;
+    const matchRate = meta === null ? null : Math.max(protohub, meta) === 0 ? 100 : Math.round((Math.min(protohub, meta) / Math.max(protohub, meta)) * 1000) / 10;
+    const firstAd = group.orders.find((row) => row.adId)?.adId ?? "";
+    const productId = view === "product" ? group.id : group.orders.find((row) => row.productId)?.productId ?? data.adHome.get(firstAd)?.productId ?? null;
+    const product: any = productId ? productOf.get(productId) : null;
+    const source: any = data.basics.sources.find((row: any) => group.sourceIds.has(row.id));
+    const sent = group.orders.filter((row) => row.serverStatus === "sent" || row.serverStatus === "dry_run").length;
+    const duplicates = group.orders.filter((row) => data.events.server.get(row.orderId)?.status === "duplicate").length;
+    const verdict = reconciliationVerdict({ protohubOrders: protohub, purchaseEvents: group.orders.filter((row) => row.browser || row.serverStatus === "sent").length, sentToMeta: sent, duplicates, metaPurchases: meta });
+    const investigate = matchRate !== null && matchRate < settings.investigateBelowMatchRate && Math.abs((meta ?? 0) - protohub) > 1;
+    return {
+      id: group.id, name: group.name || (view === "product" ? product?.name : null) || (view === "campaign" ? data.campaigns.find((row: any) => row.campaign_id === group.id)?.name : null) || group.id, view,
+      image: product?.imageUrl ?? null, productName: product?.name ?? null,
+      account: source?.ad_account_label || source?.name || (group.accounts.size ? `act_${Array.from(group.accounts)[0]}` : "—"),
+      accountId: group.accounts.size ? Array.from(group.accounts)[0] : null, dataSourceName: source?.name ?? null,
+      protohub, meta, difference: meta === null ? null : meta - protohub, matchRate, spend: group.spend,
+      status: resolved.has(group.id) ? "resolved" : meta === null ? "no_meta" : investigate ? "investigate" : "matched", verdict
+    };
+  }).sort((a, b) => (b.protohub + (b.meta ?? 0)) - (a.protohub + (a.meta ?? 0)));
+}
 
 router.get("/reconciliation", async (req, res) => {
   try {
     const orgId = req.user!.orgId;
     const branchId = branchOf(req);
     const period = periodOf(req.query);
-    const [orders, insightsRes, sourcesRes] = await Promise.all([
-      formOrders(orgId, branchId, period.from, period.to),
-      supabase.from("tracking_meta_insights").select("data_source_id, campaign_id, campaign_name, purchases, purchase_value, spend, fetched_at, day")
-        .eq("org_id", orgId).eq("branch_id", branchId).gte("day", period.from).lte("day", period.to),
-      supabase.from("tracking_data_sources").select("id, name, ad_account_ids, access_token").eq("org_id", orgId).eq("branch_id", branchId)
-    ]);
-    if (insightsRes.error) throw insightsRes.error;
-    if (sourcesRes.error) throw sourcesRes.error;
-    const events = await eventsFor(orgId, orders.map((order) => order.id));
-    const rows = orders.map((order) => ledgerRow(order, events));
-    const meta = new Map<string, { name: string; purchases: number; value: number; spend: number }>();
-    let lastFetched: string | null = null;
-    for (const row of insightsRes.data ?? []) {
-      const entry = meta.get(row.campaign_id) ?? { name: row.campaign_name, purchases: 0, value: 0, spend: 0 };
-      entry.purchases += Number(row.purchases) || 0;
-      entry.value += Number(row.purchase_value) || 0;
-      entry.spend += Number(row.spend) || 0;
-      meta.set(row.campaign_id, entry);
-      if (!lastFetched || row.fetched_at > lastFetched) lastFetched = row.fetched_at;
-    }
-    const campaignIds = new Set<string>([...meta.keys(), ...rows.map((row) => row.campaignId).filter(Boolean) as string[]]);
-    const campaigns = Array.from(campaignIds).map((campaignId) => {
-      const ours = rows.filter((row) => row.campaignId === campaignId);
-      const sent = ours.filter((row) => row.serverStatus === "sent" || row.serverStatus === "dry_run").length;
-      const purchaseEvents = ours.filter((row) => row.browser || row.serverStatus === "sent" || row.serverStatus === "dry_run").length;
-      const duplicates = ours.filter((row) => events.server.get(row.orderId)?.status === "duplicate").length;
-      const m = meta.get(campaignId);
-      const metaPurchases = meta.size > 0 ? Math.round(m?.purchases ?? 0) : null;
-      return {
-        campaignId, campaignName: m?.name ?? null,
-        protohubOrders: ours.length, purchaseEvents, sentToMeta: sent, duplicates,
-        metaPurchases, difference: metaPurchases === null ? null : metaPurchases - ours.length,
-        spend: m?.spend ?? 0, verdict: reconciliationVerdict({ protohubOrders: ours.length, purchaseEvents, sentToMeta: sent, duplicates, metaPurchases })
-      };
-    }).sort((a, b) => (b.protohubOrders + (b.metaPurchases ?? 0)) - (a.protohubOrders + (a.metaPurchases ?? 0)));
-    const noCampaign = rows.filter((row) => !row.campaignId).length;
+    const view = (RECON_VIEWS.includes(String(req.query.view) as ReconView) ? String(req.query.view) : "campaign") as ReconView;
+    const [data, previous, settings] = await Promise.all([reconData(orgId, branchId, period.from, period.to), formOrders(orgId, branchId, period.compareFrom, period.compareTo), loadHubSettings(orgId, branchId)]);
+    let rows = reconRows(view, data, settings);
+    const q = String(req.query.q ?? "").trim().toLowerCase();
+    const accountId = String(req.query.accountId ?? "");
+    const business = String(req.query.business ?? "");
+    const websiteId = String(req.query.websiteId ?? "");
+    const websiteDomain = data.basics.websites.find((row: any) => row.id === websiteId)?.domain;
+    if (q) rows = rows.filter((row) => `${row.name} ${row.id}`.toLowerCase().includes(q));
+    if (accountId) rows = rows.filter((row) => row.accountId === accountId);
+    if (business) rows = rows.filter((row) => data.basics.sources.some((source: any) => source.business_name === business && source.name === row.dataSourceName));
+    if (websiteDomain) rows = rows.filter((row) => row.id.startsWith(websiteDomain) || data.rows.some((order) => order.website === websiteDomain && reconKey(view, order, null, data.adHome)?.id === row.id));
+    const metaTotal = data.insights.length ? Math.round(data.insights.reduce((sum: number, row: any) => sum + (Number(row.purchases) || 0), 0)) : null;
+    const protohub = data.rows.length;
+    const lastFetched = data.insights.map((row: any) => row.fetched_at).sort().pop() ?? null;
     res.json({
-      period, campaigns, noCampaign, lastFetched,
-      sources: (sourcesRes.data ?? []).map((row: any) => ({ id: row.id, name: row.name, adAccounts: (row.ad_account_ids ?? []).length, hasToken: Boolean(row.access_token) }))
+      period, view, lastFetched,
+      kpis: {
+        protohub, protohubChange: change(protohub, previous.length),
+        meta: metaTotal, difference: metaTotal === null ? null : metaTotal - protohub,
+        matchRate: metaTotal === null ? null : Math.max(protohub, metaTotal) === 0 ? 100 : Math.round((Math.min(protohub, metaTotal) / Math.max(protohub, metaTotal)) * 1000) / 10,
+        matched: metaTotal === null ? null : Math.min(protohub, metaTotal), matchedOf: metaTotal === null ? null : Math.max(protohub, metaTotal),
+        investigate: rows.filter((row) => row.status === "investigate").length
+      },
+      rows,
+      filters: {
+        accounts: Array.from(new Set(data.basics.sources.flatMap((row: any) => (row.ad_account_ids ?? []) as string[]))).map((id) => ({ id, label: `act_${id}` })),
+        businesses: Array.from(new Set(data.basics.sources.map((row: any) => row.business_name).filter(Boolean))),
+        websites: data.basics.websites.map((row: any) => ({ id: row.id, domain: row.domain }))
+      },
+      sources: data.basics.sources.map((row: any) => ({ id: row.id, name: row.name, adAccounts: (row.ad_account_ids ?? []).length, hasToken: Boolean(row.access_token) }))
     });
   } catch (error: any) { fail(res, error, "Could not load the reconciliation."); }
+});
+
+router.get("/reconciliation/item", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const view = (RECON_VIEWS.includes(String(req.query.view) as ReconView) ? String(req.query.view) : "campaign") as ReconView;
+    const id = String(req.query.id ?? "");
+    if (!id) throw httpError(400, "Which item?");
+    const period = periodOf(req.query);
+    const chartDays = Math.min(30, Math.max(7, Number(req.query.chartDays) || 7));
+    const chartFrom = addDaysToDateKey(period.to, -(chartDays - 1));
+    const from = chartFrom < period.from ? chartFrom : period.from;
+    const [data, settings] = await Promise.all([reconData(orgId, branchId, from, period.to), loadHubSettings(orgId, branchId)]);
+    const inPeriod = (day: string) => day >= period.from && day <= period.to;
+    const matchesOrder = (row: LedgerRow) => reconKey(view, row, null, data.adHome)?.id === id;
+    const matchesInsight = (row: any) => reconKey(view, null, row, data.adHome)?.id === id;
+    const periodData = { ...data, rows: data.rows.filter((row) => inPeriod(dayOfIso(row.createdAt))), insights: data.insights.filter((row: any) => inPeriod(String(row.day))) };
+    const item = reconRows(view, periodData, settings).find((row) => row.id === id);
+    if (!item) throw httpError(404, "Nothing found for this item in the period.");
+    const orders = periodData.rows.filter(matchesOrder);
+    const insights = periodData.insights.filter(matchesInsight);
+    const firstInsight: any = insights[0] ?? data.insights.find(matchesInsight) ?? null;
+    const campaignId = view === "campaign" ? id : firstInsight?.campaign_id ?? orders.find((row) => row.campaignId)?.campaignId ?? null;
+    const campaign: any = campaignId ? data.campaigns.find((row: any) => row.campaign_id === campaignId) : null;
+    const source: any = data.basics.sources.find((row: any) => row.id === (firstInsight?.data_source_id ?? campaign?.data_source_id));
+    const home = firstInsight ? data.adHome.get(firstInsight.ad_id) : orders[0]?.adId ? data.adHome.get(orders[0].adId) : null;
+    const link: any = data.basics.links.find((row: any) => String(row.tracking_key).toLowerCase() === (home?.key ?? orders[0]?.trackingKey));
+    res.json({
+      ...item,
+      chart: lastNDays(period.to, chartDays).map((day) => ({
+        day, protohub: data.rows.filter((row) => dayOfIso(row.createdAt) === day && matchesOrder(row)).length,
+        meta: Math.round(data.insights.filter((row: any) => String(row.day) === day && matchesInsight(row)).reduce((sum: number, row: any) => sum + (Number(row.purchases) || 0), 0))
+      })),
+      details: {
+        adAccount: source ? `${source.ad_account_label || source.name}${firstInsight?.ad_account_id ? ` (${firstInsight.ad_account_id})` : ""}` : firstInsight?.ad_account_id ?? null,
+        businessAccount: source?.business_name ?? null, campaignId,
+        objective: campaign?.objective ? String(campaign.objective).replace(/^OUTCOME_/, "").replace(/_/g, " ").toLowerCase().replace(/^\w/, (c: string) => c.toUpperCase()) : null,
+        startDate: campaign?.start_time ?? null, endDate: campaign?.stop_time ?? null, campaignStatus: campaign?.status ?? null,
+        landingPage: link?.landing_page_url ?? (home?.domain ? `https://${home.domain}${home.path ?? "/"}` : null),
+        dataSource: source?.name ?? null, form: link?.form_label ?? link?.label ?? null,
+        adsManagerUrl: adsManagerUrl(firstInsight?.ad_account_id ?? null, campaignId)
+      },
+      orders: orders.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 100),
+      metaRows: insights.map((row: any) => ({ day: row.day, campaign: row.campaign_name, adset: row.adset_name, ad: row.ad_name, purchases: Number(row.purchases), value: Number(row.purchase_value), spend: Number(row.spend) })),
+      breakdown: {
+        protohubOrders: orders.length, purchaseEvents: orders.filter((row) => row.browser || row.serverStatus === "sent").length,
+        sentToMeta: orders.filter((row) => row.serverStatus === "sent" || row.serverStatus === "dry_run").length,
+        notSent: orders.filter((row) => !(row.serverStatus === "sent" || row.serverStatus === "dry_run")).length,
+        withoutFbclid: orders.filter((row) => !data.orders.find((order) => order.id === row.orderId)?.form_context?.fbclid).length,
+        duplicates: orders.filter((row) => data.events.server.get(row.orderId)?.status === "duplicate").length, metaPurchases: item.meta
+      },
+      insights: [
+        item.spend > 0 && item.meta ? `Meta cost per purchase: ₦${Math.round(item.spend / Math.max(1, item.meta)).toLocaleString("en-NG")}.` : null,
+        item.spend > 0 && item.protohub ? `Cost per Protohub order: ₦${Math.round(item.spend / Math.max(1, item.protohub)).toLocaleString("en-NG")}.` : null,
+        orders.length ? `${pct(orders.filter((row) => row.status === "deduped").length, orders.length)}% of these orders reached Meta from both browser and server.` : null,
+        item.verdict.likely
+      ].filter(Boolean),
+      notes: data.notes.filter((note: any) => note.scope === view && note.scope_id === id).map((note: any) => ({ note: note.note, resolved: note.resolved, by: note.created_by_name, at: note.created_at }))
+    });
+  } catch (error: any) { fail(res, error, "Could not load the item."); }
+});
+
+router.post("/reconciliation/notes", async (req, res) => {
+  const parsed = z.object({ scope: z.enum(["campaign", "adset", "ad", "landing_page", "product", "website"]), scopeId: z.string().min(1).max(300), note: z.string().trim().max(2000).optional(), resolved: z.boolean().default(false) }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Write a note." }); return; }
+  try {
+    if (!parsed.data.resolved && !parsed.data.note) throw httpError(400, "Write a note.");
+    const { error } = await supabase.from("tracking_reconciliation_notes").insert({
+      org_id: req.user!.orgId, branch_id: branchOf(req), scope: parsed.data.scope, scope_id: parsed.data.scopeId, note: parsed.data.note ?? null, resolved: parsed.data.resolved,
+      created_by: req.user!.id, created_by_name: req.user!.name ?? null
+    });
+    if (error) throw error;
+    await hubAudit(req.user!.orgId, branchOf(req), actorOf(req), parsed.data.resolved ? "reconciliation_resolved" : "reconciliation_note", { type: parsed.data.scope, id: parsed.data.scopeId }, { note: parsed.data.note ?? null });
+    res.status(201).json({ ok: true });
+  } catch (error: any) { fail(res, error, "Could not save."); }
 });
 
 router.post("/reconciliation/refresh", async (req, res) => {
@@ -746,56 +1050,231 @@ router.post("/reconciliation/refresh", async (req, res) => {
     const orgId = req.user!.orgId;
     const branchId = branchOf(req);
     const period = periodOf(req.body ?? {});
-    if (daysBetween(period.from, period.to) > 92) throw httpError(400, "Refresh at most 92 days at a time.");
-    const { data: sources, error } = await supabase.from("tracking_data_sources").select("id, name, ad_account_ids, access_token").eq("org_id", orgId).eq("branch_id", branchId);
+    const from = addDaysToDateKey(period.to, -Math.max(6, period.length - 1));
+    if (daysBetween(from, period.to) > 92) throw httpError(400, "Refresh at most 92 days at a time.");
+    const { data: sources, error } = await supabase.from("tracking_data_sources").select("id, name, ad_account_ids, access_token, platform").eq("org_id", orgId).eq("branch_id", branchId);
     if (error) throw error;
     const report: Array<{ source: string; account: string; ok: boolean; message: string; rows: number }> = [];
-    for (const source of sources ?? []) {
+    for (const source of (sources ?? []).filter((row: any) => (row.platform ?? "meta") === "meta")) {
       if (!source.access_token) continue;
       for (const account of source.ad_account_ids ?? []) {
-        const result = await campaignPurchases(account, source.access_token, period.from, period.to);
+        const [result, info] = await Promise.all([adPurchases(account, source.access_token, from, period.to), campaignInfo(account, source.access_token)]);
         if (!result.ok) { report.push({ source: source.name, account, ok: false, message: humanMetaError(result.message, null).title, rows: 0 }); continue; }
-        await supabase.from("tracking_meta_insights").delete().eq("data_source_id", source.id).eq("ad_account_id", account).gte("day", period.from).lte("day", period.to);
-        if (result.rows.length > 0) {
-          const insert = await supabase.from("tracking_meta_insights").insert(result.rows.map((row) => ({
+        await supabase.from("tracking_meta_ad_insights").delete().eq("data_source_id", source.id).eq("ad_account_id", account).gte("day", from).lte("day", period.to);
+        for (let i = 0; i < result.rows.length; i += 500) {
+          const insert = await supabase.from("tracking_meta_ad_insights").insert(result.rows.slice(i, i + 500).map((row) => ({
             org_id: orgId, branch_id: branchId, data_source_id: source.id, ad_account_id: account, day: row.day,
-            campaign_id: row.campaignId, campaign_name: row.campaignName, purchases: row.purchases, purchase_value: row.purchaseValue, spend: row.spend
+            campaign_id: row.campaignId, campaign_name: row.campaignName, adset_id: row.adsetId, adset_name: row.adsetName, ad_id: row.adId, ad_name: row.adName,
+            purchases: row.purchases, purchase_value: row.purchaseValue, spend: row.spend
           })));
           if (insert.error) throw insert.error;
+        }
+        if (info.ok) {
+          for (const campaign of info.rows) {
+            await supabase.from("tracking_meta_campaigns").upsert({
+              org_id: orgId, branch_id: branchId, data_source_id: source.id, ad_account_id: account, campaign_id: campaign.id, name: campaign.name ?? "",
+              objective: campaign.objective ?? null, status: campaign.effective_status ?? null, start_time: campaign.start_time ?? null, stop_time: campaign.stop_time ?? null, fetched_at: new Date().toISOString()
+            }, { onConflict: "data_source_id,campaign_id" });
+          }
         }
         report.push({ source: source.name, account, ok: true, message: "Loaded.", rows: result.rows.length });
       }
     }
-    if (report.length === 0) throw httpError(400, "No data source has a token and an ad account id. Add them in Data Sources.");
+    if (report.length === 0) throw httpError(400, "No Meta data source has a token and an ad account id. Add them in Data Sources.");
+    await hubAudit(orgId, branchId, actorOf(req), "reconciliation_refreshed", { type: "reconciliation" }, { from, to: period.to, accounts: report.length });
     res.json({ report });
   } catch (error: any) { fail(res, error, "Could not read Meta's numbers."); }
 });
 
-// ----------------------------------------------------------------- settings
+// ============================================================= DIAGNOSTICS
 
-const DEFAULT_SETTINGS = {
-  // Bright, 2 Oct 2026: new links default to Browser + CAPI, behind a go-live checklist.
-  defaultStrategy: "browser_capi" as "browser_capi" | "capi_only" | "landing_page",
-  urlParameters: "utm_source={{site_source_name}}&utm_medium=paid&utm_campaign={{campaign.name}}&utm_id={{campaign.id}}&utm_term={{adset.id}}&utm_content={{ad.id}}&campaign_id={{campaign.id}}&adset_id={{adset.id}}&ad_id={{ad.id}}"
-};
-async function loadSettings(orgId: string, branchId: string) {
-  const { data } = await supabase.from("tracking_settings").select("settings").eq("org_id", orgId).eq("branch_id", branchId).maybeSingle();
-  return { ...DEFAULT_SETTINGS, ...((data?.settings ?? {}) as Record<string, unknown>) } as typeof DEFAULT_SETTINGS;
-}
-router.get("/settings", async (req, res) => {
-  try { res.json({ settings: await loadSettings(req.user!.orgId, branchOf(req)) }); } catch (error: any) { fail(res, error, "Could not load the settings."); }
-});
-router.put("/settings", async (req, res) => {
-  const parsed = z.object({
-    defaultStrategy: z.enum(["browser_capi", "capi_only", "landing_page"]), urlParameters: z.string().trim().max(1000)
-  }).safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: "Check the settings." }); return; }
+router.get("/diagnostics", async (req, res) => {
   try {
-    const settings = parsed.data;
-    const { error } = await supabase.from("tracking_settings").upsert({ org_id: req.user!.orgId, branch_id: branchOf(req), settings, updated_by: req.user!.id, updated_at: new Date().toISOString() }, { onConflict: "org_id,branch_id" });
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const period = periodOf(req.query);
+    const flowRange = String(req.query.flow ?? "24h");
+    const websiteId = String(req.query.websiteId ?? "");
+    const flowFrom = flowRange === "7d" ? addDaysToDateKey(period.to, -6) : flowRange === "30d" ? addDaysToDateKey(period.to, -29) : period.from;
+    const loadFrom = flowFrom < period.from ? flowFrom : period.from;
+    const [assessment, orders, journey, { data: audit }] = await Promise.all([
+      assess(orgId, branchId), formOrders(orgId, branchId, loadFrom, period.to), journeyCounts(orgId, branchId, loadFrom, period.to).catch(() => [] as JourneyRow[]),
+      supabase.from("tracking_audit").select("action, subject_label, subject_type, detail, actor_name, created_at").eq("org_id", orgId).eq("branch_id", branchId).order("created_at", { ascending: false }).limit(100)
+    ]);
+    const events = await eventsFor(orgId, orders.map((order) => order.id));
+    const domain = assessment.basics.websites.find((row: any) => row.id === websiteId)?.domain ?? null;
+    const allRows = orders.map((order) => ledgerRow(order, events)).filter((row) => !domain || row.website === domain);
+    const rows = allRows.filter((row) => dayOfIso(row.createdAt) >= period.from);
+    const flowRows = allRows.filter((row) => dayOfIso(row.createdAt) >= flowFrom);
+    const flowJourney = journey.filter((row) => row.day >= flowFrom && (!domain || row.domain === domain));
+    const k = kpisOf(rows);
+    const views = sumVisits(flowJourney, "form_opened");
+    const starts = sumVisits(flowJourney, "first_interaction");
+    const fk = kpisOf(flowRows);
+    const flow = [
+      { key: "landing", label: "Landing Page", value: views, sub: "Page Views", pct: views ? 100 : 0 },
+      { key: "form", label: "Form Submitted", value: starts, sub: "Form Starts", pct: pct(starts, views) },
+      { key: "order", label: "Order Created", value: fk.orders, sub: "Orders", pct: fk.orders ? 100 : 0 },
+      { key: "browser", label: "Browser Pixel", value: fk.browserEvents, sub: "Events Sent", pct: pct(fk.browserEvents, fk.orders) },
+      { key: "capi", label: "CAPI Server", value: fk.serverEvents, sub: "Events Sent", pct: pct(fk.serverEvents, fk.orders) },
+      { key: "meta", label: "Meta Received", value: fk.deduped || fk.purchaseEvents, sub: "Deduplicated", pct: pct(fk.deduped || fk.purchaseEvents, fk.orders) }
+    ];
+    const statusCounts = {
+      deduplicated: rows.filter((row) => row.status === "deduped").length,
+      serverOnly: rows.filter((row) => row.status === "server_only" || row.status === "capi_only").length,
+      browserOnly: rows.filter((row) => row.status === "browser_only").length,
+      failed: rows.filter((row) => row.status === "capi_failed").length,
+      pending: rows.filter((row) => row.status === "sending").length,
+      pagePixel: rows.filter((row) => row.status === "page_pixel").length
+    };
+    const emqSource: any = assessment.sourceRows.find((row: any) => row.emq) ?? null;
+    const sitesWithBrowser = assessment.websiteRows.filter((row: any) => row.lastBrowserEvent || (row.lastScan?.pages ?? []).some((page: any) => page.pixels?.length)).length;
+    const capture = attributionCapture(orders.filter((order) => dayOfIso(order.created_at) >= period.from));
+    const redirects = sumVisits(journey.filter((row) => row.day >= period.from), "redirect_triggered");
+    const linksWithForm = assessment.basics.links.filter((link: any) => link.active !== false).length;
+    const issues = assessment.issues;
+    const pageGroups = new Map<string, { path: string; domain: string; orders: number; issues: number }>();
+    for (const row of rows) {
+      const key = `${row.website ?? "unknown"}|${row.landingPath ?? "/"}`;
+      const entry = pageGroups.get(key) ?? { path: row.landingPath ?? "/", domain: row.website ?? "unknown", orders: 0, issues: 0 };
+      entry.orders += 1;
+      if (row.status === "capi_failed" || row.status === "browser_only" || (row.trackingMode === "hybrid" && !row.browser)) entry.issues += 1;
+      pageGroups.set(key, entry);
+    }
+    for (const site of assessment.websiteRows) {
+      for (const entry of pageGroups.values()) if (entry.domain === site.domain && site.problems.length) entry.issues += site.problems.length;
+    }
+    const duplicates = [
+      ...rows.filter((row) => row.browser && row.serverStatus === "sent" && row.status === "server_only").map((row) => ({ kind: "Different event ids", detail: `Order ${row.orderId}: browser and server used different ids`, orderId: row.orderId as string | null })),
+      ...rows.filter((row) => events.server.get(row.orderId)?.status === "duplicate").map((row) => ({ kind: "Repeat blocked", detail: `Order ${row.orderId}: a second send was blocked`, orderId: row.orderId as string | null })),
+      ...assessment.websiteRows.filter((row: any) => row.duplicatePixel).map((row: any) => ({ kind: "Pixel loaded twice", detail: row.domain as string, orderId: null as string | null }))
+    ];
+    const lostParams = orders.filter((order) => /^(fb|ig|facebook|instagram|meta)$/i.test(String(order.utm_source ?? "")) && !orderAdIds(order).campaignId)
+      .slice(0, 50).map((order) => ({ orderId: order.id, at: order.created_at, utmSource: order.utm_source, referrer: order.referrer }));
+    const dedupItem = assessment.items.find((item) => item.key === "dedup");
+    res.json({
+      period,
+      kpis: {
+        score: assessment.score, ordersTracked: k.purchaseEvents, orders: k.orders, trackedPct: k.purchasePct,
+        browser: k.browserEvents, browserPct: k.browserPct, browserMissing: Math.max(0, k.orders - k.browserEvents),
+        server: k.serverEvents, serverPct: k.serverPct,
+        issues: issues.length, critical: issues.filter((issue) => issue.level === "critical").length, warning: issues.filter((issue) => issue.level === "warning").length, info: issues.filter((issue) => issue.level === "info").length
+      },
+      items: assessment.items,
+      flow,
+      emq: emqSource ? { source: emqSource.name, scores: emqSource.emq } : null,
+      statusCounts, totalEvents: rows.length,
+      issues,
+      quickChecks: [
+        { label: "Meta Dataset Connection", ok: assessment.sourceRows.some((row: any) => row.lastCheckOk), value: assessment.sourceRows.length === 0 ? "No dataset" : assessment.sourceRows.some((row: any) => row.lastCheckOk) ? "Connected" : "Not tested" },
+        { label: "CAPI Access Token", ok: assessment.sourceRows.some((row: any) => row.hasToken && row.lastCheckOk !== false), value: assessment.sourceRows.some((row: any) => row.hasToken) ? (assessment.sourceRows.some((row: any) => row.lastCheckOk === false) ? "Problem" : "Valid") : "Missing" },
+        { label: "Browser Pixel Detection", ok: sitesWithBrowser === assessment.websiteRows.length && sitesWithBrowser > 0, warn: sitesWithBrowser > 0 && sitesWithBrowser < assessment.websiteRows.length, value: `Detected on ${sitesWithBrowser}/${assessment.websiteRows.length} sites` },
+        { label: "Purchase Event Firing", ok: k.purchaseEvents > 0 || k.orders === 0, value: k.orders === 0 ? "No orders yet" : k.purchaseEvents > 0 ? "Working properly" : "Thank-you page only" },
+        { label: "Event Deduplication", ok: dedupItem?.healthy === 1, value: `${k.dedupRate}% match rate` },
+        { label: "Campaign Parameters", ok: capture.orders === 0 || capture.fields.campaign >= 80, value: capture.orders === 0 ? "No ad orders" : capture.fields.campaign >= 80 ? "Capturing correctly" : `Only ${capture.fields.campaign}% carry a campaign id` },
+        { label: "Thank-you Page Redirect", ok: redirects > 0 || k.orders === 0, value: redirects > 0 ? "Working properly" : "No redirects seen" },
+        { label: "Form Integration", ok: linksWithForm > 0 || k.orders > 0, value: linksWithForm > 0 ? `${linksWithForm} forms OK` : "Forms send orders" }
+      ],
+      topPages: Array.from(pageGroups.values()).sort((a, b) => b.issues - a.issues || b.orders - a.orders).slice(0, 20),
+      pixelCapi: assessment.sourceRows,
+      attribution: ATTRIBUTION_FIELDS.map((field) => ({ ...field, pct: capture.fields[field.key] })), attributionOrders: capture.orders,
+      duplicates, lostParams,
+      activity: (audit ?? []).map((row: any) => ({ at: row.created_at, action: row.action, subject: row.subject_label, by: row.actor_name, detail: row.detail })),
+      websites: assessment.basics.websites.map((row: any) => ({ id: row.id, domain: row.domain }))
+    });
+  } catch (error: any) { fail(res, error, "Could not run the diagnostics."); }
+});
+
+/** Validate URL Parameters: does an ad URL carry what Protohub needs? */
+router.post("/diagnostics/validate-url", async (req, res) => {
+  const parsed = z.object({ url: z.string().trim().min(5).max(3000) }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Paste an ad URL." }); return; }
+  try {
+    const url = new URL(parsed.data.url);
+    const params = url.searchParams;
+    const looksMeta = (value: string | null) => Boolean(value && /^\d{10,22}$/.test(value));
+    const placeholder = (value: string | null) => Boolean(value && /\{\{.+\}\}/.test(value));
+    const check = (key: string, label: string, required: boolean, ok?: (value: string | null) => boolean) => {
+      const value = params.get(key);
+      return { key, label, value, required, ok: value ? (ok ? ok(value) || placeholder(value) : true) : !required };
+    };
+    const checks = [
+      check("utm_source", "UTM source", true), check("utm_medium", "UTM medium", false), check("utm_campaign", "UTM campaign", true),
+      check("utm_id", "Campaign ID (utm_id)", true, looksMeta), check("utm_term", "Ad set ID (utm_term)", false, looksMeta), check("utm_content", "Ad ID (utm_content)", false, looksMeta),
+      check("campaign_id", "campaign_id", false, looksMeta), check("adset_id", "adset_id", false, looksMeta), check("ad_id", "ad_id", false, looksMeta),
+      check("ph_link", "Protohub link (ph_link)", false)
+    ];
+    res.json({ host: url.hostname, path: url.pathname, checks, ok: checks.every((item) => item.ok), note: "fbclid is added by Meta itself when someone clicks the ad - it is not in the URL you paste into the ad." });
+  } catch {
+    res.status(400).json({ error: "That is not a full URL (it must start with https://)." });
+  }
+});
+
+// ================================================================= SETTINGS
+
+const SettingsSchema = z.object({
+  enabled: z.boolean(), currency: z.string().trim().max(8), timezone: z.string().trim().max(60),
+  sendBrowser: z.boolean(), sendCapi: z.boolean(), multiPlatform: z.boolean(), logAllEvents: z.boolean(),
+  trackingMode: z.enum(["order_based", "thank_you", "hybrid"]),
+  defaultDataSources: z.record(z.string()).default({}), defaultEventValue: z.literal("order_total").default("order_total"),
+  defaultWebsiteId: z.string().uuid().nullable(), defaultProfileId: z.string().uuid().nullable(),
+  notifications: z.object({ capiFailures: z.boolean(), connection: z.boolean(), duplicatePixel: z.boolean(), lostParameters: z.boolean(), dailySummary: z.boolean() }),
+  urlParameters: z.string().trim().max(1000),
+  lowConversionRate: z.number().min(0).max(100), investigateBelowMatchRate: z.number().min(0).max(100)
+});
+
+router.get("/settings", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const [settings, assessment, { data: owners }, { data: lastSent }] = await Promise.all([
+      loadHubSettings(orgId, branchId), assess(orgId, branchId),
+      supabase.from("users").select("name, email").eq("org_id", orgId).eq("role", "Owner").eq("active", true),
+      supabase.from("meta_capi_events").select("sent_at").eq("org_id", orgId).eq("status", "sent").order("sent_at", { ascending: false }).limit(1)
+    ]);
+    const main: any = assessment.sourceRows.find((row: any) => row.id === settings.defaultDataSources.meta) ?? assessment.sourceRows.find((row: any) => row.isMain && row.platform === "meta") ?? assessment.sourceRows[0] ?? null;
+    res.json({
+      settings,
+      dataSources: assessment.sourceRows.map((row: any) => ({ id: row.id, name: row.name, platform: row.platform, pixelId: row.pixelId, health: row.health, isMain: row.isMain })),
+      websites: assessment.basics.websites.map((row: any) => ({ id: row.id, domain: row.domain })),
+      profiles: assessment.basics.profiles.map(presentProfile),
+      health: [
+        { label: "Meta Connection", ok: Boolean(main?.lastCheckOk), value: main ? (main.lastCheckOk ? "Healthy" : main.lastCheckOk === false ? "Problem" : "Not tested") : "No dataset" },
+        { label: "CAPI Access Token", ok: Boolean(main?.hasToken), value: main?.hasToken ? "Valid" : "Missing" },
+        { label: "Default Pixel Detection", ok: assessment.websiteRows.some((row: any) => row.lastBrowserEvent), value: assessment.websiteRows.some((row: any) => row.lastBrowserEvent) ? "Working" : "Not seen yet" },
+        { label: "Event Deduplication", ok: true, value: "Enabled" },
+        { label: "Campaign Parameter Capture", ok: true, value: "Enabled" }
+      ],
+      defaultSource: main ? { id: main.id, name: main.name, pixelId: main.pixelId, health: main.health } : null,
+      lastSentAt: lastSent?.[0]?.sent_at ?? null,
+      owners: owners ?? []
+    });
+  } catch (error: any) { fail(res, error, "Could not load the settings."); }
+});
+
+router.put("/settings", async (req, res) => {
+  const parsed = SettingsSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Check the settings." }); return; }
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const d = parsed.data;
+    if (d.trackingMode !== "thank_you" && !d.sendBrowser && !d.sendCapi) throw httpError(400, "Send at least one of browser Pixel events or server events (CAPI).");
+    const defaultStrategy = d.trackingMode === "thank_you" ? "landing_page" : d.sendBrowser ? "browser_capi" : "capi_only";
+    const settings: HubSettings = { ...DEFAULT_HUB_SETTINGS, ...d, defaultStrategy };
+    const { error } = await supabase.from("tracking_settings").upsert({ org_id: orgId, branch_id: branchId, settings, updated_by: req.user!.id, updated_at: new Date().toISOString() }, { onConflict: "org_id,branch_id" });
     if (error) throw error;
-    res.json({ settings: { ...DEFAULT_SETTINGS, ...settings } });
+    await hubAudit(orgId, branchId, actorOf(req), "settings_changed", { type: "settings" }, { trackingMode: d.trackingMode, enabled: d.enabled });
+    res.json({ settings });
   } catch (error: any) { fail(res, error, "Could not save the settings."); }
+});
+
+router.get("/audit", async (req, res) => {
+  try {
+    const { data, error } = await supabase.from("tracking_audit").select("action, subject_type, subject_label, detail, actor_name, created_at").eq("org_id", req.user!.orgId).eq("branch_id", branchOf(req)).order("created_at", { ascending: false }).limit(300);
+    if (error) throw error;
+    res.json({ entries: (data ?? []).map((row: any) => ({ at: row.created_at, action: row.action, subjectType: row.subject_type, subject: row.subject_label, by: row.actor_name, detail: row.detail })) });
+  } catch (error: any) { fail(res, error, "Could not load the audit log."); }
 });
 
 export default router;

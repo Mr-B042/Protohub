@@ -1,6 +1,7 @@
 import trackingHubRoutes from "./routes/tracking-hub.js";
 import publicTrackingRoutes from "./routes/public-tracking.js";
 import { runMetaDeliveredEvents } from "./lib/meta-capi-delivered.js";
+import { runTrackingAlerts } from "./lib/tracking-alerts.js";
 import "./lib/load-env.js";
 import express from "express";
 import compression from "compression";
@@ -672,6 +673,17 @@ cron.schedule("*/10 * * * *", async () => {
     await runMetaDeliveredEvents();
   } catch (e) {
     logger.error("cron: meta delivered events crashed", { error: (e as Error).message });
+  }
+});
+
+// ── Tracking Hub alerts — hourly, 08:00-20:00 Lagos ──────
+// One notification per issue per day, only the kinds switched on in
+// Tracking Hub → Settings → Alert & Notifications.
+cron.schedule("7 * * * *", async () => {
+  try {
+    await runTrackingAlerts();
+  } catch (e) {
+    logger.error("cron: tracking alerts crashed", { error: (e as Error).message });
   }
 });
 

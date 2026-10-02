@@ -1,7 +1,7 @@
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { addDaysToDateKey, lagosDateKey } from "./sales-bonus-engine.js";
-import { withDataSource } from "./tracking-credentials.js";
+import { serverEventsAllowed, withDataSource } from "./tracking-credentials.js";
 import { deliveredEventTime, metaIdsFromFormContext, recordMetaCapiEvent, sendMetaCapiDelivered, type MetaTrackingConfig } from "./meta-capi.js";
 
 // The delivered-sale event for Meta (Bright, 1 Oct 2026).
@@ -67,6 +67,7 @@ export async function runMetaDeliveredEvents(): Promise<{ sent: number; skipped:
       const config = (key ? orgConfigs.find((row) => row.tracking_key === key && sameBranch(row)) : undefined)
         ?? orgConfigs.find((row) => row.tracking_key === "__default__" && sameBranch(row));
       if (!config) { skipped += 1; continue; }
+      if (!(await serverEventsAllowed(orgId, order.branch_id, "Delivered"))) { skipped += 1; continue; }
 
       const metaConfig: MetaTrackingConfig = {
         mode: "hybrid", pixelId: config.pixel_id ?? undefined, accessToken: config.access_token ?? undefined,
@@ -93,7 +94,7 @@ export async function runMetaDeliveredEvents(): Promise<{ sent: number; skipped:
       });
       await recordMetaCapiEvent(supabase, {
         orgId, branchId: order.branch_id, orderId: String(order.id), eventName: "Delivered", metaEventName: eventName, eventId,
-        result, testMode: Boolean(config.test_event_code), value, currency
+        result, testMode: Boolean(config.test_event_code), pixelId: config.pixel_id, value, currency
       });
       if (result.status === "sent" || result.status === "dry_run") sent += 1;
     }
