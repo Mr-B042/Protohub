@@ -244,6 +244,9 @@ import RepWeeklyReportPage from "./pages/RepWeeklyReportPage";
 import type { ManagerFundTxn, WeeklyLogMissRow } from "./lib/api";
 import { HeadOfSalesReviewPanel, headOfSalesBonusStatus, useHeadOfSalesReview } from "./components/HeadOfSalesParts";
 import RepScriptsPanel from "./components/RepScriptsPanel";
+import { buildEmbedSnippet } from "./lib/embed-snippet";
+import TrackingHubPage from "./pages/TrackingHubPage";
+import EmbedTrackingChoice from "./components/EmbedTrackingChoice";
 import { MetaCapiSummary, MetaOrderEventsCard } from "./components/MetaCapiParts";
 import SalesScriptingPage, { SalesScriptingOverviewCard } from "./pages/SalesScriptingPage";
 import ScriptUsageReportPage from "./pages/ScriptUsageReportPage";
@@ -308,7 +311,7 @@ type CurrencyCode = "NGN" | "GHS" | "KES" | "ZMW" | "XOF" | "XAF" | "TZS" | "MWK
 // currency no product can be priced in.
 type ProductCurrencyCode = CurrencyCode;
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "addBranch" | "cartAssignmentRules" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addExtraItems" | "addFreeGift" | "salesBonusFullReport" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | "pdaPortalCredentials" | null;
-type ActivePage = "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "Marketing Performance" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers" | "Weekly Reports";
+type ActivePage = "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Tracking Hub" | "Marketing" | "Marketing Performance" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers" | "Weekly Reports";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type PendingSalesExpansionAction =
@@ -2553,7 +2556,8 @@ const userRoles: UserRole[] = ["All Roles", "Admin", "Manager", "Sales Rep", "In
 const editableUserRoles: EditableUserRole[] = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager & Logistics Operations", "Marketer", "Viewer", "Recovery Rep", "Delivery Agent", "Sales Closer"];
 const userStatuses: UserStatus[] = ["All Status", "Active", "Inactive"];
 const roundRobinTabs: RoundRobinTab[] = ["Active Sequence", "Temporarily Excluded", "Dedicated Products"];
-const embedTabs: EmbedTab[] = ["Create Order Form", "Extra Offers", "Generate", "Meta & Ads", "Links & Tracking"];
+// Meta & Ads and Links & Tracking moved to the Tracking Hub (2 Oct 2026).
+const embedTabs: EmbedTab[] = ["Create Order Form", "Extra Offers", "Generate"];
 const embedCodeTabs: EmbedCodeTab[] = ["Direct Link", "HTML/Iframe", "Elementor"];
 const defaultEmbedMetaTrackingSettings: EmbedMetaTrackingSettings = {
   mode: "landing_page",
@@ -2880,7 +2884,7 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
     "Dashboard", "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
-    "Ad Tracking", "Marketing", "Marketing Performance", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp", "Weekly Reports"
+    "Tracking Hub", "Ad Tracking", "Marketing", "Marketing Performance", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp", "Weekly Reports"
   ],
   "Admin": [
     "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
@@ -2995,6 +2999,7 @@ const dashboardHashByPage: Record<ActivePage, string> = {
   Expenses: "#/dashboard/admin/expenses",
   "Finance & Accounting": "#/dashboard/admin/reports",
   "Ad Tracking": "#/dashboard/admin/utm-tracking",
+  "Tracking Hub": "#/dashboard/admin/tracking-hub",
   Marketing: "#/dashboard/admin/marketing",
   "Marketing Performance": "#/dashboard/admin/marketing-performance",
   "Weekly Reports": "#/dashboard/admin/weekly-reports",
@@ -15967,138 +15972,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const buildIframeCode = (product: Product | undefined = generatedProduct) => {
     const url = buildEmbedUrl(product);
     const title = product ? `${product.name} Order Form` : "Protohub Order Form";
-    return `<iframe
-  id="ordo-order-embed"
-  src="${url}"
-  width="100%"
-  height="800"
-  frameborder="0"
-  scrolling="no"
-  style="border: none; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow: hidden;"
-  title="${title}"
-></iframe>
-<script>
-  (function() {
-    var iframe = document.getElementById("ordo-order-embed");
-    if (!iframe) return;
-
-    // Forward ad/UTM params from this page into the iframe so orders
-    // are correctly attributed to Facebook / TikTok / etc. Use set()
-    // instead of appending so the landing page's creative/ad id wins.
-    var trackingKeys = ["utm_source","utm_medium","utm_campaign","utm_content","utm_term","utm_id","ad_id","adset_id","campaign_id","creative_id","fbclid","gclid","gbraid","wbraid","ttclid","msclkid","tracking_mode","meta_pixel_id","meta_tracking_key","meta_test","meta_test_mode","meta_test_event_code","test_event_code"];
-    var pageParams = new URLSearchParams(window.location.search);
-    var src = iframe.getAttribute("src") || iframe.src;
-    var hashIndex = src.indexOf("#");
-    var beforeHash = hashIndex >= 0 ? src.slice(0, hashIndex) : src;
-    var hash = hashIndex >= 0 ? src.slice(hashIndex) : "";
-    var queryIndex = hash.indexOf("?");
-    var hashPath = queryIndex >= 0 ? hash.slice(0, queryIndex) : hash;
-    var embedParams = new URLSearchParams(queryIndex >= 0 ? hash.slice(queryIndex + 1) : "");
-    var changed = false;
-    trackingKeys.forEach(function(k) {
-      var v = pageParams.get(k);
-      if (v) {
-        embedParams.set(k, v);
-        changed = true;
-      }
-    });
-    function readCookie(name) {
-      var specials = "\\\\^$*+?.()|{}[]";
-      var escaped = "";
-      for (var i = 0; i < name.length; i++) {
-        var ch = name.charAt(i);
-        escaped += specials.indexOf(ch) >= 0 ? "\\\\" + ch : ch;
-      }
-      var match = document.cookie.match(new RegExp("(?:^|; )" + escaped + "=([^;]*)"));
-      return match ? decodeURIComponent(match[1]) : "";
-    }
-    var fbp = pageParams.get("_fbp") || pageParams.get("fbp") || readCookie("_fbp");
-    var fbc = pageParams.get("_fbc") || pageParams.get("fbc") || readCookie("_fbc");
-    if (fbp) { embedParams.set("fbp", fbp); changed = true; }
-    if (fbc) { embedParams.set("fbc", fbc); changed = true; }
-    if (changed) iframe.src = beforeHash + hashPath + "?" + embedParams.toString();
-    function truthy(value) {
-      return /^(1|true|yes|on|test|dry_run|dry-run)$/i.test(String(value || "").trim());
-    }
-    var metaTestEventCode = embedParams.get("meta_test_event_code") || embedParams.get("test_event_code") || "";
-    var metaTestMode = truthy(embedParams.get("meta_test")) || truthy(embedParams.get("meta_test_mode")) || !!metaTestEventCode;
-    var metaTrackingMode = String(embedParams.get("tracking_mode") || embedParams.get("trackingMode") || "").toLowerCase().replace(/-/g, "_");
-    var appendMetaEventIdToRedirect = metaTrackingMode === "hybrid";
-
-    // Grow to the form's content so it reads as one natural Elementor section,
-    // rather than showing a second scrollbar inside the frame.
-    var sentMetaEvents = {};
-    var lastPurchaseEventId = "";
-    function requestResize() {
-      try {
-        iframe.contentWindow && iframe.contentWindow.postMessage({ type: "ordo-request-resize" }, "*");
-      } catch (_) {}
-    }
-    iframe.addEventListener("load", function() {
-      requestResize();
-      setTimeout(requestResize, 250);
-      setTimeout(requestResize, 800);
-      setTimeout(requestResize, 1800);
-    });
-    function redirectWithEventId(url) {
-      try {
-        var target = new URL(url, window.location.href);
-        if (target.protocol === "http:" || target.protocol === "https:") {
-          if (appendMetaEventIdToRedirect && lastPurchaseEventId) {
-            target.searchParams.set("ordo_event_id", lastPurchaseEventId);
-          }
-          window.location.href = target.toString();
-        }
-      } catch (_) {}
-    }
-    window.addEventListener("message", function(e) {
-      if (e.data && e.data.type === "ordo-resize") {
-        var nextHeight = Math.max(800, Number(e.data.height || 0) + 40);
-        if (nextHeight) {
-          iframe.setAttribute("height", String(nextHeight));
-          iframe.style.height = nextHeight + "px";
-          iframe.style.minHeight = nextHeight + "px";
-        }
-      }
-      if (e.data && e.data.type === "ordo-meta-event" && e.data.eventName && e.data.eventId) {
-        var metaKey = e.data.eventName + ":" + e.data.eventId;
-        if (sentMetaEvents[metaKey]) {
-          if (window.console && console.warn) console.warn("[Protohub Meta] duplicate browser event blocked", metaKey);
-          return;
-        }
-        sentMetaEvents[metaKey] = true;
-        if (metaTestMode || e.data.testMode) {
-          if (window.console && console.info) {
-            console.info("[Protohub Meta Test] would send browser event", {
-              eventName: e.data.eventName,
-              eventId: e.data.eventId,
-              pixelId: e.data.pixelId || null,
-              testEventCode: e.data.testEventCode || metaTestEventCode || null,
-              customData: e.data.customData || {}
-            });
-          }
-        } else if (typeof window.fbq === "function") {
-          var payload = e.data.customData || {};
-          var options = { eventID: e.data.eventId };
-          if (e.data.pixelId && typeof window.fbq === "function") {
-            window.fbq("trackSingle", e.data.pixelId, e.data.eventName, payload, options);
-          } else {
-            window.fbq("track", e.data.eventName, payload, options);
-          }
-        }
-        if (e.data.eventName === "Purchase") {
-          lastPurchaseEventId = e.data.eventId;
-        }
-      }
-      if (e.data && e.data.type === "ordo-redirect" && e.data.url) {
-        redirectWithEventId(e.data.url);
-      }
-    });
-    setTimeout(requestResize, 400);
-    setTimeout(requestResize, 1200);
-    setTimeout(requestResize, 2500);
-  })();
-</script>`;
+    return buildEmbedSnippet(url, title);
   };
   const marketingVariantsForProduct = (productId: string) =>
     marketingLinkVariants
@@ -27983,6 +27857,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       "finance-accounting": "Finance & Accounting",
       "finance-and-accounting": "Finance & Accounting",
       "utm-tracking": "Ad Tracking",
+      "tracking-hub": "Tracking Hub",
       "ad-tracking": "Ad Tracking",
       marketing: "Marketing",
       "marketing-performance": "Marketing Performance",
@@ -31553,6 +31428,184 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, managerDashboardTab, upsellPerfWindow.start, upsellPerfWindow.end, upsellPerfReload, currentRole]);
+
+  // Org-wide Meta defaults (auto-submit fallback, delivered-sale event, TikTok).
+  // Moved from Embed Form to Tracking Hub → Settings (2 Oct 2026); same JSX.
+  const renderMetaAdsSettings = () => (() => {
+                // Inline the meta panel - same JSX as before but now shown in the embed form
+                const defConfig = metaCapiConfigs.find(c => c.trackingKey === "__default__");
+                return (
+                  <div className="space-y-4 max-w-3xl">
+                    <div>
+                      <h2 className="text-base font-bold text-gray-800">Default Meta setup (auto-submits &amp; delivered sales)</h2>
+                      <p className="text-sm text-gray-500 mt-1">The organisation-wide default: used for server auto-submits (customers who leave before pressing submit) when their link has no data source, and for the delivered-sale event. Live form orders follow their Tracking Link.</p>
+                    </div>
+                    <MetaCapiSummary />
+                    <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                      <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-gray-50/50">
+                        <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-100 text-blue-600"><BarChart3 className="h-4 w-4" /></span>
+                        <div>
+                          <p className="m-0 text-sm font-black text-gray-900">Default CAPI configuration</p>
+                          <p className="m-0 text-xs text-gray-500">Fallback for server-side auto-submits when no tracking key is on the cart</p>
+                        </div>
+                        {metaDefaultSaved && <span className="ml-auto shrink-0 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-black text-emerald-700">✓ Saved</span>}
+                      </div>
+                      <div className="px-5 py-5 space-y-4">
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <div>
+                            <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">Meta Pixel ID</p>
+                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="e.g. 2171263370039172" value={metaDefaultDraft.pixelId} onChange={e=>setMetaDefaultDraft(d=>({...d,pixelId:e.target.value.trim()}))} />
+                          </div>
+                          <div>
+                            <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">Thank-you page URL (redirect after order)</p>
+                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="https://yoursite.com/thank-you" value={metaDefaultDraft.thankYouUrl} onChange={e=>setMetaDefaultDraft(d=>({...d,thankYouUrl:e.target.value.trim()}))} />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">Conversions API access token</p>
+                            <input type="password" autoComplete="off" className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200"
+                              placeholder={defConfig?.hasAccessToken ? "Token saved - paste new token to update" : "Paste from Meta Events Manager → your Pixel → Conversions API"}
+                              value={metaDefaultDraft.accessToken} onChange={e=>setMetaDefaultDraft(d=>({...d,accessToken:e.target.value}))} />
+                          </div>
+                          <div>
+                            <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">Test event code <span className="font-normal normal-case">(remove after testing)</span></p>
+                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="TEST12345" value={metaDefaultDraft.testEventCode} onChange={e=>setMetaDefaultDraft(d=>({...d,testEventCode:e.target.value.trim()}))} />
+                          </div>
+                          <div className="flex items-end">
+                            <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 w-full">
+                              <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 shrink-0"/>
+                              <p className="m-0 text-xs font-black text-emerald-800">CAPI fallback - fires only when the customer leaves</p>
+                            </div>
+                          </div>
+                        </div>
+                        {/* TikTok Events API */}
+                        <div className="rounded-xl border border-gray-200 bg-gray-50/40 px-4 py-3.5 space-y-3">
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-black text-white text-[10px] font-black">TT</span>
+                            <p className="m-0 text-[11px] font-black uppercase tracking-wider text-gray-600">TikTok Events API <span className="font-normal normal-case text-gray-400">- for TikTok ad orders</span></p>
+                          </div>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <div>
+                              <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">TikTok Pixel ID</p>
+                              <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-gray-300" placeholder="e.g. CABCDEF01ABC..." value={metaDefaultDraft.tiktokPixelId} onChange={e=>setMetaDefaultDraft(d=>({...d,tiktokPixelId:e.target.value.trim()}))} />
+                            </div>
+                            <div>
+                              <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">TikTok Events API access token</p>
+                              <input type="password" autoComplete="off" className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-gray-300" placeholder={(metaCapiConfigs.find(c=>c.trackingKey==="__default__") as any)?.hasTiktokAccessToken?"Token saved - paste to replace":"Paste from TikTok Events Manager"} value={metaDefaultDraft.tiktokAccessToken} onChange={e=>setMetaDefaultDraft(d=>({...d,tiktokAccessToken:e.target.value}))} />
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button type="button" className="!min-h-0 rounded-xl border border-gray-200 bg-white px-4 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                              disabled={metaDefaultTtTesting||!metaDefaultDraft.tiktokPixelId}
+                              onClick={async()=>{
+                                setMetaDefaultTtTesting(true); setMetaDefaultTtTestResult(null);
+                                try { const r=await metaCapiSettingsApi.testTiktok({trackingKey:"__default__",pixelId:metaDefaultDraft.tiktokPixelId,accessToken:metaDefaultDraft.tiktokAccessToken||undefined}); setMetaDefaultTtTestResult({ok:r.ok,message:r.message}); showToast(r.ok?"✓ TikTok connection working.":`✗ ${r.message}`); }
+                                catch(e:any){ setMetaDefaultTtTestResult({ok:false,message:e?.message??"Test failed."}); }
+                                finally{ setMetaDefaultTtTesting(false); }
+                              }}>{metaDefaultTtTesting?"Testing…":"Test TikTok connection"}</button>
+                            {metaDefaultTtTestResult && <span className={`text-xs font-bold ${metaDefaultTtTestResult.ok?"text-emerald-700":"text-rose-700"}`}>{metaDefaultTtTestResult.ok?"✓ Working":`⚠ ${metaDefaultTtTestResult.message}`}</span>}
+                          </div>
+                          <p className="m-0 text-[10px] text-gray-400">Fires <strong>CompletePayment</strong> with the TikTok click ID (ttclid) when a TikTok customer leaves and the server auto-submits - same no-double-count rule as Meta (present customers use the landing-page TikTok pixel).</p>
+                        </div>
+                        {/* In-form idle auto-submit toggle (client-side countdown) */}
+                        <div className="rounded-xl border border-gray-200 bg-gray-50/60 px-4 py-3.5 flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="m-0 text-[11px] font-black uppercase tracking-wider text-gray-500">In-form idle auto-submit</p>
+                            <p className="m-0 mt-0.5 text-[11px] text-gray-400">The 45–70s countdown inside the form - submits when a present customer fills everything then goes idle. Turn off to only submit on tap / server-side.</p>
+                          </div>
+                          <button type="button" role="switch" aria-checked={clientIdleAutosubmitEnabled} className="!min-h-0 p-0 shrink-0"
+                            onClick={()=>{ const next=!clientIdleAutosubmitEnabled; setClientIdleAutosubmitEnabled(next); void embedSettingsApi.patch({client_idle_autosubmit_enabled:next}); showToast(next?"In-form idle auto-submit ON":"In-form idle auto-submit OFF"); }}>
+                            <span className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${clientIdleAutosubmitEnabled?"bg-[#1F8FE0]":"bg-gray-300"}`}>
+                              <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${clientIdleAutosubmitEnabled?"translate-x-6":"translate-x-1"}`}/>
+                            </span>
+                          </button>
+                        </div>
+                        {/* Server-side auto-submit mode */}
+                        <div className="rounded-xl border border-gray-200 bg-gray-50/60 px-4 py-3.5">
+                          <p className="m-0 mb-0.5 text-[11px] font-black uppercase tracking-wider text-gray-500">Server-side auto-submit mode</p>
+                          <p className="m-0 mb-3 text-[11px] text-gray-400">What the backend cron does every 2 min when it finds a 6/6 complete idle cart. The client-side countdown in the form is unaffected.</p>
+                          <div className="flex gap-2">
+                            {([
+                              { key: "full",  label: "Full",  desc: "Create order + WhatsApp + CAPI" },
+                              { key: "cart",  label: "Flag only", desc: "Mark 'In progress' - team follows up, no order created" },
+                              { key: "off",   label: "Off",   desc: "Server cron disabled" }
+                            ] as const).map(opt => (
+                              <button key={opt.key} type="button"
+                                className={`!min-h-0 flex-1 rounded-xl border px-3 py-2.5 text-left transition-all ${autoSubmitMode===opt.key?"border-blue-400 bg-blue-500 text-white shadow-sm":"border-gray-200 bg-white text-gray-600 hover:border-gray-300"}`}
+                                onClick={()=>{ setAutoSubmitMode(opt.key); void embedSettingsApi.patch({auto_submit_mode:opt.key}); }}>
+                                <p className="m-0 text-xs font-black">{opt.label}</p>
+                                <p className={`m-0 mt-0.5 text-[10px] leading-tight ${autoSubmitMode===opt.key?"text-blue-100":"text-gray-400"}`}>{opt.desc}</p>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        {/* Delivered-sale event (1 Oct 2026): Purchase counts every
+                            submitted order; this tells Meta which ones paid. */}
+                        <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 px-4 py-3.5">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="m-0 text-[11px] font-black uppercase tracking-wider text-emerald-800">Send a delivered-sale event</p>
+                              <p className="m-0 mt-1 text-[11px] text-gray-600">When an order from a Protohub form is marked Delivered, send Meta one extra event with the amount collected (within Meta's 7-day limit). Lets you optimise ads on customers who actually pay, not everyone who submits. Purchase is not changed. Save to apply.</p>
+                            </div>
+                            <button type="button" aria-label="Send a delivered-sale event"
+                              className={`!min-h-0 relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${metaDefaultDraft.sendDeliveredEvent ? "bg-emerald-500" : "bg-gray-300"}`}
+                              onClick={()=>setMetaDefaultDraft(d=>({...d,sendDeliveredEvent:!d.sendDeliveredEvent}))}>
+                              <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${metaDefaultDraft.sendDeliveredEvent?"translate-x-6":"translate-x-1"}`}/>
+                            </button>
+                          </div>
+                          {metaDefaultDraft.sendDeliveredEvent ? (
+                            <label className="mt-3 block">
+                              <span className="text-[11px] font-black uppercase tracking-wider text-gray-500">Event name in Meta</span>
+                              <input className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-200" value={metaDefaultDraft.deliveredEventName}
+                                onChange={e=>setMetaDefaultDraft(d=>({...d,deliveredEventName:e.target.value.replace(/[^A-Za-z0-9_]/g,"")}))} placeholder="OrderDelivered" />
+                              <span className="mt-1 block text-[11px] text-gray-500">In Meta Events Manager, make a custom conversion from this event to optimise or report on it.</span>
+                            </label>
+                          ) : null}
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <button type="button" className="!min-h-0 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-black text-white hover:bg-blue-700 disabled:opacity-50"
+                            disabled={metaDefaultSaving||!metaDefaultDraft.pixelId}
+                            onClick={async()=>{
+                              if(!metaDefaultDraft.pixelId){showToast("Enter your Pixel ID first.");return;}
+                              setMetaDefaultSaving(true);
+                              try {
+                                await metaCapiSettingsApi.save({trackingKey:"__default__",label:"Default (org-wide)",mode:"hybrid",pixelId:metaDefaultDraft.pixelId,accessToken:metaDefaultDraft.accessToken||undefined,sendDeliveredEvent:metaDefaultDraft.sendDeliveredEvent,deliveredEventName:(metaDefaultDraft.deliveredEventName||"OrderDelivered").trim(),tiktokPixelId:metaDefaultDraft.tiktokPixelId||undefined,tiktokAccessToken:metaDefaultDraft.tiktokAccessToken||undefined,active:true});
+                                setMetaDefaultSaved(true);setMetaDefaultDraft(d=>({...d,accessToken:""}));showToast("✓ Saved.");setTimeout(()=>setMetaDefaultSaved(false),4000);
+                              } catch(e:any){showToast(e?.message??"Could not save.");}
+                              finally{setMetaDefaultSaving(false);}
+                            }}>{metaDefaultSaving?"Saving…":"Save configuration"}</button>
+                          <button type="button" className="!min-h-0 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                            disabled={metaDefaultTesting||!metaDefaultDraft.pixelId}
+                            onClick={async()=>{
+                              setMetaDefaultTesting(true); setMetaDefaultTestResult(null);
+                              try {
+                                const r = await metaCapiSettingsApi.test({ trackingKey:"__default__", pixelId:metaDefaultDraft.pixelId, accessToken:metaDefaultDraft.accessToken||undefined, testEventCode:metaDefaultDraft.testEventCode||undefined });
+                                setMetaDefaultTestResult({ ok:r.ok, message:r.message });
+                                showToast(r.ok ? "✓ CAPI connection working." : `✗ ${r.message}`);
+                              } catch(e:any){ setMetaDefaultTestResult({ ok:false, message:e?.message??"Test failed." }); showToast(e?.message??"Test failed."); }
+                              finally{ setMetaDefaultTesting(false); }
+                            }}>{metaDefaultTesting?"Testing…":"Test connection"}</button>
+                        </div>
+                        {metaDefaultTestResult && (
+                          <div className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 ${metaDefaultTestResult.ok ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>
+                            <span className="shrink-0 text-sm">{metaDefaultTestResult.ok ? "✅" : "⚠️"}</span>
+                            <p className={`m-0 text-xs font-bold ${metaDefaultTestResult.ok ? "text-emerald-800" : "text-rose-800"}`}>
+                              {metaDefaultTestResult.ok ? "Working - Meta accepted the test event. Your Pixel ID + token are valid." : `Not working: ${metaDefaultTestResult.message}`}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
+                      <p className="m-0 text-xs font-black text-blue-800">One Purchase per order - never double-counted</p>
+                      <ul className="m-0 mt-1.5 space-y-1 pl-4 list-disc">
+                        <li className="text-xs text-blue-700"><strong>Customer present</strong> (taps Order Now <em>or</em> idle countdown): redirect to thank-you URL → <strong>landing-page pixel fires only</strong>. CAPI stays off.</li>
+                        <li className="text-xs text-blue-700"><strong>Customer left</strong> (server auto-submit): no browser, so no pixel → <strong>CAPI fires only</strong>.</li>
+                        <li className="text-xs text-blue-700">Each path fires exactly one signal, so your Purchase count stays accurate.</li>
+                      </ul>
+                    </div>
+                  </div>
+                );
+  })();
 
   const renderWeeklyReportsArea = (context: "sidebar" | "dashboard") => {
     // Weekly Report approvals (Bright's three designs, 1 Oct 2026).
@@ -37120,6 +37173,7 @@ ${waybillLineItems(w).length > 1
       Expenses: "#/dashboard/admin/expenses",
       "Finance & Accounting": "#/dashboard/admin/reports",
       "Ad Tracking": "#/dashboard/admin/utm-tracking",
+      "Tracking Hub": "#/dashboard/admin/tracking-hub",
       Marketing: "#/dashboard/admin/marketing",
   "Marketing Performance": "#/dashboard/admin/marketing-performance",
   "Weekly Reports": "#/dashboard/admin/weekly-reports",
@@ -37208,7 +37262,7 @@ ${waybillLineItems(w).length > 1
       return;
     }
 
-    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory & Logistics Operations" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Head of Sales Rep" || label === "Sales Closers" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Marketing" || label === "Marketing Performance" || label === "Weekly Reports" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp") {
+    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory & Logistics Operations" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Head of Sales Rep" || label === "Sales Closers" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Tracking Hub" || label === "Marketing" || label === "Marketing Performance" || label === "Weekly Reports" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp") {
       if (label === "Inventory & Logistics Operations") {
         setInventoryOperationsSection("dashboard");
       }
@@ -75204,6 +75258,8 @@ ${waybillLineItems(w).length > 1
                   ? "Operations"
                   : targetPage === "Expenses"
                     ? "Finance"
+                    : targetPage === "Tracking Hub"
+                      ? "Tracking & Marketing"
                     : targetPage === "Call Rep Console"
                       ? "Administration"
                       : null;
@@ -90267,6 +90323,12 @@ ${waybillLineItems(w).length > 1
             </div>
           ) : activePage === "Weekly Reports" ? (
             renderWeeklyReportsArea("sidebar")
+          ) : activePage === "Tracking Hub" ? (
+            // Tracking Hub (2 Oct 2026): Owner only - it holds the Meta tokens.
+            // Gated on currentRole so "view as" a staff member lands on a note.
+            currentRole === "Owner"
+              ? <TrackingHubPage onToast={showToast} renderMetaDefaults={renderMetaAdsSettings} />
+              : <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center text-sm text-gray-500">The Tracking Hub is for the Owner.</section>
           ) : activePage === "Marketing Performance" ? (
             // ⚠️ OWNER ONLY WHILE THIS IS STILL BEING BUILT.
             // Bright's call: "Marketing Performance is a future module."
@@ -93995,126 +94057,12 @@ ${waybillLineItems(w).length > 1
                                     <span className="text-xs text-gray-400">After a successful order, send the customer to this page. Leave empty to show the built-in success screen.</span>
                                   </label>
                                   {!isMarketerEmbedMode && (
-                                    <section className="rounded-xl border border-slate-200 bg-slate-50/80 p-4 space-y-3">
-                                      <div className="flex flex-wrap items-start justify-between gap-3">
-                                        <div>
-                                          <p className="m-0 flex items-center gap-2 text-sm font-bold text-slate-900"><ShieldCheck className="h-4 w-4 text-[#1F8FE0]" /> Meta Pixel / CAPI setup</p>
-                                          <p className="m-0 mt-1 text-xs text-slate-500">Optional. Controls what this generated link tells Protohub to do for Meta tracking.</p>
-                                        </div>
-                                        <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${metaTracking.testMode || metaTracking.testEventCode.trim() ? "bg-amber-100 text-amber-800" : "bg-white text-slate-500 border border-slate-200"}`}>
-                                          {metaTracking.testEventCode.trim() ? "Test code set" : metaTracking.testMode ? "Test mode ON" : "Live mode"}
-                                        </span>
-                                      </div>
-                                      <label className="flex flex-col gap-1">
-                                        <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Tracking mode</span>
-                                        <select
-                                          className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 w-full"
-                                          value={metaTracking.mode}
-                                          onChange={(e) => updateProductEmbedMetaTracking(product.id, { mode: e.target.value as EmbedMetaTrackingMode })}
-	                                        >
-	                                          {embedMetaTrackingModeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-	                                        </select>
-	                                        <span className="text-xs text-slate-500">{selectedMetaMode.hint}</span>
-	                                        {usesLandingPageMetaTracking && (
-	                                          <span className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">
-	                                            Protohub will not send Purchase in this mode. Your thank-you page Pixel or WordPress CAPI must fire Purchase, and the redirect URL stays exact for Meta URL rules.
-	                                          </span>
-	                                        )}
-	                                      </label>
-                                      {canManageMetaCapiSettings && (
-                                        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-                                          <label className="flex min-w-0 flex-col gap-1">
-                                            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Saved product CAPI setup</span>
-                                            <select
-                                              className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-slate-100 disabled:text-slate-400"
-                                              value={selectedMetaCapiConfigId}
-                                              onChange={(e) => applyMetaCapiConfigToProduct(product.id, e.target.value)}
-                                              disabled={metaCapiConfigsLoading || metaCapiConfigs.length === 0}
-                                            >
-                                              <option value="">{metaCapiConfigsLoading ? "Loading saved configs..." : "Manual / unsaved setup"}</option>
-                                              {metaCapiConfigs.map((config) => (
-                                                <option key={config.id} value={config.id}>{config.label} · {config.pixelId}</option>
-                                              ))}
-                                            </select>
-                                          </label>
-                                          <label className="flex min-w-0 flex-col gap-1">
-                                            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">CAPI access token</span>
-                                            <input
-                                              type="password"
-                                              autoComplete="off"
-                                              className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
-                                              value={metaCapiTokenDraft}
-                                              onChange={(e) => updateMetaCapiAccessTokenDraft(product.id, e.target.value)}
-                                              placeholder={currentMetaCapiConfig?.hasAccessToken ? "Saved token on file" : "Paste token once"}
-                                              disabled={!usesProtohubMetaTracking}
-                                            />
-                                          </label>
-                                          <div className="flex items-end">
-                                            <button
-                                              type="button"
-                                              className="w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 lg:w-auto"
-                                              onClick={() => { void saveMetaCapiConfigForProduct(product); }}
-                                              disabled={metaCapiSaving || !usesProtohubMetaTracking}
-                                            >
-                                              {metaCapiSaving ? "Saving..." : currentMetaCapiConfig?.hasAccessToken ? "Update CAPI Setup" : "Save CAPI Setup"}
-                                            </button>
-                                          </div>
-                                          <p className="m-0 text-xs text-slate-500 lg:col-span-3">The token is saved on the backend only. The generated embed link uses the tracking key, not the token.</p>
-                                        </div>
-                                      )}
-                                      <div className="grid gap-3 md:grid-cols-2">
-                                        <label className="flex flex-col gap-1">
-                                          <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Meta Pixel ID <span className="font-normal normal-case text-slate-400">(optional)</span></span>
-                                          <input
-                                            className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
-                                            value={metaTracking.pixelId}
-                                            onChange={(e) => updateProductEmbedMetaTracking(product.id, { pixelId: e.target.value })}
-                                            placeholder="e.g. 1264176945876165"
-                                            disabled={!usesProtohubMetaTracking}
-                                          />
-                                        </label>
-                                        <label className="flex flex-col gap-1">
-                                          <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Server tracking key <span className="font-normal normal-case text-slate-400">(optional)</span></span>
-                                          <input
-                                            className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
-                                            value={metaTracking.trackingKey}
-                                            onChange={(e) => updateProductEmbedMetaTracking(product.id, { trackingKey: e.target.value })}
-                                            placeholder="e.g. edge_brusher_default"
-                                            disabled={!usesProtohubMetaTracking}
-                                          />
-                                        </label>
-                                      </div>
-                                      <label className={`flex items-start gap-3 rounded-lg border px-3 py-2 ${usesProtohubMetaTracking ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white"}`}>
-                                        <input
-                                          type="checkbox"
-                                          className="mt-1 h-4 w-4 rounded border-amber-300 text-[#1F8FE0] focus:ring-[#1F8FE0] disabled:cursor-not-allowed disabled:opacity-50"
-                                          checked={metaTracking.testMode}
-                                          onChange={(e) => updateProductEmbedMetaTracking(product.id, { testMode: e.target.checked })}
-                                          disabled={!usesProtohubMetaTracking}
-                                        />
-                                        <span>
-                                          <span className={`block text-sm font-bold ${usesProtohubMetaTracking ? "text-amber-900" : "text-slate-600"}`}>Add test mode to this link</span>
-                                          <span className={`block text-xs ${usesProtohubMetaTracking ? "text-amber-800" : "text-slate-500"}`}>{usesProtohubMetaTracking ? <>Adds <code className="rounded bg-white/70 px-1">meta_test=1</code>. Without a TEST code, browser events log locally and backend CAPI stays dry-run.</> : "Switch to Protohub app tracking or Hybrid to test Protohub-fired events."}</span>
-                                        </span>
-                                      </label>
-                                      <label className="flex flex-col gap-1">
-                                        <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Meta test event code <span className="font-normal normal-case text-slate-400">(optional)</span></span>
-                                        <input
-                                          className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
-                                          value={metaTracking.testEventCode}
-                                          onChange={(e) => updateProductEmbedMetaTracking(product.id, { testEventCode: e.target.value })}
-                                          placeholder="e.g. TEST65434"
-                                          disabled={!usesProtohubMetaTracking}
-                                        />
-                                        <span className="text-xs text-slate-500">Paste the code from Meta Events Manager to send CAPI Purchase into Test Events.</span>
-                                      </label>
-                                      <div className="grid gap-2 text-[11px] font-semibold text-slate-500 sm:grid-cols-2">
-                                        <span className="rounded-lg bg-white px-3 py-2 border border-slate-200">Browser duplicate protection: on</span>
-                                        <span className="rounded-lg bg-white px-3 py-2 border border-slate-200">Backend CAPI duplicate protection: on</span>
-                                        <span className="rounded-lg bg-white px-3 py-2 border border-slate-200">Event ID shared for dedupe</span>
-                                        <span className="rounded-lg bg-white px-3 py-2 border border-slate-200">CAPI token stays server-side</span>
-                                      </div>
-                                    </section>
+                                    // Tracking moved to the Tracking Hub (2 Oct 2026): pick the product's link, no Pixel IDs or tokens here.
+                                    <EmbedTrackingChoice productId={product.id} currentKey={metaTracking.trackingKey} canManage={currentRole === "Owner"}
+                                      onOpenHub={() => handleNavClick("Tracking Hub")}
+                                      onApply={(link) => updateProductEmbedMetaTracking(product.id, link
+                                        ? { mode: link.strategy === "browser_capi" ? "hybrid" : link.strategy === "capi_only" ? "protohub" : "landing_page", pixelId: link.pixelId ?? "", trackingKey: link.trackingKey, testEventCode: link.testEventCode ?? "", testMode: Boolean(link.testEventCode) }
+                                        : { mode: "landing_page", pixelId: "", trackingKey: "", testEventCode: "", testMode: false })} />
                                   )}
                                   <label className="flex flex-col gap-1">
                                     <span className="text-sm font-semibold text-gray-700">Select Currency</span>
@@ -94220,104 +94168,12 @@ ${waybillLineItems(w).length > 1
                                     <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled={productSyncing} onClick={() => { void generateEmbedUrl(product); }}><RefreshCw className="w-3 h-3" /> {productSyncing ? "Verifying..." : "Refresh"}</button>
                                   </div>
                                   {!isMarketerEmbedMode && (
-                                    <details className="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
-                                      <summary className="cursor-pointer text-sm font-bold text-slate-800">Meta Pixel / CAPI setup: {selectedMetaMode.label}{metaTracking.testMode || metaTracking.testEventCode.trim() ? " · test" : ""}</summary>
-                                      {canManageMetaCapiSettings && (
-                                        <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-                                          <label className="flex min-w-0 flex-col gap-1">
-                                            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Saved product CAPI setup</span>
-                                            <select
-                                              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-slate-100 disabled:text-slate-400"
-                                              value={selectedMetaCapiConfigId}
-                                              onChange={(e) => applyMetaCapiConfigToProduct(product.id, e.target.value)}
-                                              disabled={metaCapiConfigsLoading || metaCapiConfigs.length === 0}
-                                            >
-                                              <option value="">{metaCapiConfigsLoading ? "Loading saved configs..." : "Manual / unsaved setup"}</option>
-                                              {metaCapiConfigs.map((config) => (
-                                                <option key={config.id} value={config.id}>{config.label} · {config.pixelId}</option>
-                                              ))}
-                                            </select>
-                                          </label>
-                                          <label className="flex min-w-0 flex-col gap-1">
-                                            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">CAPI access token</span>
-                                            <input
-                                              type="password"
-                                              autoComplete="off"
-                                              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
-                                              value={metaCapiTokenDraft}
-                                              onChange={(e) => updateMetaCapiAccessTokenDraft(product.id, e.target.value)}
-                                              placeholder={currentMetaCapiConfig?.hasAccessToken ? "Saved token on file" : "Paste token once"}
-                                              disabled={!usesProtohubMetaTracking}
-                                            />
-                                          </label>
-                                          <div className="flex items-end">
-                                            <button
-                                              type="button"
-                                              className="w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 lg:w-auto"
-                                              onClick={() => { void saveMetaCapiConfigForProduct(product); }}
-                                              disabled={metaCapiSaving || !usesProtohubMetaTracking}
-                                            >
-                                              {metaCapiSaving ? "Saving..." : currentMetaCapiConfig?.hasAccessToken ? "Update CAPI Setup" : "Save CAPI Setup"}
-                                            </button>
-                                          </div>
-                                          <p className="m-0 text-xs text-slate-500 lg:col-span-3">Saved tokens stay backend-only. Refresh after changes so the copied link includes the tracking key.</p>
-                                        </div>
-                                      )}
-                                      <div className="mt-3 grid gap-3 md:grid-cols-2">
-                                        <label className="flex flex-col gap-1">
-                                          <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Tracking mode</span>
-                                          <select
-                                            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                                            value={metaTracking.mode}
-                                            onChange={(e) => updateProductEmbedMetaTracking(product.id, { mode: e.target.value as EmbedMetaTrackingMode })}
-	                                          >
-	                                            {embedMetaTrackingModeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-	                                          </select>
-	                                          <span className="text-xs text-slate-500">{selectedMetaMode.hint}</span>
-	                                          {usesLandingPageMetaTracking && (
-	                                            <span className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">
-	                                              Protohub will not send Purchase here. The thank-you page must fire Purchase, and the redirect URL stays exact for strict Meta URL rules.
-	                                            </span>
-	                                          )}
-	                                        </label>
-                                        <label className="flex flex-col gap-1">
-                                          <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Meta Pixel ID</span>
-                                          <input
-                                            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
-                                            value={metaTracking.pixelId}
-                                            onChange={(e) => updateProductEmbedMetaTracking(product.id, { pixelId: e.target.value })}
-                                            placeholder="1264176945876165"
-                                            disabled={!usesProtohubMetaTracking}
-                                          />
-                                        </label>
-                                        <label className="flex flex-col gap-1">
-                                          <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Server tracking key</span>
-                                          <input
-                                            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
-                                            value={metaTracking.trackingKey}
-                                            onChange={(e) => updateProductEmbedMetaTracking(product.id, { trackingKey: e.target.value })}
-                                            placeholder="edge_brusher_default"
-                                            disabled={!usesProtohubMetaTracking}
-                                          />
-                                        </label>
-                                        <label className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-bold ${usesProtohubMetaTracking ? "border-amber-200 bg-amber-50 text-amber-900" : "border-slate-200 bg-white text-slate-500"}`}>
-                                          <input type="checkbox" className="h-4 w-4 rounded border-amber-300 text-[#1F8FE0] focus:ring-[#1F8FE0] disabled:cursor-not-allowed disabled:opacity-50" checked={metaTracking.testMode} onChange={(e) => updateProductEmbedMetaTracking(product.id, { testMode: e.target.checked })} disabled={!usesProtohubMetaTracking} />
-                                          Add <code className="rounded bg-white/70 px-1">meta_test=1</code>
-                                        </label>
-                                        <label className="flex flex-col gap-1 md:col-span-2">
-                                          <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Meta test event code</span>
-                                          <input
-                                            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
-                                            value={metaTracking.testEventCode}
-                                            onChange={(e) => updateProductEmbedMetaTracking(product.id, { testEventCode: e.target.value })}
-                                            placeholder="TEST65434"
-                                            disabled={!usesProtohubMetaTracking}
-                                          />
-                                          <span className="text-xs text-slate-500">A TEST code keeps backend CAPI visible in Meta Test Events; no code means dry-run only.</span>
-                                        </label>
-                                      </div>
-                                      <p className="m-0 mt-3 text-xs text-slate-500">Change anything here, then click Refresh above or copy the updated code. Backend CAPI uses the owner-saved config for this tracking key.</p>
-                                    </details>
+                                    // Tracking moved to the Tracking Hub (2 Oct 2026): pick the product's link, no Pixel IDs or tokens here.
+                                    <EmbedTrackingChoice productId={product.id} currentKey={metaTracking.trackingKey} canManage={currentRole === "Owner"}
+                                      onOpenHub={() => handleNavClick("Tracking Hub")}
+                                      onApply={(link) => updateProductEmbedMetaTracking(product.id, link
+                                        ? { mode: link.strategy === "browser_capi" ? "hybrid" : link.strategy === "capi_only" ? "protohub" : "landing_page", pixelId: link.pixelId ?? "", trackingKey: link.trackingKey, testEventCode: link.testEventCode ?? "", testMode: Boolean(link.testEventCode) }
+                                        : { mode: "landing_page", pixelId: "", trackingKey: "", testEventCode: "", testMode: false })} />
                                   )}
                                   {isMarketerEmbedMode && (
                                     <div className="space-y-3 pt-3 border-t border-gray-100">
@@ -94374,427 +94230,6 @@ ${waybillLineItems(w).length > 1
                 </div>
               )}
 
-              {/* ── Meta & Ads tab ── */}
-              {embedTab === "Meta & Ads" && currentRole === "Owner" && (() => {
-                // Inline the meta panel - same JSX as before but now shown in the embed form
-                const defConfig = metaCapiConfigs.find(c => c.trackingKey === "__default__");
-                return (
-                  <div className="space-y-4 max-w-3xl">
-                    <div>
-                      <h2 className="text-base font-bold text-gray-800">Meta Pixel & Conversions API</h2>
-                      <p className="text-sm text-gray-500 mt-1">Set up once. Live customers fire the landing-page pixel only; this CAPI is the fallback used <strong>only when the customer leaves</strong> (server-side auto-submit, no browser/pixel). Exactly one Purchase event per order - never double-counted.</p>
-                    </div>
-                    <MetaCapiSummary />
-                    <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-                      <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-gray-50/50">
-                        <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-100 text-blue-600"><BarChart3 className="h-4 w-4" /></span>
-                        <div>
-                          <p className="m-0 text-sm font-black text-gray-900">Default CAPI configuration</p>
-                          <p className="m-0 text-xs text-gray-500">Fallback for server-side auto-submits when no tracking key is on the cart</p>
-                        </div>
-                        {metaDefaultSaved && <span className="ml-auto shrink-0 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-black text-emerald-700">✓ Saved</span>}
-                      </div>
-                      <div className="px-5 py-5 space-y-4">
-                        <div className="grid gap-4 sm:grid-cols-2">
-                          <div>
-                            <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">Meta Pixel ID</p>
-                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="e.g. 2171263370039172" value={metaDefaultDraft.pixelId} onChange={e=>setMetaDefaultDraft(d=>({...d,pixelId:e.target.value.trim()}))} />
-                          </div>
-                          <div>
-                            <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">Thank-you page URL (redirect after order)</p>
-                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="https://yoursite.com/thank-you" value={metaDefaultDraft.thankYouUrl} onChange={e=>setMetaDefaultDraft(d=>({...d,thankYouUrl:e.target.value.trim()}))} />
-                          </div>
-                          <div className="sm:col-span-2">
-                            <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">Conversions API access token</p>
-                            <input type="password" autoComplete="off" className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200"
-                              placeholder={defConfig?.hasAccessToken ? "Token saved - paste new token to update" : "Paste from Meta Events Manager → your Pixel → Conversions API"}
-                              value={metaDefaultDraft.accessToken} onChange={e=>setMetaDefaultDraft(d=>({...d,accessToken:e.target.value}))} />
-                          </div>
-                          <div>
-                            <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">Test event code <span className="font-normal normal-case">(remove after testing)</span></p>
-                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="TEST12345" value={metaDefaultDraft.testEventCode} onChange={e=>setMetaDefaultDraft(d=>({...d,testEventCode:e.target.value.trim()}))} />
-                          </div>
-                          <div className="flex items-end">
-                            <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 w-full">
-                              <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 shrink-0"/>
-                              <p className="m-0 text-xs font-black text-emerald-800">CAPI fallback - fires only when the customer leaves</p>
-                            </div>
-                          </div>
-                        </div>
-                        {/* TikTok Events API */}
-                        <div className="rounded-xl border border-gray-200 bg-gray-50/40 px-4 py-3.5 space-y-3">
-                          <div className="flex items-center gap-2">
-                            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-black text-white text-[10px] font-black">TT</span>
-                            <p className="m-0 text-[11px] font-black uppercase tracking-wider text-gray-600">TikTok Events API <span className="font-normal normal-case text-gray-400">- for TikTok ad orders</span></p>
-                          </div>
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            <div>
-                              <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">TikTok Pixel ID</p>
-                              <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-gray-300" placeholder="e.g. CABCDEF01ABC..." value={metaDefaultDraft.tiktokPixelId} onChange={e=>setMetaDefaultDraft(d=>({...d,tiktokPixelId:e.target.value.trim()}))} />
-                            </div>
-                            <div>
-                              <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">TikTok Events API access token</p>
-                              <input type="password" autoComplete="off" className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-gray-300" placeholder={(metaCapiConfigs.find(c=>c.trackingKey==="__default__") as any)?.hasTiktokAccessToken?"Token saved - paste to replace":"Paste from TikTok Events Manager"} value={metaDefaultDraft.tiktokAccessToken} onChange={e=>setMetaDefaultDraft(d=>({...d,tiktokAccessToken:e.target.value}))} />
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <button type="button" className="!min-h-0 rounded-xl border border-gray-200 bg-white px-4 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                              disabled={metaDefaultTtTesting||!metaDefaultDraft.tiktokPixelId}
-                              onClick={async()=>{
-                                setMetaDefaultTtTesting(true); setMetaDefaultTtTestResult(null);
-                                try { const r=await metaCapiSettingsApi.testTiktok({trackingKey:"__default__",pixelId:metaDefaultDraft.tiktokPixelId,accessToken:metaDefaultDraft.tiktokAccessToken||undefined}); setMetaDefaultTtTestResult({ok:r.ok,message:r.message}); showToast(r.ok?"✓ TikTok connection working.":`✗ ${r.message}`); }
-                                catch(e:any){ setMetaDefaultTtTestResult({ok:false,message:e?.message??"Test failed."}); }
-                                finally{ setMetaDefaultTtTesting(false); }
-                              }}>{metaDefaultTtTesting?"Testing…":"Test TikTok connection"}</button>
-                            {metaDefaultTtTestResult && <span className={`text-xs font-bold ${metaDefaultTtTestResult.ok?"text-emerald-700":"text-rose-700"}`}>{metaDefaultTtTestResult.ok?"✓ Working":`⚠ ${metaDefaultTtTestResult.message}`}</span>}
-                          </div>
-                          <p className="m-0 text-[10px] text-gray-400">Fires <strong>CompletePayment</strong> with the TikTok click ID (ttclid) when a TikTok customer leaves and the server auto-submits - same no-double-count rule as Meta (present customers use the landing-page TikTok pixel).</p>
-                        </div>
-                        {/* In-form idle auto-submit toggle (client-side countdown) */}
-                        <div className="rounded-xl border border-gray-200 bg-gray-50/60 px-4 py-3.5 flex items-center justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="m-0 text-[11px] font-black uppercase tracking-wider text-gray-500">In-form idle auto-submit</p>
-                            <p className="m-0 mt-0.5 text-[11px] text-gray-400">The 45–70s countdown inside the form - submits when a present customer fills everything then goes idle. Turn off to only submit on tap / server-side.</p>
-                          </div>
-                          <button type="button" role="switch" aria-checked={clientIdleAutosubmitEnabled} className="!min-h-0 p-0 shrink-0"
-                            onClick={()=>{ const next=!clientIdleAutosubmitEnabled; setClientIdleAutosubmitEnabled(next); void embedSettingsApi.patch({client_idle_autosubmit_enabled:next}); showToast(next?"In-form idle auto-submit ON":"In-form idle auto-submit OFF"); }}>
-                            <span className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${clientIdleAutosubmitEnabled?"bg-[#1F8FE0]":"bg-gray-300"}`}>
-                              <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${clientIdleAutosubmitEnabled?"translate-x-6":"translate-x-1"}`}/>
-                            </span>
-                          </button>
-                        </div>
-                        {/* Server-side auto-submit mode */}
-                        <div className="rounded-xl border border-gray-200 bg-gray-50/60 px-4 py-3.5">
-                          <p className="m-0 mb-0.5 text-[11px] font-black uppercase tracking-wider text-gray-500">Server-side auto-submit mode</p>
-                          <p className="m-0 mb-3 text-[11px] text-gray-400">What the backend cron does every 2 min when it finds a 6/6 complete idle cart. The client-side countdown in the form is unaffected.</p>
-                          <div className="flex gap-2">
-                            {([
-                              { key: "full",  label: "Full",  desc: "Create order + WhatsApp + CAPI" },
-                              { key: "cart",  label: "Flag only", desc: "Mark 'In progress' - team follows up, no order created" },
-                              { key: "off",   label: "Off",   desc: "Server cron disabled" }
-                            ] as const).map(opt => (
-                              <button key={opt.key} type="button"
-                                className={`!min-h-0 flex-1 rounded-xl border px-3 py-2.5 text-left transition-all ${autoSubmitMode===opt.key?"border-blue-400 bg-blue-500 text-white shadow-sm":"border-gray-200 bg-white text-gray-600 hover:border-gray-300"}`}
-                                onClick={()=>{ setAutoSubmitMode(opt.key); void embedSettingsApi.patch({auto_submit_mode:opt.key}); }}>
-                                <p className="m-0 text-xs font-black">{opt.label}</p>
-                                <p className={`m-0 mt-0.5 text-[10px] leading-tight ${autoSubmitMode===opt.key?"text-blue-100":"text-gray-400"}`}>{opt.desc}</p>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                        {/* Delivered-sale event (1 Oct 2026): Purchase counts every
-                            submitted order; this tells Meta which ones paid. */}
-                        <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 px-4 py-3.5">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <p className="m-0 text-[11px] font-black uppercase tracking-wider text-emerald-800">Send a delivered-sale event</p>
-                              <p className="m-0 mt-1 text-[11px] text-gray-600">When an order from a Protohub form is marked Delivered, send Meta one extra event with the amount collected (within Meta's 7-day limit). Lets you optimise ads on customers who actually pay, not everyone who submits. Purchase is not changed. Save to apply.</p>
-                            </div>
-                            <button type="button" aria-label="Send a delivered-sale event"
-                              className={`!min-h-0 relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${metaDefaultDraft.sendDeliveredEvent ? "bg-emerald-500" : "bg-gray-300"}`}
-                              onClick={()=>setMetaDefaultDraft(d=>({...d,sendDeliveredEvent:!d.sendDeliveredEvent}))}>
-                              <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${metaDefaultDraft.sendDeliveredEvent?"translate-x-6":"translate-x-1"}`}/>
-                            </button>
-                          </div>
-                          {metaDefaultDraft.sendDeliveredEvent ? (
-                            <label className="mt-3 block">
-                              <span className="text-[11px] font-black uppercase tracking-wider text-gray-500">Event name in Meta</span>
-                              <input className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-200" value={metaDefaultDraft.deliveredEventName}
-                                onChange={e=>setMetaDefaultDraft(d=>({...d,deliveredEventName:e.target.value.replace(/[^A-Za-z0-9_]/g,"")}))} placeholder="OrderDelivered" />
-                              <span className="mt-1 block text-[11px] text-gray-500">In Meta Events Manager, make a custom conversion from this event to optimise or report on it.</span>
-                            </label>
-                          ) : null}
-                        </div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <button type="button" className="!min-h-0 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-black text-white hover:bg-blue-700 disabled:opacity-50"
-                            disabled={metaDefaultSaving||!metaDefaultDraft.pixelId}
-                            onClick={async()=>{
-                              if(!metaDefaultDraft.pixelId){showToast("Enter your Pixel ID first.");return;}
-                              setMetaDefaultSaving(true);
-                              try {
-                                await metaCapiSettingsApi.save({trackingKey:"__default__",label:"Default (org-wide)",mode:"hybrid",pixelId:metaDefaultDraft.pixelId,accessToken:metaDefaultDraft.accessToken||undefined,sendDeliveredEvent:metaDefaultDraft.sendDeliveredEvent,deliveredEventName:(metaDefaultDraft.deliveredEventName||"OrderDelivered").trim(),tiktokPixelId:metaDefaultDraft.tiktokPixelId||undefined,tiktokAccessToken:metaDefaultDraft.tiktokAccessToken||undefined,active:true});
-                                setMetaDefaultSaved(true);setMetaDefaultDraft(d=>({...d,accessToken:""}));showToast("✓ Saved.");setTimeout(()=>setMetaDefaultSaved(false),4000);
-                              } catch(e:any){showToast(e?.message??"Could not save.");}
-                              finally{setMetaDefaultSaving(false);}
-                            }}>{metaDefaultSaving?"Saving…":"Save configuration"}</button>
-                          <button type="button" className="!min-h-0 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                            disabled={metaDefaultTesting||!metaDefaultDraft.pixelId}
-                            onClick={async()=>{
-                              setMetaDefaultTesting(true); setMetaDefaultTestResult(null);
-                              try {
-                                const r = await metaCapiSettingsApi.test({ trackingKey:"__default__", pixelId:metaDefaultDraft.pixelId, accessToken:metaDefaultDraft.accessToken||undefined, testEventCode:metaDefaultDraft.testEventCode||undefined });
-                                setMetaDefaultTestResult({ ok:r.ok, message:r.message });
-                                showToast(r.ok ? "✓ CAPI connection working." : `✗ ${r.message}`);
-                              } catch(e:any){ setMetaDefaultTestResult({ ok:false, message:e?.message??"Test failed." }); showToast(e?.message??"Test failed."); }
-                              finally{ setMetaDefaultTesting(false); }
-                            }}>{metaDefaultTesting?"Testing…":"Test connection"}</button>
-                        </div>
-                        {metaDefaultTestResult && (
-                          <div className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 ${metaDefaultTestResult.ok ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>
-                            <span className="shrink-0 text-sm">{metaDefaultTestResult.ok ? "✅" : "⚠️"}</span>
-                            <p className={`m-0 text-xs font-bold ${metaDefaultTestResult.ok ? "text-emerald-800" : "text-rose-800"}`}>
-                              {metaDefaultTestResult.ok ? "Working - Meta accepted the test event. Your Pixel ID + token are valid." : `Not working: ${metaDefaultTestResult.message}`}
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
-                      <p className="m-0 text-xs font-black text-blue-800">One Purchase per order - never double-counted</p>
-                      <ul className="m-0 mt-1.5 space-y-1 pl-4 list-disc">
-                        <li className="text-xs text-blue-700"><strong>Customer present</strong> (taps Order Now <em>or</em> idle countdown): redirect to thank-you URL → <strong>landing-page pixel fires only</strong>. CAPI stays off.</li>
-                        <li className="text-xs text-blue-700"><strong>Customer left</strong> (server auto-submit): no browser, so no pixel → <strong>CAPI fires only</strong>.</li>
-                        <li className="text-xs text-blue-700">Each path fires exactly one signal, so your Purchase count stays accurate.</li>
-                      </ul>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* ── Links & Tracking tab ── */}
-              {embedTab === "Links & Tracking" && currentRole === "Owner" && (() => {
-                // Show every saved config - the org-wide Default first, then campaign links.
-                const visibleConfigs = [...metaCapiConfigs].sort((a, b) =>
-                  a.trackingKey === "__default__" ? -1 : b.trackingKey === "__default__" ? 1 : a.label.localeCompare(b.label));
-                const buildEmbedUrl = (c: MetaCapiConfigRecord) => {
-                  const base = c.landingPageUrl?.trim() || "";
-                  const prod = products.find(p => p.id === c.productId);
-                  if (!prod) return base;
-                  const pkg = prod.packages?.[0];
-                  const params = new URLSearchParams();
-                  params.set("product", prod.id);
-                  if (pkg?.id) params.set("package_set", pkg.name ?? "");
-                  if (c.redirectUrl?.trim()) params.set("redirect_url", c.redirectUrl.trim());
-                  if (c.utmSource?.trim()) params.set("utm_source", c.utmSource.trim());
-                  if (c.utmMedium?.trim()) params.set("utm_medium", c.utmMedium.trim());
-                  if (c.utmCampaign?.trim()) params.set("utm_campaign", c.utmCampaign.trim());
-                  if (c.pixelId?.trim()) params.set("meta_pixel_id", c.pixelId.trim());
-                  params.set("tracking_mode", (c.mode==="hybrid"||c.mode==="protohub")?"hybrid":"landing_page");
-                  params.set("tracking_key", c.trackingKey);
-                  if (c.testEventCode?.trim()) params.set("meta_test_event_code", c.testEventCode.trim());
-                  if (c.label?.trim()) params.set("embed_label", c.label.trim());
-                  return `${base}#/order-form/embed?${params.toString()}`;
-                };
-                const startEdit = (c: MetaCapiConfigRecord) => {
-                  setLinksEditingId(c.id);
-                  setLinkDraft({label:c.label,pixelId:c.pixelId,accessToken:"",redirectUrl:c.redirectUrl??"",landingPageUrl:c.landingPageUrl??"",utmSource:c.utmSource??"facebook",utmMedium:c.utmMedium??"paid_social",utmCampaign:c.utmCampaign??"",testEventCode:c.testEventCode??"",mode:c.mode,productId:c.productId??""});
-                  setLinksAdding(true);
-                };
-                const saveLink = async () => {
-                  if(!linkDraft.label.trim()||!linkDraft.pixelId.trim()){showToast("Label and Pixel ID are required.");return;}
-                  setLinksSaving(true);
-                  try {
-                    const trackingKey = linksEditingId
-                      ? (metaCapiConfigs.find(c=>c.id===linksEditingId)?.trackingKey ?? linkDraft.label.toLowerCase().replace(/\s+/g,"_").replace(/[^a-z0-9_]/g,"").slice(0,40))
-                      : linkDraft.label.toLowerCase().replace(/\s+/g,"_").replace(/[^a-z0-9_]/g,"").slice(0,40)+"_"+Date.now().toString(36);
-                    const saved = await metaCapiSettingsApi.save({...linkDraft,trackingKey,active:true});
-                    setMetaCapiConfigs(prev=>{const without=prev.filter(c=>c.id!==saved.id);return [...without,saved].sort((a,b)=>a.label.localeCompare(b.label));});
-                    setLinksAdding(false);setLinksEditingId(null);setLinkDraft(emptyLinkDraft());showToast("✓ Tracking link saved.");
-                  } catch(e:any){showToast(e?.message??"Could not save.");}
-                  finally{setLinksSaving(false);}
-                };
-                const modeColors: Record<string,string> = {hybrid:"bg-emerald-100 text-emerald-700",landing_page:"bg-blue-100 text-blue-700",protohub:"bg-purple-100 text-purple-700",off:"bg-gray-100 text-gray-500"};
-                const modeLabel: Record<string,string> = {hybrid:"Hybrid",landing_page:"Landing page",protohub:"CAPI only",off:"Off"};
-                return (
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <h2 className="text-base font-bold text-gray-800">Links & Tracking</h2>
-                        <p className="text-sm text-gray-500 mt-0.5">One row per landing page campaign. Each link bundles pixel, CAPI, redirect, and UTM - copy the embed URL and paste it on your landing page.</p>
-                      </div>
-                      {!linksAdding && (
-                        <button type="button" className="!min-h-0 shrink-0 inline-flex items-center gap-2 rounded-xl bg-[#1F8FE0] px-4 py-2 text-sm font-black text-white hover:bg-blue-700"
-                          onClick={()=>{setLinksAdding(true);setLinksEditingId(null);setLinkDraft(emptyLinkDraft());}}>
-                          <Plus className="h-4 w-4"/>New link
-                        </button>
-                      )}
-                    </div>
-                    {linksAdding && (
-                      <div className="rounded-2xl border border-[#1F8FE0]/30 bg-blue-50/40 p-5 space-y-4">
-                        <p className="m-0 text-xs font-black uppercase tracking-wider text-[#1F8FE0]">{linksEditingId?"Edit tracking link":"New tracking link"}</p>
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <div className="sm:col-span-2"><p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Label *</p><input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="e.g. Edge Brusher TikTok - June" value={linkDraft.label} onChange={e=>setLinkDraft(d=>({...d,label:e.target.value}))}/></div>
-                          <div><p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Meta Pixel ID *</p><input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="2171263370039172" value={linkDraft.pixelId} onChange={e=>setLinkDraft(d=>({...d,pixelId:e.target.value.trim()}))}/></div>
-                          <div><p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Tracking mode</p><select className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" value={linkDraft.mode} onChange={e=>setLinkDraft(d=>({...d,mode:e.target.value as EmbedMetaTrackingMode}))}><option value="hybrid">Hybrid - pixel + CAPI (recommended)</option><option value="landing_page">Landing page only</option><option value="protohub">CAPI only</option><option value="off">Off</option></select></div>
-                          <div className="sm:col-span-2"><p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">CAPI access token {(linkDraft.mode==="hybrid"||linkDraft.mode==="protohub")?"*":"(optional)"}</p><input type="password" autoComplete="off" className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder={linksEditingId&&metaCapiConfigs.find(c=>c.id===linksEditingId)?.hasAccessToken?"Token saved - paste to replace":"Paste from Meta Events Manager"} value={linkDraft.accessToken} onChange={e=>setLinkDraft(d=>({...d,accessToken:e.target.value}))}/></div>
-                          <div><p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Thank-you / redirect URL</p><input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="https://yoursite.com/thank-you" value={linkDraft.redirectUrl} onChange={e=>setLinkDraft(d=>({...d,redirectUrl:e.target.value.trim()}))}/></div>
-                          <div><p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Landing page base URL</p><input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="https://yoursite.com" value={linkDraft.landingPageUrl} onChange={e=>setLinkDraft(d=>({...d,landingPageUrl:e.target.value.trim()}))}/></div>
-                          <div><p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Product</p><select className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" value={linkDraft.productId} onChange={e=>setLinkDraft(d=>({...d,productId:e.target.value}))}><option value="">- Select product -</option>{products.filter(p=>p.active!==false).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
-                          <div><p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">UTM source</p><input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="facebook / tiktok" value={linkDraft.utmSource} onChange={e=>setLinkDraft(d=>({...d,utmSource:e.target.value.trim()}))}/></div>
-                          <div><p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">UTM campaign</p><input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="june_launch" value={linkDraft.utmCampaign} onChange={e=>setLinkDraft(d=>({...d,utmCampaign:e.target.value.trim()}))}/></div>
-                          <div><p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Test event code</p><input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="TEST12345" value={linkDraft.testEventCode} onChange={e=>setLinkDraft(d=>({...d,testEventCode:e.target.value.trim()}))}/></div>
-                        </div>
-                        <div className="flex items-center gap-3"><button type="button" className="!min-h-0 rounded-xl bg-[#1F8FE0] px-5 py-2.5 text-sm font-black text-white hover:bg-blue-700 disabled:opacity-50" disabled={linksSaving||!linkDraft.label.trim()||!linkDraft.pixelId.trim()} onClick={saveLink}>{linksSaving?"Saving…":linksEditingId?"Update":"Save link"}</button><button type="button" className="!min-h-0 text-sm text-gray-400 hover:text-gray-600" onClick={()=>{setLinksAdding(false);setLinksEditingId(null);setLinkDraft(emptyLinkDraft());}}>Cancel</button></div>
-                      </div>
-                    )}
-                    {visibleConfigs.length===0&&!linksAdding&&<div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 py-12 text-center"><ExternalLink className="h-8 w-8 text-gray-200 mx-auto mb-2"/><p className="m-0 text-sm font-bold text-gray-400">No tracking links yet</p><p className="m-0 mt-1 text-xs text-gray-400">Create one per campaign</p></div>}
-                    <div className="space-y-3">
-                      {visibleConfigs.map(c=>{
-                        const embedUrl=buildEmbedUrl(c);
-                        const prod=products.find(p=>p.id===c.productId);
-                        return (
-                          <div key={c.id} className={`rounded-2xl border bg-white shadow-sm overflow-hidden ${c.active?"":"opacity-60"}`}>
-                            <div className="flex items-center gap-3 px-4 py-3.5 border-b border-gray-100">
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <p className="m-0 text-sm font-black text-gray-900 truncate">{c.label}</p>
-                                  {c.trackingKey==="__default__"&&<span className="shrink-0 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-black text-indigo-700">Default · org-wide</span>}
-                                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${modeColors[c.mode]??"bg-gray-100 text-gray-500"}`}>{modeLabel[c.mode]??c.mode}</span>
-                                  {c.hasAccessToken&&<span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700">CAPI ✓</span>}
-                                  {c.testEventCode&&<span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-700">Test mode</span>}
-                                  {linkTestResults[c.id]&&<span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${linkTestResults[c.id].ok?"bg-emerald-100 text-emerald-700":"bg-rose-100 text-rose-700"}`} title={linkTestResults[c.id].message}>{linkTestResults[c.id].ok?"✓ Working":"⚠ Not working"}</span>}
-                                </div>
-                                <p className="m-0 mt-0.5 text-[11px] text-gray-400 truncate">Pixel {c.pixelId} · key: {c.trackingKey}{prod?` · ${prod.name}`:""}</p>
-                              </div>
-                              <div className="flex items-center gap-2 shrink-0">
-                                <button type="button" className={`!min-h-0 rounded-lg border px-2.5 py-1 text-[11px] font-bold transition-colors ${linkPreviewId===c.id?"border-[#1F8FE0] bg-blue-50 text-[#1F8FE0]":"border-gray-200 text-gray-600 hover:bg-gray-50"}`} onClick={()=>setLinkPreviewId(linkPreviewId===c.id?null:c.id)}>Preview</button>
-                                <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-bold text-gray-600 hover:bg-gray-50 disabled:opacity-50" disabled={linkTestingId===c.id||!c.hasAccessToken}
-                                  onClick={async()=>{
-                                    setLinkTestingId(c.id);
-                                    try { const r=await metaCapiSettingsApi.test({id:c.id}); setLinkTestResults(p=>({...p,[c.id]:{ok:r.ok,message:r.message}})); showToast(r.ok?"✓ CAPI working.":`✗ ${r.message}`); }
-                                    catch(e:any){ setLinkTestResults(p=>({...p,[c.id]:{ok:false,message:e?.message??"Test failed."}})); }
-                                    finally{ setLinkTestingId(null); }
-                                  }}>{linkTestingId===c.id?"Testing…":"Test"}</button>
-                                <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-bold text-gray-600 hover:bg-gray-50" onClick={()=>startEdit(c)}>Edit</button>
-                                <button type="button" className="!min-h-0 rounded-lg border border-rose-100 px-2.5 py-1 text-[11px] font-bold text-rose-500 hover:bg-rose-50" onClick={()=>showConfirm(`Remove "${c.label}"?`,async()=>{await metaCapiSettingsApi.delete(c.id);setMetaCapiConfigs(p=>p.filter(x=>x.id!==c.id));showToast("Removed.");},{danger:true,confirmLabel:"Remove"})}>Remove</button>
-                                <button type="button" role="switch" aria-checked={c.active} className="!min-h-0 p-0" onClick={async()=>{await metaCapiSettingsApi.toggle(c.id,!c.active);setMetaCapiConfigs(p=>p.map(x=>x.id===c.id?{...x,active:!c.active}:x));}}>
-                                  <span className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${c.active?"bg-[#1F8FE0]":"bg-gray-300"}`}><span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${c.active?"translate-x-6":"translate-x-1"}`}/></span>
-                                </button>
-                              </div>
-                            </div>
-                            {linkPreviewId===c.id&&(
-                              <div className="border-t border-gray-100 bg-gray-50/50 px-4 py-3">
-                                <p className="m-0 mb-2 text-[10px] font-black uppercase tracking-wider text-gray-400">Saved configuration</p>
-                                <div className="grid gap-x-4 gap-y-2 sm:grid-cols-2 text-xs">
-                                  {[
-                                    ["Label", c.label],
-                                    ["Tracking key", c.trackingKey],
-                                    ["Meta Pixel ID", c.pixelId || "-"],
-                                    ["CAPI token", c.hasAccessToken ? "•••••••• saved" : "not set"],
-                                    ["Tracking mode", modeLabel[c.mode] ?? c.mode],
-                                    ["Product", prod?.name ?? "-"],
-                                    ["Thank-you / redirect", c.redirectUrl || "-"],
-                                    ["Landing page", c.landingPageUrl || "-"],
-                                    ["UTM source", c.utmSource || "-"],
-                                    ["UTM medium", c.utmMedium || "-"],
-                                    ["UTM campaign", c.utmCampaign || "-"],
-                                    ["Test event code", c.testEventCode || "-"],
-                                    ["Status", c.active ? "Active" : "Off"],
-                                  ].map(([k,v])=>(
-                                    <div key={k} className="min-w-0">
-                                      <p className="m-0 text-[10px] font-bold uppercase tracking-wider text-gray-400">{k}</p>
-                                      <p className="m-0 text-gray-800 break-words font-medium">{v}</p>
-                                    </div>
-                                  ))}
-                                </div>
-                                {c.landingPageUrl&&c.productId&&(
-                                  <div className="mt-3">
-                                    <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400 mb-1">Full embed URL</p>
-                                    <p className="m-0 text-[11px] text-gray-600 break-all font-mono bg-white border border-gray-200 rounded-lg px-2.5 py-2">{embedUrl}</p>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                            {c.redirectUrl&&<div className="px-4 py-2.5 text-xs text-gray-400">→ <a href={c.redirectUrl} target="_blank" rel="noreferrer" className="text-[#1F8FE0] hover:underline truncate">{c.redirectUrl}</a></div>}
-                            {c.landingPageUrl&&c.productId&&(
-                              <div className="border-t border-gray-100 bg-gray-50/60 px-4 py-2.5 flex items-center gap-2">
-                                <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400 shrink-0">Embed URL</p>
-                                <p className="m-0 flex-1 text-[11px] text-gray-500 truncate font-mono">{embedUrl}</p>
-                                <button type="button" className="!min-h-0 shrink-0 inline-flex items-center gap-1 rounded-lg bg-white border border-gray-200 px-2.5 py-1 text-[11px] font-bold text-gray-600 hover:bg-gray-50"
-                                  onClick={()=>{copyText(embedUrl,"");setLinkCopiedId(c.id);setTimeout(()=>setLinkCopiedId(null),2000);}}>
-                                  {linkCopiedId===c.id?<><Check className="h-3 w-3 text-emerald-500"/>Copied!</>:<><Copy className="h-3 w-3"/>Copy</>}
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                    {/* Traffic table */}
-                    <div className="mt-2">
-                      <div className="flex items-center justify-between gap-3 mb-3">
-                        <div><h3 className="text-sm font-black text-gray-800">All links - 30 day traffic</h3><p className="text-xs text-gray-500">Every embed link that received traffic. Carts = visited, Orders = converted.</p></div>
-                        <button type="button" className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50 disabled:opacity-50" disabled={linkTrafficLoading}
-                          onClick={()=>{setLinkTrafficLoading(true);marketingLinkVariantsApi.traffic().then(setLinkTraffic).catch(()=>{}).finally(()=>setLinkTrafficLoading(false));}}>
-                          <RefreshCw className={`h-3 w-3 ${linkTrafficLoading?"animate-spin":""}`}/>Refresh
-                        </button>
-                      </div>
-                      <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-                        <div className="grid grid-cols-[1fr_70px_70px_90px_36px] gap-2 px-4 py-2.5 bg-gray-50 border-b border-gray-100 text-[10px] font-black uppercase tracking-wider text-gray-400">
-                          <span>Link</span><span className="text-center">Carts</span><span className="text-center">Orders</span><span>Last seen</span><span/>
-                        </div>
-                        {Object.keys(linkTraffic).length===0&&!linkTrafficLoading&&<div className="px-4 py-8 text-center text-sm text-gray-400">No traffic data yet</div>}
-                        {linkTrafficLoading&&<div className="px-4 py-6 text-center text-xs text-gray-400 flex items-center justify-center gap-2"><RefreshCw className="h-3 w-3 animate-spin"/>Loading…</div>}
-                        <div className="divide-y divide-gray-50">
-                          {Object.entries(linkTraffic).sort(([,a],[,b])=>(b.carts+b.orders*2)-(a.carts+a.orders*2)).map(([label,stat])=>{
-                            const variant=marketingLinkVariants.find(v=>v.label===label);
-                            const ageSec=stat.lastActivity?(Date.now()-new Date(stat.lastActivity).getTime())/1000:Infinity;
-                            const isLive=ageSec<300;
-                            const ageLabel=ageSec<60?"just now":ageSec<3600?`${Math.floor(ageSec/60)}m ago`:ageSec<86400?`${Math.floor(ageSec/3600)}h ago`:`${Math.floor(ageSec/86400)}d ago`;
-                            const convRate=stat.carts>0?Math.round((stat.orders/stat.carts)*100):0;
-                            const isExpanded=linkDetailLabel===label;
-                            const openDetail=()=>{
-                              if(isExpanded){setLinkDetailLabel(null);return;}
-                              setLinkDetailLabel(label);
-                              setLinkDetailRows([]);
-                              setLinkDetailLoading(true);
-                              cartsApi.byLabel(label).then(setLinkDetailRows).catch(()=>{}).finally(()=>setLinkDetailLoading(false));
-                            };
-                            return (
-                              <div key={label} className="divide-y divide-gray-50">
-                                <button type="button" className={`!min-h-0 w-full grid grid-cols-[1fr_70px_70px_90px_36px] gap-2 items-center px-4 py-3 text-left transition-colors ${isExpanded?"bg-blue-50/60":"hover:bg-gray-50/60"}`} onClick={openDetail}>
-                                  <div className="min-w-0 flex items-center gap-1.5">
-                                    {isLive&&<span className="relative flex h-2 w-2 shrink-0"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"/><span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"/></span>}
-                                    <p className="m-0 text-sm font-bold text-gray-900 truncate">{label}</p>
-                                    <ChevronRight className={`h-3.5 w-3.5 text-gray-400 shrink-0 transition-transform ${isExpanded?"rotate-90":""}`}/>
-                                  </div>
-                                  <p className="m-0 text-sm font-black text-gray-900 text-center">{stat.carts}</p>
-                                  <div className="text-center"><p className="m-0 text-sm font-black text-gray-900">{stat.orders}</p><p className={`m-0 text-[10px] font-bold ${convRate>=60?"text-emerald-600":convRate>=30?"text-amber-600":"text-rose-500"}`}>{convRate}%</p></div>
-                                  <p className="m-0 text-[11px] text-gray-500 text-left">{stat.lastActivity?ageLabel:"-"}</p>
-                                  <div className="flex justify-end" onClick={e=>e.stopPropagation()}>
-                                    {variant?.id&&<button type="button" className="!min-h-0 rounded-lg border border-rose-100 p-1 text-rose-400 hover:bg-rose-50" title="Remove"
-                                      onClick={()=>showConfirm(`Remove link "${label}"?`,async()=>{await marketingLinkVariantsApi.delete(variant.id);setMarketingLinkVariants(p=>p.filter(v=>v.id!==variant.id));setLinkTraffic(p=>{const n={...p};delete n[label];return n;});if(linkDetailLabel===label)setLinkDetailLabel(null);showToast("Removed.");},{danger:true,confirmLabel:"Remove"})}><X className="h-3 w-3"/></button>}
-                                  </div>
-                                </button>
-                                {isExpanded&&(
-                                  <div className="bg-gray-50/80 px-4 py-3">
-                                    {linkDetailLoading&&<p className="m-0 text-xs text-gray-400 flex items-center gap-1.5"><RefreshCw className="h-3 w-3 animate-spin"/>Loading…</p>}
-                                    {!linkDetailLoading&&linkDetailRows.length===0&&<p className="m-0 text-xs text-gray-400">No carts found for this link in the last 30 days.</p>}
-                                    {!linkDetailLoading&&linkDetailRows.length>0&&(
-                                      <div className="space-y-0 rounded-xl border border-gray-200 bg-white overflow-hidden">
-                                        <div className="grid grid-cols-[1fr_120px_90px_80px] gap-2 px-3 py-2 bg-gray-50 border-b border-gray-100 text-[10px] font-black uppercase tracking-wider text-gray-400">
-                                          <span>Customer</span><span>Location</span><span>Status</span><span className="text-right">Amount</span>
-                                        </div>
-                                        {linkDetailRows.slice(0,20).map((row:any)=>{
-                                          const statusColor=row.order?.status==="Delivered"?"text-emerald-600":row.order?.status==="Cancelled"?"text-rose-500":row.order?"text-blue-600":row.status==="Converted"?"text-emerald-600":"text-amber-600";
-                                          const displayStatus=row.order?row.order.status:row.status;
-                                          return (
-                                            <div key={row.id} className="grid grid-cols-[1fr_120px_90px_80px] gap-2 items-center px-3 py-2.5 border-b border-gray-50 last:border-0 hover:bg-gray-50/60 cursor-pointer"
-                                              onClick={()=>{if(row.order){setActivePage("Orders");setTimeout(()=>document.dispatchEvent(new CustomEvent("open-order",{detail:{id:row.order.id}})),200);}else{setActivePage("Abandoned Carts");}}}>
-                                              <div className="min-w-0">
-                                                <p className="m-0 text-sm font-bold text-gray-900 truncate">{row.customer||"Partial lead"}</p>
-                                                <p className="m-0 text-[11px] text-gray-400 truncate">{row.phone} · {formatMoment(row.created_at)}</p>
-                                              </div>
-                                              <p className="m-0 text-[11px] text-gray-500 truncate">{[row.city,row.state].filter(Boolean).join(", ")||"-"}</p>
-                                              <p className={`m-0 text-[11px] font-bold truncate ${statusColor}`}>{displayStatus}</p>
-                                              <p className="m-0 text-[11px] font-black text-gray-900 text-right">₦{Number(row.amount||0).toLocaleString("en-NG")}</p>
-                                            </div>
-                                          );
-                                        })}
-                                        {linkDetailRows.length>20&&<p className="m-0 px-3 py-2 text-[11px] text-gray-400">+{linkDetailRows.length-20} more - export for full list</p>}
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
 
             </div>
           ) : activePage === "Notifications" ? (

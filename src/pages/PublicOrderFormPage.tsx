@@ -1441,7 +1441,8 @@ export default function PublicOrderFormPage() {
     eventId: string,
     customData: Record<string, unknown>
   ) => {
-    if (publicEmbedIsPreview || !eventId || publicMetaTrackingMode === "off" || publicMetaTrackingMode === "landing_page") return;
+    // "protohub" = CAPI only (Tracking Hub): the server sends Purchase, the browser does not.
+    if (publicEmbedIsPreview || !eventId || publicMetaTrackingMode === "off" || publicMetaTrackingMode === "landing_page" || publicMetaTrackingMode === "protohub") return;
     const dedupeKey = `${eventName}:${eventId}`;
     if (metaBrowserEventsSentRef.current.has(dedupeKey)) return;
     metaBrowserEventsSentRef.current.add(dedupeKey);
@@ -3374,9 +3375,10 @@ export default function PublicOrderFormPage() {
         : null;
       const hasAfterSubmitOffer = Boolean(created.upsellToken && created.upsellOffer && upsellCompanion && upsellProduct);
       if (!created.reviewHold) {
-        // A replay of an order already recorded for this cart gets back the
-        // original Purchase event id, so the Pixel's repeat is counted once.
-        const browserPurchaseEventId = (created.replayed && created.metaPurchaseEventId) || purchaseEventId;
+        // Purchase event id = the Protohub order id (Tracking Hub, 2 Oct 2026),
+        // the same id the server sends to Meta, so the two count as one. A
+        // replay gets back the id the order was first registered under.
+        const browserPurchaseEventId = (created.replayed && created.metaPurchaseEventId) || String(created.id || purchaseEventId);
         lastMetaPurchaseEventIdRef.current = browserPurchaseEventId;
         postMetaBrowserEvent("Purchase", browserPurchaseEventId, {
           value: Number(created.amount || 0),

@@ -16,6 +16,7 @@ import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { sendOrderNewCustomerWhatsApp, sendOrderNewRepWhatsApp, sendOrderUpsellWhatsApp } from "./whatsapp.js";
 import { resolveMetaTrackingConfig, recordMetaCapiEvent, sendMetaCapiPurchase } from "./meta-capi.js";
+import { withDataSource } from "./tracking-credentials.js";
 import { sendTikTokConversion } from "./tiktok-events.js";
 import { assignOrderRep } from "./order-assignment.js";
 import { notifyOutageRecoveredOrder } from "./order-notifications.js";
@@ -367,7 +368,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
       ? await supabase.from("meta_capi_configs").select("*").eq("org_id", orgId).eq("tracking_key", "__default__").maybeSingle()
       : { data: null };
 
-    const storedMetaConfig = specificConfig ?? defaultConfig ?? null;
+    const storedMetaConfig = await withDataSource(specificConfig ?? defaultConfig ?? null);
 
     // Force hybrid mode for server-side submits so CAPI always fires when credentials exist
     const metaConfig = resolveMetaTrackingConfig({
@@ -380,7 +381,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
 
     void sendMetaCapiPurchase({
       config: metaConfig,
-      eventId: `protohub_purchase_${order.id}`,
+      eventId: String(order.id),
       eventSourceUrl: capturePayload.landingUrl ?? null,
       clientIp: null,
       userAgent: null,
@@ -403,7 +404,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
       quantity: pkg.quantity ?? 1
     }).then((result) => recordMetaCapiEvent(supabase, {
       orgId, branchId: (order as any).branch_id ?? (cart as any).branch_id ?? null, orderId: String(order.id),
-      eventName: "Purchase", metaEventName: "Purchase", eventId: `protohub_purchase_${order.id}`, result,
+      eventName: "Purchase", metaEventName: "Purchase", eventId: String(order.id), result,
       testMode: Boolean(metaConfig.testMode || metaConfig.testEventCode), value: amount, currency: cart.currency ?? "NGN"
     })).catch(() => {});
 
@@ -416,7 +417,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     if (isTikTok && storedMetaConfig?.tiktok_pixel_id && storedMetaConfig?.tiktok_access_token) {
       void sendTikTokConversion({
         config: { pixelId: storedMetaConfig.tiktok_pixel_id, accessToken: storedMetaConfig.tiktok_access_token, testEventCode: storedMetaConfig.test_event_code ?? null },
-        eventId: `protohub_purchase_${order.id}`,
+        eventId: String(order.id),
         eventSourceUrl: capturePayload.landingUrl ?? null,
         clientIp: null,
         userAgent: null,
