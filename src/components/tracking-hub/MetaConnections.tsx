@@ -8,7 +8,11 @@ import { ActionMenu, Card, Modal, PlatformIcon, StatusPill, ago, darkButton, inp
 // the Owner switches each one on or off. "Add Manually" is still there for a
 // Pixel owned by another business.
 
-const STATUS: Record<HubConnection["status"], ["green" | "red" | "orange", string]> = { connected: ["green", "Connected"], error: ["red", "Problem"], disconnected: ["red", "Disconnected"] };
+const STATUS: Record<HubConnection["status"], ["green" | "red" | "orange", string]> = { connected: ["green", "Connected"], error: ["red", "Problem"], disconnected: ["red", "Disconnected"], sync_failed: ["orange", "Connected · last sync failed"] };
+
+/** The app pop-up shows a warning only for messages starting "Couldn't…". */
+export const syncToast = (name: string, sync: { ok: boolean; message: string } | null, syncError: string | null) =>
+  syncError ? `Couldn't read ${name}'s Pixels and ad accounts. ${syncError.replace(/^Couldn't sync\. /, "")}` : sync && !sync.ok ? `Couldn't finish the sync for ${name}. ${sync.message}` : `${name}: ${sync?.message ?? "saved."}`;
 
 export function ConnectionsSection({ connections, onToast, onChanged, onConnect, onAddManually, onOpenPixel }: {
   connections: HubConnection[]; onToast: Toast; onChanged: () => void; onConnect: () => void; onAddManually: () => void; onOpenPixel: (sourceId: string) => void;
@@ -39,8 +43,8 @@ function ConnectionCard({ connection, onToast, onChanged, onAddManually, onOpenP
   const [editing, setEditing] = useState(false);
   const [tone, text] = STATUS[connection.status];
   const run = async (key: string, action: () => Promise<void>) => { setBusy(key); try { await action(); } catch (err: any) { onToast(err?.message ?? "Something went wrong."); } finally { setBusy(""); } };
-  const sync = () => run("sync", async () => { const result = await trackingHubApi.syncConnection(connection.id); onToast(result.message); onChanged(); });
-  const test = () => run("test", async () => { const result = await trackingHubApi.testConnection(connection.id); onToast(result.ok ? result.message : `${result.human?.title ?? result.message}. ${result.human?.action ?? ""}`); onChanged(); });
+  const sync = () => run("sync", async () => { const result = await trackingHubApi.syncConnection(connection.id); onToast(syncToast(connection.name, result, null)); onChanged(); });
+  const test = () => run("test", async () => { const result = await trackingHubApi.testConnection(connection.id); onToast(result.ok ? result.message : `Couldn't connect: ${result.message}`); onChanged(); });
   const togglePixel = (sourceId: string, name: string, active: boolean) => run(`px${sourceId}`, async () => {
     const result = await trackingHubApi.setPixelActive(sourceId, active);
     onToast(active ? `${name} switched on.` : result.linksUsing ? `${name} switched off. ${result.linksUsing} tracking link${result.linksUsing === 1 ? " uses" : "s use"} it and will stop sending server events.` : `${name} switched off.`);
@@ -71,11 +75,12 @@ function ConnectionCard({ connection, onToast, onChanged, onAddManually, onOpenP
           <button type="button" className={smallButton} disabled={Boolean(busy) || !connection.hasToken} onClick={() => void test()}>{busy === "test" ? "Testing…" : "Test"}</button>
           <ActionMenu items={[
             { label: "Replace token / settings", onClick: () => setEditing(true) },
+            { label: "Remove connection", danger: true, onClick: () => { if (!window.confirm(`Remove ${connection.name}? Its Pixels stay listed but lose this token, so they stop sending server events until they get a token again.`)) return; void run("remove", async () => { await trackingHubApi.removeConnection(connection.id); onToast("Connection removed."); onChanged(); }); } },
             { label: "Disconnect", danger: true, onClick: () => { if (!window.confirm(`Disconnect ${connection.name}? The token is removed: its Pixels stop sending server events and Meta's numbers cannot be read until you paste a token again.`)) return; void run("disconnect", async () => { await trackingHubApi.disconnectConnection(connection.id); onToast("Disconnected."); onChanged(); }); } }
           ]} />
         </div>
       </div>
-      {connection.status !== "connected" ? (
+      {connection.status === "error" || connection.status === "disconnected" ? (
         <div className="mt-3 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-[12.5px] text-rose-800">
           <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{connection.status === "disconnected" ? "No token: this business's Pixels cannot send server events or read Meta's numbers. Replace the token to reconnect." : <><strong>{connection.human?.title ?? connection.lastCheckMessage}</strong>{connection.human?.action ? ` ${connection.human.action}` : ""}</>}</span>
@@ -118,7 +123,7 @@ function ConnectionCard({ connection, onToast, onChanged, onAddManually, onOpenP
           <p className="m-0 border-t border-gray-100 px-4 py-2 text-[11px] text-gray-400 dark:border-slate-800">Reconciliation reads Meta's purchases from the ad accounts switched on.</p>
         </div>
       </div>
-      {editing ? <EditConnection connection={connection} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); onToast("Connection saved."); onChanged(); }} /> : null}
+      {editing ? <EditConnection connection={connection} onClose={() => setEditing(false)} onSaved={(message) => { setEditing(false); onToast(message); onChanged(); }} /> : null}
     </Card>
   );
 }
@@ -152,7 +157,7 @@ export function ConnectModal({ onClose, onDone, onToast }: { onClose: () => void
         else { setError(who.businessesError ? `${who.businessesError}. Enter the Business ID instead (Meta Business Settings → Business info).` : "Meta did not say which business this token belongs to. Enter the Business ID (Meta Business Settings → Business info)."); setBusy(false); return; }
       }
       const result = await trackingHubApi.connect({ accessToken: token.trim(), businessId: chosen, currency, timezone });
-      onToast(result.sync ? `${result.name} connected. ${result.sync.message}` : `${result.name} connected, but its assets could not be read: ${result.syncError ?? ""}`);
+      onToast(syncToast(result.name, result.sync, result.syncError));
       onDone();
     } catch (err: any) {
       setError(err?.message ?? "Could not connect.");
@@ -192,8 +197,9 @@ export function ConnectModal({ onClose, onDone, onToast }: { onClose: () => void
   );
 }
 
-function EditConnection({ connection, onClose, onSaved }: { connection: HubConnection; onClose: () => void; onSaved: () => void }) {
+function EditConnection({ connection, onClose, onSaved }: { connection: HubConnection; onClose: () => void; onSaved: (message: string) => void }) {
   const [token, setToken] = useState("");
+  const [businessId, setBusinessId] = useState(connection.businessId);
   const [currency, setCurrency] = useState(connection.currency);
   const [timezone, setTimezone] = useState(connection.timezone);
   const [busy, setBusy] = useState(false);
@@ -201,6 +207,7 @@ function EditConnection({ connection, onClose, onSaved }: { connection: HubConne
   return (
     <Modal title={`Edit ${connection.name}`} subtitle={`Business ${connection.businessId}`} onClose={onClose}>
       <div className="space-y-3">
+        <label className={labelCls}>Business portfolio ID <span className="font-normal text-gray-400">(Meta Business Settings → Business info)</span><input value={businessId} onChange={(e) => setBusinessId(e.target.value.trim())} className={`${input} font-mono`} /></label>
         <label className={labelCls}>New System User token <span className="font-normal text-gray-400">(leave empty to keep the current one)</span><input type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} placeholder={connection.hasToken ? "Token saved: paste to replace" : "Paste the System User token"} className={`${input} font-mono`} /></label>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className={labelCls}>Currency<select value={currency} onChange={(e) => setCurrency(e.target.value)} className={input}>{CURRENCIES.map((value) => <option key={value}>{value}</option>)}</select></label>
@@ -211,7 +218,10 @@ function EditConnection({ connection, onClose, onSaved }: { connection: HubConne
           <button type="button" className={`${darkButton} !rounded-lg !px-4 !py-2 !text-[13px]`} disabled={busy} onClick={async () => {
             setBusy(true);
             setError("");
-            try { await trackingHubApi.saveConnection(connection.id, { accessToken: token.trim() || undefined, currency, timezone }); onSaved(); } catch (err: any) { setError(err?.message ?? "Could not save."); setBusy(false); }
+            try {
+              const result = await trackingHubApi.saveConnection(connection.id, { accessToken: token.trim() || undefined, businessId: businessId !== connection.businessId ? businessId : undefined, currency, timezone });
+              onSaved(result.sync || result.syncError ? syncToast(result.name, result.sync, result.syncError) : "Connection saved.");
+            } catch (err: any) { setError(err?.message ?? "Could not save."); setBusy(false); }
           }}>{busy ? "Checking…" : "Save"}</button></div>
       </div>
     </Modal>

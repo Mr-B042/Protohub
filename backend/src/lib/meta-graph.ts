@@ -225,9 +225,17 @@ export async function metaWhoAmI(token: string) {
   };
 }
 
+/**
+ * Is this ID a Meta Business (portfolio)? Asks for a field only a business
+ * has; if that fails but the ID has a name, it is something else (often the
+ * System User's own ID, shown on the System Users page) and we say so.
+ */
 export async function metaBusiness(businessId: string, token: string) {
-  const result = await graphGet<{ id: string; name?: string }>(businessId, token, { fields: "id,name" });
-  return result.ok ? { ok: true as const, id: result.data.id, name: result.data.name ?? "" } : { ok: false as const, message: result.message };
+  const result = await graphGet<{ id: string; name?: string }>(businessId, token, { fields: "id,name,verification_status" });
+  if (result.ok) return { ok: true as const, id: result.data.id, name: result.data.name ?? "" };
+  const other = await graphGet<{ id: string; name?: string }>(businessId, token, { fields: "id,name" });
+  if (other.ok) return { ok: false as const, notBusiness: true as const, name: other.data.name ?? "", message: `That ID belongs to "${other.data.name ?? "another Meta object"}", not a business.` };
+  return { ok: false as const, notBusiness: false as const, name: "", message: result.message };
 }
 
 export type DiscoveredPixel = { id: string; name: string; lastFiredAt: string | null; hasAccess: boolean; owned: boolean };
@@ -251,7 +259,7 @@ export async function discoverPixels(businessId: string, token: string): Promise
 }
 
 /** The business's ad accounts, and which ones the token has been given. */
-export async function discoverAdAccounts(businessId: string, token: string): Promise<{ ok: true; accounts: DiscoveredAdAccount[] } | { ok: false; message: string }> {
+export async function discoverAdAccounts(businessId: string, token: string): Promise<{ ok: true; accounts: DiscoveredAdAccount[]; businessListError: string | null } | { ok: false; message: string }> {
   const fields = "account_id,name,currency,timezone_name,account_status";
   const [owned, client, mine] = await Promise.all([
     graphAll<any>(`${businessId}/owned_ad_accounts`, token, { fields }), graphAll<any>(`${businessId}/client_ad_accounts`, token, { fields }), graphAll<any>("me/adaccounts", token, { fields })
@@ -264,5 +272,5 @@ export async function discoverAdAccounts(businessId: string, token: string): Pro
     if (!id || byId.has(id)) continue;
     byId.set(id, { accountId: id, name: row.name ?? "", currency: row.currency ?? null, timezone: row.timezone_name ?? null, status: typeof row.account_status === "number" ? row.account_status : null, hasAccess: assigned.has(id) });
   }
-  return { ok: true, accounts: Array.from(byId.values()) };
+  return { ok: true, accounts: Array.from(byId.values()), businessListError: owned.ok ? null : owned.message };
 }
