@@ -1246,6 +1246,8 @@ export default function PublicOrderFormPage() {
   const publicPackageSet = cleanPackageSetLabel(params?.get("package_set") ?? params?.get("packageSet") ?? "");
   const publicMetaTrackingMode = parsePublicMetaTrackingMode(params?.get("tracking_mode") ?? params?.get("trackingMode"));
   const publicMetaPixelId = (params?.get("meta_pixel_id") ?? params?.get("metaPixelId") ?? "").trim().slice(0, 80);
+  // Tracking Hub "Also send to" Pixels: the page fires the browser event for each too, same event id.
+  const publicMetaExtraPixelIds = useMemo(() => (params?.get("meta_extra_pixel_ids") ?? "").split(",").map((value) => value.trim()).filter((value) => /^\d{8,25}$/.test(value)).slice(0, 10), [params]);
   const publicMetaTrackingKey = (params?.get("meta_tracking_key") ?? params?.get("metaTrackingKey") ?? "").trim().slice(0, 120);
   const publicMetaTestEventCode = (params?.get("meta_test_event_code") ?? params?.get("metaTestEventCode") ?? params?.get("test_event_code") ?? params?.get("testEventCode") ?? "").trim().slice(0, 80);
   const publicMetaTestMode = parsePublicBoolean(params?.get("meta_test") ?? params?.get("metaTest") ?? params?.get("meta_test_mode") ?? params?.get("metaTestMode")) || Boolean(publicMetaTestEventCode);
@@ -1454,6 +1456,7 @@ export default function PublicOrderFormPage() {
         eventName,
         eventId,
         pixelId: publicMetaPixelId || null,
+        extraPixelIds: publicMetaExtraPixelIds,
         trackingMode: publicMetaTrackingMode,
         testMode: publicMetaTestMode,
         testEventCode: publicMetaTestEventCode || null,
@@ -1462,7 +1465,7 @@ export default function PublicOrderFormPage() {
     } catch {
       // Browser-side Meta bridge is best-effort only.
     }
-  }, [publicEmbedIsPreview, publicMetaPixelId, publicMetaTestEventCode, publicMetaTestMode, publicMetaTrackingMode]);
+  }, [publicEmbedIsPreview, publicMetaExtraPixelIds, publicMetaPixelId, publicMetaTestEventCode, publicMetaTestMode, publicMetaTrackingMode]);
   const publicJourneyAttributionMetadata = useMemo(
     () => ({
       source: orderSourceFromUtm(publicUtmSource),

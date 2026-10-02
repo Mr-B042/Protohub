@@ -17,7 +17,7 @@ const PAGE_STATUS: Record<HubWebsiteDetail["landingStats"][number]["status"], ["
 const PAGE_HELP: Record<HubWebsiteDetail["landingStats"][number]["status"], string> = {
   ok: "The page loads the Pixel its tracking link uses.", no_link: "No tracking link names this page yet: create one in Tracking Links.",
   not_checked: "Press Test Website, or wait for a browser report from the new embed code.", missing_pixel: "The page loads no Meta Pixel: add the Pixel's base code to this page.",
-  two_pixels: "The page loads more than one Pixel: remove the extra (often a site-wide theme or plugin Pixel).", wrong_pixel: "The page loads a different Pixel from the one its tracking link uses."
+  two_pixels: "The page loads more than one Pixel: remove the extra (often a site-wide theme or plugin Pixel).", wrong_pixel: "The page does not load every Pixel its tracking link uses (the link's code loads a missing one when a sale happens, but page views go uncounted)."
 };
 const STATUS_PILL: Record<HubWebsite["status"], ["green" | "orange" | "red", string]> = { healthy: ["green", "Healthy"], warning: ["orange", "Warning"], disconnected: ["red", "Disconnected"] };
 
@@ -215,6 +215,8 @@ function WebsitePanel({ id, scanTick, onClose, onToast, onChanged, onEdit, onDel
                   </div>
                   <dl className="m-0 mt-1.5 grid grid-cols-[86px_1fr] gap-y-0.5 text-[12px]">
                     <dt className="text-gray-500">Link uses</dt><dd className="m-0 text-gray-800 dark:text-slate-200">{row.expectedPixel ? `${row.expectedPixel.name}${row.expectedPixel.fromDefault ? " (site default)" : ""}` : "—"}</dd>
+                    {row.extraPixels.length ? <><dt className="text-gray-500">Also sends to</dt><dd className="m-0 text-gray-800 dark:text-slate-200">{row.extraPixels.map((pixel) => `${pixel.name}${row.status === "not_checked" ? "" : pixel.seen ? " ✓" : " (not loaded)"}`).join(", ")}</dd></> : null}
+                    {row.extraPixels.length ? <><dt className="text-gray-500">Also sends to</dt><dd className="m-0 text-gray-800 dark:text-slate-200">{row.extraPixels.map((pixel) => `${pixel.name}${row.status === "not_checked" ? "" : pixel.seen ? " ✓" : " (not loaded)"}`).join(", ")}</dd></> : null}
                     <dt className="text-gray-500">Page loads</dt><dd className="m-0 break-all text-gray-800 dark:text-slate-200">{row.foundPixels.length ? row.foundPixels.map((pixel) => pixel.name ?? pixel.id).join(", ") : row.status === "not_checked" ? <span className="text-gray-400">Not checked yet</span> : "None"}{row.lastBrowserEvent ? <span className="text-gray-400"> · browser report {ago(row.lastBrowserEvent)}</span> : null}</dd>
                   </dl>
                   {row.status !== "ok" ? <p className="m-0 mt-1 text-[11.5px] text-gray-500">{PAGE_HELP[row.status]}</p> : null}

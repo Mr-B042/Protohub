@@ -127,7 +127,22 @@ export function buildEmbedSnippet(url: string, title: string, beaconUrl: string 
           var payload = e.data.customData || {};
           var options = { eventID: e.data.eventId };
           if (e.data.pixelId && typeof window.fbq === "function") {
+            // A Pixel the page has not loaded would drop the event silently: load it first.
+            var ensurePixel = function(id) {
+              try {
+                var state = window.fbq.getState && window.fbq.getState();
+                var known = ((state && state.pixels) || []).some(function(p) { return p && String(p.id) === String(id); });
+                if (!known) window.fbq("init", id);
+              } catch (_) {}
+            };
+            ensurePixel(e.data.pixelId);
             window.fbq("trackSingle", e.data.pixelId, e.data.eventName, payload, options);
+            // Tracking Hub "Also send to" Pixels: same event, same id, so each Pixel counts it once.
+            (e.data.extraPixelIds || []).forEach(function(extraId) {
+              if (!extraId || extraId === e.data.pixelId) return;
+              ensurePixel(extraId);
+              window.fbq("trackSingle", extraId, e.data.eventName, payload, options);
+            });
           } else {
             window.fbq("track", e.data.eventName, payload, options);
           }

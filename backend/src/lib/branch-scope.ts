@@ -70,7 +70,7 @@ const BRANCH_TABLES = new Set([
   "head_of_sales_settings", "head_of_sales_weekly_reports",
   "head_of_sales_bonus_weekly_records", "sales_scripts", "order_script_uses", "head_of_sales_bonus_releases",
   "sales_script_items", "sales_script_versions", "sales_script_uses", "sales_script_views", "sales_script_settings", "sales_script_audit", "meta_capi_events",
-  "tracking_data_sources", "tracking_websites", "tracking_profiles", "tracking_browser_events", "tracking_meta_insights", "tracking_settings", "tracking_meta_ad_insights", "tracking_meta_campaigns", "tracking_reconciliation_notes", "tracking_audit", "tracking_alert_log", "tracking_meta_connections", "tracking_meta_ad_accounts",
+  "tracking_data_sources", "tracking_websites", "tracking_profiles", "tracking_browser_events", "tracking_meta_insights", "tracking_settings", "tracking_meta_ad_insights", "tracking_meta_campaigns", "tracking_reconciliation_notes", "tracking_audit", "tracking_alert_log", "tracking_meta_connections", "tracking_meta_ad_accounts", "tracking_extra_pixel_sends",
   "rep_weekly_targets", "rep_coaching_plans", "rep_coaching_action_items",
   "target_periods", "daily_target_snapshots", "incentive_rules",
   "upsell_bonus_settings", "sales_expansion_settings",

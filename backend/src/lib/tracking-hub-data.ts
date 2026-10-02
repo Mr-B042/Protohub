@@ -260,10 +260,17 @@ export async function assess(orgId: string, branchId: string) {
     const lastBeacon = beacons.map((row: any) => row.fired_at).sort().pop() ?? null;
     const scan = site.last_scan as { pages?: Array<{ url: string; pixels: string[] }> } | null;
     const scanPixels = new Set((scan?.pages ?? []).flatMap((page) => page.pixels ?? []));
-    // One site, many products: different pages may load different Pixels.
-    // "Duplicate" means more than one Pixel on the SAME page.
-    const duplicatePixel = beacons.some((row: any) => (row.pixels_on_page ?? []).length > 1) || (scan?.pages ?? []).some((page) => (page.pixels ?? []).length > 1);
     const siteLinks = basics.links.filter((link: any) => link.website_id === site.id);
+    // The Pixels a page should load: its link's main Pixel + "Also send to" Pixels.
+    const expectedOn = (path: string | null) => {
+      const link: any = siteLinks.find((item: any) => pathOf(item.landing_page_url) === path);
+      const ids = [link?.data_source_id ?? site.data_source_id, ...((link?.extra_data_source_ids ?? []) as string[])].filter(Boolean);
+      return new Set(ids.map((id: string) => basics.sources.find((row: any) => row.id === id)?.pixel_id).filter(Boolean) as string[]);
+    };
+    // One site, many products: different pages may load different Pixels.
+    // "Duplicate" = a page loading more than one Pixel beyond the ones its link expects.
+    const tooMany = (path: string | null, pixels: string[]) => { const expected = expectedOn(path); return pixels.length > 1 && pixels.some((id) => !expected.has(id)); };
+    const duplicatePixel = beacons.some((row: any) => tooMany(pathOf(row.page_url), row.pixels_on_page ?? [])) || (scan?.pages ?? []).some((page) => tooMany(pathOf(page.url), page.pixels ?? []));
     const siteOrders = rows.filter((row) => row.website === site.domain);
     const views = journey.filter((row) => row.domain === site.domain);
     const lastView = views.map((row) => row.day).sort().pop() ?? null;
@@ -277,17 +284,17 @@ export async function assess(orgId: string, branchId: string) {
       ...(scan?.pages ?? []).filter((page) => (page.pixels ?? []).length > 0).map((page) => pathOf(page.url)).filter(Boolean) as string[]
     ]);
     const browserMissing = browserPages.filter((path) => !seenPaths.has(path));
-    const pixelIds = new Set<string>([...siteLinks.map((link: any) => basics.sources.find((row: any) => row.id === link.data_source_id)?.pixel_id).filter(Boolean), source?.pixel_id].filter(Boolean) as string[]);
+    const pixelIds = new Set<string>([...siteLinks.flatMap((link: any) => Array.from(expectedOn(pathOf(link.landing_page_url)))), source?.pixel_id].filter(Boolean) as string[]);
     const problems: string[] = [];
     if (!source && siteLinks.every((link: any) => !link.data_source_id)) problems.push("No Pixel chosen (no default and no tracking link with one)");
     if (browserMissing.length) problems.push(`Browser Pixel not seen on ${browserMissing.length} of ${browserPages.length} landing page${browserPages.length === 1 ? "" : "s"}`);
-    if (duplicatePixel) problems.push("More than one Pixel on the same page");
+    if (duplicatePixel) problems.push("More than one Pixel on the same page (beyond the ones its link uses)");
     // A landing page loading a different Pixel from the one its link uses.
     const wrongPages = siteLinks.filter((link: any) => {
-      const expected = basics.sources.find((row: any) => row.id === (link.data_source_id ?? site.data_source_id))?.pixel_id;
+      const expected = Array.from(expectedOn(pathOf(link.landing_page_url)));
       const page = (scan?.pages ?? []).find((item) => pathOf(item.url) === pathOf(link.landing_page_url));
       const seen = [...(page?.pixels ?? []), ...beacons.filter((row: any) => pathOf(row.page_url) === pathOf(link.landing_page_url)).flatMap((row: any) => row.pixels_on_page ?? [])];
-      return Boolean(expected && seen.length && !seen.includes(expected));
+      return Boolean(expected.length && seen.length && expected.some((id) => !seen.includes(id)));
     }).length;
     if (wrongPages) problems.push(`Wrong Pixel on ${wrongPages} landing page${wrongPages === 1 ? "" : "s"}`);
     const landingPaths = new Set<string>([
