@@ -4401,13 +4401,18 @@ export type HubScanPage = { url: string; ok: boolean; status: number | null; pix
 export type HubWebsite = {
   id: string; domain: string; label: string; platform: string; dataSourceId: string | null; dataSourceName: string | null; dataSourceIsMain: boolean; dataSourcePlatform: string;
   notes: string | null; forms: number; activeForms: number; orders7d: number; lastBrowserEvent: string | null; lastEvent: string | null; duplicatePixel: boolean; landingPages: string[];
+  pixelCount: number; browserPages: number; browserSeenPages: number;
   lastScanAt: string | null; lastScan: { pages: HubScanPage[]; at: string } | null; status: "healthy" | "warning" | "disconnected"; problems: string[]; createdAt: string;
 };
 export type HubWebsiteDetail = HubWebsite & {
   siteUrl: string;
   dataSource: { id: string; name: string; isMain: boolean; hasToken: boolean; platform: string } | null;
   orders30d: number; orders30dChange: number;
-  landingStats: Array<{ path: string; orders30d: number; link: string | null }>;
+  landingStats: Array<{
+    path: string; orders30d: number; link: string | null; linkId: string | null; strategy: string | null;
+    expectedPixel: { id: string; name: string; fromDefault: boolean } | null; foundPixels: Array<{ id: string; name: string | null }>;
+    lastBrowserEvent: string | null; checkedAt: string | null; status: "ok" | "no_link" | "not_checked" | "missing_pixel" | "two_pixels" | "wrong_pixel";
+  }>;
   forms: Array<{ id: string; label: string; landingPath: string | null; strategy: string; active: boolean }>;
   checks: Array<{ key: string; label: string; ok: boolean; value: string }>;
   recent: Array<{ name: string; count: number; change: number }>;

@@ -129,7 +129,7 @@ function ConnectionCard({ connection, onToast, onChanged, onAddManually, onOpenP
 }
 
 function Info({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div className="min-w-0"><dt className="text-[11px] text-gray-500">{label}</dt><dd className="m-0 truncate font-semibold text-gray-800 dark:text-slate-200">{children}</dd></div>;
+  return <div className="min-w-0"><dt className="text-[11px] text-gray-500">{label}</dt><dd className="m-0 break-all font-semibold text-gray-800 dark:text-slate-200">{children}</dd></div>;
 }
 
 const CURRENCIES = ["NGN", "USD", "GHS", "KES"];
