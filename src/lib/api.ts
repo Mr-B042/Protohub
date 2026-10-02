@@ -4431,6 +4431,7 @@ export type HubLinkStats = { views: number; orders: number; conversionRate: numb
 export type HubLink = {
   id: string; trackingKey: string; label: string; active: boolean; productId: string | null; productName: string | null; productImage: string | null;
   websiteId: string | null; websiteDomain: string | null; landingPageUrl: string; landingPath: string | null; redirectUrl: string; formLabel: string;
+  packageSet: string | null; currency: string | null;
   dataSourceId: string | null; dataSourceName: string | null; dataSourcePlatform: string; pixelId: string | null; profileId: string | null; profileName: string | null;
   strategy: HubStrategy | "off"; mode: string; testEventCode: string;
   checklist: { thankYouPixelRemoved?: boolean; testEventSeen?: boolean; confirmedBy?: string | null; confirmedAt?: string };
@@ -4440,7 +4441,7 @@ export type HubLink = {
 export type HubLinksResponse = {
   period: HubPeriod;
   kpis: { total: number; newThisMonth: number; orders: number; ordersChange: number; pageViews: number; pageViewsChange: number; conversionRate: number; conversionRateChange: number; healthy: number; healthyPct: number };
-  links: HubLink[]; products: Array<{ id: string; name: string }>;
+  links: HubLink[]; products: Array<{ id: string; name: string; packageSets: Array<{ name: string; currency: string | null; packages: number }> }>;
   dataSources: Array<{ id: string; name: string; pixelId: string; status: string; platform: string }>;
   websites: Array<{ id: string; domain: string; dataSourceId: string | null }>; profiles: HubProfile[]; defaultStrategy: HubStrategy; urlParameters: string;
 };
@@ -4570,7 +4571,8 @@ export const trackingHubApi = {
   reconciliation: (query: HubQuery) => get<HubReconciliation>(`/api/tracking-hub/reconciliation${hubQuery(query)}`),
   reconciliationItem: (query: HubQuery) => get<HubReconItem>(`/api/tracking-hub/reconciliation/item${hubQuery(query)}`),
   reconciliationNote: (body: { scope: HubReconView; scopeId: string; note?: string; resolved?: boolean }) => post<{ ok: true }>("/api/tracking-hub/reconciliation/notes", body),
-  refreshReconciliation: (period: { from: string; to: string }) => post<{ report: Array<{ source: string; account: string; ok: boolean; message: string; rows: number }> }>("/api/tracking-hub/reconciliation/refresh", period),
+  reconciliationTargets: () => get<{ accounts: Array<{ account: string; label: string }> }>("/api/tracking-hub/reconciliation/targets"),
+  refreshReconciliation: (period: { from: string; to: string; account?: string }) => post<{ report: Array<{ source: string; account: string; ok: boolean; message: string; rows: number }> }>("/api/tracking-hub/reconciliation/refresh", period),
   diagnostics: (query: HubQuery) => get<HubDiagnostics>(`/api/tracking-hub/diagnostics${hubQuery(query)}`),
   validateUrl: (url: string) => post<{ host: string; path: string; ok: boolean; note: string; checks: Array<{ key: string; label: string; value: string | null; required: boolean; ok: boolean }> }>("/api/tracking-hub/diagnostics/validate-url", { url }),
   settings: () => get<HubSettingsResponse>("/api/tracking-hub/settings"),

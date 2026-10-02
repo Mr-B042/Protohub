@@ -5,7 +5,7 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 import { addDaysToDateKey, lagosDateKey } from "../lib/sales-bonus-engine.js";
 import { sendMetaCapiPurchase, testMetaCapiConnection } from "../lib/meta-capi.js";
 import { testTikTokConnection } from "../lib/tiktok-events.js";
-import { adPurchases, campaignInfo, checkDataset, datasetEventStats, datasetQuality, discoverAdAccounts, discoverPixels, metaBusiness, metaWhoAmI, scanPage } from "../lib/meta-graph.js";
+import { adPurchases, campaignsByIds, checkDataset, datasetEventStats, datasetQuality, discoverAdAccounts, discoverPixels, metaBusiness, metaWhoAmI, scanPage } from "../lib/meta-graph.js";
 import { connectionToken } from "../lib/tracking-credentials.js";
 import { ATTRIBUTION_FIELDS, attributionCapture, domainOf, humanMetaError, orderAdIds, pathOf, reconciliationVerdict } from "../lib/tracking-hub.js";
 import {
@@ -849,6 +849,7 @@ router.get("/links", async (req, res) => {
         productId: link.product_id, productName: product?.name ?? null, productImage: product?.imageUrl ?? null,
         websiteId: link.website_id, websiteDomain: site?.domain ?? domainOf(link.landing_page_url),
         landingPageUrl: link.landing_page_url ?? "", landingPath: pathOf(link.landing_page_url), redirectUrl: link.redirect_url ?? "", formLabel: link.form_label ?? "",
+        packageSet: link.package_set ?? null, currency: link.currency ?? null,
         dataSourceId: link.data_source_id, dataSourceName: source?.name ?? (link.pixel_id ? `Pixel ${link.pixel_id}` : null), dataSourcePlatform: source?.platform ?? "meta", pixelId: source?.pixel_id ?? link.pixel_id ?? null,
         profileId: link.profile_id, profileName: profile?.name ?? null,
         strategy: STRATEGY_OF_MODE[link.mode] ?? "landing_page", mode: link.mode, testEventCode: testCode,
@@ -857,6 +858,16 @@ router.get("/links", async (req, res) => {
         status: link.active === false ? "paused" : linkStatusOf(Boolean(linkHealth?.healthy), stats.conversionRate, stats.views, settings.lowConversionRate)
       };
     });
+    // Each product's package sets (the order form shows one set) and their currency.
+    const { data: packageRows } = await supabase.from("product_packages").select("product_id, package_set, currency").in("product_id", basics.products.map((row: any) => row.id)).eq("active", true);
+    const packageSetsOf = new Map<string, Array<{ name: string; currency: string | null; packages: number }>>();
+    for (const pack of packageRows ?? []) {
+      const list = packageSetsOf.get(pack.product_id) ?? [];
+      const name = String(pack.package_set ?? "").trim() || "Default";
+      const found = list.find((item) => item.name.toLowerCase() === name.toLowerCase());
+      if (found) found.packages += 1; else list.push({ name, currency: pack.currency ?? null, packages: 1 });
+      packageSetsOf.set(pack.product_id, list);
+    }
     const monthAgo = new Date(Date.now() - 30 * 86_400_000).toISOString();
     const linkKeys = new Set(links.map((link: any) => String(link.trackingKey).toLowerCase()));
     const ordersNow = nowRows.filter((row) => row.trackingKey && linkKeys.has(row.trackingKey)).length;
@@ -874,7 +885,7 @@ router.get("/links", async (req, res) => {
         healthy: healthyCount, healthyPct: pct(healthyCount, links.length)
       },
       links,
-      products: basics.products.map((row: any) => ({ id: row.id, name: row.name })).sort((a: any, b: any) => a.name.localeCompare(b.name)),
+      products: basics.products.map((row: any) => ({ id: row.id, name: row.name, packageSets: packageSetsOf.get(row.id) ?? [] })).sort((a: any, b: any) => a.name.localeCompare(b.name)),
       dataSources: assessment.sourceRows.map((row: any) => ({ id: row.id, name: row.name, pixelId: row.pixelId, status: row.status, platform: row.platform })),
       websites: basics.websites.map((row: any) => ({ id: row.id, domain: row.domain, dataSourceId: row.data_source_id })),
       profiles: basics.profiles.map(presentProfile),
@@ -945,6 +956,8 @@ const LinkSchema = z.object({
   landingPageUrl: z.string().trim().max(2000).default(""),
   redirectUrl: z.string().trim().max(2000).default(""),
   formLabel: z.string().trim().max(200).default(""),
+  packageSet: z.string().trim().max(80).default("Default"),
+  currency: z.string().trim().max(8).default(""),
   active: z.boolean().default(true)
 });
 
@@ -977,6 +990,7 @@ async function saveLink(req: Request, id: string | null, body: unknown = req.bod
     org_id: orgId, branch_id: branchId, label: d.label, product_id: d.productId ?? null, website_id: websiteId,
     profile_id: d.profileId ?? null, data_source_id: dataSourceId, mode: MODE_OF_STRATEGY[d.strategy], pixel_id: pixelId,
     landing_page_url: d.landingPageUrl || null, redirect_url: d.redirectUrl || null, form_label: d.formLabel || null,
+    package_set: d.packageSet || "Default", currency: d.currency || null,
     active: d.active, updated_at: new Date().toISOString()
   };
   if (id) {
@@ -1015,7 +1029,7 @@ router.post("/links/:id/duplicate", async (req, res) => {
     res.status(201).json(await saveLink(req, null, {
       label: `${link.label} (copy)`, productId: link.product_id, websiteId: link.website_id, profileId: link.profile_id, dataSourceId: link.data_source_id,
       strategy: !strategy || strategy === "off" ? "landing_page" : strategy,
-      landingPageUrl: link.landing_page_url ?? "", redirectUrl: link.redirect_url ?? "", formLabel: link.form_label ?? "", active: false
+      landingPageUrl: link.landing_page_url ?? "", redirectUrl: link.redirect_url ?? "", formLabel: link.form_label ?? "", packageSet: link.package_set ?? "Default", currency: link.currency ?? "", active: false
     }));
   } catch (error: any) { fail(res, error, "Could not duplicate the link."); }
 });
@@ -1375,62 +1389,81 @@ router.post("/reconciliation/notes", async (req, res) => {
   } catch (error: any) { fail(res, error, "Could not save."); }
 });
 
+type RefreshTarget = { label: string; account: string; token: string; sourceId: string | null; connectionId: string | null };
+
+/** What Refresh Data reads: connections' switched-on ad accounts (their token), then ad account ids typed on manually added Pixels. */
+function refreshTargets(basics: Awaited<ReturnType<typeof loadBasics>>): RefreshTarget[] {
+  const targets: RefreshTarget[] = [];
+  const seen = new Set<string>();
+  for (const connection of basics.connections as any[]) {
+    if (!connection.access_token) continue;
+    for (const account of (basics.adAccounts as any[]).filter((row) => row.connection_id === connection.id && row.active)) {
+      if (seen.has(account.account_id)) continue;
+      seen.add(account.account_id);
+      targets.push({ label: account.name || connection.name, account: account.account_id, token: connection.access_token, sourceId: null, connectionId: connection.id });
+    }
+  }
+  for (const source of (basics.sources as any[]).filter((row) => (row.platform ?? "meta") === "meta" && row.active !== false && row.access_token)) {
+    for (const account of (source.ad_account_ids ?? []) as string[]) {
+      if (seen.has(account)) continue;
+      seen.add(account);
+      targets.push({ label: source.name, account, token: source.access_token, sourceId: source.id, connectionId: null });
+    }
+  }
+  return targets;
+}
+
+/** One ad account: Meta's purchases per ad per day, then details of only the campaigns in them. */
+async function refreshAccount(orgId: string, branchId: string, target: RefreshTarget, from: string, to: string) {
+  const account = target.account;
+  const result = await adPurchases(account, target.token, from, to);
+  if (!result.ok) return { source: target.label, account, ok: false, message: humanMetaError(result.message, null).title, rows: 0 };
+  const clear = supabase.from("tracking_meta_ad_insights").delete().eq("ad_account_id", account).gte("day", from).lte("day", to);
+  await (target.connectionId ? clear.eq("connection_id", target.connectionId) : clear.eq("data_source_id", target.sourceId!));
+  for (let i = 0; i < result.rows.length; i += 500) {
+    const insert = await supabase.from("tracking_meta_ad_insights").insert(result.rows.slice(i, i + 500).map((row) => ({
+      org_id: orgId, branch_id: branchId, data_source_id: target.sourceId, connection_id: target.connectionId, ad_account_id: account, day: row.day,
+      campaign_id: row.campaignId, campaign_name: row.campaignName, adset_id: row.adsetId, adset_name: row.adsetName, ad_id: row.adId, ad_name: row.adName,
+      purchases: row.purchases, purchase_value: row.purchaseValue, spend: row.spend
+    })));
+    if (insert.error) throw insert.error;
+  }
+  const info = await campaignsByIds(result.rows.map((row) => row.campaignId), target.token);
+  if (info.ok && info.rows.length) {
+    const fetchedAt = new Date().toISOString();
+    const upsert = await supabase.from("tracking_meta_campaigns").upsert(info.rows.map((campaign) => ({
+      org_id: orgId, branch_id: branchId, data_source_id: target.sourceId, connection_id: target.connectionId, ad_account_id: account, campaign_id: campaign.id, name: campaign.name ?? "",
+      objective: campaign.objective ?? null, status: campaign.effective_status ?? null, start_time: campaign.start_time ?? null, stop_time: campaign.stop_time ?? null, fetched_at: fetchedAt
+    })), { onConflict: target.connectionId ? "connection_id,campaign_id" : "data_source_id,campaign_id" });
+    if (upsert.error) throw upsert.error;
+  }
+  return { source: target.label, account, ok: true, message: info.ok ? "Loaded." : `Loaded; campaign names not read (${humanMetaError(info.message, null).title}).`, rows: result.rows.length };
+}
+
+/** The ad accounts Refresh Data will read (the page refreshes them one by one to show progress). */
+router.get("/reconciliation/targets", async (req, res) => {
+  try {
+    const targets = refreshTargets(await loadBasics(req.user!.orgId, branchOf(req)));
+    res.json({ accounts: targets.map((target) => ({ account: target.account, label: target.label })) });
+  } catch (error: any) { fail(res, error, "Could not list the ad accounts."); }
+});
+
 router.post("/reconciliation/refresh", async (req, res) => {
   try {
     const orgId = req.user!.orgId;
     const branchId = branchOf(req);
     const period = periodOf(req.body ?? {});
+    // At least 7 days, so the detail panel's chart has Meta's side too.
     const from = addDaysToDateKey(period.to, -Math.max(6, period.length - 1));
     if (daysBetween(from, period.to) > 92) throw httpError(400, "Refresh at most 92 days at a time.");
-    const basics = await loadBasics(orgId, branchId);
-    // What to read: each connection's switched-on ad accounts (its token), then
-    // ad account ids typed on manually added Pixels (their own token).
-    type Target = { label: string; account: string; token: string; sourceId: string | null; connectionId: string | null };
-    const targets: Target[] = [];
-    const seenAccounts = new Set<string>();
-    for (const connection of basics.connections as any[]) {
-      if (!connection.access_token) continue;
-      for (const account of (basics.adAccounts as any[]).filter((row) => row.connection_id === connection.id && row.active)) {
-        if (seenAccounts.has(account.account_id)) continue;
-        seenAccounts.add(account.account_id);
-        targets.push({ label: account.name || connection.name, account: account.account_id, token: connection.access_token, sourceId: null, connectionId: connection.id });
-      }
+    const only = typeof req.body?.account === "string" ? String(req.body.account).replace(/^act_/, "") : "";
+    const targets = refreshTargets(await loadBasics(orgId, branchId)).filter((target) => !only || target.account === only);
+    if (targets.length === 0) throw httpError(400, only ? `Ad account ${only} is not switched on.` : "No ad account is switched on. Connect your Meta Business in Data Sources and switch on its ad accounts.");
+    // Accounts side by side, four at a time.
+    const report: Array<Awaited<ReturnType<typeof refreshAccount>>> = [];
+    for (let i = 0; i < targets.length; i += 4) {
+      report.push(...await Promise.all(targets.slice(i, i + 4).map((target) => refreshAccount(orgId, branchId, target, from, period.to))));
     }
-    for (const source of (basics.sources as any[]).filter((row) => (row.platform ?? "meta") === "meta" && row.active !== false && row.access_token)) {
-      for (const account of (source.ad_account_ids ?? []) as string[]) {
-        if (seenAccounts.has(account)) continue;
-        seenAccounts.add(account);
-        targets.push({ label: source.name, account, token: source.access_token, sourceId: source.id, connectionId: null });
-      }
-    }
-    const report: Array<{ source: string; account: string; ok: boolean; message: string; rows: number }> = [];
-    for (const target of targets) {
-      {
-        const account = target.account;
-        const [result, info] = await Promise.all([adPurchases(account, target.token, from, period.to), campaignInfo(account, target.token)]);
-        if (!result.ok) { report.push({ source: target.label, account, ok: false, message: humanMetaError(result.message, null).title, rows: 0 }); continue; }
-        const clear = supabase.from("tracking_meta_ad_insights").delete().eq("ad_account_id", account).gte("day", from).lte("day", period.to);
-        await (target.connectionId ? clear.eq("connection_id", target.connectionId) : clear.eq("data_source_id", target.sourceId!));
-        for (let i = 0; i < result.rows.length; i += 500) {
-          const insert = await supabase.from("tracking_meta_ad_insights").insert(result.rows.slice(i, i + 500).map((row) => ({
-            org_id: orgId, branch_id: branchId, data_source_id: target.sourceId, connection_id: target.connectionId, ad_account_id: account, day: row.day,
-            campaign_id: row.campaignId, campaign_name: row.campaignName, adset_id: row.adsetId, adset_name: row.adsetName, ad_id: row.adId, ad_name: row.adName,
-            purchases: row.purchases, purchase_value: row.purchaseValue, spend: row.spend
-          })));
-          if (insert.error) throw insert.error;
-        }
-        if (info.ok) {
-          for (const campaign of info.rows) {
-            await supabase.from("tracking_meta_campaigns").upsert({
-              org_id: orgId, branch_id: branchId, data_source_id: target.sourceId, connection_id: target.connectionId, ad_account_id: account, campaign_id: campaign.id, name: campaign.name ?? "",
-              objective: campaign.objective ?? null, status: campaign.effective_status ?? null, start_time: campaign.start_time ?? null, stop_time: campaign.stop_time ?? null, fetched_at: new Date().toISOString()
-            }, { onConflict: target.connectionId ? "connection_id,campaign_id" : "data_source_id,campaign_id" });
-          }
-        }
-        report.push({ source: target.label, account, ok: true, message: "Loaded.", rows: result.rows.length });
-      }
-    }
-    if (report.length === 0) throw httpError(400, "No ad account is switched on. Connect your Meta Business in Data Sources and switch on its ad accounts.");
     await hubAudit(orgId, branchId, actorOf(req), "reconciliation_refreshed", { type: "reconciliation" }, { from, to: period.to, accounts: report.length });
     res.json({ report });
   } catch (error: any) { fail(res, error, "Could not read Meta's numbers."); }
