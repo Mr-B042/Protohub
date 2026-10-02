@@ -1296,7 +1296,11 @@ function reconRows(view: ReconView, data: ReconData, settings: HubSettings) {
       account: adAccount?.name || source?.ad_account_label || source?.name || (accountId ? `act_${accountId}` : "—"),
       accountId, dataSourceName: source?.name ?? null, businessName: connection?.name || source?.business_name || null,
       protohub, meta, difference: meta === null ? null : meta - protohub, matchRate, spend: group.spend,
-      status: resolved.has(group.id) ? "resolved" : meta === null ? "no_meta" : investigate ? "investigate" : "matched", verdict
+      // "Matched" only when the counts agree or the match rate clears the bar;
+      // a small gap below the bar (e.g. 0 vs 1) says which side is higher.
+      status: resolved.has(group.id) ? "resolved" : meta === null ? "no_meta" : investigate ? "investigate"
+        : meta === protohub || (matchRate !== null && matchRate >= settings.investigateBelowMatchRate) ? "matched"
+        : meta > protohub ? "meta_higher" : "protohub_higher", verdict
     };
   }).sort((a, b) => (b.protohub + (b.meta ?? 0)) - (a.protohub + (a.meta ?? 0)));
 }

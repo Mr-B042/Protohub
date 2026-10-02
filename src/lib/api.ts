@@ -4481,7 +4481,7 @@ export type HubReconView = "campaign" | "adset" | "ad" | "landing_page" | "produ
 export type HubVerdict = { tone: "ok" | "warn" | "info"; conclusion: string; likely: string };
 export type HubReconRow = {
   id: string; name: string; view: HubReconView; image: string | null; productName: string | null; account: string; accountId: string | null; dataSourceName: string | null;
-  protohub: number; meta: number | null; difference: number | null; matchRate: number | null; spend: number; status: "matched" | "investigate" | "resolved" | "no_meta"; verdict: HubVerdict;
+  protohub: number; meta: number | null; difference: number | null; matchRate: number | null; spend: number; status: "matched" | "investigate" | "resolved" | "no_meta" | "meta_higher" | "protohub_higher"; verdict: HubVerdict;
 };
 export type HubReconciliation = {
   period: HubPeriod; view: HubReconView; lastFetched: string | null;
