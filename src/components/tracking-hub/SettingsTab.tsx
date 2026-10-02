@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { trackingHubApi, type HubAuditEntry, type HubProfile, type HubSettings, type HubSettingsResponse, type HubStrategy } from "../../lib/api";
 import {
+  LoadState,
   Card, EmptyRow, HubHeader, Loading, Modal, PlatformIcon, StatusPill, Toggle, ago, copyText, input, labelCls, primaryButton, rowCls, smallButton,
   STRATEGY_LABEL, tableCls, timeOf, useLoad, darkButton, type HubTab, type Toast
 } from "./HubParts";
@@ -33,13 +34,13 @@ const SIDE: Array<{ key: Section; title: string; sub: string; icon: ReactNode }>
 const sideFor = (section: Section): Section => (section === "rules" ? "general" : section);
 
 export default function SettingsTab({ tabBar, onToast, onTab, renderMetaDefaults }: { tabBar: ReactNode; onToast: Toast; onTab: (tab: HubTab) => void; renderMetaDefaults?: () => ReactNode }) {
-  const { data, reload } = useLoad(() => trackingHubApi.settings(), [], onToast);
+  const { data, error: loadError, reload } = useLoad(() => trackingHubApi.settings(), []);
   const [section, setSection] = useState<Section>("general");
   const [draft, setDraft] = useState<HubSettings | null>(null);
   const [saving, setSaving] = useState(false);
   useEffect(() => { if (data) setDraft(data.settings); }, [data]);
   const header = <HubHeader title="Settings" subtitle="Configure how Protohub tracks orders and sends conversion events to your advertising platforms." />;
-  if (!data || !draft) return <div className="space-y-5">{header}{tabBar}<Loading /></div>;
+  if (!data || !draft) return <div className="space-y-5">{header}{tabBar}<Loading error={loadError} onRetry={reload} /></div>;
   const set = (patch: Partial<HubSettings>) => setDraft((current) => (current ? { ...current, ...patch } : current));
   const save = async (next: HubSettings = draft) => {
     setSaving(true);
@@ -357,7 +358,7 @@ function ProfileForm({ profile, data, onClose, onSaved }: { profile: HubProfile 
 }
 
 function AuditSection() {
-  const { data } = useLoad(() => trackingHubApi.audit(), []);
+  const { data, error: auditError, reload: reloadAudit } = useLoad(() => trackingHubApi.audit(), []);
   return (
     <Panel title="Audit Logs" sub="Who changed what in the Tracking Hub (last 300 changes).">
       <table className={tableCls}>
@@ -365,7 +366,7 @@ function AuditSection() {
         <tbody>
           {(data?.entries ?? []).map((row: HubAuditEntry, index) => <tr key={index} className={rowCls}><td className="whitespace-nowrap py-2 text-gray-600"><Clock className="mr-1 inline h-3.5 w-3.5" />{ago(row.at)} · {timeOf(row.at)}</td><td className="py-2 font-semibold">{auditLabel(row.action)}</td><td className="py-2 text-gray-600">{row.subject ?? row.subjectType ?? "—"}</td><td className="py-2 text-gray-600">{row.by ?? "System"}</td></tr>)}
           {data && data.entries.length === 0 ? <EmptyRow colSpan={4} text="No changes recorded yet." /> : null}
-          {!data ? <EmptyRow colSpan={4} text="Loading…" /> : null}
+          {!data ? <tr><td colSpan={4}><LoadState compact error={auditError} onRetry={reloadAudit} /></td></tr> : null}
         </tbody>
       </table>
     </Panel>

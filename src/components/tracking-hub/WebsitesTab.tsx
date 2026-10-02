@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ArrowRight, BookOpen, CheckCircle2, ChevronRight, ExternalLink, FileText, Globe, Layers, Link2, Plus, ScanLine, ShoppingCart, TriangleAlert, XCircle } from "lucide-react";
 import { trackingHubApi, type HubWebsite } from "../../lib/api";
 import {
+  LoadState,
   ActionMenu, Card, CheckBox, Delta, EmptyRow, FilterSelect, HubHeader, Kpi, Loading, MenuButton, MiniStat, Modal, PanelClose, PlatformIcon, SearchBox, SetupGuide,
   SiteIcon, SplitLayout, STRATEGY_LABEL, StatusPill, UnderlineTabs, ago, darkButton, input, labelCls, nf, outlineButton, primaryButton, rowCls, smallButton,
   listTableCls, tableCls, useLoad, type Toast
@@ -13,7 +14,7 @@ type PanelTab = "overview" | "pages" | "forms" | "tracking" | "diagnostics" | "s
 const STATUS_PILL: Record<HubWebsite["status"], ["green" | "orange" | "red", string]> = { healthy: ["green", "Healthy"], warning: ["orange", "Warning"], disconnected: ["red", "Disconnected"] };
 
 export default function WebsitesTab({ tabBar, onToast }: { tabBar: ReactNode; onToast: Toast }) {
-  const { data, reload } = useLoad(() => trackingHubApi.websites(), [], onToast);
+  const { data, error, reload } = useLoad(() => trackingHubApi.websites(), []);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
@@ -45,7 +46,7 @@ export default function WebsitesTab({ tabBar, onToast }: { tabBar: ReactNode; on
       <WebsiteForm site={editing} sources={data.dataSources} detected={data.detected} onCancel={() => setEditing(null)} onSaved={(id) => { setEditing(null); onToast("Website saved."); setSelected(id); reload(); }} />
     </Modal> : null}
   </>;
-  if (!data) return <div className="space-y-5">{header}{tabBar}<Loading /></div>;
+  if (!data) return <div className="space-y-5">{header}{tabBar}<Loading error={error} onRetry={reload} /></div>;
   const k = data.kpis;
   const current = data.websites.find((site) => site.id === selected) ?? null;
 
@@ -114,7 +115,7 @@ export default function WebsitesTab({ tabBar, onToast }: { tabBar: ReactNode; on
 }
 
 function WebsitePanel({ id, scanTick, onClose, onToast, onChanged, onEdit, onDeleted, sources }: { id: string; scanTick: number; onClose: () => void; onToast: Toast; onChanged: () => void; onEdit: () => void; onDeleted: () => void; sources: Array<{ id: string; name: string; platform: string; isMain: boolean }> }) {
-  const { data, reload } = useLoad(() => trackingHubApi.website(id), [id], onToast);
+  const { data, error, reload } = useLoad(() => trackingHubApi.website(id), [id]);
   const [tab, setTab] = useState<PanelTab>("overview");
   const [scanning, setScanning] = useState(false);
   const [summary, setSummary] = useState<string[]>([]);
@@ -134,7 +135,7 @@ function WebsitePanel({ id, scanTick, onClose, onToast, onChanged, onEdit, onDel
   };
   const [lastTick, setLastTick] = useState(scanTick);
   useEffect(() => { if (scanTick !== lastTick) { setLastTick(scanTick); setTab("tracking"); void scan(); } }, [scanTick]);
-  if (!data) return <Card className="p-8 text-center text-sm text-gray-500">Loading…</Card>;
+  if (!data) return <LoadState error={error} onRetry={reload} />;
   const [tone, text] = STATUS_PILL[data.status];
   const failing = data.checks.filter((check) => !check.ok).length;
   const tones: Array<"green" | "blue" | "green" | "purple"> = ["green", "blue", "green", "purple"];

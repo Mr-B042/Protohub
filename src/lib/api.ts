@@ -24,6 +24,8 @@ export type AuthRefreshResult =
       session: AuthSessionSnapshot;
       status?: number;
       message?: string;
+      /** The refresh request got no answer at all (connection, not the login). */
+      noAnswer?: boolean;
     };
 
 let refreshInFlight: Promise<AuthRefreshResult> | null = null;
@@ -230,6 +232,47 @@ export class PreviewReadOnlyError extends Error {
   }
 }
 
+// ── When a request gets no answer at all ───────────────────
+// (Bright, 2 Oct 2026: error messages must say what actually happened.)
+// The browser only says "failed", so we check: is the device offline? Does
+// the Protohub website itself still load? Then we say which one it was.
+// Status stays 0 so callers that treat "no answer" as an outage still do.
+export type NoAnswerKind = "offline" | "connection_lost" | "server_unreachable";
+export const NO_ANSWER_MESSAGE: Record<NoAnswerKind, string> = {
+  offline: "You're offline. Check your internet or data connection. We'll try again when you're back.",
+  connection_lost: "Your internet connection dropped. Nothing was saved or lost. Try again once you're connected.",
+  server_unreachable: "Your internet is working, but Protohub's server didn't answer. This is on our side. Try again in a minute."
+};
+
+async function websiteStillLoads(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timer = controller ? window.setTimeout(() => controller.abort(), 4000) : null;
+  try {
+    const res = await fetch(`${window.location.origin}/?connection-check=${Date.now()}`, { method: "HEAD", cache: "no-store", signal: controller?.signal });
+    return res.status > 0;
+  } catch {
+    return false;
+  } finally {
+    if (timer) window.clearTimeout(timer);
+  }
+}
+
+export async function diagnoseNoAnswer(): Promise<NoAnswerKind> {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return "offline";
+  return (await websiteStillLoads()) ? "server_unreachable" : "connection_lost";
+}
+
+async function noAnswerError() {
+  const kind = await diagnoseNoAnswer();
+  return new ApiError(0, NO_ANSWER_MESSAGE[kind], kind);
+}
+
+/** True when the request got no answer (offline, dropped, or server silent). */
+export function isNoAnswerError(error: unknown): boolean {
+  return typeof (error as { status?: unknown })?.status === "number" && (error as { status: number }).status === 0;
+}
+
 // ── Core request helper ────────────────────────────────────
 async function request<T>(
   method: string,
@@ -256,6 +299,7 @@ async function request<T>(
         }
         token = auth.getAccessToken();
       } else {
+        if (refresh.noAnswer) throw await noAnswerError();
         throw new ApiError(503, "Could not refresh your session right now. Please retry in a moment - you have not been logged out.");
       }
     }
@@ -285,7 +329,7 @@ async function request<T>(
       await sleep(400 * (transientAttempt + 1));
       return request<T>(method, path, body, retried, transientAttempt + 1);
     }
-    throw new ApiError(0, "Unable to reach the server. The request may be blocked by your connection or allowed domain settings.");
+    throw await noAnswerError();
   }
 
   if (method === "GET" && TRANSIENT_RETRYABLE_STATUSES.has(res.status) && transientAttempt < TRANSIENT_GET_RETRY_LIMIT) {
@@ -301,6 +345,7 @@ async function request<T>(
       return request<T>(method, path, body, true, transientAttempt);
     }
     if (refreshed.reason === "transient") {
+      if (refreshed.noAnswer) throw await noAnswerError();
       throw new ApiError(503, "Could not refresh your session right now. Please retry in a moment - you have not been logged out.");
     }
     if (refreshed.reason === "invalid" && !auth.isAccessTokenExpired(30_000)) {
@@ -381,7 +426,7 @@ export async function refreshAuthSession(): Promise<AuthRefreshResult> {
       }
       return { ok: true };
     } catch (error: any) {
-      return { ok: false, reason: "transient", session, message: error?.message ?? "Session refresh failed." };
+      return { ok: false, reason: "transient", session, message: error?.message ?? "Session refresh failed.", noAnswer: true };
     } finally {
       if (lockAcquired) releaseAuthRefreshLock();
       refreshInFlight = null;

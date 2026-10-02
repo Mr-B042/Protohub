@@ -378,21 +378,45 @@ export function ProductThumb({ src, size = 40 }: { src: string | null | undefine
 
 // ---------------------------------------------------------------- data loading
 
-export function useLoad<T>(load: () => Promise<T>, deps: unknown[], onError?: Toast) {
+/**
+ * Loads a page's data. A failed load is shown IN the page (LoadState) with the
+ * real reason and a Try again button - not a pop-up - and loads again by
+ * itself when the device comes back online.
+ */
+export function useLoad<T>(load: () => Promise<T>, deps: unknown[]) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState("");
   const [tick, setTick] = useState(0);
   useEffect(() => {
     let cancelled = false;
     setError("");
-    load().then((result) => { if (!cancelled) setData(result); }).catch((err: any) => { if (!cancelled) { setError(err?.message ?? "Could not load."); onError?.(err?.message ?? "Could not load."); } });
+    load().then((result) => { if (!cancelled) setData(result); }).catch((err: any) => { if (!cancelled) setError(err?.message ?? "Could not load this page."); });
     return () => { cancelled = true; };
   }, [...deps, tick]);
+  useEffect(() => {
+    if (!error) return;
+    const retry = () => setTick((value) => value + 1);
+    window.addEventListener("online", retry);
+    return () => window.removeEventListener("online", retry);
+  }, [error]);
   return { data, error, reload: () => setTick((value) => value + 1), setData };
 }
 
-export function Loading({ text = "Loading…" }: { text?: string }) {
-  return <Card className="p-10 text-center text-sm text-gray-500">{text}</Card>;
+/** Loading placeholder; with an error it shows the reason and Try again. */
+export function LoadState({ error, onRetry, text = "Loading…", compact }: { error?: string; onRetry?: () => void; text?: string; compact?: boolean }) {
+  if (!error) return compact ? <p className="m-0 py-6 text-center text-sm text-gray-500">{text}</p> : <Card className="p-10 text-center text-sm text-gray-500">{text}</Card>;
+  const body = (
+    <div className="flex flex-col items-center gap-3 text-center">
+      <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-rose-50 text-rose-600"><X className="h-5 w-5" /></span>
+      <p className="m-0 max-w-md text-[13.5px] font-semibold text-gray-800 dark:text-slate-200">{error}</p>
+      {onRetry ? <button type="button" onClick={onRetry} className={smallButton}>Try again</button> : null}
+    </div>
+  );
+  return compact ? <div className="py-6">{body}</div> : <Card className="p-8">{body}</Card>;
+}
+
+export function Loading({ text = "Loading…", error, onRetry }: { text?: string; error?: string; onRetry?: () => void }) {
+  return <LoadState text={text} error={error} onRetry={onRetry} />;
 }
 
 export function DetailRow({ label, children, copy, onToast }: { label: string; children: ReactNode; copy?: string | null; onToast?: Toast }) {

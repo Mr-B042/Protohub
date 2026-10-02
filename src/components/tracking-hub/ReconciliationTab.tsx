@@ -3,6 +3,7 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { ArrowLeftRight, ArrowRight, CalendarDays, Check, ChevronRight, CircleDot, Download, ExternalLink, RefreshCw, ShoppingCart, TriangleAlert } from "lucide-react";
 import { trackingHubApi, type HubReconRow, type HubReconView } from "../../lib/api";
 import {
+  LoadState,
   ActionMenu, Card, CheckBox, CopyButton, DateRangeButton, Delta, EmptyRow, FilterSelect, HubHeader, Kpi, LEDGER_TONE, Modal, Pagination, PanelClose, PlatformIcon,
   ProductThumb, Ring, SearchBox, SplitLayout, StatusPill, UnderlineTabs, ago, compareWord, darkButton, downloadCsv, input, longDay, naira, nf, rowCls, selectCls,
   shortDay, smallButton, listTableCls, tableCls, timeOf, useLoad, type Range, type Toast
@@ -33,7 +34,7 @@ export default function ReconciliationTab({ tabBar, onToast, range, onRange, onO
   const [closed, setClosed] = useState(false);
   const [checked, setChecked] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  const { data, reload } = useLoad(() => trackingHubApi.reconciliation({ ...range, view, q: filters.q, accountId: filters.accountId, business: filters.business, websiteId: filters.websiteId }), [range.from, range.to, view, filters.q, filters.accountId, filters.business, filters.websiteId], onToast);
+  const { data, error: loadError, reload } = useLoad(() => trackingHubApi.reconciliation({ ...range, view, q: filters.q, accountId: filters.accountId, business: filters.business, websiteId: filters.websiteId }), [range.from, range.to, view, filters.q, filters.accountId, filters.business, filters.websiteId]);
   const rows = useMemo(() => (data?.rows ?? []).filter((row) => !filters.status || row.status === filters.status), [data, filters.status]);
   useEffect(() => { setPage(1); setSelected(null); setClosed(false); }, [view]);
   useEffect(() => { setPage(1); }, [filters, pageSize]);
@@ -135,7 +136,7 @@ export default function ReconciliationTab({ tabBar, onToast, range, onRange, onO
                         );
                       })}
                       {data && pageRows.length === 0 ? <EmptyRow colSpan={9} text={`No ${viewInfo.noun} in this period.`} /> : null}
-                      {!data ? <EmptyRow colSpan={9} text="Loading…" /> : null}
+                      {!data ? <tr><td colSpan={9}><LoadState compact error={loadError} onRetry={reload} /></td></tr> : null}
                     </tbody>
                   </table>
                 </div>
@@ -152,7 +153,7 @@ export default function ReconciliationTab({ tabBar, onToast, range, onRange, onO
 
 function ReconPanel({ view, row, range, onClose, onToast, onChanged, onOpenLedger }: { view: HubReconView; row: HubReconRow; range: Range; onClose: () => void; onToast: Toast; onChanged: () => void; onOpenLedger: (filter: { orderIds?: string[] }) => void }) {
   const [chartDays, setChartDays] = useState(7);
-  const { data, reload } = useLoad(() => trackingHubApi.reconciliationItem({ ...range, view, id: row.id, chartDays }), [view, row.id, range.from, range.to, chartDays, row.status]);
+  const { data, error: itemError, reload } = useLoad(() => trackingHubApi.reconciliationItem({ ...range, view, id: row.id, chartDays }), [view, row.id, range.from, range.to, chartDays, row.status]);
   const [tab, setTab] = useState<PanelTab>("overview");
   const [noting, setNoting] = useState(false);
   const [note, setNote] = useState("");
@@ -182,7 +183,7 @@ function ReconPanel({ view, row, range, onClose, onToast, onChanged, onOpenLedge
         <PanelClose onClose={onClose} />
       </div>
       <UnderlineTabs className="mt-2" value={tab} onChange={setTab} tabs={[{ key: "overview", label: "Overview" }, { key: "orders", label: "Orders" }, { key: "meta", label: "Meta Data" }, { key: "discrepancies", label: "Discrepancies" }, { key: "insights", label: "Insights" }]} />
-      {!data ? <p className="m-0 mt-4 text-sm text-gray-500">Loading…</p> : null}
+      {!data ? <LoadState compact error={itemError} onRetry={reload} /> : null}
 
       {data && tab === "overview" ? (
         <div className="mt-3 space-y-4">

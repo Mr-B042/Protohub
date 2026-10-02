@@ -4,6 +4,7 @@ import { BookOpen, ChartColumn, CheckCircle2, Copy, Database, ExternalLink, Eye,
 import { buildEmbedSnippet } from "../../lib/embed-snippet";
 import { trackingHubApi, type HubLink, type HubLinksResponse, type HubStrategy } from "../../lib/api";
 import {
+  LoadState,
   ActionMenu, Card, CheckBox, Delta, EmptyRow, FilterSelect, HubHeader, Kpi, Loading, MenuButton, Modal, Pagination, PanelClose, PlatformIcon, ProductThumb,
   SearchBox, SetupGuide, Sparkline, SplitLayout, STRATEGY_LABEL, StatusPill, UnderlineTabs, ago, copyText, darkButton, dateTime, input, labelCls, naira, nf, outlineButton,
   primaryButton, rowCls, selectCls, shortDay, smallButton, smallBlueButton, listTableCls, tableCls, timeOf, useLoad, LEDGER_TONE, type Toast
@@ -30,7 +31,7 @@ export function embedUrlFor(link: HubLink) {
 }
 
 export default function LinksTab({ tabBar, onToast, createSignal }: { tabBar: ReactNode; onToast: Toast; createSignal: number }) {
-  const { data, reload } = useLoad(() => trackingHubApi.links(), [], onToast);
+  const { data, error, reload } = useLoad(() => trackingHubApi.links(), []);
   const [filters, setFilters] = useState({ q: "", productId: "", websiteId: "", dataSourceId: "", status: "" });
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "label", dir: 1 });
   const [page, setPage] = useState(1);
@@ -71,7 +72,7 @@ export default function LinksTab({ tabBar, onToast, createSignal }: { tabBar: Re
       <LinkForm link={null} meta={data} onToast={onToast} onSaved={(id) => { setCreating(false); setSelected(id); setClosed(false); reload(); }} onCancel={() => setCreating(false)} />
     </Modal> : null}
   </>;
-  if (!data) return <div className="space-y-5">{header}{tabBar}<Loading /></div>;
+  if (!data) return <div className="space-y-5">{header}{tabBar}<Loading error={error} onRetry={reload} /></div>;
   const k = data.kpis;
   const current = data.links.find((link) => link.id === selected) ?? null;
   const pageRows = rows.slice((page - 1) * pageSize, page * pageSize);
@@ -146,7 +147,7 @@ export default function LinksTab({ tabBar, onToast, createSignal }: { tabBar: Re
 
 function LinkPanel({ link, meta, onClose, onToast, onChanged, onSelect }: { link: HubLink; meta: HubLinksResponse; onClose: () => void; onToast: Toast; onChanged: () => void; onSelect: (id: string) => void }) {
   const [days, setDays] = useState(7);
-  const { data } = useLoad(() => trackingHubApi.link(link.id, days), [link.id, days, link.updatedAt], onToast);
+  const { data, error: loadError, reload: reloadLink } = useLoad(() => trackingHubApi.link(link.id, days), [link.id, days, link.updatedAt]);
   const [tab, setTab] = useState<PanelTab>("overview");
   const [tone, text] = STATUS_PILL[link.status];
   return (
@@ -169,7 +170,7 @@ function LinkPanel({ link, meta, onClose, onToast, onChanged, onSelect }: { link
       </div>
       <UnderlineTabs className="mt-3" value={tab} onChange={setTab} tabs={[{ key: "overview", label: "Overview" }, { key: "campaigns", label: "Campaign URLs" }, { key: "attribution", label: "Attribution" }, { key: "events", label: "Events" }, { key: "settings", label: "Settings" }]} />
 
-      {tab === "overview" ? (!data ? <p className="m-0 mt-4 text-sm text-gray-500">Loading…</p> : (
+      {tab === "overview" ? (!data ? <LoadState compact error={loadError} onRetry={reloadLink} /> : (
         <div className="mt-4 space-y-4">
           <div className="grid grid-cols-2 gap-2 min-[1700px]:grid-cols-4">
             <PanelStat icon={<Eye className="h-4 w-4" />} tone="text-blue-600" label="Page Views" value={nf(data.kpis.views)} change={data.kpis.viewsChange} />
