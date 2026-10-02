@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { BookOpen, CheckCircle2, ExternalLink, Globe, Infinity as InfinityIcon, Play, Plus, RefreshCw, Server, Trash2, TriangleAlert, X } from "lucide-react";
 import { trackingHubApi, type HubDataSource, type HubPlatform } from "../../lib/api";
 import {
+  LoadState,
   ActionMenu, Card, CheckBox, CheckDot, DetailRow, Delta, EmptyRow, HubHeader, Kpi, Loading, MiniStat, Modal, PLATFORM_LABEL, PanelClose, PlatformIcon,
   SearchBox, SetupGuide, SplitLayout, StatusPill, UnderlineTabs, ago, darkButton, input, labelCls, nf, outlineButton, primaryButton, rowCls, smallButton,
   sourceTone, listTableCls, tableCls, useLoad, type Toast
@@ -13,7 +14,7 @@ type Filter = "all" | "meta" | "tiktok" | "google" | "other";
 type PanelTab = "overview" | "settings" | "events" | "diagnostics" | "logs";
 
 export default function DataSourcesTab({ tabBar, onToast }: { tabBar: ReactNode; onToast: Toast }) {
-  const { data, reload } = useLoad(() => trackingHubApi.dataSources(), [], onToast);
+  const { data, error, reload } = useLoad(() => trackingHubApi.dataSources(), []);
   const [filter, setFilter] = useState<Filter>("all");
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
@@ -43,7 +44,7 @@ export default function DataSourcesTab({ tabBar, onToast }: { tabBar: ReactNode;
       <SourceForm source={editing === "new" ? null : editing} onCancel={() => setEditing(null)} onSaved={(id) => { setEditing(null); onToast("Data source saved."); setSelected(id); reload(); }} />
     </Modal> : null}
   </>;
-  if (!data) return <div className="space-y-5">{header}{tabBar}<Loading /></div>;
+  if (!data) return <div className="space-y-5">{header}{tabBar}<Loading error={error} onRetry={reload} />{modals}</div>;
 
   const k = data.kpis;
   const counts = data.platformCounts;
@@ -122,10 +123,10 @@ export default function DataSourcesTab({ tabBar, onToast }: { tabBar: ReactNode;
 }
 
 function SourcePanel({ id, onClose, onToast, onChanged, onEdit }: { id: string; onClose: () => void; onToast: Toast; onChanged: () => void; onEdit: () => void }) {
-  const { data, reload } = useLoad(() => trackingHubApi.dataSource(id), [id], onToast);
+  const { data, error, reload } = useLoad(() => trackingHubApi.dataSource(id), [id]);
   const [tab, setTab] = useState<PanelTab>("overview");
   const [busy, setBusy] = useState("");
-  if (!data) return <Card className="p-8 text-center text-sm text-gray-500">Loading…</Card>;
+  if (!data) return <LoadState error={error} onRetry={reload} />;
   const [tone, text] = sourceTone(data);
   const run = async (key: string, action: () => Promise<void>) => { setBusy(key); try { await action(); } catch (err: any) { onToast(err?.message ?? "Something went wrong."); } finally { setBusy(""); } };
   const test = () => run("test", async () => { const r = await trackingHubApi.testDataSource(data.id); onToast(r.ok ? r.message : r.human?.title ?? r.message); reload(); onChanged(); });

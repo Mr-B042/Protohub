@@ -24,7 +24,7 @@ export default function DiagnosticsTab({ tabBar, onToast, range, onRange, onTab,
   const [websiteId, setWebsiteId] = useState("");
   const [running, setRunning] = useState(false);
   const [validating, setValidating] = useState(false);
-  const { data, reload } = useLoad(() => trackingHubApi.diagnostics({ ...range, flow, websiteId }), [range.from, range.to, flow, websiteId], onToast);
+  const { data, error: loadError, reload } = useLoad(() => trackingHubApi.diagnostics({ ...range, flow, websiteId }), [range.from, range.to, flow, websiteId]);
 
   /** Run Full Diagnostics: test every data source, read Meta's numbers, scan every website, then reload. */
   const runAll = async () => {
@@ -54,7 +54,7 @@ export default function DiagnosticsTab({ tabBar, onToast, range, onRange, onTab,
         <button type="button" className={darkButton} disabled={running || !data} onClick={() => void runAll()}><Timer className={`h-4 w-4 ${running ? "animate-spin" : ""}`} /> {running ? "Running…" : "Run Full Diagnostics"}</button>
       </>} />
   );
-  if (!data) return <div className="space-y-5">{header}{tabBar}<Loading text="Running diagnostics…" /></div>;
+  if (!data) return <div className="space-y-5">{header}{tabBar}<Loading text="Running diagnostics…" error={loadError} onRetry={reload} /></div>;
   const k = data.kpis;
   const scoreOk = k.score >= 90;
 

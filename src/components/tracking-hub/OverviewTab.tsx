@@ -3,7 +3,7 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { Activity, AlertTriangle, ArrowRight, ArrowUp, CheckCircle2, ChevronDown, ChevronRight, Link2, Monitor, Plus, Server, ShoppingCart, XCircle } from "lucide-react";
 import { trackingHubApi, type HubIssue, type HubOverview } from "../../lib/api";
 import {
-  ActionMenu, Card, CheckDot, DateRangeButton, LEDGER_TONE, PlatformIcon, SiteIcon, StatusPill, ago, compareWord, daysBetween, naira, nf, shift, shortDay, sourceTone, timeOf,
+  ActionMenu, Card, CheckDot, DateRangeButton, LoadState, LEDGER_TONE, PlatformIcon, SiteIcon, StatusPill, ago, compareWord, daysBetween, naira, nf, shift, shortDay, sourceTone, timeOf,
   type HubTab, type Range, type Toast
 } from "./HubParts";
 
@@ -64,12 +64,19 @@ export default function OverviewTab({ tabBar, range, onRange, onTab, onToast, on
   const [data, setData] = useState<HubOverview | null>(null);
   const [error, setError] = useState("");
   const [chartDays, setChartDays] = useState(7);
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    if (!error) return;
+    const again = () => setRetry((value) => value + 1);
+    window.addEventListener("online", again);
+    return () => window.removeEventListener("online", again);
+  }, [error]);
   useEffect(() => {
     let cancelled = false;
     setError("");
     trackingHubApi.overview({ ...range, ...comparePeriod, chartDays }).then((result) => { if (!cancelled) setData(result); }).catch((err: any) => { if (!cancelled) setError(err?.message ?? "Could not load the Tracking Hub."); });
     return () => { cancelled = true; };
-  }, [range.from, range.to, chartDays]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [range.from, range.to, chartDays, retry]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const header = (
     <div className="flex flex-wrap items-start justify-between gap-4">
@@ -95,8 +102,7 @@ export default function OverviewTab({ tabBar, range, onRange, onTab, onToast, on
       </div>
     </div>
   );
-  if (error && !data) return <div className="space-y-5">{header}{tabBar}<Card className="p-6 text-sm font-semibold text-rose-700">{error}</Card></div>;
-  if (!data) return <div className="space-y-5">{header}{tabBar}<Card className="p-10 text-center text-sm text-gray-500">Loading the Tracking Hub…</Card></div>;
+  if (!data) return <div className="space-y-5">{header}{tabBar}<LoadState text="Loading the Tracking Hub…" error={error} onRetry={() => setRetry((value) => value + 1)} /></div>;
   const k = data.kpis;
   const p = data.previous;
   const delta = (now: number, before: number) => (compare === "none" ? null : pctChange(now, before));

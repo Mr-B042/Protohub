@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { BadgeCheck, CheckCircle2, CircleCheck, Download, ExternalLink, FileText, Globe, Server, ShoppingCart, Shuffle, FlaskConical, TriangleAlert, X } from "lucide-react";
 import { trackingHubApi, type HubLedgerDetail } from "../../lib/api";
 import {
+  LoadState,
   ActionMenu, Card, CheckBox, CheckDot, CopyButton, DateRangeButton, Delta, EmptyRow, FilterSelect, HubHeader, Kpi, LEDGER_TONE, MenuButton, Pagination, PanelClose,
   PlatformIcon, PRESETS, ProductThumb, SearchBox, SplitLayout, StatusPill, UnderlineTabs, compareWord, darkButton, dateTime, downloadCsv, nf, naira,
   presetLabel, rowCls, shortDay, smallBlueButton, smallButton, listTableCls, tableCls, timeOf, timeWithSeconds, useLoad, type Range, type Toast
@@ -24,7 +25,7 @@ export default function LedgerTab({ tabBar, onToast, range, onRange, initial, on
   const [closed, setClosed] = useState(false);
   const [checked, setChecked] = useState<string[]>([]);
   const query = { ...range, tab, ...filters, orderIds: only?.join(",") ?? "" };
-  const { data } = useLoad(() => trackingHubApi.ledger({ ...query, page, pageSize }), [range.from, range.to, tab, filters.q, filters.status, filters.dataSourceId, filters.websiteId, filters.productId, only?.join(","), page, pageSize], onToast);
+  const { data, error: loadError, reload } = useLoad(() => trackingHubApi.ledger({ ...query, page, pageSize }), [range.from, range.to, tab, filters.q, filters.status, filters.dataSourceId, filters.websiteId, filters.productId, only?.join(","), page, pageSize]);
   useEffect(() => { setPage(1); }, [range.from, range.to, tab, filters, only, pageSize]);
   useEffect(() => { if (!closed && data?.rows.length && (!selected || !data.rows.some((row) => row.orderId === selected))) setSelected(data.rows[0].orderId); }, [data]);
 
@@ -112,7 +113,7 @@ export default function LedgerTab({ tabBar, onToast, range, onRange, initial, on
                         );
                       })}
                       {data && data.rows.length === 0 ? <EmptyRow colSpan={12} text="No form orders match." /> : null}
-                      {!data ? <EmptyRow colSpan={12} text="Loading…" /> : null}
+                      {!data ? <tr><td colSpan={12}><LoadState compact error={loadError} onRetry={reload} /></td></tr> : null}
                     </tbody>
                   </table>
                 </div>
@@ -137,10 +138,9 @@ const sourceLabel = (source: string | null) => {
 };
 
 function LedgerPanel({ orderId, onClose, onToast, onOpenOrder }: { orderId: string; onClose: () => void; onToast: Toast; onOpenOrder?: (orderId: string) => void }) {
-  const { data, error } = useLoad(() => trackingHubApi.ledgerDetail(orderId), [orderId]);
+  const { data, error, reload } = useLoad(() => trackingHubApi.ledgerDetail(orderId), [orderId]);
   const [tab, setTab] = useState<PanelTab>("details");
-  if (error) return <div className="rounded-xl border border-gray-200 p-6 text-sm text-rose-700 dark:border-slate-700">{error}</div>;
-  if (!data) return <div className="rounded-xl border border-gray-200 p-8 text-center text-sm text-gray-500 dark:border-slate-700">Loading…</div>;
+  if (!data) return <div className="rounded-xl border border-gray-200 p-2 dark:border-slate-700"><LoadState compact error={error} onRetry={reload} /></div>;
   const healthy = data.status === "deduped" || data.status === "server_only" || data.status === "capi_only";
   return (
     <div className="rounded-xl border border-gray-200 p-4 dark:border-slate-700">
