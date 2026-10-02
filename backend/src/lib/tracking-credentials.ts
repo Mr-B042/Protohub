@@ -7,16 +7,25 @@ import { supabase } from "./supabase.js";
 
 type LinkRow = Record<string, any> & { data_source_id?: string | null; pixel_id?: string | null; access_token?: string | null; test_event_code?: string | null };
 
+/** The Meta Business connection's token (Pixels found through a connection use it). */
+export async function connectionToken(connectionId: string | null | undefined): Promise<string | null> {
+  if (!connectionId) return null;
+  const { data } = await supabase.from("tracking_meta_connections").select("access_token").eq("id", connectionId).maybeSingle();
+  return data?.access_token || null;
+}
+
 export async function withDataSource<T extends LinkRow>(row: T | null | undefined): Promise<T | null> {
   if (!row) return null;
   if (!row.data_source_id) return row;
   const { data: source } = await supabase.from("tracking_data_sources")
-    .select("pixel_id, access_token, test_event_code, status").eq("id", row.data_source_id).maybeSingle();
+    .select("pixel_id, access_token, test_event_code, status, active, connection_id").eq("id", row.data_source_id).maybeSingle();
   if (!source) return row;
+  // A Pixel switched off in the hub sends nothing (recorded as "no token").
+  const token = source.active === false ? null : source.access_token || (await connectionToken(source.connection_id)) || row.access_token || null;
   return {
     ...row,
     pixel_id: source.pixel_id || row.pixel_id || null,
-    access_token: source.access_token || row.access_token || null,
+    access_token: token,
     // A data source marked Testing always sends to Meta's Test Events tab.
     test_event_code: row.test_event_code || (source.status === "testing" ? source.test_event_code : null) || source.test_event_code || null
   };

@@ -40,7 +40,7 @@ export function purchaseStatus(input: { serverStatus: string | null; serverEvent
 export function humanMetaError(message: string | null | undefined, httpStatus?: number | null): { title: string; action: string } {
   const text = String(message ?? "").toLowerCase();
   if (text.includes("oauth") || text.includes("access token") || text.includes("session has expired") || text.includes("code 190")) {
-    return { title: "The Meta connection is not working (token expired or wrong)", action: "Create a new System User token in Meta Business Settings and paste it on the data source." };
+    return { title: "The Meta connection is not working (token expired or wrong)", action: "Create a new System User token in Meta Business Settings and paste it in Tracking Hub → Data Sources (Replace token on the connection)." };
   }
   if (text.includes("permission") || text.includes("not authorized") || text.includes("does not have permission")) {
     return { title: "The Meta token is missing a permission", action: "Give the System User access to this Pixel / ad account (ads_management or ads_read) and try again." };
@@ -52,7 +52,7 @@ export function humanMetaError(message: string | null | undefined, httpStatus?: 
     return { title: "Meta refused the event's time", action: "Events older than 7 days cannot be sent. Nothing to fix unless it keeps happening." };
   }
   if (text.includes("missing") && text.includes("token")) {
-    return { title: "No Meta token saved", action: "Add the Conversions API token on the data source." };
+    return { title: "No Meta token saved", action: "Connect your Meta Business in Tracking Hub → Data Sources, or give this Pixel its own token." };
   }
   if (httpStatus && httpStatus >= 500) return { title: "Meta was down when we sent", action: "It is retried automatically for delivered events; Purchase is not resent." };
   if (!text) return { title: "Could not reach Meta", action: "Usually a network problem. Check again later." };

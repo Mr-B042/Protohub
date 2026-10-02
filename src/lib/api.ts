@@ -4369,11 +4369,20 @@ export type HubLedgerRow = {
 };
 export type HubDataSource = {
   id: string; name: string; description: string; platform: HubPlatform; businessName: string; adAccountIds: string[]; adAccountLabel: string; pixelId: string;
-  datasetName: string | null; currency: string; timezone: string; hasToken: boolean; testEventCode: string; isMain: boolean; status: "production" | "testing" | "paused";
+  datasetName: string | null; currency: string; timezone: string; hasToken: boolean; ownToken: boolean; active: boolean; hasAccess: boolean | null;
+  connectionId: string | null; connectionName: string | null; metaLastFiredAt: string | null; testEventCode: string; isMain: boolean; status: "production" | "testing" | "paused";
   lastCheckAt: string | null; lastCheckOk: boolean | null; lastCheckMessage: string | null; metaStatsAt: string | null; emq: Record<string, number> | null;
   events7d: number | null; events7dChange: number | null; eventsFromMeta: boolean; sentByProtohub7d: number;
-  health: "healthy" | "testing" | "error" | "no_token" | "unchecked" | "disconnected"; healthy: boolean; createdAt: string;
+  health: "healthy" | "testing" | "error" | "no_token" | "unchecked" | "disconnected" | "off" | "no_access"; healthy: boolean; createdAt: string;
 };
+export type HubConnection = {
+  id: string; name: string; businessId: string; systemUserName: string | null; hasToken: boolean; currency: string; timezone: string;
+  lastCheckAt: string | null; lastCheckOk: boolean | null; lastCheckMessage: string | null; human: { title: string; action: string } | null;
+  lastSyncAt: string | null; lastSyncOk: boolean | null; lastSyncMessage: string | null; status: "connected" | "error" | "disconnected";
+  pixels: Array<{ sourceId: string; pixelId: string; name: string; active: boolean; hasAccess: boolean | null; lastFiredAt: string | null; health: HubDataSource["health"]; ownToken: boolean }>;
+  adAccounts: Array<{ id: string; accountId: string; name: string; currency: string | null; active: boolean; hasAccess: boolean; status: number | null }>;
+};
+export type HubSyncResult = { message: string; pixels: number; newPixels: number; accounts: number; newAccounts: number; noAccess: number };
 export type HubIssue = {
   key: string; severity: "red" | "orange" | "yellow"; level: "critical" | "warning" | "info"; title: string; detail: string; action: string; at: string | null;
   tab: string; affected: string; actionLabel: string; orderIds?: string[]; subjectId?: string | null;
@@ -4519,13 +4528,21 @@ const hubQuery = (query: HubQuery) => {
 const hubId = (id: string) => encodeURIComponent(id);
 export const trackingHubApi = {
   overview: (query: HubQuery) => get<HubOverview>(`/api/tracking-hub/overview${hubQuery(query)}`),
-  dataSources: () => get<{ kpis: { total: number; newThisMonth: number; healthy: number; healthyPct: number; needAttention: number; needAttentionPct: number; disconnected: number; disconnectedPct: number }; platformCounts: Record<HubPlatform, number>; dataSources: HubDataSource[]; profiles: HubProfile[]; websites: Array<{ id: string; domain: string }>; issues: HubIssue[] }>("/api/tracking-hub/data-sources"),
+  dataSources: () => get<{ kpis: { total: number; newThisMonth: number; healthy: number; healthyPct: number; needAttention: number; needAttentionPct: number; disconnected: number; disconnectedPct: number; off: number }; platformCounts: Record<HubPlatform, number>; dataSources: HubDataSource[]; connections: HubConnection[]; profiles: HubProfile[]; websites: Array<{ id: string; domain: string }>; issues: HubIssue[] }>("/api/tracking-hub/data-sources"),
   dataSource: (id: string) => get<HubDataSourceDetail>(`/api/tracking-hub/data-sources/${hubId(id)}`),
   saveDataSource: (id: string | null, body: Record<string, unknown>) => id ? put<{ id: string; name: string }>(`/api/tracking-hub/data-sources/${hubId(id)}`, body) : post<{ id: string; name: string }>("/api/tracking-hub/data-sources", body),
   deleteDataSource: (id: string) => del<{ ok: true }>(`/api/tracking-hub/data-sources/${hubId(id)}`),
   disconnectDataSource: (id: string) => post<{ ok: true }>(`/api/tracking-hub/data-sources/${hubId(id)}/disconnect`, {}),
   testDataSource: (id: string) => post<{ ok: boolean; message: string; canRead: boolean; lastFiredAt: string | null; human: { title: string; action: string } | null }>(`/api/tracking-hub/data-sources/${hubId(id)}/test`, {}),
   refreshDataSource: (id: string) => post<{ metaStats: Record<string, unknown> }>(`/api/tracking-hub/data-sources/${hubId(id)}/refresh`, {}),
+  lookupToken: (accessToken: string) => post<{ userName: string | null; businesses: Array<{ id: string; name: string }>; businessesError: string | null }>("/api/tracking-hub/connections/lookup", { accessToken }),
+  connect: (body: { accessToken: string; businessId?: string; currency: string; timezone: string }) => post<{ id: string; name: string; sync: HubSyncResult | null; syncError: string | null }>("/api/tracking-hub/connections", body),
+  saveConnection: (id: string, body: { accessToken?: string; currency: string; timezone: string }) => put<{ ok: true }>(`/api/tracking-hub/connections/${hubId(id)}`, body),
+  testConnection: (id: string) => post<{ ok: boolean; message: string; human: { title: string; action: string } | null }>(`/api/tracking-hub/connections/${hubId(id)}/test`, {}),
+  syncConnection: (id: string) => post<HubSyncResult>(`/api/tracking-hub/connections/${hubId(id)}/sync`, {}),
+  disconnectConnection: (id: string) => post<{ ok: true }>(`/api/tracking-hub/connections/${hubId(id)}/disconnect`, {}),
+  setPixelActive: (sourceId: string, active: boolean) => put<{ ok: true; linksUsing: number }>(`/api/tracking-hub/data-sources/${hubId(sourceId)}/active`, { active }),
+  setAdAccountActive: (id: string, active: boolean) => put<{ ok: true }>(`/api/tracking-hub/ad-accounts/${hubId(id)}/active`, { active }),
   testEvent: (dataSourceId: string) => post<{ ok: boolean; status: string; eventId: string; message: string }>("/api/tracking-hub/test-event", { dataSourceId }),
   saveProfile: (id: string | null, body: Record<string, unknown>) => id ? put<HubProfile>(`/api/tracking-hub/profiles/${hubId(id)}`, body) : post<HubProfile>("/api/tracking-hub/profiles", body),
   deleteProfile: (id: string) => del<{ ok: true }>(`/api/tracking-hub/profiles/${hubId(id)}`),

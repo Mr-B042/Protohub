@@ -337,7 +337,8 @@ export function StatusPill({ tone, children, size = "md" }: { tone: "green" | "o
 
 export const sourceTone = (source: Pick<HubDataSource, "health">): ["green" | "orange" | "red" | "gray", string] =>
   source.health === "healthy" ? ["green", "Healthy"] : source.health === "testing" ? ["orange", "Testing"] : source.health === "error" ? ["red", "Error"]
-    : source.health === "no_token" ? ["red", "No token"] : source.health === "disconnected" ? ["red", "Disconnected"] : ["gray", "Not tested"];
+    : source.health === "no_token" ? ["red", "No token"] : source.health === "disconnected" ? ["red", "Disconnected"]
+    : source.health === "off" ? ["gray", "Off"] : source.health === "no_access" ? ["orange", "No access"] : ["gray", "Not tested"];
 
 export const LEDGER_TONE: Record<HubLedgerStatus, "green" | "blue" | "orange" | "red" | "gray" | "purple"> = {
   deduped: "green", server_only: "blue", browser_only: "orange", capi_failed: "red", test: "blue", not_tracked: "red", page_pixel: "gray", capi_only: "purple", sending: "orange"
