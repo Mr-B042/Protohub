@@ -27,6 +27,10 @@ export function embedUrlFor(link: HubLink) {
   if (link.strategy !== "landing_page" && link.strategy !== "off") {
     params.set("tracking_mode", link.strategy === "capi_only" ? "protohub" : "hybrid");
     if (link.pixelId) params.set("meta_pixel_id", link.pixelId);
+    // "Also send to" Pixels the browser fires for real: switched on and in Production.
+    // (A Pixel in Testing gets its test Purchase from the server only.)
+    const extras = (link.extraPixels ?? []).filter((pixel) => pixel.active && pixel.status === "production" && pixel.pixelId !== link.pixelId).map((pixel) => pixel.pixelId);
+    if (extras.length) params.set("meta_extra_pixel_ids", extras.join(","));
     if (link.testEventCode) { params.set("meta_test", "1"); params.set("meta_test_event_code", link.testEventCode); }
   }
   params.set("meta_tracking_key", link.trackingKey);
@@ -212,6 +216,7 @@ function LinkPanel({ link, meta, onClose, onToast, onChanged, onSelect }: { link
               <Detail label="Product">{data.productName ?? "—"}</Detail>
               <Detail label="Website">{data.websiteDomain ?? "—"}</Detail>
               <Detail label="Data Source">{data.dataSourceName ? <span className="flex items-center gap-1.5"><PlatformIcon platform={link.dataSourcePlatform} size="sm" />{data.dataSourceName}</span> : "—"}</Detail>
+              {link.extraPixels.length ? <Detail label="Also sends to">{link.extraPixels.map((pixel) => `${pixel.name}${pixel.status === "testing" ? " (testing)" : !pixel.active ? " (off)" : !pixel.hasToken ? " (no token)" : ""}`).join(", ")}</Detail> : null}
               <Detail label="Landing Page">{data.landingPath ?? "—"}</Detail>
               <Detail label="Form">{data.formLabel || "—"}</Detail>
               <Detail label="Thank-you Page">{data.redirectPath || "—"}</Detail>
@@ -288,8 +293,10 @@ function LinkForm({ link, meta, onToast, onSaved, onCancel, compact }: { link: H
     label: link?.label ?? "", productId: link?.productId ?? "", websiteId: link?.websiteId ?? "", profileId: link?.profileId ?? "",
     dataSourceId: link?.dataSourceId ?? "", strategy: (link?.strategy && link.strategy !== "off" ? link.strategy : meta.defaultStrategy) as HubStrategy,
     landingPageUrl: link?.landingPageUrl ?? "", redirectUrl: link?.redirectUrl ?? "", formLabel: link?.formLabel ?? "", active: link?.active ?? true,
-    packageSet: link?.packageSet ?? "Default", currency: link?.currency ?? ""
+    packageSet: link?.packageSet ?? "Default", currency: link?.currency ?? "",
+    extraDataSourceIds: (link?.extraPixels ?? []).map((pixel) => pixel.id)
   });
+  const metaSources = meta.dataSources.filter((row) => (row.platform ?? "meta") === "meta");
   const sets = meta.products.find((row) => row.id === form.productId)?.packageSets ?? [];
   // Keep the chosen set valid for the product, and its currency in step.
   useEffect(() => {
@@ -328,6 +335,20 @@ function LinkForm({ link, meta, onToast, onSaved, onCancel, compact }: { link: H
         <label className={labelCls}>Tracking profile<select value={form.profileId} onChange={(e) => applyProfile(e.target.value)} className={input}><option value="">None</option>{meta.profiles.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
         <label className={labelCls}>Website<select value={form.websiteId} onChange={(e) => setForm({ ...form, websiteId: e.target.value })} className={input}><option value="">Choose…</option>{meta.websites.map((row) => <option key={row.id} value={row.id}>{row.domain}</option>)}</select></label>
         <label className={labelCls}>Data source<select value={form.dataSourceId} onChange={(e) => setForm({ ...form, dataSourceId: e.target.value })} className={input}><option value="">From profile / website</option>{meta.dataSources.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
+        <div className={`${labelCls} sm:col-span-2`}>
+          Also send to <span className="font-normal text-gray-400">(optional: more Pixels that get every sale)</span>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 rounded-lg border border-gray-200 p-1.5 dark:border-slate-700">
+            {form.extraDataSourceIds.map((id) => {
+              const pixel = metaSources.find((row) => row.id === id);
+              return <span key={id} className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-1 text-[12px] font-semibold text-blue-800 dark:bg-blue-950/40 dark:text-blue-200">{pixel?.name ?? id}{pixel ? <span className="font-normal text-blue-600/70">{pixel.pixelId}</span> : null}<button type="button" aria-label={`Remove ${pixel?.name ?? id}`} className="!min-h-0 ml-0.5 text-blue-600" onClick={() => setForm({ ...form, extraDataSourceIds: form.extraDataSourceIds.filter((value) => value !== id) })}>×</button></span>;
+            })}
+            <select value="" onChange={(e) => { if (e.target.value) setForm({ ...form, extraDataSourceIds: [...form.extraDataSourceIds, e.target.value] }); }} className="!min-h-0 h-8 min-w-[180px] flex-1 rounded-md border-0 bg-transparent text-[13px] font-normal text-gray-600 outline-none dark:text-slate-300">
+              <option value="">{form.extraDataSourceIds.length ? "Add another Pixel…" : "Add a Pixel…"}</option>
+              {metaSources.filter((row) => row.id !== form.dataSourceId && !form.extraDataSourceIds.includes(row.id)).map((row) => <option key={row.id} value={row.id}>{row.name} ({row.pixelId})</option>)}
+            </select>
+          </div>
+          <span className="mt-1 block text-[11px] font-normal text-gray-500">Use this when ads from different businesses optimise on different Pixels for the same page. Each Pixel gets the browser and server Purchase with the order number, so each counts the sale once.</span>
+        </div>
         <label className={labelCls}>Landing page URL<input value={form.landingPageUrl} onChange={(e) => setForm({ ...form, landingPageUrl: e.target.value })} placeholder="https://brightpathhubs.com/shelf/" className={input} /></label>
         <label className={labelCls}>Thank-you page URL<input value={form.redirectUrl} onChange={(e) => setForm({ ...form, redirectUrl: e.target.value })} placeholder="https://brightpathhubs.com/order-success/" className={input} /></label>
         <label className={labelCls}>Package set<select value={form.packageSet} onChange={(e) => { const set = sets.find((row) => row.name === e.target.value); setForm({ ...form, packageSet: e.target.value, currency: set?.currency ?? form.currency }); }} className={input} disabled={!form.productId}>

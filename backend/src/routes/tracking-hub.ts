@@ -626,14 +626,17 @@ router.get("/websites/:id", async (req, res) => {
       const scanned = (site.lastScan?.pages ?? []).find((page: any) => pathOf(page.url) === path) ?? null;
       const pageBeacons = (beacons ?? []).filter((row: any) => pathOf(row.page_url) === path);
       const seen = Array.from(new Set<string>([...((scanned?.pixels ?? []) as string[]), ...pageBeacons.flatMap((row: any) => (row.pixels_on_page ?? []) as string[])]));
+      const extras = ((link?.extra_data_source_ids ?? []) as string[]).map((extraId) => sourceById.get(extraId) as any).filter(Boolean);
+      const expectedIds = [expected?.pixel_id, ...extras.map((row: any) => row.pixel_id)].filter(Boolean) as string[];
       const status = !link ? "no_link"
         : seen.length === 0 ? (scanned || pageBeacons.length ? "missing_pixel" : "not_checked")
-        : expected && !seen.includes(expected.pixel_id) ? "wrong_pixel"
-        : seen.length > 1 ? "two_pixels" : "ok";
+        : expectedIds.some((id) => !seen.includes(id)) ? "wrong_pixel"
+        : seen.some((id) => !expectedIds.includes(id)) && seen.length > 1 ? "two_pixels" : "ok";
       return {
         path, orders30d: siteOrders.filter((order) => pathOf(order.form_context?.landingPageUrl) === path).length,
         link: link?.label ?? null, linkId: link?.id ?? null, strategy: link ? STRATEGY_OF_MODE[link.mode] ?? "landing_page" : null,
         expectedPixel: expected ? { id: expected.pixel_id, name: expected.name, fromDefault: !link?.data_source_id } : null,
+        extraPixels: extras.map((row: any) => ({ id: row.pixel_id, name: row.name, seen: seen.includes(row.pixel_id) })),
         foundPixels: seen.map((id) => ({ id, name: pixelName(id) })),
         lastBrowserEvent: pageBeacons[0]?.fired_at ?? null, checkedAt: scanned ? site.lastScanAt : null, status
       };
@@ -852,6 +855,9 @@ router.get("/links", async (req, res) => {
         packageSet: link.package_set ?? null, currency: link.currency ?? null,
         dataSourceId: link.data_source_id, dataSourceName: source?.name ?? (link.pixel_id ? `Pixel ${link.pixel_id}` : null), dataSourcePlatform: source?.platform ?? "meta", pixelId: source?.pixel_id ?? link.pixel_id ?? null,
         profileId: link.profile_id, profileName: profile?.name ?? null,
+        extraPixels: ((link.extra_data_source_ids ?? []) as string[]).map((extraId) => basics.sources.find((row: any) => row.id === extraId)).filter(Boolean).map((row: any) => ({
+          id: row.id, name: row.name, pixelId: row.pixel_id, status: row.status, active: row.active !== false, hasToken: Boolean(row.effective_token)
+        })),
         strategy: STRATEGY_OF_MODE[link.mode] ?? "landing_page", mode: link.mode, testEventCode: testCode,
         checklist: link.checklist ?? {}, adUrl: adUrlFor(link), createdAt: link.created_at, updatedAt: link.updated_at,
         stats, healthy: Boolean(linkHealth?.healthy), problems: linkHealth?.problems ?? [],
@@ -958,6 +964,8 @@ const LinkSchema = z.object({
   formLabel: z.string().trim().max(200).default(""),
   packageSet: z.string().trim().max(80).default("Default"),
   currency: z.string().trim().max(8).default(""),
+  // "Also send to": more Pixels that get every sale (same order id).
+  extraDataSourceIds: z.array(z.string().uuid()).max(10).default([]),
   active: z.boolean().default(true)
 });
 
@@ -986,11 +994,18 @@ async function saveLink(req: Request, id: string | null, body: unknown = req.bod
     const { data: source } = await supabase.from("tracking_data_sources").select("pixel_id").eq("id", dataSourceId).maybeSingle();
     pixelId = source?.pixel_id ?? "";
   }
+  const extraIds = Array.from(new Set(d.extraDataSourceIds.filter((value) => value !== dataSourceId)));
+  if (extraIds.length) {
+    const { data: extras } = await supabase.from("tracking_data_sources").select("id, platform").eq("org_id", orgId).eq("branch_id", branchId).in("id", extraIds);
+    if ((extras ?? []).length !== extraIds.length) throw httpError(400, "One of the extra Pixels was not found.");
+    if ((extras ?? []).some((row: any) => (row.platform ?? "meta") !== "meta")) throw httpError(400, "Only Meta Pixels can be added as extra Pixels.");
+    if (d.strategy === "landing_page") throw httpError(400, "Extra Pixels need Browser + CAPI or CAPI only.");
+  }
   const row: Record<string, unknown> = {
     org_id: orgId, branch_id: branchId, label: d.label, product_id: d.productId ?? null, website_id: websiteId,
     profile_id: d.profileId ?? null, data_source_id: dataSourceId, mode: MODE_OF_STRATEGY[d.strategy], pixel_id: pixelId,
     landing_page_url: d.landingPageUrl || null, redirect_url: d.redirectUrl || null, form_label: d.formLabel || null,
-    package_set: d.packageSet || "Default", currency: d.currency || null,
+    package_set: d.packageSet || "Default", currency: d.currency || null, extra_data_source_ids: extraIds,
     active: d.active, updated_at: new Date().toISOString()
   };
   if (id) {
@@ -1029,7 +1044,7 @@ router.post("/links/:id/duplicate", async (req, res) => {
     res.status(201).json(await saveLink(req, null, {
       label: `${link.label} (copy)`, productId: link.product_id, websiteId: link.website_id, profileId: link.profile_id, dataSourceId: link.data_source_id,
       strategy: !strategy || strategy === "off" ? "landing_page" : strategy,
-      landingPageUrl: link.landing_page_url ?? "", redirectUrl: link.redirect_url ?? "", formLabel: link.form_label ?? "", packageSet: link.package_set ?? "Default", currency: link.currency ?? "", active: false
+      landingPageUrl: link.landing_page_url ?? "", redirectUrl: link.redirect_url ?? "", formLabel: link.form_label ?? "", packageSet: link.package_set ?? "Default", currency: link.currency ?? "", extraDataSourceIds: link.extra_data_source_ids ?? [], active: false
     }));
   } catch (error: any) { fail(res, error, "Could not duplicate the link."); }
 });
@@ -1139,9 +1154,10 @@ router.get("/ledger/:orderId", async (req, res) => {
       .eq("org_id", orgId).eq("branch_id", branchId).eq("id", String(req.params.orderId)).maybeSingle();
     if (error) throw error;
     if (!order) throw httpError(404, "Order not found.");
-    const [events, basics, { data: audit }] = await Promise.all([
+    const [events, basics, { data: audit }, { data: extraSends }] = await Promise.all([
       eventsFor(orgId, [order.id]), loadBasics(orgId, branchId),
-      supabase.from("order_audit").select("to_status, note, created_at").eq("order_id", order.id).order("created_at")
+      supabase.from("order_audit").select("to_status, note, created_at").eq("order_id", order.id).order("created_at"),
+      supabase.from("tracking_extra_pixel_sends").select("pixel_id, data_source_id, status, message, test_mode, sent_at, attempts, http_status").eq("org_id", orgId).eq("order_id", order.id).eq("event_name", "Purchase")
     ]);
     const ctx = (order.form_context ?? {}) as Record<string, any>;
     const server = events.server.get(order.id) ?? null;
@@ -1168,6 +1184,13 @@ router.get("/ledger/:orderId", async (req, res) => {
       device: { deviceType: ctx.deviceType ?? null, userAgent: ctx.userAgent ?? null, locale: ctx.clientLocale ?? null },
       browserEvent: browser ? { firedAt: browser.fired_at, eventId: browser.event_id, pixelId: browser.pixel_id, pageUrl: browser.page_url, pixelsOnPage: browser.pixels_on_page } : null,
       serverEvent: server ? { sentAt: server.sent_at, eventId: server.event_id, status: server.status, message: server.message, test: server.test_mode, attempts: server.attempts, human: server.status === "sent" || server.status === "dry_run" ? null : humanMetaError(server.message, server.http_status) } : null,
+      // The main Pixel is serverEvent; "Also send to" Pixels are listed here.
+      mainPixel: server?.pixel_id ? { pixelId: server.pixel_id, name: (basics.sources as any[]).find((item) => item.pixel_id === server.pixel_id)?.name ?? null } : null,
+      extraPixelSends: (extraSends ?? []).map((send: any) => ({
+        pixelId: send.pixel_id, name: (basics.sources as any[]).find((item) => item.id === send.data_source_id)?.name ?? null, status: send.status,
+        test: Boolean(send.test_mode), sentAt: send.sent_at, attempts: send.attempts, message: send.message,
+        human: send.status === "sent" || send.status === "dry_run" ? null : humanMetaError(send.message, send.http_status)
+      })),
       deliveredEvent: delivered ? { sentAt: delivered.sent_at, status: delivered.status, metaEventName: delivered.meta_event_name, message: delivered.message } : null,
       deliveredDate: order.delivered_date, timeline
     });

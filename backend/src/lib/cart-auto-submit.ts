@@ -17,6 +17,7 @@ import { logger } from "./logger.js";
 import { sendOrderNewCustomerWhatsApp, sendOrderNewRepWhatsApp, sendOrderUpsellWhatsApp } from "./whatsapp.js";
 import { resolveMetaTrackingConfig, recordMetaCapiEvent, sendMetaCapiPurchase } from "./meta-capi.js";
 import { serverEventsAllowed, withDataSource } from "./tracking-credentials.js";
+import { sendPurchaseToExtraPixels } from "./tracking-extra-pixels.js";
 import { sendTikTokConversion } from "./tiktok-events.js";
 import { assignOrderRep } from "./order-assignment.js";
 import { notifyOutageRecoveredOrder } from "./order-notifications.js";
@@ -379,10 +380,9 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
       pixelIdOverride: capturePayload.metaPixelId ?? capturePayload.pixelId ?? null,
     });
 
-    if (await serverEventsAllowed(orgId, (order as any).branch_id ?? (cart as any).branch_id ?? null)) void sendMetaCapiPurchase({
-      config: metaConfig,
-      eventId: String(order.id),
-      eventSourceUrl: capturePayload.landingUrl ?? null,
+    const autoBranchId = (order as any).branch_id ?? (cart as any).branch_id ?? null;
+    const autoSendArgs = {
+      eventSourceUrl: capturePayload.landingPageUrl ?? capturePayload.formContext?.landingPageUrl ?? capturePayload.landingUrl ?? null,
       clientIp: null,
       userAgent: null,
       customer: cart.customer,
@@ -402,11 +402,21 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
       packageId: pkg.id,
       packageName: pkg.name,
       quantity: pkg.quantity ?? 1
-    }).then((result) => recordMetaCapiEvent(supabase, {
-      orgId, branchId: (order as any).branch_id ?? (cart as any).branch_id ?? null, orderId: String(order.id),
-      eventName: "Purchase", metaEventName: "Purchase", eventId: String(order.id), result,
-      testMode: Boolean(metaConfig.testMode || metaConfig.testEventCode), pixelId: metaConfig.pixelId ?? null, value: amount, currency: cart.currency ?? "NGN"
-    })).catch(() => {});
+    };
+    if (await serverEventsAllowed(orgId, autoBranchId)) {
+      void sendMetaCapiPurchase({ ...autoSendArgs, config: metaConfig, eventId: String(order.id) }).then((result) => recordMetaCapiEvent(supabase, {
+        orgId, branchId: autoBranchId, orderId: String(order.id),
+        eventName: "Purchase", metaEventName: "Purchase", eventId: String(order.id), result,
+        testMode: Boolean(metaConfig.testMode || metaConfig.testEventCode), pixelId: metaConfig.pixelId ?? null, value: amount, currency: cart.currency ?? "NGN"
+      })).catch(() => {});
+      // "Also send to" Pixels on the cart's tracking link.
+      if (storedMetaConfig?.tracking_key && storedMetaConfig.tracking_key !== "__default__") {
+        void sendPurchaseToExtraPixels({
+          orgId, branchId: autoBranchId, trackingKey: storedMetaConfig.tracking_key, mainPixelId: metaConfig.pixelId ?? null,
+          orderId: String(order.id), eventId: String(order.id), args: autoSendArgs
+        }).catch(() => {});
+      }
+    }
 
     // TikTok Events API — fire for TikTok-sourced orders (customer left, no pixel).
     // Uses the same config row's TikTok credentials + the captured ttclid.

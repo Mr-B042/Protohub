@@ -4411,6 +4411,7 @@ export type HubWebsiteDetail = HubWebsite & {
   landingStats: Array<{
     path: string; orders30d: number; link: string | null; linkId: string | null; strategy: string | null;
     expectedPixel: { id: string; name: string; fromDefault: boolean } | null; foundPixels: Array<{ id: string; name: string | null }>;
+    extraPixels: Array<{ id: string; name: string; seen: boolean }>;
     lastBrowserEvent: string | null; checkedAt: string | null; status: "ok" | "no_link" | "not_checked" | "missing_pixel" | "two_pixels" | "wrong_pixel";
   }>;
   forms: Array<{ id: string; label: string; landingPath: string | null; strategy: string; active: boolean }>;
@@ -4433,6 +4434,7 @@ export type HubLink = {
   websiteId: string | null; websiteDomain: string | null; landingPageUrl: string; landingPath: string | null; redirectUrl: string; formLabel: string;
   packageSet: string | null; currency: string | null;
   dataSourceId: string | null; dataSourceName: string | null; dataSourcePlatform: string; pixelId: string | null; profileId: string | null; profileName: string | null;
+  extraPixels: Array<{ id: string; name: string; pixelId: string; status: "production" | "testing" | "paused"; active: boolean; hasToken: boolean }>;
   strategy: HubStrategy | "off"; mode: string; testEventCode: string;
   checklist: { thankYouPixelRemoved?: boolean; testEventSeen?: boolean; confirmedBy?: string | null; confirmedAt?: string };
   adUrl: string | null; createdAt: string; updatedAt: string; stats: HubLinkStats; healthy: boolean; problems: string[];
@@ -4467,6 +4469,8 @@ export type HubLedgerDetail = HubLedgerRow & {
   browserEvent: { firedAt: string; eventId: string; pixelId: string | null; pageUrl: string | null; pixelsOnPage: string[] } | null;
   serverEvent: { sentAt: string; eventId: string; status: string; message: string | null; test: boolean; attempts: number; human: { title: string; action: string } | null } | null;
   deliveredEvent: { sentAt: string; status: string; metaEventName: string; message: string | null } | null;
+  mainPixel: { pixelId: string; name: string | null } | null;
+  extraPixelSends: Array<{ pixelId: string; name: string | null; status: string; test: boolean; sentAt: string; attempts: number; message: string | null; human: { title: string; action: string } | null }>;
   deliveredDate: string | null; timeline: Array<{ at: string; label: string; detail: string }>;
 };
 export type HubReconView = "campaign" | "adset" | "ad" | "landing_page" | "product" | "website";

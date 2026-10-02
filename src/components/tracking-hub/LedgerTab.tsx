@@ -169,6 +169,20 @@ function LedgerPanel({ orderId, onClose, onToast, onOpenOrder }: { orderId: stri
               <div className="rounded-lg border border-gray-200 p-3 dark:border-slate-700"><p className="m-0 text-[12px] font-bold text-gray-800 dark:text-slate-200">Event ID</p><p className="m-0 mt-1 truncate text-[12px] text-gray-600" title={data.eventId ?? ""}>{data.eventId ?? "—"}</p></div>
             </div>
             {data.serverEvent?.human ? <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-[12.5px] text-rose-800"><strong className="block">{data.serverEvent.human.title}</strong>{data.serverEvent.human.action}</div> : null}
+            {data.extraPixelSends.length ? (
+              <div className="mt-3 rounded-xl border border-gray-200 p-3 dark:border-slate-700">
+                <p className="m-0 text-[12px] font-black uppercase tracking-wider text-gray-500">Server Purchase per Pixel</p>
+                <ul className="m-0 mt-1.5 list-none space-y-1 p-0 text-[12.5px]">
+                  {data.mainPixel ? <li className="flex items-center justify-between gap-2"><span>{data.mainPixel.name ?? data.mainPixel.pixelId} <span className="text-gray-400">(main)</span></span><StatusPill size="sm" tone={data.serverEvent?.status === "sent" ? "green" : data.serverEvent?.status === "dry_run" || data.serverEvent?.test ? "blue" : "red"}>{data.serverEvent?.test ? "Test" : data.serverEvent?.status ?? "Not sent"}</StatusPill></li> : null}
+                  {data.extraPixelSends.map((send) => (
+                    <li key={send.pixelId} className="flex items-center justify-between gap-2" title={send.human ? `${send.human.title}. ${send.human.action}` : ""}>
+                      <span>{send.name ?? send.pixelId}</span>
+                      <StatusPill size="sm" tone={send.status === "sent" && !send.test ? "green" : send.status === "sent" || send.status === "dry_run" ? "blue" : "red"}>{send.test ? "Test" : send.status === "sent" ? "Sent" : send.status === "missing_config" ? "No token" : send.status}</StatusPill>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
           <div>
             <p className="m-0 text-[14px] font-black text-gray-900 dark:text-slate-100">Event Details</p>

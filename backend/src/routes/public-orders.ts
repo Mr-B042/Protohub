@@ -22,6 +22,7 @@ import { assignOrderRep } from "../lib/order-assignment.js";
 import { buildPackageComponentSnapshot } from "../lib/order-inventory.js";
 import { packageAllowsState, packageHasAgentStateStock } from "../lib/package-availability.js";
 import { serverEventsAllowed, withDataSource } from "../lib/tracking-credentials.js";
+import { sendPurchaseToExtraPixels } from "../lib/tracking-extra-pixels.js";
 import { metaIdsFromFormContext, recordMetaCapiEvent, resolveMetaTrackingConfig, sendMetaCapiPurchase, type MetaTrackingConfig } from "../lib/meta-capi.js";
 import { readSettings } from "./embed-settings.js";
 import {
@@ -1520,35 +1521,44 @@ router.post("/", submitRateLimit, async (req, res) => {
   // Strict registry: one server Purchase per order, ever.
   const { data: alreadyRegistered } = await supabase.from("meta_capi_events").select("status")
     .eq("org_id", product.org_id).eq("order_id", String(order.id)).eq("event_name", "Purchase").in("status", ["sent", "dry_run"]).maybeSingle();
-  if (!reviewHold && !alreadyRegistered && await serverEventsAllowed(product.org_id, (order as any).branch_id ?? null)) {
-    void sendMetaCapiPurchase({
-      config: metaConfig,
-      eventId: metaPurchaseEventId,
-      eventSourceUrl: contextString(formContext, "landingUrl") || d.referrer || null,
-      clientIp: clientIpFromRequest(req),
-      userAgent: contextString(formContext, "userAgent") || String(req.headers["user-agent"] ?? ""),
-      customer: d.customer,
-      phone: d.phone,
-      email: d.email || null,
-      city: d.city || null,
-      state: d.state || null,
-      country: "ng",
-      fbp: metaIds.fbp,
-      fbc: metaIds.fbc,
-      fbclid: metaIds.fbclid,
-      value: Number(order.amount ?? amount),
-      currency: String(order.currency ?? pkg.currency),
-      orderId: String(order.id),
-      productId: String(stampProductId),
-      productName: String(stampProductName),
-      packageId: String(pkg.id),
-      packageName: String(pkg.name),
-      quantity: Number(pkg.quantity ?? 1)
-    }).then((result) => recordMetaCapiEvent(supabase, {
+  // The page the customer ordered on (the form's own address is the iframe's).
+  const metaPageUrl = contextString(formContext, "landingPageUrl") || contextString(formContext, "landingUrl") || d.referrer || null;
+  const metaSendArgs = {
+    eventSourceUrl: metaPageUrl,
+    clientIp: clientIpFromRequest(req),
+    userAgent: contextString(formContext, "userAgent") || String(req.headers["user-agent"] ?? ""),
+    customer: d.customer,
+    phone: d.phone,
+    email: d.email || null,
+    city: d.city || null,
+    state: d.state || null,
+    country: "ng",
+    fbp: metaIds.fbp,
+    fbc: metaIds.fbc,
+    fbclid: metaIds.fbclid,
+    value: Number(order.amount ?? amount),
+    currency: String(order.currency ?? pkg.currency),
+    orderId: String(order.id),
+    productId: String(stampProductId),
+    productName: String(stampProductName),
+    packageId: String(pkg.id),
+    packageName: String(pkg.name),
+    quantity: Number(pkg.quantity ?? 1)
+  };
+  const metaSendsAllowed = !reviewHold && await serverEventsAllowed(product.org_id, (order as any).branch_id ?? null);
+  if (metaSendsAllowed && !alreadyRegistered) {
+    void sendMetaCapiPurchase({ ...metaSendArgs, config: metaConfig, eventId: metaPurchaseEventId }).then((result) => recordMetaCapiEvent(supabase, {
       orgId: product.org_id, branchId: (order as any).branch_id ?? null, orderId: String(order.id),
       eventName: "Purchase", metaEventName: "Purchase", eventId: metaPurchaseEventId, result,
       testMode: Boolean(metaConfig.testMode || metaConfig.testEventCode), pixelId: metaConfig.pixelId ?? null, value: Number(order.amount ?? amount), currency: String(order.currency ?? pkg.currency)
     })).catch(() => undefined);
+  }
+  // "Also send to" Pixels on the tracking link, same event id (each sent once).
+  if (metaSendsAllowed && (metaConfig.mode === "hybrid" || metaConfig.mode === "protohub")) {
+    void sendPurchaseToExtraPixels({
+      orgId: product.org_id, branchId: (order as any).branch_id ?? null, trackingKey: metaTrackingKey, mainPixelId: metaConfig.pixelId ?? null,
+      orderId: String(order.id), eventId: metaPurchaseEventId, args: metaSendArgs
+    }).catch(() => undefined);
   }
 
   // 6. Audit, in-app notification, emails (fire-and-forget).
