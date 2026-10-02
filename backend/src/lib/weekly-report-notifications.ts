@@ -378,3 +378,25 @@ export async function notifySalesScript(orgId: string, branchId: string, event: 
     console.warn("[weekly-report-notifications] sales script alert failed:", error?.message ?? error);
   }
 }
+
+// Tracking Hub alerts (2 Oct 2026): Owners only, one per issue per day.
+export async function notifyTrackingIssue(orgId: string, branchId: string, issue: { title: string; detail: string; action: string }): Promise<void> {
+  try {
+    const owners = (await leadershipRecipients(orgId, branchId)).filter((user) => user.role === "Owner");
+    if (owners.length === 0) return;
+    const title = `Tracking: ${issue.title}`;
+    const message = `${issue.detail} ${issue.action}`.trim();
+    const link = "/dashboard/admin/tracking-hub";
+    // Own insert: notification_type has no "warning", and the link is the hub.
+    const { error } = await supabase.from("system_notifications").insert(owners.map((owner) => ({
+      org_id: orgId, branch_id: branchId, recipient_id: owner.id, type: "needs_attention", title, message, link, read: false
+    })));
+    if (error) console.warn("[weekly-report-notifications] tracking insert failed:", error.message);
+    const branding = await getOrgPushBranding(orgId);
+    await sendPushToUsers(orgId, owners.map((owner) => owner.id), {
+      title, body: message, kind: "tracking_issue", url: link, tag: `tracking-${Date.now()}`, brandName: branding.brandName, brandLogo: branding.brandLogo
+    });
+  } catch (error: any) {
+    console.warn("[weekly-report-notifications] tracking alert failed:", error?.message ?? error);
+  }
+}

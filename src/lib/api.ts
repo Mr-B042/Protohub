@@ -4310,87 +4310,202 @@ export const salesScriptingApi = {
   saveSettings: (settings: Partial<ScriptSettings>) => put<{ settings: ScriptSettings }>("/api/sales-scripting/settings", settings)
 };
 
-// Tracking Hub (Bright, 2 Oct 2026). Owner only.
+// Tracking Hub (Bright, 2 Oct 2026; every tab rebuilt to his images the same day). Owner only.
 export type HubStrategy = "browser_capi" | "capi_only" | "landing_page";
-export type HubLedgerStatus = "deduped" | "server_only" | "browser_only" | "capi_failed" | "test" | "not_tracked" | "page_pixel";
-export type HubKpis = { orders: number; purchaseEvents: number; browserEvents: number; serverEvents: number; deduped: number; unmatched: number; browserPct: number; serverPct: number; dedupRate: number; unmatchedPct: number };
+export type HubPlatform = "meta" | "tiktok" | "google" | "snapchat" | "other";
+export type HubLedgerStatus = "deduped" | "server_only" | "browser_only" | "capi_failed" | "test" | "not_tracked" | "page_pixel" | "capi_only" | "sending";
+export type HubKpis = { orders: number; purchaseEvents: number; browserEvents: number; serverEvents: number; deduped: number; unmatched: number; failed: number; browserPct: number; serverPct: number; purchasePct: number; dedupRate: number; unmatchedPct: number };
+export type HubPeriod = { from: string; to: string; compareFrom: string; compareTo: string; length: number };
 export type HubLedgerRow = {
-  orderId: string; createdAt: string; product: string; productId: string | null; website: string | null; source: string | null;
+  orderId: string; createdAt: string; product: string; productId: string | null; productImage?: string | null; website: string | null; landingPath: string | null; source: string | null;
   campaignId: string | null; adsetId: string | null; adId: string | null; value: number; currency: string; orderStatus: string | null;
-  trackingMode: string; trackingKey: string | null; browser: boolean; serverStatus: string | null; serverTest: boolean; eventId: string | null;
+  trackingMode: string; trackingKey: string | null; browser: boolean; browserAt: string | null; serverStatus: string | null; serverAt: string | null; serverTest: boolean; serverPixel: string | null; eventId: string | null;
   status: HubLedgerStatus; statusLabel: string;
 };
 export type HubDataSource = {
-  id: string; name: string; businessName: string; adAccountIds: string[]; pixelId: string; hasToken: boolean; accessToken: string; testEventCode: string;
-  isMain: boolean; status: "production" | "testing" | "paused"; lastCheckAt: string | null; lastCheckOk: boolean | null; lastCheckMessage: string | null;
-  metaStats: { counts?: Record<string, number>; days?: number }; metaStatsAt: string | null;
-  events7d: number | null; eventsFromMeta: boolean; sentByProtohub7d: number; health: "healthy" | "testing" | "error" | "no_token" | "unchecked"; healthy: boolean;
+  id: string; name: string; description: string; platform: HubPlatform; businessName: string; adAccountIds: string[]; adAccountLabel: string; pixelId: string;
+  datasetName: string | null; currency: string; timezone: string; hasToken: boolean; testEventCode: string; isMain: boolean; status: "production" | "testing" | "paused";
+  lastCheckAt: string | null; lastCheckOk: boolean | null; lastCheckMessage: string | null; metaStatsAt: string | null; emq: Record<string, number> | null;
+  events7d: number | null; events7dChange: number | null; eventsFromMeta: boolean; sentByProtohub7d: number;
+  health: "healthy" | "testing" | "error" | "no_token" | "unchecked" | "disconnected"; healthy: boolean; createdAt: string;
 };
+export type HubIssue = {
+  key: string; severity: "red" | "orange" | "yellow"; level: "critical" | "warning" | "info"; title: string; detail: string; action: string; at: string | null;
+  tab: string; affected: string; actionLabel: string; orderIds?: string[]; subjectId?: string | null;
+};
+export type HubDataSourceDetail = HubDataSource & {
+  eventsManagerUrl: string;
+  browser: { lastEventAt: string | null; receiving: boolean; emq: number | null };
+  capi: { lastEventAt: string | null; connected: boolean; emq: number | null };
+  counts7d: Record<string, number> | null; prev7d: Record<string, number> | null;
+  recent: Array<{ name: string; count: number; change: number | null }>; recentLoaded: boolean;
+  issues: HubIssue[];
+  logs: Array<{ at: string; action: string; by: string | null; detail: Record<string, unknown> }>;
+  sends: Array<{ at: string; orderId: string; event: string; status: string; message: string | null; test: boolean }>;
+};
+export type HubScanPage = { url: string; ok: boolean; status: number | null; pixels: string[]; protohubForm: boolean; purchaseOnPage: boolean; usesTagManager: boolean; error?: string; kind: "home" | "landing" | "thank_you" };
 export type HubWebsite = {
-  id: string; domain: string; platform: string; dataSourceId: string | null; dataSourceName: string | null; notes: string | null;
-  forms: number; orders7d: number; lastBrowserEvent: string | null; duplicatePixel: boolean; landingPages: string[]; status: "healthy" | "warning"; problems: string[];
+  id: string; domain: string; label: string; platform: string; dataSourceId: string | null; dataSourceName: string | null; dataSourceIsMain: boolean; dataSourcePlatform: string;
+  notes: string | null; forms: number; activeForms: number; orders7d: number; lastBrowserEvent: string | null; lastEvent: string | null; duplicatePixel: boolean; landingPages: string[];
+  lastScanAt: string | null; lastScan: { pages: HubScanPage[]; at: string } | null; status: "healthy" | "warning" | "disconnected"; problems: string[]; createdAt: string;
+};
+export type HubWebsiteDetail = HubWebsite & {
+  siteUrl: string;
+  dataSource: { id: string; name: string; isMain: boolean; hasToken: boolean; platform: string } | null;
+  orders30d: number; orders30dChange: number;
+  landingStats: Array<{ path: string; orders30d: number; link: string | null }>;
+  forms: Array<{ id: string; label: string; landingPath: string | null; strategy: string; active: boolean }>;
+  checks: Array<{ key: string; label: string; ok: boolean; value: string }>;
+  recent: Array<{ name: string; count: number; change: number }>;
+  issues: HubIssue[];
 };
 export type HubProfile = { id: string; name: string; dataSourceId: string | null; defaultWebsiteId: string | null; strategy: HubStrategy; adAccountLabel: string; status: "production" | "testing" };
-export type HubIssue = { severity: "red" | "orange" | "yellow"; title: string; detail: string; action: string; at: string | null; tab: string; orderIds?: string[] };
 export type HubHealthItem = { key: string; label: string; total: number; healthy: number; detail: string };
 export type HubOverview = {
-  period: { from: string; to: string; compareFrom: string; compareTo: string };
-  kpis: HubKpis; previous: HubKpis;
+  period: HubPeriod; kpis: HubKpis; previous: HubKpis;
   chart: Array<{ day: string; orders: number; browser: number; server: number }>;
   health: { score: number; items: HubHealthItem[] };
   attribution: { orders: number; fields: Array<{ key: string; label: string; pct: number }> };
   dataSources: HubDataSource[]; websites: HubWebsite[]; recent: HubLedgerRow[]; attention: HubIssue[]; issueCount: number;
 };
+export type HubLinkStats = { views: number; orders: number; conversionRate: number; revenue: number; spark: Array<{ day: string; views: number; orders: number }> };
 export type HubLink = {
-  id: string; trackingKey: string; label: string; active: boolean; productId: string | null; productName: string | null;
+  id: string; trackingKey: string; label: string; active: boolean; productId: string | null; productName: string | null; productImage: string | null;
   websiteId: string | null; websiteDomain: string | null; landingPageUrl: string; landingPath: string | null; redirectUrl: string; formLabel: string;
-  dataSourceId: string | null; dataSourceName: string | null; pixelId: string | null; profileId: string | null; profileName: string | null;
+  dataSourceId: string | null; dataSourceName: string | null; dataSourcePlatform: string; pixelId: string | null; profileId: string | null; profileName: string | null;
   strategy: HubStrategy | "off"; mode: string; testEventCode: string;
   checklist: { thankYouPixelRemoved?: boolean; testEventSeen?: boolean; confirmedBy?: string | null; confirmedAt?: string };
-  orders30d: number; healthy: boolean; problems: string[];
+  adUrl: string | null; createdAt: string; updatedAt: string; stats: HubLinkStats; healthy: boolean; problems: string[];
+  status: "healthy" | "needs_review" | "low_performance" | "paused";
+};
+export type HubLinksResponse = {
+  period: HubPeriod;
+  kpis: { total: number; newThisMonth: number; orders: number; ordersChange: number; pageViews: number; pageViewsChange: number; conversionRate: number; conversionRateChange: number; healthy: number; healthyPct: number };
+  links: HubLink[]; products: Array<{ id: string; name: string }>;
+  dataSources: Array<{ id: string; name: string; pixelId: string; status: string; platform: string }>;
+  websites: Array<{ id: string; domain: string; dataSourceId: string | null }>; profiles: HubProfile[]; defaultStrategy: HubStrategy; urlParameters: string;
+};
+export type HubLinkDetail = {
+  id: string; label: string; trackingKey: string; adUrl: string | null; landingPageUrl: string; productName: string | null; productImage: string | null; websiteDomain: string | null; dataSourceName: string | null;
+  landingPath: string | null; formLabel: string; redirectPath: string; createdAt: string; updatedAt: string; totalOrders: number;
+  kpis: { views: number; viewsChange: number; orders: number; ordersChange: number; conversionRate: number; conversionRateChange: number; revenue: number; revenueChange: number };
+  chart: Array<{ day: string; views: number; orders: number }>;
+  campaigns: Array<{ campaignId: string; orders: number; views: number }>;
+  attribution: Array<{ key: string; label: string; pct: number }>; attributionOrders: number; events: HubLedgerRow[];
+};
+export type HubLedgerResponse = {
+  period: HubPeriod; kpis: HubKpis; previous: HubKpis; rows: HubLedgerRow[]; total: number; page: number; pageSize: number; tabCounts: Record<string, number>;
+  filters: { dataSources: Array<{ id: string; name: string }>; websites: Array<{ id: string; domain: string }>; products: Array<{ id: string; name: string }> };
+  mainPixelUrl: string;
 };
 export type HubLedgerDetail = HubLedgerRow & {
-  landingPage: string | null; fbclid: string | null; fbp: string | null; fbc: string | null;
-  utm: { source: string | null; campaign: string | null; content: string | null; term: string | null };
+  productImage: string | null; sku: string | null; packageName: string | null;
+  landingPage: string | null; referralUrl: string | null; thankYouPage: string | null; fbclid: string | null; fbp: string | null; fbc: string | null;
+  utm: { source: string | null; campaign: string | null; content: string | null; term: string | null; medium: string | null };
+  customer: { name: string | null; phone: string | null; state: string | null; city: string | null };
   device: { deviceType: string | null; userAgent: string | null; locale: string | null };
   browserEvent: { firedAt: string; eventId: string; pixelId: string | null; pageUrl: string | null; pixelsOnPage: string[] } | null;
   serverEvent: { sentAt: string; eventId: string; status: string; message: string | null; test: boolean; attempts: number; human: { title: string; action: string } | null } | null;
   deliveredEvent: { sentAt: string; status: string; metaEventName: string; message: string | null } | null;
-  deliveredDate: string | null;
+  deliveredDate: string | null; timeline: Array<{ at: string; label: string; detail: string }>;
+};
+export type HubReconView = "campaign" | "adset" | "ad" | "landing_page" | "product" | "website";
+export type HubVerdict = { tone: "ok" | "warn" | "info"; conclusion: string; likely: string };
+export type HubReconRow = {
+  id: string; name: string; view: HubReconView; image: string | null; productName: string | null; account: string; accountId: string | null; dataSourceName: string | null;
+  protohub: number; meta: number | null; difference: number | null; matchRate: number | null; spend: number; status: "matched" | "investigate" | "resolved" | "no_meta"; verdict: HubVerdict;
 };
 export type HubReconciliation = {
-  period: { from: string; to: string };
-  campaigns: Array<{ campaignId: string; campaignName: string | null; protohubOrders: number; purchaseEvents: number; sentToMeta: number; duplicates: number; metaPurchases: number | null; difference: number | null; spend: number; verdict: { tone: "ok" | "warn" | "info"; conclusion: string; likely: string } }>;
-  noCampaign: number; lastFetched: string | null; sources: Array<{ id: string; name: string; adAccounts: number; hasToken: boolean }>;
+  period: HubPeriod; view: HubReconView; lastFetched: string | null;
+  kpis: { protohub: number; protohubChange: number; meta: number | null; difference: number | null; matchRate: number | null; matched: number | null; matchedOf: number | null; investigate: number };
+  rows: HubReconRow[];
+  filters: { accounts: Array<{ id: string; label: string }>; businesses: string[]; websites: Array<{ id: string; domain: string }> };
+  sources: Array<{ id: string; name: string; adAccounts: number; hasToken: boolean }>;
 };
-export type HubSettings = { defaultStrategy: HubStrategy; urlParameters: string };
-const hubPeriod = (period: { from?: string; to?: string; compareFrom?: string; compareTo?: string; chartDays?: number; q?: string; status?: string }) => {
+export type HubReconItem = HubReconRow & {
+  chart: Array<{ day: string; protohub: number; meta: number }>;
+  details: { adAccount: string | null; businessAccount: string | null; campaignId: string | null; objective: string | null; startDate: string | null; endDate: string | null; campaignStatus: string | null; landingPage: string | null; dataSource: string | null; form: string | null; adsManagerUrl: string };
+  orders: HubLedgerRow[];
+  metaRows: Array<{ day: string; campaign: string; adset: string; ad: string; purchases: number; value: number; spend: number }>;
+  breakdown: { protohubOrders: number; purchaseEvents: number; sentToMeta: number; notSent: number; withoutFbclid: number; duplicates: number; metaPurchases: number | null };
+  insights: string[];
+  notes: Array<{ note: string | null; resolved: boolean; by: string | null; at: string }>;
+};
+export type HubDiagnostics = {
+  period: HubPeriod;
+  kpis: { score: number; ordersTracked: number; orders: number; trackedPct: number; browser: number; browserPct: number; browserMissing: number; server: number; serverPct: number; issues: number; critical: number; warning: number; info: number };
+  items: HubHealthItem[];
+  flow: Array<{ key: string; label: string; value: number; sub: string; pct: number }>;
+  emq: { source: string; scores: Record<string, number> } | null;
+  statusCounts: { deduplicated: number; serverOnly: number; browserOnly: number; failed: number; pending: number; pagePixel: number }; totalEvents: number;
+  issues: HubIssue[];
+  quickChecks: Array<{ label: string; ok: boolean; warn?: boolean; value: string }>;
+  topPages: Array<{ path: string; domain: string; orders: number; issues: number }>;
+  pixelCapi: HubDataSource[];
+  attribution: Array<{ key: string; label: string; pct: number }>; attributionOrders: number;
+  duplicates: Array<{ kind: string; detail: string; orderId: string | null }>;
+  lostParams: Array<{ orderId: string; at: string; utmSource: string | null; referrer: string | null }>;
+  activity: Array<{ at: string; action: string; subject: string | null; by: string | null; detail: Record<string, unknown> }>;
+  websites: Array<{ id: string; domain: string }>;
+};
+export type HubSettings = {
+  enabled: boolean; currency: string; timezone: string; sendBrowser: boolean; sendCapi: boolean; multiPlatform: boolean; logAllEvents: boolean;
+  trackingMode: "order_based" | "thank_you" | "hybrid"; defaultStrategy: HubStrategy; defaultDataSources: Record<string, string>; defaultEventValue: "order_total";
+  defaultWebsiteId: string | null; defaultProfileId: string | null;
+  notifications: { capiFailures: boolean; connection: boolean; duplicatePixel: boolean; lostParameters: boolean; dailySummary: boolean };
+  urlParameters: string; lowConversionRate: number; investigateBelowMatchRate: number;
+};
+export type HubSettingsResponse = {
+  settings: HubSettings;
+  dataSources: Array<{ id: string; name: string; platform: HubPlatform; pixelId: string; health: HubDataSource["health"]; isMain: boolean }>;
+  websites: Array<{ id: string; domain: string }>; profiles: HubProfile[];
+  health: Array<{ label: string; ok: boolean; value: string }>;
+  defaultSource: { id: string; name: string; pixelId: string; health: HubDataSource["health"] } | null;
+  lastSentAt: string | null; owners: Array<{ name: string; email: string }>;
+};
+export type HubAuditEntry = { at: string; action: string; subjectType: string | null; subject: string | null; by: string | null; detail: Record<string, unknown> };
+type HubQuery = Record<string, string | number | undefined | null>;
+const hubQuery = (query: HubQuery) => {
   const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(period)) if (value !== undefined && value !== "") params.set(key, String(value));
+  for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== null && value !== "") params.set(key, String(value));
   const text = params.toString();
   return text ? `?${text}` : "";
 };
+const hubId = (id: string) => encodeURIComponent(id);
 export const trackingHubApi = {
-  overview: (period: { from: string; to: string; compareFrom?: string; compareTo?: string; chartDays?: number }) => get<HubOverview>(`/api/tracking-hub/overview${hubPeriod(period)}`),
-  diagnostics: () => get<{ score: number; items: HubHealthItem[]; checks: Array<{ ok: boolean; text: string }>; issues: HubIssue[] }>("/api/tracking-hub/diagnostics"),
-  ledger: (query: { from: string; to: string; q?: string; status?: string }) => get<{ kpis: HubKpis; rows: HubLedgerRow[]; total: number }>(`/api/tracking-hub/ledger${hubPeriod(query)}`),
-  ledgerDetail: (orderId: string) => get<HubLedgerDetail>(`/api/tracking-hub/ledger/${encodeURIComponent(orderId)}`),
-  dataSources: () => get<{ dataSources: HubDataSource[]; profiles: HubProfile[]; websites: Array<{ id: string; domain: string }> }>("/api/tracking-hub/data-sources"),
-  saveDataSource: (id: string | null, body: Record<string, unknown>) => id ? put<HubDataSource>(`/api/tracking-hub/data-sources/${id}`, body) : post<HubDataSource>("/api/tracking-hub/data-sources", body),
-  deleteDataSource: (id: string) => del<{ ok: true }>(`/api/tracking-hub/data-sources/${id}`),
-  testDataSource: (id: string) => post<{ ok: boolean; message: string; canSend: boolean; canRead: boolean; lastFiredAt: string | null; human: { title: string; action: string } | null }>(`/api/tracking-hub/data-sources/${id}/test`, {}),
-  refreshDataSource: (id: string) => post<{ metaStats: { counts: Record<string, number> } }>(`/api/tracking-hub/data-sources/${id}/refresh`, {}),
-  saveProfile: (id: string | null, body: Record<string, unknown>) => id ? put<HubProfile>(`/api/tracking-hub/profiles/${id}`, body) : post<HubProfile>("/api/tracking-hub/profiles", body),
-  deleteProfile: (id: string) => del<{ ok: true }>(`/api/tracking-hub/profiles/${id}`),
-  websites: () => get<{ websites: HubWebsite[]; detected: Array<{ domain: string; orders30d: number }>; dataSources: Array<{ id: string; name: string }> }>("/api/tracking-hub/websites"),
-  saveWebsite: (id: string | null, body: Record<string, unknown>) => id ? put<{ id: string }>(`/api/tracking-hub/websites/${id}`, body) : post<{ id: string }>("/api/tracking-hub/websites", body),
-  deleteWebsite: (id: string) => del<{ ok: true }>(`/api/tracking-hub/websites/${id}`),
-  links: () => get<{ links: HubLink[]; products: Array<{ id: string; name: string }>; dataSources: Array<{ id: string; name: string; pixelId: string; status: string }>; websites: Array<{ id: string; domain: string; dataSourceId: string | null }>; profiles: HubProfile[]; defaultStrategy: HubStrategy }>("/api/tracking-hub/links"),
-  saveLink: (id: string | null, body: Record<string, unknown>) => id ? put<{ id: string; tracking_key: string }>(`/api/tracking-hub/links/${id}`, body) : post<{ id: string; tracking_key: string }>("/api/tracking-hub/links", body),
-  saveChecklist: (id: string, body: { thankYouPixelRemoved: boolean; testEventSeen: boolean }) => put<{ checklist: HubLink["checklist"] }>(`/api/tracking-hub/links/${id}/checklist`, body),
-  deleteLink: (id: string) => del<{ ok: true }>(`/api/tracking-hub/links/${id}`),
-  reconciliation: (period: { from: string; to: string }) => get<HubReconciliation>(`/api/tracking-hub/reconciliation${hubPeriod(period)}`),
+  overview: (query: HubQuery) => get<HubOverview>(`/api/tracking-hub/overview${hubQuery(query)}`),
+  dataSources: () => get<{ kpis: { total: number; newThisMonth: number; healthy: number; healthyPct: number; needAttention: number; needAttentionPct: number; disconnected: number; disconnectedPct: number }; platformCounts: Record<HubPlatform, number>; dataSources: HubDataSource[]; profiles: HubProfile[]; websites: Array<{ id: string; domain: string }>; issues: HubIssue[] }>("/api/tracking-hub/data-sources"),
+  dataSource: (id: string) => get<HubDataSourceDetail>(`/api/tracking-hub/data-sources/${hubId(id)}`),
+  saveDataSource: (id: string | null, body: Record<string, unknown>) => id ? put<{ id: string; name: string }>(`/api/tracking-hub/data-sources/${hubId(id)}`, body) : post<{ id: string; name: string }>("/api/tracking-hub/data-sources", body),
+  deleteDataSource: (id: string) => del<{ ok: true }>(`/api/tracking-hub/data-sources/${hubId(id)}`),
+  disconnectDataSource: (id: string) => post<{ ok: true }>(`/api/tracking-hub/data-sources/${hubId(id)}/disconnect`, {}),
+  testDataSource: (id: string) => post<{ ok: boolean; message: string; canRead: boolean; lastFiredAt: string | null; human: { title: string; action: string } | null }>(`/api/tracking-hub/data-sources/${hubId(id)}/test`, {}),
+  refreshDataSource: (id: string) => post<{ metaStats: Record<string, unknown> }>(`/api/tracking-hub/data-sources/${hubId(id)}/refresh`, {}),
+  testEvent: (dataSourceId: string) => post<{ ok: boolean; status: string; eventId: string; message: string }>("/api/tracking-hub/test-event", { dataSourceId }),
+  saveProfile: (id: string | null, body: Record<string, unknown>) => id ? put<HubProfile>(`/api/tracking-hub/profiles/${hubId(id)}`, body) : post<HubProfile>("/api/tracking-hub/profiles", body),
+  deleteProfile: (id: string) => del<{ ok: true }>(`/api/tracking-hub/profiles/${hubId(id)}`),
+  websites: () => get<{ kpis: { total: number; newThisMonth: number; wordpress: number; wordpressPct: number; healthy: number; healthyPct: number; withIssues: number; withIssuesPct: number; landingPages: number; externalForms: number }; websites: HubWebsite[]; detected: Array<{ domain: string; orders30d: number }>; dataSources: Array<{ id: string; name: string; platform: string; isMain: boolean }> }>("/api/tracking-hub/websites"),
+  website: (id: string) => get<HubWebsiteDetail>(`/api/tracking-hub/websites/${hubId(id)}`),
+  saveWebsite: (id: string | null, body: Record<string, unknown>) => id ? put<{ id: string }>(`/api/tracking-hub/websites/${hubId(id)}`, body) : post<{ id: string }>("/api/tracking-hub/websites", body),
+  deleteWebsite: (id: string) => del<{ ok: true }>(`/api/tracking-hub/websites/${hubId(id)}`),
+  scanWebsite: (id: string) => post<{ scan: { pages: HubScanPage[]; at: string }; summary: string[] }>(`/api/tracking-hub/websites/${hubId(id)}/scan`, {}),
+  links: (query: HubQuery = {}) => get<HubLinksResponse>(`/api/tracking-hub/links${hubQuery(query)}`),
+  link: (id: string, days = 7) => get<HubLinkDetail>(`/api/tracking-hub/links/${hubId(id)}?days=${days}`),
+  saveLink: (id: string | null, body: Record<string, unknown>) => id ? put<{ id: string; tracking_key: string }>(`/api/tracking-hub/links/${hubId(id)}`, body) : post<{ id: string; tracking_key: string }>("/api/tracking-hub/links", body),
+  duplicateLink: (id: string) => post<{ id: string; tracking_key: string }>(`/api/tracking-hub/links/${hubId(id)}/duplicate`, {}),
+  bulkLinks: (ids: string[], action: "activate" | "pause" | "delete") => post<{ ok: true }>("/api/tracking-hub/links/bulk", { ids, action }),
+  saveChecklist: (id: string, body: { thankYouPixelRemoved: boolean; testEventSeen: boolean }) => put<{ checklist: HubLink["checklist"] }>(`/api/tracking-hub/links/${hubId(id)}/checklist`, body),
+  deleteLink: (id: string) => del<{ ok: true }>(`/api/tracking-hub/links/${hubId(id)}`),
+  ledger: (query: HubQuery) => get<HubLedgerResponse>(`/api/tracking-hub/ledger${hubQuery(query)}`),
+  ledgerExport: (query: HubQuery) => get<{ filename: string; csv: string }>(`/api/tracking-hub/ledger/export${hubQuery(query)}`),
+  ledgerDetail: (orderId: string) => get<HubLedgerDetail>(`/api/tracking-hub/ledger/${hubId(orderId)}`),
+  reconciliation: (query: HubQuery) => get<HubReconciliation>(`/api/tracking-hub/reconciliation${hubQuery(query)}`),
+  reconciliationItem: (query: HubQuery) => get<HubReconItem>(`/api/tracking-hub/reconciliation/item${hubQuery(query)}`),
+  reconciliationNote: (body: { scope: HubReconView; scopeId: string; note?: string; resolved?: boolean }) => post<{ ok: true }>("/api/tracking-hub/reconciliation/notes", body),
   refreshReconciliation: (period: { from: string; to: string }) => post<{ report: Array<{ source: string; account: string; ok: boolean; message: string; rows: number }> }>("/api/tracking-hub/reconciliation/refresh", period),
-  settings: () => get<{ settings: HubSettings }>("/api/tracking-hub/settings"),
-  saveSettings: (settings: HubSettings) => put<{ settings: HubSettings }>("/api/tracking-hub/settings", settings)
+  diagnostics: (query: HubQuery) => get<HubDiagnostics>(`/api/tracking-hub/diagnostics${hubQuery(query)}`),
+  validateUrl: (url: string) => post<{ host: string; path: string; ok: boolean; note: string; checks: Array<{ key: string; label: string; value: string | null; required: boolean; ok: boolean }> }>("/api/tracking-hub/diagnostics/validate-url", { url }),
+  settings: () => get<HubSettingsResponse>("/api/tracking-hub/settings"),
+  saveSettings: (settings: HubSettings) => put<{ settings: HubSettings }>("/api/tracking-hub/settings", settings),
+  audit: () => get<{ entries: HubAuditEntry[] }>("/api/tracking-hub/audit")
 };

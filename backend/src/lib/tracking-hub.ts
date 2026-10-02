@@ -130,7 +130,8 @@ export function domainOf(url: string | null | undefined): string | null {
 export function pathOf(url: string | null | undefined): string | null {
   try {
     const parsed = new URL(String(url ?? ""));
-    return parsed.pathname || "/";
+    // "/shelf/" and "/shelf" are the same page (the page-view count drops the slash too).
+    return parsed.pathname.replace(/\/+$/, "") || "/";
   } catch {
     return null;
   }

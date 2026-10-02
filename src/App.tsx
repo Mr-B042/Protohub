@@ -90327,7 +90327,7 @@ ${waybillLineItems(w).length > 1
             // Tracking Hub (2 Oct 2026): Owner only - it holds the Meta tokens.
             // Gated on currentRole so "view as" a staff member lands on a note.
             currentRole === "Owner"
-              ? <TrackingHubPage onToast={showToast} renderMetaDefaults={renderMetaAdsSettings} />
+              ? <TrackingHubPage onToast={showToast} renderMetaDefaults={renderMetaAdsSettings} onOpenOrder={(orderId) => { setSelectedOrderId(orderId); setModal("orderDetails"); }} />
               : <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center text-sm text-gray-500">The Tracking Hub is for the Owner.</section>
           ) : activePage === "Marketing Performance" ? (
             // ⚠️ OWNER ONLY WHILE THIS IS STILL BEING BUILT.

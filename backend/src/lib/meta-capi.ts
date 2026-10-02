@@ -378,7 +378,7 @@ async function sendMetaCapiEvent(args: SendMetaPurchaseArgs & { eventName: strin
 export async function recordMetaCapiEvent(supabase: any, args: {
   orgId: string; branchId: string | null | undefined; orderId: string;
   eventName: "Purchase" | "Delivered"; metaEventName: string; eventId: string;
-  result: MetaCapiSendResult; testMode: boolean; value: number; currency: string;
+  result: MetaCapiSendResult; testMode: boolean; value: number; currency: string; pixelId?: string | null;
 }) {
   if (args.result.status === "off" || !args.branchId) return;
   try {
@@ -388,7 +388,7 @@ export async function recordMetaCapiEvent(supabase: any, args: {
       org_id: args.orgId, branch_id: args.branchId, order_id: args.orderId,
       event_name: args.eventName, meta_event_name: args.metaEventName, event_id: args.eventId,
       status: args.result.status, http_status: args.result.httpStatus ?? null, message: args.result.message ?? null,
-      test_mode: args.testMode, value: args.value, currency: args.currency, sent_at: new Date().toISOString()
+      test_mode: args.testMode, value: args.value, currency: args.currency, pixel_id: args.pixelId ?? null, sent_at: new Date().toISOString()
     };
     if (existing) {
       // A blocked repeat must not overwrite the real result it repeated.

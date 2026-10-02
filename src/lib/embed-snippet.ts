@@ -52,6 +52,11 @@ export function buildEmbedSnippet(url: string, title: string, beaconUrl: string 
       var match = document.cookie.match(new RegExp("(?:^|; )" + escaped + "=([^;]*)"));
       return match ? decodeURIComponent(match[1]) : "";
     }
+    // Tracking Hub ad link: ?ph_link=<key> on the landing page picks the link.
+    var phLink = pageParams.get("ph_link");
+    if (phLink) { embedParams.set("meta_tracking_key", phLink); changed = true; }
+    // The page the form sits on, so orders and page views show their landing page.
+    if (!embedParams.get("landing_page_url")) { embedParams.set("landing_page_url", window.location.origin + window.location.pathname); changed = true; }
     var fbp = pageParams.get("_fbp") || pageParams.get("fbp") || readCookie("_fbp");
     var fbc = pageParams.get("_fbc") || pageParams.get("fbc") || readCookie("_fbc");
     if (fbp) { embedParams.set("fbp", fbp); changed = true; }

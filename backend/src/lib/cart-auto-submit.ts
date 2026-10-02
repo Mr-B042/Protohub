@@ -16,7 +16,7 @@ import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { sendOrderNewCustomerWhatsApp, sendOrderNewRepWhatsApp, sendOrderUpsellWhatsApp } from "./whatsapp.js";
 import { resolveMetaTrackingConfig, recordMetaCapiEvent, sendMetaCapiPurchase } from "./meta-capi.js";
-import { withDataSource } from "./tracking-credentials.js";
+import { serverEventsAllowed, withDataSource } from "./tracking-credentials.js";
 import { sendTikTokConversion } from "./tiktok-events.js";
 import { assignOrderRep } from "./order-assignment.js";
 import { notifyOutageRecoveredOrder } from "./order-notifications.js";
@@ -379,7 +379,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
       pixelIdOverride: capturePayload.metaPixelId ?? capturePayload.pixelId ?? null,
     });
 
-    void sendMetaCapiPurchase({
+    if (await serverEventsAllowed(orgId, (order as any).branch_id ?? (cart as any).branch_id ?? null)) void sendMetaCapiPurchase({
       config: metaConfig,
       eventId: String(order.id),
       eventSourceUrl: capturePayload.landingUrl ?? null,
@@ -405,7 +405,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     }).then((result) => recordMetaCapiEvent(supabase, {
       orgId, branchId: (order as any).branch_id ?? (cart as any).branch_id ?? null, orderId: String(order.id),
       eventName: "Purchase", metaEventName: "Purchase", eventId: String(order.id), result,
-      testMode: Boolean(metaConfig.testMode || metaConfig.testEventCode), value: amount, currency: cart.currency ?? "NGN"
+      testMode: Boolean(metaConfig.testMode || metaConfig.testEventCode), pixelId: metaConfig.pixelId ?? null, value: amount, currency: cart.currency ?? "NGN"
     })).catch(() => {});
 
     // TikTok Events API — fire for TikTok-sourced orders (customer left, no pixel).
