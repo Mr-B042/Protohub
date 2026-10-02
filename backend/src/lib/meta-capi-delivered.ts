@@ -1,6 +1,7 @@
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { addDaysToDateKey, lagosDateKey } from "./sales-bonus-engine.js";
+import { withDataSource } from "./tracking-credentials.js";
 import { deliveredEventTime, metaIdsFromFormContext, recordMetaCapiEvent, sendMetaCapiDelivered, type MetaTrackingConfig } from "./meta-capi.js";
 
 // The delivered-sale event for Meta (Bright, 1 Oct 2026).
@@ -28,10 +29,12 @@ type ConfigRow = {
 
 export async function runMetaDeliveredEvents(): Promise<{ sent: number; skipped: number }> {
   const { data: configs, error } = await supabase.from("meta_capi_configs")
-    .select("org_id, branch_id, tracking_key, pixel_id, access_token, test_event_code, delivered_event_name, active, send_delivered_event")
+    .select("org_id, branch_id, tracking_key, pixel_id, access_token, test_event_code, delivered_event_name, active, send_delivered_event, data_source_id")
     .eq("active", true).eq("send_delivered_event", true);
   if (error) throw error;
-  const usable = ((configs ?? []) as ConfigRow[]).filter((row) => row.pixel_id && row.access_token);
+  // Tracking Hub links take their Pixel + token from their data source.
+  const resolved = await Promise.all(((configs ?? []) as ConfigRow[]).map((row) => withDataSource(row as any)));
+  const usable = (resolved.filter(Boolean) as ConfigRow[]).filter((row) => row.pixel_id && row.access_token);
   if (usable.length === 0) return { sent: 0, skipped: 0 };
 
   const since = addDaysToDateKey(lagosDateKey(), -6);

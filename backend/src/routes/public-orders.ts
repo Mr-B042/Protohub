@@ -21,6 +21,7 @@ import { notifyOrderEvent } from "../lib/order-notifications.js";
 import { assignOrderRep } from "../lib/order-assignment.js";
 import { buildPackageComponentSnapshot } from "../lib/order-inventory.js";
 import { packageAllowsState, packageHasAgentStateStock } from "../lib/package-availability.js";
+import { withDataSource } from "../lib/tracking-credentials.js";
 import { metaIdsFromFormContext, recordMetaCapiEvent, resolveMetaTrackingConfig, sendMetaCapiPurchase, type MetaTrackingConfig } from "../lib/meta-capi.js";
 import { readSettings } from "./embed-settings.js";
 import {
@@ -101,13 +102,15 @@ async function readStoredMetaCapiConfig(
   const key = trackingKey.trim().toLowerCase();
   if (!key) return null;
 
-  const { data, error } = await supabase
+  const { data: linkRow, error } = await supabase
     .from("meta_capi_configs")
-    .select("mode, pixel_id, access_token, test_event_code")
+    .select("mode, pixel_id, access_token, test_event_code, data_source_id")
     .eq("org_id", orgId)
     .eq("tracking_key", key)
     .eq("active", true)
     .maybeSingle();
+  // A Tracking Hub link takes its Pixel + token from its data source.
+  const data = await withDataSource(linkRow);
 
   if (error) {
     logger.warn("public-orders: failed to read stored Meta CAPI config", {
@@ -1316,7 +1319,9 @@ router.post("/", submitRateLimit, async (req, res) => {
       // The browser re-fires its Pixel Purchase for a replay; handing back the
       // ORIGINAL event id lets Meta count it once (Bright, 1 Oct 2026). The
       // server does not send a second Conversions API Purchase for a replay.
-      const originalPurchaseEventId = typeof existing.form_context?.metaPurchaseEventId === "string" ? existing.form_context.metaPurchaseEventId : null;
+      const { data: registered } = await supabase.from("meta_capi_events").select("event_id")
+        .eq("org_id", product.org_id).eq("order_id", String(existing.id)).eq("event_name", "Purchase").maybeSingle();
+      const originalPurchaseEventId = registered?.event_id ?? String(existing.id);
       res.status(200).json({ id: existing.id, amount: existing.amount, currency: existing.currency,
         crossSellLines: existing.cross_sell_lines ?? [], reviewHold: Boolean(existing.review_hold),
         upsellOffer: null, upsellToken: null, replayed: true, metaPurchaseEventId: originalPurchaseEventId });
@@ -1491,8 +1496,10 @@ router.post("/", submitRateLimit, async (req, res) => {
   // generated link/package-set: the safe default is landing-page tracking only,
   // so Protohub never starts a second Purchase sender silently.
   const formContext = (d.formContext ?? {}) as Record<string, unknown>;
-  const metaPurchaseEventId = contextString(formContext, "metaPurchaseEventId", "metaEventId")
-    || `protohub_purchase_${order.id}`;
+  // Purchase event id = the Protohub order id (Tracking Hub, 2 Oct 2026). The
+  // browser Pixel fires with the same id after the order comes back, so Meta
+  // counts browser + server as one Purchase.
+  const metaPurchaseEventId = String(order.id);
   const metaTrackingKey = contextString(formContext, "metaTrackingKey", "trackingKey");
   const storedMetaConfig = metaTrackingKey
     ? await readStoredMetaCapiConfig(product.org_id, metaTrackingKey)
@@ -1510,7 +1517,10 @@ router.post("/", submitRateLimit, async (req, res) => {
   // fbp / fbc / fbclid, recovered from the form's address when the form
   // dropped them (see metaIdsFromFormContext).
   const metaIds = metaIdsFromFormContext(formContext);
-  if (!reviewHold) {
+  // Strict registry: one server Purchase per order, ever.
+  const { data: alreadyRegistered } = await supabase.from("meta_capi_events").select("status")
+    .eq("org_id", product.org_id).eq("order_id", String(order.id)).eq("event_name", "Purchase").in("status", ["sent", "dry_run"]).maybeSingle();
+  if (!reviewHold && !alreadyRegistered) {
     void sendMetaCapiPurchase({
       config: metaConfig,
       eventId: metaPurchaseEventId,

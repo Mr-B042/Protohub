@@ -1,3 +1,5 @@
+import trackingHubRoutes from "./routes/tracking-hub.js";
+import publicTrackingRoutes from "./routes/public-tracking.js";
 import { runMetaDeliveredEvents } from "./lib/meta-capi-delivered.js";
 import "./lib/load-env.js";
 import express from "express";
@@ -343,6 +345,7 @@ app.use("/api/manager-funds", managerFundsRoutes);
 app.use("/api/log-misses", logMissRoutes);
 app.use("/api/sales-scripts", salesScriptRoutes);
 app.use("/api/sales-scripting", salesScriptingRoutes);
+app.use("/api/tracking-hub", trackingHubRoutes);
 app.use("/api/recovery-rep-kpi", recoveryRepKpiRoutes);
 app.use("/api/recovery-templates", recoveryTemplateRoutes);
 app.use("/api/personal-delivery-agents", personalDeliveryAgentRoutes);
@@ -374,6 +377,8 @@ app.use("/api/whatsapp-destinations", whatsappDestinationRoutes);
 app.use("/api/whatsapp/conversations", whatsappConversationRoutes);
 app.use("/api/public/carts",           publicCartRoutes);
 app.use("/api/public/orders",          publicOrderRoutes);
+// sendBeacon posts text/plain; the tracking route parses it itself.
+app.use("/api/public/tracking",        express.text({ type: "text/plain", limit: "16kb" }), publicTrackingRoutes);
 app.use("/api/public/products",        publicProductRoutes);
 app.use("/api/public/sms",             publicSmsRoutes);
 app.use("/api/public/branding",        publicBrandingRoutes);
