@@ -241,13 +241,15 @@ export async function metaBusiness(businessId: string, token: string) {
 export type DiscoveredPixel = { id: string; name: string; lastFiredAt: string | null; hasAccess: boolean; owned: boolean };
 export type DiscoveredAdAccount = { accountId: string; name: string; currency: string | null; timezone: string | null; status: number | null; hasAccess: boolean };
 
+export type ListResult = { ok: true; count: number } | { ok: false; message: string };
+
 /** The business's Pixels / datasets (owned and shared with it), and whether the token can use each. */
-export async function discoverPixels(businessId: string, token: string): Promise<{ ok: true; pixels: DiscoveredPixel[] } | { ok: false; message: string }> {
+export async function discoverPixels(businessId: string, token: string): Promise<{ ok: true; pixels: DiscoveredPixel[]; lists: { owned: ListResult; shared: ListResult } } | { ok: false; message: string }> {
   const fields = "id,name,last_fired_time";
   const [owned, client] = await Promise.all([graphAll<any>(`${businessId}/owned_pixels`, token, { fields }), graphAll<any>(`${businessId}/client_pixels`, token, { fields })]);
-  if (!owned.ok) return { ok: false, message: owned.message };
+  if (!owned.ok && !client.ok) return { ok: false, message: owned.message };
   const byId = new Map<string, DiscoveredPixel>();
-  for (const [rows, isOwned] of [[owned.data, true], [client.ok ? client.data : [], false]] as Array<[any[], boolean]>) {
+  for (const [rows, isOwned] of [[owned.ok ? owned.data : [], true], [client.ok ? client.data : [], false]] as Array<[any[], boolean]>) {
     for (const row of rows) if (row?.id && !byId.has(String(row.id))) byId.set(String(row.id), { id: String(row.id), name: row.name ?? "", lastFiredAt: row.last_fired_time ?? null, hasAccess: false, owned: isOwned });
   }
   // Access = the token can read the Pixel itself (it has been given to the System User).
@@ -255,16 +257,22 @@ export async function discoverPixels(businessId: string, token: string): Promise
     const check = await graphGet<{ id: string }>(pixel.id, token, { fields: "id" });
     pixel.hasAccess = check.ok;
   }
-  return { ok: true, pixels: Array.from(byId.values()) };
+  const list = (result: GraphResult<any[]>): ListResult => (result.ok ? { ok: true, count: result.data.length } : { ok: false, message: result.message });
+  return { ok: true, pixels: Array.from(byId.values()), lists: { owned: list(owned), shared: list(client) } };
 }
 
-/** The business's ad accounts, and which ones the token has been given. */
-export async function discoverAdAccounts(businessId: string, token: string): Promise<{ ok: true; accounts: DiscoveredAdAccount[]; businessListError: string | null } | { ok: false; message: string }> {
+/**
+ * The business's ad accounts from Meta's three lists - owned by the business,
+ * shared with it by another owner, given to the System User - each reported
+ * on its own (count, or Meta's refusal), so "none" is only said when all
+ * three were read and are empty.
+ */
+export async function discoverAdAccounts(businessId: string, token: string): Promise<{ ok: true; accounts: DiscoveredAdAccount[]; lists: { owned: ListResult; shared: ListResult; assigned: ListResult } } | { ok: false; message: string }> {
   const fields = "account_id,name,currency,timezone_name,account_status";
   const [owned, client, mine] = await Promise.all([
     graphAll<any>(`${businessId}/owned_ad_accounts`, token, { fields }), graphAll<any>(`${businessId}/client_ad_accounts`, token, { fields }), graphAll<any>("me/adaccounts", token, { fields })
   ]);
-  if (!owned.ok && !mine.ok) return { ok: false, message: owned.message };
+  if (!owned.ok && !client.ok && !mine.ok) return { ok: false, message: owned.message };
   const assigned = new Set((mine.ok ? mine.data : []).map((row) => String(row.account_id)));
   const byId = new Map<string, DiscoveredAdAccount>();
   for (const row of [...(owned.ok ? owned.data : []), ...(client.ok ? client.data : []), ...(mine.ok ? mine.data : [])]) {
@@ -272,5 +280,6 @@ export async function discoverAdAccounts(businessId: string, token: string): Pro
     if (!id || byId.has(id)) continue;
     byId.set(id, { accountId: id, name: row.name ?? "", currency: row.currency ?? null, timezone: row.timezone_name ?? null, status: typeof row.account_status === "number" ? row.account_status : null, hasAccess: assigned.has(id) });
   }
-  return { ok: true, accounts: Array.from(byId.values()), businessListError: owned.ok ? null : owned.message };
+  const list = (result: GraphResult<any[]>): ListResult => (result.ok ? { ok: true, count: result.data.length } : { ok: false, message: result.message });
+  return { ok: true, accounts: Array.from(byId.values()), lists: { owned: list(owned), shared: list(client), assigned: list(mine) } };
 }

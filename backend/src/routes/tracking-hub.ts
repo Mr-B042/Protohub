@@ -338,17 +338,26 @@ async function syncConnection(orgId: string, branchId: string, connection: any) 
   // Meta's "nonexisting field (owned_pixels) on node type (User)" = the ID is not a business.
   const why = (raw: string) => { const type = raw.match(/node type \((\w+)\)/i)?.[1]; return type && type.toLowerCase() !== "business" ? `Meta says ID ${connection.business_id} is a ${type}, not a business` : raw.replace(/\.$/, ""); };
   const accountsNoAccess = accounts.ok ? accounts.accounts.filter((account) => !account.hasAccess).length : 0;
+  const listText = (label: string, list: { ok: true; count: number } | { ok: false; message: string }) => (list.ok ? `${label} ${list.count}` : `${label}: couldn't read (${why(list.message)})`);
   // Say exactly what was and was not read (Bright: messages must be accurate).
   const lines: string[] = [];
   if (!pixels.ok) lines.push(`Meta would not list this business's Pixels: ${why(pixels.message)}. Check the Business ID (Business Settings → Business info) and that the token has business_management.`);
-  else if (pixelCount === 0) lines.push("This business has no Pixels the token can see. Give the Pixels to the System User (Business Settings → System Users → Assign assets).");
-  else lines.push(`Pixels: ${plural(pixelCount, "Pixel")} found${newPixels ? `, ${newPixels} new` : ""}${noAccess ? `; ${noAccess} not given to the System User yet` : ""}.`);
+  else {
+    const lists = `owned by the business ${pixels.lists.owned.ok ? pixels.lists.owned.count : "?"} · shared with it ${pixels.lists.shared.ok ? pixels.lists.shared.count : "?"}`;
+    const unread = [!pixels.lists.owned.ok ? listText("owned list", pixels.lists.owned) : null, !pixels.lists.shared.ok ? listText("shared list", pixels.lists.shared) : null].filter(Boolean).join("; ");
+    lines.push(pixelCount === 0 && !unread
+      ? "Pixels: none owned by or shared with this business. Give the Pixels to the System User (Business Settings → System Users → Assign assets)."
+      : `Pixels: ${plural(pixelCount, "Pixel")} (${lists})${newPixels ? `, ${newPixels} new` : ""}${noAccess ? `; ${noAccess} not given to the System User yet` : ""}${unread ? `. ${unread}` : ""}.`);
+  }
   if (!accounts.ok) lines.push(`Meta would not list the ad accounts: ${why(accounts.message)}.`);
-  else if (accounts.businessListError) lines.push(`Ad accounts: the business's own list could not be read (${why(accounts.businessListError)}); ${plural(accountCount, "ad account")} assigned to the System User.`);
-  else if (accountCount === 0) lines.push("Ad accounts: none found. Give the ad accounts to the System User (Business Settings → System Users → Assign assets).");
-  else lines.push(`Ad accounts: ${plural(accountCount, "ad account")} found${newAccounts ? `, ${newAccounts} new` : ""}${accountsNoAccess ? `; ${accountsNoAccess === accountCount ? "none" : accountsNoAccess} ${accountsNoAccess === accountCount ? "given" : "not given"} to the System User yet` : ""}.`);
+  else {
+    const all = [listText("owned by the business", accounts.lists.owned), listText("shared with the business", accounts.lists.shared), listText("given to the System User", accounts.lists.assigned)].join(" · ");
+    const allRead = accounts.lists.owned.ok && accounts.lists.shared.ok && accounts.lists.assigned.ok;
+    if (accountCount === 0 && allRead) lines.push(`Ad accounts: none (${all}). If the business uses an ad account, it is owned elsewhere: in Business Settings → Accounts → Ad accounts, check "Owned by", then give it to the System User (System Users → Assign assets).`);
+    else lines.push(`Ad accounts: ${plural(accountCount, "ad account")} (${all})${newAccounts ? `, ${newAccounts} new` : ""}${accountsNoAccess ? `; ${accountsNoAccess === accountCount ? "none" : accountsNoAccess} ${accountsNoAccess === accountCount ? "given" : "not given"} to the System User yet` : ""}.`);
+  }
   if (!firstSync && newPixels + newAccounts > 0) lines.push("New finds are switched off until you switch them on.");
-  const ok = pixels.ok && accounts.ok && !accounts.businessListError;
+  const ok = pixels.ok && accounts.ok && pixels.lists.owned.ok && pixels.lists.shared.ok && accounts.lists.owned.ok && accounts.lists.shared.ok && accounts.lists.assigned.ok;
   const message = lines.join(" ");
   await supabase.from("tracking_meta_connections").update({ last_sync_at: now, last_sync_ok: ok, last_sync_message: message, updated_at: now }).eq("id", connection.id);
   return { ok, message, pixels: pixelCount, newPixels, accounts: accountCount, newAccounts, noAccess };
@@ -602,10 +611,33 @@ router.get("/websites/:id", async (req, res) => {
       const before = item.type === "orders" ? dayOrders(yesterday) : sumVisits(journey2, item.type, (row) => onSite(row) && row.day === yesterday);
       return { name: item.name, count: now, change: change(now, before) };
     });
-    const landingStats = (site.landingPages as string[]).map((path) => ({
-      path, orders30d: siteOrders.filter((order) => pathOf(order.form_context?.landingPageUrl) === path).length,
-      link: siteLinks.find((link: any) => pathOf(link.landing_page_url) === path)?.label ?? null
-    }));
+    // Conversions API: every Pixel this site's links (or its default) use.
+    const capiIds = new Set<string>([...siteLinks.map((link: any) => link.data_source_id).filter(Boolean), site.dataSourceId].filter(Boolean) as string[]);
+    const capiPixels = assessment.sourceRows.filter((row: any) => capiIds.has(row.id));
+    // Each landing page: its tracking link, the Pixel that link uses, what the
+    // page was seen loading (last scan + browser reports), and a verdict.
+    const { data: beacons } = await supabase.from("tracking_browser_events").select("page_url, pixel_id, pixels_on_page, fired_at")
+      .eq("org_id", orgId).eq("page_domain", site.domain).gte("fired_at", new Date(Date.now() - 30 * 86_400_000).toISOString()).order("fired_at", { ascending: false }).limit(2000);
+    const sourceById = new Map(assessment.basics.sources.map((row: any) => [row.id, row]));
+    const pixelName = (pixelId: string) => assessment.basics.sources.find((row: any) => row.pixel_id === pixelId)?.name ?? null;
+    const landingStats = (site.landingPages as string[]).map((path) => {
+      const link: any = siteLinks.find((row: any) => pathOf(row.landing_page_url) === path) ?? null;
+      const expected: any = link?.data_source_id ? sourceById.get(link.data_source_id) : source ? sourceById.get(source.id) : null;
+      const scanned = (site.lastScan?.pages ?? []).find((page: any) => pathOf(page.url) === path) ?? null;
+      const pageBeacons = (beacons ?? []).filter((row: any) => pathOf(row.page_url) === path);
+      const seen = Array.from(new Set<string>([...((scanned?.pixels ?? []) as string[]), ...pageBeacons.flatMap((row: any) => (row.pixels_on_page ?? []) as string[])]));
+      const status = !link ? "no_link"
+        : seen.length === 0 ? (scanned || pageBeacons.length ? "missing_pixel" : "not_checked")
+        : expected && !seen.includes(expected.pixel_id) ? "wrong_pixel"
+        : seen.length > 1 ? "two_pixels" : "ok";
+      return {
+        path, orders30d: siteOrders.filter((order) => pathOf(order.form_context?.landingPageUrl) === path).length,
+        link: link?.label ?? null, linkId: link?.id ?? null, strategy: link ? STRATEGY_OF_MODE[link.mode] ?? "landing_page" : null,
+        expectedPixel: expected ? { id: expected.pixel_id, name: expected.name, fromDefault: !link?.data_source_id } : null,
+        foundPixels: seen.map((id) => ({ id, name: pixelName(id) })),
+        lastBrowserEvent: pageBeacons[0]?.fired_at ?? null, checkedAt: scanned ? site.lastScanAt : null, status
+      };
+    });
     const dedup = assessment.items.find((item) => item.key === "dedup");
     const scanPixels = (site.lastScan?.pages ?? []).some((page: any) => page.pixels?.length);
     res.json({
@@ -616,9 +648,14 @@ router.get("/websites/:id", async (req, res) => {
       landingStats,
       forms: siteLinks.map((link: any) => ({ id: link.id, label: link.label, landingPath: pathOf(link.landing_page_url), strategy: STRATEGY_OF_MODE[link.mode] ?? "landing_page", active: link.active !== false })),
       checks: [
-        { key: "browser", label: "Browser Pixel Detected", ok: Boolean(site.lastBrowserEvent || scanPixels), value: site.lastBrowserEvent || scanPixels ? "Yes" : "Not seen yet" },
-        { key: "capi", label: "Conversions API", ok: Boolean(source?.hasToken), value: source?.hasToken ? "Connected" : "Not connected" },
-        { key: "duplicate", label: "Duplicate Pixel", ok: !site.duplicatePixel, value: site.duplicatePixel ? "More than one Pixel" : "None detected" },
+        { key: "browser", label: "Browser Pixel Detected", ok: site.browserPages === 0 ? Boolean(site.lastBrowserEvent || scanPixels) : site.browserSeenPages === site.browserPages,
+          value: site.browserPages === 0 ? (site.lastBrowserEvent || scanPixels ? "Yes" : "Not seen yet") : `On ${site.browserSeenPages} of ${site.browserPages} landing page${site.browserPages === 1 ? "" : "s"}` },
+        { key: "capi", label: "Conversions API", ok: capiPixels.length > 0 && capiPixels.every((row: any) => row.hasToken),
+          value: capiPixels.length === 0 ? "No Pixel chosen" : capiPixels.every((row: any) => row.hasToken) ? `Connected${capiPixels.length > 1 ? ` (all ${capiPixels.length} Pixels)` : ""}` : `Connected for ${capiPixels.filter((row: any) => row.hasToken).length} of ${capiPixels.length} Pixels` },
+        { key: "duplicate", label: "Duplicate Pixel", ok: !site.duplicatePixel, value: site.duplicatePixel ? "Two Pixels on one page" : "None detected" },
+        { key: "match", label: "Pixel matches its link", ok: !landingStats.some((row) => row.status === "wrong_pixel"),
+          value: landingStats.some((row) => row.status === "wrong_pixel") ? `Wrong Pixel on ${landingStats.filter((row) => row.status === "wrong_pixel").length} of ${landingStats.filter((row) => row.link).length} page(s)`
+            : landingStats.some((row) => row.status === "not_checked" && row.link) ? (landingStats.some((row) => row.status === "ok" || row.status === "two_pixels") ? "Yes, on the pages checked" : "Not checked yet") : landingStats.some((row) => row.link) ? "Yes" : "No tracking links yet" },
         { key: "params", label: "Campaign Parameters", ok: capture.orders === 0 || capture.fields.fbclid >= 50, value: capture.orders === 0 ? "No ad orders this week" : capture.fields.fbclid >= 50 ? "Capturing (fbclid, fbp, fbc, utm)" : `Only ${capture.fields.fbclid}% carry fbclid` },
         { key: "purchase", label: "Purchase Event", ok: true, value: usesProtohub ? "Firing from Protohub orders" : "Thank-you page Pixel" },
         { key: "dedup", label: "Event Deduplication", ok: dedup?.healthy === 1, value: dedup?.detail ?? "" }
@@ -695,13 +732,26 @@ router.post("/websites/:id/scan", async (req, res) => {
     await supabase.from("tracking_websites").update({ last_scan: scan, last_scan_at: scan.at }).eq("id", site.id);
     await hubAudit(orgId, branchId, actorOf(req), "website_scanned", { type: "website", id: site.id, label: site.domain }, { pages: pages.length });
     const allPixels = Array.from(new Set(pages.flatMap((page) => page.pixels)));
+    const { data: sourcesForScan } = await supabase.from("tracking_data_sources").select("id, name, pixel_id").eq("org_id", orgId).eq("branch_id", branchId);
+    const { data: linksForScan } = await supabase.from("meta_capi_configs").select("landing_page_url, data_source_id, label").eq("org_id", orgId).eq("website_id", site.id);
+    const nameOf = (pixelId: string) => (sourcesForScan ?? []).find((row: any) => row.pixel_id === pixelId)?.name ?? pixelId;
+    const pageLines = pages.filter((page) => page.kind === "landing").map((page) => {
+      const link: any = (linksForScan ?? []).find((row: any) => pathOf(row.landing_page_url) === pathOf(page.url));
+      const expected: any = (sourcesForScan ?? []).find((row: any) => row.id === (link?.data_source_id ?? site.data_source_id));
+      const path = pathOf(page.url) ?? page.url;
+      if (!page.ok) return `${path}: could not load (${page.error ?? `HTTP ${page.status}`}).`;
+      if (page.pixels.length > 1) return `${path}: loads ${page.pixels.length} Pixels (${page.pixels.map(nameOf).join(", ")}). Remove the extra one.`;
+      if (page.pixels.length === 0) return page.usesTagManager ? `${path}: no Pixel in the page itself (Google Tag Manager may load it).` : `${path}: no Pixel found.`;
+      if (expected && page.pixels[0] !== expected.pixel_id) return `${path}: loads ${nameOf(page.pixels[0])}, but its link uses ${expected.name}.`;
+      return `${path}: loads ${nameOf(page.pixels[0])}${expected ? " (matches its link)" : ""}.`;
+    });
     const usesProtohub = (links ?? []).some((link: any) => link.mode === "hybrid" || link.mode === "protohub");
     const thankYouWithPurchase = pages.filter((page) => page.kind === "thank_you" && page.purchaseOnPage);
     res.json({
       scan,
       summary: [
-        allPixels.length === 0 ? (pages.some((page) => page.usesTagManager) ? "No Pixel code in the page itself — it may be loaded by Google Tag Manager." : "No Meta Pixel found on the scanned pages.") : `Pixel${allPixels.length === 1 ? "" : "s"} found: ${allPixels.join(", ")}.`,
-        allPixels.length > 1 ? "More than one Pixel id — check that each page loads only the right one." : null,
+        allPixels.length === 0 ? (pages.some((page) => page.usesTagManager) ? "No Pixel code in the pages themselves — Google Tag Manager may load it." : "No Meta Pixel found on the scanned pages.") : null,
+        ...pageLines,
         pages.some((page) => page.protohubForm) ? "Protohub order form found." : "No Protohub order form found on these pages.",
         usesProtohub && thankYouWithPurchase.length ? `The thank-you page still fires Purchase (${thankYouWithPurchase.map((page) => page.url).join(", ")}) while Protohub also sends it — orders count twice.` : null
       ].filter(Boolean)

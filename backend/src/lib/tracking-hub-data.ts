@@ -258,9 +258,11 @@ export async function assess(orgId: string, branchId: string) {
   const websiteRows = basics.websites.map((site: any) => {
     const beacons = browserRows.filter((row: any) => row.page_domain === site.domain);
     const lastBeacon = beacons.map((row: any) => row.fired_at).sort().pop() ?? null;
-    const scan = site.last_scan as { pages?: Array<{ pixels: string[] }> } | null;
+    const scan = site.last_scan as { pages?: Array<{ url: string; pixels: string[] }> } | null;
     const scanPixels = new Set((scan?.pages ?? []).flatMap((page) => page.pixels ?? []));
-    const duplicatePixel = beacons.some((row: any) => (row.pixels_on_page ?? []).length > 1) || scanPixels.size > 1;
+    // One site, many products: different pages may load different Pixels.
+    // "Duplicate" means more than one Pixel on the SAME page.
+    const duplicatePixel = beacons.some((row: any) => (row.pixels_on_page ?? []).length > 1) || (scan?.pages ?? []).some((page) => (page.pixels ?? []).length > 1);
     const siteLinks = basics.links.filter((link: any) => link.website_id === site.id);
     const siteOrders = rows.filter((row) => row.website === site.domain);
     const views = journey.filter((row) => row.domain === site.domain);
@@ -268,11 +270,26 @@ export async function assess(orgId: string, branchId: string) {
     const lastOrder = siteOrders.map((row) => row.createdAt).sort().pop() ?? null;
     const lastEvent = [lastBeacon, lastOrder].filter(Boolean).sort().pop() ?? (lastView ? `${lastView}T12:00:00+01:00` : null);
     const source = basics.sources.find((row: any) => row.id === site.data_source_id);
-    const usesBrowser = siteLinks.some((link: any) => link.mode === "hybrid");
+    // Browser Pixel, judged per landing page that fires it (Browser + CAPI links).
+    const browserPages = Array.from(new Set(siteLinks.filter((link: any) => link.mode === "hybrid" && link.active !== false).map((link: any) => pathOf(link.landing_page_url)).filter(Boolean) as string[]));
+    const seenPaths = new Set<string>([
+      ...beacons.map((row: any) => pathOf(row.page_url)).filter(Boolean) as string[],
+      ...(scan?.pages ?? []).filter((page) => (page.pixels ?? []).length > 0).map((page) => pathOf(page.url)).filter(Boolean) as string[]
+    ]);
+    const browserMissing = browserPages.filter((path) => !seenPaths.has(path));
+    const pixelIds = new Set<string>([...siteLinks.map((link: any) => basics.sources.find((row: any) => row.id === link.data_source_id)?.pixel_id).filter(Boolean), source?.pixel_id].filter(Boolean) as string[]);
     const problems: string[] = [];
-    if (!source) problems.push("No data source chosen");
-    if (usesBrowser && !lastBeacon && !scanPixels.size) problems.push("Browser Pixel not detected");
-    if (duplicatePixel) problems.push("More than one Pixel on the page");
+    if (!source && siteLinks.every((link: any) => !link.data_source_id)) problems.push("No Pixel chosen (no default and no tracking link with one)");
+    if (browserMissing.length) problems.push(`Browser Pixel not seen on ${browserMissing.length} of ${browserPages.length} landing page${browserPages.length === 1 ? "" : "s"}`);
+    if (duplicatePixel) problems.push("More than one Pixel on the same page");
+    // A landing page loading a different Pixel from the one its link uses.
+    const wrongPages = siteLinks.filter((link: any) => {
+      const expected = basics.sources.find((row: any) => row.id === (link.data_source_id ?? site.data_source_id))?.pixel_id;
+      const page = (scan?.pages ?? []).find((item) => pathOf(item.url) === pathOf(link.landing_page_url));
+      const seen = [...(page?.pixels ?? []), ...beacons.filter((row: any) => pathOf(row.page_url) === pathOf(link.landing_page_url)).flatMap((row: any) => row.pixels_on_page ?? [])];
+      return Boolean(expected && seen.length && !seen.includes(expected));
+    }).length;
+    if (wrongPages) problems.push(`Wrong Pixel on ${wrongPages} landing page${wrongPages === 1 ? "" : "s"}`);
     const landingPaths = new Set<string>([
       ...siteLinks.map((link: any) => pathOf(link.landing_page_url)).filter(Boolean) as string[],
       ...views.map((row) => row.path).filter(Boolean) as string[]
@@ -283,6 +300,7 @@ export async function assess(orgId: string, branchId: string) {
       dataSourceName: source?.name ?? null, dataSourceIsMain: Boolean(source?.is_main), dataSourcePlatform: source?.platform ?? "meta",
       notes: site.notes, forms: siteLinks.length, activeForms: siteLinks.filter((link: any) => link.active !== false).length,
       orders7d: siteOrders.length, lastBrowserEvent: lastBeacon, lastEvent, duplicatePixel, landingPages: Array.from(landingPaths),
+      pixelCount: pixelIds.size, browserPages: browserPages.length, browserSeenPages: browserPages.length - browserMissing.length,
       lastScanAt: site.last_scan_at, lastScan: site.last_scan ?? null,
       status: disconnected ? "disconnected" : problems.length === 0 ? "healthy" : "warning", problems, createdAt: site.created_at
     };
@@ -349,8 +367,9 @@ async function buildIssues(orgId: string, branchId: string, a: { basics: Basics;
     for (const problem of site.problems) {
       const isDup = problem.startsWith("More than one");
       const isMissing = problem.startsWith("Browser");
-      push({ key: `site:${site.id}:${problem}`, severity: isMissing ? "red" : isDup ? "orange" : "yellow", title: isMissing ? "Pixel not detected on page" : isDup ? "Duplicate pixel detected" : site.domain, detail: isMissing || isDup ? site.domain : problem,
-        action: isMissing ? "Re-copy the embed code from Tracking Links onto the page; the new code reports each browser Purchase." : isDup ? "Remove the extra Pixel code (theme, plugin or a second snippet) so each Purchase is counted once." : "Choose the data source this website should use.",
+      const isWrong = problem.startsWith("Wrong Pixel");
+      push({ key: `site:${site.id}:${problem}`, severity: isMissing || isWrong ? "red" : isDup ? "orange" : "yellow", title: isMissing ? "Pixel not detected on page" : isWrong ? "Wrong Pixel on a landing page" : isDup ? "Duplicate pixel detected" : site.domain, detail: isMissing || isWrong ? `${problem} (${site.domain})` : isDup ? site.domain : problem,
+        action: isWrong ? "Open Websites → this site → Landing Pages: the page loads a different Pixel from the one its tracking link uses. Change the page's Pixel code or the link's Pixel." : isMissing ? "Open Websites → this site → Landing Pages to see which pages, then make sure each loads its own Pixel and has the current embed code." : isDup ? "Open Websites → this site → Landing Pages to see which page loads two Pixels; remove the extra (often a site-wide theme or plugin Pixel)." : "Choose a default Pixel for this website, or give each tracking link its own.",
         at: site.lastBrowserEvent ?? site.lastScanAt, tab: "websites", affected: `${site.orders7d} orders`, actionLabel: isDup ? "Check Page" : "Fix Now", subjectId: site.id });
     }
   }

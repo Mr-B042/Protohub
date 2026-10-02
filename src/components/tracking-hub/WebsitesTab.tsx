@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ArrowRight, BookOpen, CheckCircle2, ChevronRight, ExternalLink, FileText, Globe, Layers, Link2, Plus, ScanLine, ShoppingCart, TriangleAlert, XCircle } from "lucide-react";
-import { trackingHubApi, type HubWebsite } from "../../lib/api";
+import { trackingHubApi, type HubWebsite, type HubWebsiteDetail } from "../../lib/api";
 import {
   LoadState,
   ActionMenu, Card, CheckBox, Delta, EmptyRow, FilterSelect, HubHeader, Kpi, Loading, MenuButton, MiniStat, Modal, PanelClose, PlatformIcon, SearchBox, SetupGuide,
@@ -11,6 +11,14 @@ import {
 // Websites tab - built to Bright's image (2 Oct 2026).
 
 type PanelTab = "overview" | "pages" | "forms" | "tracking" | "diagnostics" | "settings";
+const PAGE_STATUS: Record<HubWebsiteDetail["landingStats"][number]["status"], ["green" | "orange" | "red" | "gray", string]> = {
+  ok: ["green", "Matches"], no_link: ["gray", "No link"], not_checked: ["gray", "Not checked"], missing_pixel: ["red", "No Pixel"], two_pixels: ["orange", "Two Pixels"], wrong_pixel: ["red", "Wrong Pixel"]
+};
+const PAGE_HELP: Record<HubWebsiteDetail["landingStats"][number]["status"], string> = {
+  ok: "The page loads the Pixel its tracking link uses.", no_link: "No tracking link names this page yet: create one in Tracking Links.",
+  not_checked: "Press Test Website, or wait for a browser report from the new embed code.", missing_pixel: "The page loads no Meta Pixel: add the Pixel's base code to this page.",
+  two_pixels: "The page loads more than one Pixel: remove the extra (often a site-wide theme or plugin Pixel).", wrong_pixel: "The page loads a different Pixel from the one its tracking link uses."
+};
 const STATUS_PILL: Record<HubWebsite["status"], ["green" | "orange" | "red", string]> = { healthy: ["green", "Healthy"], warning: ["orange", "Warning"], disconnected: ["red", "Disconnected"] };
 
 export default function WebsitesTab({ tabBar, onToast }: { tabBar: ReactNode; onToast: Toast }) {
@@ -76,7 +84,7 @@ export default function WebsitesTab({ tabBar, onToast }: { tabBar: ReactNode; on
               <table className={listTableCls}>
                 <thead><tr className="bg-gray-50/70 text-gray-500 dark:bg-slate-800/40">
                   <th className="w-8"><CheckBox checked={rows.length > 0 && checked.length === rows.length} onChange={(value) => setChecked(value ? rows.map((row) => row.id) : [])} /></th>
-                  <th>Website / Domain</th><th>Platform</th><th>Data Source</th><th className="text-center">Landing<br />Pages</th><th className="text-center">Forms</th><th>Status</th><th>Last Event</th><th className="text-right">Actions</th>
+                  <th>Website / Domain</th><th>Platform</th><th>Default Pixel</th><th className="text-center">Landing<br />Pages</th><th className="text-center">Forms</th><th>Status</th><th>Last Event</th><th className="text-right">Actions</th>
                 </tr></thead>
                 <tbody>
                   {rows.map((site) => {
@@ -160,9 +168,9 @@ function WebsitePanel({ id, scanTick, onClose, onToast, onChanged, onEdit, onDel
             <div className="flex items-center gap-3 rounded-xl border border-gray-200 p-3 dark:border-slate-700"><SiteIcon platform={data.platform} /><div className="min-w-0"><p className="m-0 text-[13px] font-bold text-gray-900 dark:text-slate-100">Platform</p><p className="m-0 text-[13px] text-gray-700 dark:text-slate-300">{data.platform}</p><p className="m-0 text-[11.5px] text-gray-400">{data.lastScanAt ? "Checked by the last scan" : "Set when the site was added"}</p></div></div>
             <div className="flex items-center gap-3 rounded-xl border border-gray-200 p-3 dark:border-slate-700">
               <PlatformIcon platform={data.dataSource?.platform ?? "meta"} />
-              <div className="min-w-0"><p className="m-0 text-[13px] font-bold text-gray-900 dark:text-slate-100">Primary Data Source</p>
-                {data.dataSource ? <><p className="m-0 flex items-center gap-2 text-[13px] text-gray-700 dark:text-slate-300">{data.dataSource.name}{data.dataSource.isMain ? <span className="rounded bg-blue-50 px-1.5 text-[10.5px] font-semibold text-blue-700">Default</span> : null}</p><p className="m-0 text-[11.5px] text-gray-400">{data.dataSource.hasToken ? "Pixel + CAPI connected" : "Pixel only — no CAPI token"}</p></>
-                  : <button type="button" className="!min-h-0 text-[13px] font-semibold text-blue-600" onClick={() => setTab("settings")}>Choose a data source</button>}
+              <div className="min-w-0"><p className="m-0 text-[13px] font-bold text-gray-900 dark:text-slate-100">Pixels on this site</p>
+                <p className="m-0 text-[13px] text-gray-700 dark:text-slate-300">{data.pixelCount} Pixel{data.pixelCount === 1 ? "" : "s"} <button type="button" className="!min-h-0 text-[12px] font-semibold text-blue-600" onClick={() => setTab("pages")}>by page →</button></p>
+                <p className="m-0 truncate text-[11.5px] text-gray-400">{data.dataSource ? `Default: ${data.dataSource.name}` : "No default: each link chooses"}</p>
               </div>
             </div>
           </div>
@@ -195,13 +203,28 @@ function WebsitePanel({ id, scanTick, onClose, onToast, onChanged, onEdit, onDel
       ) : null}
 
       {tab === "pages" ? (
-        <table className={`${tableCls} mt-4`}>
-          <thead><tr className="text-gray-500"><th>Landing page</th><th>Tracking link</th><th className="text-right">Orders (30d)</th></tr></thead>
-          <tbody>
-            {data.landingStats.map((row) => <tr key={row.path} className={rowCls}><td className="py-2.5"><a href={`${data.siteUrl}${row.path}`} target="_blank" rel="noreferrer" className="font-semibold text-blue-600">{row.path}</a></td><td className="py-2.5 text-gray-600">{row.link ?? "—"}</td><td className="py-2.5 text-right font-semibold">{nf(row.orders30d)}</td></tr>)}
-            {data.landingStats.length === 0 ? <EmptyRow colSpan={3} text="No landing page seen yet. Pages appear once the new embed code reports them, or when a tracking link names one." /> : null}
-          </tbody>
-        </table>
+        <div className="mt-4">
+          <ul className="m-0 list-none divide-y divide-gray-100 p-0 dark:divide-slate-800">
+            {data.landingStats.map((row) => {
+              const [tone, text] = PAGE_STATUS[row.status];
+              return (
+                <li key={row.path} className="py-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="min-w-0"><a href={`${data.siteUrl}${row.path}`} target="_blank" rel="noreferrer" className="text-[13.5px] font-semibold text-blue-600">{row.path}</a><span className="block truncate text-[11.5px] text-gray-500">{row.link ?? "No tracking link"} · {nf(row.orders30d)} orders (30d)</span></span>
+                    <span title={PAGE_HELP[row.status]}><StatusPill size="sm" tone={tone}>{text}</StatusPill></span>
+                  </div>
+                  <dl className="m-0 mt-1.5 grid grid-cols-[86px_1fr] gap-y-0.5 text-[12px]">
+                    <dt className="text-gray-500">Link uses</dt><dd className="m-0 text-gray-800 dark:text-slate-200">{row.expectedPixel ? `${row.expectedPixel.name}${row.expectedPixel.fromDefault ? " (site default)" : ""}` : "—"}</dd>
+                    <dt className="text-gray-500">Page loads</dt><dd className="m-0 break-all text-gray-800 dark:text-slate-200">{row.foundPixels.length ? row.foundPixels.map((pixel) => pixel.name ?? pixel.id).join(", ") : row.status === "not_checked" ? <span className="text-gray-400">Not checked yet</span> : "None"}{row.lastBrowserEvent ? <span className="text-gray-400"> · browser report {ago(row.lastBrowserEvent)}</span> : null}</dd>
+                  </dl>
+                  {row.status !== "ok" ? <p className="m-0 mt-1 text-[11.5px] text-gray-500">{PAGE_HELP[row.status]}</p> : null}
+                </li>
+              );
+            })}
+            {data.landingStats.length === 0 ? <li className="py-8 text-center text-[13px] text-gray-500">No landing page seen yet. Pages appear once the new embed code reports them, or when a tracking link names one.</li> : null}
+          </ul>
+          {data.landingStats.some((row) => row.status === "not_checked") ? <p className="m-0 mt-2 text-[11.5px] text-gray-500">Press Test Website to check what each page loads.</p> : null}
+        </div>
       ) : null}
 
       {tab === "forms" ? (
@@ -264,7 +287,7 @@ export function WebsiteForm({ site, sources, detected, onCancel, onSaved }: { si
         <label className={labelCls}>Domain<input value={form.domain} onChange={(e) => setForm({ ...form, domain: e.target.value })} placeholder="brightpathhubs.com" className={input} /></label>
         <label className={labelCls}>Name<input value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder="Main Store" className={input} /></label>
         <label className={labelCls}>Platform<select value={form.platform} onChange={(e) => setForm({ ...form, platform: e.target.value })} className={input}><option>WordPress</option><option>Shopify</option><option>Custom</option><option>Other</option></select></label>
-        <label className={labelCls}>Data source<select value={form.dataSourceId} onChange={(e) => setForm({ ...form, dataSourceId: e.target.value })} className={input}><option value="">Choose…</option>{sources.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
+        <label className={labelCls}>Default Pixel <span className="font-normal text-gray-400">(optional)</span><select value={form.dataSourceId} onChange={(e) => setForm({ ...form, dataSourceId: e.target.value })} className={input}><option value="">None: each landing page's link chooses</option>{sources.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select><span className="mt-1 block text-[11.5px] font-normal text-gray-500">One site can sell many products: each landing page's tracking link can use its own Pixel. This is only used when a link doesn't name one.</span></label>
         <label className={`${labelCls} sm:col-span-2`}>Description<input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Main store for household products and bathroom accessories" className={input} /></label>
       </div>
       {error ? <p className="m-0 mt-3 text-[13px] font-semibold text-rose-700">{error}</p> : null}
