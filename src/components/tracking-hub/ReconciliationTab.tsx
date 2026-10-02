@@ -20,7 +20,10 @@ const VIEW_TABS: Array<{ key: HubReconView; label: string; noun: string; head: s
   { key: "ad", label: "Ad View", noun: "ads", head: "Ad" }, { key: "landing_page", label: "Landing Page View", noun: "landing pages", head: "Landing Page" },
   { key: "product", label: "Product View", noun: "products", head: "Product" }, { key: "website", label: "Website View", noun: "websites", head: "Website" }
 ];
-const STATUS_PILL: Record<HubReconRow["status"], ["green" | "red" | "blue" | "gray", string]> = { matched: ["green", "Matched"], investigate: ["red", "Investigate"], resolved: ["blue", "Resolved"], no_meta: ["gray", "No Meta data"] };
+const STATUS_PILL: Record<HubReconRow["status"], ["green" | "red" | "blue" | "gray" | "orange", string]> = {
+  matched: ["green", "Matched"], investigate: ["red", "Investigate"], resolved: ["blue", "Resolved"], no_meta: ["gray", "No Meta data"],
+  meta_higher: ["orange", "Meta higher"], protohub_higher: ["orange", "Protohub higher"]
+};
 const rateColor = (rate: number | null) => (rate === null ? "text-gray-400" : rate >= 90 ? "text-emerald-600" : rate >= 75 ? "text-amber-600" : "text-rose-600");
 const diffColor = (diff: number | null) => (diff === null ? "text-gray-400" : Math.abs(diff) <= 1 ? "text-emerald-600" : "text-rose-600");
 const signed = (value: number | null) => (value === null ? "—" : `${value > 0 ? "+" : ""}${value}`);
