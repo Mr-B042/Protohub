@@ -864,6 +864,8 @@ router.get("/links", async (req, res) => {
         status: link.active === false ? "paused" : linkStatusOf(Boolean(linkHealth?.healthy), stats.conversionRate, stats.views, settings.lowConversionRate)
       };
     });
+    const { data: pageBeacons = [] } = await supabase.from("tracking_browser_events").select("page_domain, page_url, pixels_on_page")
+      .eq("org_id", orgId).gte("fired_at", new Date(Date.now() - 30 * 86_400_000).toISOString()).limit(2000) as any;
     // Each product's package sets (the order form shows one set) and their currency.
     const { data: packageRows } = await supabase.from("product_packages").select("product_id, package_set, currency").in("product_id", basics.products.map((row: any) => row.id)).eq("active", true);
     const packageSetsOf = new Map<string, Array<{ name: string; currency: string | null; packages: number }>>();
@@ -892,8 +894,19 @@ router.get("/links", async (req, res) => {
       },
       links,
       products: basics.products.map((row: any) => ({ id: row.id, name: row.name, packageSets: packageSetsOf.get(row.id) ?? [] })).sort((a: any, b: any) => a.name.localeCompare(b.name)),
-      dataSources: assessment.sourceRows.map((row: any) => ({ id: row.id, name: row.name, pixelId: row.pixelId, status: row.status, platform: row.platform })),
-      websites: basics.websites.map((row: any) => ({ id: row.id, domain: row.domain, dataSourceId: row.data_source_id })),
+      // Pixel pickers show the id, business and last event, and recommend Pixels.
+      dataSources: assessment.sourceRows.map((row: any) => ({
+        id: row.id, name: row.name, pixelId: row.pixelId, status: row.status, platform: row.platform,
+        business: row.connectionName || row.businessName || null, active: row.active, hasAccess: row.hasAccess, health: row.health, lastFiredAt: row.metaLastFiredAt
+      })),
+      // Pixels each landing page was seen loading (last scan + browser reports).
+      websites: basics.websites.map((row: any) => {
+        const pages: Record<string, string[]> = {};
+        const add = (url: string | null | undefined, ids: string[]) => { const path = pathOf(url); if (!path) return; pages[path] = Array.from(new Set([...(pages[path] ?? []), ...ids])); };
+        for (const page of ((row.last_scan as any)?.pages ?? [])) add(page.url, page.pixels ?? []);
+        for (const beacon of (pageBeacons ?? []).filter((item: any) => item.page_domain === row.domain)) add(beacon.page_url, beacon.pixels_on_page ?? []);
+        return { id: row.id, domain: row.domain, dataSourceId: row.data_source_id, pagePixels: pages };
+      }),
       profiles: basics.profiles.map(presentProfile),
       defaultStrategy: settings.defaultStrategy,
       urlParameters: settings.urlParameters

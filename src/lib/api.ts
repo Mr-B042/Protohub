@@ -4440,12 +4440,16 @@ export type HubLink = {
   adUrl: string | null; createdAt: string; updatedAt: string; stats: HubLinkStats; healthy: boolean; problems: string[];
   status: "healthy" | "needs_review" | "low_performance" | "paused";
 };
+export type HubPixelOption = {
+  id: string; name: string; pixelId: string; status: string; platform: string; business: string | null; active: boolean; hasAccess: boolean | null;
+  health: HubDataSource["health"]; lastFiredAt: string | null;
+};
 export type HubLinksResponse = {
   period: HubPeriod;
   kpis: { total: number; newThisMonth: number; orders: number; ordersChange: number; pageViews: number; pageViewsChange: number; conversionRate: number; conversionRateChange: number; healthy: number; healthyPct: number };
   links: HubLink[]; products: Array<{ id: string; name: string; packageSets: Array<{ name: string; currency: string | null; packages: number }> }>;
-  dataSources: Array<{ id: string; name: string; pixelId: string; status: string; platform: string }>;
-  websites: Array<{ id: string; domain: string; dataSourceId: string | null }>; profiles: HubProfile[]; defaultStrategy: HubStrategy; urlParameters: string;
+  dataSources: HubPixelOption[];
+  websites: Array<{ id: string; domain: string; dataSourceId: string | null; pagePixels: Record<string, string[]> }>; profiles: HubProfile[]; defaultStrategy: HubStrategy; urlParameters: string;
 };
 export type HubLinkDetail = {
   id: string; label: string; trackingKey: string; adUrl: string | null; landingPageUrl: string; productName: string | null; productImage: string | null; websiteDomain: string | null; dataSourceName: string | null;

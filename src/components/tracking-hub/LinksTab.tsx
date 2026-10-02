@@ -1,3 +1,4 @@
+import PixelPicker from "./PixelPicker";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { BookOpen, ChartColumn, CheckCircle2, Copy, Database, ExternalLink, Eye, Link2, Pencil, Percent, Plus, ShoppingCart, TriangleAlert } from "lucide-react";
@@ -297,6 +298,18 @@ function LinkForm({ link, meta, onToast, onSaved, onCancel, compact }: { link: H
     extraDataSourceIds: (link?.extraPixels ?? []).map((pixel) => pixel.id)
   });
   const metaSources = meta.dataSources.filter((row) => (row.platform ?? "meta") === "meta");
+  // What the picker recommends: Pixels this landing page loads, Pixels other
+  // links for the product use, names matching the product / link name.
+  const pixelHints = useMemo(() => {
+    const site = meta.websites.find((row) => row.id === form.websiteId);
+    let path: string | null = null;
+    try { path = form.landingPageUrl ? new URL(form.landingPageUrl).pathname.replace(/\/+$/, "") || "/" : null; } catch { path = null; }
+    return {
+      productName: meta.products.find((row) => row.id === form.productId)?.name ?? null, linkName: form.label,
+      pagePixelIds: path && site ? site.pagePixels[path] ?? [] : [],
+      productPixelIds: meta.links.filter((row) => row.productId && row.productId === form.productId && row.id !== link?.id).flatMap((row) => [row.pixelId, ...row.extraPixels.map((pixel) => pixel.pixelId)]).filter(Boolean) as string[]
+    };
+  }, [meta, form.websiteId, form.landingPageUrl, form.productId, form.label, link?.id]);
   const sets = meta.products.find((row) => row.id === form.productId)?.packageSets ?? [];
   // Keep the chosen set valid for the product, and its currency in step.
   useEffect(() => {
@@ -334,7 +347,8 @@ function LinkForm({ link, meta, onToast, onSaved, onCancel, compact }: { link: H
         <label className={labelCls}>Product<select value={form.productId} onChange={(e) => setForm({ ...form, productId: e.target.value })} className={input}><option value="">Choose…</option>{meta.products.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
         <label className={labelCls}>Tracking profile<select value={form.profileId} onChange={(e) => applyProfile(e.target.value)} className={input}><option value="">None</option>{meta.profiles.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
         <label className={labelCls}>Website<select value={form.websiteId} onChange={(e) => setForm({ ...form, websiteId: e.target.value })} className={input}><option value="">Choose…</option>{meta.websites.map((row) => <option key={row.id} value={row.id}>{row.domain}</option>)}</select></label>
-        <label className={labelCls}>Data source<select value={form.dataSourceId} onChange={(e) => setForm({ ...form, dataSourceId: e.target.value })} className={input}><option value="">From profile / website</option>{meta.dataSources.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
+        <div className={labelCls}>Data source (main Pixel)<PixelPicker options={meta.dataSources} value={form.dataSourceId || null} hints={pixelHints} exclude={form.extraDataSourceIds}
+          placeholder="From profile / website" emptyLabel="From profile / website" onPick={(id) => setForm({ ...form, dataSourceId: id ?? "" })} /></div>
         <div className={`${labelCls} sm:col-span-2`}>
           Also send to <span className="font-normal text-gray-400">(optional: more Pixels that get every sale)</span>
           <div className="mt-1 flex flex-wrap items-center gap-1.5 rounded-lg border border-gray-200 p-1.5 dark:border-slate-700">
@@ -342,10 +356,10 @@ function LinkForm({ link, meta, onToast, onSaved, onCancel, compact }: { link: H
               const pixel = metaSources.find((row) => row.id === id);
               return <span key={id} className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-1 text-[12px] font-semibold text-blue-800 dark:bg-blue-950/40 dark:text-blue-200">{pixel?.name ?? id}{pixel ? <span className="font-normal text-blue-600/70">{pixel.pixelId}</span> : null}<button type="button" aria-label={`Remove ${pixel?.name ?? id}`} className="!min-h-0 ml-0.5 text-blue-600" onClick={() => setForm({ ...form, extraDataSourceIds: form.extraDataSourceIds.filter((value) => value !== id) })}>×</button></span>;
             })}
-            <select value="" onChange={(e) => { if (e.target.value) setForm({ ...form, extraDataSourceIds: [...form.extraDataSourceIds, e.target.value] }); }} className="!min-h-0 h-8 min-w-[180px] flex-1 rounded-md border-0 bg-transparent text-[13px] font-normal text-gray-600 outline-none dark:text-slate-300">
-              <option value="">{form.extraDataSourceIds.length ? "Add another Pixel…" : "Add a Pixel…"}</option>
-              {metaSources.filter((row) => row.id !== form.dataSourceId && !form.extraDataSourceIds.includes(row.id)).map((row) => <option key={row.id} value={row.id}>{row.name} ({row.pixelId})</option>)}
-            </select>
+            <div className="min-w-[220px] flex-1 [&>div>button]:!mt-0 [&>div>button]:!border-0">
+              <PixelPicker options={meta.dataSources} value={null} hints={pixelHints} exclude={[form.dataSourceId, ...form.extraDataSourceIds].filter(Boolean)}
+                placeholder={form.extraDataSourceIds.length ? "Add another Pixel…" : "Add a Pixel…"} onPick={(id) => { if (id) setForm({ ...form, extraDataSourceIds: [...form.extraDataSourceIds, id] }); }} />
+            </div>
           </div>
           <span className="mt-1 block text-[11px] font-normal text-gray-500">Use this when ads from different businesses optimise on different Pixels for the same page. Each Pixel gets the browser and server Purchase with the order number, so each counts the sale once.</span>
         </div>
