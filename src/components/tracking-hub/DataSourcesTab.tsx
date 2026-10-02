@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { BookOpen, CheckCircle2, ExternalLink, Globe, Infinity as InfinityIcon, Play, Plus, RefreshCw, Server, Trash2, TriangleAlert, X } from "lucide-react";
+import { ConnectModal, ConnectionsSection } from "./MetaConnections";
 import { trackingHubApi, type HubDataSource, type HubPlatform } from "../../lib/api";
 import {
   LoadState,
@@ -23,6 +24,7 @@ export default function DataSourcesTab({ tabBar, onToast }: { tabBar: ReactNode;
   const [editing, setEditing] = useState<HubDataSource | "new" | null>(null);
   const [guide, setGuide] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [connecting, setConnecting] = useState(false);
 
   const rows = useMemo(() => (data?.dataSources ?? []).filter((row) =>
     (filter === "all" || (filter === "other" ? row.platform === "other" || row.platform === "snapchat" : row.platform === filter))
@@ -34,13 +36,14 @@ export default function DataSourcesTab({ tabBar, onToast }: { tabBar: ReactNode;
       actions={<>
         <button type="button" className={outlineButton} onClick={() => setGuide(true)}><BookOpen className="h-4 w-4" /> Docs &amp; Setup Guide</button>
         <button type="button" className={outlineButton} onClick={() => setTesting(true)}><Play className="h-4 w-4" /> Test Event</button>
-        <button type="button" className={primaryButton} onClick={() => setEditing("new")}><Plus className="h-5 w-5" /> Connect Data Source</button>
+        <button type="button" className={primaryButton} onClick={() => setConnecting(true)}><Plus className="h-5 w-5" /> Connect Meta Business</button>
       </>} />
   );
   const modals = <>
     {guide ? <SetupGuide onClose={() => setGuide(false)} /> : null}
     {testing && data ? <TestEventModal sources={data.dataSources} onClose={() => setTesting(false)} onToast={onToast} /> : null}
-    {editing ? <Modal title={editing === "new" ? "Connect Data Source" : `Edit ${editing.name}`} subtitle="From Meta Events Manager → Data Sources, and Business Settings → System Users." onClose={() => setEditing(null)} wide>
+    {connecting ? <ConnectModal onClose={() => setConnecting(false)} onToast={onToast} onDone={() => { setConnecting(false); reload(); }} /> : null}
+    {editing ? <Modal title={editing === "new" ? "Add a Pixel manually" : `Edit ${editing.name}`} subtitle={editing === "new" ? "For a Pixel your Meta Business connection cannot see, e.g. one owned by a partner. It needs its own token." : "From Meta Events Manager → Data Sources, and Business Settings → System Users."} onClose={() => setEditing(null)} wide>
       <SourceForm source={editing === "new" ? null : editing} onCancel={() => setEditing(null)} onSaved={(id) => { setEditing(null); onToast("Data source saved."); setSelected(id); reload(); }} />
     </Modal> : null}
   </>;
@@ -64,6 +67,8 @@ export default function DataSourcesTab({ tabBar, onToast }: { tabBar: ReactNode;
         <Kpi icon={<TriangleAlert className="h-7 w-7" />} tone="orange" label="Need Attention" value={nf(k.needAttention)} sub={`${k.needAttentionPct}%`} />
         <Kpi icon={<X className="h-8 w-8" strokeWidth={3} />} tone="red" label="Disconnected" value={nf(k.disconnected)} sub={`${k.disconnectedPct}%`} />
       </div>
+
+      <ConnectionsSection connections={data.connections} onToast={onToast} onChanged={reload} onConnect={() => setConnecting(true)} onAddManually={() => setEditing("new")} onOpenPixel={(id) => { setSelected(id); setClosed(false); }} />
 
       <SplitLayout
         list={
@@ -108,7 +113,7 @@ export default function DataSourcesTab({ tabBar, onToast }: { tabBar: ReactNode;
                       </tr>
                     );
                   })}
-                  {rows.length === 0 ? <EmptyRow colSpan={9} text={data.dataSources.length === 0 ? <>No data source connected yet. <button type="button" className="!min-h-0 font-bold text-blue-600" onClick={() => setEditing("new")}>Connect one</button></> : "No data source matches."} /> : null}
+                  {rows.length === 0 ? <EmptyRow colSpan={9} text={data.dataSources.length === 0 ? <>No data source yet. <button type="button" className="!min-h-0 font-bold text-blue-600" onClick={() => setConnecting(true)}>Connect your Meta Business</button></> : "No data source matches."} /> : null}
                 </tbody>
               </table>
               {data.dataSources.some((row) => !row.eventsFromMeta) ? <p className="m-0 mt-2 text-[11px] text-gray-400">* Sent by Protohub. Open a data source → Events → Refresh from Meta for Meta's own count.</p> : null}
@@ -176,6 +181,7 @@ function SourcePanel({ id, onClose, onToast, onChanged, onEdit }: { id: string; 
           </div>
           <div className="rounded-xl border border-gray-200 p-4 dark:border-slate-700">
             <p className="m-0 mb-2 text-[13px] font-bold text-gray-900 dark:text-slate-100">Dataset Information</p>
+            {data.connectionName ? <DetailRow label="Connected through">{data.connectionName}{data.ownToken ? " (own token)" : ""}</DetailRow> : null}
             <DetailRow label="Pixel ID" copy={data.pixelId} onToast={onToast}>{data.pixelId}</DetailRow>
             <DetailRow label="Business Account" copy={data.businessName || null} onToast={onToast}>{data.businessName || "—"}</DetailRow>
             <DetailRow label="Ad Account" copy={data.adAccountIds[0] ?? null} onToast={onToast}>{data.adAccountLabel || data.adAccountIds.length ? `${data.adAccountLabel || "Ad account"}${data.adAccountIds.length ? ` (${data.adAccountIds.join(", ")})` : ""}` : "—"}</DetailRow>
@@ -298,7 +304,7 @@ export function SourceForm({ source, onCancel, onSaved }: { source: HubDataSourc
         <label className={`${labelCls} sm:col-span-2`}>Description<input value={form.description} onChange={(e) => set({ description: e.target.value })} placeholder="Main pixel for household products campaigns" className={input} /></label>
         <label className={labelCls}>Business account<input value={form.businessName} onChange={(e) => set({ businessName: e.target.value })} placeholder="Protools Household" className={input} /></label>
         <label className={labelCls}>Dataset / Pixel ID<input value={form.pixelId} onChange={(e) => set({ pixelId: e.target.value })} placeholder="985124764502331" className={`${input} font-mono`} /></label>
-        <label className={`${labelCls} sm:col-span-2`}>Access token (System User, with ads_read)<input type="password" autoComplete="off" value={form.accessToken} onChange={(e) => set({ accessToken: e.target.value })} placeholder={source?.hasToken ? "Token saved — paste to replace" : "Paste from Meta Business Settings"} className={`${input} font-mono`} /></label>
+        <label className={`${labelCls} sm:col-span-2`}>{source?.connectionId ? <>Own token <span className="font-normal text-gray-400">(optional: otherwise uses the {source.connectionName ?? "connection"} token)</span></> : "Access token (System User, with ads_read)"}<input type="password" autoComplete="off" value={form.accessToken} onChange={(e) => set({ accessToken: e.target.value })} placeholder={source?.ownToken ? "Own token saved: paste to replace" : source?.connectionId ? "Leave empty to use the connection's token" : "Paste from Meta Business Settings"} className={`${input} font-mono`} /></label>
         <label className={labelCls}>Ad account name<input value={form.adAccountLabel} onChange={(e) => set({ adAccountLabel: e.target.value })} placeholder="Household Ads" className={input} /></label>
         <label className={labelCls}>Ad account IDs (for Reconciliation)<input value={form.adAccounts} onChange={(e) => set({ adAccounts: e.target.value })} placeholder="act_238746321" className={`${input} font-mono`} /></label>
         <label className={labelCls}>Test Event Code (optional)<input value={form.testEventCode} onChange={(e) => set({ testEventCode: e.target.value })} placeholder="TEST12345" className={`${input} font-mono`} /></label>

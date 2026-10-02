@@ -5,7 +5,8 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 import { addDaysToDateKey, lagosDateKey } from "../lib/sales-bonus-engine.js";
 import { sendMetaCapiPurchase, testMetaCapiConnection } from "../lib/meta-capi.js";
 import { testTikTokConnection } from "../lib/tiktok-events.js";
-import { adPurchases, campaignInfo, checkDataset, datasetEventStats, datasetQuality, scanPage } from "../lib/meta-graph.js";
+import { adPurchases, campaignInfo, checkDataset, datasetEventStats, datasetQuality, discoverAdAccounts, discoverPixels, metaBusiness, metaWhoAmI, scanPage } from "../lib/meta-graph.js";
+import { connectionToken } from "../lib/tracking-credentials.js";
 import { ATTRIBUTION_FIELDS, attributionCapture, domainOf, humanMetaError, orderAdIds, pathOf, reconciliationVerdict } from "../lib/tracking-hub.js";
 import {
   DEFAULT_HUB_SETTINGS, MODE_OF_STRATEGY, STRATEGY_OF_MODE, assess, change, dayOfIso, daysBetween, eventsFor, formOrders,
@@ -88,17 +89,19 @@ router.get("/data-sources", async (req, res) => {
     const assessment = await assess(req.user!.orgId, branchOf(req));
     const rows = assessment.sourceRows;
     const monthAgo = new Date(Date.now() - 30 * 86_400_000).toISOString();
-    const disconnected = rows.filter((row: any) => row.health === "no_token" || row.health === "disconnected" || row.health === "error").length;
-    const healthy = rows.filter((row: any) => row.health === "healthy").length;
+    const live = rows.filter((row: any) => row.active);
+    const disconnected = live.filter((row: any) => row.health === "no_token" || row.health === "disconnected" || row.health === "error").length;
+    const healthy = live.filter((row: any) => row.health === "healthy").length;
     res.json({
       kpis: {
         total: rows.length, newThisMonth: rows.filter((row: any) => row.createdAt >= monthAgo).length,
         healthy, healthyPct: pct(healthy, rows.length),
-        needAttention: rows.length - healthy - disconnected, needAttentionPct: pct(rows.length - healthy - disconnected, rows.length),
+        needAttention: live.length - healthy - disconnected, needAttentionPct: pct(live.length - healthy - disconnected, rows.length), off: rows.length - live.length,
         disconnected, disconnectedPct: pct(disconnected, rows.length)
       },
       platformCounts: Object.fromEntries(PLATFORMS.map((platform) => [platform, rows.filter((row: any) => row.platform === platform).length])),
       dataSources: rows,
+      connections: assessment.basics.connections.map((connection: any) => presentConnection(connection, rows, assessment.basics.adAccounts)),
       profiles: assessment.basics.profiles.map(presentProfile),
       websites: assessment.basics.websites.map((site: any) => ({ id: site.id, domain: site.domain })),
       issues: assessment.issues.filter((issue) => issue.tab === "sources")
@@ -193,7 +196,8 @@ async function loadSource(req: Request) {
   const { data, error } = await supabase.from("tracking_data_sources").select("*").eq("org_id", req.user!.orgId).eq("branch_id", branchOf(req)).eq("id", String(req.params.id)).maybeSingle();
   if (error) throw error;
   if (!data) throw httpError(404, "Data source not found.");
-  return data;
+  // A Pixel found through a Meta Business connection uses the connection's token.
+  return { ...data, access_token: data.access_token || (await connectionToken(data.connection_id)) };
 }
 
 /** Disconnect: removes the token (sending and reading stop) and pauses the source. */
@@ -209,7 +213,7 @@ router.post("/data-sources/:id/disconnect", async (req, res) => {
 router.post("/data-sources/:id/test", async (req, res) => {
   try {
     const source = await loadSource(req);
-    if (!source.access_token) throw httpError(400, "Add the access token first.");
+    if (!source.access_token) throw httpError(400, source.connection_id ? "The Meta Business connection has no token. Paste one on the connection." : "Add the access token first.");
     let ok = false;
     let message = "";
     let canRead = false;
@@ -230,7 +234,7 @@ router.post("/data-sources/:id/test", async (req, res) => {
       ok = false;
       message = "Saved. Protohub does not send events to this platform yet.";
     }
-    await supabase.from("tracking_data_sources").update({ last_check_at: new Date().toISOString(), last_check_ok: ok, last_check_message: message, ...(datasetName ? { dataset_name: datasetName } : {}) }).eq("id", source.id);
+    await supabase.from("tracking_data_sources").update({ last_check_at: new Date().toISOString(), last_check_ok: ok, last_check_message: message, ...(datasetName ? { dataset_name: datasetName } : {}), ...(source.connection_id ? { has_access: canRead || ok } : {}) }).eq("id", source.id);
     await hubAudit(req.user!.orgId, branchOf(req), actorOf(req), "connection_tested", { type: "data_source", id: source.id, label: source.name }, { ok, message });
     res.json({ ok, message, canRead, lastFiredAt, human: ok ? null : humanMetaError(message, null) });
   } catch (error: any) { fail(res, error, "Could not test the connection."); }
@@ -250,13 +254,236 @@ router.post("/data-sources/:id/refresh", async (req, res) => {
   } catch (error: any) { fail(res, error, "Could not read Meta's numbers."); }
 });
 
+// ==================================================== META BUSINESS CONNECTIONS
+// (Bright, 2 Oct 2026) Connect a Meta Business once; Sync Assets finds its
+// Pixels and ad accounts; each is switched on or off here.
+
+function presentConnection(connection: any, sourceRows: any[], adAccounts: any[]) {
+  const pixels = sourceRows.filter((row: any) => row.connectionId === connection.id);
+  return {
+    id: connection.id, name: connection.name, businessId: connection.business_id, systemUserName: connection.system_user_name,
+    hasToken: Boolean(connection.access_token), currency: connection.currency, timezone: connection.timezone,
+    lastCheckAt: connection.last_check_at, lastCheckOk: connection.last_check_ok, lastCheckMessage: connection.last_check_message,
+    human: connection.last_check_ok === false ? humanMetaError(connection.last_check_message, null) : null,
+    lastSyncAt: connection.last_sync_at, lastSyncOk: connection.last_sync_ok, lastSyncMessage: connection.last_sync_message,
+    status: !connection.access_token ? "disconnected" : connection.last_check_ok === false ? "error" : "connected",
+    pixels: pixels.map((row: any) => ({ sourceId: row.id, pixelId: row.pixelId, name: row.name, active: row.active, hasAccess: row.hasAccess, lastFiredAt: row.metaLastFiredAt, health: row.health, ownToken: row.ownToken })),
+    adAccounts: adAccounts.filter((row: any) => row.connection_id === connection.id).map((row: any) => ({ id: row.id, accountId: row.account_id, name: row.name, currency: row.currency, active: row.active, hasAccess: row.has_access, status: row.account_status }))
+  };
+}
+
+async function loadConnection(req: Request) {
+  const { data, error } = await supabase.from("tracking_meta_connections").select("*").eq("org_id", req.user!.orgId).eq("branch_id", branchOf(req)).eq("id", String(req.params.id)).maybeSingle();
+  if (error) throw error;
+  if (!data) throw httpError(404, "Connection not found.");
+  return data;
+}
+
+/** Find the business's Pixels and ad accounts and save them under the connection. */
+async function syncConnection(orgId: string, branchId: string, connection: any) {
+  if (!connection.access_token) throw httpError(400, "Paste the System User token on this connection first.");
+  const [pixels, accounts] = await Promise.all([discoverPixels(connection.business_id, connection.access_token), discoverAdAccounts(connection.business_id, connection.access_token)]);
+  const now = new Date().toISOString();
+  if (!pixels.ok && !accounts.ok) {
+    const human = humanMetaError(pixels.message, null);
+    await supabase.from("tracking_meta_connections").update({ last_sync_at: now, last_sync_ok: false, last_sync_message: human.title }).eq("id", connection.id);
+    throw httpError(400, `${human.title}. ${human.action}`);
+  }
+  // First sync switches on everything the token can use; later syncs add new
+  // finds switched off, for the Owner to switch on.
+  const firstSync = !connection.last_sync_at;
+  let newPixels = 0;
+  let newAccounts = 0;
+  if (pixels.ok) {
+    const { data: existing } = await supabase.from("tracking_data_sources").select("id, pixel_id, connection_id, name").eq("org_id", orgId).eq("branch_id", branchId);
+    const byPixel = new Map((existing ?? []).map((row: any) => [String(row.pixel_id), row]));
+    for (const pixel of pixels.pixels) {
+      const found: any = byPixel.get(pixel.id);
+      if (found) {
+        await supabase.from("tracking_data_sources").update({ connection_id: found.connection_id ?? connection.id, has_access: pixel.hasAccess, meta_last_fired_at: pixel.lastFiredAt, dataset_name: pixel.name || null, updated_at: now }).eq("id", found.id);
+      } else {
+        newPixels += 1;
+        const { error } = await supabase.from("tracking_data_sources").insert({
+          org_id: orgId, branch_id: branchId, connection_id: connection.id, name: pixel.name || `Pixel ${pixel.id}`, platform: "meta", pixel_id: pixel.id,
+          business_name: connection.name, dataset_name: pixel.name || null, has_access: pixel.hasAccess, meta_last_fired_at: pixel.lastFiredAt,
+          active: firstSync && pixel.hasAccess, status: "production", currency: connection.currency, timezone: connection.timezone
+        });
+        if (error) throw error;
+      }
+    }
+    // Pixels Meta no longer lists for this business can no longer be used.
+    const seen = new Set(pixels.pixels.map((pixel) => pixel.id));
+    const gone = (existing ?? []).filter((row: any) => row.connection_id === connection.id && !seen.has(String(row.pixel_id))).map((row: any) => row.id);
+    if (gone.length) await supabase.from("tracking_data_sources").update({ has_access: false, updated_at: now }).in("id", gone);
+  }
+  if (accounts.ok) {
+    const { data: existing } = await supabase.from("tracking_meta_ad_accounts").select("id, account_id").eq("connection_id", connection.id);
+    const byAccount = new Map((existing ?? []).map((row: any) => [String(row.account_id), row]));
+    for (const account of accounts.accounts) {
+      const fields = { name: account.name, currency: account.currency, timezone: account.timezone, account_status: account.status, has_access: account.hasAccess, last_seen_at: now };
+      const found: any = byAccount.get(account.accountId);
+      if (found) await supabase.from("tracking_meta_ad_accounts").update(fields).eq("id", found.id);
+      else {
+        newAccounts += 1;
+        const { error } = await supabase.from("tracking_meta_ad_accounts").insert({ org_id: orgId, branch_id: branchId, connection_id: connection.id, account_id: account.accountId, active: firstSync && account.hasAccess, ...fields });
+        if (error) throw error;
+      }
+    }
+  }
+  const pixelCount = pixels.ok ? pixels.pixels.length : 0;
+  const accountCount = accounts.ok ? accounts.accounts.length : 0;
+  const noAccess = pixels.ok ? pixels.pixels.filter((pixel) => !pixel.hasAccess).length : 0;
+  const parts = [
+    pixels.ok ? `${pixelCount} Pixel${pixelCount === 1 ? "" : "s"}${newPixels ? ` (${newPixels} new)` : ""}` : `Pixels not read (${humanMetaError(pixels.message, null).title})`,
+    accounts.ok ? `${accountCount} ad account${accountCount === 1 ? "" : "s"}${newAccounts ? ` (${newAccounts} new)` : ""}` : `ad accounts not read (${humanMetaError(accounts.message, null).title})`
+  ];
+  const message = `Found ${parts.join(" and ")}.${noAccess ? ` ${noAccess} Pixel${noAccess === 1 ? " is" : "s are"} not given to the System User yet.` : ""}${!firstSync && newPixels + newAccounts > 0 ? " New finds are switched off until you switch them on." : ""}`;
+  await supabase.from("tracking_meta_connections").update({ last_sync_at: now, last_sync_ok: pixels.ok && accounts.ok, last_sync_message: message, updated_at: now }).eq("id", connection.id);
+  return { message, pixels: pixelCount, newPixels, accounts: accountCount, newAccounts, noAccess };
+}
+
+const ConnectionSchema = z.object({
+  accessToken: z.string().trim().max(5000).optional(),
+  businessId: z.string().trim().regex(/^\d{5,25}$/, "A Business ID is a number (Business Settings → Business info).").optional().or(z.literal("")),
+  currency: z.string().trim().max(8).default("NGN"),
+  timezone: z.string().trim().max(60).default("Africa/Lagos")
+});
+
+/** Connect step 1: who is this token, and which businesses can it see? */
+router.post("/connections/lookup", async (req, res) => {
+  const parsed = z.object({ accessToken: z.string().trim().min(10).max(5000) }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Paste the System User token." }); return; }
+  try {
+    const who = await metaWhoAmI(parsed.data.accessToken);
+    if (!who.ok) { const human = humanMetaError(who.message, who.status ?? null); throw httpError(400, `${human.title}. ${human.action}`); }
+    res.json({ userName: who.userName, businesses: who.businesses, businessesError: who.businessesError ? humanMetaError(who.businessesError, null).title : null });
+  } catch (error: any) { fail(res, error, "Could not check the token."); }
+});
+
+router.post("/connections", async (req, res) => {
+  const parsed = ConnectionSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Check the form." }); return; }
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const token = parsed.data.accessToken ?? "";
+    if (!token) throw httpError(400, "Paste the System User token.");
+    const who = await metaWhoAmI(token);
+    if (!who.ok) { const human = humanMetaError(who.message, who.status ?? null); throw httpError(400, `${human.title}. ${human.action}`); }
+    let businessId = parsed.data.businessId || "";
+    let businessName = "";
+    if (businessId) {
+      const business = await metaBusiness(businessId, token);
+      if (!business.ok) throw httpError(400, `This token cannot see business ${businessId}. Check the Business ID, or give the System User access to that business.`);
+      businessName = business.name;
+    } else if (who.businesses.length === 1) {
+      businessId = who.businesses[0].id;
+      businessName = who.businesses[0].name;
+    } else if (who.businesses.length > 1) {
+      res.status(409).json({ error: `This token can see ${who.businesses.length} businesses. Choose which one to connect.`, code: "choose_business", businesses: who.businesses });
+      return;
+    } else {
+      throw httpError(400, "Meta did not say which business this token belongs to. Enter the Business ID (Meta Business Settings → Business info).");
+    }
+    const now = new Date().toISOString();
+    const { data: connection, error } = await supabase.from("tracking_meta_connections").insert({
+      org_id: orgId, branch_id: branchId, name: businessName, business_id: businessId, system_user_id: who.userId, system_user_name: who.userName,
+      access_token: token, currency: parsed.data.currency, timezone: parsed.data.timezone, last_check_at: now, last_check_ok: true, last_check_message: "Connected", created_by: req.user!.id
+    }).select("*").single();
+    if (error) throw error.code === "23505" ? httpError(409, "This Meta Business is already connected. Open it and press Sync Assets.") : error;
+    await hubAudit(orgId, branchId, actorOf(req), "connection_added", { type: "connection", id: connection.id, label: businessName });
+    let sync: Awaited<ReturnType<typeof syncConnection>> | null = null;
+    let syncError: string | null = null;
+    try { sync = await syncConnection(orgId, branchId, connection); } catch (err: any) { syncError = err?.message ?? "Could not read the business's assets."; }
+    res.status(201).json({ id: connection.id, name: businessName, sync, syncError });
+  } catch (error: any) { fail(res, error, "Could not connect the business."); }
+});
+
+router.put("/connections/:id", async (req, res) => {
+  const parsed = ConnectionSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Check the form." }); return; }
+  try {
+    const connection = await loadConnection(req);
+    const update: Record<string, unknown> = { currency: parsed.data.currency, timezone: parsed.data.timezone, updated_at: new Date().toISOString() };
+    const token = parsed.data.accessToken ?? "";
+    if (token && token !== SECRET_MASK) {
+      const who = await metaWhoAmI(token);
+      if (!who.ok) { const human = humanMetaError(who.message, who.status ?? null); throw httpError(400, `${human.title}. ${human.action}`); }
+      const business = await metaBusiness(connection.business_id, token);
+      if (!business.ok) throw httpError(400, `This token cannot see business ${connection.business_id} (${connection.name}). Use a System User token from that business.`);
+      Object.assign(update, { access_token: token, system_user_id: who.userId, system_user_name: who.userName, last_check_at: new Date().toISOString(), last_check_ok: true, last_check_message: "Connected" });
+    }
+    await supabase.from("tracking_meta_connections").update(update).eq("id", connection.id);
+    await hubAudit(req.user!.orgId, branchOf(req), actorOf(req), "connection_updated", { type: "connection", id: connection.id, label: connection.name }, { tokenChanged: Boolean(update.access_token) });
+    res.json({ ok: true });
+  } catch (error: any) { fail(res, error, "Could not save the connection."); }
+});
+
+router.post("/connections/:id/test", async (req, res) => {
+  try {
+    const connection = await loadConnection(req);
+    if (!connection.access_token) throw httpError(400, "This connection has no token. Paste a System User token first.");
+    const who = await metaWhoAmI(connection.access_token);
+    const business = who.ok ? await metaBusiness(connection.business_id, connection.access_token) : null;
+    const ok = who.ok && Boolean(business?.ok);
+    const message = !who.ok ? who.message : !business?.ok ? `The token can no longer see business ${connection.business_id}.` : `Connected as ${who.userName ?? "the System User"}.`;
+    await supabase.from("tracking_meta_connections").update({ last_check_at: new Date().toISOString(), last_check_ok: ok, last_check_message: message, ...(who.ok ? { system_user_name: who.userName } : {}) }).eq("id", connection.id);
+    await hubAudit(req.user!.orgId, branchOf(req), actorOf(req), "connection_tested", { type: "connection", id: connection.id, label: connection.name }, { ok, message });
+    res.json({ ok, message, human: ok ? null : humanMetaError(message, who.ok ? null : who.status ?? null) });
+  } catch (error: any) { fail(res, error, "Could not test the connection."); }
+});
+
+router.post("/connections/:id/sync", async (req, res) => {
+  try {
+    const connection = await loadConnection(req);
+    const result = await syncConnection(req.user!.orgId, branchOf(req), connection);
+    await hubAudit(req.user!.orgId, branchOf(req), actorOf(req), "connection_synced", { type: "connection", id: connection.id, label: connection.name }, { message: result.message });
+    res.json(result);
+  } catch (error: any) { fail(res, error, "Could not sync."); }
+});
+
+/** Disconnect: removes the token. Its Pixels stop sending and reading until a new token is pasted. */
+router.post("/connections/:id/disconnect", async (req, res) => {
+  try {
+    const connection = await loadConnection(req);
+    await supabase.from("tracking_meta_connections").update({ access_token: null, last_check_ok: null, last_check_message: "Disconnected", updated_at: new Date().toISOString() }).eq("id", connection.id);
+    await hubAudit(req.user!.orgId, branchOf(req), actorOf(req), "connection_disconnected", { type: "connection", id: connection.id, label: connection.name });
+    res.json({ ok: true });
+  } catch (error: any) { fail(res, error, "Could not disconnect."); }
+});
+
+router.put("/data-sources/:id/active", async (req, res) => {
+  const parsed = z.object({ active: z.boolean() }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "On or off?" }); return; }
+  try {
+    const source = await loadSource(req);
+    await supabase.from("tracking_data_sources").update({ active: parsed.data.active, updated_at: new Date().toISOString() }).eq("id", source.id);
+    const { count } = await supabase.from("meta_capi_configs").select("id", { count: "exact", head: true }).eq("org_id", req.user!.orgId).eq("data_source_id", source.id).eq("active", true);
+    await hubAudit(req.user!.orgId, branchOf(req), actorOf(req), parsed.data.active ? "pixel_on" : "pixel_off", { type: "data_source", id: source.id, label: source.name });
+    res.json({ ok: true, linksUsing: count ?? 0 });
+  } catch (error: any) { fail(res, error, "Could not change the Pixel."); }
+});
+
+router.put("/ad-accounts/:id/active", async (req, res) => {
+  const parsed = z.object({ active: z.boolean() }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "On or off?" }); return; }
+  try {
+    const { data, error } = await supabase.from("tracking_meta_ad_accounts").update({ active: parsed.data.active }).eq("org_id", req.user!.orgId).eq("branch_id", branchOf(req)).eq("id", String(req.params.id)).select("name, account_id").maybeSingle();
+    if (error) throw error;
+    if (!data) throw httpError(404, "Ad account not found.");
+    await hubAudit(req.user!.orgId, branchOf(req), actorOf(req), parsed.data.active ? "ad_account_on" : "ad_account_off", { type: "ad_account", id: String(req.params.id), label: data.name || `act_${data.account_id}` });
+    res.json({ ok: true });
+  } catch (error: any) { fail(res, error, "Could not change the ad account."); }
+});
+
 /** Header "Test Event": a test Purchase to Meta's Test Events tab. */
 router.post("/test-event", async (req, res) => {
   const parsed = z.object({ dataSourceId: z.string().uuid() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Choose a data source." }); return; }
   try {
-    const { data: source } = await supabase.from("tracking_data_sources").select("*").eq("org_id", req.user!.orgId).eq("branch_id", branchOf(req)).eq("id", parsed.data.dataSourceId).maybeSingle();
-    if (!source) throw httpError(404, "Data source not found.");
+    const { data: found } = await supabase.from("tracking_data_sources").select("*").eq("org_id", req.user!.orgId).eq("branch_id", branchOf(req)).eq("id", parsed.data.dataSourceId).maybeSingle();
+    if (!found) throw httpError(404, "Data source not found.");
+    const source = { ...found, access_token: found.access_token || (await connectionToken(found.connection_id)) };
     if (!source.access_token) throw httpError(400, "Add the access token first.");
     if (!source.test_event_code) throw httpError(400, "Add the Test Event Code (Meta Events Manager → Test Events) to this data source first, so the test does not count as a real sale.");
     const eventId = `protohub_test_${Date.now()}`;
@@ -849,7 +1076,7 @@ const RECON_VIEWS: ReconView[] = ["campaign", "adset", "ad", "landing_page", "pr
 async function reconData(orgId: string, branchId: string, from: string, to: string) {
   const [orders, basics, insightsRes, campaignsRes, notesRes, journey] = await Promise.all([
     formOrders(orgId, branchId, from, to), loadBasics(orgId, branchId),
-    supabase.from("tracking_meta_ad_insights").select("data_source_id, ad_account_id, day, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name, purchases, purchase_value, spend, fetched_at").eq("org_id", orgId).eq("branch_id", branchId).gte("day", from).lte("day", to).limit(20000),
+    supabase.from("tracking_meta_ad_insights").select("data_source_id, connection_id, ad_account_id, day, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name, purchases, purchase_value, spend, fetched_at").eq("org_id", orgId).eq("branch_id", branchId).gte("day", from).lte("day", to).limit(20000),
     supabase.from("tracking_meta_campaigns").select("*").eq("org_id", orgId).eq("branch_id", branchId),
     supabase.from("tracking_reconciliation_notes").select("scope, scope_id, note, resolved, created_by_name, created_at").eq("org_id", orgId).eq("branch_id", branchId).order("created_at", { ascending: false }),
     journeyCounts(orgId, branchId, addDaysToDateKey(to, -29), to).catch(() => [] as JourneyRow[])
@@ -914,6 +1141,9 @@ function reconRows(view: ReconView, data: ReconData, settings: HubSettings) {
     const productId = view === "product" ? group.id : group.orders.find((row) => row.productId)?.productId ?? data.adHome.get(firstAd)?.productId ?? null;
     const product: any = productId ? productOf.get(productId) : null;
     const source: any = data.basics.sources.find((row: any) => group.sourceIds.has(row.id));
+    const accountId = group.accounts.size ? Array.from(group.accounts)[0] : null;
+    const adAccount: any = accountId ? (data.basics.adAccounts as any[]).find((row) => row.account_id === accountId) : null;
+    const connection: any = adAccount ? (data.basics.connections as any[]).find((row) => row.id === adAccount.connection_id) : null;
     const sent = group.orders.filter((row) => row.serverStatus === "sent" || row.serverStatus === "dry_run").length;
     const duplicates = group.orders.filter((row) => data.events.server.get(row.orderId)?.status === "duplicate").length;
     const verdict = reconciliationVerdict({ protohubOrders: protohub, purchaseEvents: group.orders.filter((row) => row.browser || row.serverStatus === "sent").length, sentToMeta: sent, duplicates, metaPurchases: meta });
@@ -921,8 +1151,8 @@ function reconRows(view: ReconView, data: ReconData, settings: HubSettings) {
     return {
       id: group.id, name: group.name || (view === "product" ? product?.name : null) || (view === "campaign" ? data.campaigns.find((row: any) => row.campaign_id === group.id)?.name : null) || group.id, view,
       image: product?.imageUrl ?? null, productName: product?.name ?? null,
-      account: source?.ad_account_label || source?.name || (group.accounts.size ? `act_${Array.from(group.accounts)[0]}` : "—"),
-      accountId: group.accounts.size ? Array.from(group.accounts)[0] : null, dataSourceName: source?.name ?? null,
+      account: adAccount?.name || source?.ad_account_label || source?.name || (accountId ? `act_${accountId}` : "—"),
+      accountId, dataSourceName: source?.name ?? null, businessName: connection?.name || source?.business_name || null,
       protohub, meta, difference: meta === null ? null : meta - protohub, matchRate, spend: group.spend,
       status: resolved.has(group.id) ? "resolved" : meta === null ? "no_meta" : investigate ? "investigate" : "matched", verdict
     };
@@ -944,7 +1174,7 @@ router.get("/reconciliation", async (req, res) => {
     const websiteDomain = data.basics.websites.find((row: any) => row.id === websiteId)?.domain;
     if (q) rows = rows.filter((row) => `${row.name} ${row.id}`.toLowerCase().includes(q));
     if (accountId) rows = rows.filter((row) => row.accountId === accountId);
-    if (business) rows = rows.filter((row) => data.basics.sources.some((source: any) => source.business_name === business && source.name === row.dataSourceName));
+    if (business) rows = rows.filter((row) => row.businessName === business);
     if (websiteDomain) rows = rows.filter((row) => row.id.startsWith(websiteDomain) || data.rows.some((order) => order.website === websiteDomain && reconKey(view, order, null, data.adHome)?.id === row.id));
     const metaTotal = data.insights.length ? Math.round(data.insights.reduce((sum: number, row: any) => sum + (Number(row.purchases) || 0), 0)) : null;
     const protohub = data.rows.length;
@@ -960,11 +1190,17 @@ router.get("/reconciliation", async (req, res) => {
       },
       rows,
       filters: {
-        accounts: Array.from(new Set(data.basics.sources.flatMap((row: any) => (row.ad_account_ids ?? []) as string[]))).map((id) => ({ id, label: `act_${id}` })),
-        businesses: Array.from(new Set(data.basics.sources.map((row: any) => row.business_name).filter(Boolean))),
+        accounts: Array.from(new Map<string, string>([
+          ...(data.basics.adAccounts as any[]).filter((row) => row.active).map((row) => [row.account_id, row.name ? `${row.name} (act_${row.account_id})` : `act_${row.account_id}`] as [string, string]),
+          ...data.basics.sources.flatMap((row: any) => ((row.ad_account_ids ?? []) as string[]).map((id) => [id, `act_${id}`] as [string, string]))
+        ]).entries()).map(([id, label]) => ({ id, label })),
+        businesses: Array.from(new Set([...(data.basics.connections as any[]).map((row) => row.name), ...data.basics.sources.map((row: any) => row.business_name)].filter(Boolean))),
         websites: data.basics.websites.map((row: any) => ({ id: row.id, domain: row.domain }))
       },
-      sources: data.basics.sources.map((row: any) => ({ id: row.id, name: row.name, adAccounts: (row.ad_account_ids ?? []).length, hasToken: Boolean(row.access_token) }))
+      sources: [
+        ...(data.basics.connections as any[]).map((row) => ({ id: row.id, name: row.name, adAccounts: (data.basics.adAccounts as any[]).filter((account) => account.connection_id === row.id && account.active).length, hasToken: Boolean(row.access_token) })),
+        ...data.basics.sources.filter((row: any) => !row.connection_id).map((row: any) => ({ id: row.id, name: row.name, adAccounts: (row.ad_account_ids ?? []).length, hasToken: Boolean(row.effective_token) }))
+      ]
     });
   } catch (error: any) { fail(res, error, "Could not load the reconciliation."); }
 });
@@ -993,6 +1229,8 @@ router.get("/reconciliation/item", async (req, res) => {
     const campaignId = view === "campaign" ? id : firstInsight?.campaign_id ?? orders.find((row) => row.campaignId)?.campaignId ?? null;
     const campaign: any = campaignId ? data.campaigns.find((row: any) => row.campaign_id === campaignId) : null;
     const source: any = data.basics.sources.find((row: any) => row.id === (firstInsight?.data_source_id ?? campaign?.data_source_id));
+    const connection: any = (data.basics.connections as any[]).find((row) => row.id === (firstInsight?.connection_id ?? campaign?.connection_id));
+    const adAccount: any = firstInsight ? (data.basics.adAccounts as any[]).find((row) => row.account_id === firstInsight.ad_account_id) : null;
     const home = firstInsight ? data.adHome.get(firstInsight.ad_id) : orders[0]?.adId ? data.adHome.get(orders[0].adId) : null;
     const link: any = data.basics.links.find((row: any) => String(row.tracking_key).toLowerCase() === (home?.key ?? orders[0]?.trackingKey));
     res.json({
@@ -1002,12 +1240,12 @@ router.get("/reconciliation/item", async (req, res) => {
         meta: Math.round(data.insights.filter((row: any) => String(row.day) === day && matchesInsight(row)).reduce((sum: number, row: any) => sum + (Number(row.purchases) || 0), 0))
       })),
       details: {
-        adAccount: source ? `${source.ad_account_label || source.name}${firstInsight?.ad_account_id ? ` (${firstInsight.ad_account_id})` : ""}` : firstInsight?.ad_account_id ?? null,
-        businessAccount: source?.business_name ?? null, campaignId,
+        adAccount: adAccount ? `${adAccount.name || "Ad account"} (${adAccount.account_id})` : source ? `${source.ad_account_label || source.name}${firstInsight?.ad_account_id ? ` (${firstInsight.ad_account_id})` : ""}` : firstInsight?.ad_account_id ?? null,
+        businessAccount: connection?.name ?? source?.business_name ?? null, campaignId,
         objective: campaign?.objective ? String(campaign.objective).replace(/^OUTCOME_/, "").replace(/_/g, " ").toLowerCase().replace(/^\w/, (c: string) => c.toUpperCase()) : null,
         startDate: campaign?.start_time ?? null, endDate: campaign?.stop_time ?? null, campaignStatus: campaign?.status ?? null,
         landingPage: link?.landing_page_url ?? (home?.domain ? `https://${home.domain}${home.path ?? "/"}` : null),
-        dataSource: source?.name ?? null, form: link?.form_label ?? link?.label ?? null,
+        dataSource: (data.basics.sources as any[]).find((row) => row.id === link?.data_source_id)?.name ?? source?.name ?? null, form: link?.form_label ?? link?.label ?? null,
         adsManagerUrl: adsManagerUrl(firstInsight?.ad_account_id ?? null, campaignId)
       },
       orders: orders.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 100),
@@ -1052,18 +1290,38 @@ router.post("/reconciliation/refresh", async (req, res) => {
     const period = periodOf(req.body ?? {});
     const from = addDaysToDateKey(period.to, -Math.max(6, period.length - 1));
     if (daysBetween(from, period.to) > 92) throw httpError(400, "Refresh at most 92 days at a time.");
-    const { data: sources, error } = await supabase.from("tracking_data_sources").select("id, name, ad_account_ids, access_token, platform").eq("org_id", orgId).eq("branch_id", branchId);
-    if (error) throw error;
+    const basics = await loadBasics(orgId, branchId);
+    // What to read: each connection's switched-on ad accounts (its token), then
+    // ad account ids typed on manually added Pixels (their own token).
+    type Target = { label: string; account: string; token: string; sourceId: string | null; connectionId: string | null };
+    const targets: Target[] = [];
+    const seenAccounts = new Set<string>();
+    for (const connection of basics.connections as any[]) {
+      if (!connection.access_token) continue;
+      for (const account of (basics.adAccounts as any[]).filter((row) => row.connection_id === connection.id && row.active)) {
+        if (seenAccounts.has(account.account_id)) continue;
+        seenAccounts.add(account.account_id);
+        targets.push({ label: account.name || connection.name, account: account.account_id, token: connection.access_token, sourceId: null, connectionId: connection.id });
+      }
+    }
+    for (const source of (basics.sources as any[]).filter((row) => (row.platform ?? "meta") === "meta" && row.active !== false && row.access_token)) {
+      for (const account of (source.ad_account_ids ?? []) as string[]) {
+        if (seenAccounts.has(account)) continue;
+        seenAccounts.add(account);
+        targets.push({ label: source.name, account, token: source.access_token, sourceId: source.id, connectionId: null });
+      }
+    }
     const report: Array<{ source: string; account: string; ok: boolean; message: string; rows: number }> = [];
-    for (const source of (sources ?? []).filter((row: any) => (row.platform ?? "meta") === "meta")) {
-      if (!source.access_token) continue;
-      for (const account of source.ad_account_ids ?? []) {
-        const [result, info] = await Promise.all([adPurchases(account, source.access_token, from, period.to), campaignInfo(account, source.access_token)]);
-        if (!result.ok) { report.push({ source: source.name, account, ok: false, message: humanMetaError(result.message, null).title, rows: 0 }); continue; }
-        await supabase.from("tracking_meta_ad_insights").delete().eq("data_source_id", source.id).eq("ad_account_id", account).gte("day", from).lte("day", period.to);
+    for (const target of targets) {
+      {
+        const account = target.account;
+        const [result, info] = await Promise.all([adPurchases(account, target.token, from, period.to), campaignInfo(account, target.token)]);
+        if (!result.ok) { report.push({ source: target.label, account, ok: false, message: humanMetaError(result.message, null).title, rows: 0 }); continue; }
+        const clear = supabase.from("tracking_meta_ad_insights").delete().eq("ad_account_id", account).gte("day", from).lte("day", period.to);
+        await (target.connectionId ? clear.eq("connection_id", target.connectionId) : clear.eq("data_source_id", target.sourceId!));
         for (let i = 0; i < result.rows.length; i += 500) {
           const insert = await supabase.from("tracking_meta_ad_insights").insert(result.rows.slice(i, i + 500).map((row) => ({
-            org_id: orgId, branch_id: branchId, data_source_id: source.id, ad_account_id: account, day: row.day,
+            org_id: orgId, branch_id: branchId, data_source_id: target.sourceId, connection_id: target.connectionId, ad_account_id: account, day: row.day,
             campaign_id: row.campaignId, campaign_name: row.campaignName, adset_id: row.adsetId, adset_name: row.adsetName, ad_id: row.adId, ad_name: row.adName,
             purchases: row.purchases, purchase_value: row.purchaseValue, spend: row.spend
           })));
@@ -1072,15 +1330,15 @@ router.post("/reconciliation/refresh", async (req, res) => {
         if (info.ok) {
           for (const campaign of info.rows) {
             await supabase.from("tracking_meta_campaigns").upsert({
-              org_id: orgId, branch_id: branchId, data_source_id: source.id, ad_account_id: account, campaign_id: campaign.id, name: campaign.name ?? "",
+              org_id: orgId, branch_id: branchId, data_source_id: target.sourceId, connection_id: target.connectionId, ad_account_id: account, campaign_id: campaign.id, name: campaign.name ?? "",
               objective: campaign.objective ?? null, status: campaign.effective_status ?? null, start_time: campaign.start_time ?? null, stop_time: campaign.stop_time ?? null, fetched_at: new Date().toISOString()
-            }, { onConflict: "data_source_id,campaign_id" });
+            }, { onConflict: target.connectionId ? "connection_id,campaign_id" : "data_source_id,campaign_id" });
           }
         }
-        report.push({ source: source.name, account, ok: true, message: "Loaded.", rows: result.rows.length });
+        report.push({ source: target.label, account, ok: true, message: "Loaded.", rows: result.rows.length });
       }
     }
-    if (report.length === 0) throw httpError(400, "No Meta data source has a token and an ad account id. Add them in Data Sources.");
+    if (report.length === 0) throw httpError(400, "No ad account is switched on. Connect your Meta Business in Data Sources and switch on its ad accounts.");
     await hubAudit(orgId, branchId, actorOf(req), "reconciliation_refreshed", { type: "reconciliation" }, { from, to: period.to, accounts: report.length });
     res.json({ report });
   } catch (error: any) { fail(res, error, "Could not read Meta's numbers."); }

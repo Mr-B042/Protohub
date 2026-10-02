@@ -12,7 +12,7 @@ type Kind = "capiFailures" | "connection" | "duplicatePixel" | "lostParameters";
 
 function kindOf(issue: Issue): Kind | null {
   if (issue.key.startsWith("capi:") || issue.key === "browser:missing") return "capiFailures";
-  if (issue.key.startsWith("source:token:") || issue.key.startsWith("source:error:")) return "connection";
+  if (issue.key.startsWith("source:token:") || issue.key.startsWith("source:error:") || issue.key.startsWith("source:access:") || issue.key.startsWith("conn:")) return "connection";
   if (issue.key.startsWith("site:") && issue.title === "Duplicate pixel detected") return "duplicatePixel";
   if (issue.key === "params:lost") return "lostParameters";
   return null;

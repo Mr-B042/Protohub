@@ -118,21 +118,32 @@ export const sumVisits = (rows: JourneyRow[], type: string, test: (row: JourneyR
   rows.filter((row) => row.event_type === type && test(row)).reduce((sum, row) => sum + row.visits, 0);
 
 export async function loadBasics(orgId: string, branchId: string) {
-  const [sources, websites, profiles, links, products] = await Promise.all([
+  const [sources, websites, profiles, links, products, connections, adAccounts] = await Promise.all([
     supabase.from("tracking_data_sources").select("*").eq("org_id", orgId).eq("branch_id", branchId).order("is_main", { ascending: false }).order("name"),
     supabase.from("tracking_websites").select("*").eq("org_id", orgId).eq("branch_id", branchId).order("domain"),
     supabase.from("tracking_profiles").select("*").eq("org_id", orgId).eq("branch_id", branchId).order("name"),
     supabase.from("meta_capi_configs").select("*").eq("org_id", orgId).order("label"),
-    supabase.from("products").select("id, name, image_url, sku").eq("org_id", orgId)
+    supabase.from("products").select("id, name, image_url, sku").eq("org_id", orgId),
+    supabase.from("tracking_meta_connections").select("*").eq("org_id", orgId).eq("branch_id", branchId).order("created_at"),
+    supabase.from("tracking_meta_ad_accounts").select("*").eq("org_id", orgId).eq("branch_id", branchId).order("name")
   ]);
-  for (const result of [sources, websites, profiles, links, products]) if (result.error) throw result.error;
+  for (const result of [sources, websites, profiles, links, products, connections, adAccounts]) if (result.error) throw result.error;
+  // A Pixel found through a Meta Business connection uses the connection's
+  // token unless it has its own; a Pixel switched off has none.
+  const connectionOf = new Map((connections.data ?? []).map((row: any) => [row.id, row]));
+  const withToken = (sources.data ?? []).map((row: any) => {
+    const connection: any = row.connection_id ? connectionOf.get(row.connection_id) ?? null : null;
+    return { ...row, connection, effective_token: row.active === false ? null : row.access_token || connection?.access_token || null };
+  });
   const productIds = (products.data ?? []).map((row: any) => row.id);
   const { data: packages } = productIds.length ? await supabase.from("product_packages").select("product_id, image_url, display_order").in("product_id", productIds).not("image_url", "is", null) : { data: [] as any[] };
   const imageOf = new Map<string, string>();
   for (const product of products.data ?? []) if (product.image_url) imageOf.set(product.id, product.image_url);
   for (const pack of (packages ?? []).sort((a: any, b: any) => (a.display_order ?? 0) - (b.display_order ?? 0))) if (!imageOf.has(pack.product_id) && pack.image_url) imageOf.set(pack.product_id, pack.image_url);
   return {
-    sources: sources.data ?? [],
+    sources: withToken,
+    connections: connections.data ?? [],
+    adAccounts: adAccounts.data ?? [],
     websites: websites.data ?? [],
     profiles: profiles.data ?? [],
     links: (links.data ?? []).filter((row: any) => (!row.branch_id || row.branch_id === branchId) && row.tracking_key !== "__default__"),
@@ -208,12 +219,23 @@ export async function assess(orgId: string, branchId: string) {
     const sentByProtohub7d = serverRows.filter((row: any) => row.status === "sent" && (!row.pixel_id || row.pixel_id === source.pixel_id)).length;
     const events7d = total(counts7d);
     const platform = source.platform ?? "meta";
-    const health = !source.access_token ? "no_token" : source.status === "paused" ? "disconnected" : source.last_check_ok === false ? "error" : source.status === "testing" ? "testing" : source.last_check_ok === true ? "healthy" : "unchecked";
+    const connection = source.connection ?? null;
+    const usesConnectionToken = Boolean(connection && !source.access_token);
+    const checkOk = usesConnectionToken && connection.last_check_ok === false ? false : source.last_check_ok;
+    const health = source.active === false ? "off"
+      : !source.effective_token ? "no_token"
+      : source.status === "paused" ? "disconnected"
+      : source.has_access === false ? "no_access"
+      : checkOk === false ? "error"
+      : source.status === "testing" ? "testing"
+      : checkOk === true || (usesConnectionToken && connection.last_check_ok === true && source.has_access === true) ? "healthy" : "unchecked";
     return {
       id: source.id, name: source.name, description: source.description ?? "", platform, businessName: source.business_name, adAccountIds: source.ad_account_ids ?? [], adAccountLabel: source.ad_account_label ?? "",
       pixelId: source.pixel_id, datasetName: source.dataset_name ?? null, currency: source.currency ?? "NGN", timezone: source.timezone ?? "Africa/Lagos",
-      hasToken: Boolean(source.access_token), testEventCode: source.test_event_code ?? "", isMain: source.is_main, status: source.status,
-      lastCheckAt: source.last_check_at, lastCheckOk: source.last_check_ok, lastCheckMessage: source.last_check_message,
+      hasToken: Boolean(source.effective_token), ownToken: Boolean(source.access_token), active: source.active !== false, hasAccess: source.has_access ?? null,
+      connectionId: connection?.id ?? null, connectionName: connection?.name ?? null, metaLastFiredAt: source.meta_last_fired_at ?? null, testEventCode: source.test_event_code ?? "", isMain: source.is_main, status: source.status,
+      lastCheckAt: source.last_check_at ?? (usesConnectionToken ? connection.last_check_at : null), lastCheckOk: checkOk ?? null,
+      lastCheckMessage: source.last_check_message ?? (usesConnectionToken ? connection.last_check_message : null),
       metaStatsAt: source.meta_stats_at, emq: stats.emq ?? null,
       events7d, events7dChange: events7d !== null && prev7d ? change(events7d, total(prev7d) ?? 0) : null, eventsFromMeta: events7d !== null, sentByProtohub7d,
       health, healthy: health === "healthy" || health === "testing", createdAt: source.created_at
@@ -269,11 +291,11 @@ export async function assess(orgId: string, branchId: string) {
   const differentIds = rows.filter((row) => row.browser && row.serverStatus === "sent" && row.status === "server_only").length;
   const capiFailures24h = rows.filter((row) => row.status === "capi_failed" && Date.parse(row.createdAt) > Date.now() - 86_400_000).length;
   const items: HealthItem[] = [
-    { key: "sources", label: "Data Sources", total: sourceRows.length, healthy: sourceRows.filter((row: any) => row.healthy).length, detail: "" },
+    { key: "sources", label: "Data Sources", total: sourceRows.filter((row: any) => row.active).length, healthy: sourceRows.filter((row: any) => row.active && row.healthy).length, detail: "" },
     { key: "websites", label: "Websites", total: websiteRows.length, healthy: websiteRows.filter((row: any) => row.status === "healthy").length, detail: "" },
     { key: "links", label: "Tracking Links", total: linkRowsBase.length, healthy: linkRowsBase.filter((row: any) => row.healthy).length, detail: "" },
     { key: "dedup", label: "Event Deduplication", total: 1, healthy: differentIds === 0 ? 1 : 0, detail: differentIds === 0 ? "Working properly" : `${differentIds} order${differentIds === 1 ? "" : "s"} with mismatched ids` },
-    { key: "capi", label: "CAPI Connection", total: 1, healthy: capiFailures24h === 0 && sourceRows.some((row: any) => row.hasToken) ? 1 : 0,
+    { key: "capi", label: "CAPI Connection", total: 1, healthy: capiFailures24h === 0 && sourceRows.some((row: any) => row.active && row.hasToken) ? 1 : 0,
       detail: !sourceRows.some((row: any) => row.hasToken) ? "No token connected" : capiFailures24h === 0 ? "All active" : `${capiFailures24h} failure${capiFailures24h === 1 ? "" : "s"} in 24h` }
   ];
   for (const item of items.slice(0, 3)) item.detail = `${item.healthy} Healthy`;
@@ -302,8 +324,20 @@ async function buildIssues(orgId: string, branchId: string, a: { basics: Basics;
   }
   const missingBrowser = a.rows.filter((row) => row.trackingMode === "hybrid" && !row.browser && row.serverStatus === "sent");
   if (missingBrowser.length) push({ key: "browser:missing", severity: "red", title: "Missing browser events", detail: `${missingBrowser.length} orders without a browser Purchase`, action: "Re-copy the embed code from Tracking Links onto the landing pages; the new code reports each browser Purchase.", at: missingBrowser[0].createdAt, tab: "ledger", affected: `${missingBrowser.length} orders`, actionLabel: "View Orders", orderIds: missingBrowser.map((row) => row.orderId) });
+  for (const connection of a.basics.connections as any[]) {
+    const pixels = a.sourceRows.filter((row: any) => row.connectionId === connection.id && row.active && !row.ownToken);
+    const affected = `${pixels.length} Pixel${pixels.length === 1 ? "" : "s"}`;
+    if (!connection.access_token) push({ key: `conn:token:${connection.id}`, severity: "red", title: `${connection.name || "Meta Business"}: disconnected`, detail: `${affected} cannot send server events or read Meta's numbers.`, action: "Paste a new System User token on the connection (Data Sources).", at: connection.updated_at, tab: "sources", affected, actionLabel: "Fix Now", subjectId: connection.id });
+    else if (connection.last_check_ok === false) {
+      const human = humanMetaError(connection.last_check_message, null);
+      push({ key: `conn:error:${connection.id}`, severity: "red", title: `${connection.name || "Meta Business"}: ${human.title}`, detail: `${affected} affected.`, action: human.action, at: connection.last_check_at, tab: "sources", affected, actionLabel: "Fix Now", subjectId: connection.id });
+    }
+  }
   for (const source of a.sourceRows) {
-    if (source.health === "no_token") push({ key: `source:token:${source.id}`, severity: "orange", title: `${source.name}: no Conversions API token`, detail: "Server Purchase events cannot be sent and Meta's numbers cannot be read.", action: "Add a System User token on the data source.", at: null, tab: "sources", affected: "Data source", actionLabel: "Fix Now", subjectId: source.id });
+    if (!source.active) continue;
+    if (source.connectionId && !source.ownToken && (source.health === "no_token" || source.health === "error")) continue;
+    if (source.health === "no_access") { push({ key: `source:access:${source.id}`, severity: "orange", title: `${source.name}: not given to the System User`, detail: `Pixel ${source.pixelId} is switched on, but the connection's token cannot use it.`, action: "In Meta Business Settings → System Users → Assign assets, give this Pixel to the System User, then press Sync Assets.", at: null, tab: "sources", affected: "Data source", actionLabel: "Fix Now", subjectId: source.id }); continue; }
+    if (source.health === "no_token") push({ key: `source:token:${source.id}`, severity: "orange", title: `${source.name}: no Conversions API token`, detail: "Server Purchase events cannot be sent and Meta's numbers cannot be read.", action: "Connect your Meta Business in Data Sources, or give this Pixel its own token.", at: null, tab: "sources", affected: "Data source", actionLabel: "Fix Now", subjectId: source.id });
     else if (source.health === "error") {
       const human = humanMetaError(source.lastCheckMessage, null);
       push({ key: `source:error:${source.id}`, severity: "red", title: `${source.name}: ${human.title}`, detail: `Pixel ${source.pixelId}.`, action: human.action, at: source.lastCheckAt, tab: "sources", affected: "Data source", actionLabel: "Fix Now", subjectId: source.id });
