@@ -166,6 +166,20 @@ export async function campaignInfo(adAccountId: string, token: string) {
   return { ok: true as const, rows: result.data.data ?? [] };
 }
 
+/** Details for just these campaigns (50 per request), instead of every campaign the account ever had. */
+export async function campaignsByIds(ids: string[], token: string) {
+  const rows: Array<{ id: string; name?: string; objective?: string; effective_status?: string; start_time?: string; stop_time?: string }> = [];
+  const unique = Array.from(new Set(ids.filter(Boolean)));
+  const chunks: string[][] = [];
+  for (let i = 0; i < unique.length; i += 50) chunks.push(unique.slice(i, i + 50));
+  const results = await Promise.all(chunks.map((chunk) => graphGet<Record<string, any>>("", token, { ids: chunk.join(","), fields: "id,name,objective,effective_status,start_time,stop_time" })));
+  for (const result of results) {
+    if (!result.ok) return { ok: false as const, message: result.message };
+    rows.push(...Object.values(result.data));
+  }
+  return { ok: true as const, rows };
+}
+
 /**
  * "Scan Website": load a page and find the Meta Pixel ids it starts
  * (fbq('init', '...')) and whether a Protohub order form is embedded. Only

@@ -34,23 +34,36 @@ export default function ReconciliationTab({ tabBar, onToast, range, onRange, onO
   const [closed, setClosed] = useState(false);
   const [checked, setChecked] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const { data, error: loadError, reload } = useLoad(() => trackingHubApi.reconciliation({ ...range, view, q: filters.q, accountId: filters.accountId, business: filters.business, websiteId: filters.websiteId }), [range.from, range.to, view, filters.q, filters.accountId, filters.business, filters.websiteId]);
   const rows = useMemo(() => (data?.rows ?? []).filter((row) => !filters.status || row.status === filters.status), [data, filters.status]);
   useEffect(() => { setPage(1); setSelected(null); setClosed(false); }, [view]);
   useEffect(() => { setPage(1); }, [filters, pageSize]);
   useEffect(() => { if (!closed && rows.length && (!selected || !rows.some((row) => row.id === selected))) setSelected((rows.find((row) => row.status === "investigate") ?? rows[0]).id); }, [rows]);
 
+  /** Each ad account on its own request (four at a time) so the button shows real progress. */
   const refresh = async () => {
     setBusy(true);
     try {
-      const result = await trackingHubApi.refreshReconciliation(range);
-      const failed = result.report.filter((row) => !row.ok);
-      onToast(failed.length ? `${failed[0].source}: ${failed[0].message}` : `Loaded Meta's numbers for ${result.report.length} ad account${result.report.length === 1 ? "" : "s"}.`);
+      const { accounts } = await trackingHubApi.reconciliationTargets();
+      if (accounts.length === 0) { onToast("Couldn't read Meta: no ad account is switched on. Switch them on in Data Sources."); return; }
+      setProgress({ done: 0, total: accounts.length });
+      const report: Array<{ source: string; account: string; ok: boolean; message: string; rows: number }> = [];
+      for (let i = 0; i < accounts.length; i += 4) {
+        await Promise.all(accounts.slice(i, i + 4).map(async (item) => {
+          try { report.push(...(await trackingHubApi.refreshReconciliation({ ...range, account: item.account })).report); }
+          catch (err: any) { report.push({ source: item.label, account: item.account, ok: false, message: err?.message ?? "Failed", rows: 0 }); }
+          setProgress((value) => (value ? { ...value, done: value.done + 1 } : value));
+        }));
+      }
+      const failed = report.filter((row) => !row.ok);
+      onToast(failed.length ? `Couldn't read ${failed.length} of ${report.length} ad account${report.length === 1 ? "" : "s"}: ${failed.map((row) => `${row.source} (${row.message})`).join("; ")}` : `Loaded Meta's numbers for ${report.length} ad account${report.length === 1 ? "" : "s"}.`);
       reload();
     } catch (err: any) {
-      onToast(err?.message ?? "Could not read Meta.");
+      onToast(err?.message ?? "Couldn't read Meta.");
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   };
   const exportCsv = () => {
@@ -73,7 +86,7 @@ export default function ReconciliationTab({ tabBar, onToast, range, onRange, onO
             <span className="text-[11.5px] text-gray-500">Compare with</span>
             <select defaultValue="meta" className="!min-h-0 appearance-none bg-transparent pr-8 text-[14px] font-semibold text-gray-800 outline-none dark:text-slate-200"><option value="meta">Meta (Facebook)</option><option value="tiktok" disabled>TikTok (not yet)</option><option value="google" disabled>Google Ads (not yet)</option></select>
           </label>
-          <button type="button" className={darkButton} disabled={busy} onClick={() => void refresh()}><RefreshCw className={`h-4 w-4 ${busy ? "animate-spin" : ""}`} /> {busy ? "Reading Meta…" : "Refresh Data"}</button>
+          <button type="button" className={darkButton} disabled={busy} onClick={() => void refresh()}><RefreshCw className={`h-4 w-4 ${busy ? "animate-spin" : ""}`} /> {busy ? (progress ? `Reading Meta… ${progress.done} of ${progress.total}` : "Reading Meta…") : "Refresh Data"}</button>
         </>} />
       {tabBar}
       {k ? (

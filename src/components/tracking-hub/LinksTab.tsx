@@ -19,6 +19,10 @@ const STATUS_PILL: Record<HubLink["status"], ["green" | "orange" | "red" | "gray
 export function embedUrlFor(link: HubLink) {
   const params = new URLSearchParams();
   if (link.productId) params.set("product", link.productId);
+  // Same as the Embed Form's code: the currency and ONE package set (with no
+  // set named, the order form would show the packages of every set).
+  if (link.currency) params.set("currency", link.currency);
+  params.set("package_set", link.packageSet || "Default");
   if (link.redirectUrl) params.set("redirect_url", link.redirectUrl);
   if (link.strategy !== "landing_page" && link.strategy !== "off") {
     params.set("tracking_mode", link.strategy === "capi_only" ? "protohub" : "hybrid");
@@ -283,8 +287,16 @@ function LinkForm({ link, meta, onToast, onSaved, onCancel, compact }: { link: H
   const [form, setForm] = useState({
     label: link?.label ?? "", productId: link?.productId ?? "", websiteId: link?.websiteId ?? "", profileId: link?.profileId ?? "",
     dataSourceId: link?.dataSourceId ?? "", strategy: (link?.strategy && link.strategy !== "off" ? link.strategy : meta.defaultStrategy) as HubStrategy,
-    landingPageUrl: link?.landingPageUrl ?? "", redirectUrl: link?.redirectUrl ?? "", formLabel: link?.formLabel ?? "", active: link?.active ?? true
+    landingPageUrl: link?.landingPageUrl ?? "", redirectUrl: link?.redirectUrl ?? "", formLabel: link?.formLabel ?? "", active: link?.active ?? true,
+    packageSet: link?.packageSet ?? "Default", currency: link?.currency ?? ""
   });
+  const sets = meta.products.find((row) => row.id === form.productId)?.packageSets ?? [];
+  // Keep the chosen set valid for the product, and its currency in step.
+  useEffect(() => {
+    if (!sets.length) return;
+    const chosen = sets.find((row) => row.name.toLowerCase() === form.packageSet.toLowerCase()) ?? sets.find((row) => row.name === "Default") ?? sets[0];
+    if (chosen.name !== form.packageSet || (chosen.currency ?? "") !== form.currency) setForm((current) => ({ ...current, packageSet: chosen.name, currency: chosen.currency ?? "" }));
+  }, [form.productId, sets.length]);
   const [checklist, setChecklist] = useState({ thankYouPixelRemoved: Boolean(link?.checklist?.thankYouPixelRemoved), testEventSeen: Boolean(link?.checklist?.testEventSeen) });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -318,6 +330,9 @@ function LinkForm({ link, meta, onToast, onSaved, onCancel, compact }: { link: H
         <label className={labelCls}>Data source<select value={form.dataSourceId} onChange={(e) => setForm({ ...form, dataSourceId: e.target.value })} className={input}><option value="">From profile / website</option>{meta.dataSources.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
         <label className={labelCls}>Landing page URL<input value={form.landingPageUrl} onChange={(e) => setForm({ ...form, landingPageUrl: e.target.value })} placeholder="https://brightpathhubs.com/shelf/" className={input} /></label>
         <label className={labelCls}>Thank-you page URL<input value={form.redirectUrl} onChange={(e) => setForm({ ...form, redirectUrl: e.target.value })} placeholder="https://brightpathhubs.com/order-success/" className={input} /></label>
+        <label className={labelCls}>Package set<select value={form.packageSet} onChange={(e) => { const set = sets.find((row) => row.name === e.target.value); setForm({ ...form, packageSet: e.target.value, currency: set?.currency ?? form.currency }); }} className={input} disabled={!form.productId}>
+          {sets.length === 0 ? <option value={form.packageSet}>{form.productId ? form.packageSet : "Choose the product first"}</option> : sets.map((row) => <option key={row.name} value={row.name}>{row.name} ({row.packages} package{row.packages === 1 ? "" : "s"}{row.currency ? ` · ${row.currency}` : ""})</option>)}
+        </select><span className="mt-1 block text-[11px] font-normal text-gray-500">The packages this form shows. Your current forms use "Default".</span></label>
         <label className={labelCls}>Form name<input value={form.formLabel} onChange={(e) => setForm({ ...form, formLabel: e.target.value })} placeholder="Shelf External Form V4" className={input} /></label>
         <label className={labelCls}>Purchase strategy<select value={form.strategy} onChange={(e) => setForm({ ...form, strategy: e.target.value as HubStrategy })} className={input}><option value="browser_capi">Browser + CAPI (Protohub fires Purchase)</option><option value="capi_only">CAPI only</option><option value="landing_page">Thank-you page Pixel (Protohub sends nothing)</option></select></label>
         <label className="flex items-center gap-2 pt-6 text-[13px] font-semibold text-gray-700 dark:text-slate-300"><input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} /> Active</label>
