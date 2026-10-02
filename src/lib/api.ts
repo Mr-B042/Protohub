@@ -4378,11 +4378,11 @@ export type HubDataSource = {
 export type HubConnection = {
   id: string; name: string; businessId: string; systemUserName: string | null; hasToken: boolean; currency: string; timezone: string;
   lastCheckAt: string | null; lastCheckOk: boolean | null; lastCheckMessage: string | null; human: { title: string; action: string } | null;
-  lastSyncAt: string | null; lastSyncOk: boolean | null; lastSyncMessage: string | null; status: "connected" | "error" | "disconnected";
+  lastSyncAt: string | null; lastSyncOk: boolean | null; lastSyncMessage: string | null; status: "connected" | "error" | "disconnected" | "sync_failed";
   pixels: Array<{ sourceId: string; pixelId: string; name: string; active: boolean; hasAccess: boolean | null; lastFiredAt: string | null; health: HubDataSource["health"]; ownToken: boolean }>;
   adAccounts: Array<{ id: string; accountId: string; name: string; currency: string | null; active: boolean; hasAccess: boolean; status: number | null }>;
 };
-export type HubSyncResult = { message: string; pixels: number; newPixels: number; accounts: number; newAccounts: number; noAccess: number };
+export type HubSyncResult = { ok: boolean; message: string; pixels: number; newPixels: number; accounts: number; newAccounts: number; noAccess: number };
 export type HubIssue = {
   key: string; severity: "red" | "orange" | "yellow"; level: "critical" | "warning" | "info"; title: string; detail: string; action: string; at: string | null;
   tab: string; affected: string; actionLabel: string; orderIds?: string[]; subjectId?: string | null;
@@ -4537,9 +4537,10 @@ export const trackingHubApi = {
   refreshDataSource: (id: string) => post<{ metaStats: Record<string, unknown> }>(`/api/tracking-hub/data-sources/${hubId(id)}/refresh`, {}),
   lookupToken: (accessToken: string) => post<{ userName: string | null; businesses: Array<{ id: string; name: string }>; businessesError: string | null }>("/api/tracking-hub/connections/lookup", { accessToken }),
   connect: (body: { accessToken: string; businessId?: string; currency: string; timezone: string }) => post<{ id: string; name: string; sync: HubSyncResult | null; syncError: string | null }>("/api/tracking-hub/connections", body),
-  saveConnection: (id: string, body: { accessToken?: string; currency: string; timezone: string }) => put<{ ok: true }>(`/api/tracking-hub/connections/${hubId(id)}`, body),
+  saveConnection: (id: string, body: { accessToken?: string; businessId?: string; currency: string; timezone: string }) => put<{ ok: true; name: string; sync: HubSyncResult | null; syncError: string | null }>(`/api/tracking-hub/connections/${hubId(id)}`, body),
   testConnection: (id: string) => post<{ ok: boolean; message: string; human: { title: string; action: string } | null }>(`/api/tracking-hub/connections/${hubId(id)}/test`, {}),
   syncConnection: (id: string) => post<HubSyncResult>(`/api/tracking-hub/connections/${hubId(id)}/sync`, {}),
+  removeConnection: (id: string) => del<{ ok: true }>(`/api/tracking-hub/connections/${hubId(id)}`),
   disconnectConnection: (id: string) => post<{ ok: true }>(`/api/tracking-hub/connections/${hubId(id)}/disconnect`, {}),
   setPixelActive: (sourceId: string, active: boolean) => put<{ ok: true; linksUsing: number }>(`/api/tracking-hub/data-sources/${hubId(sourceId)}/active`, { active }),
   setAdAccountActive: (id: string, active: boolean) => put<{ ok: true }>(`/api/tracking-hub/ad-accounts/${hubId(id)}/active`, { active }),

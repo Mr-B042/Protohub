@@ -266,7 +266,7 @@ function presentConnection(connection: any, sourceRows: any[], adAccounts: any[]
     lastCheckAt: connection.last_check_at, lastCheckOk: connection.last_check_ok, lastCheckMessage: connection.last_check_message,
     human: connection.last_check_ok === false ? humanMetaError(connection.last_check_message, null) : null,
     lastSyncAt: connection.last_sync_at, lastSyncOk: connection.last_sync_ok, lastSyncMessage: connection.last_sync_message,
-    status: !connection.access_token ? "disconnected" : connection.last_check_ok === false ? "error" : "connected",
+    status: !connection.access_token ? "disconnected" : connection.last_check_ok === false ? "error" : connection.last_sync_ok === false ? "sync_failed" : "connected",
     pixels: pixels.map((row: any) => ({ sourceId: row.id, pixelId: row.pixelId, name: row.name, active: row.active, hasAccess: row.hasAccess, lastFiredAt: row.metaLastFiredAt, health: row.health, ownToken: row.ownToken })),
     adAccounts: adAccounts.filter((row: any) => row.connection_id === connection.id).map((row: any) => ({ id: row.id, accountId: row.account_id, name: row.name, currency: row.currency, active: row.active, hasAccess: row.has_access, status: row.account_status }))
   };
@@ -285,9 +285,10 @@ async function syncConnection(orgId: string, branchId: string, connection: any) 
   const [pixels, accounts] = await Promise.all([discoverPixels(connection.business_id, connection.access_token), discoverAdAccounts(connection.business_id, connection.access_token)]);
   const now = new Date().toISOString();
   if (!pixels.ok && !accounts.ok) {
-    const human = humanMetaError(pixels.message, null);
-    await supabase.from("tracking_meta_connections").update({ last_sync_at: now, last_sync_ok: false, last_sync_message: human.title }).eq("id", connection.id);
-    throw httpError(400, `${human.title}. ${human.action}`);
+    const type = pixels.message.match(/node type \((\w+)\)/i)?.[1];
+    const message = `Meta would not list this business's Pixels or ad accounts: ${type && type.toLowerCase() !== "business" ? `Meta says ID ${connection.business_id} is a ${type}, not a business` : pixels.message.replace(/\.$/, "")}. Check the Business ID (Business Settings → Business info) and that the token has business_management.`;
+    await supabase.from("tracking_meta_connections").update({ last_sync_at: now, last_sync_ok: false, last_sync_message: message }).eq("id", connection.id);
+    throw httpError(400, `Couldn't sync. ${message}`);
   }
   // First sync switches on everything the token can use; later syncs add new
   // finds switched off, for the Owner to switch on.
@@ -333,13 +334,24 @@ async function syncConnection(orgId: string, branchId: string, connection: any) 
   const pixelCount = pixels.ok ? pixels.pixels.length : 0;
   const accountCount = accounts.ok ? accounts.accounts.length : 0;
   const noAccess = pixels.ok ? pixels.pixels.filter((pixel) => !pixel.hasAccess).length : 0;
-  const parts = [
-    pixels.ok ? `${pixelCount} Pixel${pixelCount === 1 ? "" : "s"}${newPixels ? ` (${newPixels} new)` : ""}` : `Pixels not read (${humanMetaError(pixels.message, null).title})`,
-    accounts.ok ? `${accountCount} ad account${accountCount === 1 ? "" : "s"}${newAccounts ? ` (${newAccounts} new)` : ""}` : `ad accounts not read (${humanMetaError(accounts.message, null).title})`
-  ];
-  const message = `Found ${parts.join(" and ")}.${noAccess ? ` ${noAccess} Pixel${noAccess === 1 ? " is" : "s are"} not given to the System User yet.` : ""}${!firstSync && newPixels + newAccounts > 0 ? " New finds are switched off until you switch them on." : ""}`;
-  await supabase.from("tracking_meta_connections").update({ last_sync_at: now, last_sync_ok: pixels.ok && accounts.ok, last_sync_message: message, updated_at: now }).eq("id", connection.id);
-  return { message, pixels: pixelCount, newPixels, accounts: accountCount, newAccounts, noAccess };
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  // Meta's "nonexisting field (owned_pixels) on node type (User)" = the ID is not a business.
+  const why = (raw: string) => { const type = raw.match(/node type \((\w+)\)/i)?.[1]; return type && type.toLowerCase() !== "business" ? `Meta says ID ${connection.business_id} is a ${type}, not a business` : raw.replace(/\.$/, ""); };
+  const accountsNoAccess = accounts.ok ? accounts.accounts.filter((account) => !account.hasAccess).length : 0;
+  // Say exactly what was and was not read (Bright: messages must be accurate).
+  const lines: string[] = [];
+  if (!pixels.ok) lines.push(`Meta would not list this business's Pixels: ${why(pixels.message)}. Check the Business ID (Business Settings → Business info) and that the token has business_management.`);
+  else if (pixelCount === 0) lines.push("This business has no Pixels the token can see. Give the Pixels to the System User (Business Settings → System Users → Assign assets).");
+  else lines.push(`Pixels: ${plural(pixelCount, "Pixel")} found${newPixels ? `, ${newPixels} new` : ""}${noAccess ? `; ${noAccess} not given to the System User yet` : ""}.`);
+  if (!accounts.ok) lines.push(`Meta would not list the ad accounts: ${why(accounts.message)}.`);
+  else if (accounts.businessListError) lines.push(`Ad accounts: the business's own list could not be read (${why(accounts.businessListError)}); ${plural(accountCount, "ad account")} assigned to the System User.`);
+  else if (accountCount === 0) lines.push("Ad accounts: none found. Give the ad accounts to the System User (Business Settings → System Users → Assign assets).");
+  else lines.push(`Ad accounts: ${plural(accountCount, "ad account")} found${newAccounts ? `, ${newAccounts} new` : ""}${accountsNoAccess ? `; ${accountsNoAccess === accountCount ? "none" : accountsNoAccess} ${accountsNoAccess === accountCount ? "given" : "not given"} to the System User yet` : ""}.`);
+  if (!firstSync && newPixels + newAccounts > 0) lines.push("New finds are switched off until you switch them on.");
+  const ok = pixels.ok && accounts.ok && !accounts.businessListError;
+  const message = lines.join(" ");
+  await supabase.from("tracking_meta_connections").update({ last_sync_at: now, last_sync_ok: ok, last_sync_message: message, updated_at: now }).eq("id", connection.id);
+  return { ok, message, pixels: pixelCount, newPixels, accounts: accountCount, newAccounts, noAccess };
 }
 
 const ConnectionSchema = z.object({
@@ -374,7 +386,9 @@ router.post("/connections", async (req, res) => {
     let businessName = "";
     if (businessId) {
       const business = await metaBusiness(businessId, token);
-      if (!business.ok) throw httpError(400, `This token cannot see business ${businessId}. Check the Business ID, or give the System User access to that business.`);
+      if (!business.ok) throw httpError(400, business.notBusiness
+        ? `${business.message} Use the Business portfolio ID from Meta Business Settings → Business info.`
+        : `This token cannot see business ${businessId}: ${business.message}`);
       businessName = business.name;
     } else if (who.businesses.length === 1) {
       businessId = who.businesses[0].id;
@@ -405,17 +419,34 @@ router.put("/connections/:id", async (req, res) => {
   try {
     const connection = await loadConnection(req);
     const update: Record<string, unknown> = { currency: parsed.data.currency, timezone: parsed.data.timezone, updated_at: new Date().toISOString() };
-    const token = parsed.data.accessToken ?? "";
-    if (token && token !== SECRET_MASK) {
-      const who = await metaWhoAmI(token);
+    const newToken = parsed.data.accessToken && parsed.data.accessToken !== SECRET_MASK ? parsed.data.accessToken : "";
+    const token = newToken || connection.access_token || "";
+    const newBusinessId = parsed.data.businessId && parsed.data.businessId !== connection.business_id ? parsed.data.businessId : "";
+    if (newToken) {
+      const who = await metaWhoAmI(newToken);
       if (!who.ok) { const human = humanMetaError(who.message, who.status ?? null); throw httpError(400, `${human.title}. ${human.action}`); }
-      const business = await metaBusiness(connection.business_id, token);
-      if (!business.ok) throw httpError(400, `This token cannot see business ${connection.business_id} (${connection.name}). Use a System User token from that business.`);
-      Object.assign(update, { access_token: token, system_user_id: who.userId, system_user_name: who.userName, last_check_at: new Date().toISOString(), last_check_ok: true, last_check_message: "Connected" });
+      Object.assign(update, { access_token: newToken, system_user_id: who.userId, system_user_name: who.userName, last_check_at: new Date().toISOString(), last_check_ok: true, last_check_message: "Connected" });
     }
-    await supabase.from("tracking_meta_connections").update(update).eq("id", connection.id);
-    await hubAudit(req.user!.orgId, branchOf(req), actorOf(req), "connection_updated", { type: "connection", id: connection.id, label: connection.name }, { tokenChanged: Boolean(update.access_token) });
-    res.json({ ok: true });
+    if (newToken || newBusinessId) {
+      if (!token) throw httpError(400, "Paste the System User token too.");
+      const businessId = newBusinessId || connection.business_id;
+      const business = await metaBusiness(businessId, token);
+      if (!business.ok) throw httpError(400, business.notBusiness
+        ? `${business.message} Use the Business portfolio ID from Meta Business Settings → Business info.`
+        : `This token cannot see business ${businessId}: ${business.message}`);
+      // A different business starts fresh: its first sync switches on what the token can use.
+      if (newBusinessId) Object.assign(update, { business_id: newBusinessId, name: business.name, last_sync_at: null, last_sync_ok: null, last_sync_message: null });
+      Object.assign(update, { last_check_at: new Date().toISOString(), last_check_ok: true, last_check_message: "Connected" });
+    }
+    const saved = await supabase.from("tracking_meta_connections").update(update).eq("id", connection.id).select("*").single();
+    if (saved.error) throw saved.error.code === "23505" ? httpError(409, "That business is already connected on another card.") : saved.error;
+    await hubAudit(req.user!.orgId, branchOf(req), actorOf(req), "connection_updated", { type: "connection", id: connection.id, label: saved.data.name }, { tokenChanged: Boolean(newToken), businessChanged: Boolean(newBusinessId) });
+    let sync: Awaited<ReturnType<typeof syncConnection>> | null = null;
+    let syncError: string | null = null;
+    if (newBusinessId || newToken) {
+      try { sync = await syncConnection(req.user!.orgId, branchOf(req), saved.data); } catch (err: any) { syncError = err?.message ?? "Couldn't sync."; }
+    }
+    res.json({ ok: true, name: saved.data.name, sync, syncError });
   } catch (error: any) { fail(res, error, "Could not save the connection."); }
 });
 
@@ -426,7 +457,7 @@ router.post("/connections/:id/test", async (req, res) => {
     const who = await metaWhoAmI(connection.access_token);
     const business = who.ok ? await metaBusiness(connection.business_id, connection.access_token) : null;
     const ok = who.ok && Boolean(business?.ok);
-    const message = !who.ok ? who.message : !business?.ok ? `The token can no longer see business ${connection.business_id}.` : `Connected as ${who.userName ?? "the System User"}.`;
+    const message = !who.ok ? who.message : !business?.ok ? (business && "notBusiness" in business && business.notBusiness ? `${business.message} Fix the Business ID (Replace token / settings).` : `The token can no longer see business ${connection.business_id}.`) : `Connected as ${who.userName ?? "the System User"}.`;
     await supabase.from("tracking_meta_connections").update({ last_check_at: new Date().toISOString(), last_check_ok: ok, last_check_message: message, ...(who.ok ? { system_user_name: who.userName } : {}) }).eq("id", connection.id);
     await hubAudit(req.user!.orgId, branchOf(req), actorOf(req), "connection_tested", { type: "connection", id: connection.id, label: connection.name }, { ok, message });
     res.json({ ok, message, human: ok ? null : humanMetaError(message, who.ok ? null : who.status ?? null) });
@@ -450,6 +481,17 @@ router.post("/connections/:id/disconnect", async (req, res) => {
     await hubAudit(req.user!.orgId, branchOf(req), actorOf(req), "connection_disconnected", { type: "connection", id: connection.id, label: connection.name });
     res.json({ ok: true });
   } catch (error: any) { fail(res, error, "Could not disconnect."); }
+});
+
+/** Remove a connection. Its Pixels stay as data sources but no longer have its token. */
+router.delete("/connections/:id", async (req, res) => {
+  try {
+    const connection = await loadConnection(req);
+    const { error } = await supabase.from("tracking_meta_connections").delete().eq("id", connection.id);
+    if (error) throw error;
+    await hubAudit(req.user!.orgId, branchOf(req), actorOf(req), "connection_removed", { type: "connection", id: connection.id, label: connection.name });
+    res.json({ ok: true });
+  } catch (error: any) { fail(res, error, "Could not remove the connection."); }
 });
 
 router.put("/data-sources/:id/active", async (req, res) => {
