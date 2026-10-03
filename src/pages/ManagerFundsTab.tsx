@@ -1,11 +1,11 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlertTriangle, ArrowDownLeft, ArrowUpRight, Banknote, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, FileText, Lock,
   MoreVertical, Paperclip, Plus, Receipt, Search, Wallet
 } from "lucide-react";
 import { Bar, CartesianGrid, Cell, ComposedChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Modal, Panel, dateTimeText, longDate, nf, shortDay } from "../components/WeeklyReportParts";
-import type { ManagerFundLogInput, ManagerFundTxn, ManagerFundWeek, FundKindKey } from "../lib/api";
+import { managerFundsApi, type ManagerFundLogInput, type ManagerFundOrderCheck, type ManagerFundTxn, type ManagerFundWeek, type FundKindKey } from "../lib/api";
 import { currencySymbol } from "../lib/money-privacy";
 
 /**
@@ -55,6 +55,74 @@ function MethodPill({ method }: { method: string | null }) {
   if (!method) return <span className="text-gray-400">-</span>;
   const tone = method === "cash" ? "bg-emerald-50 text-emerald-700" : method === "transfer" ? "bg-blue-50 text-blue-700" : "bg-gray-100 text-gray-600";
   return <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold capitalize ${tone}`}>{method === "pos" ? "POS" : method}</span>;
+}
+
+/**
+ * The money already on the orders (Bright, 3 Oct 2026), so nothing is counted
+ * twice. A rider fee: how much of it is the orders' own delivery fee (already a
+ * cost) and how much is new. Income for an order: amount − delivery fee −
+ * already received = what is left, with a button to use it.
+ */
+function OrderMoneyCheck({ kind, category, amount, orderText, excludeTxnId, sym, nf, onUseAmount }: {
+  kind: string; category: string; amount: string; orderText: string; excludeTxnId?: string; sym: string;
+  nf: (value: number) => string; onUseAmount: (value: number) => void;
+}) {
+  const ids = useMemo(() => Array.from(new Set(orderText.split(/[\s,]+/).map((id) => id.replace(/^#/, "").trim()).filter(Boolean))).slice(0, 20), [orderText]);
+  const rider = kind === "expense" && category === "logistics";
+  const income = kind === "customer_payment";
+  const value = Number(amount.replace(/[^0-9.]/g, "")) || 0;
+  const [check, setCheck] = useState<ManagerFundOrderCheck | null>(null);
+  const [error, setError] = useState("");
+  const key = `${ids.join(",")}|${rider ? value : ""}`;
+  useEffect(() => {
+    if ((!rider && !income) || ids.length === 0) { setCheck(null); setError(""); return; }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      managerFundsApi.orderCheck(ids, rider ? { amount: value, category: "logistics", excludeTxnId } : {})
+        .then((result) => { if (!cancelled) { setCheck(result); setError(""); } })
+        .catch((err: any) => { if (!cancelled) { setCheck(null); setError(err?.message ?? "Couldn't check those orders."); } });
+    }, 400);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, rider, income, excludeTxnId]);
+
+  if (!rider && !income) return null;
+  if (rider && ids.length === 0) {
+    return <p className="m-0 rounded-xl bg-amber-50 px-3 py-2 text-[12px] text-amber-800">Add the order numbers this fee was for. If a fee is already on the order, it won't be counted twice.</p>;
+  }
+  if (ids.length === 0) return null;
+  if (error) return <p className="m-0 rounded-xl bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700">{error}</p>;
+  if (!check) return <p className="m-0 text-[11px] text-gray-500">Checking the order{ids.length === 1 ? "" : "s"}…</p>;
+  if (income) {
+    const order = check.orders[0];
+    if (!order) return null;
+    return (
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-3 py-2.5 text-[12px] text-gray-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-slate-200">
+        <p className="m-0 font-bold text-gray-900 dark:text-slate-50">#{order.id} · {order.customer} · {order.status}</p>
+        <p className="m-0 mt-1">Order {sym}{nf(order.amount)} − delivery fee {sym}{nf(order.deliveryFee)} = <strong>{sym}{nf(order.expected)}</strong> expected</p>
+        <p className="m-0">Already received {sym}{nf(order.received)} · <strong>{sym}{nf(order.left)} left</strong></p>
+        {order.left > 0 && Math.abs(order.left - value) >= 0.01 ? (
+          <button type="button" onClick={() => onUseAmount(order.left)} className="!min-h-[36px] mt-2 rounded-lg bg-emerald-600 px-3 text-[12px] font-bold text-white">Use {sym}{nf(order.left)}</button>
+        ) : null}
+        {order.left <= 0 ? <p className="m-0 mt-1 font-semibold text-amber-700">Nothing is left to receive on this order. Logging more is a double payment.</p> : null}
+      </div>
+    );
+  }
+  const fees = check.orders.reduce((sum, order) => sum + order.deliveryFee, 0);
+  return (
+    <div className="rounded-xl border border-blue-200 bg-blue-50/60 px-3 py-2.5 text-[12px] text-gray-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-slate-200">
+      <ul className="m-0 list-none space-y-0.5 p-0">
+        {check.orders.map((order) => <li key={order.id} className="flex justify-between gap-2"><span className="truncate">#{order.id} · {order.customer}</span><span className="shrink-0">delivery fee {sym}{nf(order.deliveryFee)}</span></li>)}
+      </ul>
+      {check.split ? (
+        <div className="mt-2 grid grid-cols-2 gap-2 border-t border-blue-100 pt-2 dark:border-blue-500/20">
+          <div><span className="block text-[11px] text-gray-500">Already on the orders</span><strong className="text-[14px]">{sym}{nf(check.split.counted)}</strong><span className="block text-[10.5px] text-gray-500">paid from your wallet, not a new cost</span></div>
+          <div><span className="block text-[11px] text-gray-500">New cost booked</span><strong className="text-[14px]">{sym}{nf(check.split.newCost)}</strong><span className="block text-[10.5px] text-gray-500">{check.split.newCost > 0 ? "above the orders' fees" : "nothing extra"}</span></div>
+        </div>
+      ) : null}
+      {fees === 0 ? <p className="m-0 mt-1 text-[11px] text-gray-500">These orders have no delivery fee yet, so the whole amount is a new cost.</p> : null}
+    </div>
+  );
 }
 
 function FundCard({ icon: Icon, tone, label, value, sub }: { icon: typeof Wallet; tone: string; label: string; value: string; sub: string }) {
@@ -456,7 +524,7 @@ export default function ManagerFundsTab({
                     <td className={td}>{exPage * PAGE + index + 1}</td>
                     <td className={td}>{dateTimeText(txn.occurredAt).replace(/ \d{4},/, "")}</td>
                     <td className={td}>{txn.categoryLabel}</td>
-                    <td className={`${td} max-w-[180px]`}>{txn.description || "-"}{txn.paidTo ? ` (${txn.paidTo})` : ""}{txn.orderIds.length > 0 && <span className="block text-[11px] text-gray-500">Orders {txn.orderIds.map((id) => `#${id}`).join(", ")}</span>}{txn.evidence.length > 0 && <Paperclip className="ml-1 inline h-3 w-3 text-gray-400" />}</td>
+                    <td className={`${td} max-w-[180px]`}>{txn.description || "-"}{txn.paidTo ? ` (${txn.paidTo})` : ""}{txn.orderIds.length > 0 && <span className="block text-[11px] text-gray-500">Orders {txn.orderIds.map((id) => `#${id}`).join(", ")}</span>}{(txn.countedOnOrders ?? 0) > 0 && <span className="block text-[11px] font-semibold text-blue-700">{sym}{nf(txn.countedOnOrders ?? 0)} already on the orders · {sym}{nf(Math.max(0, txn.amount - (txn.countedOnOrders ?? 0)))} new cost</span>}{txn.evidence.length > 0 && <Paperclip className="ml-1 inline h-3 w-3 text-gray-400" />}</td>
                     <td className={`${td} font-semibold`}>{nf(txn.amount)}</td>
                     <td className={td}><MethodPill method={txn.paymentMethod} /></td>
                     <td className={td}>{txn.createdByName ?? "-"}</td>
@@ -642,6 +710,10 @@ export default function ManagerFundsTab({
                     <input className={field} value={draft.orderId} disabled={!!editing} onChange={(event) => setDraft({ ...draft, orderId: event.target.value })} placeholder="e.g. 4358" />
                     <span className="mt-1 block text-[11px] text-gray-500">The order is marked paid. A part or extra payment must be recorded by an Admin or the Owner.</span></label>
                 )}
+                {draft.kind === "customer_payment" && !editing && (
+                  <OrderMoneyCheck kind={draft.kind} category="" amount={draft.amount} orderText={draft.orderId} sym={sym} nf={nf}
+                    onUseAmount={(value) => setDraft({ ...draft, amount: String(value) })} />
+                )}
                 {["owner_funding", "company_transfer_in", "remittance_out"].includes(draft.kind) && (
                   <label className="block"><span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">{draft.kind === "remittance_out" ? "Sent to account" : "From account"}</span>
                     <select className={field} value={draft.counterpartyAccountId} onChange={(event) => setDraft({ ...draft, counterpartyAccountId: event.target.value })}>
@@ -658,6 +730,10 @@ export default function ManagerFundsTab({
                     <label className="block"><span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Related order(s)</span>
                       <input className={field} value={draft.relatedOrders} onChange={(event) => setDraft({ ...draft, relatedOrders: event.target.value })} placeholder="e.g. 4358, 4362" /></label>
                   </div>
+                )}
+                {draft.kind === "expense" && (
+                  <OrderMoneyCheck kind={draft.kind} category={draft.category} amount={draft.amount} orderText={draft.relatedOrders} excludeTxnId={editing?.id} sym={sym} nf={nf}
+                    onUseAmount={() => undefined} />
                 )}
                 <div className="grid grid-cols-2 gap-3">
                   <label className="block"><span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Payment method</span>

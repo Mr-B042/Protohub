@@ -7,7 +7,7 @@ import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { addDaysToDateKey, lagosDateKey, sundayWeekStartForDateKey, weekEndFromStart } from "../lib/sales-bonus-engine.js";
 import {
   DEFAULT_FUND_SETTINGS, FUND_CATEGORIES, KIND_LABEL, customerPaymentEffect, fundTotals, fundsEditable, fundsReadiness,
-  missingProof, type FundKind, type FundSettings, type FundTxn
+  logisticsSplit, missingProof, type FundKind, type FundSettings, type FundTxn
 } from "../lib/manager-funds.js";
 import { notifyFunds } from "../lib/weekly-report-notifications.js";
 
@@ -136,7 +136,9 @@ const toFundTxn = (row: any): FundTxn => ({
   evidenceCount: Array.isArray(row.evidence) ? row.evidence.length : 0
 });
 
-const mapTxn = (row: any, settings: FundSettings) => ({
+const mapTxn = (row: any, settings: FundSettings, countedOnOrders = 0) => ({
+  /** Rider fees already on the orders: paid from the wallet, not a new cost. */
+  countedOnOrders,
   id: row.id,
   managerId: row.manager_id,
   weekStart: row.week_start,
@@ -259,6 +261,16 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
     if (accountsError) throw accountsError;
     if (adjustmentError) throw adjustmentError;
     const editable = fundsEditable(fund.companyStatus, fund.locked);
+    // Rider fees matched to orders' own delivery fees: amount minus what was booked.
+    const riderRows = fund.rows.filter((row: any) => row.kind === "expense" && row.category === "logistics" && row.status !== "voided" && (row.order_ids ?? []).length > 0);
+    const bookedIds = riderRows.map((row: any) => row.expense_id).filter(Boolean);
+    const booked = new Map<string, number>();
+    if (bookedIds.length > 0) {
+      const { data: bookedRows, error: bookedError } = await supabase.from("expenses").select("id, amount").eq("org_id", orgId).in("id", bookedIds);
+      if (bookedError) throw bookedError;
+      for (const item of bookedRows ?? []) booked.set(String(item.id), Number(item.amount ?? 0));
+    }
+    const countedOnOrders = new Map<string, number>(riderRows.map((row: any) => [row.id as string, round(Math.max(0, Number(row.amount) - (row.expense_id ? booked.get(row.expense_id) ?? 0 : 0)))]));
     const days = Array.from({ length: 7 }, (_, index) => addDaysToDateKey(weekStart, index));
     const daily = days.map((date) => {
       const dayRows = fund.rows.filter((row: any) => row.status !== "voided" && lagosDay(row.occurred_at) === date);
@@ -290,7 +302,7 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
       settings: fund.settings,
       totals: fund.totals,
       readiness: fund.readiness,
-      transactions: fund.rows.map((row: any) => mapTxn(row, fund.settings)),
+      transactions: fund.rows.map((row: any) => mapTxn(row, fund.settings, countedOnOrders.get(row.id) ?? 0)),
       companyAccounts: (accounts ?? []).filter((row: any) => !row.holder_user_id).map((row: any) => ({ id: row.id, name: row.name, bankName: row.bank_name })),
       adjustments: (adjustments ?? []).map((row: any) => ({
         id: row.id, transactionId: row.transaction_id, originalAmount: Number(row.original_amount), requestedAmount: Number(row.requested_amount),
@@ -444,6 +456,119 @@ const expenseRow = (input: { id: string; orgId: string; branchId: string; wallet
 const expenseDescription = (category: string, description: string | null | undefined, paidTo: string | null | undefined) =>
   `[Manager wallet] ${FUND_CATEGORIES[category as keyof typeof FUND_CATEGORIES].label}${description ? `: ${description}` : ""}${paidTo ? ` - paid to ${paidTo}` : ""}`.slice(0, 500);
 
+
+// ── No double counting (Bright, 3 Oct 2026) ─────────────────────────────────
+// An order's delivery fee is already a "Delivery" expense (EXP-DEL-<order>,
+// booked from the order screen). A rider fee the manager pays from the wallet
+// for those orders is the SAME money: only the part above the orders' fees is
+// a new cost. The covered part still leaves her wallet, so the orders' own fee
+// entries are marked as paid from the wallet (Cash Flow account balances).
+
+const cleanOrderIds = (ids: Array<string | null | undefined> | null | undefined) =>
+  Array.from(new Set((ids ?? []).map((id) => String(id ?? "").replace(/^#/, "").trim()).filter(Boolean)));
+
+/** Each order's money position: what the forms show and the split uses. */
+async function ordersPosition(orgId: string, ids: string[]) {
+  if (ids.length === 0) return [];
+  const { data, error } = await supabase.from("orders")
+    .select("id, customer, status, amount, logistics_cost, amount_remitted, remittance_status").eq("org_id", orgId).in("id", ids);
+  if (error) throw error;
+  const found = new Map((data ?? []).map((row: any) => [String(row.id), row]));
+  const missing = ids.filter((id) => !found.has(id));
+  if (missing.length > 0) throw httpError(404, `Order ${missing.map((id) => `#${id}`).join(", ")} was not found.`);
+  return ids.map((id) => {
+    const row: any = found.get(id);
+    const failed = row.status === "Failed" || row.status === "Cancelled";
+    const amount = Number(row.amount ?? 0);
+    const deliveryFee = Number(row.logistics_cost ?? 0);
+    const received = Number(row.amount_remitted ?? 0);
+    const expected = failed ? 0 : Math.max(0, round(amount - deliveryFee));
+    return {
+      id, customer: String(row.customer ?? ""), status: String(row.status ?? ""), amount, deliveryFee, received, expected,
+      left: round(Math.max(0, expected - received)), remittanceStatus: row.remittance_status ?? null
+    };
+  });
+}
+
+/** How much of these orders' fees other live wallet rider-fee entries already matched. */
+async function claimedByOtherEntries(orgId: string, ids: string[], excludeTxnId: string | null) {
+  if (ids.length === 0) return 0;
+  const { data, error } = await supabase.from("manager_fund_transactions").select("id, amount, expense_id")
+    .eq("org_id", orgId).eq("kind", "expense").eq("category", "logistics").in("status", ["recorded", "returned"]).overlaps("order_ids", ids);
+  if (error) throw error;
+  const others = (data ?? []).filter((row: any) => row.id !== excludeTxnId);
+  if (others.length === 0) return 0;
+  const expenseIds = others.map((row: any) => row.expense_id).filter(Boolean);
+  const booked = new Map<string, number>();
+  if (expenseIds.length > 0) {
+    const { data: rows, error: expenseError } = await supabase.from("expenses").select("id, amount").eq("org_id", orgId).in("id", expenseIds);
+    if (expenseError) throw expenseError;
+    for (const row of rows ?? []) booked.set(String(row.id), Number(row.amount ?? 0));
+  }
+  return round(others.reduce((sum: number, row: any) => sum + Math.max(0, Number(row.amount) - (row.expense_id ? booked.get(row.expense_id) ?? 0 : 0)), 0));
+}
+
+async function expenseSplit(orgId: string, category: string, amount: number, orderIds: string[], txnId: string | null) {
+  if (category !== "logistics" || orderIds.length === 0) return { counted: 0, newCost: round(amount), orders: [] as Awaited<ReturnType<typeof ordersPosition>> };
+  const orders = await ordersPosition(orgId, orderIds);
+  const fees = orders.reduce((sum, order) => sum + order.deliveryFee, 0);
+  const claimed = await claimedByOtherEntries(orgId, orderIds, txnId);
+  return { ...logisticsSplit(amount, fees, claimed), orders };
+}
+
+const feeExpenseIds = (orderIds: string[]) => orderIds.map((id) => `EXP-DEL-${id}`);
+
+/** Puts back the orders' fee entries this entry had marked as paid from the wallet. */
+async function releaseOrderFees(orgId: string, walletId: string, orderIds: string[]) {
+  if (orderIds.length === 0) return;
+  const { error } = await supabase.from("expenses").update({ bank_account_id: null })
+    .eq("org_id", orgId).eq("bank_account_id", walletId).in("id", feeExpenseIds(orderIds));
+  if (error) throw error;
+}
+
+/**
+ * Books (or updates / removes) the expense behind a wallet expense entry: only
+ * its NEW cost. Returns the expense id to keep on the entry (null = none).
+ */
+async function syncWalletExpense(input: {
+  orgId: string; branchId: string; txnId: string; walletId: string; existingExpenseId: string | null;
+  category: string; amount: number; occurredAt: string; description: string | null; paidTo: string | null; paidBy: string;
+  orderIds: string[]; previousOrderIds: string[];
+}) {
+  const split = await expenseSplit(input.orgId, input.category, input.amount, input.orderIds, input.txnId);
+  const coveredIds = split.counted > 0 ? input.orderIds : [];
+  const covered = split.counted > 0
+    ? ` · ${split.counted.toLocaleString("en-NG")} of it is the delivery fee already on order${coveredIds.length === 1 ? "" : "s"} ${coveredIds.map((id) => `#${id}`).join(", ")} (not counted again)`
+    : "";
+  const description = `${expenseDescription(input.category, input.description, input.paidTo)}${covered}`.slice(0, 500);
+  const expenseId = input.existingExpenseId ?? `MGRF-${input.txnId}`;
+  if (split.newCost > 0) {
+    if (input.existingExpenseId) {
+      const { error } = await supabase.from("expenses").update({
+        amount: split.newCost, date: lagosDay(input.occurredAt), description,
+        category: FUND_CATEGORIES[input.category as keyof typeof FUND_CATEGORIES].expenseCategory
+      }).eq("id", input.existingExpenseId).eq("org_id", input.orgId);
+      if (error) throw error;
+    } else {
+      const { error } = await supabase.from("expenses").insert(expenseRow({
+        id: expenseId, orgId: input.orgId, branchId: input.branchId, walletId: input.walletId, date: lagosDay(input.occurredAt),
+        category: input.category, description, amount: split.newCost, paidBy: input.paidBy, currency: await currencyFor(input.branchId)
+      }));
+      if (error) throw error;
+    }
+  } else if (input.existingExpenseId) {
+    const { error } = await supabase.from("expenses").delete().eq("id", input.existingExpenseId).eq("org_id", input.orgId);
+    if (error) throw error;
+  }
+  await releaseOrderFees(input.orgId, input.walletId, input.previousOrderIds.filter((id) => !coveredIds.includes(id)));
+  if (coveredIds.length > 0) {
+    const { error } = await supabase.from("expenses").update({ bank_account_id: input.walletId })
+      .eq("org_id", input.orgId).is("bank_account_id", null).in("id", feeExpenseIds(coveredIds));
+    if (error) throw error;
+  }
+  return { expenseId: split.newCost > 0 ? expenseId : null, counted: split.counted, newCost: split.newCost };
+}
+
 // ── Write: log ───────────────────────────────────────────────────────────────
 
 const LogSchema = z.object({
@@ -497,14 +622,14 @@ router.post("/transactions", requireRole("Manager", "Admin"), async (req, res) =
     try {
       const mirror: Record<string, unknown> = {};
       if (body.kind === "expense") {
-        const expenseId = `MGRF-${row.id}`;
-        const { error: expenseError } = await supabase.from("expenses").insert(expenseRow({
-          id: expenseId, orgId, branchId, walletId: wallet.id, date: lagosDay(body.occurredAt), category: body.category!,
-          description: expenseDescription(body.category!, body.description, body.paidTo), amount: body.amount, paidBy: me.name,
-          currency: await currencyFor(branchId)
-        }));
-        if (expenseError) throw expenseError;
-        mirror.expense_id = expenseId;
+        // Only the NEW cost is booked: a rider fee for orders whose delivery
+        // fee is already recorded is that same money (see syncWalletExpense).
+        const synced = await syncWalletExpense({
+          orgId, branchId, txnId: row.id, walletId: wallet.id, existingExpenseId: null, category: body.category!,
+          amount: body.amount, occurredAt: body.occurredAt, description: body.description ?? null, paidTo: body.paidTo ?? null,
+          paidBy: me.name, orderIds: cleanOrderIds(row.order_ids), previousOrderIds: []
+        });
+        if (synced.expenseId) mirror.expense_id = synced.expenseId;
       } else if (body.kind === "owner_funding" || body.kind === "company_transfer_in" || body.kind === "remittance_out") {
         const into = body.kind !== "remittance_out";
         const { data: transfer, error: transferError } = await supabase.from("bank_account_transfers").insert({
@@ -560,7 +685,8 @@ const EditSchema = z.object({
   paidTo: z.string().trim().max(200).optional(),
   paymentMethod: z.enum(["cash", "transfer", "pos", "other"]).optional(),
   reference: z.string().trim().max(120).optional(),
-  counterpartyAccountId: z.string().uuid().optional()
+  counterpartyAccountId: z.string().uuid().optional(),
+  relatedOrderIds: z.array(z.string().trim().min(1).max(60)).max(20).optional()
 });
 
 router.patch("/transactions/:id", requireRole("Manager", "Admin"), async (req, res) => {
@@ -585,16 +711,18 @@ router.patch("/transactions/:id", requireRole("Manager", "Admin"), async (req, r
       paid_to: body.paidTo ?? row.paid_to,
       payment_method: body.paymentMethod ?? row.payment_method,
       reference: body.reference ?? row.reference,
-      counterparty_account_id: body.counterpartyAccountId ?? row.counterparty_account_id
+      counterparty_account_id: body.counterpartyAccountId ?? row.counterparty_account_id,
+      order_ids: row.kind === "expense" && body.relatedOrderIds ? cleanOrderIds(body.relatedOrderIds) : (row.order_ids ?? []),
+      expense_id: row.expense_id ?? null
     };
 
-    if (row.kind === "expense" && row.expense_id) {
-      const { error } = await supabase.from("expenses").update({
-        amount: next.amount, date: lagosDay(next.occurred_at),
-        category: FUND_CATEGORIES[next.category as keyof typeof FUND_CATEGORIES].expenseCategory,
-        description: expenseDescription(next.category!, next.description, next.paid_to)
-      }).eq("id", row.expense_id).eq("org_id", orgId);
-      if (error) throw error;
+    if (row.kind === "expense") {
+      const synced = await syncWalletExpense({
+        orgId, branchId, txnId: row.id, walletId: row.wallet_account_id, existingExpenseId: row.expense_id ?? null, category: next.category!,
+        amount: next.amount, occurredAt: next.occurred_at, description: next.description, paidTo: next.paid_to,
+        paidBy: row.created_by_name ?? req.user!.name ?? "Manager", orderIds: cleanOrderIds(next.order_ids), previousOrderIds: cleanOrderIds(row.order_ids)
+      });
+      next.expense_id = synced.expenseId;
     }
     if (row.transfer_id) {
       const into = row.kind !== "remittance_out";
@@ -641,6 +769,7 @@ router.post("/transactions/:id/void", requireRole("Manager", "Admin"), async (re
       const { error } = await supabase.from("expenses").delete().eq("id", row.expense_id).eq("org_id", orgId);
       if (error) throw error;
     }
+    if (row.kind === "expense") await releaseOrderFees(orgId, row.wallet_account_id, cleanOrderIds(row.order_ids));
     if (row.transfer_id) {
       const { error } = await supabase.from("bank_account_transfers").delete().eq("id", row.transfer_id).eq("org_id", orgId);
       if (error) throw error;
@@ -688,6 +817,28 @@ router.post("/transactions/:id/evidence", requireRole("Manager", "Admin"), async
     res.status(201).json({ ok: true });
   } catch (error: any) {
     sendError(res, error, "Could not upload the proof.");
+  }
+});
+
+/** The forms' order check: each order's money position and, for a rider fee, the split. */
+router.get("/order-check", requireRole(...LEADERSHIP), async (req, res) => {
+  const parsed = z.object({
+    ids: z.string().trim().min(1).max(1500),
+    amount: z.coerce.number().min(0).max(100_000_000).optional(),
+    category: z.string().trim().max(40).optional(),
+    excludeTxnId: z.string().uuid().optional()
+  }).safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+  try {
+    const orgId = req.user!.orgId;
+    const ids = cleanOrderIds(parsed.data.ids.split(/[\s,]+/)).slice(0, 20);
+    const orders = await ordersPosition(orgId, ids);
+    const split = parsed.data.category === "logistics" && parsed.data.amount !== undefined
+      ? await expenseSplit(orgId, "logistics", parsed.data.amount, ids, parsed.data.excludeTxnId ?? null)
+      : null;
+    res.json({ orders, split: split ? { counted: split.counted, newCost: split.newCost } : null });
+  } catch (error: any) {
+    sendError(res, error, "Couldn't check those orders.");
   }
 });
 
@@ -801,9 +952,16 @@ router.post("/adjustments/:id/decide", requireRole("Owner"), async (req, res) =>
       // values stay on the request and in the audit trail.
       const amount = Number(request.requested_amount);
       if (amount > 0) {
-        if (txn.expense_id) {
-          const { error: e } = await supabase.from("expenses").update({ amount }).eq("id", txn.expense_id).eq("org_id", orgId);
-          if (e) throw e;
+        if (txn.kind === "expense") {
+          const synced = await syncWalletExpense({
+            orgId, branchId, txnId: txn.id, walletId: txn.wallet_account_id, existingExpenseId: txn.expense_id ?? null, category: txn.category ?? "other",
+            amount, occurredAt: txn.occurred_at, description: txn.description, paidTo: txn.paid_to, paidBy: txn.created_by_name ?? "Manager",
+            orderIds: cleanOrderIds(txn.order_ids), previousOrderIds: cleanOrderIds(txn.order_ids)
+          });
+          if ((synced.expenseId ?? null) !== (txn.expense_id ?? null)) {
+            const { error: e } = await supabase.from("manager_fund_transactions").update({ expense_id: synced.expenseId }).eq("id", txn.id);
+            if (e) throw e;
+          }
         }
         if (txn.transfer_id) {
           const { error: e } = await supabase.from("bank_account_transfers").update({ amount }).eq("id", txn.transfer_id).eq("org_id", orgId);
@@ -813,6 +971,7 @@ router.post("/adjustments/:id/decide", requireRole("Owner"), async (req, res) =>
         if (e) throw e;
       } else {
         if (txn.expense_id) await supabase.from("expenses").delete().eq("id", txn.expense_id).eq("org_id", orgId);
+        if (txn.kind === "expense") await releaseOrderFees(orgId, txn.wallet_account_id, cleanOrderIds(txn.order_ids));
         if (txn.transfer_id) await supabase.from("bank_account_transfers").delete().eq("id", txn.transfer_id).eq("org_id", orgId);
         const { error: e } = await supabase.from("manager_fund_transactions").update({
           status: "voided", void_reason: `Owner-approved adjustment to ₦0: ${request.reason}`, voided_by: req.user!.id, voided_at: new Date().toISOString(),
