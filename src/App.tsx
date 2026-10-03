@@ -252,6 +252,8 @@ import SalesScriptingPage, { SalesScriptingOverviewCard } from "./pages/SalesScr
 import ScriptUsageReportPage from "./pages/ScriptUsageReportPage";
 import ManagerFundsTab from "./pages/ManagerFundsTab";
 import ManagerWeeklyReviewPage, { type ReviewRepRow } from "./pages/ManagerWeeklyReviewPage";
+import TeamChallengesManager from "./components/team-challenges/TeamChallengesManager";
+import TeamChallengesRep from "./components/team-challenges/TeamChallengesRep";
 import OwnerWeeklyApprovalPage, { type WeeklyFinancialSummary } from "./pages/OwnerWeeklyApprovalPage";
 import { CompanyReportHistoryPage, MyReportsHistoryPage, WeeklyAuditLogPage } from "./pages/WeeklyReportHistoryPages";
 import {
@@ -311,7 +313,7 @@ type CurrencyCode = "NGN" | "GHS" | "KES" | "ZMW" | "XOF" | "XAF" | "TZS" | "MWK
 // currency no product can be priced in.
 type ProductCurrencyCode = CurrencyCode;
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "addBranch" | "cartAssignmentRules" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addExtraItems" | "addFreeGift" | "salesBonusFullReport" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | "pdaPortalCredentials" | null;
-type ActivePage = "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Tracking Hub" | "Marketing" | "Marketing Performance" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers" | "Weekly Reports";
+type ActivePage = "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Team Challenges" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Tracking Hub" | "Marketing" | "Marketing Performance" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers" | "Weekly Reports";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type PendingSalesExpansionAction =
@@ -331,7 +333,7 @@ type AgentStatus = "All Status" | "Active" | "Order in Progress" | "Inactive";
 type PayrollTab = "Pay Rates" | "Run Payroll" | "History";
 type CustomerSource = "Source: All" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
 type FinanceTab = "Cash Flow" | "Financial Overview" | "Reports" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Delivery Fee Audit" | "Remittance" | "Profit & Loss" | "Product Profitability" | "Package Performance" | "State Performance" | "Profitability";
-type ManagerDashboardTab = "Overview" | "Targets" | "Bonus" | "Upsell Bonus" | "Upsell Performance" | "Weekly Reports" | "Inventory" | "Needs Attention";
+type ManagerDashboardTab = "Overview" | "Targets" | "Bonus" | "Upsell Bonus" | "Upsell Performance" | "Team Challenges" | "Weekly Reports" | "Inventory" | "Needs Attention";
 type RecoveryRepDashboardTab = "Overview" | "Work Queue" | "Activity Sheet" | "Customer Retention";
 // One screen of recovery cards. Big enough to be a real batch of calls,
 // small enough that a 618-order tier does not become an endless scroll.
@@ -742,7 +744,7 @@ function waybillLineItems(w: WaybillRecord): WaybillItem[] {
   }
   return [{ productId: w.productId, productName: w.productName, quantity: w.quantity }];
 }
-type RepConsoleTab = "Dashboard" | "My Targets & Incentives" | "Bonuses" | "Upsell & Cross-sell Log" | "Products & Stock" | "Orders" | "Scheduled Deliveries" | "Abandoned Carts" | "Customers" | "Leaderboard" | "Notifications" | "Settings";
+type RepConsoleTab = "Dashboard" | "My Targets & Incentives" | "Team Challenges" | "Bonuses" | "Upsell & Cross-sell Log" | "Products & Stock" | "Orders" | "Scheduled Deliveries" | "Abandoned Carts" | "Customers" | "Leaderboard" | "Notifications" | "Settings";
 type SalesRepsPageTab = "Overview" | "Bonuses";
 type CustomerFlag = { flagged: boolean; reason: string; flaggedAt: string };
 type CallOutcome = string;
@@ -2901,7 +2903,7 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   // currentAllowedPages), the same way extraPages layers on top of this
   // static list. Most Sales Reps must never see the page in their sidebar.
   "Sales Rep": [
-    "Sales Rep Workspace", "My Targets & Incentives", "Products & Stock", "Bonuses", "Weekly Reports", "Call Rep Console", "Weekend Stock Summary", "Personal Delivery Agents", "Notifications", "Settings", "WhatsApp"
+    "Sales Rep Workspace", "My Targets & Incentives", "Team Challenges", "Products & Stock", "Bonuses", "Weekly Reports", "Call Rep Console", "Weekend Stock Summary", "Personal Delivery Agents", "Notifications", "Settings", "WhatsApp"
   ],
   "Inventory Manager": [
     "Inventory & Logistics Operations", "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Expenses", "Notifications", "Settings", "WhatsApp"
@@ -2983,6 +2985,7 @@ const dashboardHashByPage: Record<ActivePage, string> = {
   "Sales Rep Bonuses": "#/dashboard/admin/sales-reps/bonuses",
   "Sales Rep Workspace": "#/dashboard/sales-rep",
   "My Targets & Incentives": "#/dashboard/sales-rep/my-targets",
+  "Team Challenges": "#/dashboard/sales-rep/team-challenges",
   "Recovery Rep Dashboard": "#/dashboard/recovery-rep",
   "Head of Sales Rep": "#/dashboard/admin/head-of-sales-rep",
   "Sales Closers": "#/dashboard/admin/sales-closers",
@@ -27725,6 +27728,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       "my-targets-incentives": "My Targets & Incentives",
       "my-targets": "My Targets & Incentives",
       "upsell-cross-sell-log": "Upsell & Cross-sell Log",
+      "team-challenges": "Team Challenges",
       products: "Products & Stock",
       orders: "Orders",
       "scheduled-deliveries": "Scheduled Deliveries",
@@ -27752,7 +27756,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
 
     const resolvedTab = routeToTab[section ?? ""] ?? "Dashboard";
-    setActivePage(resolvedTab === "My Targets & Incentives" ? "My Targets & Incentives" : "Sales Rep Workspace");
+    setActivePage(resolvedTab === "My Targets & Incentives" ? "My Targets & Incentives" : resolvedTab === "Team Challenges" ? "Team Challenges" : "Sales Rep Workspace");
     setRepConsoleTab(resolvedTab);
     if (currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager") {
       if (repConsoleRepId !== resolvedRepId) {
@@ -37317,6 +37321,17 @@ ${waybillLineItems(w).length > 1
       return;
     }
 
+    if (label === "Team Challenges") {
+      setRepConsoleTab("Team Challenges");
+      setRepOrderDetailId("");
+      const nextHash = repTabRoute("Team Challenges");
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
+      setHashRoute(nextHash);
+      setActivePage("Team Challenges");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+
     if (label === "My Targets & Incentives") {
       setRepConsoleTab("My Targets & Incentives");
       setRepOrderDetailId("");
@@ -41717,6 +41732,7 @@ ${waybillLineItems(w).length > 1
     // Map a workspace tab back to its hash section (Dashboard = the base hash).
     const repTabToSection: Partial<Record<RepConsoleTab, string>> = {
       "Upsell & Cross-sell Log": "upsell-cross-sell-log",
+      "Team Challenges": "team-challenges",
       "Products & Stock": "products",
       Orders: "orders",
       "Scheduled Deliveries": "scheduled-deliveries",
@@ -72174,7 +72190,7 @@ ${waybillLineItems(w).length > 1
             Workspace", still described as the sales-rep workflow, and still
             carrying the workspace's cart banner - so it read as the workspace
             with its tabs missing rather than as its own page. */}
-        {repConsoleTab !== "Products & Stock" && repConsoleTab !== "My Targets & Incentives" && <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+        {repConsoleTab !== "Products & Stock" && repConsoleTab !== "My Targets & Incentives" && repConsoleTab !== "Team Challenges" && <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
           <div className="space-y-1">
             <nav className="flex items-center gap-2 text-sm font-medium text-gray-500 mb-1">
               <span>Dashboard</span>
@@ -72211,7 +72227,7 @@ ${waybillLineItems(w).length > 1
         {/* Carts assigned to this rep are work they would otherwise never know
             about - the cart list is a different page. Surfacing the count here,
             on the page they actually land on, is the whole point. */}
-        {repConsoleTab !== "Products & Stock" && repConsoleTab !== "My Targets & Incentives" && (() => {
+        {repConsoleTab !== "Products & Stock" && repConsoleTab !== "My Targets & Incentives" && repConsoleTab !== "Team Challenges" && (() => {
           if (!cartFollowUpIsOwnWork || cartFollowUps.length === 0) return null;
           const open = cartFollowUps.filter((row) => !row.convertedOrderId).length;
           const uncalled = cartFollowUps.filter((row) => row.attempts === 0).length;
@@ -72244,7 +72260,7 @@ ${waybillLineItems(w).length > 1
         {/* ⚠️ Two tabs render as standalone pages and hide this bar: they carry
             their own headers, and a console tab strip above them reads as a
             second, competing navigation. */}
-        {repConsoleTab !== "Products & Stock" && repConsoleTab !== "My Targets & Incentives" && <nav className="grid grid-cols-2 sm:flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-full sm:w-fit overflow-x-auto no-scrollbar max-w-full" aria-label="Sales rep workspace sections">
+        {repConsoleTab !== "Products & Stock" && repConsoleTab !== "My Targets & Incentives" && repConsoleTab !== "Team Challenges" && <nav className="grid grid-cols-2 sm:flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-full sm:w-fit overflow-x-auto no-scrollbar max-w-full" aria-label="Sales rep workspace sections">
           {repConsoleTabs.filter((tab) => tab !== "Products & Stock" && tab !== "My Targets & Incentives" && (tab !== "Upsell & Cross-sell Log" || (currentRole === "Sales Rep" && salesExpansionFeatureEnabled))).map((tab) => (
             <button
               key={tab}
@@ -72261,7 +72277,9 @@ ${waybillLineItems(w).length > 1
           ))}
         </nav>}
 
-        {repConsoleTab === "My Targets & Incentives" ? (
+        {repConsoleTab === "Team Challenges" ? (
+          <TeamChallengesRep onToast={showToast} onOpenOrders={() => openRepTab("Orders")} onOpenFollowUps={() => openRepTab("Orders")} />
+        ) : repConsoleTab === "My Targets & Incentives" ? (
           <div className="space-y-6">
           <header>
             <h1 className="m-0 text-2xl font-black text-gray-900 dark:text-slate-100">My Targets &amp; Incentives</h1>
@@ -75355,16 +75373,20 @@ ${waybillLineItems(w).length > 1
             // stays grey - which is exactly what it looks like when a click did
             // nothing, whatever the page is really showing.
             const isWorkspaceMyTargetsTab = (activePage === "Sales Rep Workspace" || activePage === "My Targets & Incentives") && repConsoleTab === "My Targets & Incentives";
+            const isWorkspaceTeamChallengesTab = (activePage === "Sales Rep Workspace" || activePage === "Team Challenges") && repConsoleTab === "Team Challenges";
             const isActive = isBonusShortcut
               ? isWorkspaceBonusTab
               : targetPage === "Products & Stock"
                 ? isWorkspaceProductsTab
               : targetPage === "My Targets & Incentives"
                 ? isWorkspaceMyTargetsTab
+              : targetPage === "Team Challenges"
+                ? isWorkspaceTeamChallengesTab
               : activePage === targetPage
                   && !(targetPage === "Sales Rep Workspace" && isWorkspaceBonusTab && currentAllowedPages.includes("Bonuses"))
                   && !(targetPage === "Sales Rep Workspace" && isWorkspaceProductsTab && currentAllowedPages.includes("Products & Stock"))
                   && !(targetPage === "Sales Rep Workspace" && isWorkspaceMyTargetsTab && currentAllowedPages.includes("My Targets & Incentives"))
+                  && !(targetPage === "Sales Rep Workspace" && isWorkspaceTeamChallengesTab && currentAllowedPages.includes("Team Challenges"))
                   && !(targetPage === "Sales Rep Workspace" && isWorkspaceSalesExpansionTab && currentAllowedPages.includes("Upsell & Cross-sell Log"));
             // Customer Retention's own pages render as a contextual
             // sub-section right under Recovery Rep Dashboard - not a second
@@ -78350,15 +78372,15 @@ ${waybillLineItems(w).length > 1
                   </span>
                 </header>
 
-                <div className="inline-flex w-full sm:w-auto items-center rounded-2xl bg-gray-100 p-1">
-                  {(["Overview", "Targets", "Bonus", "Upsell Bonus", "Upsell Performance", "Weekly Reports", "Inventory", "Needs Attention"] as ManagerDashboardTab[]).map((tab) => (
+                <div className="flex max-w-full items-center overflow-x-auto rounded-2xl bg-gray-100 p-1 sm:w-fit">
+                  {(["Overview", "Targets", "Bonus", "Upsell Bonus", "Upsell Performance", "Team Challenges", "Weekly Reports", "Inventory", "Needs Attention"] as ManagerDashboardTab[]).map((tab) => (
                     <button
                       key={tab}
-                      className={`!min-h-0 flex-1 sm:flex-none rounded-xl px-4 py-2 text-sm font-black transition-colors ${managerDashboardTab === tab ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                      className={`!min-h-0 shrink-0 whitespace-nowrap rounded-xl px-4 py-2 text-sm font-black transition-colors ${managerDashboardTab === tab ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
                       onClick={() => (tab === "Upsell Performance" ? openUpsellPerformance() : tab === "Weekly Reports" ? openWeeklyReportsTab() : setManagerDashboardTab(tab))}
                     >
                       <span className="inline-flex items-center gap-1.5">
-                        {tab === "Targets" ? "Targets & Incentives" : tab === "Bonus" ? "Bonus & Performance" : tab === "Upsell Bonus" ? "Upsell & Cross-Sell Bonus" : tab === "Upsell Performance" ? "Upsell Performance" : tab === "Weekly Reports" ? "Weekly Reports" : tab === "Inventory" ? "Inventory" : tab === "Needs Attention" ? "Needs Attention" : "Overview"}
+                        {tab === "Targets" ? "Targets & Incentives" : tab === "Bonus" ? "Bonus & Performance" : tab === "Upsell Bonus" ? "Upsell & Cross-Sell Bonus" : tab === "Upsell Performance" ? "Upsell Performance" : tab === "Team Challenges" ? "Team Challenges" : tab === "Weekly Reports" ? "Weekly Reports" : tab === "Inventory" ? "Inventory" : tab === "Needs Attention" ? "Needs Attention" : "Overview"}
                         {tab === "Needs Attention" && needsAttentionBadgeCount > 0 && (
                           <span
                             className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-rose-600 px-1.5 text-[11px] font-black text-white shadow-[0_0_0_2px_rgba(225,29,72,0.25)] animate-bounce"
@@ -78372,7 +78394,7 @@ ${waybillLineItems(w).length > 1
                   ))}
                 </div>
 
-                {managerDashboardTab === "Targets" ? renderTargetsPanel() : managerDashboardTab === "Bonus" ? renderManagerBonusPanel() : managerDashboardTab === "Upsell Bonus" ? renderUpsellBonusPanel() : managerDashboardTab === "Inventory" ? renderManagerInventoryPanel() : managerDashboardTab === "Needs Attention" ? renderNeedsAttentionPanel() : (
+                {managerDashboardTab === "Team Challenges" ? <TeamChallengesManager role={currentRole} onToast={showToast} /> : managerDashboardTab === "Targets" ? renderTargetsPanel() : managerDashboardTab === "Bonus" ? renderManagerBonusPanel() : managerDashboardTab === "Upsell Bonus" ? renderUpsellBonusPanel() : managerDashboardTab === "Inventory" ? renderManagerInventoryPanel() : managerDashboardTab === "Needs Attention" ? renderNeedsAttentionPanel() : (
                   <>
 
                 {/* Period control — top of the page, drives every section below. */}
@@ -82158,6 +82180,8 @@ ${waybillLineItems(w).length > 1
           ) : activePage === "Upsell & Cross-sell Log" ? (
             renderSalesExpansionTab(true)
           ) : activePage === "My Targets & Incentives" ? (
+            renderRepConsole()
+          ) : activePage === "Team Challenges" ? (
             renderRepConsole()
           ) : activePage === "Sales Rep Workspace" ? (
             renderRepConsole()
