@@ -25664,6 +25664,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       });
       const perOrder: Record<string, { base: number; upsell: number; crossSell: number }> = {};
       for (const part of row?.orderComponents ?? []) perOrder[part.orderId] = { base: part.base, upsell: part.upsell, crossSell: part.crossSell };
+      // Say why an upgrade paid half (Bright, 3 Oct 2026): the product's
+      // upgrade rule pays in full only at its delivery-rate line, judged on
+      // the rep's week exactly as buildManagerBonusRepRows does. Only noted
+      // when the order's upsell really is that half, so a manual edit or a
+      // higher engine rule never gets the wrong reason.
+      const weekRate = placed.length > 0 ? Math.round((placed.filter((order) => (order.status ?? "New") === "Delivered").length / placed.length) * 100) : 0;
+      const bonusNoteFor = (order: TrackedOrder): string | undefined => {
+        if (order.bonusManuallyAdjusted || !orderHasVerifiedUpsell(order)) return undefined;
+        const cfg = productBonusConfig(products.find((product) => product.id === order.productId));
+        const full = cfg.upgradeBonuses.find((rule) => rule.fromQty === order.upsellFromQty && rule.toQty === order.upsellToQty)?.amount ?? 0;
+        if (full <= 0 || weekRate >= cfg.upgradeRequiresMinDeliveryRate || perOrder[order.id]?.upsell !== Math.round(full / 2)) return undefined;
+        return `Upgrade ${order.upsellFromQty}→${order.upsellToQty} is ${formatMoney(full)}; half paid because the week's delivery rate is ${weekRate}%, under ${cfg.upgradeRequiresMinDeliveryRate}%.`;
+      };
       const seen = new Set<string>();
       const orders = [...placed, ...delivered].filter((order) => (seen.has(order.id) ? false : (seen.add(order.id), true)));
       return buildRepWeeklySnapshot({
@@ -25683,7 +25696,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           amount: Number(order.amount || 0),
           hasUpsell: orderHasVerifiedUpsell(order),
           hasCrossSell: (order.crossSellLines?.length ?? 0) > 0,
-          bonusManuallyAdjusted: !!order.bonusManuallyAdjusted
+          bonusManuallyAdjusted: !!order.bonusManuallyAdjusted,
+          bonusNote: bonusNoteFor(order)
         })),
         bonus: { base: row?.base ?? 0, upsell: row?.upsell ?? 0, crossSell: row?.crossSell ?? 0, total: row?.total ?? 0, perOrder },
         fines: weekFines.filter((fine) => fine.repId === rep.id).map((fine) => ({ id: fine.id, label: fine.label, amount: fine.amount, date: fine.date })),

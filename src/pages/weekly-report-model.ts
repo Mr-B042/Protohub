@@ -38,6 +38,9 @@ export type WeeklyReportOrderInput = {
   hasUpsell: boolean;
   hasCrossSell: boolean;
   bonusManuallyAdjusted: boolean;
+  /** Why this order's bonus is lower than its rule, in plain words, e.g. a
+   *  halved upgrade (Bright, 3 Oct 2026). Only set when it applies. */
+  bonusNote?: string;
 };
 
 export type WeeklyReportBonusInput = {
@@ -88,6 +91,8 @@ export type WeeklyReportOrderRow = {
   upsellBonus?: number;
   crossSellBonus?: number;
   bonusManuallyAdjusted: boolean;
+  /** Why the bonus is lower than the rule (e.g. a halved upgrade). Missing on older reports. */
+  bonusNote?: string;
 };
 
 // ── Monthly incentive in the last week of the month (Bright, 3 Oct 2026) ────
@@ -385,7 +390,8 @@ export function buildRepWeeklySnapshot(input: {
       bonus: deliveredThisWeek ? Math.round(bonusFor(order.id)) : 0,
       upsellBonus: deliveredThisWeek ? Math.round(input.bonus.perOrder[order.id]?.upsell ?? 0) : 0,
       crossSellBonus: deliveredThisWeek ? Math.round(input.bonus.perOrder[order.id]?.crossSell ?? 0) : 0,
-      bonusManuallyAdjusted: order.bonusManuallyAdjusted
+      bonusManuallyAdjusted: order.bonusManuallyAdjusted,
+      ...(deliveredThisWeek && order.bonusNote ? { bonusNote: order.bonusNote } : {})
     });
   }
   orders.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
