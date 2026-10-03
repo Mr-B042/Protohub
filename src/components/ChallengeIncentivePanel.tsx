@@ -204,10 +204,15 @@ export function ChallengeIncentivePanel({ incentive, currency, role, repMode, fo
         ))}
       </ul>
       {canPay && unpaid.length > 1 ? (
-        <button type="button" disabled={Boolean(busy)} onClick={() => { if (window.confirm(`Mark ${unpaid.length} people paid, ${money(unpaid.reduce((sum, line) => sum + line.payable, 0))} in total?`)) void run("all", () => onMarkPaid!(unpaid)); }}
+        <button type="button" disabled={Boolean(busy)} onClick={() => { if (window.confirm(`Mark ${unpaid.length} people paid, ${money(unpaid.reduce((sum, line) => sum + line.payable, 0))} in total? It will be recorded as a Bonuses & Incentives expense, shared across the challenge weeks.`)) void run("all", () => onMarkPaid!(unpaid)); }}
           className="mt-3 flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 text-[14px] font-bold text-white disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900">
           <BadgeCheck className="h-5 w-5" /> {busy === "all" ? "Saving…" : `Mark all ${unpaid.length} paid`}
         </button>
+      ) : null}
+      {canPay ? (
+        <p className="m-0 mt-2 text-center text-[11.5px] text-gray-500">
+          Marking someone paid records it as a <strong>Bonuses &amp; Incentives</strong> expense, shared equally across the challenge weeks ({day(incentive.from)} – {day(incentive.to)}), so no single week carries it all.
+        </p>
       ) : null}
       {incentive.status === "accruing" ? <p className="m-0 mt-2 text-center text-[11.5px] text-gray-400">Payments open on {day(incentive.dueFrom)}, after the month ends. Rates and amounts update until then.</p> : null}
     </section>

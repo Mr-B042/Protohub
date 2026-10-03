@@ -43,7 +43,7 @@ export function cashOutGroupFor(category: unknown): CashOutGroup {
   if (value === "delivery" || value === "waybill" || value === "clearing & shipping" || value === "failed delivery") {
     return "Logistics / Dispatch";
   }
-  if (value === "salary") return "Payroll";
+  if (value === "salary" || value === "bonuses & incentives") return "Payroll";
   return "Other Operating Expenses";
 }
 

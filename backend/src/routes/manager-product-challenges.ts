@@ -12,7 +12,7 @@ import { humanFieldErrors } from "../lib/validation-message.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 import { logger } from "../lib/logger.js";
-import { calendarMonthOf, incentiveTier, incentiveWindow, monthlyDeliveryRate, payableAmount } from "../lib/challenge-incentive.js";
+import { INCENTIVE_EXPENSE_CATEGORY, calendarMonthOf, challengeWeekStarts, incentiveExpenseIdPrefix, incentiveExpenseSplit, incentiveTier, incentiveWindow, monthlyDeliveryRate, payableAmount } from "../lib/challenge-incentive.js";
 
 const router = Router();
 router.use(requireAuth, requireRole("Owner", "Admin", "Manager", "Sales Rep"));
@@ -580,6 +580,8 @@ router.get("/", async (req, res) => {
 // once). The amounts are the ones shown on the card; the server re-checks the
 // tier from the rate so a payment always matches the 70 / 65 / 60 rule, and
 // only once the month has ended. Undo is Owner only.
+// Each payment is also booked as a "Bonuses & Incentives" expense spread over
+// the challenge's weeks (Bright, 3 Oct 2026), and undo removes those rows.
 const PaidSchema = z.object({
   note: z.string().trim().max(300).optional(),
   people: z.array(z.object({
@@ -595,7 +597,7 @@ router.post("/:id/incentive/paid", requireRole("Manager", "Admin", "Owner"), asy
   const parsed = PaidSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
-    const { data: challenge, error } = await supabase.from("manager_product_challenges").select("id, end_date, branch_id, name")
+    const { data: challenge, error } = await supabase.from("manager_product_challenges").select("id, start_date, end_date, branch_id, name")
       .eq("org_id", req.user!.orgId).eq("id", String(req.params.id)).maybeSingle();
     if (error) throw error;
     if (!challenge) { res.status(404).json({ error: "Challenge not found." }); return; }
@@ -615,8 +617,31 @@ router.post("/:id/incentive/paid", requireRole("Manager", "Admin", "Owner"), asy
     const { data: existing } = await supabase.from("challenge_incentive_payouts").select("person_kind, person_id").eq("challenge_id", challenge.id);
     const fresh = rows.filter((row) => !(existing ?? []).some((item: any) => item.person_kind === row.person_kind && (row.person_kind === "manager" || item.person_id === row.person_id)));
     if (fresh.length) {
-      const insert = await supabase.from("challenge_incentive_payouts").insert(fresh);
+      const insert = await supabase.from("challenge_incentive_payouts").insert(fresh).select("id, person_name, payable_amount");
       if (insert.error) throw insert.error;
+      // Book the money as expenses, a share in each challenge week.
+      const weeks = challengeWeekStarts(challenge.start_date, challenge.end_date);
+      const monthLabel = new Date(`${calendarMonthOf(challenge.end_date).from}T12:00:00Z`).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+      const productLabel = String(challenge.name ?? "").replace(/\s*-\s*Monthly Challenge\s*$/i, "");
+      const expenseRows = (insert.data ?? []).flatMap((payout: any) => {
+        const amount = Number(payout.payable_amount ?? 0);
+        if (amount <= 0) return [];
+        return incentiveExpenseSplit(amount, weeks.length).map((share, index) => ({
+          id: `${incentiveExpenseIdPrefix(payout.id)}${index + 1}`,
+          org_id: req.user!.orgId, branch_id: challenge.branch_id ?? null, date: weeks[index],
+          category: INCENTIVE_EXPENSE_CATEGORY,
+          description: `${monthLabel} incentive · ${payout.person_name} · ${productLabel} · week ${index + 1} of ${weeks.length}`,
+          amount: share, currency: "NGN", paid_by: actor?.name ?? null
+        }));
+      });
+      if (expenseRows.length) {
+        const booked = await supabase.from("expenses").insert(expenseRows);
+        if (booked.error) {
+          // Never leave a payment marked without its expense: take it back.
+          await supabase.from("challenge_incentive_payouts").delete().in("id", (insert.data ?? []).map((payout: any) => payout.id));
+          throw booked.error;
+        }
+      }
     }
     res.json({ paid: fresh.length, alreadyPaid: rows.length - fresh.length, total: fresh.reduce((sum, row) => sum + row.payable_amount, 0) });
   } catch (error: any) {
@@ -628,10 +653,17 @@ router.delete("/:id/incentive/paid", requireRole("Owner"), async (req, res) => {
   const parsed = z.object({ kind: z.enum(["rep", "manager"]), personId: z.string().uuid().nullable() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Which payment?" }); return; }
   try {
-    let query = supabase.from("challenge_incentive_payouts").delete().eq("org_id", req.user!.orgId).eq("challenge_id", String(req.params.id)).eq("person_kind", parsed.data.kind);
-    if (parsed.data.kind === "rep") query = query.eq("person_id", parsed.data.personId);
-    const { error } = await query;
-    if (error) throw error;
+    let find = supabase.from("challenge_incentive_payouts").select("id").eq("org_id", req.user!.orgId).eq("challenge_id", String(req.params.id)).eq("person_kind", parsed.data.kind);
+    if (parsed.data.kind === "rep") find = find.eq("person_id", parsed.data.personId);
+    const { data: payouts, error: findError } = await find;
+    if (findError) throw findError;
+    for (const payout of payouts ?? []) {
+      // The weekly expense rows this payment booked go with it.
+      const removed = await supabase.from("expenses").delete().eq("org_id", req.user!.orgId).like("id", `${incentiveExpenseIdPrefix(payout.id)}%`);
+      if (removed.error) throw removed.error;
+      const { error } = await supabase.from("challenge_incentive_payouts").delete().eq("org_id", req.user!.orgId).eq("id", payout.id);
+      if (error) throw error;
+    }
     res.json({ ok: true });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not undo the payment." });
