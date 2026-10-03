@@ -5,7 +5,7 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 import { addDaysToDateKey, lagosDateKey } from "../lib/sales-bonus-engine.js";
 import { sendMetaCapiPurchase, testMetaCapiConnection } from "../lib/meta-capi.js";
 import { testTikTokConnection } from "../lib/tiktok-events.js";
-import { adPurchases, campaignsByIds, checkDataset, datasetEventStats, datasetQuality, discoverAdAccounts, discoverPixels, metaBusiness, metaWhoAmI, scanPage } from "../lib/meta-graph.js";
+import { accountAdsetPixels, adPurchases, campaignsByIds, checkDataset, datasetEventStats, datasetQuality, discoverAdAccounts, discoverPixels, metaBusiness, metaWhoAmI, scanPage } from "../lib/meta-graph.js";
 import { connectionToken } from "../lib/tracking-credentials.js";
 import { ATTRIBUTION_FIELDS, attributionCapture, domainOf, explainCampaignGaps, humanMetaError, orderAdIds, pathOf, productFromName, reconciliationVerdict } from "../lib/tracking-hub.js";
 import {
@@ -1541,6 +1541,15 @@ async function refreshAccount(orgId: string, branchId: string, target: RefreshTa
       objective: campaign.objective ?? null, status: campaign.effective_status ?? null, start_time: campaign.start_time ?? null, stop_time: campaign.stop_time ?? null, fetched_at: fetchedAt
     })), { onConflict: target.connectionId ? "connection_id,campaign_id" : "data_source_id,campaign_id" });
     if (upsert.error) throw upsert.error;
+  }
+  // Each ad set's Pixel, so an order goes to the ONE Pixel of the ad clicked
+  // without asking Meta while the customer waits (lib/tracking-click-pixel.ts).
+  const adsets = await accountAdsetPixels(account, target.token);
+  if (adsets.ok && adsets.rows.length) {
+    const fetchedAt = new Date().toISOString();
+    await supabase.from("tracking_meta_adset_pixels").upsert(adsets.rows.map((row) => ({
+      org_id: orgId, adset_id: row.adsetId, campaign_id: row.campaignId, ad_account_id: account, pixel_id: row.pixelId, fetched_at: fetchedAt
+    })), { onConflict: "org_id,adset_id" });
   }
   return { source: target.label, account, ok: true, message: info.ok ? "Loaded." : `Loaded; campaign names not read (${humanMetaError(info.message, null).title}).`, rows: result.rows.length };
 }

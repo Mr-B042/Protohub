@@ -297,3 +297,32 @@ export async function discoverAdAccounts(businessId: string, token: string): Pro
   const list = (result: GraphResult<any[]>): ListResult => (result.ok ? { ok: true, count: result.data.length } : { ok: false, message: result.message });
   return { ok: true, accounts: Array.from(byId.values()), lists: { owned: list(owned), shared: list(client), assigned: list(mine) } };
 }
+
+/**
+ * The Pixel an ad set optimises on (its promoted_object), for sending a sale
+ * to that one Pixel only. Read at order time, so it gives up after 2.5s.
+ */
+export async function adsetPixel(adsetId: string, token: string): Promise<{ ok: true; pixelId: string | null; campaignId: string | null; accountId: string | null } | { ok: false; message: string }> {
+  const url = new URL(`${GRAPH}/${encodeURIComponent(adsetId)}`);
+  url.searchParams.set("fields", "promoted_object,campaign_id,account_id");
+  url.searchParams.set("access_token", token);
+  try {
+    const response = await fetch(url, { method: "GET", signal: AbortSignal.timeout(2500) });
+    const json: any = await response.json().catch(() => ({}));
+    if (!response.ok || json?.error) return { ok: false, message: json?.error?.message || `Meta returned HTTP ${response.status}` };
+    const pixel = json?.promoted_object?.pixel_id;
+    return { ok: true, pixelId: pixel ? String(pixel) : null, campaignId: json?.campaign_id ? String(json.campaign_id) : null, accountId: json?.account_id ? String(json.account_id) : null };
+  } catch (error: any) {
+    return { ok: false, message: error?.message ?? "Could not reach Meta." };
+  }
+}
+
+/** Every ad set in an account with the Pixel it optimises on (Refresh Data warms the one-Pixel cache). */
+export async function accountAdsetPixels(adAccountId: string, token: string) {
+  const account = adAccountId.startsWith("act_") ? adAccountId : `act_${adAccountId}`;
+  const result = await graphGet<{ data?: Array<{ id: string; campaign_id?: string; promoted_object?: { pixel_id?: string } }> }>(`${account}/adsets`, token, {
+    fields: "id,campaign_id,promoted_object", limit: "500"
+  });
+  if (!result.ok) return { ok: false as const, message: result.message };
+  return { ok: true as const, rows: (result.data.data ?? []).map((row) => ({ adsetId: String(row.id), campaignId: row.campaign_id ? String(row.campaign_id) : null, pixelId: row.promoted_object?.pixel_id ? String(row.promoted_object.pixel_id) : null })) };
+}
