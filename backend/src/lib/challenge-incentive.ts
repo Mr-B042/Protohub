@@ -1,7 +1,8 @@
 // Monthly incentive tiers (Bright, 3 Oct 2026). Each product challenge's earned
 // reward is paid in the first week after the month, cut by the person's
-// delivery rate for the month (Manager Dashboard formula: delivered in the
-// month / placed in the month; a rep's own orders, the company for the manager):
+// delivery rate for the calendar month (Orders page formula: orders placed in
+// the month that are delivered / orders placed in the month; a rep's own
+// orders, the company for the manager):
 //   70% and above -> full, 65 to under 70 -> half, 60 to under 65 -> quarter,
 //   under 60 -> nothing.
 
@@ -11,7 +12,7 @@ export const INCENTIVE_TIERS = [
   { min: 60, percent: 25, label: "Quarter" }
 ] as const;
 
-/** Delivered in the month / placed in the month, one decimal. Null when nothing was placed. */
+/** Delivered / placed, one decimal. Null when nothing was placed. */
 export function monthlyDeliveryRate(placed: number, delivered: number): number | null {
   if (placed <= 0) return null;
   return Math.round((delivered / placed) * 1000) / 10;
@@ -42,9 +43,23 @@ const addDays = (key: string, days: number) => {
   return date.toISOString().slice(0, 10);
 };
 
-/** "accruing" while the month runs; "due" from the day after it ends (paid in that first week). */
+/**
+ * The calendar month a challenge belongs to: the month its end date falls in
+ * (Bright, 3 Oct 2026). Weekly months end on a Saturday on or before the last
+ * day, so a September challenge (30 Aug – 26 Sept) gives 1 – 30 Sept. The
+ * delivery rate is judged on this whole month; pieces stay on the challenge dates.
+ */
+export function calendarMonthOf(endDate: string) {
+  const [year, month] = endDate.split("-").map(Number);
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return { from: `${year}-${pad(month)}-01`, to: `${year}-${pad(month)}-${pad(last)}` };
+}
+
+/** "accruing" while the calendar month runs; "due" from the day after it ends (paid in that first week). */
 export function incentiveWindow(endDate: string, today: string) {
-  const dueFrom = addDays(endDate, 1);
-  const dueBy = addDays(endDate, 7);
+  const monthEnd = calendarMonthOf(endDate).to;
+  const dueFrom = addDays(monthEnd, 1);
+  const dueBy = addDays(monthEnd, 7);
   return { dueFrom, dueBy, status: today < dueFrom ? "accruing" as const : today > dueBy ? "overdue" as const : "due" as const };
 }

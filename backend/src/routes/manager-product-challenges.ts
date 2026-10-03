@@ -12,7 +12,7 @@ import { humanFieldErrors } from "../lib/validation-message.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 import { logger } from "../lib/logger.js";
-import { incentiveTier, incentiveWindow, monthlyDeliveryRate, payableAmount } from "../lib/challenge-incentive.js";
+import { calendarMonthOf, incentiveTier, incentiveWindow, monthlyDeliveryRate, payableAmount } from "../lib/challenge-incentive.js";
 
 const router = Router();
 router.use(requireAuth, requireRole("Owner", "Admin", "Manager", "Sales Rep"));
@@ -240,9 +240,24 @@ router.get("/", async (req, res) => {
 
     // ── Monthly incentive (Bright, 3 Oct 2026) ──
     // Each product challenge pays its earned reward the first week after the
-    // month, cut by the person's delivery rate for that month (Manager
-    // Dashboard formula: delivered in the month / placed in the month, all
-    // products; a rep's own orders, the whole company for the manager).
+    // calendar month, cut by the person's delivery rate for that month.
+    // Rate (Bright, 3 Oct 2026): the WHOLE calendar month the challenge ends
+    // in (1 - 30 Sept for a 30 Aug - 26 Sept challenge), Orders page formula:
+    // orders placed in the month that are delivered / orders placed in the
+    // month, all products; a rep's own, the whole company for the manager.
+    // Pieces and weekly targets stay on the challenge's own dates.
+    const rateMonths = rows.map((row) => calendarMonthOf(row.end_date));
+    const rateFrom = rateMonths.reduce((value, month) => month.from < value ? month.from : value, rateMonths[0].from);
+    const rateTo = rateMonths.reduce((value, month) => month.to > value ? month.to : value, rateMonths[0].to);
+    const { data: rateOrders, error: rateOrdersError } = await supabase
+      .from("orders")
+      .select("id, status, created_at, assigned_rep_id")
+      .limit(REPORT_ROW_CEILING)
+      .eq("org_id", req.user!.orgId)
+      .gte("created_at", toWatUtcIso(rateFrom, "start"))
+      .lte("created_at", toWatUtcIso(rateTo, "end"))
+      .or("review_hold.is.null,review_hold.eq.false");
+    if (rateOrdersError) throw rateOrdersError;
     const { data: payoutRows, error: payoutError } = await supabase.from("challenge_incentive_payouts").select("*")
       .eq("org_id", req.user!.orgId).in("challenge_id", challengeIds);
     if (payoutError && !/relation .*challenge_incentive_payouts.*does not exist/i.test(payoutError.message ?? "")) throw payoutError;
@@ -252,13 +267,10 @@ router.get("/", async (req, res) => {
     const managerRecipient = (leaders ?? []).find((user) => user.role === "Manager") ?? (leaders ?? [])[0] ?? null;
     const lagosDay = (iso: unknown) => (iso ? new Date(String(iso)).toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" }) : "");
     const monthRate = (from: string, to: string, repId: string | null) => {
-      const mine = (order: { assigned_rep_id?: string | null }) => !repId || order.assigned_rep_id === repId;
-      const placed = orders.filter((order) => mine(order) && lagosDay(order.created_at) >= from && lagosDay(order.created_at) <= to).length;
-      const delivered = orders.filter((order) => {
-        const day = String(order.delivered_date ?? "").slice(0, 10);
-        return mine(order) && String(order.status ?? "").trim().toLowerCase() === "delivered" && day >= from && day <= to;
-      }).length;
-      return { placed, delivered, rate: monthlyDeliveryRate(placed, delivered) };
+      const placedOrders = (rateOrders ?? []).filter((order) => (!repId || order.assigned_rep_id === repId)
+        && lagosDay(order.created_at) >= from && lagosDay(order.created_at) <= to);
+      const delivered = placedOrders.filter((order) => String(order.status ?? "").trim().toLowerCase() === "delivered").length;
+      return { placed: placedOrders.length, delivered, rate: monthlyDeliveryRate(placedOrders.length, delivered) };
     };
     const payoutFor = (challengeId: string, kind: "rep" | "manager", personId: string | null) => {
       const paid: any = (payoutRows ?? []).find((item: any) => item.challenge_id === challengeId && item.person_kind === kind && (kind === "manager" || item.person_id === personId));
@@ -268,8 +280,9 @@ router.get("/", async (req, res) => {
       targetUnits: number; deliveredUnits: number;
       milestones: Array<{ index: number; startDate: string; endDate: string; targetUnits: number; progressUnits: number; rewardAmount: number; earnedRewardAmount: number; status: string }>;
     };
-    const incentiveLine = (challengeId: string, kind: "rep" | "manager", personId: string | null, personName: string, earned: number, rewardAmount: number, from: string, to: string, detail?: IncentiveDetail) => {
-      const month = monthRate(from, to, kind === "rep" ? personId : null);
+    const incentiveLine = (challengeId: string, kind: "rep" | "manager", personId: string | null, personName: string, earned: number, rewardAmount: number, endDate: string, detail?: IncentiveDetail) => {
+      const calendar = calendarMonthOf(endDate);
+      const month = monthRate(calendar.from, calendar.to, kind === "rep" ? personId : null);
       const tier = incentiveTier(month.rate);
       return {
         kind, personId, personName, rewardAmount, earned: Math.round(earned * 100) / 100,
@@ -494,11 +507,12 @@ router.get("/", async (req, res) => {
       });
       const ownAllocationDetails = allocationDetails.find((allocation) => allocation.repId === scopeId);
       const window = incentiveWindow(row.end_date, today);
-      const repLines = allocationDetails.map((detail) => incentiveLine(row.id, "rep", detail.repId, detail.repName, detail.earnedRewardAmount, detail.rewardAmount, row.start_date, row.end_date, detail.incentiveDetail));
+      const repLines = allocationDetails.map((detail) => incentiveLine(row.id, "rep", detail.repId, detail.repName, detail.earnedRewardAmount, detail.rewardAmount, row.end_date, detail.incentiveDetail));
+      const rateMonth = calendarMonthOf(row.end_date);
       const incentive = {
-        from: row.start_date, to: row.end_date, dueFrom: window.dueFrom, dueBy: window.dueBy, status: window.status,
+        from: row.start_date, to: row.end_date, rateFrom: rateMonth.from, rateTo: rateMonth.to, dueFrom: window.dueFrom, dueBy: window.dueBy, status: window.status,
         manager: scopeRole === "Sales Rep" ? null : incentiveLine(row.id, "manager", managerRecipient?.id ?? null, managerRecipient?.name ?? "Manager",
-          managerMilestoneResult.earnedRewardAmount, Number(row.manager_reward_amount ?? 0), row.start_date, row.end_date, {
+          managerMilestoneResult.earnedRewardAmount, Number(row.manager_reward_amount ?? 0), row.end_date, {
             targetUnits: teamTargetUnits,
             deliveredUnits: teamMatching.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0),
             milestones: managerMilestoneResult.milestones
