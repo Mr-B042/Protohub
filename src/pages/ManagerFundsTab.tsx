@@ -291,7 +291,12 @@ export default function ManagerFundsTab({
 
   if (!data && loading) return <p className="m-0 rounded-2xl bg-white px-5 py-10 text-center text-[13px] text-gray-500 dark:bg-slate-900">Loading the week's money…</p>;
   if (data && !data.manager) {
-    return <p className="m-0 rounded-2xl bg-white px-5 py-10 text-center text-[13px] text-gray-500 dark:bg-slate-900">No manager wallet in this branch yet. It appears as soon as a manager logs her first transaction.</p>;
+    return (
+      <div className="m-0 rounded-2xl bg-white px-5 py-8 text-center text-[13px] text-gray-600 dark:bg-slate-900 dark:text-slate-300">
+        <p className="m-0 font-bold text-gray-900 dark:text-slate-100">No manager in this branch to hold the wallet.</p>
+        <p className="m-0 mt-1">The wallet belongs to the branch's Manager, or its Admin when there is no Manager. Add one in User Management, then they log money from Weekly Reports → Funds &amp; Expenses with Log Income, Log Expense or Log Remittance.</p>
+      </div>
+    );
   }
 
   const variance = totals?.variance ?? null;
