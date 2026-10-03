@@ -22,11 +22,10 @@ const VIEW_TABS: Array<{ key: HubReconView; label: string; noun: string; head: s
 ];
 const STATUS_PILL: Record<HubReconRow["status"], ["green" | "red" | "blue" | "gray" | "orange", string]> = {
   matched: ["green", "Matched"], investigate: ["red", "Investigate"], resolved: ["blue", "Resolved"], no_meta: ["gray", "No Meta data"],
-  meta_higher: ["orange", "Meta higher"], protohub_higher: ["orange", "Protohub higher"],
-  // Not tracking problems (Bright, 3 Oct 2026): Meta gave the sale to another
-  // campaign of the same product, or counted a multi-Pixel sale on a 2nd Pixel.
-  credited_elsewhere: ["blue", "Credited to another campaign"], other_pixel: ["red", "Meta double-counted"]
+  meta_higher: ["orange", "Meta higher"], protohub_higher: ["orange", "Protohub higher"]
 };
+// ⚠️ FACTS ONLY (Bright, 3 Oct 2026): no status may guess which campaign Meta
+// credited a sale to - Meta does not say. The panel lists what is known.
 const rateColor = (rate: number | null) => (rate === null ? "text-gray-400" : rate >= 90 ? "text-emerald-600" : rate >= 75 ? "text-amber-600" : "text-rose-600");
 const diffColor = (diff: number | null) => (diff === null ? "text-gray-400" : Math.abs(diff) <= 1 ? "text-emerald-600" : "text-rose-600");
 const signed = (value: number | null) => (value === null ? "—" : `${value > 0 ? "+" : ""}${value}`);
@@ -97,7 +96,7 @@ export default function ReconciliationTab({ tabBar, onToast, range, onRange, onO
       {tabBar}
       {k ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
-          <Kpi icon={<ShoppingCart className="h-7 w-7" />} tone="green" label="Protohub Orders" value={nf(k.protohub)} delta={<span className="leading-tight"><Delta value={k.protohubChange} /><span className="block text-[11px] font-normal text-gray-400">{compareWord(range)}</span></span>} />
+          <Kpi icon={<ShoppingCart className="h-7 w-7" />} tone="green" label="Protohub Orders from Meta ads" value={nf(k.protohub)} delta={<span className="leading-tight"><Delta value={k.protohubChange} /><span className="block text-[11px] font-normal text-gray-400">{compareWord(range)}</span>{k.protohubAll !== undefined ? <span className="block text-[11px] font-normal text-gray-500">{nf(k.protohubAll)} orders in total{k.pendingMeta ? ` · ${nf(k.pendingMeta)} after Meta's last load` : ""}</span> : null}</span>} />
           <Kpi icon={<PlatformIcon platform="meta" />} tone="blue" label="Meta Purchases" value={k.meta === null ? "—" : nf(k.meta)} delta={<span className="text-[11px] text-gray-400">{k.meta === null ? "press Refresh Data" : "(Meta's own attribution)"}</span>} />
           <Kpi icon={<ArrowLeftRight className="h-7 w-7" />} tone="orange" label="Difference" value={<span className={k.difference === null ? "" : k.difference === 0 ? "text-emerald-600" : "text-amber-600"}>{signed(k.difference)}</span>} sub={k.difference === null ? "" : k.difference > 0 ? "Meta higher" : k.difference < 0 ? "Protohub higher" : "Same"} />
           <Kpi icon={<Ring value={k.matchRate ?? 0} size={60} stroke={6}><span className="text-[12px] font-black text-gray-900 dark:text-slate-100">{k.matchRate === null ? "—" : `${k.matchRate}%`}</span></Ring>} tone="gray" label="Match Rate" value={<span className={rateColor(k.matchRate)}>{rating(k.matchRate)}</span>} sub={k.matched === null ? "" : `${nf(k.matched)} / ${nf(k.matchedOf ?? 0)} matched`} />
@@ -115,11 +114,10 @@ export default function ReconciliationTab({ tabBar, onToast, range, onRange, onO
         <Card className="p-4">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <p className="m-0 text-[14px] font-black text-gray-900 dark:text-slate-100">By product</p>
-            <p className="m-0 text-[12px] text-gray-500">Meta often credits a sale to a different campaign of the same product, so compare here first.</p>
+            <p className="m-0 text-[12px] text-gray-500">Orders from Meta ads (placed before Meta's numbers were loaded) against Meta's purchases.</p>
           </div>
           <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
             {data.products.map((product) => {
-              const extra = Math.max(0, Math.min(product.difference, product.extraPixelSales));
               const ok = product.difference === 0;
               return (
                 <div key={product.id} className={`flex items-center gap-3 rounded-xl border p-3 ${ok ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-500/30 dark:bg-emerald-500/10" : "border-amber-200 bg-amber-50/50 dark:border-amber-500/30 dark:bg-amber-500/10"}`}>
@@ -128,9 +126,8 @@ export default function ReconciliationTab({ tabBar, onToast, range, onRange, onO
                     <p className="m-0 truncate text-[13px] font-bold text-gray-900 dark:text-slate-100" title={product.name}>{product.name}</p>
                     <p className="m-0 text-[12.5px] text-gray-700 dark:text-slate-300">Protohub <strong>{nf(product.protohub)}</strong> · Meta <strong>{nf(product.meta)}</strong></p>
                     <p className={`m-0 text-[11.5px] font-semibold ${ok ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}>
-                      {product.difference === 0 ? "Exact match"
-                        : product.difference > 0 ? `Meta +${product.difference}${extra > 0 ? ` (${extra} double-counted on another Pixel)` : ""}`
-                        : `Protohub +${-product.difference}`}
+                      {product.difference === 0 ? "Same count" : product.difference > 0 ? `Meta +${product.difference}` : `Protohub +${-product.difference}`}
+                      {product.pendingMeta ? <span className="font-normal text-gray-500"> · {product.pendingMeta} after Meta's last load</span> : null}
                     </p>
                   </div>
                   {ok ? <Check className="h-5 w-5 shrink-0 text-emerald-600" /> : null}
@@ -172,11 +169,11 @@ export default function ReconciliationTab({ tabBar, onToast, range, onRange, onO
                             <td className="py-3"><CheckBox checked={checked.includes(row.id)} onChange={(value) => setChecked((list) => value ? [...list, row.id] : list.filter((id) => id !== row.id))} /></td>
                             <td className="py-3"><span className="flex items-center gap-2.5"><ProductThumb src={row.image} size={38} /><span className="min-w-0"><strong className="block max-w-[150px] truncate font-semibold" title={row.name}>{row.name}</strong>{row.name !== row.id ? <span className="block max-w-[150px] truncate text-[11.5px] text-gray-500">ID: {row.id}</span> : null}</span></span></td>
                             <td className="max-w-[90px] truncate py-3 text-gray-600" title={row.account}>{row.account}</td>
-                            <td className="py-3 text-center font-semibold">{nf(row.protohub)}</td>
+                            <td className="py-3 text-center font-semibold">{nf(row.protohub)}{row.pendingMeta ? <span className="block text-[10.5px] font-normal text-gray-500" title="Placed after Meta's numbers were loaded - press Refresh Data">+{row.pendingMeta} not loaded yet</span> : null}</td>
                             <td className="py-3 text-center">{row.meta === null ? "—" : nf(row.meta)}</td>
                             <td className={`py-3 text-center font-semibold ${diffColor(row.difference)}`}>{signed(row.difference)}</td>
                             <td className={`py-3 text-center font-semibold ${rateColor(row.matchRate)}`}>{row.matchRate === null ? "—" : `${row.matchRate}%`}</td>
-                            <td className="py-3" title={row.explanation ?? undefined}><StatusPill size="sm" tone={tone}>{text}</StatusPill></td>
+                            <td className="py-3"><StatusPill size="sm" tone={tone}>{text}</StatusPill></td>
                             <td className="py-3 text-right"><ActionMenu items={[
                               { label: "Open", onClick: () => { setSelected(row.id); setClosed(false); } },
                               { label: "Mark as resolved", onClick: async () => { await trackingHubApi.reconciliationNote({ scope: view, scopeId: row.id, resolved: true }); onToast("Marked as resolved."); reload(); } }
@@ -232,8 +229,8 @@ function ReconPanel({ view, row, range, onClose, onToast, onChanged, onOpenLedge
         <PanelClose onClose={onClose} />
       </div>
       {row.explanation ? (
-        <p className="m-0 mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-[12.5px] text-blue-900 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-100">
-          <strong>{row.status === "other_pixel" ? "Meta counted a sale twice." : "Not a tracking problem."}</strong> {row.explanation}
+        <p className="m-0 mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[12.5px] text-gray-800 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100">
+          <strong>What we know:</strong> {row.explanation}
         </p>
       ) : null}
       <UnderlineTabs className="mt-2" value={tab} onChange={setTab} tabs={[{ key: "overview", label: "Overview" }, { key: "orders", label: "Orders" }, { key: "meta", label: "Meta Data" }, { key: "discrepancies", label: "Discrepancies" }, { key: "insights", label: "Insights" }]} />

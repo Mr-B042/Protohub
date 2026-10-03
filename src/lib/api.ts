@@ -4501,14 +4501,16 @@ export type HubVerdict = { tone: "ok" | "warn" | "info"; conclusion: string; lik
 export type HubReconRow = {
   id: string; name: string; view: HubReconView; image: string | null; productName: string | null; account: string; accountId: string | null; dataSourceName: string | null;
   protohub: number; meta: number | null; difference: number | null; matchRate: number | null; spend: number;
-  status: "matched" | "investigate" | "resolved" | "no_meta" | "meta_higher" | "protohub_higher" | "credited_elsewhere" | "other_pixel"; verdict: HubVerdict;
-  /** Why the counts differ when it is not a tracking problem (credit moved / counted on another Pixel). */
+  status: "matched" | "investigate" | "resolved" | "no_meta" | "meta_higher" | "protohub_higher"; verdict: HubVerdict;
+  /** What is known about the difference - facts only (orders sent, Meta's count, orders after the last load). */
   explanation?: string | null;
+  /** Orders placed after Meta's numbers were loaded: not compared yet. */
+  pendingMeta?: number;
 };
-export type HubReconProduct = { id: string; name: string; image: string | null; protohub: number; meta: number; difference: number; extraPixelSales: number };
+export type HubReconProduct = { id: string; name: string; image: string | null; protohub: number; meta: number; difference: number; pendingMeta: number };
 export type HubReconciliation = {
   period: HubPeriod; view: HubReconView; lastFetched: string | null;
-  kpis: { protohub: number; protohubChange: number; meta: number | null; difference: number | null; matchRate: number | null; matched: number | null; matchedOf: number | null; investigate: number };
+  kpis: { protohub: number; protohubChange: number; protohubAll?: number; pendingMeta?: number; loadedAt?: string | null; meta: number | null; difference: number | null; matchRate: number | null; matched: number | null; matchedOf: number | null; investigate: number };
   rows: HubReconRow[];
   products?: HubReconProduct[];
   filters: { accounts: Array<{ id: string; label: string }>; businesses: string[]; websites: Array<{ id: string; domain: string }> };
