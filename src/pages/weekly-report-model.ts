@@ -90,6 +90,89 @@ export type WeeklyReportOrderRow = {
   bonusManuallyAdjusted: boolean;
 };
 
+// ── Monthly incentive in the last week of the month (Bright, 3 Oct 2026) ────
+// The week a product challenge ends in carries that month's incentive, so the
+// report presents it: earned reward × the month's delivery-rate tier. It is
+// paid separately (first week of the next month), never added to finalBonus.
+
+export type MonthlyIncentiveLine = {
+  challengeId: string;
+  productName: string;
+  kind: "rep" | "manager";
+  personId: string | null;
+  personName: string;
+  rewardAmount: number;
+  earned: number;
+  placed: number;
+  delivered: number;
+  rate: number | null;
+  tierPercent: number;
+  payable: number;
+  paidAt: string | null;
+};
+
+export type MonthlyIncentiveReport = {
+  from: string;
+  to: string;
+  dueFrom: string;
+  dueBy: string;
+  lines: MonthlyIncentiveLine[];
+};
+
+type ChallengeWithIncentive = {
+  id: string;
+  productId: string;
+  name: string;
+  endDate: string;
+  incentive?: {
+    from: string; to: string; dueFrom: string; dueBy: string;
+    manager: IncentiveSource | null;
+    reps: IncentiveSource[];
+  };
+};
+type IncentiveSource = {
+  kind: "rep" | "manager"; personId: string | null; personName: string; rewardAmount: number; earned: number;
+  placed: number; delivered: number; rate: number | null; tier: { percent: number }; payable: number;
+  paid: { paidAt: string; amount: number; earned: number; rate: number | null; tierPercent: number } | null;
+};
+
+/** The incentive of every challenge that ends inside this report week. */
+export function monthlyIncentiveForWeek(
+  challenges: ChallengeWithIncentive[] | null | undefined,
+  weekStart: string,
+  weekEnd: string,
+  productName: (productId: string) => string | undefined,
+  keep: (line: IncentiveSource) => boolean = () => true
+): MonthlyIncentiveReport | null {
+  const ending = (challenges ?? []).filter((challenge) => challenge.incentive && challenge.endDate >= weekStart && challenge.endDate <= weekEnd);
+  if (ending.length === 0) return null;
+  const lines: MonthlyIncentiveLine[] = [];
+  for (const challenge of ending) {
+    const incentive = challenge.incentive!;
+    for (const source of [...(incentive.manager ? [incentive.manager] : []), ...incentive.reps]) {
+      if (!keep(source)) continue;
+      lines.push({
+        challengeId: challenge.id,
+        productName: productName(challenge.productId) ?? challenge.name,
+        kind: source.kind,
+        personId: source.personId,
+        personName: source.personName,
+        rewardAmount: source.rewardAmount,
+        earned: source.paid?.earned ?? source.earned,
+        placed: source.placed,
+        delivered: source.delivered,
+        rate: source.paid?.rate ?? source.rate,
+        tierPercent: source.paid?.tierPercent ?? source.tier.percent,
+        payable: source.paid?.amount ?? source.payable,
+        paidAt: source.paid?.paidAt ?? null
+      });
+    }
+  }
+  if (lines.length === 0) return null;
+  const first = ending[0].incentive!;
+  return { from: first.from, to: first.to, dueFrom: first.dueFrom, dueBy: first.dueBy, lines };
+}
+
 export type WeeklyReportSnapshot = {
   version: number;
   repId: string;
@@ -127,6 +210,8 @@ export type WeeklyReportSnapshot = {
     carryOverBonus?: number;
   };
   previous: { orders: number; delivered: number; deliveryRate: number; finalBonus: number } | null;
+  /** Only in the week the month ends. Paid separately, not in finalBonus. */
+  monthlyIncentive?: MonthlyIncentiveReport | null;
   products: WeeklyReportProductRow[];
   daily: WeeklyReportDayRow[];
   expansion: {
@@ -207,6 +292,7 @@ export function buildRepWeeklySnapshot(input: {
   /** Fines left over from last week (frozen on last week's report). */
   carriedFines?: number;
   previous: WeeklyReportSnapshot["previous"];
+  monthlyIncentive?: MonthlyIncentiveReport | null;
   now?: Date;
 }): WeeklyReportSnapshot {
   const { weekStart, weekEnd } = input;
@@ -345,6 +431,7 @@ export function buildRepWeeklySnapshot(input: {
       carryOverBonus: orders.filter((order) => !order.placedThisWeek).reduce((sum, order) => sum + order.bonus, 0)
     },
     previous: input.previous,
+    ...(input.monthlyIncentive ? { monthlyIncentive: input.monthlyIncentive } : {}),
     products,
     daily,
     expansion,
@@ -507,13 +594,15 @@ export type CompanyWeeklySnapshot = {
     reps: number;
   };
   previous: { orders: number; delivered: number; deliveryRate: number; totalBonus: number } | null;
+  /** Manager + every rep, only in the week the month ends. Frozen at submit. */
+  monthlyIncentive?: MonthlyIncentiveReport | null;
   products: WeeklyReportProductRow[];
   daily: WeeklyReportDayRow[];
   reps: Array<{ repId: string; repName: string; orders: number; delivered: number; deliveryRate: number; crossSellBonus: number; upsellBonus: number; baseBonus: number; fines: number; finalBonus: number }>;
 };
 
 /** Adds up rep snapshots into the company week. */
-export function buildCompanySnapshot(weekStart: string, weekEnd: string, reps: WeeklyReportSnapshot[], now = new Date()): CompanyWeeklySnapshot {
+export function buildCompanySnapshot(weekStart: string, weekEnd: string, reps: WeeklyReportSnapshot[], now = new Date(), monthlyIncentive: MonthlyIncentiveReport | null = null): CompanyWeeklySnapshot {
   const sum = (pick: (snap: WeeklyReportSnapshot) => number) => reps.reduce((total, snap) => total + (pick(snap) || 0), 0);
   const orders = sum((snap) => snap.totals.orders);
   const delivered = sum((snap) => snap.totals.delivered);
@@ -556,6 +645,7 @@ export function buildCompanySnapshot(weekStart: string, weekEnd: string, reps: W
       deliveryRate: pct(previousDelivered, previousOrders),
       totalBonus: withPrevious.reduce((total, snap) => total + (snap.previous?.finalBonus ?? 0), 0)
     } : null,
+    ...(monthlyIncentive ? { monthlyIncentive } : {}),
     products: Array.from(productMap.values())
       .map((row) => ({ ...row, deliveryRate: pct(row.delivered, row.orders) }))
       .sort((a, b) => b.orders - a.orders || a.name.localeCompare(b.name)),

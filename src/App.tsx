@@ -256,7 +256,7 @@ import OwnerWeeklyApprovalPage, { type WeeklyFinancialSummary } from "./pages/Ow
 import { CompanyReportHistoryPage, MyReportsHistoryPage, WeeklyAuditLogPage } from "./pages/WeeklyReportHistoryPages";
 import {
   buildCompanySnapshot, buildRepWeeklySnapshot, compareSnapshots, firstSubmittedAt, isLateSubmission,
-  FIRST_REPORT_WEEK, reportDueDate, reportOpensOn, runBonusCheck, type ManagerBonusPreview, type NamedOrderLookup, type WeeklyReportSnapshot
+  FIRST_REPORT_WEEK, monthlyIncentiveForWeek, reportDueDate, reportOpensOn, runBonusCheck, type ManagerBonusPreview, type NamedOrderLookup, type WeeklyReportSnapshot
 } from "./pages/weekly-report-model";
 import type { CorrectionDraft } from "./components/WeeklyReportParts";
 import {
@@ -25535,6 +25535,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [weeklyMyHistory, setWeeklyMyHistory] = useState<Awaited<ReturnType<typeof weeklyReportsApi.myHistory>>["rows"]>([]);
   const [weeklyHistory, setWeeklyHistory] = useState<Awaited<ReturnType<typeof weeklyReportsApi.history>>["rows"]>([]);
   const [weeklyManagerBonus, setWeeklyManagerBonus] = useState<ManagerBonusSummary | null>(null);
+  // Product challenges with their monthly incentive, for the week a month ends.
+  const [weeklyChallenges, setWeeklyChallenges] = useState<{ weekStart: string; rows: ManagerProductChallenge[] } | null>(null);
   // Manager Funds & Expenses (the manager's wallet) for the same week.
   const [weeklyFunds, setWeeklyFunds] = useState<Awaited<ReturnType<typeof managerFundsApi.week>> | null>(null);
   const [weeklyFundsManagerId, setWeeklyFundsManagerId] = useState<string | undefined>(undefined);
@@ -25577,6 +25579,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         ]);
         if (cancelled) return;
         setWeeklyBonusMaps({ weekStart, attribution: (attribution ?? null) as any, settlement: (settlement ?? {}) as any });
+        void managerProductChallengesApi.list()
+          .then((result: any) => { if (!cancelled) setWeeklyChallenges({ weekStart, rows: Array.isArray(result?.challenges) ? result.challenges : [] }); })
+          .catch(() => { if (!cancelled) setWeeklyChallenges({ weekStart, rows: [] }); });
         if (weeklyIsRep) {
           const [mine, history] = await Promise.all([
             weeklyReportsApi.mine(weekStart),
@@ -25612,6 +25617,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weeklyAreaOpen, weeklyReportWeekStart, weeklyReload, weeklySubPage, currentRole, weeklyFundsManagerId]);
 
+  /** The month's incentive when this report week is the week a month ends. */
+  const weeklyIncentiveFor = (weekStart: string, keep?: (line: { kind: string; personId: string | null }) => boolean) =>
+    weeklyChallenges && weeklyChallenges.weekStart === weekStart
+      ? monthlyIncentiveForWeek(weeklyChallenges.rows, weekStart, windowShiftDay(weekStart, 6), (productId) => catalogProducts.find((product) => product.id === productId)?.name, keep)
+      : null;
+
   /** One rep's week, worked out the way the Manager Dashboard bonus table does it. */
   const buildWeeklyRepSnapshot = (
     rep: { id: string; name: string },
@@ -25628,7 +25639,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const settlementByOrderId = { ...newEngineBonusSettlementByOrderId, ...weeklyBonusMaps.settlement };
     const repOrders = trackedOrders.filter((order) => order.assignedRepId === rep.id);
     const inRange = (key: string | undefined, start: string, end: string) => !!key && key >= start && key <= end;
-    const one = (start: string, weekFines: typeof fines, weekAdjustments: typeof adjustments, weekMisses: WeeklyLogMissRow[], carried: number, previous: WeeklyReportSnapshot["previous"]) => {
+    const one = (start: string, weekFines: typeof fines, weekAdjustments: typeof adjustments, weekMisses: WeeklyLogMissRow[], carried: number, previous: WeeklyReportSnapshot["previous"], monthlyIncentive: ReturnType<typeof weeklyIncentiveFor> = null) => {
       const end = windowShiftDay(start, 6);
       const placed = repOrders.filter((order) => !order.reviewHold && inRange(orderCreatedKey(order), start, end));
       const delivered = repOrders.filter((order) => (order.status ?? "New") === "Delivered" && inRange(orderDeliveredKey(order), start, end));
@@ -25665,7 +25676,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         adjustments: weekAdjustments.filter((item) => item.repId === rep.id).map((item) => ({ id: item.id, label: item.label, amount: item.amount, date: start })),
         logMisses: weekMisses.filter((item) => item.repId === rep.id),
         carriedFines: carried,
-        previous
+        previous,
+        monthlyIncentive
       });
     };
     const before = one(windowShiftDay(weekStart, -7), previousFines, previousAdjustments, previousLogMisses, 0, null);
@@ -25674,7 +25686,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       delivered: before.totals.delivered,
       deliveryRate: before.totals.deliveryRate,
       finalBonus: before.totals.finalBonus
-    });
+    }, weeklyIncentiveFor(weekStart, (line) => line.kind === "rep" && line.personId === rep.id));
   };
 
   /** The Funds & Expenses tab for the manager (her wallet) or the owner (any wallet). */
@@ -31804,6 +31816,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         }, null);
       return (
         <OwnerWeeklyApprovalPage
+          monthlyIncentive={weeklyIncentiveFor(weeklyReportWeekStart)}
           {...weekProps}
           rows={reviewRows}
           company={week?.company ?? null}
@@ -31836,6 +31849,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const canAct = currentRole === "Manager" || currentRole === "Admin";
     return (
       <ManagerWeeklyReviewPage
+          monthlyIncentive={weeklyIncentiveFor(weeklyReportWeekStart)}
         {...weekProps}
         mode="review"
         dueDate={dueDate}
@@ -31868,7 +31882,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             .filter((row) => row.expected || row.report)
             .map((row) => row.frozen ?? row.live)
             .filter((snap): snap is WeeklyReportSnapshot => !!snap);
-          const companySnapshot = buildCompanySnapshot(weeklyReportWeekStart, weeklyReportWeekEnd, approved);
+          const companySnapshot = buildCompanySnapshot(weeklyReportWeekStart, weeklyReportWeekEnd, approved, new Date(), weeklyIncentiveFor(weeklyReportWeekStart));
           await weeklyRun(() => weeklyReportsApi.submitCompany({
             weekStart: weeklyReportWeekStart,
             managerNote: note || undefined,

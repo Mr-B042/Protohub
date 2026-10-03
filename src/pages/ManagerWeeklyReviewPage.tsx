@@ -1,3 +1,4 @@
+import MonthlyIncentiveSection from "./MonthlyIncentiveSection";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -12,7 +13,7 @@ import {
 import { LogMissDisputesPanel } from "../components/LogMissParts";
 import { HeadOfSalesBadge } from "../components/HeadOfSalesParts";
 import {
-  CORRECTION_SECTION_LABEL, buildCompanySnapshot, type ManagerBonusPreview, type SnapshotDifference, type WeeklyReportSnapshot
+  CORRECTION_SECTION_LABEL, buildCompanySnapshot, type ManagerBonusPreview, type MonthlyIncentiveReport, type SnapshotDifference, type WeeklyReportSnapshot
 } from "./weekly-report-model";
 import type {
   LogMissDispute, ManagerFundTotals, WeeklyBonusQuery, WeeklyCompanyReport, WeeklyRepReport, WeeklyReportAuditEntry, WeeklyReportCorrection, WeeklyReportResponseInput
@@ -64,8 +65,10 @@ export default function ManagerWeeklyReviewPage({
   bonusQueries = [], canResolveQueries = false, onResolveBonusQuery,
   renderFunds, fundsPending, fundsSummary, onSaveDraftNote, initialTab, logMissDisputes = [], onDecideLogMiss,
   renderHeadOfSales, headOfSalesAttention = false,
-  onApprove, onReturn, onFlag, onSubmitToOwner, onBack, onEditManagerBonus
+  onApprove, onReturn, onFlag, onSubmitToOwner, onBack, onEditManagerBonus, monthlyIncentive = null
 }: {
+  /** The month's incentive, only in the week the month ends. */
+  monthlyIncentive?: MonthlyIncentiveReport | null;
   bonusQueries?: WeeklyBonusQuery[];
   logMissDisputes?: LogMissDispute[];
   onDecideLogMiss?: (id: string, outcome: "cancel" | "keep", note: string) => Promise<void>;
@@ -249,7 +252,9 @@ export default function ManagerWeeklyReviewPage({
     </div>
   );
 
+  const shownIncentive = ((company?.companySnapshot as { monthlyIncentive?: MonthlyIncentiveReport | null } | null)?.monthlyIncentive) ?? monthlyIncentive;
   const managerBonusPanel = (
+    <>
     <Panel>
       <div className="flex items-center justify-between gap-3 px-5 pt-4">
         <h2 className="m-0 flex items-center gap-2 text-[15px] font-bold text-gray-900 dark:text-slate-50"><Crown className="h-5 w-5 text-violet-600" /> Manager Bonus Preview</h2>
@@ -272,6 +277,8 @@ export default function ManagerWeeklyReviewPage({
         )}
       </div>
     </Panel>
+    {shownIncentive ? <MonthlyIncentiveSection report={shownIncentive} sym={sym} /> : null}
+    </>
   );
 
   const TOP_TABS: Array<{ key: TopTab; label: string; icon: typeof Check }> = [
@@ -350,7 +357,7 @@ export default function ManagerWeeklyReviewPage({
       <div className="flex gap-1 overflow-x-auto rounded-2xl bg-gray-100 p-1 dark:bg-slate-800" role="tablist">
         {TOP_TABS.map(({ key, label, icon: Icon }) => (
           <button key={key} type="button" role="tab" aria-selected={topTab === key} onClick={() => setTopTab(key)}
-            className={`!min-h-0 inline-flex items-center gap-2 whitespace-nowrap rounded-xl px-4 py-2.5 text-[13px] font-semibold ${topTab === key ? "bg-[#1F6FEB] text-white shadow-sm" : "text-gray-600 hover:text-gray-900 dark:text-slate-300"}`}>
+            className={`!min-h-0 inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl px-4 py-2.5 text-[13px] font-semibold ${topTab === key ? "bg-[#1F6FEB] text-white shadow-sm" : "text-gray-600 hover:text-gray-900 dark:text-slate-300"}`}>
             <Icon className="h-4 w-4" />{label}
             {key === "reps" && openQueries + logMissDisputes.filter((item) => item.status === "open").length > 0 && <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[11px] font-bold text-white">{openQueries + logMissDisputes.filter((item) => item.status === "open").length}</span>}
             {key === "headOfSales" && headOfSalesAttention && <span className="inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" aria-label="Needs a decision" />}

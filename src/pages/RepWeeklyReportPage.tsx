@@ -1,3 +1,4 @@
+import MonthlyIncentiveSection from "./MonthlyIncentiveSection";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, ArrowLeft, Box, Download, FileSpreadsheet, MoreVertical, Search, Send, ShoppingCart, Target, Wallet } from "lucide-react";
@@ -360,6 +361,7 @@ export default function RepWeeklyReportPage({
                 </p>
               </div>
             </Panel>
+            {snap?.monthlyIncentive ? <MonthlyIncentiveSection report={snap.monthlyIncentive} sym={sym} mine /> : null}
           </div>
         </div>
 
