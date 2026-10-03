@@ -23,7 +23,7 @@ export type IncentiveLine = {
 };
 
 export type ChallengeIncentive = {
-  from: string; to: string; dueFrom: string; dueBy: string;
+  from: string; to: string; rateFrom?: string; rateTo?: string; dueFrom: string; dueBy: string;
   status: "accruing" | "due" | "overdue";
   manager: IncentiveLine | null;
   reps: IncentiveLine[];
@@ -89,7 +89,7 @@ function MyIncentive({ line, incentive, money }: { line: IncentiveLine; incentiv
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <p className="m-0 text-[11px] font-black uppercase tracking-[0.14em] text-violet-700">Your monthly incentive</p>
-          <p className="m-0 mt-0.5 text-[12px] text-gray-500">{day(incentive.from)} – {day(incentive.to)} · paid the first week after</p>
+          <p className="m-0 mt-0.5 text-[12px] text-gray-500">Pieces {day(incentive.from)} – {day(incentive.to)} · delivery rate {day(incentive.rateFrom ?? incentive.from)} – {day(incentive.rateTo ?? incentive.to)} · paid the first week after</p>
         </div>
         {line.paid ? <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[11.5px] font-bold text-emerald-700"><BadgeCheck className="h-3.5 w-3.5" />Paid {when(line.paid.paidAt)}</span> : <StatusChip incentive={incentive} allPaid={false} />}
       </div>
@@ -186,7 +186,7 @@ export function ChallengeIncentivePanel({ incentive, currency, role, repMode, fo
           <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-50 text-violet-700"><Trophy className="h-5 w-5" /></span>
           <div>
             <h3 className="m-0 text-[15px] font-black text-gray-900 dark:text-slate-100">Monthly incentive</h3>
-            <p className="m-0 text-[12px] text-gray-500">{day(incentive.from)} – {day(incentive.to)} · earned reward × delivery-rate tier</p>
+            <p className="m-0 text-[12px] text-gray-500">Pieces {day(incentive.from)} – {day(incentive.to)} · delivery rate {day(incentive.rateFrom ?? incentive.from)} – {day(incentive.rateTo ?? incentive.to)}</p>
           </div>
         </div>
         <StatusChip incentive={incentive} allPaid={allPaid} />

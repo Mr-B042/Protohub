@@ -104,7 +104,7 @@ function Milestones({ milestones, money }: { milestones: IncentiveMilestone[]; m
   );
 }
 
-function PersonCard({ person, money, startOpen, mine }: { person: Person; money: (n: number) => string; startOpen: boolean; mine: boolean }) {
+function PersonCard({ person, money, startOpen, mine, placedIn }: { person: Person; money: (n: number) => string; startOpen: boolean; mine: boolean; placedIn: string }) {
   const [open, setOpen] = useState(startOpen);
   const first = person.lines[0];
   const earned = person.lines.reduce((sum, line) => sum + line.earned, 0);
@@ -146,7 +146,7 @@ function PersonCard({ person, money, startOpen, mine }: { person: Person; money:
             {first.rate === null ? "No orders placed" : `${first.rate}% delivered`} → pays {share(first.tierPercent)}
           </p>
           <p className="m-0 mt-0.5">
-            {first.delivered} of {ordersOf(first.placed)} were delivered.
+            {first.delivered} of {ordersOf(first.placed)} placed {placedIn} have been delivered.
             {person.kind === "manager" ? " A manager's rate counts every order in the company, not their own orders, because the manager runs the whole team." : ""}
           </p>
           <RateBar rate={first.rate} />
@@ -220,6 +220,12 @@ export default function MonthlyIncentiveSection({ report, sym, mine = false }: {
   const payable = report.lines.reduce((sum, line) => sum + line.payable, 0);
   const paid = report.lines.filter((line) => line.paidAt).reduce((sum, line) => sum + line.payable, 0);
   const headTier = tier(headline.tierPercent);
+  // The rate covers the whole calendar month (Bright, 3 Oct 2026); pieces
+  // keep the challenge dates. Reports frozen earlier have no rateFrom, and
+  // their rate used the challenge dates.
+  const rateFrom = report.rateFrom ?? report.from;
+  const rateTo = report.rateTo ?? report.to;
+  const placedIn = report.rateFrom ? `in ${monthName(rateTo)}` : `${day(rateFrom)} – ${day(rateTo)}`;
 
   return (
     <section className="rounded-2xl border border-violet-200 bg-white shadow-sm dark:border-violet-500/30 dark:bg-slate-900">
@@ -228,7 +234,7 @@ export default function MonthlyIncentiveSection({ report, sym, mine = false }: {
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700"><Trophy className="h-5 w-5" /></span>
           <div>
             <h2 className="m-0 text-[15px] font-bold text-gray-900 dark:text-slate-50">{mine ? "Your " : ""}{monthName(report.to)} Monthly Incentive</h2>
-            <p className="m-0 text-[12px] text-gray-500 dark:text-slate-400">{day(report.from)} – {day(report.to)} · hit your targets, then deliveries decide how much of it is paid</p>
+            <p className="m-0 text-[12px] text-gray-500 dark:text-slate-400">Pieces {day(report.from)} – {day(report.to)} · delivery rate {day(rateFrom)} – {day(rateTo)}</p>
           </div>
         </div>
         <span className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2.5 py-1 text-[11.5px] font-bold text-violet-700 dark:bg-violet-500/15 dark:text-violet-200">
@@ -241,22 +247,27 @@ export default function MonthlyIncentiveSection({ report, sym, mine = false }: {
         <div>
           <p className="m-0 mb-2 text-[11px] font-black uppercase tracking-[0.12em] text-gray-500">{mine ? "Your month" : "Company month"} at a glance</p>
           <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-            <Stat label="Orders placed" value={headline.placed.toLocaleString()} sub={`${day(report.from)} – ${day(report.to)}`} />
-            <Stat label="Orders delivered" value={headline.delivered.toLocaleString()} sub="in the month" />
+            <Stat label="Orders placed" value={headline.placed.toLocaleString()} sub={`${day(rateFrom)} – ${day(rateTo)}`} />
+            <Stat label="Orders delivered" value={headline.delivered.toLocaleString()} sub={report.rateFrom ? "of the orders placed" : "in the month"} />
             <Stat label="Delivery rate" value={headline.rate === null ? "—" : `${headline.rate}%`} sub={`pays ${share(headline.tierPercent)} of targets hit`}
               tone={`${headTier.chip} ring-1`} />
             <Stat label={mine ? "You get" : "Total to pay"} value={money(payable)} sub={`targets hit ${money(earned)} of ${money(max)}`} tone="bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900" />
           </div>
-          {/* Why this rate is not the Dashboard's (Bright, 3 Oct 2026): same
-              sum, different dates and a different "delivered", so people
-              comparing the two don't take the gap for a mistake. */}
+          {/* Which dates count for what (Bright, 3 Oct 2026): the rate is the
+              whole calendar month, same as the Orders page; pieces are the
+              challenge's own weeks. Said plainly so neither looks wrong. */}
           <div className="mt-2 flex gap-2 rounded-xl border border-sky-100 bg-sky-50 px-3 py-2 text-[11.5px] leading-snug text-sky-900 dark:border-sky-500/20 dark:bg-sky-500/10 dark:text-sky-100">
             <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <span>
-              <strong>Why this rate can differ from the Dashboard.</strong> This rate uses the challenge month, {day(report.from)} – {day(report.to)}, not the calendar month.
-              It counts an order as delivered only if it was delivered between those dates. Other pages may use the calendar month and count orders placed that month that were delivered later.
-              Both are correct. This one decides the payout.
-            </span>
+            {report.rateFrom ? (
+              <span>
+                <strong>Which dates count.</strong> The delivery rate uses all of {monthName(rateTo)} ({day(rateFrom)} – {day(rateTo)}): orders placed in {monthName(rateTo)} that have been delivered. That's the same rate as the Orders page for {monthName(rateTo)}.
+                The pieces and weekly targets use the challenge's own weeks, {day(report.from)} – {day(report.to)}.
+              </span>
+            ) : (
+              <span>
+                <strong>Why this rate can differ from the Dashboard.</strong> This rate uses the challenge month, {day(report.from)} – {day(report.to)}, and counts an order as delivered only if it was delivered between those dates.
+              </span>
+            )}
           </div>
           {earned > payable ? (
             <p className="m-0 mt-2 rounded-xl bg-amber-50 px-3 py-2 text-[12px] font-semibold text-amber-900 dark:bg-amber-500/10 dark:text-amber-100">
@@ -315,12 +326,12 @@ export default function MonthlyIncentiveSection({ report, sym, mine = false }: {
         <div>
           <p className="m-0 mb-2 text-[11px] font-black uppercase tracking-[0.12em] text-gray-500">{mine ? "How your incentive was worked out" : "Earnings by person"}</p>
           <ul className="m-0 list-none space-y-2 p-0">
-            {personList.map((person) => <PersonCard key={person.key} person={person} money={money} startOpen={mine || personList.length === 1} mine={mine} />)}
+            {personList.map((person) => <PersonCard key={person.key} person={person} money={money} startOpen={mine || personList.length === 1} mine={mine} placedIn={placedIn} />)}
           </ul>
         </div>
 
         <p className="m-0 text-[11px] text-gray-500 dark:text-slate-400">
-          Paid separately from the weekly bonus. A week's target is hit when the pieces delivered so far reach that week's total. The delivery rate counts {mine ? "your" : "each rep's"} orders placed {day(report.from)} – {day(report.to)} and the orders delivered in that time{mine ? "" : "; the manager's rate counts the whole company"}.
+          Paid separately from the weekly bonus. A week's target is hit when the pieces delivered so far reach that week's total. The delivery rate counts {mine ? "your" : "each rep's"} orders placed {placedIn} and how many of them have been delivered{mine ? "" : "; the manager's rate counts the whole company"}.
         </p>
       </div>
     </section>

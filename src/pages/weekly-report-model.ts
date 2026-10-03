@@ -91,7 +91,7 @@ export type WeeklyReportOrderRow = {
 };
 
 // ── Monthly incentive in the last week of the month (Bright, 3 Oct 2026) ────
-// The week a product challenge ends in carries that month's incentive, so the
+// The week the calendar month ends in carries that month's incentive, so the
 // report presents it: earned reward × the month's delivery-rate tier. It is
 // paid separately (first week of the next month), never added to finalBonus.
 
@@ -122,8 +122,13 @@ export type IncentiveMilestone = {
 };
 
 export type MonthlyIncentiveReport = {
+  /** The challenge's own dates: pieces and weekly targets. */
   from: string;
   to: string;
+  /** The calendar month the delivery rate covers (1 - 30 Sept for a
+   *  30 Aug - 26 Sept challenge). Missing on reports frozen before. */
+  rateFrom?: string;
+  rateTo?: string;
   dueFrom: string;
   dueBy: string;
   lines: MonthlyIncentiveLine[];
@@ -135,7 +140,7 @@ type ChallengeWithIncentive = {
   name: string;
   endDate: string;
   incentive?: {
-    from: string; to: string; dueFrom: string; dueBy: string;
+    from: string; to: string; rateFrom?: string; rateTo?: string; dueFrom: string; dueBy: string;
     manager: IncentiveSource | null;
     reps: IncentiveSource[];
   };
@@ -147,7 +152,9 @@ type IncentiveSource = {
   targetUnits?: number; deliveredUnits?: number; milestones?: IncentiveMilestone[];
 };
 
-/** The incentive of every challenge that ends inside this report week. */
+/** The incentive of every challenge whose calendar month ends inside this
+ *  report week (Bright, 3 Oct 2026): the rate covers the whole month, so a
+ *  September challenge (30 Aug - 26 Sept) shows in the week holding 30 Sept. */
 export function monthlyIncentiveForWeek(
   challenges: ChallengeWithIncentive[] | null | undefined,
   weekStart: string,
@@ -155,7 +162,8 @@ export function monthlyIncentiveForWeek(
   productName: (productId: string) => string | undefined,
   keep: (line: IncentiveSource) => boolean = () => true
 ): MonthlyIncentiveReport | null {
-  const ending = (challenges ?? []).filter((challenge) => challenge.incentive && challenge.endDate >= weekStart && challenge.endDate <= weekEnd);
+  const monthEnd = (challenge: ChallengeWithIncentive) => challenge.incentive?.rateTo ?? challenge.endDate;
+  const ending = (challenges ?? []).filter((challenge) => challenge.incentive && monthEnd(challenge) >= weekStart && monthEnd(challenge) <= weekEnd);
   if (ending.length === 0) return null;
   const lines: MonthlyIncentiveLine[] = [];
   for (const challenge of ending) {
@@ -184,7 +192,7 @@ export function monthlyIncentiveForWeek(
   }
   if (lines.length === 0) return null;
   const first = ending[0].incentive!;
-  return { from: first.from, to: first.to, dueFrom: first.dueFrom, dueBy: first.dueBy, lines };
+  return { from: first.from, to: first.to, rateFrom: first.rateFrom, rateTo: first.rateTo, dueFrom: first.dueFrom, dueBy: first.dueBy, lines };
 }
 
 export type WeeklyReportSnapshot = {
