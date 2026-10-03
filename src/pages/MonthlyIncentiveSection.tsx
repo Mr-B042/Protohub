@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BadgeCheck, CalendarClock, Check, ChevronDown, Clock, Package, Trophy, X } from "lucide-react";
+import { BadgeCheck, CalendarClock, Check, ChevronDown, Clock, Info, Package, Trophy, X } from "lucide-react";
 import type { IncentiveMilestone, MonthlyIncentiveLine, MonthlyIncentiveReport } from "./weekly-report-model";
 
 // The month's incentive inside the weekly report, shown only in the week the
@@ -179,6 +179,17 @@ export default function MonthlyIncentiveSection({ report, sym, mine = false }: {
             <Stat label="Delivery rate" value={headline.rate === null ? "—" : `${headline.rate}%`} sub={`${headTier.label} tier · ${headline.tierPercent}% paid`}
               tone={`${headTier.chip} ring-1`} />
             <Stat label={mine ? "You get" : "Total to pay"} value={money(payable)} sub={`earned ${money(earned)} of ${money(max)}`} tone="bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900" />
+          </div>
+          {/* Why this rate is not the Dashboard's (Bright, 3 Oct 2026): same
+              sum, different dates and a different "delivered", so people
+              comparing the two don't take the gap for a mistake. */}
+          <div className="mt-2 flex gap-2 rounded-xl border border-sky-100 bg-sky-50 px-3 py-2 text-[11.5px] leading-snug text-sky-900 dark:border-sky-500/20 dark:bg-sky-500/10 dark:text-sky-100">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+              <strong>Why this rate can differ from the Dashboard.</strong> This rate uses the challenge month, {day(report.from)} – {day(report.to)}, not the calendar month.
+              It counts an order as delivered only if it was delivered between those dates. Other pages may use the calendar month and count orders placed that month that were delivered later.
+              Both are correct. This one decides the payout.
+            </span>
           </div>
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-emerald-50 px-3 py-2 text-[12px] text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-200">
             <span>Paid so far: <strong>{money(paid)}</strong></span>
