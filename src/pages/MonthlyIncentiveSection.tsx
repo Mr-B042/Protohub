@@ -20,12 +20,12 @@ const SHARE: Record<number, string> = { 100: "all of it", 50: "half", 25: "a qua
 const share = (percent: number) => SHARE[percent] ?? `${percent}%`;
 const TIER_MINS = [{ min: 60, percent: 25 }, { min: 65, percent: 50 }, { min: 70, percent: 100 }];
 // Fewest extra delivered orders that would have reached each higher tier.
-// Same rounding as the server (rate to one decimal, then >= the tier's floor).
+// Same rounding as the server and the Manager Dashboard (whole percent, then >= the tier's floor).
 function moreDeliveries(placed: number, delivered: number, tierPercent: number) {
   if (placed <= 0) return [];
   return TIER_MINS.filter((item) => item.percent > tierPercent).map((item) => {
     let needed = delivered;
-    while (needed <= placed && Math.round((needed / placed) * 1000) / 10 < item.min) needed += 1;
+    while (needed <= placed && Math.round((needed / placed) * 100) < item.min) needed += 1;
     return { ...item, more: needed - delivered, reachable: needed <= placed };
   }).filter((item) => item.reachable && item.more > 0);
 }
@@ -317,7 +317,7 @@ export default function MonthlyIncentiveSection({ report, sym, mine = false }: {
           {[100, 50, 25, 0].map((percent) => (
             <span key={percent} className={`rounded-md px-1 py-1 leading-tight ring-1 ${tier(percent).chip}`}>
               <span className="block">Pays {share(percent)}</span>
-              <span className="block text-[10px] font-medium opacity-80">{percent === 100 ? "70%+" : percent === 50 ? "65–70%" : percent === 25 ? "60–65%" : "under 60%"}</span>
+              <span className="block text-[10px] font-medium opacity-80">{percent === 100 ? "70%+" : percent === 50 ? "65–69%" : percent === 25 ? "60–64%" : "under 60%"}</span>
             </span>
           ))}
         </div>

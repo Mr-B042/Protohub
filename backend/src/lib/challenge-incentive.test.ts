@@ -25,7 +25,11 @@ test("next tier and points needed", () => {
 
 test("rate and payable", () => {
   assert.equal(monthlyDeliveryRate(0, 0), null);
-  assert.equal(monthlyDeliveryRate(200, 141), 70.5);
+  assert.equal(monthlyDeliveryRate(200, 141), 71);
+  // Whole percent like the Manager Dashboard: 123 of 190 is 64.7% -> 65 -> half.
+  assert.equal(monthlyDeliveryRate(190, 123), 65);
+  assert.equal(incentiveTier(monthlyDeliveryRate(190, 123)).percent, 50);
+  assert.equal(monthlyDeliveryRate(189, 121), 64);
   assert.equal(payableAmount(20000, 50), 10000);
   assert.equal(payableAmount(13333.33, 25), 3333.33);
 });

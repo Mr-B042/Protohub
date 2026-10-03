@@ -12,10 +12,15 @@ export const INCENTIVE_TIERS = [
   { min: 60, percent: 25, label: "Quarter" }
 ] as const;
 
-/** Delivered / placed, one decimal. Null when nothing was placed. */
+/**
+ * Delivered / placed as a WHOLE percent, rounded exactly like the Manager
+ * Dashboard's Team performance table (Bright, 3 Oct 2026): the manager
+ * reviews from that table, so 123 of 190 (64.7%) is 65% on both screens and
+ * pays half. Null when nothing was placed.
+ */
 export function monthlyDeliveryRate(placed: number, delivered: number): number | null {
   if (placed <= 0) return null;
-  return Math.round((delivered / placed) * 1000) / 10;
+  return Math.round((delivered / placed) * 100);
 }
 
 export function incentiveTier(rate: number | null) {
@@ -29,7 +34,7 @@ export function incentiveTier(rate: number | null) {
     minRate: tier?.min ?? null,
     nextPercent: next?.percent ?? null,
     nextMinRate: next?.min ?? null,
-    pointsToNext: next && rate !== null ? Math.round((next.min - rate) * 10) / 10 : null
+    pointsToNext: next && rate !== null ? next.min - rate : null
   };
 }
 
