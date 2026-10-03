@@ -109,6 +109,16 @@ export type MonthlyIncentiveLine = {
   tierPercent: number;
   payable: number;
   paidAt: string | null;
+  /** Pieces against this person's target for the product, and the weekly
+   *  milestones that made up `earned`. Missing on reports frozen before. */
+  targetUnits?: number;
+  deliveredUnits?: number;
+  milestones?: IncentiveMilestone[];
+};
+
+export type IncentiveMilestone = {
+  index: number; startDate: string; endDate: string; targetUnits: number; progressUnits: number;
+  rewardAmount: number; earnedRewardAmount: number; status: string;
 };
 
 export type MonthlyIncentiveReport = {
@@ -134,6 +144,7 @@ type IncentiveSource = {
   kind: "rep" | "manager"; personId: string | null; personName: string; rewardAmount: number; earned: number;
   placed: number; delivered: number; rate: number | null; tier: { percent: number }; payable: number;
   paid: { paidAt: string; amount: number; earned: number; rate: number | null; tierPercent: number } | null;
+  targetUnits?: number; deliveredUnits?: number; milestones?: IncentiveMilestone[];
 };
 
 /** The incentive of every challenge that ends inside this report week. */
@@ -164,7 +175,10 @@ export function monthlyIncentiveForWeek(
         rate: source.paid?.rate ?? source.rate,
         tierPercent: source.paid?.tierPercent ?? source.tier.percent,
         payable: source.paid?.amount ?? source.payable,
-        paidAt: source.paid?.paidAt ?? null
+        paidAt: source.paid?.paidAt ?? null,
+        targetUnits: source.targetUnits ?? 0,
+        deliveredUnits: source.deliveredUnits ?? 0,
+        milestones: source.milestones ?? []
       });
     }
   }

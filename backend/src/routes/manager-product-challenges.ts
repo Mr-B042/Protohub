@@ -264,13 +264,26 @@ router.get("/", async (req, res) => {
       const paid: any = (payoutRows ?? []).find((item: any) => item.challenge_id === challengeId && item.person_kind === kind && (kind === "manager" || item.person_id === personId));
       return paid ? { paidAt: paid.paid_at, paidBy: paid.paid_by_name, amount: Number(paid.payable_amount), earned: Number(paid.earned_amount), rate: paid.delivery_rate === null ? null : Number(paid.delivery_rate), tierPercent: paid.tier_percent, personName: paid.person_name, note: paid.note } : null;
     };
-    const incentiveLine = (challengeId: string, kind: "rep" | "manager", personId: string | null, personName: string, earned: number, rewardAmount: number, from: string, to: string) => {
+    type IncentiveDetail = {
+      targetUnits: number; deliveredUnits: number;
+      milestones: Array<{ index: number; startDate: string; endDate: string; targetUnits: number; progressUnits: number; rewardAmount: number; earnedRewardAmount: number; status: string }>;
+    };
+    const incentiveLine = (challengeId: string, kind: "rep" | "manager", personId: string | null, personName: string, earned: number, rewardAmount: number, from: string, to: string, detail?: IncentiveDetail) => {
       const month = monthRate(from, to, kind === "rep" ? personId : null);
       const tier = incentiveTier(month.rate);
       return {
         kind, personId, personName, rewardAmount, earned: Math.round(earned * 100) / 100,
         placed: month.placed, delivered: month.delivered, rate: month.rate, tier,
-        payable: payableAmount(earned, tier.percent), paid: payoutFor(challengeId, kind, personId)
+        payable: payableAmount(earned, tier.percent), paid: payoutFor(challengeId, kind, personId),
+        // The detailed breakdown (Bright, 3 Oct 2026): pieces against the
+        // product target and each weekly milestone, so a rep can see how the
+        // earned figure was made.
+        targetUnits: detail?.targetUnits ?? 0,
+        deliveredUnits: detail?.deliveredUnits ?? 0,
+        milestones: (detail?.milestones ?? []).map((milestone) => ({
+          index: milestone.index, startDate: milestone.startDate, endDate: milestone.endDate, targetUnits: milestone.targetUnits,
+          progressUnits: milestone.progressUnits, rewardAmount: milestone.rewardAmount, earnedRewardAmount: milestone.earnedRewardAmount, status: milestone.status
+        }))
       };
     };
 
@@ -452,6 +465,7 @@ router.get("/", async (req, res) => {
           repId: allocation.rep_id,
           repName: rep?.name ?? rep?.email ?? "Sales rep",
           earnedRewardAmount: repMilestones.earnedRewardAmount,
+          incentiveDetail: { targetUnits: allocationTarget, deliveredUnits: repDeliveredPieces, milestones: repMilestones.milestones } as IncentiveDetail,
           dailyTargetPace: Math.round(dailyTargetPace * 100) / 100,
           dailyProgress,
           windowDeliveredPieces: repWindowOrders.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0),
@@ -480,15 +494,19 @@ router.get("/", async (req, res) => {
       });
       const ownAllocationDetails = allocationDetails.find((allocation) => allocation.repId === scopeId);
       const window = incentiveWindow(row.end_date, today);
-      const repLines = allocationDetails.map((detail) => incentiveLine(row.id, "rep", detail.repId, detail.repName, detail.earnedRewardAmount, detail.rewardAmount, row.start_date, row.end_date));
+      const repLines = allocationDetails.map((detail) => incentiveLine(row.id, "rep", detail.repId, detail.repName, detail.earnedRewardAmount, detail.rewardAmount, row.start_date, row.end_date, detail.incentiveDetail));
       const incentive = {
         from: row.start_date, to: row.end_date, dueFrom: window.dueFrom, dueBy: window.dueBy, status: window.status,
         manager: scopeRole === "Sales Rep" ? null : incentiveLine(row.id, "manager", managerRecipient?.id ?? null, managerRecipient?.name ?? "Manager",
-          managerMilestoneResult.earnedRewardAmount, Number(row.manager_reward_amount ?? 0), row.start_date, row.end_date),
+          managerMilestoneResult.earnedRewardAmount, Number(row.manager_reward_amount ?? 0), row.start_date, row.end_date, {
+            targetUnits: teamTargetUnits,
+            deliveredUnits: teamMatching.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0),
+            milestones: managerMilestoneResult.milestones
+          }),
         reps: scopeRole === "Sales Rep" ? repLines.filter((line) => line.personId === scopeId) : repLines
       };
       return rowToApi({ ...row, target_units: targetUnits, reward_amount: rewardAmount }, progress, matching.length, milestoneResult, {
-        allocations: scopeRole === "Sales Rep" ? [] : allocationDetails,
+        allocations: scopeRole === "Sales Rep" ? [] : allocationDetails.map(({ incentiveDetail: _detail, ...rest }) => rest),
         allocationMode: storedAllocations.length > 0 ? "manager_allocated" : "equal_split_fallback",
         teamProgressUnits: teamMatching.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0),
         teamQualifiedOrders: teamMatching.length,
