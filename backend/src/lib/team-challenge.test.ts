@@ -1,103 +1,79 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DEFAULT_MILESTONES, DEFAULT_SCORING, maxBudget, raceResults, scoreOrder, splitEqually, teamEntitlements } from "./team-challenge.js";
+import { DEFAULT_MILESTONES, DEFAULT_SCORING, contributionOf, maxBudget, pointsFor, raceResults, splitEqually, teamEntitlements, type ContributionInput } from "./team-challenge.js";
 
-const order = (overrides: Partial<Parameters<typeof scoreOrder>[0]>) => ({
-  productId: "rack", amount: 39500, originalAmount: null, upsellFromQty: null, upsellToQty: null, quantity: 1, crossSellLines: [], ...overrides
+const costs: Record<string, number> = { rack: 11_500, brush: 4_000, hook: 300 };
+const input = (overrides: Partial<ContributionInput>): ContributionInput => ({
+  productId: "rack", amount: 39_500, originalAmount: 39_500, originalQuantity: 1, upsellFromQty: null, upsellToQty: null, quantity: 1,
+  crossSellLines: [], giftLines: [], unitCost: (id) => costs[id ?? ""] ?? 0, repBonus: 0, extraLogistics: 0, adjustment: 0, packagingPerUnit: 500, ...overrides
 });
 
-test("score: one rack → two is an upgrade worth 2", () => {
-  const score = scoreOrder(order({ amount: 79000, originalAmount: 39500, upsellFromQty: 1, upsellToQty: 2, quantity: 2 }), DEFAULT_SCORING);
-  assert.equal(score?.points, 2);
-  assert.equal(score?.category, "upsell");
-  assert.equal(score?.addedValue, 39500);
+test("contribution: Bright's example - 39,500 → 68,500 leaves 14,600 = 1 point", () => {
+  const result = contributionOf(input({ amount: 68_500, upsellFromQty: 1, upsellToQty: 2, quantity: 2, repBonus: 2_400 }))!;
+  assert.equal(result.revenue, 29_000);
+  assert.equal(result.productCost, 11_500);
+  assert.equal(result.packaging, 500);
+  assert.equal(result.contribution, 14_600);
+  assert.equal(pointsFor(result.contribution, DEFAULT_SCORING), 1);
 });
 
-test("score: an order placed for two (no upgrade) earns nothing", () => {
-  assert.equal(scoreOrder(order({ amount: 79000, quantity: 2 }), DEFAULT_SCORING), null);
+test("points: below 10,000 = 0, 10,000-49,999 = 1, 50,000+ = 2 (two at most)", () => {
+  assert.equal(pointsFor(9_999, DEFAULT_SCORING), 0);
+  assert.equal(pointsFor(10_000, DEFAULT_SCORING), 1);
+  assert.equal(pointsFor(49_999, DEFAULT_SCORING), 1);
+  assert.equal(pointsFor(52_000, DEFAULT_SCORING), 2);
+  assert.equal(pointsFor(500_000, DEFAULT_SCORING), 2);
 });
 
-test("score: a free gift earns nothing; a paid add-on is a cross-sell worth 1", () => {
-  assert.equal(scoreOrder(order({ crossSellLines: [{ amount: 0, productId: "hook" }] }), DEFAULT_SCORING), null);
-  const score = scoreOrder(order({ amount: 56000, crossSellLines: [{ amount: 16500, productId: "brush", addedById: "rep-1" }] }), DEFAULT_SCORING);
-  assert.equal(score?.points, 1);
-  assert.equal(score?.category, "cross_sell");
-  assert.equal(score?.crossSellOwner, "rep-1");
+test("contribution: upsell + cross-sell are assessed together as one transaction", () => {
+  const result = contributionOf(input({
+    amount: 39_500 + 50_000 + 20_000, upsellFromQty: 1, upsellToQty: 2, quantity: 2,
+    crossSellLines: [{ amount: 20_000, quantity: 1, productId: "brush" }], repBonus: 0, packagingPerUnit: 0
+  }))!;
+  assert.equal(result.hasUpsell && result.hasCrossSell, true);
+  assert.equal(result.contribution, 70_000 - 11_500 - 4_000);
+  assert.equal(pointsFor(result.contribution, DEFAULT_SCORING), 2);
 });
 
-test("score: upgrade + cross-sell scores the highest once (2, not 3)", () => {
-  const score = scoreOrder(order({ amount: 95500, originalAmount: 39500, upsellFromQty: 1, upsellToQty: 2, crossSellLines: [{ amount: 16500 }] }), DEFAULT_SCORING);
-  assert.equal(score?.points, 2);
-  assert.equal(score?.category, "both");
-});
-
-test("score: one → three is the higher upgrade worth 3; minimum added value filters", () => {
-  assert.equal(scoreOrder(order({ amount: 118500, originalAmount: 39500, upsellFromQty: 1, upsellToQty: 3 }), DEFAULT_SCORING)?.points, 3);
-  assert.equal(scoreOrder(order({ amount: 45000, crossSellLines: [{ amount: 5500 }] }), { ...DEFAULT_SCORING, minAddedValue: 10000 }), null);
+test("contribution: rep-added gifts, extra delivery and a manager adjustment come off; nothing added = null", () => {
+  const result = contributionOf(input({ amount: 56_000, crossSellLines: [{ amount: 16_500, quantity: 1, productId: "brush" }], giftLines: [{ quantity: 10, productId: "hook" }], extraLogistics: 2_000, adjustment: -1_000 }))!;
+  assert.equal(result.gifts, 3_000);
+  assert.equal(result.contribution, 16_500 - 4_000 - 3_000 - 2_000 - 500 - 1_000);
+  assert.equal(contributionOf(input({ amount: 79_000, quantity: 2 })), null);
+  assert.equal(contributionOf(input({ crossSellLines: [{ amount: 0, productId: "hook" }] })), null);
 });
 
 const at = (minute: number) => new Date(Date.UTC(2026, 9, 5, 9, minute)).toISOString();
+const teams = [{ id: "A", memberIds: ["a1", "a2"] }, { id: "B", memberIds: ["b1", "b2"] }];
+const e = (teamId: string, repId: string, points: number, minute: number, status = "verified") => ({ teamId, repId, points, qualifiedAt: at(minute), status });
 
-test("race: Bright's example - A first to 50, B second; B first to 100, A second", () => {
-  const entries = [
-    { teamId: "A", points: 50, qualifiedAt: at(1), status: "verified" },
-    { teamId: "B", points: 50, qualifiedAt: at(2), status: "verified" },
-    { teamId: "B", points: 50, qualifiedAt: at(3), status: "verified" },
-    { teamId: "A", points: 50, qualifiedAt: at(4), status: "verified" }
-  ];
-  const results = raceResults(["A", "B"], entries, DEFAULT_MILESTONES, null);
-  const a = teamEntitlements("A", results);
-  const b = teamEntitlements("B", results);
-  assert.deepEqual(a.map((row) => row.step), [50000, 10000]);
-  assert.deepEqual(b.map((row) => row.step), [20000, 130000]);
-  assert.equal(a[1].entitlement, 60000);
-  assert.equal(b[1].entitlement, 150000);
+test("race: A wins both - 50,000 then 100,000; B second - 10,000 then 30,000; budget 190,000", () => {
+  const entries = [e("A", "a1", 25, 1), e("A", "a2", 25, 2), e("B", "b1", 25, 3), e("B", "b2", 25, 4), e("A", "a1", 25, 5), e("A", "a2", 25, 6), e("B", "b1", 25, 7), e("B", "b2", 25, 8)];
+  const results = raceResults(teams, entries, DEFAULT_MILESTONES, null);
+  assert.deepEqual(teamEntitlements("A", results).map((row) => row.step), [50_000, 100_000]);
+  assert.deepEqual(teamEntitlements("B", results).map((row) => row.step), [10_000, 30_000]);
+  assert.equal(maxBudget(DEFAULT_MILESTONES), 190_000);
 });
 
-test("race: A wins both - 150,000 and 60,000; budget is 210,000", () => {
-  const entries = [
-    { teamId: "A", points: 50, qualifiedAt: at(1), status: "verified" },
-    { teamId: "B", points: 50, qualifiedAt: at(2), status: "verified" },
-    { teamId: "A", points: 50, qualifiedAt: at(3), status: "verified" },
-    { teamId: "B", points: 50, qualifiedAt: at(4), status: "verified" }
-  ];
-  const results = raceResults(["A", "B"], entries, DEFAULT_MILESTONES, null);
-  assert.deepEqual(teamEntitlements("A", results).map((row) => row.step), [50000, 100000]);
-  assert.deepEqual(teamEntitlements("B", results).map((row) => row.step), [20000, 40000]);
-  assert.equal(maxBudget(DEFAULT_MILESTONES), 210000);
+test("race: 50 reached but a member has 8 - member requirement pending, 2 more needed; reached when they get there", () => {
+  const entries = [e("A", "a1", 42, 1), e("A", "a2", 8, 2)];
+  const [m1] = raceResults(teams, entries, DEFAULT_MILESTONES, null);
+  assert.equal(m1.reached.length, 0);
+  assert.deepEqual(m1.memberPending, [{ teamId: "A", short: [{ repId: "a2", need: 2 }] }]);
+  const [later] = raceResults(teams, [...entries, e("A", "a2", 2, 9)], DEFAULT_MILESTONES, null);
+  assert.deepEqual(later.reached, [{ teamId: "A", at: at(9) }]);
 });
 
-test("race: the qualification time decides, not review order; passing the target counts (49 + 2 = 51)", () => {
-  const entries = [
-    { teamId: "B", points: 49, qualifiedAt: at(0), status: "verified" },
-    { teamId: "A", points: 49, qualifiedAt: at(0), status: "verified" },
-    { teamId: "B", points: 2, qualifiedAt: at(15), status: "verified" },
-    { teamId: "A", points: 2, qualifiedAt: at(10), status: "verified" }
-  ];
-  const [m1] = raceResults(["A", "B"], entries, DEFAULT_MILESTONES, null);
+test("race: qualification time decides, not review order; earlier pending keeps it provisional; ties split", () => {
+  const entries = [e("B", "b1", 25, 0), e("B", "b2", 24, 0), e("A", "a1", 25, 0), e("A", "a2", 24, 0), e("B", "b2", 2, 15), e("A", "a2", 2, 10)];
+  const [m1] = raceResults(teams, entries, DEFAULT_MILESTONES, null);
   assert.deepEqual(m1.winnerTeamIds, ["A"]);
-  assert.deepEqual(m1.runnerUpTeamIds, ["B"]);
-});
-
-test("race: an earlier order still awaiting verification keeps the winner provisional", () => {
-  const entries = [
-    { teamId: "A", points: 50, qualifiedAt: at(10), status: "verified" },
-    { teamId: "B", points: 50, qualifiedAt: at(5), status: "awaiting_verification" }
-  ];
-  assert.equal(raceResults(["A", "B"], entries, DEFAULT_MILESTONES, null)[0].provisional, true);
-});
-
-test("race: an exact tie splits winner + runner-up equally; nothing after the close counts", () => {
-  const entries = [
-    { teamId: "A", points: 50, qualifiedAt: at(5), status: "verified" },
-    { teamId: "B", points: 50, qualifiedAt: at(5), status: "verified" }
-  ];
-  const results = raceResults(["A", "B"], entries, DEFAULT_MILESTONES, null);
-  assert.equal(teamEntitlements("A", results)[0].entitlement, 35000);
-  assert.equal(raceResults(["A"], [{ teamId: "A", points: 50, qualifiedAt: at(30), status: "verified" }], DEFAULT_MILESTONES, at(20))[0].reached.length, 0);
+  assert.equal(raceResults(teams, [...entries, e("B", "b1", 2, 5, "awaiting_verification")], DEFAULT_MILESTONES, null)[0].provisional, true);
+  const tie = raceResults(teams, [e("A", "a1", 25, 5), e("A", "a2", 25, 5), e("B", "b1", 25, 5), e("B", "b2", 25, 5)], DEFAULT_MILESTONES, null);
+  assert.equal(teamEntitlements("A", tie)[0].entitlement, 30_000);
 });
 
 test("split: equal shares, kobo-exact", () => {
-  assert.deepEqual(splitEqually(50000, ["x", "y"]), [{ repId: "x", amount: 25000 }, { repId: "y", amount: 25000 }]);
+  assert.deepEqual(splitEqually(50_000, ["x", "y"]), [{ repId: "x", amount: 25_000 }, { repId: "y", amount: 25_000 }]);
   assert.equal(splitEqually(100, ["a", "b", "c"]).reduce((sum, row) => sum + row.amount, 0), 100);
 });

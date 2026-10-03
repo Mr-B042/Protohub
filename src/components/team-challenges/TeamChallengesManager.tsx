@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { BarChart3, Check, CheckCircle2, Clock, FileText, Gift, Pause, Pencil, Play, Plus, ShieldCheck, Star, X } from "lucide-react";
 import { teamChallengesApi, type TeamChallengeDetail, type TeamChallengeEntry, type TeamChallengeInput } from "../../lib/api";
 import {
-  CATEGORY_LABEL, ChallengeHeader, EntryPill, Kpi, PrizeTable, TeamRaceCard, dateTime, naira, shortDate, toneOf, upgradeText
+  CATEGORY_LABEL, ChallengeHeader, EntryPill, Kpi, PrizeTable, TeamRaceCard, contributionText, dateTime, naira, shortDate, toneOf, upgradeText
 } from "./TeamChallengeParts";
 
 // Team Challenges - manager / owner page, built to Bright's first design
@@ -48,7 +48,7 @@ export default function TeamChallengesManager({ role, onToast }: { role: string;
     catch (err: any) { onToast(`Couldn't do that: ${err?.message ?? "please try again."}`); }
   };
 
-  const pendingCount = detail ? detail.entries.filter((row) => row.status === "awaiting_verification" || (row.status === "correction_requested" && row.reviewRequestedAt)).length : 0;
+  const pendingCount = detail ? detail.entries.filter((row) => row.status === "awaiting_verification" || (row.status === "correction_requested" && row.reviewRequestedAt) || (owner && row.escalatedAt)).length : 0;
   const c = detail?.challenge;
 
   return (
@@ -112,11 +112,15 @@ export default function TeamChallengesManager({ role, onToast }: { role: string;
           <div className="mt-4">
             {tab === "race" ? <RaceTab detail={detail} /> : null}
             {tab === "teams" ? <TeamsTab detail={detail} /> : null}
-            {tab === "verification" ? <VerificationTab detail={detail} onDecide={(entry, action, note) => run(() => teamChallengesApi.decide(c.id, entry.id, action, note), action === "verify" ? `Order #${entry.orderId} verified.` : action === "correction" ? "Correction requested." : "Order excluded.")} /> : null}
+            {tab === "verification" ? <VerificationTab detail={detail} owner={owner}
+              onAdjust={(entry, amount, reason) => run(() => teamChallengesApi.adjust(c.id, entry.id, amount, reason), "Contribution adjusted.")}
+              onEscalate={(entry, note) => run(() => teamChallengesApi.escalate(c.id, entry.id, note), "Sent to the Owner.")}
+              onDecide={(entry, action, note) => run(() => teamChallengesApi.decide(c.id, entry.id, action, note), action === "verify" ? `Order #${entry.orderId} verified.` : action === "correction" ? "Correction requested." : "Order excluded.")} /> : null}
             {tab === "rewards" ? <RewardsTab detail={detail} owner={owner}
               onApprove={(teamId, key) => run(() => teamChallengesApi.approvePayout(c.id, teamId, key), "Payout approved.")}
               onPaid={(payoutId, reference) => run(() => teamChallengesApi.markPaid(c.id, payoutId, reference), "Marked paid.")} /> : null}
             {tab === "rules" ? <RulesTab detail={detail} owner={owner} onEdit={() => setEditing("edit")}
+              onBaseline={() => run(() => teamChallengesApi.baseline(c.id), "Baseline calculated.")}
               onClose={() => { if (window.confirm("Close this challenge? No more orders will count.")) void run(() => teamChallengesApi.setStatus(c.id, "closed"), "Challenge closed."); }}
               onDelete={() => { if (window.confirm("Delete this draft?")) void run(async () => { await teamChallengesApi.remove(c.id); setSelected(null); }, "Draft deleted."); }} /> : null}
             {tab === "log" ? <LogTab detail={detail} /> : null}
@@ -148,7 +152,7 @@ function RaceTab({ detail }: { detail: TeamChallengeDetail }) {
       <div className="grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4">
         <Kpi icon={<Check className="h-5 w-5" />} tone="bg-emerald-50 text-emerald-600" label="Verified points" value={k.verifiedPoints} sub={`${k.verifiedOrders} delivered & paid order${k.verifiedOrders === 1 ? "" : "s"}`} hint="Only manager-verified orders count." />
         <Kpi icon={<Clock className="h-5 w-5" />} tone="bg-amber-50 text-amber-500" label="Awaiting delivery" value={k.awaitingDelivery} sub="Not delivered or not paid yet" />
-        <Kpi icon={<BarChart3 className="h-5 w-5" />} tone="bg-blue-50 text-blue-600" label="Additional revenue" value={naira(k.addedRevenue)} sub={`From ${k.verifiedOrders} verified order${k.verifiedOrders === 1 ? "" : "s"}`} hint="What the reps added on top of the original orders." />
+        <Kpi icon={<BarChart3 className="h-5 w-5" />} tone="bg-blue-50 text-blue-600" label="Added contribution" value={naira(k.addedContribution)} sub={`${naira(k.addedRevenue)} extra revenue · ${k.verifiedOrders} verified`} hint="Extra amount collected minus added product cost, delivery, rep bonus, packaging and gifts." />
         <Kpi icon={<Gift className="h-5 w-5" />} tone="bg-rose-50 text-rose-500" label="Prize budget" value={naira(k.prizeBudget)} sub="Maximum, Owner personally funded" hint="Winner + other team at the top milestone." />
       </div>
       <div className="grid gap-3 lg:grid-cols-2">
@@ -166,7 +170,7 @@ function RaceTab({ detail }: { detail: TeamChallengeDetail }) {
         <div className="flex items-center gap-2 px-4 pt-4"><FileText className="h-5 w-5 text-gray-500" /><div><p className="m-0 text-[15px] font-black text-gray-900 dark:text-slate-50">Latest verified wins</p><p className="m-0 text-[12px] text-gray-500">Most recent delivered, paid and verified orders.</p></div></div>
         <div className="mt-3 overflow-x-auto">
           <table className="w-full !min-w-[640px] text-left text-[12.5px]">
-            <thead className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500 dark:bg-slate-800"><tr>{["Order", "Rep", "Team", "Product", "What was added", "Points", "Added value", "Qualified"].map((h) => <th key={h} className="px-3 py-2.5 font-bold">{h}</th>)}</tr></thead>
+            <thead className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500 dark:bg-slate-800"><tr>{["Order", "Rep", "Team", "Product", "What was added", "Points", "Contribution", "Qualified"].map((h) => <th key={h} className="px-3 py-2.5 font-bold">{h}</th>)}</tr></thead>
             <tbody>
               {verified.slice(0, 8).map((row) => {
                 const team = teamOf.get(row.teamId ?? "");
@@ -175,7 +179,7 @@ function RaceTab({ detail }: { detail: TeamChallengeDetail }) {
                     <td className="px-3 py-2.5 font-bold">#{row.orderId}</td><td className="px-3 py-2.5">{row.repName}</td>
                     <td className="px-3 py-2.5">{team ? <span className={`rounded-md px-2 py-0.5 text-[11.5px] font-bold ${toneOf(team.color).soft}`}>{team.name}</span> : "—"}</td>
                     <td className="px-3 py-2.5">{row.product ?? "—"}</td><td className="px-3 py-2.5">{upgradeText(row)}</td>
-                    <td className="px-3 py-2.5 font-black">{row.verifiedPoints ?? row.points}</td><td className="px-3 py-2.5">{naira(row.addedValue)}</td><td className="px-3 py-2.5 text-gray-500">{dateTime(row.qualifiedAt)}</td>
+                    <td className="px-3 py-2.5 font-black">{row.verifiedPoints ?? row.points}</td><td className="px-3 py-2.5">{naira(row.contribution ?? 0)}</td><td className="px-3 py-2.5 text-gray-500">{dateTime(row.qualifiedAt)}</td>
                   </tr>
                 );
               })}
@@ -195,7 +199,8 @@ function TeamsTab({ detail }: { detail: TeamChallengeDetail }) {
         const tone = toneOf(team.color);
         return (
           <div key={team.id} className="rounded-2xl border border-gray-200 p-4 dark:border-slate-700">
-            <p className={`m-0 text-[15px] font-black ${tone.text}`}>{team.name} · {team.points} points · {team.orders} orders</p>
+            <p className={`m-0 text-[15px] font-black ${tone.text}`}>{team.name} · {team.points} points · {team.orders} verified transactions</p>
+            <p className="m-0 text-[12.5px] text-gray-700 dark:text-slate-300">{team.onePoint} one-point + {team.twoPoint} two-point = {team.onePoint + team.twoPoint * 2} points · {naira(team.contribution)} added contribution · {team.zeroPoint} below the 1-point level</p>
             <p className="m-0 text-[12px] text-gray-500">{team.awaitingDelivery} awaiting delivery · {team.awaitingPayment} awaiting payment · {team.awaitingVerification} awaiting verification · added {naira(team.addedValue)}</p>
             <div className="mt-3 space-y-2">
               {team.members.map((member) => {
@@ -204,7 +209,7 @@ function TeamsTab({ detail }: { detail: TeamChallengeDetail }) {
                   <div key={member.id} className="rounded-xl bg-gray-50 p-3 dark:bg-slate-800">
                     <div className="flex items-center justify-between gap-2"><strong className="text-[14px]">{member.name}</strong><span className="text-[14px] font-black">{member.points} pts · {share}%</span></div>
                     <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-slate-700"><div className={`h-full ${tone.bar}`} style={{ width: `${share}%` }} /></div>
-                    <p className="m-0 mt-1.5 text-[12px] text-gray-500">{member.orders} verified orders · {member.upsells} upsells · {member.crossSells} cross-sells · {member.pending} in progress</p>
+                    <p className="m-0 mt-1.5 text-[12px] text-gray-500">{member.orders} verified · {member.onePoint} × 1-pt · {member.twoPoint} × 2-pt · {naira(member.contribution)} contribution · {member.upsells} upsells · {member.crossSells} cross-sells · {member.pending} in progress</p>
                   </div>
                 );
               })}
@@ -217,10 +222,16 @@ function TeamsTab({ detail }: { detail: TeamChallengeDetail }) {
   );
 }
 
-function VerificationTab({ detail, onDecide }: { detail: TeamChallengeDetail; onDecide: (entry: TeamChallengeEntry, action: "verify" | "correction" | "exclude", note?: string) => Promise<void> }) {
-  const [filter, setFilter] = useState<"queue" | "progress" | "done" | "all">("queue");
+function VerificationTab({ detail, owner, onDecide, onAdjust, onEscalate }: {
+  detail: TeamChallengeDetail; owner: boolean;
+  onDecide: (entry: TeamChallengeEntry, action: "verify" | "correction" | "exclude", note?: string) => Promise<void>;
+  onAdjust: (entry: TeamChallengeEntry, amount: number, reason: string) => Promise<void>;
+  onEscalate: (entry: TeamChallengeEntry, note: string) => Promise<void>;
+}) {
+  const [filter, setFilter] = useState<"queue" | "progress" | "done" | "owner" | "all">(owner && detail.entries.some((row) => row.escalatedAt) ? "owner" : "queue");
   const [open, setOpen] = useState<string | null>(null);
   const rows = detail.entries.filter((row) => filter === "all" ? true
+    : filter === "owner" ? Boolean(row.escalatedAt)
     : filter === "queue" ? row.status === "awaiting_verification" || row.status === "correction_requested"
     : filter === "progress" ? row.status === "awaiting_delivery" || row.status === "awaiting_payment"
     : ["verified", "excluded", "reversed"].includes(row.status))
@@ -233,7 +244,7 @@ function VerificationTab({ detail, onDecide }: { detail: TeamChallengeDetail; on
   return (
     <div>
       <div className="flex flex-wrap gap-2">
-        {([["queue", "To verify"], ["progress", "Not delivered / paid yet"], ["done", "Decided"], ["all", "All"]] as const).map(([key, label]) => (
+        {([["queue", "To verify"], ["owner", `With the Owner (${detail.entries.filter((row) => row.escalatedAt).length})`], ["progress", "Not delivered / paid yet"], ["done", "Decided"], ["all", "All"]] as const).map(([key, label]) => (
           <button key={key} type="button" onClick={() => setFilter(key)} className={`!min-h-[36px] rounded-full px-3.5 text-[12.5px] font-bold ${filter === key ? "bg-violet-600 text-white" : "bg-gray-100 text-gray-700 dark:bg-slate-800 dark:text-slate-200"}`}>{label}</button>
         ))}
       </div>
@@ -249,32 +260,55 @@ function VerificationTab({ detail, onDecide }: { detail: TeamChallengeDetail; on
                 <span className="text-[13px] text-gray-700 dark:text-slate-300">{entry.repName}</span>
                 {team ? <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${toneOf(team.color).soft}`}>{team.name}</span> : null}
                 <span className="text-[13px] text-gray-600">{upgradeText(entry)}</span>
-                <span className="ml-auto flex items-center gap-2"><span className="text-[13px] font-black">{entry.points} {entry.points === 1 ? "pt" : "pts"}</span><EntryPill status={entry.status} /></span>
+                <span className="ml-auto flex flex-wrap items-center gap-2">{entry.escalatedAt ? <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-bold text-violet-700">With the Owner</span> : null}<span className="text-[12.5px] text-gray-600">{contributionText(entry)}</span><EntryPill status={entry.status} /></span>
               </button>
               {isOpen ? (
                 <div className="border-t border-gray-100 px-3.5 py-3 dark:border-slate-800">
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="rounded-lg bg-gray-50 p-3 dark:bg-slate-800">
-                      <p className="m-0 text-[11px] font-black uppercase tracking-wide text-gray-500">Original order</p>
+                      <p className="m-0 text-[11px] font-black uppercase tracking-wide text-gray-500">Original order (locked)</p>
                       <p className="m-0 mt-1 text-[13px]">{entry.original?.quantity ?? "?"} × {entry.product ?? "item"}{entry.original?.amount ? ` · ${naira(entry.original.amount)}` : ""}</p>
+                      <p className="m-0 mt-1 text-[12px] text-gray-500">No challenge points</p>
                     </div>
                     <div className="rounded-lg bg-emerald-50 p-3 dark:bg-emerald-500/10">
                       <p className="m-0 text-[11px] font-black uppercase tracking-wide text-emerald-700">After the rep's call</p>
                       <p className="m-0 mt-1 text-[13px]">{entry.revised?.quantity ?? "?"} × {entry.product ?? "item"} · {naira(entry.revised?.amount ?? 0)}</p>
                       {(entry.revised?.crossSells ?? []).map((line, index) => <p key={index} className="m-0 text-[12.5px]">+ {line.quantity} × {line.product} · {naira(line.amount)}</p>)}
+                      <p className="m-0 mt-1 text-[12px] font-bold text-emerald-800">{entry.final ? "Amount collected" : "Order value"} {naira(entry.revised?.amount ?? 0)}</p>
                     </div>
                   </div>
+                  {entry.breakdown ? (
+                    <div className="mt-2 overflow-hidden rounded-lg border border-gray-200 dark:border-slate-700">
+                      <table className="w-full !min-w-0 text-[12.5px]"><tbody>
+                        {([["Additional revenue", entry.breakdown.revenue, 1], ["Added product cost", entry.breakdown.productCost, -1], ["Extra delivery cost", entry.breakdown.logistics, -1], ["Rep bonus", entry.breakdown.repBonus, -1], ["Packaging", entry.breakdown.packaging, -1], ["Gifts", entry.breakdown.gifts, -1]] as const).map(([label, value, sign]) => (
+                          <tr key={label} className="border-b border-gray-100 dark:border-slate-800"><td className="px-3 py-1.5 text-gray-600 dark:text-slate-300">{label}</td><td className="px-3 py-1.5 text-right">{sign < 0 && value > 0 ? "−" : ""}{naira(value)}</td></tr>
+                        ))}
+                        {entry.breakdown.adjustment ? <tr className="border-b border-gray-100 dark:border-slate-800"><td className="px-3 py-1.5 text-gray-600">Manager adjustment{entry.adjustmentReason ? ` (${entry.adjustmentReason}, ${entry.adjustmentBy ?? ""})` : ""}</td><td className="px-3 py-1.5 text-right">{entry.breakdown.adjustment > 0 ? "+" : "−"}{naira(Math.abs(entry.breakdown.adjustment))}</td></tr> : null}
+                        <tr className="bg-gray-50 font-bold dark:bg-slate-800"><td className="px-3 py-2">{entry.final ? "Final" : "Potential"} added contribution</td><td className="px-3 py-2 text-right">{naira(entry.contribution ?? 0)} → {entry.points} pt{entry.points === 1 ? "" : "s"}</td></tr>
+                      </tbody></table>
+                      {!entry.final ? <p className="m-0 px-3 py-1.5 text-[11.5px] text-gray-500">Potential: the rep bonus and final amount are counted once delivered and paid.</p> : null}
+                    </div>
+                  ) : null}
                   <p className="m-0 mt-2 text-[12.5px] text-gray-700 dark:text-slate-300">
                     {CATEGORY_LABEL[entry.category]} · <strong>{entry.points} points</strong> ({entry.ruleLabel}, rules v{entry.ruleVersion}) · added {naira(entry.addedValue)}<br />
                     Customer {entry.customer ?? "—"} · delivered {dateTime(entry.deliveredAt)} · paid {dateTime(entry.paidAt)} · <strong>qualified {dateTime(entry.qualifiedAt)}</strong>
                   </p>
                   {entry.reason ? <p className="m-0 mt-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[12.5px] text-amber-900">{entry.reason}{entry.decidedBy ? ` (${entry.decidedBy}, ${dateTime(entry.decidedAt)})` : ""}</p> : null}
                   {entry.repNote ? <p className="m-0 mt-1.5 rounded-lg bg-blue-50 px-2.5 py-1.5 text-[12.5px] text-blue-900">Rep: "{entry.repNote}"</p> : null}
+                  {entry.escalatedAt ? <p className="m-0 mt-1.5 rounded-lg bg-violet-50 px-2.5 py-1.5 text-[12.5px] text-violet-900">Escalated to the Owner: "{entry.escalationNote}"{owner ? "" : " - the Owner decides it."}</p> : null}
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {["awaiting_verification", "correction_requested", "excluded"].includes(entry.status) && entry.deliveredAt && entry.paidAt ? (
+                    {owner && entry.escalatedAt && entry.status === "verified" ? <button type="button" onClick={() => void onDecide(entry, "verify")} className="!min-h-[44px] inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 text-[13px] font-bold text-white"><CheckCircle2 className="h-4 w-4" />Keep verified</button> : null}
+                    {["awaiting_verification", "correction_requested", "excluded"].includes(entry.status) && entry.deliveredAt && entry.paidAt && (owner || !entry.escalatedAt) ? (
                       <button type="button" onClick={() => void onDecide(entry, "verify")} className="!min-h-[44px] inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 text-[13px] font-bold text-white"><CheckCircle2 className="h-4 w-4" />Verify {entry.points} points</button>
                     ) : null}
                     {entry.status === "awaiting_verification" ? <button type="button" onClick={() => ask(entry, "correction")} className="!min-h-[44px] rounded-xl border border-amber-300 px-4 text-[13px] font-bold text-amber-800">Request correction</button> : null}
+                    {!["excluded", "reversed"].includes(entry.status) ? <button type="button" onClick={() => {
+                      const amount = window.prompt("Adjustment to the contribution in ₦ (e.g. -2000 if the upgrade raised delivery by ₦2,000):", String(entry.adjustment || ""));
+                      if (amount === null || !Number.isFinite(Number(amount))) return;
+                      const reason = window.prompt("Reason (recorded in the activity log):");
+                      if (reason && reason.trim().length >= 5) void onAdjust(entry, Number(amount), reason.trim());
+                    }} className="!min-h-[44px] rounded-xl border border-gray-300 px-4 text-[13px] font-bold">Adjust contribution</button> : null}
+                    {!owner && !entry.escalatedAt && !["excluded", "reversed"].includes(entry.status) ? <button type="button" onClick={() => { const note = window.prompt("What should the Owner look at?"); if (note && note.trim().length >= 3) void onEscalate(entry, note.trim()); }} className="!min-h-[44px] rounded-xl border border-violet-300 px-4 text-[13px] font-bold text-violet-700">Escalate to Owner</button> : null}
                     {!["excluded", "reversed"].includes(entry.status) ? <button type="button" onClick={() => ask(entry, "exclude")} className="!min-h-[44px] inline-flex items-center gap-1.5 rounded-xl border border-rose-200 px-4 text-[13px] font-bold text-rose-600"><X className="h-4 w-4" />{entry.status === "verified" ? "Reverse" : "Exclude"}</button> : null}
                   </div>
                 </div>
@@ -301,6 +335,7 @@ function RewardsTab({ detail, owner, onApprove, onPaid }: { detail: TeamChalleng
       {detail.teams.map((team) => (
         <div key={team.id} className="rounded-2xl border border-gray-200 p-4 dark:border-slate-700">
           <p className={`m-0 text-[15px] font-black ${toneOf(team.color).text}`}>{team.name}</p>
+          {team.reconciliation ? <p className="m-0 mt-2 rounded-lg bg-rose-50 px-3 py-2 text-[12.5px] font-semibold text-rose-800">Prize reconciliation exception: {naira(team.reconciliation.paid)} paid but the verified ledger now entitles {naira(team.reconciliation.entitled)} ({naira(team.reconciliation.over)} over), after a return or reversal. The payment record is kept; nothing is deducted automatically. Owner review needed.</p> : null}
           <div className="mt-2 space-y-2">
             {team.entitlements.map((item) => (
               <div key={item.key} className="flex flex-col gap-2 rounded-xl bg-gray-50 p-3 dark:bg-slate-800 sm:flex-row sm:items-center">
@@ -325,8 +360,10 @@ function RewardsTab({ detail, owner, onApprove, onPaid }: { detail: TeamChalleng
   );
 }
 
-function RulesTab({ detail, owner, onEdit, onClose, onDelete }: { detail: TeamChallengeDetail; owner: boolean; onEdit: () => void; onClose: () => void; onDelete: () => void }) {
+function RulesTab({ detail, owner, onEdit, onClose, onDelete, onBaseline }: { detail: TeamChallengeDetail; owner: boolean; onEdit: () => void; onClose: () => void; onDelete: () => void; onBaseline: () => Promise<void> }) {
   const c = detail.challenge;
+  const [working, setWorking] = useState(false);
+  const teamName = new Map(detail.teams.map((team) => [team.id, team.name]));
   return (
     <div className="space-y-3 text-[13px] text-gray-700 dark:text-slate-300">
       <div className="grid gap-3 md:grid-cols-2">
@@ -337,11 +374,11 @@ function RulesTab({ detail, owner, onEdit, onClose, onDelete }: { detail: TeamCh
           <p className="m-0 text-[12px] text-gray-500">An upgrade made by {shortDate(c.sellTo)} counts if it is delivered and paid by {shortDate(c.graceUntil)}. Africa/Lagos time.</p>
         </div>
         <div className="rounded-2xl border border-gray-200 p-4 dark:border-slate-700">
-          <p className="m-0 text-[14px] font-black text-gray-900 dark:text-slate-50">Points (rules v{c.ruleVersion})</p>
-          <p className="m-0 mt-1">Eligible cross-sell (paid add-on): <strong>{c.scoring.crossSell}</strong></p>
-          <p className="m-0">Upgrade by one unit (e.g. 1 → 2): <strong>{c.scoring.upgradePlusOne}</strong></p>
-          <p className="m-0">Upgrade by two or more (e.g. 1 → 3): <strong>{c.scoring.upgradePlusTwo}</strong></p>
-          <p className="m-0 text-[12px] text-gray-500">One order scores once, at its highest category. Free gifts never count. Minimum added value {naira(c.scoring.minAddedValue)}{c.scoring.productIds.length ? ` · ${c.scoring.productIds.length} eligible products` : " · all products"}.</p>
+          <p className="m-0 text-[14px] font-black text-gray-900 dark:text-slate-50">Points by added contribution (rules v{c.ruleVersion})</p>
+          <p className="m-0 mt-1">Below {naira(c.scoring.onePointFrom)}: <strong>0 points</strong> (still shown)</p>
+          <p className="m-0">{naira(c.scoring.onePointFrom)} – {naira(c.scoring.twoPointsFrom - 1)}: <strong>1 point</strong></p>
+          <p className="m-0">{naira(c.scoring.twoPointsFrom)} and above: <strong>2 points</strong></p>
+          <p className="m-0 mt-1 text-[12px] text-gray-500">Added contribution = additional amount collected − added product cost (Product Master, on the order's day) − extra delivery cost − the rep's upsell/cross-sell bonus − packaging ({naira(c.scoring.packagingPerUnit)} per added unit) − gifts. One transaction, one score, two points at most{c.scoring.productIds.length ? ` · ${c.scoring.productIds.length} eligible products` : " · all products"}.</p>
         </div>
       </div>
       <div className="rounded-2xl border border-gray-200 p-4 dark:border-slate-700">
@@ -358,6 +395,26 @@ function RulesTab({ detail, owner, onEdit, onClose, onDelete }: { detail: TeamCh
           <li>The race is timed by when each order was delivered and paid, never by when it was reviewed.</li>
         </ul>
       </div>
+      <div className="rounded-2xl border border-gray-200 p-4 dark:border-slate-700">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div><p className="m-0 text-[14px] font-black text-gray-900 dark:text-slate-50">Historical baseline</p><p className="m-0 text-[12px] text-gray-500">The three months before the challenge, run through the same rule (delivered and paid orders, added contribution → points). The challenge should beat this.</p></div>
+          <button type="button" disabled={working} onClick={async () => { setWorking(true); try { await onBaseline(); } finally { setWorking(false); } }} className="!min-h-[40px] rounded-xl border border-gray-200 px-3 text-[12.5px] font-bold disabled:opacity-50">{working ? "Calculating…" : c.baseline ? "Recalculate" : "Calculate baseline"}</button>
+        </div>
+        {c.baseline ? (
+          <div className="mt-2 overflow-x-auto">
+            <table className="w-full !min-w-[420px] text-left text-[12.5px]">
+              <thead className="text-[11px] uppercase text-gray-500"><tr><th className="py-1.5 pr-3">Month</th><th className="py-1.5 pr-3">Transactions</th><th className="py-1.5 pr-3">Points</th><th className="py-1.5 pr-3">Contribution</th><th className="py-1.5">By team</th></tr></thead>
+              <tbody>
+                {c.baseline.months.map((row) => (
+                  <tr key={row.month} className="border-t border-gray-100 dark:border-slate-800"><td className="py-1.5 pr-3 font-bold">{row.month}</td><td className="py-1.5 pr-3">{row.transactions}</td><td className="py-1.5 pr-3 font-bold">{row.points}</td><td className="py-1.5 pr-3">{naira(row.contribution)}</td>
+                    <td className="py-1.5">{Object.entries(row.byTeam).map(([id, value]) => `${teamName.get(id) ?? "Team"} ${value.points}`).join(" · ") || "—"}</td></tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="m-0 mt-1.5 text-[12.5px] font-bold">Average: {c.baseline.averagePoints} points a month (both teams). Targets: {c.milestones.map((m) => m.target).join(" / ")} per team.</p>
+          </div>
+        ) : null}
+      </div>
       {c.approvedAt ? <p className="m-0 text-[12px] text-gray-500">Budget approved by {c.approvedBy} on {dateTime(c.approvedAt)}.</p> : null}
       <div className="flex flex-wrap gap-2">
         {c.status !== "closed" ? <button type="button" onClick={onEdit} className="!min-h-[44px] inline-flex items-center gap-2 rounded-xl border border-gray-200 px-4 text-[13px] font-bold"><Pencil className="h-4 w-4" />{c.status === "draft" ? "Edit draft" : owner ? "Change rules (Owner)" : "View settings"}</button> : null}
@@ -372,7 +429,7 @@ const LOG_LABEL: Record<string, string> = {
   draft_created: "Draft created", draft_edited: "Draft edited", published: "Budget approved and published", rules_changed: "Rules changed",
   status_paused: "Paused", status_active: "Resumed", status_closed: "Closed", entry_verified: "Order verified", entry_excluded: "Order excluded",
   entry_correction_requested: "Correction requested", entry_reversed: "Score reversed", score_reversed: "Score reversed (order changed)",
-  review_requested: "Rep asked for a review", rep_responded: "Rep responded", payout_approved: "Payout approved", payout_paid: "Payout paid"
+  review_requested: "Rep asked for a review", contribution_adjusted: "Contribution adjusted", escalation_resolved: "Escalation resolved by the Owner", escalated_to_owner: "Escalated to the Owner", baseline_calculated: "Baseline calculated", rep_responded: "Rep responded", payout_approved: "Payout approved", payout_paid: "Payout paid"
 };
 
 function LogTab({ detail }: { detail: TeamChallengeDetail }) {
@@ -402,13 +459,13 @@ function ChallengeEditor({ detail, onClose, onSave }: { detail: TeamChallengeDet
   const plus = (days: number) => new Date(Date.parse(`${today}T12:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
   const [form, setForm] = useState<TeamChallengeInput>(() => detail ? {
     name: detail.challenge.name, sellFrom: detail.challenge.sellFrom, sellTo: detail.challenge.sellTo, graceDays: detail.challenge.graceDays,
-    milestones: detail.challenge.milestones.map((row) => ({ target: row.target, winnerAmount: row.winnerAmount, runnerUpAmount: row.runnerUpAmount })),
+    milestones: detail.challenge.milestones.map((row) => ({ target: row.target, winnerAmount: row.winnerAmount, runnerUpAmount: row.runnerUpAmount, minPerMember: row.minPerMember })),
     scoring: detail.challenge.scoring, sponsorNote: detail.challenge.sponsorNote ?? undefined,
     teams: detail.teams.map((team) => ({ id: team.id, name: team.name, color: team.color, memberIds: team.members.map((member) => member.id) }))
   } : {
     name: "Upsell & Cross-Sell Race", sellFrom: today, sellTo: plus(29), graceDays: 7,
-    milestones: [{ target: 50, winnerAmount: 50000, runnerUpAmount: 20000 }, { target: 100, winnerAmount: 150000, runnerUpAmount: 60000 }],
-    scoring: { crossSell: 1, upgradePlusOne: 2, upgradePlusTwo: 3, minAddedValue: 0, productIds: [] },
+    milestones: [{ target: 50, winnerAmount: 50000, runnerUpAmount: 10000, minPerMember: 10 }, { target: 100, winnerAmount: 150000, runnerUpAmount: 40000, minPerMember: 20 }],
+    scoring: { onePointFrom: 10000, twoPointsFrom: 50000, packagingPerUnit: 500, productIds: [] },
     teams: [{ name: "Team A", color: "violet", memberIds: [] }, { name: "Team B", color: "teal", memberIds: [] }]
   });
   const [saving, setSaving] = useState(false);
@@ -467,23 +524,24 @@ function ChallengeEditor({ detail, onClose, onSave }: { detail: TeamChallengeDet
             <p className="m-0 text-[13px] font-black">Milestones and prizes (team totals, cumulative)</p>
             <div className="mt-2 space-y-2">
               {form.milestones.map((milestone, index) => (
-                <div key={index} className="grid grid-cols-3 gap-2">
+                <div key={index} className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   <label className="block"><span className="mb-1 block text-[11.5px] text-gray-500">Target points</span><input type="number" min={1} className={field} value={milestone.target} onChange={(event) => setForm({ ...form, milestones: form.milestones.map((row, i) => (i === index ? { ...row, target: Number(event.target.value) } : row)) })} /></label>
                   <label className="block"><span className="mb-1 block text-[11.5px] text-gray-500">First team (₦ total)</span><input type="number" min={0} className={field} value={milestone.winnerAmount} onChange={(event) => setForm({ ...form, milestones: form.milestones.map((row, i) => (i === index ? { ...row, winnerAmount: Number(event.target.value) } : row)) })} /></label>
                   <label className="block"><span className="mb-1 block text-[11.5px] text-gray-500">Other team (₦ total)</span><input type="number" min={0} className={field} value={milestone.runnerUpAmount} onChange={(event) => setForm({ ...form, milestones: form.milestones.map((row, i) => (i === index ? { ...row, runnerUpAmount: Number(event.target.value) } : row)) })} /></label>
+                  <label className="block"><span className="mb-1 block text-[11.5px] text-gray-500">Min. points per member</span><input type="number" min={0} className={field} value={milestone.minPerMember} onChange={(event) => setForm({ ...form, milestones: form.milestones.map((row, i) => (i === index ? { ...row, minPerMember: Number(event.target.value) } : row)) })} /></label>
                 </div>
               ))}
             </div>
             <p className="m-0 mt-2 rounded-xl bg-violet-50 px-3 py-2 text-[13px] font-bold text-violet-800 dark:bg-violet-500/10 dark:text-violet-200">Maximum prize budget: {naira(budget)} <span className="font-normal">(top milestone: first team + other team)</span></p>
           </div>
           <div>
-            <p className="m-0 text-[13px] font-black">Points table</p>
-            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {([["crossSell", "Cross-sell"], ["upgradePlusOne", "Upgrade +1 unit"], ["upgradePlusTwo", "Upgrade +2 or more"], ["minAddedValue", "Min. added value (₦)"]] as const).map(([key, label]) => (
+            <p className="m-0 text-[13px] font-black">Points by added contribution</p>
+            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {([["onePointFrom", "1 point from (₦)"], ["twoPointsFrom", "2 points from (₦)"], ["packagingPerUnit", "Packaging per added unit (₦)"]] as const).map(([key, label]) => (
                 <label key={key} className="block"><span className="mb-1 block text-[11.5px] text-gray-500">{label}</span><input type="number" min={0} className={field} value={form.scoring[key]} onChange={(event) => setForm({ ...form, scoring: { ...form.scoring, [key]: Number(event.target.value) } })} /></label>
               ))}
             </div>
-            <p className="m-0 mt-1 text-[11.5px] text-gray-500">An order scores once, at its highest category. Free gifts never count.</p>
+            <p className="m-0 mt-1 text-[11.5px] text-gray-500">Added contribution = additional amount collected − added product cost − extra delivery − rep bonus − packaging − gifts. Below the 1-point level scores 0; a transaction scores two points at most.</p>
           </div>
           {running ? <label className="block"><span className="mb-1 block text-[12.5px] font-bold">Reason for the change (the reps see it)</span><input className={field} value={form.reason ?? ""} onChange={(event) => setForm({ ...form, reason: event.target.value })} /></label> : null}
           {error ? <p className="m-0 rounded-xl bg-rose-50 px-3 py-2 text-[12.5px] font-semibold text-rose-700">{error}</p> : null}
