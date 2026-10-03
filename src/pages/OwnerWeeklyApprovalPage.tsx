@@ -1,3 +1,4 @@
+import MonthlyIncentiveSection from "./MonthlyIncentiveSection";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlertTriangle, BarChart3, Box, ChevronDown, ChevronRight, ClipboardList, Download, Eye, Lock, MoreVertical, RotateCcw,
@@ -11,7 +12,7 @@ import {
 import { CompanyProductTable, OrdersTable, RepBonusTable, RepReviewModal, shownSnapshot, type ReviewRepRow } from "./ManagerWeeklyReviewPage";
 import { LogMissDisputesPanel } from "../components/LogMissParts";
 import { HeadOfSalesBadge, headOfSalesBonusStatus } from "../components/HeadOfSalesParts";
-import { buildCompanySnapshot, type CompanyWeeklySnapshot, type ManagerBonusPreview, type WeeklyReportSnapshot } from "./weekly-report-model";
+import { buildCompanySnapshot, type CompanyWeeklySnapshot, type ManagerBonusPreview, type MonthlyIncentiveReport, type WeeklyReportSnapshot } from "./weekly-report-model";
 import type { HeadOfSalesReview, LogMissDispute, WeeklyLogMissRow, ManagerFundTotals, WeeklyBonusQuery, WeeklyCompanyReport, WeeklyReportAuditEntry, WeeklyReportCorrection } from "../lib/api";
 import { currencySymbol } from "../lib/money-privacy";
 
@@ -45,8 +46,10 @@ export default function OwnerWeeklyApprovalPage({
   rows, company, corrections, audit, managerBonus, managerName, financial, lowRateThreshold, dueDate, bonusQueries = [],
   funds = [], renderFunds, logMisses = [], logMissDisputes = [], onDecideLogMiss,
   headOfSales = null, renderHeadOfSales,
-  onApproveLock, onReturnToManager, onReopen, onBack
+  onApproveLock, onReturnToManager, onReopen, onBack, monthlyIncentive = null
 }: {
+  /** The month's incentive, only in the week the month ends. */
+  monthlyIncentive?: MonthlyIncentiveReport | null;
   weekStart: string;
   weekEnd: string;
   onShiftWeek: (weeks: number) => void;
@@ -105,6 +108,8 @@ export default function OwnerWeeklyApprovalPage({
   const totals = companySnap.totals;
   const prev = companySnap.previous;
   const frozenManagerBonus = (company?.managerBonusSnapshot as ManagerBonusPreview | null) ?? managerBonus;
+  const shownIncentive = frozenCompany?.monthlyIncentive ?? monthlyIncentive;
+  const incentiveCard = shownIncentive ? <MonthlyIncentiveSection report={shownIncentive} sym={sym} /> : null;
 
   // ── Exceptions & Red Flags ───────────────────────────────────────────────
   const redFlags = useMemo<RedFlag[]>(() => {
@@ -407,7 +412,7 @@ export default function OwnerWeeklyApprovalPage({
       <div className="flex gap-1 overflow-x-auto" role="tablist">
         {([["overview", "Company Overview"], ["reps", "Sales Rep Reports"], ["manager", "Manager Report"], ...(renderHeadOfSales ? [["headOfSales", "Head of Sales"]] as const : []), ["bonus", "Bonus Breakdown"], ["funds", "Funds & Expenses"], ["products", "Product Performance"], ["audit", "Audit Trail"]] as const).map(([key, label]) => (
           <button key={key} type="button" role="tab" aria-selected={tab === key} onClick={() => setTab(key)}
-            className={`!min-h-0 whitespace-nowrap rounded-lg px-5 py-2.5 text-[13px] font-semibold ${tab === key ? "bg-[#1F6FEB] text-white shadow-sm" : "bg-white text-gray-600 hover:text-gray-900 dark:bg-slate-900 dark:text-slate-300"}`}>
+            className={`!min-h-0 shrink-0 whitespace-nowrap rounded-lg px-5 py-2.5 text-[13px] font-semibold ${tab === key ? "bg-[#1F6FEB] text-white shadow-sm" : "bg-white text-gray-600 hover:text-gray-900 dark:bg-slate-900 dark:text-slate-300"}`}>
             {label}
           </button>
         ))}
@@ -457,6 +462,7 @@ export default function OwnerWeeklyApprovalPage({
                 {financialPanel}
               </div>
               {fundsCard}
+              {incentiveCard}
             </>
           )}
 
@@ -481,6 +487,7 @@ export default function OwnerWeeklyApprovalPage({
           {tab === "manager" && (
             <div className="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
               {managerReportPanel}
+              {incentiveCard}
               <Panel>
                 <NumberedHeader title="Returns to the manager" subtitle="Every time this week came back to the manager, and their answer." />
                 <div className="pt-3"><CorrectionList corrections={corrections.filter((item) => item.companyReportId)} empty={<p className="m-0 px-5 pb-5 text-[12px] text-gray-500">Not returned this week.</p>} /></div>
