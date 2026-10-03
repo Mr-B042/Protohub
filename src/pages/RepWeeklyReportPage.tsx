@@ -24,7 +24,7 @@ import { currencySymbol } from "../lib/money-privacy";
  */
 export default function RepWeeklyReportPage({
   weekStart, weekEnd, onShiftWeek, onPickWeek, canGoNext,
-  live, report, companyStatus, corrections, loading, error, canSubmitNow, dueDate, todayKey, submittedLate, productImageByKey,
+  live, report, companyStatus, corrections, loading, error, canSubmitNow, beforeStart = false, dueDate, todayKey, submittedLate, productImageByKey,
   bonusQueries, onRunBonusCheck, onSendBonusQuery,
   logMisses = [], logMissDisputes = [], canDispute = true, onCheckLogMiss, onEscalateLogMiss, onLogMissChecked,
   isHeadOfSales = false, renderHeadOfSales,
@@ -58,6 +58,8 @@ export default function RepWeeklyReportPage({
   error: string;
   /** False until the Tuesday after the week (the due date). */
   canSubmitNow: boolean;
+  /** A week before reports started: settled, nothing to submit (a returned report can still be answered). */
+  beforeStart?: boolean;
   /** The Tuesday after the week. Submitting after it is allowed but marked Late. */
   dueDate: string;
   todayKey: string;
@@ -89,7 +91,7 @@ export default function RepWeeklyReportPage({
 
   const canSubmit = (status === "draft" || status === "returned")
     && companyStatus !== "submitted_to_owner" && companyStatus !== "locked"
-    && canSubmitNow && !!live && !loading
+    && canSubmitNow && !!live && !loading && !(beforeStart && status === "draft")
     && openReturns.every((row) => (responses[row.id] ?? "").trim().length >= 2);
 
   const steps: WorkflowStep[] = [
@@ -387,7 +389,9 @@ export default function RepWeeklyReportPage({
             </button>
             {(status === "draft" || status === "returned") && (
               <p className={`m-0 mt-2 text-[11px] ${!canSubmitNow ? "text-gray-500" : todayKey > dueDate && status === "draft" ? "font-semibold text-rose-600" : "text-gray-600 dark:text-slate-300"}`}>
-                {!canSubmitNow
+                {beforeStart && status === "draft"
+                  ? "Weekly reports start with the week of 27 Sept - 3 Oct 2026. This week is already settled, so there is nothing to submit."
+                  : !canSubmitNow
                   ? `Opens on Tuesday, ${longDate(dueDate)}. Submit it that day, after the weekend's orders are attended to.`
                   : todayKey > dueDate && status === "draft"
                     ? `Late: this was due by the end of Tuesday, ${longDate(dueDate)}. You can still submit; it will be marked late.`

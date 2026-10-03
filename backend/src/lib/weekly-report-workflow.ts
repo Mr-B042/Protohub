@@ -107,6 +107,13 @@ export function canOwnerAct(action: OwnerAction, company: CompanyReportStatus | 
   return no("The manager has not submitted this week yet.");
 }
 
+/**
+ * The first week reps submit (Bright, 3 Oct 2026): Sun 27 Sept - Sat 3 Oct.
+ * Earlier weeks are already settled, so no new report is started for them;
+ * a report a manager already returned can still be answered.
+ */
+export const FIRST_REPORT_WEEK = "2026-09-27";
+
 /** The Tuesday after the week (week Sun 20 - Sat 26 Sept -> Tue 29 Sept). */
 export const reportDueDate = (weekStart: string) => {
   const date = new Date(`${weekStart}T12:00:00Z`);

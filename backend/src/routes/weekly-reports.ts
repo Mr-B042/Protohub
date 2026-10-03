@@ -8,7 +8,7 @@ import { notifyWeeklyReport } from "../lib/weekly-report-notifications.js";
 import { branchFundManagers, loadFundWeek } from "./manager-funds.js";
 import { disputesForWeek, logMissesForWeek } from "./log-misses.js";
 import { addDaysToDateKey, sundayWeekStartForDateKey, lagosDateKey, weekEndFromStart } from "../lib/sales-bonus-engine.js";
-import {
+import { FIRST_REPORT_WEEK,
   CORRECTION_SECTIONS,
   canManagerAct,
   canOwnerAct,
@@ -470,6 +470,10 @@ router.post("/mine/submit", requireRole("Sales Rep"), async (req, res) => {
     // Reports open on the TUESDAY after the week (Bright, 1 Oct 2026), so the
     // weekend's orders are attended to before the week is reported. Due by
     // the end of that Tuesday; later is allowed but recorded as late.
+    const existing = await loadRepReport(orgId, branchId, req.user!.id, weekStart);
+    if (weekStart < FIRST_REPORT_WEEK && existing?.status !== "returned") {
+      throw httpError(400, "Weekly reports start with the week of 27 Sept - 3 Oct 2026. Earlier weeks are already settled, so there is nothing to submit.");
+    }
     const dueDate = reportDueDate(weekStart);
     if (today < dueDate) throw httpError(400, `This week's report opens on Tuesday ${dueDate}. Submit it that day.`);
     const late = today > dueDate;

@@ -256,7 +256,7 @@ import OwnerWeeklyApprovalPage, { type WeeklyFinancialSummary } from "./pages/Ow
 import { CompanyReportHistoryPage, MyReportsHistoryPage, WeeklyAuditLogPage } from "./pages/WeeklyReportHistoryPages";
 import {
   buildCompanySnapshot, buildRepWeeklySnapshot, compareSnapshots, firstSubmittedAt, isLateSubmission,
-  reportDueDate, reportOpensOn, runBonusCheck, type ManagerBonusPreview, type NamedOrderLookup, type WeeklyReportSnapshot
+  FIRST_REPORT_WEEK, reportDueDate, reportOpensOn, runBonusCheck, type ManagerBonusPreview, type NamedOrderLookup, type WeeklyReportSnapshot
 } from "./pages/weekly-report-model";
 import type { CorrectionDraft } from "./components/WeeklyReportParts";
 import {
@@ -31648,6 +31648,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           companyStatus={mine?.companyStatus ?? "open"}
           corrections={mine?.corrections ?? []}
           canSubmitNow={todayKey >= reportOpensOn(weeklyReportWeekStart)}
+          beforeStart={weeklyReportWeekStart < FIRST_REPORT_WEEK}
           dueDate={dueDate}
           todayKey={todayKey}
           submittedLate={me ? isLateSubmission(weeklyReportWeekStart, firstSubmittedAt(mine?.audit ?? [], me.id)) : false}
