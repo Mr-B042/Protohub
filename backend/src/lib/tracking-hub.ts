@@ -68,8 +68,15 @@ const isMetaId = (value: unknown) => typeof value === "string" && /^\d{10,22}$/.
  * adset_id / ad_id, or (how Bright's ads do it today) as utm_id = campaign,
  * utm_term = ad set, utm_content = ad.
  */
-export function orderAdIds(order: { form_context?: Record<string, unknown> | null; utm_content?: string | null; utm_term?: string | null; utm_campaign?: string | null }) {
+/** Orders from these ad platforms carry their own long numeric ids (TikTok's
+ *  utm_id 1877402734527570) that look like Meta ids but never are. */
+const NON_META_SOURCE = /tiktok|google|youtube|snap|twitter|bing|pinterest/i;
+
+export function orderAdIds(order: { form_context?: Record<string, unknown> | null; utm_content?: string | null; utm_term?: string | null; utm_campaign?: string | null; utm_source?: string | null }) {
   const ctx = order.form_context ?? {};
+  if (NON_META_SOURCE.test(String(order.utm_source ?? "")) || (typeof ctx.ttclid === "string" && ctx.ttclid)) {
+    return { campaignId: null, adsetId: null, adId: null };
+  }
   const pick = (...values: unknown[]) => {
     for (const value of values) if (isMetaId(value)) return String(value).trim();
     return null;
@@ -187,14 +194,10 @@ export function reconciliationVerdict(input: {
   };
 }
 
-// ── Why a campaign row differs from Meta (Bright, 3 Oct 2026) ────────────────
-// Meta credits a sale to the LAST ad the customer clicked or viewed, which is
-// often a different campaign for the same product than the link they ordered
-// from. And a sale sent to several Pixels ("Also send to") can be credited
-// once per Pixel. Within one product, a campaign's surplus that cancels
-// another's shortfall is "credited to another campaign"; Meta surplus left
-// over, up to the extra-Pixel sends, is "counted on another Pixel". Only what
-// remains is a real gap.
+// ── Which product a Meta campaign is for (Bright, 3 Oct 2026) ────────────────
+// Used for the Reconciliation "By product" totals when no order ties a
+// campaign to a product. ⚠️ Reconciliation shows FACTS only: it never guesses
+// which campaign Meta credited a sale to (Meta does not say).
 
 const wordsOf = (text: string) => [
   // "5-in-1" is one word: the 5 alone also names "5-Slot Toothbrush Holder".
@@ -219,43 +222,4 @@ export function productFromName(name: string | null | undefined, products: Array
     if (score > bestScore) { best = product.id; bestScore = score; tie = false; } else if (score > 0 && score === bestScore) tie = true;
   });
   return bestScore > 0 && !tie ? best : null;
-}
-
-export type GapRow = { id: string; name: string; productId: string | null; protohub: number; meta: number; orderIds: string[] };
-export type GapExplanation = { creditedElsewhere: number; otherPixel: number; unexplained: number; note: string };
-
-export function explainCampaignGaps(rows: GapRow[], extraPixelSends: Map<string, number>): Map<string, GapExplanation> {
-  const result = new Map<string, GapExplanation>();
-  const byProduct = new Map<string, GapRow[]>();
-  for (const row of rows) {
-    if (!row.productId || row.meta === row.protohub) continue;
-    byProduct.set(row.productId, [...(byProduct.get(row.productId) ?? []), row]);
-  }
-  for (const [productId, group] of byProduct) {
-    const metaSide = group.filter((row) => row.meta > row.protohub).sort((a, b) => (b.meta - b.protohub) - (a.meta - a.protohub));
-    const ourSide = group.filter((row) => row.protohub > row.meta).sort((a, b) => (b.protohub - b.meta) - (a.protohub - a.meta));
-    const metaSurplus = metaSide.reduce((sum, row) => sum + row.meta - row.protohub, 0);
-    const ourSurplus = ourSide.reduce((sum, row) => sum + row.protohub - row.meta, 0);
-    let offsetMeta = Math.min(metaSurplus, ourSurplus);
-    let offsetOurs = offsetMeta;
-    let pixel = Math.min(metaSurplus - offsetMeta, extraPixelSends.get(productId) ?? 0);
-    const names = (list: GapRow[]) => list.slice(0, 3).map((row) => `"${row.name}"`).join(", ") + (list.length > 3 ? ` and ${list.length - 3} more` : "");
-    const ourOrders = ourSide.flatMap((row) => row.orderIds).slice(0, 6).map((id) => `#${id}`).join(", ");
-    for (const row of metaSide) {
-      const gap = row.meta - row.protohub;
-      const credited = Math.min(gap, offsetMeta); offsetMeta -= credited;
-      const viaPixel = Math.min(gap - credited, pixel); pixel -= viaPixel;
-      const parts: string[] = [];
-      if (credited > 0) parts.push(`Meta credited ${credited} sale${credited === 1 ? "" : "s"} here that came through ${names(ourSide)}${ourOrders ? ` (${ourOrders})` : ""}.`);
-      if (viaPixel > 0) parts.push(`${viaPixel} is a sale Meta counted twice: it was also sent to another Pixel ("Also send to"), and Meta counts it once per Pixel. That purchase did not happen.`);
-      result.set(row.id, { creditedElsewhere: credited, otherPixel: viaPixel, unexplained: gap - credited - viaPixel, note: parts.join(" ") });
-    }
-    for (const row of ourSide) {
-      const gap = row.protohub - row.meta;
-      const credited = Math.min(gap, offsetOurs); offsetOurs -= credited;
-      const note = credited > 0 ? `${credited} order${credited === 1 ? "" : "s"} from this campaign${row.orderIds.length ? ` (${row.orderIds.slice(0, 4).map((id) => `#${id}`).join(", ")})` : ""} Meta credited to ${names(metaSide)}.` : "";
-      result.set(row.id, { creditedElsewhere: credited, otherPixel: 0, unexplained: gap - credited, note });
-    }
-  }
-  return result;
 }

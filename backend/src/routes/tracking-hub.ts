@@ -7,7 +7,7 @@ import { sendMetaCapiPurchase, testMetaCapiConnection } from "../lib/meta-capi.j
 import { testTikTokConnection } from "../lib/tiktok-events.js";
 import { accountAdsetPixels, adPurchases, campaignsByIds, checkDataset, datasetEventStats, datasetQuality, discoverAdAccounts, discoverPixels, metaBusiness, metaWhoAmI, scanPage } from "../lib/meta-graph.js";
 import { connectionToken } from "../lib/tracking-credentials.js";
-import { ATTRIBUTION_FIELDS, attributionCapture, domainOf, explainCampaignGaps, humanMetaError, orderAdIds, pathOf, productFromName, reconciliationVerdict } from "../lib/tracking-hub.js";
+import { ATTRIBUTION_FIELDS, attributionCapture, domainOf, humanMetaError, orderAdIds, pathOf, productFromName, reconciliationVerdict } from "../lib/tracking-hub.js";
 import {
   DEFAULT_HUB_SETTINGS, MODE_OF_STRATEGY, STRATEGY_OF_MODE, assess, change, dayOfIso, daysBetween, eventsFor, formOrders,
   hubAudit, journeyCounts, kpisOf, ledgerRow, loadBasics, loadHubSettings, pct, sumVisits, type HubSettings, type JourneyRow, type LedgerRow
@@ -1252,15 +1252,15 @@ function insightProduct(insight: any, data: { adHome: Map<string, { productId: s
     ?? productFromName(insight.ad_name, data.basics.products);
 }
 
-/** Meta vs Protohub per product: the honest headline (campaign credit moves around inside a product). */
-function reconProducts(data: { rows: LedgerRow[]; insights: any[]; extraSends: Map<string, number>; adHome: Map<string, { productId: string | null }>; basics: { products: Array<{ id: string; name: string; imageUrl?: string | null }> } }) {
-  const byProduct = new Map<string, { protohub: number; meta: number; extraPixelSales: number }>();
-  const get = (id: string) => { const entry = byProduct.get(id) ?? { protohub: 0, meta: 0, extraPixelSales: 0 }; byProduct.set(id, entry); return entry; };
+/** Meta vs Protohub per product: Meta-ad orders placed before Meta's numbers were loaded, against Meta's purchases. */
+function reconProducts(data: { rows: LedgerRow[]; insights: any[]; adHome: Map<string, { productId: string | null }>; basics: { products: Array<{ id: string; name: string; imageUrl?: string | null }> } }) {
+  const lastLoaded = lastLoadedOf(data.insights);
+  const byProduct = new Map<string, { protohub: number; meta: number; pending: number }>();
+  const get = (id: string) => { const entry = byProduct.get(id) ?? { protohub: 0, meta: 0, pending: 0 }; byProduct.set(id, entry); return entry; };
   for (const row of data.rows) {
     if (!row.productId || !row.campaignId) continue;
     const entry = get(row.productId);
-    entry.protohub += 1;
-    if ((data.extraSends.get(row.orderId) ?? 0) > 0) entry.extraPixelSales += 1;
+    if (lastLoaded && Date.parse(row.createdAt) > Date.parse(lastLoaded)) entry.pending += 1; else entry.protohub += 1;
   }
   for (const insight of data.insights) {
     const productId = insightProduct(insight, data);
@@ -1269,8 +1269,8 @@ function reconProducts(data: { rows: LedgerRow[]; insights: any[]; extraSends: M
   return Array.from(byProduct.entries()).map(([id, entry]) => {
     const product = data.basics.products.find((row) => row.id === id);
     const meta = Math.round(entry.meta);
-    return { id, name: product?.name ?? (id === "unknown" ? "Not linked to a product" : id), image: product?.imageUrl ?? null, protohub: entry.protohub, meta, difference: meta - entry.protohub, extraPixelSales: entry.extraPixelSales };
-  }).filter((row) => row.protohub + row.meta > 0).sort((a, b) => (b.protohub + b.meta) - (a.protohub + a.meta));
+    return { id, name: product?.name ?? (id === "unknown" ? "Not linked to a product" : id), image: product?.imageUrl ?? null, protohub: entry.protohub, meta, difference: meta - entry.protohub, pendingMeta: entry.pending };
+  }).filter((row) => row.protohub + row.meta + row.pendingMeta > 0).sort((a, b) => (b.protohub + b.meta) - (a.protohub + a.meta));
 }
 type ReconData = Awaited<ReturnType<typeof reconData>>;
 
@@ -1294,9 +1294,9 @@ function reconKey(view: ReconView, order: LedgerRow | null, insight: any | null,
 }
 
 function reconRows(view: ReconView, data: ReconData, settings: HubSettings) {
-  const groups = new Map<string, { id: string; name: string; orders: LedgerRow[]; meta: number; value: number; spend: number; accounts: Set<string>; sourceIds: Set<string>; insightProducts: Map<string, number> }>();
+  const groups = new Map<string, { id: string; name: string; orders: LedgerRow[]; meta: number; value: number; spend: number; accounts: Set<string>; sourceIds: Set<string>; insightProducts: Map<string, number>; loadedAt: string | null }>();
   const get = (key: { id: string; name: string }) => {
-    const entry = groups.get(key.id) ?? { id: key.id, name: key.name, orders: [] as LedgerRow[], meta: 0, value: 0, spend: 0, accounts: new Set<string>(), sourceIds: new Set<string>(), insightProducts: new Map<string, number>() };
+    const entry = groups.get(key.id) ?? { id: key.id, name: key.name, orders: [] as LedgerRow[], meta: 0, value: 0, spend: 0, accounts: new Set<string>(), sourceIds: new Set<string>(), insightProducts: new Map<string, number>(), loadedAt: null as string | null };
     if (!entry.name && key.name) entry.name = key.name;
     groups.set(key.id, entry);
     return entry;
@@ -1310,12 +1310,20 @@ function reconRows(view: ReconView, data: ReconData, settings: HubSettings) {
     entry.accounts.add(insight.ad_account_id); entry.sourceIds.add(insight.data_source_id);
     const productId = insightProduct(insight, data);
     if (productId) entry.insightProducts.set(productId, (entry.insightProducts.get(productId) ?? 0) + (Number(insight.purchases) || 0) + 0.001);
+    if (insight.fetched_at && (!entry.loadedAt || Date.parse(insight.fetched_at) > Date.parse(entry.loadedAt))) entry.loadedAt = insight.fetched_at;
   }
   const metaLoaded = data.insights.length > 0;
   const productOf = new Map(data.basics.products.map((row: any) => [row.id, row]));
   const resolved = new Set(data.notes.filter((note: any) => note.scope === view && note.resolved).map((note: any) => note.scope_id));
-  const built = Array.from(groups.values()).map((group) => {
-    const protohub = group.orders.length;
+  const lastLoaded = lastLoadedOf(data.insights);
+  const noun = view === "campaign" ? "campaign" : view === "adset" ? "ad set" : view === "ad" ? "ad" : view === "landing_page" ? "page" : view;
+  return Array.from(groups.values()).map((group) => {
+    // FACTS ONLY (Bright, 3 Oct 2026). An order placed after Meta's numbers
+    // were loaded cannot be in them, so it is held out of the comparison.
+    const loadedAt = group.loadedAt ?? lastLoaded;
+    const afterLoad = metaLoaded && loadedAt ? group.orders.filter((row) => Date.parse(row.createdAt) > Date.parse(loadedAt)) : [];
+    const compared = group.orders.filter((row) => !afterLoad.includes(row));
+    const protohub = compared.length;
     const meta = metaLoaded ? Math.round(group.meta) : null;
     const matchRate = meta === null ? null : Math.max(protohub, meta) === 0 ? 100 : Math.round((Math.min(protohub, meta) / Math.max(protohub, meta)) * 1000) / 10;
     const firstAd = group.orders.find((row) => row.adId)?.adId ?? "";
@@ -1325,49 +1333,50 @@ function reconRows(view: ReconView, data: ReconData, settings: HubSettings) {
     const accountId = group.accounts.size ? Array.from(group.accounts)[0] : null;
     const adAccount: any = accountId ? (data.basics.adAccounts as any[]).find((row) => row.account_id === accountId) : null;
     const connection: any = adAccount ? (data.basics.connections as any[]).find((row) => row.id === adAccount.connection_id) : null;
-    const sent = group.orders.filter((row) => row.serverStatus === "sent" || row.serverStatus === "dry_run").length;
-    const duplicates = group.orders.filter((row) => data.events.server.get(row.orderId)?.status === "duplicate").length;
-    const verdict = reconciliationVerdict({ protohubOrders: protohub, purchaseEvents: group.orders.filter((row) => row.browser || row.serverStatus === "sent").length, sentToMeta: sent, duplicates, metaPurchases: meta });
+    const isSent = (row: LedgerRow) => row.serverStatus === "sent" || row.serverStatus === "dry_run";
+    const sent = compared.filter(isSent).length;
+    const duplicates = compared.filter((row) => data.events.server.get(row.orderId)?.status === "duplicate").length;
+    const verdict = reconciliationVerdict({ protohubOrders: protohub, purchaseEvents: compared.filter((row) => row.browser || row.serverStatus === "sent").length, sentToMeta: sent, duplicates, metaPurchases: meta });
     const investigate = matchRate !== null && matchRate < settings.investigateBelowMatchRate && Math.abs((meta ?? 0) - protohub) > 1;
+    const facts: string[] = [];
+    if (afterLoad.length > 0) {
+      facts.push(`${afterLoad.length} order${afterLoad.length === 1 ? "" : "s"} (${afterLoad.slice(0, 5).map((row) => `#${row.orderId}`).join(", ")}) came in after Meta's numbers were loaded (${lagosWhen(loadedAt!)}), so ${afterLoad.length === 1 ? "it is" : "they are"} not compared yet. Press Refresh Data.`);
+    }
+    if (meta !== null && protohub > meta) {
+      const lines = compared.slice(0, 6).map((row) => `#${row.orderId} (${lagosWhen(row.createdAt)}): ${isSent(row) ? `Purchase sent to Pixel ${row.serverPixel ?? "?"}` : "no Purchase sent to Meta"}`);
+      const notSent = compared.filter((row) => !isSent(row)).length;
+      facts.push(`${lines.join("; ")}.`);
+      facts.push(notSent > 0
+        ? `${notSent} of these order${notSent === 1 ? " was" : "s were"} not sent to Meta, so that part of the gap is on our side.`
+        : `Meta received every one of these, but shows ${meta} under this ${noun}.`);
+    }
+    if (meta !== null && meta > protohub) {
+      facts.push(`Meta reports ${meta} purchase${meta === 1 ? "" : "s"} here; ${protohub === 0 ? "no Protohub order" : `${protohub} Protohub order${protohub === 1 ? "" : "s"}`} came through this ${noun}'s ad link in this period. By default Meta counts a purchase made within 7 days of clicking this ad or 1 day of viewing it, even when the order came through a different link.`);
+    }
     return {
       id: group.id, name: group.name || (view === "product" ? product?.name : null) || (view === "campaign" ? data.campaigns.find((row: any) => row.campaign_id === group.id)?.name : null) || group.id, view,
       image: product?.imageUrl ?? null, productName: product?.name ?? null,
       account: adAccount?.name || source?.ad_account_label || source?.name || (accountId ? `act_${accountId}` : "—"),
       accountId, dataSourceName: source?.name ?? null, businessName: connection?.name || source?.business_name || null,
       protohub, meta, difference: meta === null ? null : meta - protohub, matchRate, spend: group.spend,
+      pendingMeta: afterLoad.length,
       // "Matched" only when the counts agree or the match rate clears the bar;
       // a small gap below the bar (e.g. 0 vs 1) says which side is higher.
       status: resolved.has(group.id) ? "resolved" : meta === null ? "no_meta" : investigate ? "investigate"
         : meta === protohub || (matchRate !== null && matchRate >= settings.investigateBelowMatchRate) ? "matched"
         : meta > protohub ? "meta_higher" : "protohub_higher", verdict,
-      explanation: null as string | null,
-      gapProductId: group.orders.find((row) => row.productId)?.productId
-        ?? (Array.from(group.insightProducts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null),
-      orderIds: group.orders.map((row) => row.orderId)
+      explanation: facts.length ? facts.join(" ") : null
     };
-  });
-  // Campaign / ad set / ad: Meta moves credit between campaigns of the same
-  // product, and counts a multi-Pixel sale once per Pixel. Explain those gaps
-  // instead of flagging them.
-  if (view === "campaign" || view === "adset" || view === "ad") {
-    const extraByProduct = new Map<string, number>();
-    for (const row of data.rows) {
-      const sends = data.extraSends.get(row.orderId) ?? 0;
-      if (row.productId && sends > 0) extraByProduct.set(row.productId, (extraByProduct.get(row.productId) ?? 0) + sends);
-    }
-    const gaps = explainCampaignGaps(built.filter((row) => row.meta !== null && row.status !== "resolved").map((row) => ({
-      id: row.id, name: row.name, productId: row.gapProductId, protohub: row.protohub, meta: row.meta ?? 0, orderIds: row.orderIds
-    })), extraByProduct);
-    for (const row of built) {
-      const gap = gaps.get(row.id);
-      if (!gap || !gap.note) continue;
-      row.explanation = gap.note;
-      if (gap.unexplained === 0) (row as any).status = gap.creditedElsewhere > 0 ? "credited_elsewhere" : "other_pixel";
-    }
-  }
-  return built.map(({ gapProductId: _product, orderIds: _orders, ...row }) => row)
-    .sort((a, b) => (b.protohub + (b.meta ?? 0)) - (a.protohub + (a.meta ?? 0)));
+  }).sort((a, b) => (b.protohub + (b.meta ?? 0)) - (a.protohub + (a.meta ?? 0)));
 }
+
+/** When Meta's numbers were last loaded (latest fetch among the rows shown). */
+function lastLoadedOf(insights: any[]): string | null {
+  let latest: string | null = null;
+  for (const row of insights) if (row.fetched_at && (!latest || Date.parse(row.fetched_at) > Date.parse(latest))) latest = row.fetched_at;
+  return latest;
+}
+const lagosWhen = (iso: string) => new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Africa/Lagos" });
 
 router.get("/reconciliation", async (req, res) => {
   try {
@@ -1387,12 +1396,19 @@ router.get("/reconciliation", async (req, res) => {
     if (business) rows = rows.filter((row) => row.businessName === business);
     if (websiteDomain) rows = rows.filter((row) => row.id.startsWith(websiteDomain) || data.rows.some((order) => order.website === websiteDomain && reconKey(view, order, null, data.adHome)?.id === row.id));
     const metaTotal = data.insights.length ? Math.round(data.insights.reduce((sum: number, row: any) => sum + (Number(row.purchases) || 0), 0)) : null;
-    const protohub = data.rows.length;
+    const protohubAll = data.rows.length;
+    // The Meta comparison counts only orders from Meta ads (a Meta campaign id),
+    // placed before Meta's numbers were loaded.
+    const loadedAt = lastLoadedOf(data.insights);
+    const fromMeta = data.rows.filter((row) => row.campaignId);
+    const pendingMeta = loadedAt ? fromMeta.filter((row) => Date.parse(row.createdAt) > Date.parse(loadedAt)).length : 0;
+    const protohub = fromMeta.length - pendingMeta;
     const lastFetched = data.insights.map((row: any) => row.fetched_at).sort().pop() ?? null;
     res.json({
       period, view, lastFetched,
       kpis: {
-        protohub, protohubChange: change(protohub, previous.length),
+        protohub, protohubChange: change(protohub, previous.filter((order) => orderAdIds(order).campaignId).length),
+        protohubAll, pendingMeta, loadedAt,
         meta: metaTotal, difference: metaTotal === null ? null : metaTotal - protohub,
         matchRate: metaTotal === null ? null : Math.max(protohub, metaTotal) === 0 ? 100 : Math.round((Math.min(protohub, metaTotal) / Math.max(protohub, metaTotal)) * 1000) / 10,
         matched: metaTotal === null ? null : Math.min(protohub, metaTotal), matchedOf: metaTotal === null ? null : Math.max(protohub, metaTotal),
