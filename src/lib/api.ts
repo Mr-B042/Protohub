@@ -2232,7 +2232,11 @@ export const managerProductChallengesApi = {
   create: (body: unknown) => post<any>("/api/manager-product-challenges", body),
   update: (id: string, body: unknown) => patch<any>(`/api/manager-product-challenges/${id}`, body),
   remove: (id: string) => del<void>(`/api/manager-product-challenges/${id}`),
-  saveAllocations: (id: string, allocations: unknown[]) => put<any>(`/api/manager-product-challenges/${id}/allocations`, { allocations })
+  saveAllocations: (id: string, allocations: unknown[]) => put<any>(`/api/manager-product-challenges/${id}/allocations`, { allocations }),
+  markIncentivePaid: (id: string, body: { note?: string; people: Array<{ kind: string; personId: string | null; personName: string; earned: number; rate: number | null }> }) =>
+    post<any>(`/api/manager-product-challenges/${id}/incentive/paid`, body),
+  undoIncentivePaid: (id: string, body: { kind: string; personId: string | null }) =>
+    request<any>("DELETE", `/api/manager-product-challenges/${id}/incentive/paid`, body)
 };
 
 export const upsellBonusApi = {

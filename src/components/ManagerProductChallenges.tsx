@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Trophy,
   Circle,
   CircleDollarSign,
   Gauge,
@@ -24,6 +25,8 @@ import {
   XCircle
 } from "lucide-react";
 import { LoadingState } from "./ui/loading-state";
+
+import { ChallengeIncentivePanel, type ChallengeIncentive, type IncentiveLine } from "./ChallengeIncentivePanel";
 
 export type ManagerChallengeMilestone = {
   index: number;
@@ -56,6 +59,8 @@ export type ManagerProductChallenge = {
   description: string;
   managerRewardAmount?: number;
   managerEarnedRewardAmount?: number;
+  /** Monthly incentive: earned reward × the month's delivery-rate tier. */
+  incentive?: ChallengeIncentive;
   progressUnits: number;
   progressPercent: number;
   expectedPercent: number;
@@ -169,6 +174,8 @@ type Props = {
   onDelete: (id: string) => Promise<void>;
   onSaveAllocations?: (challengeId: string, allocations: Array<Pick<ChallengeAllocation, "repId" | "targetUnits" | "rewardAmount" | "milestoneTargets">>) => Promise<void>;
   onOpenBonusRules: () => void;
+  onMarkIncentivePaid?: (challengeId: string, lines: IncentiveLine[]) => Promise<void>;
+  onUndoIncentivePaid?: (challengeId: string, line: IncentiveLine) => Promise<void>;
 };
 
 const fieldControlClass = "w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm font-bold text-gray-900 outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100";
@@ -646,7 +653,9 @@ export function ManagerProductChallenges({
   onSave,
   onDelete,
   onSaveAllocations,
-  onOpenBonusRules
+  onOpenBonusRules,
+  onMarkIncentivePaid,
+  onUndoIncentivePaid
 }: Props) {
   const canEdit = role === "Owner";
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -673,6 +682,13 @@ export function ManagerProductChallenges({
     [challenges, challengeTodayKey]
   );
   const [showPastChallenges, setShowPastChallenges] = useState(false);
+  const payoutsDue = useMemo(() => pastChallenges.flatMap((challenge) => {
+    const incentive = challenge.incentive;
+    if (!incentive || incentive.status === "accruing") return [];
+    const unpaid = [...(incentive.manager ? [incentive.manager] : []), ...incentive.reps].filter((line) => !line.paid && line.payable > 0);
+    if (unpaid.length === 0) return [];
+    return [{ challenge, amount: unpaid.reduce((sum, line) => sum + line.payable, 0), people: unpaid.length }];
+  }), [pastChallenges]);
   useEffect(() => {
     // Open on this month's challenge, not on history.
     if (!challenges.some((challenge) => challenge.id === selectedChallengeId)) {
@@ -703,6 +719,9 @@ export function ManagerProductChallenges({
       onDelete={() => void onDelete(challenge.id)}
       onToggleStatus={() => void onSave({ ...challenge, status: challenge.status === "active" ? "paused" : "active" }, challenge.id)}
       onSaveAllocations={onSaveAllocations}
+      role={role}
+      onMarkIncentivePaid={onMarkIncentivePaid ? (lines) => onMarkIncentivePaid(challenge.id, lines) : undefined}
+      onUndoIncentivePaid={onUndoIncentivePaid ? (line) => onUndoIncentivePaid(challenge.id, line) : undefined}
     />
   );
   const previewProduct = productMap.get(draft.productId);
@@ -1035,6 +1054,24 @@ export function ManagerProductChallenges({
             </div>
           ) : (
             <>
+              {/* Ended months whose incentive is still to pay sit folded in
+                  "Past months", so they get a banner up top. One per product. */}
+              {payoutsDue.length > 0 && (
+                <div className="space-y-2">
+                  {payoutsDue.map(({ challenge, amount, people }) => (
+                    <button key={challenge.id} type="button"
+                      onClick={() => { setShowPastChallenges(true); setSelectedChallengeId(challenge.id); }}
+                      className="!min-h-[56px] flex w-full items-center gap-3 rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 to-white px-3.5 py-3 text-left shadow-sm active:scale-[0.99]">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700"><Trophy className="h-5 w-5" /></span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[13.5px] font-black leading-snug text-gray-900">{productMap.get(challenge.productId)?.name ?? challenge.name}: {challengeMonthLabel(challenge.endDate)} incentive {role === "Sales Rep" ? "" : "to pay"}</span>
+                        <span className="block text-[12px] text-amber-800">{role === "Sales Rep" ? `You get ${formatMoney(amount, challenge.currency)}` : `${formatMoney(amount, challenge.currency)} for ${people} ${people === 1 ? "person" : "people"}`} · {challenge.incentive?.status === "overdue" ? "overdue" : `by ${formatDateShort(challenge.incentive?.dueBy ?? challenge.endDate)}`}</span>
+                      </span>
+                      <ChevronRight className="h-5 w-5 shrink-0 text-amber-600" />
+                    </button>
+                  ))}
+                </div>
+              )}
               {currentChallenges.length === 0 ? (
                 <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-indigo-200 bg-white/70 px-5 py-6 text-center">
                   <Target className="h-6 w-6 text-indigo-300" />
@@ -1080,7 +1117,7 @@ export function ManagerProductChallenges({
                     <ChevronDown className={`h-5 w-5 shrink-0 text-gray-400 transition-transform ${showPastChallenges ? "rotate-180" : ""}`} />
                   </button>
                   {showPastChallenges && (
-                    <div className="space-y-4 border-t border-gray-100 px-4 py-4">
+                    <div className="space-y-4 border-t border-gray-100 px-2 py-3 sm:px-4 sm:py-4">
                       {Array.from(new Set(pastChallenges.map((challenge) => challengeMonthLabel(challenge.endDate)))).map((month) => (
                         <div key={month}>
                           <p className="m-0 mb-2 text-xs font-black uppercase tracking-wide text-gray-500">{month}</p>
@@ -1115,7 +1152,10 @@ function ChallengeCard({
   onEdit,
   onDelete,
   onToggleStatus,
-  onSaveAllocations
+  onSaveAllocations,
+  role,
+  onMarkIncentivePaid,
+  onUndoIncentivePaid
 }: {
   challenge: ManagerProductChallenge;
   product?: ChallengeProduct;
@@ -1126,6 +1166,9 @@ function ChallengeCard({
   onDelete: () => void;
   onToggleStatus: () => void;
   onSaveAllocations?: Props["onSaveAllocations"];
+  role: string;
+  onMarkIncentivePaid?: (lines: IncentiveLine[]) => Promise<void>;
+  onUndoIncentivePaid?: (line: IncentiveLine) => Promise<void>;
 }) {
   const hasMilestones = challenge.milestoneMode === "weekly" && challenge.milestones?.length > 0;
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1146,7 +1189,7 @@ function ChallengeCard({
             </div>
           </div>
           <div className="flex items-start gap-2">
-            <div className="min-w-[180px] rounded-lg border border-violet-100 bg-violet-50/70 px-5 py-4 text-center">
+            <div className="min-w-[180px] flex-1 rounded-lg lg:flex-none border border-violet-100 bg-violet-50/70 px-5 py-4 text-center">
               <p className="text-[10px] font-black uppercase tracking-[0.12em] text-violet-600">{repMode ? "My maximum reward" : "Manager reward"}</p>
               <p className="mt-2 text-2xl font-black text-violet-700">{formatMoney(repMode ? challenge.rewardAmount : (challenge.managerRewardAmount ?? 0), challenge.currency)}</p>
               <p className="mt-1 text-[10px] font-semibold text-gray-500">{hasMilestones ? "Paid through weekly milestones" : "Paid when the full target is met"}</p>
@@ -1209,6 +1252,20 @@ function ChallengeCard({
         {!repMode && challenge.allocations && challenge.allocations.length > 0 && (
           <AllocationPanel challenge={challenge} canEdit={canEdit} formatMoney={formatMoney} onSave={onSaveAllocations} />
         )}
+
+        {challenge.incentive && (repMode ? challenge.incentive.reps.length > 0 : true) ? (
+          <div className="mt-5">
+            <ChallengeIncentivePanel
+              incentive={challenge.incentive}
+              currency={challenge.currency}
+              role={role}
+              repMode={repMode}
+              formatMoney={formatMoney}
+              onMarkPaid={onMarkIncentivePaid}
+              onUndoPaid={onUndoIncentivePaid}
+            />
+          </div>
+        ) : null}
 
         {hasMilestones ? (
           <div className="mt-5">

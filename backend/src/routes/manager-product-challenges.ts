@@ -12,6 +12,7 @@ import { humanFieldErrors } from "../lib/validation-message.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 import { logger } from "../lib/logger.js";
+import { incentiveTier, incentiveWindow, monthlyDeliveryRate, payableAmount } from "../lib/challenge-incentive.js";
 
 const router = Router();
 router.use(requireAuth, requireRole("Owner", "Admin", "Manager", "Sales Rep"));
@@ -236,6 +237,43 @@ router.get("/", async (req, res) => {
       .order("name", { ascending: true });
     if (repsError) throw repsError;
     const fallbackRepCount = Math.max(1, activeReps?.length ?? 0);
+
+    // ── Monthly incentive (Bright, 3 Oct 2026) ──
+    // Each product challenge pays its earned reward the first week after the
+    // month, cut by the person's delivery rate for that month (Manager
+    // Dashboard formula: delivered in the month / placed in the month, all
+    // products; a rep's own orders, the whole company for the manager).
+    const { data: payoutRows, error: payoutError } = await supabase.from("challenge_incentive_payouts").select("*")
+      .eq("org_id", req.user!.orgId).in("challenge_id", challengeIds);
+    if (payoutError && !/relation .*challenge_incentive_payouts.*does not exist/i.test(payoutError.message ?? "")) throw payoutError;
+    const { data: leaders } = await supabase.from("users").select("id, name, role")
+      .eq("org_id", req.user!.orgId).in("role", ["Manager", "Admin"]).eq("active", true).order("name", { ascending: true });
+    // The manager reward goes to the active Manager; with none, the Admin who runs the team.
+    const managerRecipient = (leaders ?? []).find((user) => user.role === "Manager") ?? (leaders ?? [])[0] ?? null;
+    const lagosDay = (iso: unknown) => (iso ? new Date(String(iso)).toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" }) : "");
+    const monthRate = (from: string, to: string, repId: string | null) => {
+      const mine = (order: { assigned_rep_id?: string | null }) => !repId || order.assigned_rep_id === repId;
+      const placed = orders.filter((order) => mine(order) && lagosDay(order.created_at) >= from && lagosDay(order.created_at) <= to).length;
+      const delivered = orders.filter((order) => {
+        const day = String(order.delivered_date ?? "").slice(0, 10);
+        return mine(order) && String(order.status ?? "").trim().toLowerCase() === "delivered" && day >= from && day <= to;
+      }).length;
+      return { placed, delivered, rate: monthlyDeliveryRate(placed, delivered) };
+    };
+    const payoutFor = (challengeId: string, kind: "rep" | "manager", personId: string | null) => {
+      const paid: any = (payoutRows ?? []).find((item: any) => item.challenge_id === challengeId && item.person_kind === kind && (kind === "manager" || item.person_id === personId));
+      return paid ? { paidAt: paid.paid_at, paidBy: paid.paid_by_name, amount: Number(paid.payable_amount), earned: Number(paid.earned_amount), rate: paid.delivery_rate === null ? null : Number(paid.delivery_rate), tierPercent: paid.tier_percent, personName: paid.person_name, note: paid.note } : null;
+    };
+    const incentiveLine = (challengeId: string, kind: "rep" | "manager", personId: string | null, personName: string, earned: number, rewardAmount: number, from: string, to: string) => {
+      const month = monthRate(from, to, kind === "rep" ? personId : null);
+      const tier = incentiveTier(month.rate);
+      return {
+        kind, personId, personName, rewardAmount, earned: Math.round(earned * 100) / 100,
+        placed: month.placed, delivered: month.delivered, rate: month.rate, tier,
+        payable: payableAmount(earned, tier.percent), paid: payoutFor(challengeId, kind, personId)
+      };
+    };
+
     const challenges = rows.map((row) => {
       const teamProductOrders = (orders ?? []).filter((order) => order.product_id === row.product_id);
       const teamMatching = (orders ?? []).filter((order) => {
@@ -401,9 +439,19 @@ router.get("/", async (req, res) => {
             return deliveredDate >= windowFrom && deliveredDate <= windowTo;
           })
           : [];
+        // This rep's own milestones, for the reward they have earned so far.
+        const repMilestones = buildChallengeMilestones({
+          cadence: row.cadence, startDate: row.start_date, endDate: row.end_date,
+          targetUnits: allocationTarget, rewardAmount: Number(allocation.reward_amount ?? 0),
+          milestoneMode: row.milestone_mode ?? "none", milestoneDistribution: row.milestone_distribution ?? "even",
+          milestoneTargets: Array.isArray(allocation.milestone_targets) && allocation.milestone_targets.length ? allocation.milestone_targets.map(Number) : [],
+          status: row.status as ChallengeLifecycleStatus, today,
+          orders: repDeliveredOrders.map((order) => ({ dateKey: String(order.delivered_date ?? "").slice(0, 10), units: Number(order.quantity ?? 0) }))
+        });
         return {
           repId: allocation.rep_id,
           repName: rep?.name ?? rep?.email ?? "Sales rep",
+          earnedRewardAmount: repMilestones.earnedRewardAmount,
           dailyTargetPace: Math.round(dailyTargetPace * 100) / 100,
           dailyProgress,
           windowDeliveredPieces: repWindowOrders.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0),
@@ -431,6 +479,14 @@ router.get("/", async (req, res) => {
         };
       });
       const ownAllocationDetails = allocationDetails.find((allocation) => allocation.repId === scopeId);
+      const window = incentiveWindow(row.end_date, today);
+      const repLines = allocationDetails.map((detail) => incentiveLine(row.id, "rep", detail.repId, detail.repName, detail.earnedRewardAmount, detail.rewardAmount, row.start_date, row.end_date));
+      const incentive = {
+        from: row.start_date, to: row.end_date, dueFrom: window.dueFrom, dueBy: window.dueBy, status: window.status,
+        manager: scopeRole === "Sales Rep" ? null : incentiveLine(row.id, "manager", managerRecipient?.id ?? null, managerRecipient?.name ?? "Manager",
+          managerMilestoneResult.earnedRewardAmount, Number(row.manager_reward_amount ?? 0), row.start_date, row.end_date),
+        reps: scopeRole === "Sales Rep" ? repLines.filter((line) => line.personId === scopeId) : repLines
+      };
       return rowToApi({ ...row, target_units: targetUnits, reward_amount: rewardAmount }, progress, matching.length, milestoneResult, {
         allocations: scopeRole === "Sales Rep" ? [] : allocationDetails,
         allocationMode: storedAllocations.length > 0 ? "manager_allocated" : "equal_split_fallback",
@@ -440,6 +496,7 @@ router.get("/", async (req, res) => {
         teamRewardAmount,
         managerRewardAmount: Number(row.manager_reward_amount ?? 0),
         managerEarnedRewardAmount: managerMilestoneResult.earnedRewardAmount,
+        incentive,
         windowFrom,
         windowTo,
         windowDeliveredPieces,
@@ -483,6 +540,69 @@ router.get("/", async (req, res) => {
     res.json({ challenges, canEdit: scopeRole === "Owner", reps: scopeRole === "Sales Rep" ? [] : (activeReps ?? []) });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not load product challenges." });
+  }
+});
+
+// ── Monthly incentive: mark paid (Bright, 3 Oct 2026) ──
+// Manager, Admin or Owner records each payment (one person, or everyone at
+// once). The amounts are the ones shown on the card; the server re-checks the
+// tier from the rate so a payment always matches the 70 / 65 / 60 rule, and
+// only once the month has ended. Undo is Owner only.
+const PaidSchema = z.object({
+  note: z.string().trim().max(300).optional(),
+  people: z.array(z.object({
+    kind: z.enum(["rep", "manager"]),
+    personId: z.string().uuid().nullable(),
+    personName: z.string().trim().max(120),
+    earned: z.number().min(0).max(100_000_000),
+    rate: z.number().min(0).max(100).nullable()
+  })).min(1).max(100)
+});
+
+router.post("/:id/incentive/paid", requireRole("Manager", "Admin", "Owner"), async (req, res) => {
+  const parsed = PaidSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+  try {
+    const { data: challenge, error } = await supabase.from("manager_product_challenges").select("id, end_date, branch_id, name")
+      .eq("org_id", req.user!.orgId).eq("id", String(req.params.id)).maybeSingle();
+    if (error) throw error;
+    if (!challenge) { res.status(404).json({ error: "Challenge not found." }); return; }
+    const window = incentiveWindow(challenge.end_date, todayInLagos());
+    if (window.status === "accruing") { res.status(400).json({ error: `This month's incentive can be paid from ${window.dueFrom}, after the month ends.` }); return; }
+    const { data: actor } = await supabase.from("users").select("name").eq("id", req.user!.id).maybeSingle();
+    const rows = parsed.data.people.map((person) => {
+      const tier = incentiveTier(person.rate);
+      return {
+        org_id: req.user!.orgId, branch_id: challenge.branch_id ?? null, challenge_id: challenge.id, person_kind: person.kind,
+        person_id: person.personId, person_name: person.personName, earned_amount: person.earned, delivery_rate: person.rate,
+        tier_percent: tier.percent, payable_amount: payableAmount(person.earned, tier.percent), note: parsed.data.note ?? null,
+        paid_by: req.user!.id, paid_by_name: actor?.name ?? null, paid_at: new Date().toISOString()
+      };
+    });
+    // Already-paid people are left as they were (paying twice is refused).
+    const { data: existing } = await supabase.from("challenge_incentive_payouts").select("person_kind, person_id").eq("challenge_id", challenge.id);
+    const fresh = rows.filter((row) => !(existing ?? []).some((item: any) => item.person_kind === row.person_kind && (row.person_kind === "manager" || item.person_id === row.person_id)));
+    if (fresh.length) {
+      const insert = await supabase.from("challenge_incentive_payouts").insert(fresh);
+      if (insert.error) throw insert.error;
+    }
+    res.json({ paid: fresh.length, alreadyPaid: rows.length - fresh.length, total: fresh.reduce((sum, row) => sum + row.payable_amount, 0) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not record the payment." });
+  }
+});
+
+router.delete("/:id/incentive/paid", requireRole("Owner"), async (req, res) => {
+  const parsed = z.object({ kind: z.enum(["rep", "manager"]), personId: z.string().uuid().nullable() }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Which payment?" }); return; }
+  try {
+    let query = supabase.from("challenge_incentive_payouts").delete().eq("org_id", req.user!.orgId).eq("challenge_id", String(req.params.id)).eq("person_kind", parsed.data.kind);
+    if (parsed.data.kind === "rep") query = query.eq("person_id", parsed.data.personId);
+    const { error } = await query;
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not undo the payment." });
   }
 });
 

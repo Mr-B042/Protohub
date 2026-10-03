@@ -8,11 +8,14 @@
  *
  * ⚠️ HOW THINGS ARE COUNTED (same as the rest of the app, on purpose)
  * - Orders = placed in the week (repeat-order holds left out).
- * - Delivered / delivery rate = of THOSE orders, how many are delivered now.
- *   That is the 25 of 44 = 56.8% in the design.
- * - Bonus = orders DELIVERED in the week, the bonus week every other bonus
- *   screen uses. An order placed last Saturday and delivered on Monday earns
- *   in this week's bonus but counts in last week's orders.
+ * - Delivered / delivery rate = orders DELIVERED in the week ÷ orders placed
+ *   in the week - the Manager Dashboard's formula (Bright, 3 Oct 2026: "the
+ *   weekly report doesn't use the manager dashboard delivery rate... use it").
+ *   It used to be "of the orders placed, how many are delivered now", which
+ *   gave a different number from the dashboard for the same week.
+ * - Bonus = the same orders delivered in the week. An order placed last
+ *   Saturday and delivered on Monday counts in this week's delivered and
+ *   bonus, and in last week's orders.
  *
  * When the rep submits, the snapshot below is frozen on the server. The
  * review pages build it again live and compareSnapshots() lists what moved.
@@ -208,15 +211,19 @@ export function buildRepWeeklySnapshot(input: {
 }): WeeklyReportSnapshot {
   const { weekStart, weekEnd } = input;
   const placed = input.orders.filter((order) => inWeek(order.createdKey, weekStart, weekEnd));
-  const placedDelivered = placed.filter((order) => order.status === "Delivered");
   const deliveredInWeek = input.orders.filter((order) => order.status === "Delivered" && inWeek(order.deliveredKey, weekStart, weekEnd));
 
   // Product breakdown, biggest first.
   const productMap = new Map<string, WeeklyReportProductRow>();
+  const productRow = (order: WeeklyReportOrderInput) => productMap.get(order.productKey) ?? { key: order.productKey, name: order.productName || "Unknown product", orders: 0, delivered: 0, deliveryRate: 0 };
   for (const order of placed) {
-    const row = productMap.get(order.productKey) ?? { key: order.productKey, name: order.productName || "Unknown product", orders: 0, delivered: 0, deliveryRate: 0 };
+    const row = productRow(order);
     row.orders += 1;
-    if (order.status === "Delivered") row.delivered += 1;
+    productMap.set(order.productKey, row);
+  }
+  for (const order of deliveredInWeek) {
+    const row = productRow(order);
+    row.delivered += 1;
     productMap.set(order.productKey, row);
   }
   const products = Array.from(productMap.values())
@@ -225,7 +232,7 @@ export function buildRepWeeklySnapshot(input: {
 
   const daily = weekDays(weekStart).map((date) => {
     const dayOrders = placed.filter((order) => order.createdKey === date);
-    const delivered = dayOrders.filter((order) => order.status === "Delivered").length;
+    const delivered = deliveredInWeek.filter((order) => order.deliveredKey === date).length;
     return { date, orders: dayOrders.length, delivered, deliveryRate: pct(delivered, dayOrders.length) };
   });
 
@@ -239,14 +246,14 @@ export function buildRepWeeklySnapshot(input: {
   const expansion = {
     crossSell: {
       orders: crossPlaced.length,
-      delivered: crossPlaced.filter((order) => order.status === "Delivered").length,
-      deliveryRate: pct(crossPlaced.filter((order) => order.status === "Delivered").length, crossPlaced.length),
+      delivered: deliveredInWeek.filter((order) => order.hasCrossSell).length,
+      deliveryRate: pct(deliveredInWeek.filter((order) => order.hasCrossSell).length, crossPlaced.length),
       bonus: input.bonus.crossSell
     },
     upsell: {
       orders: upsellPlaced.length,
-      delivered: upsellPlaced.filter((order) => order.status === "Delivered").length,
-      deliveryRate: pct(upsellPlaced.filter((order) => order.status === "Delivered").length, upsellPlaced.length),
+      delivered: deliveredInWeek.filter((order) => order.hasUpsell).length,
+      deliveryRate: pct(deliveredInWeek.filter((order) => order.hasUpsell).length, upsellPlaced.length),
       bonus: input.bonus.upsell
     }
   };
@@ -316,8 +323,8 @@ export function buildRepWeeklySnapshot(input: {
     generatedAt: (input.now ?? new Date()).toISOString(),
     totals: {
       orders: placed.length,
-      delivered: placedDelivered.length,
-      deliveryRate: pct(placedDelivered.length, placed.length),
+      delivered: deliveredInWeek.length,
+      deliveryRate: pct(deliveredInWeek.length, placed.length),
       deliveredForBonus: deliveredInWeek.length,
       baseBonus,
       upsellBonus,
@@ -475,6 +482,10 @@ export type ManagerBonusPreview = {
   performanceNote: string;
   supportBonus: number;
   supportNote: string;
+  /** The manager's weekly upsell bonus (Bright, 3 Oct 2026), worked out as the
+   *  Upsell Bonus tab does. Missing on reports frozen before it was added. */
+  upsellBonus?: number;
+  upsellNote?: string;
   total: number;
   deliveryRate: number;
 };

@@ -263,6 +263,7 @@ export default function ManagerWeeklyReviewPage({
             <tbody className="text-gray-800 dark:text-slate-200 [&_td]:[color:inherit]">
               <tr className="border-b border-gray-100 dark:border-slate-800"><td className="whitespace-nowrap py-2.5 pr-2">Performance Bonus</td><td className="whitespace-nowrap py-2.5 pr-3 font-bold">{sym}{nf(managerBonus.performanceBonus)}</td><td className="py-2.5 min-w-[100px] text-[11px] text-gray-500 dark:text-slate-400">{managerBonus.performanceNote}</td></tr>
               <tr className="border-b border-gray-100 dark:border-slate-800"><td className="whitespace-nowrap py-2.5 pr-2">Weekly Support Bonus</td><td className="whitespace-nowrap py-2.5 pr-3 font-bold">{sym}{nf(managerBonus.supportBonus)}</td><td className="py-2.5 min-w-[100px] text-[11px] text-gray-500 dark:text-slate-400">{managerBonus.supportNote}</td></tr>
+              {managerBonus.upsellBonus !== undefined || managerBonus.upsellNote ? <tr className="border-b border-gray-100 dark:border-slate-800"><td className="whitespace-nowrap py-2.5 pr-2">Manager Upsell Bonus</td><td className="whitespace-nowrap py-2.5 pr-3 font-bold">{sym}{nf(managerBonus.upsellBonus ?? 0)}</td><td className="py-2.5 min-w-[100px] text-[11px] text-gray-500 dark:text-slate-400">{managerBonus.upsellNote}</td></tr> : null}
               <tr className="bg-violet-50 font-bold text-violet-900 dark:bg-violet-500/10 dark:text-violet-100 [&>td]:[color:inherit]"><td className="whitespace-nowrap px-2 py-3 text-[13px]">Total Manager Bonus</td><td className="py-3 text-[17px]" colSpan={2}>{sym}{nf(managerBonus.total)}</td></tr>
             </tbody>
           </table>
@@ -567,7 +568,7 @@ export default function ManagerWeeklyReviewPage({
               <Panel>
                 <div className="grid grid-cols-1 gap-4 p-4 2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                   <div className="rounded-xl border border-gray-100 dark:border-slate-800">
-                    <NumberedHeader title="Product Breakdown" subtitle="All reps, orders placed this week." />
+                    <NumberedHeader title="Product Breakdown" subtitle="All reps, orders placed and delivered this week." />
                     <CompanyProductTable products={companySnap.products} totals={totals} />
                   </div>
                   <div className="rounded-xl border border-gray-100 dark:border-slate-800">
