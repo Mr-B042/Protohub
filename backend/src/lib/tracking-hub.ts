@@ -186,3 +186,76 @@ export function reconciliationVerdict(input: {
       : "Meta could not match some purchases to an ad click (missing fbclid/fbp), or counts them under another campaign."
   };
 }
+
+// ── Why a campaign row differs from Meta (Bright, 3 Oct 2026) ────────────────
+// Meta credits a sale to the LAST ad the customer clicked or viewed, which is
+// often a different campaign for the same product than the link they ordered
+// from. And a sale sent to several Pixels ("Also send to") can be credited
+// once per Pixel. Within one product, a campaign's surplus that cancels
+// another's shortfall is "credited to another campaign"; Meta surplus left
+// over, up to the extra-Pixel sends, is "counted on another Pixel". Only what
+// remains is a real gap.
+
+const wordsOf = (text: string) => [
+  // "5-in-1" is one word: the 5 alone also names "5-Slot Toothbrush Holder".
+  ...(text.toLowerCase().match(/\d+\s*-?\s*in\s*-?\s*\d+/g) ?? []).map((phrase) => phrase.replace(/[^a-z0-9]/g, "")),
+  ...(text.toLowerCase().match(/[a-z]+|\d+/g) ?? [])
+    .map((word) => (word.length > 3 && word.endsWith("s") ? word.slice(0, -1) : word))
+    .filter((word) => word.length >= 3 || /^\d+$/.test(word))
+];
+
+/** The product a campaign / ad name points at, by words only that product has. */
+export function productFromName(name: string | null | undefined, products: Array<{ id: string; name: string }>): string | null {
+  if (!name) return null;
+  const counts = new Map<string, number>();
+  const tokens = products.map((product) => new Set(wordsOf(product.name)));
+  for (const set of tokens) for (const word of set) counts.set(word, (counts.get(word) ?? 0) + 1);
+  const wanted = new Set(wordsOf(name));
+  let best: string | null = null;
+  let bestScore = 0;
+  let tie = false;
+  products.forEach((product, index) => {
+    const score = Array.from(tokens[index]).filter((word) => counts.get(word) === 1 && wanted.has(word)).length;
+    if (score > bestScore) { best = product.id; bestScore = score; tie = false; } else if (score > 0 && score === bestScore) tie = true;
+  });
+  return bestScore > 0 && !tie ? best : null;
+}
+
+export type GapRow = { id: string; name: string; productId: string | null; protohub: number; meta: number; orderIds: string[] };
+export type GapExplanation = { creditedElsewhere: number; otherPixel: number; unexplained: number; note: string };
+
+export function explainCampaignGaps(rows: GapRow[], extraPixelSends: Map<string, number>): Map<string, GapExplanation> {
+  const result = new Map<string, GapExplanation>();
+  const byProduct = new Map<string, GapRow[]>();
+  for (const row of rows) {
+    if (!row.productId || row.meta === row.protohub) continue;
+    byProduct.set(row.productId, [...(byProduct.get(row.productId) ?? []), row]);
+  }
+  for (const [productId, group] of byProduct) {
+    const metaSide = group.filter((row) => row.meta > row.protohub).sort((a, b) => (b.meta - b.protohub) - (a.meta - a.protohub));
+    const ourSide = group.filter((row) => row.protohub > row.meta).sort((a, b) => (b.protohub - b.meta) - (a.protohub - a.meta));
+    const metaSurplus = metaSide.reduce((sum, row) => sum + row.meta - row.protohub, 0);
+    const ourSurplus = ourSide.reduce((sum, row) => sum + row.protohub - row.meta, 0);
+    let offsetMeta = Math.min(metaSurplus, ourSurplus);
+    let offsetOurs = offsetMeta;
+    let pixel = Math.min(metaSurplus - offsetMeta, extraPixelSends.get(productId) ?? 0);
+    const names = (list: GapRow[]) => list.slice(0, 3).map((row) => `"${row.name}"`).join(", ") + (list.length > 3 ? ` and ${list.length - 3} more` : "");
+    const ourOrders = ourSide.flatMap((row) => row.orderIds).slice(0, 6).map((id) => `#${id}`).join(", ");
+    for (const row of metaSide) {
+      const gap = row.meta - row.protohub;
+      const credited = Math.min(gap, offsetMeta); offsetMeta -= credited;
+      const viaPixel = Math.min(gap - credited, pixel); pixel -= viaPixel;
+      const parts: string[] = [];
+      if (credited > 0) parts.push(`Meta credited ${credited} sale${credited === 1 ? "" : "s"} here that came through ${names(ourSide)}${ourOrders ? ` (${ourOrders})` : ""}.`);
+      if (viaPixel > 0) parts.push(`${viaPixel} is a sale Meta counted twice: it was also sent to another Pixel ("Also send to"), and Meta counts it once per Pixel. That purchase did not happen.`);
+      result.set(row.id, { creditedElsewhere: credited, otherPixel: viaPixel, unexplained: gap - credited - viaPixel, note: parts.join(" ") });
+    }
+    for (const row of ourSide) {
+      const gap = row.protohub - row.meta;
+      const credited = Math.min(gap, offsetOurs); offsetOurs -= credited;
+      const note = credited > 0 ? `${credited} order${credited === 1 ? "" : "s"} from this campaign${row.orderIds.length ? ` (${row.orderIds.slice(0, 4).map((id) => `#${id}`).join(", ")})` : ""} Meta credited to ${names(metaSide)}.` : "";
+      result.set(row.id, { creditedElsewhere: credited, otherPixel: 0, unexplained: gap - credited, note });
+    }
+  }
+  return result;
+}

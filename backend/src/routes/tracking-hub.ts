@@ -7,7 +7,7 @@ import { sendMetaCapiPurchase, testMetaCapiConnection } from "../lib/meta-capi.j
 import { testTikTokConnection } from "../lib/tiktok-events.js";
 import { adPurchases, campaignsByIds, checkDataset, datasetEventStats, datasetQuality, discoverAdAccounts, discoverPixels, metaBusiness, metaWhoAmI, scanPage } from "../lib/meta-graph.js";
 import { connectionToken } from "../lib/tracking-credentials.js";
-import { ATTRIBUTION_FIELDS, attributionCapture, domainOf, humanMetaError, orderAdIds, pathOf, reconciliationVerdict } from "../lib/tracking-hub.js";
+import { ATTRIBUTION_FIELDS, attributionCapture, domainOf, explainCampaignGaps, humanMetaError, orderAdIds, pathOf, productFromName, reconciliationVerdict } from "../lib/tracking-hub.js";
 import {
   DEFAULT_HUB_SETTINGS, MODE_OF_STRATEGY, STRATEGY_OF_MODE, assess, change, dayOfIso, daysBetween, eventsFor, formOrders,
   hubAudit, journeyCounts, kpisOf, ledgerRow, loadBasics, loadHubSettings, pct, sumVisits, type HubSettings, type JourneyRow, type LedgerRow
@@ -1233,7 +1233,44 @@ async function reconData(orgId: string, branchId: string, from: string, to: stri
     if (!current || row.visits > current.visits) adHome.set(row.ad_id!, { key: row.tracking_key, productId: row.product_id, domain: row.domain, path: row.path, visits: row.visits });
   }
   for (const row of rows.filter((item) => item.adId && !adHome.has(item.adId))) adHome.set(row.adId!, { key: row.trackingKey, productId: row.productId, domain: row.website, path: row.landingPath, visits: 1 });
-  return { orders, basics, insights: insightsRes.data ?? [], campaigns: campaignsRes.data ?? [], notes: notesRes.data ?? [], rows, events, adHome };
+  // How many extra Pixels each order's Purchase went to ("Also send to").
+  const extraSends = new Map<string, number>();
+  const orderIds = orders.map((order) => order.id);
+  for (let i = 0; i < orderIds.length; i += 300) {
+    const { data: sends, error: sendsError } = await supabase.from("tracking_extra_pixel_sends").select("order_id")
+      .eq("org_id", orgId).eq("status", "sent").in("order_id", orderIds.slice(i, i + 300));
+    if (sendsError) throw sendsError;
+    for (const row of sends ?? []) extraSends.set(String(row.order_id), (extraSends.get(String(row.order_id)) ?? 0) + 1);
+  }
+  return { orders, basics, insights: insightsRes.data ?? [], campaigns: campaignsRes.data ?? [], notes: notesRes.data ?? [], rows, events, adHome, extraSends };
+}
+
+/** The product an insight row is for: where its visitors landed, else its campaign / ad name. */
+function insightProduct(insight: any, data: { adHome: Map<string, { productId: string | null }>; basics: { products: Array<{ id: string; name: string }> } }) {
+  return data.adHome.get(insight.ad_id)?.productId
+    ?? productFromName(insight.campaign_name, data.basics.products)
+    ?? productFromName(insight.ad_name, data.basics.products);
+}
+
+/** Meta vs Protohub per product: the honest headline (campaign credit moves around inside a product). */
+function reconProducts(data: { rows: LedgerRow[]; insights: any[]; extraSends: Map<string, number>; adHome: Map<string, { productId: string | null }>; basics: { products: Array<{ id: string; name: string; imageUrl?: string | null }> } }) {
+  const byProduct = new Map<string, { protohub: number; meta: number; extraPixelSales: number }>();
+  const get = (id: string) => { const entry = byProduct.get(id) ?? { protohub: 0, meta: 0, extraPixelSales: 0 }; byProduct.set(id, entry); return entry; };
+  for (const row of data.rows) {
+    if (!row.productId || !row.campaignId) continue;
+    const entry = get(row.productId);
+    entry.protohub += 1;
+    if ((data.extraSends.get(row.orderId) ?? 0) > 0) entry.extraPixelSales += 1;
+  }
+  for (const insight of data.insights) {
+    const productId = insightProduct(insight, data);
+    get(productId ?? "unknown").meta += Number(insight.purchases) || 0;
+  }
+  return Array.from(byProduct.entries()).map(([id, entry]) => {
+    const product = data.basics.products.find((row) => row.id === id);
+    const meta = Math.round(entry.meta);
+    return { id, name: product?.name ?? (id === "unknown" ? "Not linked to a product" : id), image: product?.imageUrl ?? null, protohub: entry.protohub, meta, difference: meta - entry.protohub, extraPixelSales: entry.extraPixelSales };
+  }).filter((row) => row.protohub + row.meta > 0).sort((a, b) => (b.protohub + b.meta) - (a.protohub + a.meta));
 }
 type ReconData = Awaited<ReturnType<typeof reconData>>;
 
@@ -1257,9 +1294,9 @@ function reconKey(view: ReconView, order: LedgerRow | null, insight: any | null,
 }
 
 function reconRows(view: ReconView, data: ReconData, settings: HubSettings) {
-  const groups = new Map<string, { id: string; name: string; orders: LedgerRow[]; meta: number; value: number; spend: number; accounts: Set<string>; sourceIds: Set<string> }>();
+  const groups = new Map<string, { id: string; name: string; orders: LedgerRow[]; meta: number; value: number; spend: number; accounts: Set<string>; sourceIds: Set<string>; insightProducts: Map<string, number> }>();
   const get = (key: { id: string; name: string }) => {
-    const entry = groups.get(key.id) ?? { id: key.id, name: key.name, orders: [] as LedgerRow[], meta: 0, value: 0, spend: 0, accounts: new Set<string>(), sourceIds: new Set<string>() };
+    const entry = groups.get(key.id) ?? { id: key.id, name: key.name, orders: [] as LedgerRow[], meta: 0, value: 0, spend: 0, accounts: new Set<string>(), sourceIds: new Set<string>(), insightProducts: new Map<string, number>() };
     if (!entry.name && key.name) entry.name = key.name;
     groups.set(key.id, entry);
     return entry;
@@ -1271,11 +1308,13 @@ function reconRows(view: ReconView, data: ReconData, settings: HubSettings) {
     const entry = get(key);
     entry.meta += Number(insight.purchases) || 0; entry.value += Number(insight.purchase_value) || 0; entry.spend += Number(insight.spend) || 0;
     entry.accounts.add(insight.ad_account_id); entry.sourceIds.add(insight.data_source_id);
+    const productId = insightProduct(insight, data);
+    if (productId) entry.insightProducts.set(productId, (entry.insightProducts.get(productId) ?? 0) + (Number(insight.purchases) || 0) + 0.001);
   }
   const metaLoaded = data.insights.length > 0;
   const productOf = new Map(data.basics.products.map((row: any) => [row.id, row]));
   const resolved = new Set(data.notes.filter((note: any) => note.scope === view && note.resolved).map((note: any) => note.scope_id));
-  return Array.from(groups.values()).map((group) => {
+  const built = Array.from(groups.values()).map((group) => {
     const protohub = group.orders.length;
     const meta = metaLoaded ? Math.round(group.meta) : null;
     const matchRate = meta === null ? null : Math.max(protohub, meta) === 0 ? 100 : Math.round((Math.min(protohub, meta) / Math.max(protohub, meta)) * 1000) / 10;
@@ -1300,9 +1339,34 @@ function reconRows(view: ReconView, data: ReconData, settings: HubSettings) {
       // a small gap below the bar (e.g. 0 vs 1) says which side is higher.
       status: resolved.has(group.id) ? "resolved" : meta === null ? "no_meta" : investigate ? "investigate"
         : meta === protohub || (matchRate !== null && matchRate >= settings.investigateBelowMatchRate) ? "matched"
-        : meta > protohub ? "meta_higher" : "protohub_higher", verdict
+        : meta > protohub ? "meta_higher" : "protohub_higher", verdict,
+      explanation: null as string | null,
+      gapProductId: group.orders.find((row) => row.productId)?.productId
+        ?? (Array.from(group.insightProducts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null),
+      orderIds: group.orders.map((row) => row.orderId)
     };
-  }).sort((a, b) => (b.protohub + (b.meta ?? 0)) - (a.protohub + (a.meta ?? 0)));
+  });
+  // Campaign / ad set / ad: Meta moves credit between campaigns of the same
+  // product, and counts a multi-Pixel sale once per Pixel. Explain those gaps
+  // instead of flagging them.
+  if (view === "campaign" || view === "adset" || view === "ad") {
+    const extraByProduct = new Map<string, number>();
+    for (const row of data.rows) {
+      const sends = data.extraSends.get(row.orderId) ?? 0;
+      if (row.productId && sends > 0) extraByProduct.set(row.productId, (extraByProduct.get(row.productId) ?? 0) + sends);
+    }
+    const gaps = explainCampaignGaps(built.filter((row) => row.meta !== null && row.status !== "resolved").map((row) => ({
+      id: row.id, name: row.name, productId: row.gapProductId, protohub: row.protohub, meta: row.meta ?? 0, orderIds: row.orderIds
+    })), extraByProduct);
+    for (const row of built) {
+      const gap = gaps.get(row.id);
+      if (!gap || !gap.note) continue;
+      row.explanation = gap.note;
+      if (gap.unexplained === 0) (row as any).status = gap.creditedElsewhere > 0 ? "credited_elsewhere" : "other_pixel";
+    }
+  }
+  return built.map(({ gapProductId: _product, orderIds: _orders, ...row }) => row)
+    .sort((a, b) => (b.protohub + (b.meta ?? 0)) - (a.protohub + (a.meta ?? 0)));
 }
 
 router.get("/reconciliation", async (req, res) => {
@@ -1335,6 +1399,7 @@ router.get("/reconciliation", async (req, res) => {
         investigate: rows.filter((row) => row.status === "investigate").length
       },
       rows,
+      products: data.insights.length ? reconProducts(data) : [],
       filters: {
         accounts: Array.from(new Map<string, string>([
           ...(data.basics.adAccounts as any[]).filter((row) => row.active).map((row) => [row.account_id, row.name ? `${row.name} (act_${row.account_id})` : `act_${row.account_id}`] as [string, string]),
