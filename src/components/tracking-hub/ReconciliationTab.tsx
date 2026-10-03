@@ -25,7 +25,7 @@ const STATUS_PILL: Record<HubReconRow["status"], ["green" | "red" | "blue" | "gr
   meta_higher: ["orange", "Meta higher"], protohub_higher: ["orange", "Protohub higher"],
   // Not tracking problems (Bright, 3 Oct 2026): Meta gave the sale to another
   // campaign of the same product, or counted a multi-Pixel sale on a 2nd Pixel.
-  credited_elsewhere: ["blue", "Credited to another campaign"], other_pixel: ["blue", "Counted on another Pixel"]
+  credited_elsewhere: ["blue", "Credited to another campaign"], other_pixel: ["red", "Meta double-counted"]
 };
 const rateColor = (rate: number | null) => (rate === null ? "text-gray-400" : rate >= 90 ? "text-emerald-600" : rate >= 75 ? "text-amber-600" : "text-rose-600");
 const diffColor = (diff: number | null) => (diff === null ? "text-gray-400" : Math.abs(diff) <= 1 ? "text-emerald-600" : "text-rose-600");
@@ -120,8 +120,7 @@ export default function ReconciliationTab({ tabBar, onToast, range, onRange, onO
           <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
             {data.products.map((product) => {
               const extra = Math.max(0, Math.min(product.difference, product.extraPixelSales));
-              const left = product.difference - extra;
-              const ok = product.difference === 0 || (product.difference > 0 && left === 0);
+              const ok = product.difference === 0;
               return (
                 <div key={product.id} className={`flex items-center gap-3 rounded-xl border p-3 ${ok ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-500/30 dark:bg-emerald-500/10" : "border-amber-200 bg-amber-50/50 dark:border-amber-500/30 dark:bg-amber-500/10"}`}>
                   <ProductThumb src={product.image} size={40} />
@@ -130,8 +129,7 @@ export default function ReconciliationTab({ tabBar, onToast, range, onRange, onO
                     <p className="m-0 text-[12.5px] text-gray-700 dark:text-slate-300">Protohub <strong>{nf(product.protohub)}</strong> · Meta <strong>{nf(product.meta)}</strong></p>
                     <p className={`m-0 text-[11.5px] font-semibold ${ok ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}>
                       {product.difference === 0 ? "Exact match"
-                        : extra > 0 && left === 0 ? `+${extra}: sale${extra === 1 ? "" : "s"} counted on another Pixel`
-                        : product.difference > 0 ? `Meta +${product.difference}${extra > 0 ? ` (${extra} on another Pixel)` : ""}`
+                        : product.difference > 0 ? `Meta +${product.difference}${extra > 0 ? ` (${extra} double-counted on another Pixel)` : ""}`
                         : `Protohub +${-product.difference}`}
                     </p>
                   </div>
@@ -235,7 +233,7 @@ function ReconPanel({ view, row, range, onClose, onToast, onChanged, onOpenLedge
       </div>
       {row.explanation ? (
         <p className="m-0 mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-[12.5px] text-blue-900 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-100">
-          <strong>Not a tracking problem.</strong> {row.explanation}
+          <strong>{row.status === "other_pixel" ? "Meta counted a sale twice." : "Not a tracking problem."}</strong> {row.explanation}
         </p>
       ) : null}
       <UnderlineTabs className="mt-2" value={tab} onChange={setTab} tabs={[{ key: "overview", label: "Overview" }, { key: "orders", label: "Orders" }, { key: "meta", label: "Meta Data" }, { key: "discrepancies", label: "Discrepancies" }, { key: "insights", label: "Insights" }]} />

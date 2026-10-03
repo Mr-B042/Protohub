@@ -247,7 +247,7 @@ export function explainCampaignGaps(rows: GapRow[], extraPixelSends: Map<string,
       const viaPixel = Math.min(gap - credited, pixel); pixel -= viaPixel;
       const parts: string[] = [];
       if (credited > 0) parts.push(`Meta credited ${credited} sale${credited === 1 ? "" : "s"} here that came through ${names(ourSide)}${ourOrders ? ` (${ourOrders})` : ""}.`);
-      if (viaPixel > 0) parts.push(`${viaPixel} is a sale also sent to another Pixel ("Also send to"), which Meta counts once per Pixel.`);
+      if (viaPixel > 0) parts.push(`${viaPixel} is a sale Meta counted twice: it was also sent to another Pixel ("Also send to"), and Meta counts it once per Pixel. That purchase did not happen.`);
       result.set(row.id, { creditedElsewhere: credited, otherPixel: viaPixel, unexplained: gap - credited - viaPixel, note: parts.join(" ") });
     }
     for (const row of ourSide) {
