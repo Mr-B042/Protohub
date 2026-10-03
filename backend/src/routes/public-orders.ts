@@ -1332,15 +1332,36 @@ router.post("/", submitRateLimit, async (req, res) => {
     }
   }
 
-  // Keep the existing atomic phone/product guard for genuine repeat orders.
-  const duplicateGuardResult = await supabase.rpc("insert_order_with_duplicate_guard", {
+  // Save ONCE (migration 286, Bright 3 Oct 2026): locked on the cart, so cart
+  // recovery and this submit can never both create an order (#4787/#4788),
+  // then the phone/product guard holds a genuine repeat. Lock on the cart that
+  // survives a merge - the one cart recovery uses.
+  if (d.cartId) {
+    const canonical = await resolveCanonicalAbandonedCartId(product.org_id, d.cartId).catch(() => null);
+    if (canonical?.exists && canonical.id) (baseInsert as Record<string, unknown>).source_cart_id = canonical.id;
+  }
+  const onceResult = await supabase.rpc("insert_order_once", {
     p_org_id: product.org_id, p_phone_last10: phoneLast10,
     p_product_id: stampProductId,
     p_window_start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-    p_order: baseInsert
+    p_order: baseInsert,
+    p_submission_key: d.cartId ? null : randomUUID()
   });
-  order = duplicateGuardResult.data;
-  orderErr = duplicateGuardResult.error;
+  orderErr = onceResult.error;
+  const once = (onceResult.data ?? null) as { order: any; replayed: boolean } | null;
+  if (!orderErr && once?.replayed && once.order) {
+    // The cart already has its order (cart recovery got there first): hand it
+    // back exactly like a replay - no second order, no second Purchase.
+    const existing = once.order;
+    const { data: registered } = await supabase.from("meta_capi_events").select("event_id, pixel_id")
+      .eq("org_id", product.org_id).eq("order_id", String(existing.id)).eq("event_name", "Purchase").maybeSingle();
+    res.status(200).json({ id: existing.id, amount: existing.amount, currency: existing.currency,
+      crossSellLines: existing.cross_sell_lines ?? [], reviewHold: Boolean(existing.review_hold),
+      upsellOffer: null, upsellToken: null, replayed: true, metaPurchaseEventId: registered?.event_id ?? String(existing.id),
+      metaPixelId: registered?.pixel_id ?? null });
+    return;
+  }
+  order = once?.order ?? null;
 
   if (orderErr) {
     if (orderErr.code === "23505") {
