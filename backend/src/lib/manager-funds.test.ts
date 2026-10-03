@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  DEFAULT_FUND_SETTINGS, customerPaymentEffect, fundTotals, fundsEditable, fundsReadiness, missingProof, type FundTxn
+  DEFAULT_FUND_SETTINGS, customerPaymentEffect, fundTotals, fundsEditable, fundsReadiness, logisticsSplit, missingProof, type FundTxn
 } from "./manager-funds.js";
 
 const txn = (overrides: Partial<FundTxn>): FundTxn => ({
@@ -92,4 +92,12 @@ test("a customer payment follows the order screen's remittance rules", () => {
   assert.equal(customerPaymentEffect({ ...base, payment: 1, remittanceStatus: "Paid" }).ok, false);
   // Agent already deducted a fee: expected is amount - fee.
   assert.equal(customerPaymentEffect({ ...base, logisticsCost: 3500, payment: 31000 }).ok, true);
+});
+
+test("logisticsSplit: only the part above the orders' fees is a new cost", () => {
+  assert.deepEqual(logisticsSplit(10000, 9000, 0), { counted: 9000, newCost: 1000 });
+  assert.deepEqual(logisticsSplit(5000, 9000, 0), { counted: 5000, newCost: 0 });
+  assert.deepEqual(logisticsSplit(5000, 9000, 6000), { counted: 3000, newCost: 2000 });
+  assert.deepEqual(logisticsSplit(5000, 0, 0), { counted: 0, newCost: 5000 });
+  assert.deepEqual(logisticsSplit(5000, 4000, 9000), { counted: 0, newCost: 5000 });
 });

@@ -212,3 +212,16 @@ export function customerPaymentEffect(input: {
   }
   return { ok: true, nextRemitted, nextStatus: nextRemitted >= expected ? "Paid" : "Partial", variance, needsReason: variance !== 0 };
 }
+
+/**
+ * A rider / logistics fee the manager pays for orders whose delivery fee is
+ * already on the order (Bright, 3 Oct 2026). The order's fee is already a
+ * "Delivery" expense (EXP-DEL-<order>), so only the part ABOVE the fees still
+ * unclaimed is a new cost; the rest is the same money, paid from the wallet.
+ * `claimedByOthers` = what other wallet entries already matched to these fees.
+ */
+export function logisticsSplit(amount: number, orderFees: number, claimedByOthers: number): { counted: number; newCost: number } {
+  const pool = Math.max(0, round(orderFees - Math.max(0, claimedByOthers)));
+  const counted = round(Math.min(Math.max(0, amount), pool));
+  return { counted, newCost: round(Math.max(0, amount) - counted) };
+}

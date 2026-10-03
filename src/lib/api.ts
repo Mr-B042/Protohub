@@ -4169,6 +4169,12 @@ export type ManagerFundTxn = {
   status: "recorded" | "returned" | "voided"; returnReason: string | null; voidReason: string | null;
   adjustsTransactionId: string | null; version: number; createdByName: string | null; createdAt: string; updatedAt: string;
   missingProof: string | null;
+  /** Rider fees matched to the orders' own delivery fees: paid from the wallet, not a new cost. */
+  countedOnOrders?: number;
+};
+export type ManagerFundOrderCheck = {
+  orders: Array<{ id: string; customer: string; status: string; amount: number; deliveryFee: number; received: number; expected: number; left: number; remittanceStatus: string | null }>;
+  split: { counted: number; newCost: number } | null;
 };
 export type ManagerFundTotals = {
   opening: number; received: number; receivedBySource: Record<string, number>; spent: number; spentByCategory: Record<string, number>;
@@ -4210,6 +4216,13 @@ export const managerFundsApi = {
   saveWeek: (body: { weekStart: string; actualClosing?: number | null; varianceExplanation?: string | null; notes?: string | null }) =>
     request<{ ok: true }>("PUT", "/api/manager-funds/week", body),
   requestAdjustment: (body: { transactionId: string; requestedAmount: number; reason: string }) => post<{ id: string }>("/api/manager-funds/adjustments", body),
+  orderCheck: (ids: string[], options: { amount?: number; category?: string; excludeTxnId?: string } = {}) => {
+    const qs = new URLSearchParams({ ids: ids.join(",") });
+    if (options.amount !== undefined) qs.set("amount", String(options.amount));
+    if (options.category) qs.set("category", options.category);
+    if (options.excludeTxnId) qs.set("excludeTxnId", options.excludeTxnId);
+    return get<ManagerFundOrderCheck>(`/api/manager-funds/order-check?${qs.toString()}`);
+  },
   decideAdjustment: (id: string, body: { approve: boolean; note?: string }) => post<{ ok: true }>(`/api/manager-funds/adjustments/${encodeURIComponent(id)}/decide`, body),
   saveSettings: (body: { expenseProofMin: number; remittanceProofRequired: boolean; ownerFundingReferenceRequired: boolean; otherInProofRequired: boolean }) =>
     request<{ ok: true }>("PUT", "/api/manager-funds/settings", body)
