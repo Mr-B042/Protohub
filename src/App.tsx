@@ -25746,6 +25746,32 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return { performanceBonus: evaluation.amount, performanceNote: firstTier !== null ? `Delivery rate below ${firstTier}%` : "Delivery rate below the first tier", supportBonus: 0, supportNote: "Not paid once the profit target is met", total: evaluation.amount, deliveryRate: rate };
   };
 
+  /** Adds the manager's upsell bonus for the report week - the same sum the
+   *  Upsell Bonus tab does (company-wide, no product filter): the week's
+   *  profit + delivery-rate gates from the manager bonus summary, and the
+   *  contribution of delivered upsell / cross-sell orders. */
+  const withManagerUpsellBonus = (preview: ManagerBonusPreview | null): ManagerBonusPreview | null => {
+    if (!preview) return preview;
+    const settings = upsellBonusSettings;
+    const summary = weeklyManagerBonus && weeklyManagerBonus.weekStart === weeklyReportWeekStart ? weeklyManagerBonus : null;
+    const attribution = weeklyBonusMaps && weeklyBonusMaps.weekStart === weeklyReportWeekStart ? weeklyBonusMaps.attribution : null;
+    if (!settings || !summary || !attribution) return { ...preview, upsellNote: "Working out the upsell bonus…" };
+    const weekEnd = windowShiftDay(weeklyReportWeekStart, 6);
+    const qualifying = trackedOrders.filter((order) => {
+      if (order.reviewHold || (order.status ?? "New") !== "Delivered") return false;
+      const key = normalizeDateKey(orderDeliveredKey(order) ?? "");
+      return key >= weeklyReportWeekStart && key <= weekEnd && (orderHasVerifiedUpsell(order) || (order.crossSellLines?.length ?? 0) > 0);
+    });
+    const contribution = qualifying.reduce((sum, order) => sum + expansionProfitBreakdownForOrder(order, attribution as Record<string, SalesBonusOrderAttribution[]>).contributionProfit, 0);
+    const evaluation = evaluateUpsellBonusClient(settings, Number(summary.metrics?.netProfitOps ?? 0), Number(summary.metrics?.deliveryRate ?? 0), contribution);
+    const amount = Math.round(evaluation.finalAmount);
+    const upsellNote = evaluation.status === "tier_bonus" ? `${evaluation.matchedTier?.label ?? "Tier"} on ${formatManagerBonusMoney(contribution)} upsell profit${evaluation.capApplied ? " (capped)" : ""}`
+      : evaluation.status === "profit_gate_miss" ? "Profit gate not met this week"
+      : evaluation.status === "delivery_gate_miss" ? `Delivery rate below ${settings.deliveryRateGatePct}%`
+      : "Upsell profit below the first tier";
+    return { ...preview, upsellBonus: amount, upsellNote, total: preview.total + amount };
+  };
+
   const weeklyShiftWeek = (weeks: number) => setWeeklyReportWeekStart((current) => windowShiftDay(current, weeks * 7));
   const weeklyPickWeek = (dateKey: string) => setWeeklyReportWeekStart(windowWeekStart(dateKey));
   const weeklyCanGoNext = windowShiftDay(weeklyReportWeekStart, 7) <= windowWeekStart(lagosDateKeyNow());
@@ -30128,6 +30154,34 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     showToast("Sales rep targets allocated successfully.");
   };
 
+  const reloadChallengesInPlace = () => loadManagerProductChallenges({
+    quiet: true,
+    from: activePage === "Manager Dashboard" ? managerPeriodRange.start : undefined,
+    to: activePage === "Manager Dashboard" ? managerPeriodRange.end : undefined
+  });
+  const markChallengeIncentivePaid = async (challengeId: string, lines: Array<{ kind: string; personId: string | null; personName: string; earned: number; rate: number | null }>) => {
+    try {
+      const result = await managerProductChallengesApi.markIncentivePaid(challengeId, {
+        people: lines.map((line) => ({ kind: line.kind, personId: line.personId, personName: line.personName, earned: line.earned, rate: line.rate }))
+      });
+      await reloadChallengesInPlace();
+      const count = Number(result?.paid?.length ?? lines.length);
+      showToast(count === 1 ? `${lines[0].personName} marked paid.` : `${count} people marked paid.`);
+    } catch (error: any) {
+      showToast(`Couldn't mark paid: ${error?.message ?? "please try again."}`);
+    }
+  };
+  const undoChallengeIncentivePaid = async (challengeId: string, line: { kind: string; personId: string | null; personName: string }) => {
+    if (!window.confirm(`Undo the payment record for ${line.personName}?`)) return;
+    try {
+      await managerProductChallengesApi.undoIncentivePaid(challengeId, { kind: line.kind, personId: line.personId });
+      await reloadChallengesInPlace();
+      showToast(`${line.personName}'s payment record removed.`);
+    } catch (error: any) {
+      showToast(`Couldn't undo: ${error?.message ?? "please try again."}`);
+    }
+  };
+
   const managerBonusWeekEnd = (weekStart: string) => {
     const date = new Date(`${weekStart}T00:00:00`);
     date.setDate(date.getDate() + 6);
@@ -31705,7 +31759,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         editedAfterSubmit: (week.editedAfterSubmit ?? []).filter((edit) => edit.repId === repId)
       };
     }).sort((a, b) => a.repName.localeCompare(b.repName)) : [];
-    const managerBonus = toManagerBonusPreview(weeklyManagerBonus && weeklyManagerBonus.weekStart === weeklyReportWeekStart ? weeklyManagerBonus : null);
+    const managerBonus = withManagerUpsellBonus(toManagerBonusPreview(weeklyManagerBonus && weeklyManagerBonus.weekStart === weeklyReportWeekStart ? weeklyManagerBonus : null));
 
     if (sub === "Report History") {
       const backToReview = inDashboard ? "Manager Review" : defaultWeeklyReportSubPage(currentRole);
@@ -72198,6 +72252,8 @@ ${waybillLineItems(w).length > 1
             onSave={saveManagerProductChallenge}
             onDelete={deleteManagerProductChallenge}
             onSaveAllocations={saveManagerProductChallengeAllocations}
+            onMarkIncentivePaid={markChallengeIncentivePaid}
+            onUndoIncentivePaid={undoChallengeIncentivePaid}
             onOpenBonusRules={() => setActivePage("Sales Rep Bonuses")}
           />
           </div>
@@ -78333,6 +78389,8 @@ ${waybillLineItems(w).length > 1
                   onSave={saveManagerProductChallenge}
                   onDelete={deleteManagerProductChallenge}
                   onSaveAllocations={saveManagerProductChallengeAllocations}
+            onMarkIncentivePaid={markChallengeIncentivePaid}
+            onUndoIncentivePaid={undoChallengeIncentivePaid}
                   onOpenBonusRules={() => setManagerDashboardTab("Bonus")}
                 />
 

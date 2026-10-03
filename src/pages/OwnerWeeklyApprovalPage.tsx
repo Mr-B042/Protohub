@@ -279,6 +279,7 @@ export default function OwnerWeeklyApprovalPage({
           <tbody className="text-gray-800 dark:text-slate-200 [&_td]:[color:inherit]">
             <tr className="border-b border-gray-100 dark:border-slate-800"><td className="whitespace-nowrap py-2 pr-3">Manager Bonus</td><td className="py-2 font-bold">{sym}{nf(frozenManagerBonus?.performanceBonus ?? 0)}</td><td className="min-w-[140px] py-2 text-[11px] text-gray-500">{frozenManagerBonus?.performanceNote ?? ""}</td></tr>
             <tr className="border-b border-gray-100 dark:border-slate-800"><td className="whitespace-nowrap py-2 pr-3">Weekly Support Bonus</td><td className="py-2 font-bold">{sym}{nf(frozenManagerBonus?.supportBonus ?? 0)}</td><td className="min-w-[140px] py-2 text-[11px] text-gray-500">{frozenManagerBonus?.supportNote ?? ""}</td></tr>
+            {frozenManagerBonus?.upsellBonus !== undefined ? <tr className="border-b border-gray-100 dark:border-slate-800"><td className="whitespace-nowrap py-2 pr-3">Manager Upsell Bonus</td><td className="py-2 font-bold">{sym}{nf(frozenManagerBonus.upsellBonus)}</td><td className="min-w-[140px] py-2 text-[11px] text-gray-500">{frozenManagerBonus.upsellNote ?? ""}</td></tr> : null}
             <tr className="bg-violet-50 font-bold text-violet-900 dark:bg-violet-500/10 dark:text-violet-100 [&>td]:[color:inherit]"><td className="whitespace-nowrap px-2 py-2.5 text-[13px]">Total Manager Bonus</td><td className="py-2.5 text-[16px]" colSpan={2}>{sym}{nf(frozenManagerBonus?.total ?? 0)}</td></tr>
           </tbody>
         </table>
@@ -497,7 +498,7 @@ export default function OwnerWeeklyApprovalPage({
           {tab === "products" && (
             <div className="space-y-5">
               <div className="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-                <Panel><NumberedHeader title="Product Performance" subtitle="Orders placed this week and how many delivered." /><CompanyProductTable products={companySnap.products} totals={totals} /></Panel>
+                <Panel><NumberedHeader title="Product Performance" subtitle="Orders placed this week and orders delivered this week." /><CompanyProductTable products={companySnap.products} totals={totals} /></Panel>
                 <Panel><NumberedHeader title="Product Breakdown (Orders)" /><ProductDonut products={companySnap.products} /></Panel>
               </div>
               <Panel><NumberedHeader title="All Orders" subtitle="Every order in the reps' reports." /><div className="px-3 pb-4 pt-3"><OrdersTable rows={allOrders} sym={sym} /></div></Panel>
