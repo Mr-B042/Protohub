@@ -78,8 +78,19 @@ function labelUrl(value) {
 function migrationVersionsFromFiles() {
   const migrationsDir = path.join(backendRoot, "supabase", "migrations");
   if (!fs.existsSync(migrationsDir)) return [];
-  return fs.readdirSync(migrationsDir)
-    .map((name) => name.match(/^(\d+)_.*\.sql$/)?.[1])
+  // Only committed migrations count. An uncommitted file in the folder is
+  // someone's unfinished work that prod doesn't have (e.g. the stray 275 in
+  // Oct 2026), so applying it locally would break local/prod parity.
+  let names;
+  try {
+    names = execFileSync("git", ["ls-files", "--", "."], { cwd: migrationsDir, encoding: "utf8" })
+      .split(/\r?\n/)
+      .filter(Boolean);
+  } catch {
+    names = fs.readdirSync(migrationsDir);
+  }
+  return names
+    .map((name) => path.basename(name).match(/^(\d+)_.*\.sql$/)?.[1])
     .filter(Boolean)
     .sort();
 }
