@@ -169,9 +169,11 @@ async function resolveManager(req: Request, requestedId: string | undefined) {
   const scope = scopeOf(req);
   // A Manager (or the Owner using View As on one) only ever sees her own
   // wallet. Owner/Admin pick one; an Admin with no pick sees their own.
+  // Viewing as an Admin (Bright, 3 Oct 2026: Onyin is an Admin and the only
+  // manager) shows that Admin's own wallet too, not an empty page.
   const managerId = scope.role === "Manager"
     ? scope.id
-    : requestedId || (req.user!.role === "Admin" ? req.user!.id : "");
+    : requestedId || (scope.role === "Admin" ? scope.id : "");
   if (!managerId) return null;
   const { data, error } = await supabase.from("users").select("id, name, role").eq("id", managerId).eq("org_id", req.user!.orgId).maybeSingle();
   if (error) throw error;
@@ -204,20 +206,25 @@ export async function loadFundWeek(orgId: string, branchId: string, managerId: s
   };
 }
 
-/** Every manager wallet in the branch: holders plus anyone with the Manager role. */
+/** Every manager wallet in the branch: holders plus anyone with the Manager
+ *  role - or, when the branch has no Manager, its active Admins (Onyin is an
+ *  Admin and runs the money; same rule as the monthly incentive). */
 export async function branchFundManagers(orgId: string, branchId: string) {
   const [{ data: wallets, error: walletError }, { data: managers, error: managerError }, { data: members, error: memberError }] = await Promise.all([
     supabase.from("bank_accounts").select("holder_user_id").eq("org_id", orgId).eq("branch_id", branchId).not("holder_user_id", "is", null),
-    supabase.from("users").select("id, name, role").eq("org_id", orgId).eq("active", true).eq("role", "Manager"),
+    supabase.from("users").select("id, name, role").eq("org_id", orgId).eq("active", true).in("role", ["Manager", "Admin"]),
     supabase.from("branch_memberships").select("user_id").eq("branch_id", branchId)
   ]);
   if (walletError) throw walletError;
   if (managerError) throw managerError;
   if (memberError) throw memberError;
   const memberIds = new Set((members ?? []).map((row: any) => row.user_id));
+  const inBranch = (managers ?? []).filter((row: any) => memberIds.has(row.id));
+  const branchManagers = inBranch.filter((row: any) => row.role === "Manager");
+  const leaders = branchManagers.length > 0 ? branchManagers : inBranch.filter((row: any) => row.role === "Admin");
   const ids = new Set<string>([
     ...(wallets ?? []).map((row: any) => row.holder_user_id as string),
-    ...(managers ?? []).filter((row: any) => memberIds.has(row.id)).map((row: any) => row.id as string)
+    ...leaders.map((row: any) => row.id as string)
   ]);
   if (ids.size === 0) return [];
   const { data: users, error } = await supabase.from("users").select("id, name").in("id", Array.from(ids));
