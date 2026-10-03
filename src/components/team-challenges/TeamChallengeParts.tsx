@@ -20,11 +20,11 @@ export const TEAM_TONES: Record<string, { ring: string; bg: string; text: string
 export const toneOf = (color: string) => TEAM_TONES[color] ?? TEAM_TONES.violet;
 
 export const ENTRY_STATUS: Record<TeamChallengeEntryStatus, { label: string; cls: string; counts: boolean }> = {
-  awaiting_delivery: { label: "Awaiting delivery", cls: "bg-sky-50 text-sky-700 ring-sky-200", counts: false },
-  awaiting_payment: { label: "Awaiting payment", cls: "bg-amber-50 text-amber-800 ring-amber-200", counts: false },
-  awaiting_verification: { label: "Awaiting verification", cls: "bg-orange-50 text-orange-700 ring-orange-200", counts: false },
+  awaiting_delivery: { label: "Potential · awaiting delivery", cls: "bg-sky-50 text-sky-700 ring-sky-200", counts: false },
+  awaiting_payment: { label: "Delivered, awaiting payment", cls: "bg-amber-50 text-amber-800 ring-amber-200", counts: false },
+  awaiting_verification: { label: "Awaiting manager verification", cls: "bg-orange-50 text-orange-700 ring-orange-200", counts: false },
   verified: { label: "Verified", cls: "bg-emerald-50 text-emerald-700 ring-emerald-200", counts: true },
-  correction_requested: { label: "Correction requested", cls: "bg-rose-50 text-rose-700 ring-rose-200", counts: false },
+  correction_requested: { label: "Returned for correction", cls: "bg-rose-50 text-rose-700 ring-rose-200", counts: false },
   excluded: { label: "Excluded", cls: "bg-gray-100 text-gray-600 ring-gray-200", counts: false },
   reversed: { label: "Reversed", cls: "bg-rose-50 text-rose-700 ring-rose-200", counts: false }
 };
@@ -37,6 +37,12 @@ export function EntryPill({ status }: { status: TeamChallengeEntryStatus }) {
 export const CATEGORY_LABEL: Record<TeamChallengeEntry["category"], string> = { upsell: "Upsell", cross_sell: "Cross-sell", both: "Upsell + cross-sell" };
 
 /** "Rack 1 → 2" / "+ Edge Brusher" - what the rep actually added. */
+/** "₦14,600 → 1 pt" with Potential / Final. */
+export function contributionText(entry: TeamChallengeEntry) {
+  if (entry.contribution === null) return "—";
+  return `${entry.final ? "Final" : "Potential"} ${naira(entry.contribution)} → ${entry.points} pt${entry.points === 1 ? "" : "s"}`;
+}
+
 export function upgradeText(entry: TeamChallengeEntry) {
   const parts: string[] = [];
   const from = entry.original?.quantity;
@@ -136,7 +142,12 @@ export function TeamRaceCard({ team, milestones, leaderTeamId, gap, mine, meId }
           </div>
         ))}
       </div>
-      <p className="m-0 mt-2.5 flex items-center gap-2 text-[12.5px] font-semibold text-gray-700 dark:text-slate-300"><TrendingUp className={`h-4 w-4 ${tone.text}`} />{plural(team.upsells, "upsell")} <span className="text-gray-300">|</span> {plural(team.crossSells, "cross-sell")}</p>
+      <p className="m-0 mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] font-semibold text-gray-700 dark:text-slate-300"><TrendingUp className={`h-4 w-4 ${tone.text}`} />{plural(team.upsells, "upsell")} <span className="text-gray-300">|</span> {plural(team.crossSells, "cross-sell")} <span className="text-gray-300">|</span> {team.onePoint} × 1-pt · {team.twoPoint} × 2-pt <span className="text-gray-300">|</span> {naira(team.contribution)} added contribution</p>
+      {team.memberPending.map((pending) => (
+        <p key={pending.key} className="m-0 mt-2 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[12px] font-semibold text-amber-900">
+          {pending.target} points reached: member requirement pending. {pending.short.map((item) => `${item.need} more point${item.need === 1 ? "" : "s"} needed from ${item.name}`).join("; ")} to unlock the prize.
+        </p>
+      ))}
     </div>
   );
 }
@@ -158,6 +169,7 @@ export function PrizeTable({ milestones, memberCount, perRep }: { milestones: Te
           </div>
           <p className="m-0 mt-2 rounded-lg bg-gray-50 px-2.5 py-1.5 text-[12px] text-gray-600 dark:bg-slate-800 dark:text-slate-300">
             Other team reaching {milestone.target}: <strong>{naira(share(milestone.runnerUpAmount))}</strong>{perRep ? " your share" : ""}
+            {milestone.minPerMember > 0 ? <span className="block text-[11px] text-gray-500">Each member needs at least {milestone.minPerMember} points.</span> : null}
             {index > 0 ? <span className="block text-[11px] text-gray-500">Totals, not extra: earlier milestone payments are taken off.</span> : null}
           </p>
         </div>

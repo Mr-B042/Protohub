@@ -4615,8 +4615,10 @@ export const trackingHubApi = {
 };
 
 // ── Team Challenges (Bright, 3 Oct 2026) ─────────────────────────────────────
-export type TeamChallengeMilestone = { key: string; target: number; winnerAmount: number; runnerUpAmount: number };
-export type TeamChallengeScoring = { crossSell: number; upgradePlusOne: number; upgradePlusTwo: number; minAddedValue: number; productIds: string[] };
+export type TeamChallengeMilestone = { key: string; target: number; winnerAmount: number; runnerUpAmount: number; minPerMember: number };
+export type TeamChallengeScoring = { onePointFrom: number; twoPointsFrom: number; packagingPerUnit: number; productIds: string[] };
+export type TeamChallengeBreakdown = { revenue: number; productCost: number; logistics: number; repBonus: number; packaging: number; gifts: number; adjustment: number; upgrade: { from: number; to: number } | null; crossSells: number };
+export type TeamChallengeBaseline = { computedAt: string; averagePoints: number; months: Array<{ month: string; transactions: number; points: number; contribution: number; byTeam: Record<string, { transactions: number; points: number; contribution: number }>; byRep: Record<string, { transactions: number; points: number }> }> };
 export type TeamChallengeEntryStatus = "awaiting_delivery" | "awaiting_payment" | "awaiting_verification" | "verified" | "correction_requested" | "excluded" | "reversed";
 export type TeamChallengeEntitlement = {
   key: string; target: number; reached: boolean; place: "winner" | "runner_up" | "tie" | null; entitlement: number; step: number; provisional: boolean;
@@ -4624,8 +4626,11 @@ export type TeamChallengeEntitlement = {
 };
 export type TeamChallengeTeam = {
   id: string; name: string; color: string;
-  members: Array<{ id: string; name: string; points: number; orders: number; upsells: number; crossSells: number; pending: number }>;
+  members: Array<{ id: string; name: string; points: number; orders: number; upsells: number; crossSells: number; pending: number; onePoint: number; twoPoint: number; contribution: number }>;
   points: number; orders: number; upsells: number; crossSells: number; addedValue: number;
+  onePoint: number; twoPoint: number; zeroPoint: number; contribution: number;
+  reconciliation: { paid: number; entitled: number; over: number } | null;
+  memberPending: Array<{ key: string; target: number; short: Array<{ repId: string; need: number; name: string }> }>;
   awaitingDelivery: number; awaitingPayment: number; awaitingVerification: number;
   nextMilestone: { key: string; target: number; away: number } | null;
   entitlements: TeamChallengeEntitlement[]; entitled: number; approved: number; paid: number; outstanding: number;
@@ -4637,6 +4642,9 @@ export type TeamChallengeEntry = {
   revised: { quantity: number | null; amount: number; package?: string; product?: string; crossSells: Array<{ product: string; quantity: number; amount: number }> } | null;
   addedValue: number; deliveredAt: string | null; paidAt: string | null; qualifiedAt: string | null;
   status: TeamChallengeEntryStatus; reason: string | null; decidedBy: string | null; decidedAt: string | null; repNote: string | null; reviewRequestedAt: string | null; updatedAt: string;
+  contribution: number | null; breakdown: TeamChallengeBreakdown | null; final: boolean;
+  adjustment: number; adjustmentReason: string | null; adjustmentBy: string | null; adjustedAt: string | null;
+  escalatedAt: string | null; escalationNote: string | null;
 };
 export type TeamChallengeDetail = {
   challenge: {
@@ -4644,17 +4652,18 @@ export type TeamChallengeDetail = {
     sellFrom: string; sellTo: string; graceDays: number; graceUntil: string;
     milestones: TeamChallengeMilestone[]; scoring: TeamChallengeScoring; ruleVersion: number; sponsorNote: string | null;
     approvedBy: string | null; approvedAt: string | null; maxBudget: number; createdAt: string;
+    baseline: TeamChallengeBaseline | null;
   };
   teams: TeamChallengeTeam[];
   race: { leaderTeamId: string | null; gap: number; results: Array<{ key: string; target: number; winnerAmount: number; runnerUpAmount: number; reached: Array<{ teamId: string; at: string }>; winnerTeamIds: string[]; runnerUpTeamIds: string[]; tie: boolean; provisional: boolean }> };
-  kpis: { verifiedPoints: number; verifiedOrders: number; awaitingDelivery: number; awaitingVerification: number; addedRevenue: number; prizeBudget: number };
+  kpis: { verifiedPoints: number; verifiedOrders: number; awaitingDelivery: number; awaitingVerification: number; addedRevenue: number; addedContribution: number; escalated: number; prizeBudget: number };
   entries: TeamChallengeEntry[];
   log: Array<{ id: string; actor: string | null; action: string; detail: Record<string, unknown> | null; at: string }>;
   me: { id: string; teamId: string | null; leader: boolean; owner: boolean };
 };
 export type TeamChallengeInput = {
   name: string; sellFrom: string; sellTo: string; graceDays: number;
-  milestones: Array<{ target: number; winnerAmount: number; runnerUpAmount: number }>;
+  milestones: Array<{ target: number; winnerAmount: number; runnerUpAmount: number; minPerMember: number }>;
   scoring: TeamChallengeScoring; sponsorNote?: string;
   teams: Array<{ id?: string; name: string; color: string; memberIds: string[] }>;
   reason?: string;
@@ -4671,5 +4680,8 @@ export const teamChallengesApi = {
   decide: (id: string, entryId: string, action: "verify" | "correction" | "exclude", note?: string) => post<{ ok: true }>(`/api/team-challenges/${encodeURIComponent(id)}/entries/${encodeURIComponent(entryId)}/decision`, { action, note }),
   respond: (id: string, entryId: string, note: string, requestReview: boolean) => post<{ ok: true }>(`/api/team-challenges/${encodeURIComponent(id)}/entries/${encodeURIComponent(entryId)}/respond`, { note, requestReview }),
   approvePayout: (id: string, teamId: string, milestoneKey: string) => post<{ ok: true }>(`/api/team-challenges/${encodeURIComponent(id)}/payouts`, { teamId, milestoneKey }),
+  adjust: (id: string, entryId: string, amount: number, reason: string) => post<{ ok: true }>(`/api/team-challenges/${encodeURIComponent(id)}/entries/${encodeURIComponent(entryId)}/adjust`, { amount, reason }),
+  escalate: (id: string, entryId: string, note: string) => post<{ ok: true }>(`/api/team-challenges/${encodeURIComponent(id)}/entries/${encodeURIComponent(entryId)}/escalate`, { note }),
+  baseline: (id: string) => post<TeamChallengeBaseline>(`/api/team-challenges/${encodeURIComponent(id)}/baseline`, {}),
   markPaid: (id: string, payoutId: string, reference?: string) => post<{ ok: true }>(`/api/team-challenges/${encodeURIComponent(id)}/payouts/${encodeURIComponent(payoutId)}/paid`, { reference })
 };

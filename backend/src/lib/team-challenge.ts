@@ -1,9 +1,7 @@
 // Team Challenges (Bright, 3 Oct 2026) - the rules, kept pure so they can be
 // tested on their own.
 //
-// SCORE: one order = one score, the HIGHEST qualifying category (a 1→2
-// upgrade with a small add-on scores 2, not 3). Points come from the
-// challenge's scoring table; the rep never picks a category.
+// SCORE: one order = one score from its added contribution (below).
 // RACE: a team's milestone time is the qualification time (the later of
 // delivered and paid) of the verified order that takes its running total to
 // the target or past it - never the time a manager happened to review it.
@@ -11,51 +9,38 @@
 // its winner amount; the other team reaching it before the close: its
 // runner-up amount. Payable = entitlement − what the team was already paid.
 
+// PROFIT-WEIGHTED POINTS (Bright, 3 Oct 2026). A transaction scores by the
+// ADDED CONTRIBUTION it created, not by what kind of sale it was:
+//   additional amount collected − added product cost − extra logistics
+//   − rep bonus − packaging − gifts  (+ a manager adjustment, with a reason)
+// ₦10,000–₦49,999 = 1 point, ₦50,000+ = 2, below ₦10,000 = 0 (still shown).
+// One transaction = one score, two points at most, upsell and cross-sell
+// assessed together.
 export type Scoring = {
-  crossSell: number;
-  upgradePlusOne: number;
-  upgradePlusTwo: number;
-  minAddedValue: number;
+  onePointFrom: number;
+  twoPointsFrom: number;
+  packagingPerUnit: number;
   productIds: string[];
 };
-export const DEFAULT_SCORING: Scoring = { crossSell: 1, upgradePlusOne: 2, upgradePlusTwo: 3, minAddedValue: 0, productIds: [] };
+export const DEFAULT_SCORING: Scoring = { onePointFrom: 10_000, twoPointsFrom: 50_000, packagingPerUnit: 500, productIds: [] };
 
-export type Milestone = { key: string; target: number; winnerAmount: number; runnerUpAmount: number };
+export type Milestone = { key: string; target: number; winnerAmount: number; runnerUpAmount: number; minPerMember: number };
 export const DEFAULT_MILESTONES: Milestone[] = [
-  { key: "m1", target: 50, winnerAmount: 50_000, runnerUpAmount: 20_000 },
-  { key: "m2", target: 100, winnerAmount: 150_000, runnerUpAmount: 60_000 }
+  { key: "m1", target: 50, winnerAmount: 50_000, runnerUpAmount: 10_000, minPerMember: 10 },
+  { key: "m2", target: 100, winnerAmount: 150_000, runnerUpAmount: 40_000, minPerMember: 20 }
 ];
 
-export type ScoreOrderInput = {
-  productId: string | null;
-  amount: number;
-  originalAmount: number | null;
-  upsellFromQty: number | null;
-  upsellToQty: number | null;
-  quantity: number | null;
-  crossSellLines: Array<{ amount?: number | string | null; quantity?: number | null; productId?: string | null; productName?: string | null; addedById?: string | null; addedAt?: string | null }>;
-};
-
-export type OrderScore = {
-  category: "upsell" | "cross_sell" | "both";
-  points: number;
-  label: string;
-  addedValue: number;
-  upgrade: { from: number; to: number } | null;
-  crossSellValue: number;
-  crossSellOwner: string | null;
-};
-
-const money = (value: unknown) => Math.max(0, Math.round((Number(value) || 0) * 100) / 100);
+const money = (value: unknown) => Math.round((Number(value) || 0) * 100) / 100;
+const positive = (value: unknown) => Math.max(0, money(value));
 
 export function normaliseScoring(raw: unknown): Scoring {
   const value = (raw ?? {}) as Partial<Scoring>;
-  const int = (v: unknown, fallback: number) => (Number.isFinite(Number(v)) && Number(v) >= 0 ? Math.round(Number(v)) : fallback);
+  const amount = (v: unknown, fallback: number) => (Number.isFinite(Number(v)) && Number(v) >= 0 ? money(v) : fallback);
+  const one = amount(value.onePointFrom, DEFAULT_SCORING.onePointFrom);
   return {
-    crossSell: int(value.crossSell, DEFAULT_SCORING.crossSell),
-    upgradePlusOne: int(value.upgradePlusOne, DEFAULT_SCORING.upgradePlusOne),
-    upgradePlusTwo: int(value.upgradePlusTwo, DEFAULT_SCORING.upgradePlusTwo),
-    minAddedValue: money(value.minAddedValue ?? 0),
+    onePointFrom: one,
+    twoPointsFrom: Math.max(one, amount(value.twoPointsFrom, DEFAULT_SCORING.twoPointsFrom)),
+    packagingPerUnit: amount(value.packagingPerUnit, DEFAULT_SCORING.packagingPerUnit),
     productIds: Array.isArray(value.productIds) ? value.productIds.map(String) : []
   };
 }
@@ -65,68 +50,115 @@ export function normaliseMilestones(raw: unknown): Milestone[] {
   const rows = list.map((item: any, index) => ({
     key: String(item?.key || `m${index + 1}`),
     target: Math.max(1, Math.round(Number(item?.target) || 0)),
-    winnerAmount: money(item?.winnerAmount),
-    runnerUpAmount: money(item?.runnerUpAmount)
+    winnerAmount: positive(item?.winnerAmount),
+    runnerUpAmount: positive(item?.runnerUpAmount),
+    minPerMember: Math.max(0, Math.round(Number(item?.minPerMember) || 0))
   })).filter((row) => row.target > 0).sort((a, b) => a.target - b.target);
   return rows.length ? rows : DEFAULT_MILESTONES;
 }
 
-/** The score an order earns, or null when nothing the rep added qualifies. Free gifts never count. */
-export function scoreOrder(order: ScoreOrderInput, scoring: Scoring): OrderScore | null {
-  if (scoring.productIds.length > 0 && (!order.productId || !scoring.productIds.includes(order.productId))) return null;
-  const paidLines = (order.crossSellLines ?? []).filter((line) => money(line.amount) > 0);
-  const crossSellValue = paidLines.reduce((sum, line) => sum + money(line.amount), 0);
-  const from = Number(order.upsellFromQty) || 0;
-  const to = Number(order.upsellToQty) || 0;
-  const upgraded = from > 0 && to > from;
-  let upgradeValue = 0;
-  if (upgraded) {
-    const mainNow = money(order.amount) - crossSellValue;
-    upgradeValue = order.originalAmount !== null && Number(order.originalAmount) > 0
-      ? Math.max(0, money(mainNow - Number(order.originalAmount)))
-      : money(mainNow * ((to - from) / to));
-  }
-  const upgradePoints = upgraded ? (to - from >= 2 ? scoring.upgradePlusTwo : scoring.upgradePlusOne) : 0;
-  const crossPoints = crossSellValue > 0 ? scoring.crossSell : 0;
-  if (upgradePoints === 0 && crossPoints === 0) return null;
-  const addedValue = money(upgradeValue + crossSellValue);
-  if (addedValue < scoring.minAddedValue) return null;
-  const category = upgradePoints > 0 && crossPoints > 0 ? "both" : upgradePoints > 0 ? "upsell" : "cross_sell";
-  const points = Math.max(upgradePoints, crossPoints);
-  const label = upgradePoints >= crossPoints
-    ? `Upgrade ${from} → ${to}${crossPoints > 0 ? " + cross-sell (scored once, highest)" : ""}`
-    : "Cross-sell";
+export type ContributionInput = {
+  productId: string | null;
+  amount: number;
+  originalAmount: number | null;
+  originalQuantity: number | null;
+  upsellFromQty: number | null;
+  upsellToQty: number | null;
+  quantity: number | null;
+  crossSellLines: Array<{ amount?: number | string | null; quantity?: number | null; productId?: string | null; addedById?: string | null }>;
+  giftLines: Array<{ quantity?: number | null; productId?: string | null }>;
+  /** Unit cost of a product on the order's day (Product Master + cost history). */
+  unitCost: (productId: string | null | undefined) => number;
+  /** The rep's upsell / cross-sell bonus for this order (bonus engine); 0 until delivered. */
+  repBonus: number;
+  /** Extra delivery cost the upgrade created (known only when recorded). */
+  extraLogistics: number;
+  /** Manager adjustment, signed, with a reason recorded elsewhere. */
+  adjustment: number;
+  packagingPerUnit: number;
+};
+
+export type Contribution = {
+  hasUpsell: boolean; hasCrossSell: boolean; upgrade: { from: number; to: number } | null; crossSellCount: number;
+  revenue: number; productCost: number; logistics: number; repBonus: number; packaging: number; gifts: number; adjustment: number;
+  contribution: number; crossSellOwner: string | null;
+};
+
+/** The added contribution of an order, or null when the rep added nothing (no upgrade, no paid add-on). */
+export function contributionOf(input: ContributionInput): Contribution | null {
+  const paidLines = (input.crossSellLines ?? []).filter((line) => positive(line.amount) > 0);
+  const from = Number(input.upsellFromQty) || 0;
+  const to = Number(input.upsellToQty) || 0;
+  const hasUpsell = from > 0 && to > from;
+  const hasCrossSell = paidLines.length > 0;
+  if (!hasUpsell && !hasCrossSell) return null;
+  const crossSellRevenue = paidLines.reduce((sum, line) => sum + positive(line.amount), 0);
+  const upgradeUnits = hasUpsell ? to - from : 0;
+  let revenue: number;
+  if (input.originalAmount !== null && Number(input.originalAmount) > 0) revenue = money(input.amount - Number(input.originalAmount));
+  else if (hasUpsell) revenue = money((input.amount - crossSellRevenue) * (upgradeUnits / to) + crossSellRevenue);
+  else revenue = crossSellRevenue;
+  revenue = Math.max(0, revenue);
+  const productCost = money(upgradeUnits * input.unitCost(input.productId)
+    + paidLines.reduce((sum, line) => sum + Math.max(0, Number(line.quantity) || 1) * input.unitCost(line.productId), 0));
+  const gifts = money((input.giftLines ?? []).reduce((sum, line) => sum + Math.max(0, Number(line.quantity) || 1) * input.unitCost(line.productId), 0));
+  const packaging = money(input.packagingPerUnit * (upgradeUnits + paidLines.length));
+  const logistics = positive(input.extraLogistics);
+  const repBonus = positive(input.repBonus);
+  const adjustment = money(input.adjustment);
   return {
-    category, points, label, addedValue, upgrade: upgraded ? { from, to } : null, crossSellValue,
+    hasUpsell, hasCrossSell, upgrade: hasUpsell ? { from, to } : null, crossSellCount: paidLines.length,
+    revenue, productCost, logistics, repBonus, packaging, gifts, adjustment,
+    contribution: money(revenue - productCost - logistics - repBonus - packaging - gifts + adjustment),
     crossSellOwner: paidLines.find((line) => line.addedById)?.addedById ?? null
   };
 }
 
-export type RaceEntry = { teamId: string; points: number; qualifiedAt: string; status: string };
+/** 0, 1 or 2 points - two at most, whatever the transaction contains. */
+export function pointsFor(contribution: number, scoring: Scoring) {
+  if (contribution >= scoring.twoPointsFrom) return 2;
+  if (contribution >= scoring.onePointFrom) return 1;
+  return 0;
+}
+
+export type RaceEntry = { teamId: string; repId: string | null; points: number; qualifiedAt: string; status: string };
 export type MilestoneResult = {
-  key: string; target: number; winnerAmount: number; runnerUpAmount: number;
+  key: string; target: number; winnerAmount: number; runnerUpAmount: number; minPerMember: number;
   reached: Array<{ teamId: string; at: string }>;
+  /** Target reached but a member is short of the per-member minimum. */
+  memberPending: Array<{ teamId: string; short: Array<{ repId: string; need: number }> }>;
   winnerTeamIds: string[];
   runnerUpTeamIds: string[];
   tie: boolean;
   provisional: boolean;
 };
 
-/** Who reached each milestone and when, from verified entries in qualification order. */
-export function raceResults(teamIds: string[], entries: RaceEntry[], milestones: Milestone[], closeAt: string | null): MilestoneResult[] {
+/**
+ * Who reached each milestone and when, from verified entries in qualification
+ * order. A team reaches it when its total is at the target or past it AND
+ * every member has at least the per-member minimum - at the time of the
+ * entry that satisfies both.
+ */
+export function raceResults(teams: Array<{ id: string; memberIds: string[] }>, entries: RaceEntry[], milestones: Milestone[], closeAt: string | null): MilestoneResult[] {
   const verified = entries.filter((entry) => entry.status === "verified" && entry.points > 0)
     .sort((a, b) => Date.parse(a.qualifiedAt) - Date.parse(b.qualifiedAt));
   const pending = entries.filter((entry) => entry.status === "awaiting_verification" || entry.status === "correction_requested");
   return milestones.map((milestone) => {
     const reached: Array<{ teamId: string; at: string }> = [];
-    for (const teamId of teamIds) {
+    const memberPending: MilestoneResult["memberPending"] = [];
+    for (const team of teams) {
       let total = 0;
-      for (const entry of verified.filter((row) => row.teamId === teamId)) {
+      const perMember = new Map(team.memberIds.map((id) => [id, 0]));
+      let hit: string | null = null;
+      for (const entry of verified.filter((row) => row.teamId === team.id)) {
         total += entry.points;
-        if (total >= milestone.target) {
-          if (!closeAt || Date.parse(entry.qualifiedAt) <= Date.parse(closeAt)) reached.push({ teamId, at: entry.qualifiedAt });
-          break;
-        }
+        if (entry.repId && perMember.has(entry.repId)) perMember.set(entry.repId, (perMember.get(entry.repId) ?? 0) + entry.points);
+        const membersOk = Array.from(perMember.values()).every((value) => value >= milestone.minPerMember);
+        if (total >= milestone.target && membersOk) { hit = entry.qualifiedAt; break; }
+      }
+      if (hit && (!closeAt || Date.parse(hit) <= Date.parse(closeAt))) reached.push({ teamId: team.id, at: hit });
+      else if (!hit && total >= milestone.target) {
+        memberPending.push({ teamId: team.id, short: Array.from(perMember.entries()).filter(([, value]) => value < milestone.minPerMember).map(([repId, value]) => ({ repId, need: milestone.minPerMember - value })) });
       }
     }
     reached.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
@@ -136,7 +168,7 @@ export function raceResults(teamIds: string[], entries: RaceEntry[], milestones:
     const runnerUpTeamIds = reached.filter((row) => !winnerTeamIds.includes(row.teamId)).map((row) => row.teamId);
     // A pending entry that qualified before the winner's time could still change who got there first.
     const provisional = Boolean(first) && pending.some((entry) => Date.parse(entry.qualifiedAt) <= Date.parse(first!.at));
-    return { ...milestone, reached, winnerTeamIds, runnerUpTeamIds, tie, provisional };
+    return { ...milestone, reached, memberPending, winnerTeamIds, runnerUpTeamIds, tie, provisional };
   });
 }
 
