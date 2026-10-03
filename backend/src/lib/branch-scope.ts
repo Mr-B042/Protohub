@@ -36,6 +36,9 @@ const BRANCH_TABLES = new Set([
   "inventory_valuation_snapshots", "inventory_valuation_snapshot_lines",
   "state_replenishment_notes",
 
+  // Team Challenges (migration 287): every row carries a non-null branch_id.
+  "team_challenges", "team_challenge_teams", "team_challenge_entries", "team_challenge_payouts", "team_challenge_log",
+
   // Operational records with no parent to inherit from.
   "recovery_actions", "sales_call_reviews", "customer_flags",
 

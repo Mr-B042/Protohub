@@ -48,6 +48,7 @@ export const navItems = [
   // missing here can never appear no matter what the role allowlist permits.
   // This row is what makes My Targets & Incentives reachable as its own page.
   { label: "My Targets & Incentives", icon: Target },
+  { label: "Team Challenges", icon: Trophy },
   { label: "Products & Stock", icon: Package },
   { label: "Manager Dashboard", icon: LayoutPanelTop },
   { label: "Orders", icon: ShoppingBag },

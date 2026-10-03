@@ -4613,3 +4613,63 @@ export const trackingHubApi = {
   saveSettings: (settings: HubSettings) => put<{ settings: HubSettings }>("/api/tracking-hub/settings", settings),
   audit: () => get<{ entries: HubAuditEntry[] }>("/api/tracking-hub/audit")
 };
+
+// ── Team Challenges (Bright, 3 Oct 2026) ─────────────────────────────────────
+export type TeamChallengeMilestone = { key: string; target: number; winnerAmount: number; runnerUpAmount: number };
+export type TeamChallengeScoring = { crossSell: number; upgradePlusOne: number; upgradePlusTwo: number; minAddedValue: number; productIds: string[] };
+export type TeamChallengeEntryStatus = "awaiting_delivery" | "awaiting_payment" | "awaiting_verification" | "verified" | "correction_requested" | "excluded" | "reversed";
+export type TeamChallengeEntitlement = {
+  key: string; target: number; reached: boolean; place: "winner" | "runner_up" | "tie" | null; entitlement: number; step: number; provisional: boolean;
+  payout: { id: string; amount: number; perRep: Array<{ repId: string; name: string; amount: number }>; approvedAt: string; approvedBy: string | null; paidAt: string | null; reference: string | null } | null;
+};
+export type TeamChallengeTeam = {
+  id: string; name: string; color: string;
+  members: Array<{ id: string; name: string; points: number; orders: number; upsells: number; crossSells: number; pending: number }>;
+  points: number; orders: number; upsells: number; crossSells: number; addedValue: number;
+  awaitingDelivery: number; awaitingPayment: number; awaitingVerification: number;
+  nextMilestone: { key: string; target: number; away: number } | null;
+  entitlements: TeamChallengeEntitlement[]; entitled: number; approved: number; paid: number; outstanding: number;
+};
+export type TeamChallengeEntry = {
+  id: string; orderId: string; repId: string; repName: string; teamId: string | null; customer: string | null; product: string | null; packageName: string | null; orderStatus: string | null;
+  category: "upsell" | "cross_sell" | "both"; points: number; verifiedPoints: number | null; ruleLabel: string | null; ruleVersion: number;
+  original: { quantity: number | null; amount: number | null } | null;
+  revised: { quantity: number | null; amount: number; package?: string; product?: string; crossSells: Array<{ product: string; quantity: number; amount: number }> } | null;
+  addedValue: number; deliveredAt: string | null; paidAt: string | null; qualifiedAt: string | null;
+  status: TeamChallengeEntryStatus; reason: string | null; decidedBy: string | null; decidedAt: string | null; repNote: string | null; reviewRequestedAt: string | null; updatedAt: string;
+};
+export type TeamChallengeDetail = {
+  challenge: {
+    id: string; name: string; status: "draft" | "active" | "paused" | "closed"; phase: string;
+    sellFrom: string; sellTo: string; graceDays: number; graceUntil: string;
+    milestones: TeamChallengeMilestone[]; scoring: TeamChallengeScoring; ruleVersion: number; sponsorNote: string | null;
+    approvedBy: string | null; approvedAt: string | null; maxBudget: number; createdAt: string;
+  };
+  teams: TeamChallengeTeam[];
+  race: { leaderTeamId: string | null; gap: number; results: Array<{ key: string; target: number; winnerAmount: number; runnerUpAmount: number; reached: Array<{ teamId: string; at: string }>; winnerTeamIds: string[]; runnerUpTeamIds: string[]; tie: boolean; provisional: boolean }> };
+  kpis: { verifiedPoints: number; verifiedOrders: number; awaitingDelivery: number; awaitingVerification: number; addedRevenue: number; prizeBudget: number };
+  entries: TeamChallengeEntry[];
+  log: Array<{ id: string; actor: string | null; action: string; detail: Record<string, unknown> | null; at: string }>;
+  me: { id: string; teamId: string | null; leader: boolean; owner: boolean };
+};
+export type TeamChallengeInput = {
+  name: string; sellFrom: string; sellTo: string; graceDays: number;
+  milestones: Array<{ target: number; winnerAmount: number; runnerUpAmount: number }>;
+  scoring: TeamChallengeScoring; sponsorNote?: string;
+  teams: Array<{ id?: string; name: string; color: string; memberIds: string[] }>;
+  reason?: string;
+};
+export const teamChallengesApi = {
+  list: () => get<{ challenges: Array<{ id: string; name: string; status: string; phase: string; sellFrom: string; sellTo: string; maxBudget: number }> }>("/api/team-challenges"),
+  detail: (id: string) => get<TeamChallengeDetail>(`/api/team-challenges/${encodeURIComponent(id)}`),
+  meta: () => get<{ reps: Array<{ id: string; name: string }>; products: Array<{ id: string; name: string }>; defaults: { milestones: TeamChallengeMilestone[]; scoring: TeamChallengeScoring } }>("/api/team-challenges/meta/reps"),
+  create: (body: TeamChallengeInput) => post<{ id: string }>("/api/team-challenges", body),
+  update: (id: string, body: TeamChallengeInput) => request<{ ok: true }>("PUT", `/api/team-challenges/${encodeURIComponent(id)}`, body),
+  remove: (id: string) => request<{ ok: true }>("DELETE", `/api/team-challenges/${encodeURIComponent(id)}`),
+  publish: (id: string) => post<{ ok: true }>(`/api/team-challenges/${encodeURIComponent(id)}/publish`, {}),
+  setStatus: (id: string, status: "paused" | "active" | "closed", reason?: string) => post<{ ok: true }>(`/api/team-challenges/${encodeURIComponent(id)}/status`, { status, reason }),
+  decide: (id: string, entryId: string, action: "verify" | "correction" | "exclude", note?: string) => post<{ ok: true }>(`/api/team-challenges/${encodeURIComponent(id)}/entries/${encodeURIComponent(entryId)}/decision`, { action, note }),
+  respond: (id: string, entryId: string, note: string, requestReview: boolean) => post<{ ok: true }>(`/api/team-challenges/${encodeURIComponent(id)}/entries/${encodeURIComponent(entryId)}/respond`, { note, requestReview }),
+  approvePayout: (id: string, teamId: string, milestoneKey: string) => post<{ ok: true }>(`/api/team-challenges/${encodeURIComponent(id)}/payouts`, { teamId, milestoneKey }),
+  markPaid: (id: string, payoutId: string, reference?: string) => post<{ ok: true }>(`/api/team-challenges/${encodeURIComponent(id)}/payouts/${encodeURIComponent(payoutId)}/paid`, { reference })
+};
