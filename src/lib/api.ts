@@ -4004,6 +4004,8 @@ export const publicOrdersApi = {
       replayed?: boolean;
       /** On a replay, the original order's Purchase event id (so Meta counts it once). */
       metaPurchaseEventId?: string | null;
+      /** The ONE Pixel the server sent this Purchase to; the browser fires only it. */
+      metaPixelId?: string | null;
       upsellOffer?: {
         companionId?: string;
         productId: string;

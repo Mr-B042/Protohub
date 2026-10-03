@@ -22,7 +22,8 @@ import { assignOrderRep } from "../lib/order-assignment.js";
 import { buildPackageComponentSnapshot } from "../lib/order-inventory.js";
 import { packageAllowsState, packageHasAgentStateStock } from "../lib/package-availability.js";
 import { serverEventsAllowed, withDataSource } from "../lib/tracking-credentials.js";
-import { sendPurchaseToExtraPixels } from "../lib/tracking-extra-pixels.js";
+import { purchasePixelFor } from "../lib/tracking-click-pixel.js";
+import { orderAdIds } from "../lib/tracking-hub.js";
 import { metaIdsFromFormContext, recordMetaCapiEvent, resolveMetaTrackingConfig, sendMetaCapiPurchase, type MetaTrackingConfig } from "../lib/meta-capi.js";
 import { readSettings } from "./embed-settings.js";
 import {
@@ -1320,12 +1321,13 @@ router.post("/", submitRateLimit, async (req, res) => {
       // The browser re-fires its Pixel Purchase for a replay; handing back the
       // ORIGINAL event id lets Meta count it once (Bright, 1 Oct 2026). The
       // server does not send a second Conversions API Purchase for a replay.
-      const { data: registered } = await supabase.from("meta_capi_events").select("event_id")
+      const { data: registered } = await supabase.from("meta_capi_events").select("event_id, pixel_id")
         .eq("org_id", product.org_id).eq("order_id", String(existing.id)).eq("event_name", "Purchase").maybeSingle();
       const originalPurchaseEventId = registered?.event_id ?? String(existing.id);
       res.status(200).json({ id: existing.id, amount: existing.amount, currency: existing.currency,
         crossSellLines: existing.cross_sell_lines ?? [], reviewHold: Boolean(existing.review_hold),
-        upsellOffer: null, upsellToken: null, replayed: true, metaPurchaseEventId: originalPurchaseEventId });
+        upsellOffer: null, upsellToken: null, replayed: true, metaPurchaseEventId: originalPurchaseEventId,
+        metaPixelId: registered?.pixel_id ?? null });
       return;
     }
   }
@@ -1546,19 +1548,20 @@ router.post("/", submitRateLimit, async (req, res) => {
     quantity: Number(pkg.quantity ?? 1)
   };
   const metaSendsAllowed = !reviewHold && await serverEventsAllowed(product.org_id, (order as any).branch_id ?? null);
+  // ONE Pixel per sale (lib/tracking-click-pixel.ts): the clicked ad set's
+  // Pixel when it is on this link, else the link's main Pixel. Never all of
+  // them - Meta counts a sale once per Pixel. The browser gets the same Pixel
+  // back (metaPixelId) and fires only that one.
+  const purchaseTarget = reviewHold ? { config: metaConfig, pixelId: metaConfig.pixelId ?? null } : await purchasePixelFor({
+    orgId: product.org_id, branchId: (order as any).branch_id ?? null, trackingKey: metaTrackingKey, config: metaConfig,
+    adsetId: orderAdIds({ form_context: formContext, utm_term: d.utmTerm ?? null, utm_content: d.utmContent ?? null, utm_campaign: d.utmCampaign ?? null }).adsetId
+  });
   if (metaSendsAllowed && !alreadyRegistered) {
-    void sendMetaCapiPurchase({ ...metaSendArgs, config: metaConfig, eventId: metaPurchaseEventId }).then((result) => recordMetaCapiEvent(supabase, {
+    void sendMetaCapiPurchase({ ...metaSendArgs, config: purchaseTarget.config, eventId: metaPurchaseEventId }).then((result) => recordMetaCapiEvent(supabase, {
       orgId: product.org_id, branchId: (order as any).branch_id ?? null, orderId: String(order.id),
       eventName: "Purchase", metaEventName: "Purchase", eventId: metaPurchaseEventId, result,
-      testMode: Boolean(metaConfig.testMode || metaConfig.testEventCode), pixelId: metaConfig.pixelId ?? null, value: Number(order.amount ?? amount), currency: String(order.currency ?? pkg.currency)
+      testMode: Boolean(purchaseTarget.config.testMode || purchaseTarget.config.testEventCode), pixelId: purchaseTarget.pixelId, value: Number(order.amount ?? amount), currency: String(order.currency ?? pkg.currency)
     })).catch(() => undefined);
-  }
-  // "Also send to" Pixels on the tracking link, same event id (each sent once).
-  if (metaSendsAllowed && (metaConfig.mode === "hybrid" || metaConfig.mode === "protohub")) {
-    void sendPurchaseToExtraPixels({
-      orgId: product.org_id, branchId: (order as any).branch_id ?? null, trackingKey: metaTrackingKey, mainPixelId: metaConfig.pixelId ?? null,
-      orderId: String(order.id), eventId: metaPurchaseEventId, args: metaSendArgs
-    }).catch(() => undefined);
   }
 
   // 6. Audit, in-app notification, emails (fire-and-forget).
@@ -1689,7 +1692,9 @@ router.post("/", submitRateLimit, async (req, res) => {
     upsellToken: reviewHold ? null : upsellToken,
     // Tells the form NOT to redirect (so no pixel/Purchase) and to show an
     // in-place "order received" thank-you instead.
-    reviewHold
+    reviewHold,
+    // The ONE Pixel this sale's Purchase goes to; the browser fires only it.
+    metaPixelId: purchaseTarget.pixelId
   });
 });
 

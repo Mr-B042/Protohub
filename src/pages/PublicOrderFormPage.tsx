@@ -1247,7 +1247,6 @@ export default function PublicOrderFormPage() {
   const publicMetaTrackingMode = parsePublicMetaTrackingMode(params?.get("tracking_mode") ?? params?.get("trackingMode"));
   const publicMetaPixelId = (params?.get("meta_pixel_id") ?? params?.get("metaPixelId") ?? "").trim().slice(0, 80);
   // Tracking Hub "Also send to" Pixels: the page fires the browser event for each too, same event id.
-  const publicMetaExtraPixelIds = useMemo(() => (params?.get("meta_extra_pixel_ids") ?? "").split(",").map((value) => value.trim()).filter((value) => /^\d{8,25}$/.test(value)).slice(0, 10), [params]);
   const publicMetaTrackingKey = (params?.get("meta_tracking_key") ?? params?.get("metaTrackingKey") ?? "").trim().slice(0, 120);
   const publicMetaTestEventCode = (params?.get("meta_test_event_code") ?? params?.get("metaTestEventCode") ?? params?.get("test_event_code") ?? params?.get("testEventCode") ?? "").trim().slice(0, 80);
   const publicMetaTestMode = parsePublicBoolean(params?.get("meta_test") ?? params?.get("metaTest") ?? params?.get("meta_test_mode") ?? params?.get("metaTestMode")) || Boolean(publicMetaTestEventCode);
@@ -1443,7 +1442,8 @@ export default function PublicOrderFormPage() {
   const postMetaBrowserEvent = useCallback((
     eventName: "Lead" | "Purchase",
     eventId: string,
-    customData: Record<string, unknown>
+    customData: Record<string, unknown>,
+    pixelOverride?: string | null
   ) => {
     // "protohub" = CAPI only (Tracking Hub): the server sends Purchase, the browser does not.
     if (publicEmbedIsPreview || !eventId || publicMetaTrackingMode === "off" || publicMetaTrackingMode === "landing_page" || publicMetaTrackingMode === "protohub") return;
@@ -1455,8 +1455,12 @@ export default function PublicOrderFormPage() {
         type: "ordo-meta-event",
         eventName,
         eventId,
-        pixelId: publicMetaPixelId || null,
-        extraPixelIds: publicMetaExtraPixelIds,
+        // ONE Pixel per event (3 Oct 2026): for a Purchase, the Pixel the
+        // server chose (the clicked ad's); never the link's other Pixels -
+        // Meta counted a sale once per Pixel. extraPixelIds stays empty so an
+        // older copy of the embed code on a landing page sends nothing extra.
+        pixelId: pixelOverride || publicMetaPixelId || null,
+        extraPixelIds: [],
         trackingMode: publicMetaTrackingMode,
         testMode: publicMetaTestMode,
         testEventCode: publicMetaTestEventCode || null,
@@ -1465,7 +1469,7 @@ export default function PublicOrderFormPage() {
     } catch {
       // Browser-side Meta bridge is best-effort only.
     }
-  }, [publicEmbedIsPreview, publicMetaExtraPixelIds, publicMetaPixelId, publicMetaTestEventCode, publicMetaTestMode, publicMetaTrackingMode]);
+  }, [publicEmbedIsPreview, publicMetaPixelId, publicMetaTestEventCode, publicMetaTestMode, publicMetaTrackingMode]);
   const publicJourneyAttributionMetadata = useMemo(
     () => ({
       source: orderSourceFromUtm(publicUtmSource),
@@ -3394,7 +3398,7 @@ export default function PublicOrderFormPage() {
           contents: [{ id: submittedPackageId, quantity: chosenPackage.quantity || 1 }],
           num_items: chosenPackage.quantity || 1,
           order_id: created.id
-        });
+        }, created.metaPixelId);
       }
 
       trackCartJourney("order_submitted", {

@@ -28,10 +28,8 @@ export function embedUrlFor(link: HubLink) {
   if (link.strategy !== "landing_page" && link.strategy !== "off") {
     params.set("tracking_mode", link.strategy === "capi_only" ? "protohub" : "hybrid");
     if (link.pixelId) params.set("meta_pixel_id", link.pixelId);
-    // "Also send to" Pixels the browser fires for real: switched on and in Production.
-    // (A Pixel in Testing gets its test Purchase from the server only.)
-    const extras = (link.extraPixels ?? []).filter((pixel) => pixel.active && pixel.status === "production" && pixel.pixelId !== link.pixelId).map((pixel) => pixel.pixelId);
-    if (extras.length) params.set("meta_extra_pixel_ids", extras.join(","));
+    // The link's other Pixels are NOT put in the form address (3 Oct 2026):
+    // a sale goes to ONE Pixel, which the server picks and hands the browser.
     if (link.testEventCode) { params.set("meta_test", "1"); params.set("meta_test_event_code", link.testEventCode); }
   }
   params.set("meta_tracking_key", link.trackingKey);
@@ -350,7 +348,7 @@ function LinkForm({ link, meta, onToast, onSaved, onCancel, compact }: { link: H
         <div className={labelCls}>Data source (main Pixel)<PixelPicker options={meta.dataSources} value={form.dataSourceId || null} hints={pixelHints} exclude={form.extraDataSourceIds}
           placeholder="From profile / website" emptyLabel="From profile / website" onPick={(id) => setForm({ ...form, dataSourceId: id ?? "" })} /></div>
         <div className={`${labelCls} sm:col-span-2`}>
-          Also send to <span className="font-normal text-gray-400">(optional: more Pixels that get every sale)</span>
+          Other Pixels this page's ads use <span className="font-normal text-gray-400">(optional)</span>
           <div className="mt-1 flex flex-wrap items-center gap-1.5 rounded-lg border border-gray-200 p-1.5 dark:border-slate-700">
             {form.extraDataSourceIds.map((id) => {
               const pixel = metaSources.find((row) => row.id === id);
@@ -361,7 +359,7 @@ function LinkForm({ link, meta, onToast, onSaved, onCancel, compact }: { link: H
                 placeholder={form.extraDataSourceIds.length ? "Add another Pixel…" : "Add a Pixel…"} onPick={(id) => { if (id) setForm({ ...form, extraDataSourceIds: [...form.extraDataSourceIds, id] }); }} />
             </div>
           </div>
-          <span className="mt-1 block text-[11px] font-normal text-gray-500">Use this when ads from different businesses optimise on different Pixels for the same page. Each Pixel gets the browser and server Purchase with the order number, so each counts the sale once.</span>
+          <span className="mt-1 block text-[11px] font-normal text-gray-500">Use this when ads from different businesses optimise on different Pixels for the same page. Each sale goes to <strong>one</strong> Pixel only: the Pixel of the ad the customer clicked, or the main Pixel if that is unknown. It is never sent to all of them, because Meta would count it once per Pixel.</span>
         </div>
         <label className={labelCls}>Landing page URL<input value={form.landingPageUrl} onChange={(e) => setForm({ ...form, landingPageUrl: e.target.value })} placeholder="https://brightpathhubs.com/shelf/" className={input} /></label>
         <label className={labelCls}>Thank-you page URL<input value={form.redirectUrl} onChange={(e) => setForm({ ...form, redirectUrl: e.target.value })} placeholder="https://brightpathhubs.com/order-success/" className={input} /></label>
