@@ -519,7 +519,10 @@ export default function RepWeeklyReportPage({
                   <td className="px-3 py-2.5"><OrderTypePill type={row.type} /></td>
                   <td className="px-3 py-2.5 text-gray-800 dark:text-slate-200">{nf(row.amount)}</td>
                   <td className="px-3 py-2.5"><OrderStatusPill status={row.status} /></td>
-                  <td className="px-3 py-2.5 text-gray-800 dark:text-slate-200">{row.bonus > 0 ? nf(row.bonus) : "-"}</td>
+                  <td className="px-3 py-2.5 text-gray-800 dark:text-slate-200">
+                    {row.bonus > 0 ? nf(row.bonus) : "-"}
+                    {row.bonusNote ? <span className="mt-0.5 block max-w-[220px] text-[10px] font-semibold leading-snug text-amber-700 dark:text-amber-300">{row.bonusNote}</span> : null}
+                  </td>
                   <td className="px-3 py-2.5 text-right">
                     <button
                       type="button"

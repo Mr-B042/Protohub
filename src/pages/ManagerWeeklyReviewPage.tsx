@@ -135,6 +135,12 @@ export default function ManagerWeeklyReviewPage({
   const shown = expectedRows.map(shownSnapshot).filter((snap): snap is WeeklyReportSnapshot => !!snap);
   const companySnap = useMemo(() => buildCompanySnapshot(weekStart, weekEnd, shown), [weekStart, weekEnd, shown]);
   const totals = companySnap.totals;
+  // Orders placed in an earlier week, delivered and paid in this one, across
+  // every rep shown (Bright, 3 Oct 2026). Older reports have no figure: 0.
+  const carryOver = expectedRows.reduce((sum, row) => {
+    const snap = shownSnapshot(row);
+    return { orders: sum.orders + (snap?.totals.carryOverOrders ?? 0), bonus: sum.bonus + (snap?.totals.carryOverBonus ?? 0) };
+  }, { orders: 0, bonus: 0 });
   const prev = companySnap.previous;
 
   const count = (pick: (row: ReviewRepRow) => boolean) => expectedRows.filter(pick).length;
@@ -473,7 +479,10 @@ export default function ManagerWeeklyReviewPage({
                                 {row.differences.length > 0 && <span className="mt-0.5 flex items-center gap-1 text-[11px] font-bold text-amber-600"><AlertTriangle className="h-3 w-3" />{row.differences.length} figure{row.differences.length === 1 ? "" : "s"} changed</span>}
                               </td>
                               <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.orders ?? 0)}</td>
-                              <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.delivered ?? 0)}</td>
+                              <td className="px-2 py-3 text-gray-800 dark:text-slate-200">
+                                {nf(snap?.totals.delivered ?? 0)}
+                                {(snap?.totals.carryOverOrders ?? 0) > 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-blue-700 dark:text-blue-300">+{nf(snap?.totals.carryOverOrders ?? 0)} carried over · {sym}{nf(snap?.totals.carryOverBonus ?? 0)}</span>}
+                              </td>
                               <td className="px-2 py-3"><span className="flex items-center gap-2 text-gray-800 dark:text-slate-200"><span className="w-11">{pctText(snap?.totals.deliveryRate ?? 0)}</span><span className="w-14"><RateBar value={snap?.totals.deliveryRate ?? 0} /></span></span></td>
                               <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.crossSellBonus ?? 0)}</td>
                               <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.upsellBonus ?? 0)}</td>
@@ -498,7 +507,10 @@ export default function ManagerWeeklyReviewPage({
                           <td className="px-2 py-3" colSpan={2}>Total</td>
                           <td className="px-2 py-3">-</td>
                           <td className="px-2 py-3">{nf(totals.orders)}</td>
-                          <td className="px-2 py-3">{nf(totals.delivered)}</td>
+                          <td className="px-2 py-3">
+                            {nf(totals.delivered)}
+                            {carryOver.orders > 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-blue-700 dark:text-blue-300">+{nf(carryOver.orders)} carried over · {sym}{nf(carryOver.bonus)}</span>}
+                          </td>
                           <td className="px-2 py-3">{pctText(totals.deliveryRate)}</td>
                           <td className="px-2 py-3">{nf(totals.crossSellBonus)}</td>
                           <td className="px-2 py-3">{nf(totals.upsellBonus)}</td>
@@ -786,13 +798,20 @@ export function OrdersTable({ rows, sym }: { rows: Array<WeeklyReportSnapshot["o
               <td className="px-3 py-2.5 text-gray-500">{index + 1}</td>
               <td className="px-3 py-2.5 font-bold">#{row.id}</td>
               <td className="px-3 py-2.5">{row.repName ?? "-"}</td>
-              <td className="whitespace-nowrap px-3 py-2.5">{longDate(row.date)}</td>
+              <td className="whitespace-nowrap px-3 py-2.5">
+                {longDate(row.date)}
+                {/* Placed in an earlier week, delivered (and paid) in this one (Bright, 3 Oct 2026). */}
+                {row.placedThisWeek === false && <span className="mt-0.5 block text-[10px] font-bold text-blue-700 dark:text-blue-300">Carried over · delivered {row.deliveredDate ? longDate(row.deliveredDate) : ""}</span>}
+              </td>
               <td className="px-3 py-2.5">{row.customer}</td>
               <td className="px-3 py-2.5">{row.product}</td>
               <td className="px-3 py-2.5"><OrderTypePill type={row.type} /></td>
               <td className="px-3 py-2.5">{nf(row.amount)}</td>
               <td className="px-3 py-2.5"><OrderStatusPill status={row.status} /></td>
-              <td className="px-3 py-2.5">{row.bonus > 0 ? nf(row.bonus) : "-"}{row.bonusManuallyAdjusted && row.bonus > 0 ? <span className="ml-1 text-[10px] font-bold text-amber-600">edited</span> : null}</td>
+              <td className="px-3 py-2.5">
+                {row.bonus > 0 ? nf(row.bonus) : "-"}{row.bonusManuallyAdjusted && row.bonus > 0 ? <span className="ml-1 text-[10px] font-bold text-amber-600">edited</span> : null}
+                {row.bonusNote ? <span className="mt-0.5 block max-w-[220px] text-[10px] font-semibold leading-snug text-amber-700 dark:text-amber-300">{row.bonusNote}</span> : null}
+              </td>
             </tr>
           ))}
           {rows.length === 0 && <tr><td colSpan={10} className="px-3 py-8 text-center text-gray-500">No orders.</td></tr>}
