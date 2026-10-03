@@ -68,3 +68,28 @@ export function incentiveWindow(endDate: string, today: string) {
   const dueBy = addDays(monthEnd, 7);
   return { dueFrom, dueBy, status: today < dueFrom ? "accruing" as const : today > dueBy ? "overdue" as const : "due" as const };
 }
+
+// ── Paid incentive → weekly expenses (Bright, 3 Oct 2026) ──
+// When an incentive is marked paid it is booked as a "Bonuses & Incentives"
+// expense, spread across the challenge's own weeks (4 for September:
+// 30 Aug, 6, 13, 20 Sept) instead of landing in one week. One row per week,
+// dated that week's Sunday (the challenge start + 7 days each), so every week's
+// break-even carries its share. Equal shares to the kobo; the last week takes
+// what is left so the rows always add up to the amount paid.
+export const INCENTIVE_EXPENSE_CATEGORY = "Bonuses & Incentives";
+
+export function challengeWeekStarts(startDate: string, endDate: string): string[] {
+  const weeks: string[] = [];
+  for (let day = startDate; day <= endDate; day = addDays(day, 7)) weeks.push(day);
+  return weeks.length ? weeks : [startDate];
+}
+
+export function incentiveExpenseSplit(amount: number, weeks: number): number[] {
+  const count = Math.max(1, weeks);
+  const totalKobo = Math.round(Math.max(0, amount) * 100);
+  const share = Math.floor(totalKobo / count);
+  return Array.from({ length: count }, (_, index) => (index === count - 1 ? totalKobo - share * (count - 1) : share) / 100);
+}
+
+/** The expense ids for one payout, so undo can find and remove exactly them. */
+export const incentiveExpenseIdPrefix = (payoutId: string) => `incentive-${payoutId}-w`;

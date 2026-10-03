@@ -582,7 +582,7 @@ const RETENTION_TASK_TYPES: Array<{ key: RetentionTaskTypeKey; label: string; ic
   { key: "general_check_in", label: "General Check-in", icon: MessageCircle, tone: "text-teal-600" }
 ];
 type OrderWorkspacePage = "Orders" | "Follow-up Queue" | "Closed Orders";
-type ExpenseType = "Ad Spend" | "Delivery" | "Failed Delivery" | "Salary" | "Clearing & Shipping" | "Waybill" | "Airtime & Data" | "Stock Loss" | "Other";
+type ExpenseType = "Ad Spend" | "Delivery" | "Failed Delivery" | "Salary" | "Bonuses & Incentives" | "Clearing & Shipping" | "Waybill" | "Airtime & Data" | "Stock Loss" | "Other";
 type ExpenseFilter = "All Types" | ExpenseType;
 type UserRole = "All Roles" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Inventory Manager & Logistics Operations" | "Marketer" | "Viewer" | "Recovery Rep" | "Delivery Agent" | "Sales Closer";
 type UserStatus = "All Status" | "Active" | "Inactive";
@@ -2550,7 +2550,7 @@ const financeLensToneClasses: Record<FinanceLens, string> = {
   "Cash Flow": "bg-emerald-50 text-emerald-700 border-emerald-200",
   Operational: "bg-amber-50 text-amber-700 border-amber-200"
 };
-const expenseTypes: ExpenseType[] = ["Ad Spend", "Delivery", "Failed Delivery", "Salary", "Clearing & Shipping", "Waybill", "Airtime & Data", "Stock Loss", "Other"];
+const expenseTypes: ExpenseType[] = ["Ad Spend", "Delivery", "Failed Delivery", "Salary", "Bonuses & Incentives", "Clearing & Shipping", "Waybill", "Airtime & Data", "Stock Loss", "Other"];
 const expenseFilters: ExpenseFilter[] = ["All Types", ...expenseTypes];
 const userRoles: UserRole[] = ["All Roles", "Admin", "Manager", "Sales Rep", "Inventory Manager & Logistics Operations", "Marketer", "Viewer", "Recovery Rep", "Delivery Agent", "Sales Closer"];
 const editableUserRoles: EditableUserRole[] = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager & Logistics Operations", "Marketer", "Viewer", "Recovery Rep", "Delivery Agent", "Sales Closer"];
@@ -7419,6 +7419,8 @@ const normalizeExpenseRecord = (value: any): ExpenseRecord => {
     "Delivery",
     "Failed Delivery",
     "Salary",
+    // Paid monthly incentives, spread over the challenge weeks (Bright, 3 Oct 2026).
+    "Bonuses & Incentives",
     "Clearing & Shipping",
     "Waybill",
     "Airtime & Data",
@@ -25523,7 +25525,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // week's bonus maps. The rep's report, the manager's review and the bonus
   // table therefore cannot disagree. See src/pages/weekly-report-model.ts.
   // The week that just ended: it is the one due on this week's Tuesday.
-  const weeklyReportDefaultWeek = () => windowShiftDay(windowWeekStart(lagosDateKeyNow()), -7);
+  // Open on the week that needs doing (Bright, 3 Oct 2026): last week while its
+  // report is still due (Sunday to Tuesday), the current week from Wednesday,
+  // and never a week before reports started (27 Sept).
+  const weeklyReportDefaultWeek = () => {
+    const today = lagosDateKeyNow();
+    const thisWeek = windowWeekStart(today);
+    const lastWeek = windowShiftDay(thisWeek, -7);
+    const week = today <= reportDueDate(lastWeek) ? lastWeek : thisWeek;
+    return week < FIRST_REPORT_WEEK ? FIRST_REPORT_WEEK : week;
+  };
   const [weeklyReportWeekStart, setWeeklyReportWeekStart] = useState<string>(() => weeklyReportDefaultWeek());
   const [weeklyBonusMaps, setWeeklyBonusMaps] = useState<{
     weekStart: string;

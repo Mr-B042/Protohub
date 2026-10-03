@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { calendarMonthOf, incentiveTier, incentiveWindow, monthlyDeliveryRate, payableAmount } from "./challenge-incentive.js";
+import { calendarMonthOf, challengeWeekStarts, incentiveExpenseSplit, incentiveTier, incentiveWindow, monthlyDeliveryRate, payableAmount } from "./challenge-incentive.js";
 
 test("tiers: 70+ full, 65-70 half, 60-65 quarter, below 60 nothing", () => {
   assert.equal(incentiveTier(70).percent, 100);
@@ -50,4 +50,15 @@ test("window: a weekly-month challenge is paid after the calendar month ends", (
   assert.equal(incentiveWindow("2026-09-26", "2026-10-01").status, "due");
   assert.equal(incentiveWindow("2026-09-26", "2026-10-07").status, "due");
   assert.equal(incentiveWindow("2026-09-26", "2026-10-08").status, "overdue");
+});
+
+test("paid incentive spreads across the challenge weeks", () => {
+  assert.deepEqual(challengeWeekStarts("2026-08-30", "2026-09-26"), ["2026-08-30", "2026-09-06", "2026-09-13", "2026-09-20"]);
+  assert.equal(challengeWeekStarts("2026-09-27", "2026-10-31").length, 5);
+  assert.deepEqual(incentiveExpenseSplit(10000, 4), [2500, 2500, 2500, 2500]);
+  // Odd amounts: equal to the kobo, the last week takes the rest, total exact.
+  const odd = incentiveExpenseSplit(3333.33, 4);
+  assert.deepEqual(odd, [833.33, 833.33, 833.33, 833.34]);
+  assert.equal(Math.round(odd.reduce((sum, value) => sum + value, 0) * 100), 333333);
+  assert.deepEqual(incentiveExpenseSplit(0, 4), [0, 0, 0, 0]);
 });
