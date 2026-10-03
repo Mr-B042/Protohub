@@ -155,6 +155,8 @@ export const addDaysKey = (dateKey: string, days: number) => {
  * bonus lands in the week they are delivered (carry-over).
  */
 export const reportDueDate = (weekStart: string) => addDaysKey(weekStart, 9);
+/** First week reps submit (Bright, 3 Oct 2026); earlier weeks are settled. Same as the server. */
+export const FIRST_REPORT_WEEK = "2026-09-27";
 /** Submit opens on the due Tuesday itself. */
 export const reportOpensOn = reportDueDate;
 /** Submitted after the end of the due Tuesday (Lagos day). */
