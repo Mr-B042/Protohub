@@ -2,7 +2,7 @@ import { supabase } from "./supabase.js";
 import { addDaysToDateKey, lagosDateKey } from "./sales-bonus-engine.js";
 import {
   PURCHASE_STATUS_LABEL, attributionCapture, domainOf, healthScore, humanMetaError, orderAdIds, pathOf, purchaseStatus,
-  reconciliationVerdict, type HealthItem, type PurchaseStatus
+  explainCampaignGaps, productFromName, reconciliationVerdict, type HealthItem, type PurchaseStatus
 } from "./tracking-hub.js";
 
 // Tracking Hub data (Bright, 2 Oct 2026). Loads orders, sends, browser
@@ -402,7 +402,26 @@ async function buildIssues(orgId: string, branchId: string, a: { basics: Basics;
     metaByCampaign.set(row.campaign_id, entry);
   }
   const todayRows = a.rows.filter((row) => dayOfIso(row.createdAt) === today);
+  // Gaps that only move credit between campaigns of one product, or a sale
+  // counted on a second Pixel, are not tracking problems (see explainCampaignGaps).
+  const [{ data: productRows }, { data: sendRows }] = await Promise.all([
+    supabase.from("products").select("id, name").eq("org_id", orgId),
+    todayRows.length ? supabase.from("tracking_extra_pixel_sends").select("order_id").eq("org_id", orgId).eq("status", "sent").in("order_id", todayRows.map((row) => row.orderId)) : Promise.resolve({ data: [] as any[] })
+  ]);
+  const productList = (productRows ?? []).map((row: any) => ({ id: String(row.id), name: String(row.name ?? "") }));
+  const extraByProduct = new Map<string, number>();
+  for (const send of sendRows ?? []) {
+    const productId = todayRows.find((row) => row.orderId === String(send.order_id))?.productId;
+    if (productId) extraByProduct.set(productId, (extraByProduct.get(productId) ?? 0) + 1);
+  }
+  const campaignIds = new Set<string>([...metaByCampaign.keys(), ...todayRows.map((row) => row.campaignId).filter((id): id is string => !!id)]);
+  const explained = explainCampaignGaps(Array.from(campaignIds).map((campaignId) => {
+    const ours = todayRows.filter((row) => row.campaignId === campaignId);
+    const meta = metaByCampaign.get(campaignId);
+    return { id: campaignId, name: meta?.name ?? campaignId, productId: ours.find((row) => row.productId)?.productId ?? productFromName(meta?.name, productList), protohub: ours.length, meta: Math.round(meta?.purchases ?? 0), orderIds: ours.map((row) => row.orderId) };
+  }), extraByProduct);
   for (const [campaignId, meta] of metaByCampaign) {
+    if (explained.get(campaignId)?.unexplained === 0) continue;
     const ours = todayRows.filter((row) => row.campaignId === campaignId).length;
     const verdict = reconciliationVerdict({ protohubOrders: ours, purchaseEvents: ours, sentToMeta: ours, duplicates: 0, metaPurchases: Math.round(meta.purchases) });
     if (verdict.tone === "warn") push({ key: `campaign:${campaignId}`, severity: "orange", title: `Campaign ${meta.name || campaignId}`, detail: `${Math.round(meta.purchases)} Meta purchases / ${ours} Protohub orders today.`, action: verdict.likely, at: null, tab: "reconciliation", affected: `${ours} orders`, actionLabel: "View Details", subjectId: campaignId });

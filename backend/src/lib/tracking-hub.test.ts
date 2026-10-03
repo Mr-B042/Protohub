@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { attributionCapture, domainOf, healthScore, humanMetaError, orderAdIds, purchaseStatus, reconciliationVerdict } from "./tracking-hub.js";
+import { attributionCapture, domainOf, explainCampaignGaps, healthScore, humanMetaError, orderAdIds, productFromName, purchaseStatus, reconciliationVerdict } from "./tracking-hub.js";
 
 test("browser + server with the same event id is one Purchase in Meta", () => {
   assert.equal(purchaseStatus({ serverStatus: "sent", serverEventId: "18452", browserEventId: "18452" }), "deduped");
@@ -47,4 +47,35 @@ test("reconciliation explains the difference instead of blaming the Pixel", () =
   assert.match(reconciliationVerdict({ protohubOrders: 38, purchaseEvents: 38, sentToMeta: 38, duplicates: 0, metaPurchases: 52 }).conclusion, /did not generate 14 additional/);
   assert.match(reconciliationVerdict({ protohubOrders: 40, purchaseEvents: 40, sentToMeta: 30, duplicates: 0, metaPurchases: 30 }).likely, /10 orders were not sent/);
   assert.equal(reconciliationVerdict({ protohubOrders: 5, purchaseEvents: 5, sentToMeta: 5, duplicates: 0, metaPurchases: null }).tone, "info");
+});
+
+test("explainCampaignGaps: Bright's 3 Oct shelf and racks", () => {
+  const rows = [
+    { id: "0009", name: "0009 Shelf", productId: "shelf", protohub: 0, meta: 1, orderIds: [] },
+    { id: "cshelf", name: "C Shelf Corner", productId: "shelf", protohub: 0, meta: 1, orderIds: [] },
+    { id: "multi2026", name: "Multi Corner Shelf 2026", productId: "shelf", protohub: 1, meta: 0, orderIds: ["4782"] },
+    { id: "unsynced", name: "120253933094970359", productId: "shelf", protohub: 1, meta: 0, orderIds: ["4778"] },
+    { id: "abo", name: "5-in-1 ABO Test", productId: "racks", protohub: 0, meta: 1, orderIds: [] },
+    { id: "005", name: "005 5-in-1", productId: "racks", protohub: 1, meta: 1, orderIds: ["4774"] }
+  ];
+  const out = explainCampaignGaps(rows, new Map([["racks", 4]]));
+  assert.equal(out.get("0009")?.creditedElsewhere, 1);
+  assert.equal(out.get("cshelf")?.unexplained, 0);
+  assert.equal(out.get("multi2026")?.creditedElsewhere, 1);
+  assert.equal(out.get("abo")?.otherPixel, 1);
+  assert.equal(out.get("abo")?.unexplained, 0);
+  assert.equal(out.has("005"), false);
+});
+
+test("explainCampaignGaps: a real gap stays a gap", () => {
+  const out = explainCampaignGaps([{ id: "a", name: "A", productId: "p", protohub: 0, meta: 3, orderIds: [] }], new Map());
+  assert.equal(out.get("a")?.unexplained, 3);
+});
+
+test("productFromName uses words only one product has", () => {
+  const products = [{ id: "shelf", name: "Multi Corner Storage Shelf" }, { id: "racks", name: "5-in-1 Corner Racks" }, { id: "edge", name: "Edge Brusher Max" }];
+  assert.equal(productFromName("C Shelf Corner Sales campaign", products), "shelf");
+  assert.equal(productFromName("5-in-1 Corner Rack | Sales | ABO Test", products), "racks");
+  assert.equal(productFromName("D New Sept Edge Brusher Sales campaign", products), "edge");
+  assert.equal(productFromName("Corner Sales campaign", products), null);
 });

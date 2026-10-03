@@ -22,7 +22,10 @@ const VIEW_TABS: Array<{ key: HubReconView; label: string; noun: string; head: s
 ];
 const STATUS_PILL: Record<HubReconRow["status"], ["green" | "red" | "blue" | "gray" | "orange", string]> = {
   matched: ["green", "Matched"], investigate: ["red", "Investigate"], resolved: ["blue", "Resolved"], no_meta: ["gray", "No Meta data"],
-  meta_higher: ["orange", "Meta higher"], protohub_higher: ["orange", "Protohub higher"]
+  meta_higher: ["orange", "Meta higher"], protohub_higher: ["orange", "Protohub higher"],
+  // Not tracking problems (Bright, 3 Oct 2026): Meta gave the sale to another
+  // campaign of the same product, or counted a multi-Pixel sale on a 2nd Pixel.
+  credited_elsewhere: ["blue", "Credited to another campaign"], other_pixel: ["blue", "Counted on another Pixel"]
 };
 const rateColor = (rate: number | null) => (rate === null ? "text-gray-400" : rate >= 90 ? "text-emerald-600" : rate >= 75 ? "text-amber-600" : "text-rose-600");
 const diffColor = (diff: number | null) => (diff === null ? "text-gray-400" : Math.abs(diff) <= 1 ? "text-emerald-600" : "text-rose-600");
@@ -108,6 +111,38 @@ export default function ReconciliationTab({ tabBar, onToast, range, onRange, onO
         </Card>
       ) : null}
 
+      {data?.products && data.products.length > 0 ? (
+        <Card className="p-4">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <p className="m-0 text-[14px] font-black text-gray-900 dark:text-slate-100">By product</p>
+            <p className="m-0 text-[12px] text-gray-500">Meta often credits a sale to a different campaign of the same product, so compare here first.</p>
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            {data.products.map((product) => {
+              const extra = Math.max(0, Math.min(product.difference, product.extraPixelSales));
+              const left = product.difference - extra;
+              const ok = product.difference === 0 || (product.difference > 0 && left === 0);
+              return (
+                <div key={product.id} className={`flex items-center gap-3 rounded-xl border p-3 ${ok ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-500/30 dark:bg-emerald-500/10" : "border-amber-200 bg-amber-50/50 dark:border-amber-500/30 dark:bg-amber-500/10"}`}>
+                  <ProductThumb src={product.image} size={40} />
+                  <div className="min-w-0 flex-1">
+                    <p className="m-0 truncate text-[13px] font-bold text-gray-900 dark:text-slate-100" title={product.name}>{product.name}</p>
+                    <p className="m-0 text-[12.5px] text-gray-700 dark:text-slate-300">Protohub <strong>{nf(product.protohub)}</strong> · Meta <strong>{nf(product.meta)}</strong></p>
+                    <p className={`m-0 text-[11.5px] font-semibold ${ok ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}>
+                      {product.difference === 0 ? "Exact match"
+                        : extra > 0 && left === 0 ? `+${extra}: sale${extra === 1 ? "" : "s"} counted on another Pixel`
+                        : product.difference > 0 ? `Meta +${product.difference}${extra > 0 ? ` (${extra} on another Pixel)` : ""}`
+                        : `Protohub +${-product.difference}`}
+                    </p>
+                  </div>
+                  {ok ? <Check className="h-5 w-5 shrink-0 text-emerald-600" /> : null}
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      ) : null}
+
       <Card className="px-2">
         <UnderlineTabs className="!border-b-0" value={view} onChange={setView} tabs={VIEW_TABS.map((item) => ({ key: item.key, label: item.label, icon: item.key === view ? <CircleDot className="h-4 w-4" /> : undefined }))} />
       </Card>
@@ -143,7 +178,7 @@ export default function ReconciliationTab({ tabBar, onToast, range, onRange, onO
                             <td className="py-3 text-center">{row.meta === null ? "—" : nf(row.meta)}</td>
                             <td className={`py-3 text-center font-semibold ${diffColor(row.difference)}`}>{signed(row.difference)}</td>
                             <td className={`py-3 text-center font-semibold ${rateColor(row.matchRate)}`}>{row.matchRate === null ? "—" : `${row.matchRate}%`}</td>
-                            <td className="py-3"><StatusPill size="sm" tone={tone}>{text}</StatusPill></td>
+                            <td className="py-3" title={row.explanation ?? undefined}><StatusPill size="sm" tone={tone}>{text}</StatusPill></td>
                             <td className="py-3 text-right"><ActionMenu items={[
                               { label: "Open", onClick: () => { setSelected(row.id); setClosed(false); } },
                               { label: "Mark as resolved", onClick: async () => { await trackingHubApi.reconciliationNote({ scope: view, scopeId: row.id, resolved: true }); onToast("Marked as resolved."); reload(); } }
@@ -198,6 +233,11 @@ function ReconPanel({ view, row, range, onClose, onToast, onChanged, onOpenLedge
         </div>
         <PanelClose onClose={onClose} />
       </div>
+      {row.explanation ? (
+        <p className="m-0 mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-[12.5px] text-blue-900 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-100">
+          <strong>Not a tracking problem.</strong> {row.explanation}
+        </p>
+      ) : null}
       <UnderlineTabs className="mt-2" value={tab} onChange={setTab} tabs={[{ key: "overview", label: "Overview" }, { key: "orders", label: "Orders" }, { key: "meta", label: "Meta Data" }, { key: "discrepancies", label: "Discrepancies" }, { key: "insights", label: "Insights" }]} />
       {!data ? <LoadState compact error={itemError} onRetry={reload} /> : null}
 
