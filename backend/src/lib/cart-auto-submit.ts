@@ -263,13 +263,27 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     return;
   }
 
-  const { data: order, error: orderErr } = await supabase
-    .from("orders").insert(orderPayload).select().single();
+  // Save ONCE through the same locked function as the order form (migration
+  // 286): if the customer's own submit already saved this cart's order, get it
+  // back and stop - #4788 was recovery inserting directly, 0.5s after the
+  // customer's #4787. A repeat from the same number + product is held.
+  const phoneLast10 = String(customerPhone).replace(/\D/g, "").slice(-10);
+  const { data: once, error: orderErr } = await supabase.rpc("insert_order_once", {
+    p_org_id: orgId, p_phone_last10: phoneLast10, p_product_id: product.id,
+    p_window_start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+    p_order: orderPayload, p_submission_key: null
+  });
 
   if (orderErr) {
     logger.error("cart-auto-submit: order insert failed", { cartId, error: orderErr.message });
     return;
   }
+  if ((once as any)?.replayed) {
+    logger.info("cart-auto-submit: cart already has its order - not creating another", { cartId, orderId: (once as any)?.order?.id });
+    return;
+  }
+  const order = (once as any)?.order;
+  if (!order) return;
 
   if (!order.review_hold) {
     const assignment = await assignOrderRep(orgId, product.id);
