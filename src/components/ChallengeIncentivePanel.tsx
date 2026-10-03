@@ -4,7 +4,8 @@ import { BadgeCheck, CalendarClock, CheckCircle2, ChevronDown, Info, Trophy, Und
 // Monthly incentive for one product challenge (Bright, 3 Oct 2026).
 // The reward each person earned from the challenge's milestones is paid in the
 // first week after the month, cut by their delivery rate for the month:
-//   70%+ full · 65–70% half · 60–65% quarter · under 60% nothing.
+//   70%+ full · 65–69% half · 60–64% quarter · under 60% nothing. Whole
+//   percents, rounded like the Manager Dashboard (64.7% counts as 65%).
 // Reps see their own line and where they stand on the ladder; Manager, Admin
 // and Owner see everyone and mark payments. Built for phones first.
 
@@ -64,7 +65,7 @@ function TierLadder({ rate, compact = false }: { rate: number | null; compact?: 
           {TIERS.map((tier) => (
             <span key={tier.label} className={`rounded-md px-1 py-1 leading-tight ring-1 ${tier.soft}`}>
               <span className="block">{tier.label}</span>
-              <span className="block text-[10px] font-medium opacity-80">{tier.min === 0 ? "under 60%" : tier.max === 100 ? "70%+" : `${tier.min}–${tier.max}%`}</span>
+              <span className="block text-[10px] font-medium opacity-80">{tier.min === 0 ? "under 60%" : tier.max === 100 ? "70%+" : `${tier.min}–${tier.max - 1}%`}</span>
             </span>
           ))}
         </div>
