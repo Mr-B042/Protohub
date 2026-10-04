@@ -8,14 +8,14 @@
  *
  * ⚠️ HOW THINGS ARE COUNTED (same as the rest of the app, on purpose)
  * - Orders = placed in the week (repeat-order holds left out).
- * - Delivered / delivery rate = orders DELIVERED in the week ÷ orders placed
- *   in the week - the Manager Dashboard's formula (Bright, 3 Oct 2026: "the
- *   weekly report doesn't use the manager dashboard delivery rate... use it").
- *   It used to be "of the orders placed, how many are delivered now", which
- *   gave a different number from the dashboard for the same week.
- * - Bonus = the same orders delivered in the week. An order placed last
- *   Saturday and delivered on Monday counts in this week's delivered and
- *   bonus, and in last week's orders.
+ * - Delivered / delivery rate = of the orders PLACED in the week, how many
+ *   are delivered - the cohort the Manager Dashboard's Team performance and
+ *   the bonus engine's delivery-rate line use. Carried-over orders (placed in
+ *   an earlier week, delivered in this one) never count here (Bright, 4 Oct
+ *   2026: they inflated the week's rate); they belong to their own week.
+ * - Bonus = orders delivered in the week (deliveredForBonus). An order placed
+ *   last Saturday and delivered on Monday is paid in this week's bonus, shown
+ *   as carried over, and counts in last week's orders and delivery rate.
  *
  * When the rep submits, the snapshot below is frozen on the server. The
  * review pages build it again live and compareSnapshots() lists what moved.
@@ -325,6 +325,9 @@ export function buildRepWeeklySnapshot(input: {
   const { weekStart, weekEnd } = input;
   const placed = input.orders.filter((order) => inWeek(order.createdKey, weekStart, weekEnd));
   const deliveredInWeek = input.orders.filter((order) => order.status === "Delivered" && inWeek(order.deliveredKey, weekStart, weekEnd));
+  // The rate's cohort: this week's orders that are delivered. Carried-over
+  // deliveries are paid (deliveredInWeek) but never lift this week's rate.
+  const placedDelivered = placed.filter((order) => order.status === "Delivered");
 
   // Product breakdown, biggest first.
   const productMap = new Map<string, WeeklyReportProductRow>();
@@ -334,7 +337,7 @@ export function buildRepWeeklySnapshot(input: {
     row.orders += 1;
     productMap.set(order.productKey, row);
   }
-  for (const order of deliveredInWeek) {
+  for (const order of placedDelivered) {
     const row = productRow(order);
     row.delivered += 1;
     productMap.set(order.productKey, row);
@@ -345,7 +348,7 @@ export function buildRepWeeklySnapshot(input: {
 
   const daily = weekDays(weekStart).map((date) => {
     const dayOrders = placed.filter((order) => order.createdKey === date);
-    const delivered = deliveredInWeek.filter((order) => order.deliveredKey === date).length;
+    const delivered = dayOrders.filter((order) => order.status === "Delivered").length;
     return { date, orders: dayOrders.length, delivered, deliveryRate: pct(delivered, dayOrders.length) };
   });
 
@@ -359,14 +362,14 @@ export function buildRepWeeklySnapshot(input: {
   const expansion = {
     crossSell: {
       orders: crossPlaced.length,
-      delivered: deliveredInWeek.filter((order) => order.hasCrossSell).length,
-      deliveryRate: pct(deliveredInWeek.filter((order) => order.hasCrossSell).length, crossPlaced.length),
+      delivered: placedDelivered.filter((order) => order.hasCrossSell).length,
+      deliveryRate: pct(placedDelivered.filter((order) => order.hasCrossSell).length, crossPlaced.length),
       bonus: input.bonus.crossSell
     },
     upsell: {
       orders: upsellPlaced.length,
-      delivered: deliveredInWeek.filter((order) => order.hasUpsell).length,
-      deliveryRate: pct(deliveredInWeek.filter((order) => order.hasUpsell).length, upsellPlaced.length),
+      delivered: placedDelivered.filter((order) => order.hasUpsell).length,
+      deliveryRate: pct(placedDelivered.filter((order) => order.hasUpsell).length, upsellPlaced.length),
       bonus: input.bonus.upsell
     }
   };
@@ -437,8 +440,8 @@ export function buildRepWeeklySnapshot(input: {
     generatedAt: (input.now ?? new Date()).toISOString(),
     totals: {
       orders: placed.length,
-      delivered: deliveredInWeek.length,
-      deliveryRate: pct(deliveredInWeek.length, placed.length),
+      delivered: placedDelivered.length,
+      deliveryRate: pct(placedDelivered.length, placed.length),
       deliveredForBonus: deliveredInWeek.length,
       baseBonus,
       upsellBonus,

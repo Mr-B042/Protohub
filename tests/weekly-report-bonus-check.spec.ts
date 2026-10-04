@@ -107,3 +107,22 @@ test("fines bigger than the bonus carry into next week, and last week's leftover
   expect(next.totals.finalBonus).toBe(3700);
   expect(next.totals.unpaidFines).toBe(0);
 });
+
+test("a carried-over delivery is paid this week but does not lift this week's delivery rate", () => {
+  const live = snapshot([
+    order({ id: "1" }),
+    order({ id: "2", status: "New", deliveredKey: null }),
+    // Placed the week before, delivered this week: carried over.
+    order({ id: "3", createdKey: "2026-09-18", deliveredKey: "2026-09-21" })
+  ], {
+    "1": { base: 200, upsell: 0, crossSell: 0 },
+    "3": { base: 200, upsell: 0, crossSell: 0 }
+  });
+  expect(live.totals.orders).toBe(2);
+  expect(live.totals.delivered).toBe(1);
+  expect(live.totals.deliveryRate).toBe(50);
+  expect(live.totals.deliveredForBonus).toBe(2);
+  expect(live.totals.carryOverOrders).toBe(1);
+  expect(live.products[0]).toMatchObject({ orders: 2, delivered: 1, deliveryRate: 50 });
+  expect(live.daily.find((day) => day.date === "2026-09-21")).toMatchObject({ orders: 2, delivered: 1, deliveryRate: 50 });
+});
