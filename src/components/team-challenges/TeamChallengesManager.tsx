@@ -548,6 +548,15 @@ function ChallengeEditor({ detail, onClose, onSave }: { detail: TeamChallengeDet
                 </div>
               ))}
             </div>
+            {(() => {
+              // A later "second team" total below an earlier first prize pays a
+              // team that won before NOTHING for coming second later.
+              const sorted = [...form.milestones].sort((a, b) => a.target - b.target);
+              const problem = sorted.find((m, i) => i > 0 && m.runnerUpAmount <= Math.max(...sorted.slice(0, i).map((prev) => prev.winnerAmount)));
+              if (!problem) return null;
+              const earlier = Math.max(...sorted.filter((m) => m.target < problem.target).map((m) => m.winnerAmount));
+              return <p className="m-0 mt-2 rounded-xl bg-amber-50 px-3 py-2 text-[12.5px] font-semibold text-amber-900">A team that wins an earlier milestone ({naira(earlier)}) gets nothing more for coming second at {problem.target} points ({naira(problem.runnerUpAmount)} total). Set the second-team total at {problem.target} above {naira(earlier)} so they keep pushing.</p>;
+            })()}
             <p className="m-0 mt-2 rounded-xl bg-violet-50 px-3 py-2 text-[13px] font-bold text-violet-800 dark:bg-violet-500/10 dark:text-violet-200">Maximum prize budget: {naira(budget)} <span className="font-normal">(top milestone: first team + other team)</span></p>
           </div>
           <div>

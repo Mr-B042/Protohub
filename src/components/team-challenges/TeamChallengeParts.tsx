@@ -153,28 +153,95 @@ export function TeamRaceCard({ team, milestones, leaderTeamId, gap, mine, meId }
   );
 }
 
-/** Both reward paths for every milestone: the first team AND the other team. */
+/**
+ * Both reward paths for every milestone - the first team AND the other team
+ * (the consolation prize) - each with the team total and each person's share,
+ * then every way a team can finish with what it is paid in total
+ * (Bright, 5 Oct 2026: "the consolation prize is not showing with detailed info").
+ */
 export function PrizeTable({ milestones, memberCount, perRep }: { milestones: TeamChallengeMilestone[]; memberCount: number; perRep: boolean }) {
-  const share = (amount: number) => (perRep && memberCount > 0 ? Math.round(amount / memberCount) : amount);
-  const suffix = perRep ? " your share" : "";
+  const people = Math.max(1, memberCount);
+  const each = (amount: number) => Math.round(amount / people);
   return (
-    <div className="grid gap-2 sm:grid-cols-2">
-      {milestones.map((milestone, index) => (
-        <div key={milestone.key} className="rounded-xl border border-gray-200 p-3 dark:border-slate-700">
-          <div className="flex items-center gap-2.5">
-            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${index === 0 ? "bg-amber-50 text-amber-500" : "bg-violet-50 text-violet-600"}`}><Trophy className="h-5 w-5" /></span>
-            <div className="min-w-0">
-              <p className="m-0 text-[12.5px] text-gray-600 dark:text-slate-300">First team to {milestone.target} points</p>
-              <p className="m-0 text-[19px] font-black text-gray-900 dark:text-slate-50">{naira(share(milestone.winnerAmount))}<span className="text-[13px] font-semibold text-gray-500">{suffix}</span></p>
+    <div className="space-y-3">
+      <div className="grid gap-2 sm:grid-cols-2">
+        {milestones.map((milestone, index) => (
+          <div key={milestone.key} className="rounded-xl border border-gray-200 p-3 dark:border-slate-700">
+            <div className="flex items-center gap-2.5">
+              <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${index === 0 ? "bg-amber-50 text-amber-500" : "bg-violet-50 text-violet-600"}`}><Trophy className="h-5 w-5" /></span>
+              <p className="m-0 text-[14px] font-black text-gray-900 dark:text-slate-50">Reach {milestone.target} points</p>
             </div>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <div className="rounded-lg bg-amber-50 px-2.5 py-2 dark:bg-amber-500/10">
+                <p className="m-0 text-[11px] font-bold uppercase tracking-wide text-amber-700">First team</p>
+                <p className="m-0 text-[18px] font-black text-gray-900 dark:text-slate-50">{naira(perRep ? each(milestone.winnerAmount) : milestone.winnerAmount)}</p>
+                <p className="m-0 text-[11px] text-gray-600 dark:text-slate-300">{perRep ? `your share of ${naira(milestone.winnerAmount)}` : `${naira(each(milestone.winnerAmount))} each`}{index > 0 ? " · total" : ""}</p>
+              </div>
+              <div className="rounded-lg bg-sky-50 px-2.5 py-2 dark:bg-sky-500/10">
+                <p className="m-0 text-[11px] font-bold uppercase tracking-wide text-sky-700">Second team (consolation)</p>
+                <p className="m-0 text-[18px] font-black text-gray-900 dark:text-slate-50">{naira(perRep ? each(milestone.runnerUpAmount) : milestone.runnerUpAmount)}</p>
+                <p className="m-0 text-[11px] text-gray-600 dark:text-slate-300">{perRep ? `your share of ${naira(milestone.runnerUpAmount)}` : `${naira(each(milestone.runnerUpAmount))} each`}{index > 0 ? " · total" : ""}</p>
+              </div>
+            </div>
+            <p className="m-0 mt-2 text-[11px] text-gray-500">
+              The second team still wins the consolation if it reaches {milestone.target} points before the challenge closes - even after the other team got there first.
+              {milestone.minPerMember > 0 ? ` ${perRep ? "You and your teammate" : "Both teammates"} must each score at least ${milestone.minPerMember} of these ${milestone.target} points - one person can't carry the team.` : ""}
+            </p>
           </div>
-          <p className="m-0 mt-2 rounded-lg bg-gray-50 px-2.5 py-1.5 text-[12px] text-gray-600 dark:bg-slate-800 dark:text-slate-300">
-            Other team reaching {milestone.target}: <strong>{naira(share(milestone.runnerUpAmount))}</strong>{perRep ? " your share" : ""}
-            {milestone.minPerMember > 0 ? <span className="block text-[11px] text-gray-500">Each member needs at least {milestone.minPerMember} points.</span> : null}
-            {index > 0 ? <span className="block text-[11px] text-gray-500">Totals, not extra: earlier milestone payments are taken off.</span> : null}
-          </p>
-        </div>
-      ))}
+        ))}
+      </div>
+      {milestones.length > 1 ? <PrizePaths milestones={milestones} people={people} perRep={perRep} /> : null}
+    </div>
+  );
+}
+
+/** Every way a team can finish, what it is paid at each milestone, and the total. */
+function PrizePaths({ milestones, people, perRep }: { milestones: TeamChallengeMilestone[]; people: number; perRep: boolean }) {
+  type Path = { places: Array<"first" | "second">; steps: number[]; total: number };
+  const paths: Path[] = [];
+  const build = (index: number, places: Array<"first" | "second">) => {
+    if (places.length > 0) {
+      let paid = 0;
+      const steps = places.map((place, i) => {
+        const entitlement = place === "first" ? milestones[i].winnerAmount : milestones[i].runnerUpAmount;
+        const step = Math.max(0, entitlement - paid);
+        paid = Math.max(paid, entitlement);
+        return step;
+      });
+      paths.push({ places: [...places], steps, total: paid });
+    }
+    if (index >= milestones.length || index >= 3) return;
+    build(index + 1, [...places, "first"]);
+    build(index + 1, [...places, "second"]);
+  };
+  build(0, []);
+  paths.sort((a, b) => b.places.length - a.places.length || b.total - a.total);
+  const amount = (value: number) => naira(perRep ? Math.round(value / people) : value);
+  return (
+    <div className="rounded-xl border border-gray-200 dark:border-slate-700">
+      <p className="m-0 px-3 pt-3 text-[13px] font-black text-gray-900 dark:text-slate-50">Every way a team can finish{perRep ? " (your share)" : ""}</p>
+      <p className="m-0 px-3 text-[11.5px] text-gray-500">Prizes are totals: each milestone pays the new total minus what the team was already paid.</p>
+      <div className="mt-2 overflow-x-auto">
+        <table className="w-full !min-w-[460px] text-left text-[12.5px]">
+          <thead className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500 dark:bg-slate-800">
+            <tr><th className="px-3 py-2 font-bold">Outcome</th>{milestones.slice(0, 3).map((m) => <th key={m.key} className="px-3 py-2 font-bold">Paid at {m.target}</th>)}<th className="px-3 py-2 font-bold">{perRep ? "Your total" : "Team total"}</th></tr>
+          </thead>
+          <tbody>
+            {paths.map((path) => {
+              const zeroAfterWin = path.steps.some((step, i) => i > 0 && step === 0);
+              return (
+                <tr key={path.places.join("-")} className="border-t border-gray-100 dark:border-slate-800">
+                  <td className="px-3 py-2">{path.places.map((place, i) => `${place === "first" ? "1st" : "2nd"} at ${milestones[i].target}`).join(", ")}</td>
+                  {milestones.slice(0, 3).map((m, i) => (
+                    <td key={m.key} className={`px-3 py-2 ${i < path.steps.length && i > 0 && path.steps[i] === 0 ? "font-bold text-amber-700" : ""}`}>{i < path.steps.length ? (path.steps[i] === 0 && i > 0 ? "₦0 more" : amount(path.steps[i])) : "—"}</td>
+                  ))}
+                  <td className="px-3 py-2 font-black">{perRep ? amount(path.total) : `${naira(path.total)} (${naira(Math.round(path.total / people))} each)`}{zeroAfterWin ? <span className="block text-[11px] font-semibold text-amber-700">nothing extra for 2nd place later</span> : null}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
