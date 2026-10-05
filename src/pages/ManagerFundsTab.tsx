@@ -33,6 +33,31 @@ const nowLocalInput = () => {
   const now = new Date(Date.now() + 60 * 60 * 1000);
   return now.toISOString().slice(0, 16);
 };
+/** The Sunday week (YYYY-MM-DD of its Sunday) a "YYYY-MM-DD..." day falls in. */
+const sundayOf = (dayKey: string) => {
+  const date = new Date(`${dayKey.slice(0, 10)}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - date.getUTCDay());
+  return date.toISOString().slice(0, 10);
+};
+const weekText = (sunday: string) => {
+  const start = new Date(`${sunday}T12:00:00Z`);
+  const end = new Date(start); end.setUTCDate(end.getUTCDate() + 6);
+  const fmt = (date: Date) => date.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+  return `${fmt(start)} – ${fmt(end)}`;
+};
+/**
+ * Where a new entry's date starts (Bright, 5 Oct 2026): today when the week
+ * on screen is this week; otherwise inside the week on screen (its last day,
+ * 12:00) - so logging from last week's page lands in last week.
+ */
+const defaultOccurredAt = (viewedWeekStart: string | undefined) => {
+  const now = nowLocalInput();
+  if (!viewedWeekStart || sundayOf(now) === viewedWeekStart) return now;
+  const end = new Date(`${viewedWeekStart}T12:00:00Z`); end.setUTCDate(end.getUTCDate() + 6);
+  const endKey = end.toISOString().slice(0, 10);
+  // A future week (should not happen) still falls back to now.
+  return endKey > now.slice(0, 10) ? now : `${endKey}T12:00`;
+};
 /** "2026-09-29T10:00" (Lagos, from the input) -> ISO with +01:00. */
 const lagosInputToIso = (value: string) => `${value}:00+01:00`;
 
@@ -258,7 +283,7 @@ export default function ManagerFundsTab({
     return Array.from(map.values()).sort((a, b) => b.amount - a.amount);
   }, [liveExpenses]);
 
-  const startLog = (kind: FundKindKey) => { setFormError(""); setEditing(null); setDraft(emptyDraft(kind)); };
+  const startLog = (kind: FundKindKey) => { setFormError(""); setEditing(null); setDraft({ ...emptyDraft(kind), occurredAt: defaultOccurredAt(data?.weekStart) }); };
   const startEdit = (txn: ManagerFundTxn) => {
     setFormError("");
     setEditing(txn);
@@ -275,6 +300,9 @@ export default function ManagerFundsTab({
     if (!draft) return;
     const amount = Number(draft.amount.replace(/[^0-9.]/g, ""));
     if (!(amount > 0)) { setFormError("Enter the amount."); return; }
+    // The date decides the week. If it is not the week on screen, say so first.
+    if (!editing && data?.weekStart && draft.occurredAt && sundayOf(draft.occurredAt) !== data.weekStart
+      && !window.confirm(`This date is in the week of ${weekText(sundayOf(draft.occurredAt))}, not the week you're viewing (${weekText(data.weekStart)}). It will be recorded in ${weekText(sundayOf(draft.occurredAt))}. Continue?`)) return;
     setSaving(true);
     setFormError("");
     try {
@@ -705,6 +733,11 @@ export default function ManagerFundsTab({
                   <label className="block"><span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Date & time</span>
                     <input className={field} type="datetime-local" value={draft.occurredAt} onChange={(event) => setDraft({ ...draft, occurredAt: event.target.value })} /></label>
                 </div>
+                {draft.occurredAt ? (
+                  data?.weekStart && sundayOf(draft.occurredAt) !== data.weekStart
+                    ? <p className="m-0 rounded-lg bg-amber-50 px-3 py-2 text-[12px] font-semibold text-amber-800">This date is in the week of {weekText(sundayOf(draft.occurredAt))}, not the week you're viewing ({weekText(data.weekStart)}). It will be recorded there.</p>
+                    : <p className="m-0 text-[11.5px] text-gray-500">This will be recorded in the week of {weekText(sundayOf(draft.occurredAt))}.</p>
+                ) : null}
                 {draft.kind === "customer_payment" && (
                   <label className="block"><span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Order number</span>
                     <input className={field} value={draft.orderId} disabled={!!editing} onChange={(event) => setDraft({ ...draft, orderId: event.target.value })} placeholder="e.g. 4358" />
