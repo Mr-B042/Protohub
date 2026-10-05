@@ -8,6 +8,7 @@ import {
   type Milestone, type Scoring
 } from "../lib/team-challenge.js";
 import { perOrderExpansionBonusBreakdownMapForDeliveredRange } from "../lib/sales-bonus-engine.js";
+import { notifyTeamChallenge } from "../lib/team-challenge-notifications.js";
 
 // Team Challenges (Bright, 3 Oct 2026). Two teams race to point milestones
 // made of verified upsells and cross-sells. The ledger (team_challenge_entries)
@@ -69,7 +70,7 @@ function phaseOf(challenge: any) {
   return "finalising";
 }
 
-const ORDER_FIELDS = "id, status, product_id, product_name, package_name, amount, currency, original_amount, original_quantity, upsell_from_qty, upsell_to_qty, quantity, cross_sell_lines, free_gift_lines, customer, assigned_rep_id, created_at, delivered_date, remittance_status, review_hold";
+const ORDER_FIELDS = "id, status, phone, product_id, product_name, package_name, amount, currency, original_amount, original_quantity, upsell_from_qty, upsell_to_qty, quantity, cross_sell_lines, free_gift_lines, customer, assigned_rep_id, created_at, delivered_date, remittance_status, review_hold";
 
 /**
  * Unit cost of a product on a given day: the Product Master price, rolled
@@ -158,15 +159,17 @@ async function syncEntries(challenge: any, teams: any[]) {
 
   const writes: any[] = [];
   const reversals: Array<{ orderId: string; reason: string }> = [];
+
+  // Pass 1: each order on its own - contribution, delivery and payment.
+  type Info = { order: any; orderId: string; prior: any; status: string; delivered: string | null; paidTime: string | null; cancelled: boolean; result: ReturnType<typeof contributionOf> };
+  const infos: Info[] = [];
   for (const order of relevant) {
+    if (scoring.productIds.length > 0 && !scoring.productIds.includes(order.product_id)) continue;
     const orderId = String(order.id);
     const prior: any = existing.get(orderId) ?? null;
-    if (scoring.productIds.length > 0 && !scoring.productIds.includes(order.product_id)) continue;
     const status = String(order.status ?? "");
-    const isDelivered = status === "Delivered";
-    const delivered = isDelivered ? (deliveredAt.get(orderId) ?? (order.delivered_date ? `${order.delivered_date}T12:00:00+01:00` : null)) : null;
+    const delivered = status === "Delivered" ? (deliveredAt.get(orderId) ?? (order.delivered_date ? `${order.delivered_date}T12:00:00+01:00` : null)) : null;
     const paidTime = order.remittance_status === "Paid" ? (paidAt.get(orderId) ?? delivered) : null;
-    const final = Boolean(delivered && paidTime);
     const result = contributionOf({
       productId: order.product_id, amount: Number(order.amount) || 0,
       originalAmount: order.original_amount === null ? null : Number(order.original_amount), originalQuantity: order.original_quantity,
@@ -174,11 +177,80 @@ async function syncEntries(challenge: any, teams: any[]) {
       crossSellLines: Array.isArray(order.cross_sell_lines) ? order.cross_sell_lines : [],
       giftLines: Array.isArray(order.free_gift_lines) ? order.free_gift_lines : [],
       unitCost: (productId) => cost(productId, order.created_at),
-      repBonus: isDelivered ? Number((bonuses as Record<string, number>)[orderId] ?? 0) : 0,
+      repBonus: delivered ? Number((bonuses as Record<string, number>)[orderId] ?? 0) : 0,
       extraLogistics: 0,
       adjustment: Number(prior?.adjustment_amount ?? 0),
       packagingPerUnit: scoring.packagingPerUnit
     });
+    infos.push({ order, orderId, prior, status, delivered, paidTime, cancelled: ["Failed", "Cancelled", "Returned"].includes(status), result });
+  }
+
+  // Pass 2: ONE TRANSACTION PER CUSTOMER VISIT (Bright, 5 Oct 2026). Orders
+  // for the same phone placed within the link window are assessed together -
+  // scored once, on the first order, from their combined contribution - so a
+  // sale can't be split into several orders to multiply points.
+  const windowMs = scoring.linkWindowHours * 3_600_000;
+  const phoneKey = (order: any) => String(order.phone ?? "").replace(/\D/g, "").slice(-10);
+  const groups: Info[][] = [];
+  const byPhone = new Map<string, Info[]>();
+  for (const info of infos) {
+    const key = phoneKey(info.order);
+    if (!key || windowMs <= 0) { groups.push([info]); continue; }
+    byPhone.set(key, [...(byPhone.get(key) ?? []), info]);
+  }
+  for (const list of byPhone.values()) {
+    list.sort((a, b) => Date.parse(a.order.created_at) - Date.parse(b.order.created_at));
+    let current: Info[] = [];
+    for (const info of list) {
+      if (current.length && Date.parse(info.order.created_at) - Date.parse(current[0].order.created_at) > windowMs) { groups.push(current); current = []; }
+      current.push(info);
+    }
+    if (current.length) groups.push(current);
+  }
+
+  const latest = (values: Array<string | null>) => values.reduce<string | null>((max, value) => (value && (!max || Date.parse(value) > Date.parse(max)) ? value : max), null);
+  for (const group of groups) {
+    const live = group.filter((info) => info.result && !info.cancelled);
+    const primary = live[0] ?? group[0];
+    const linked = group.filter((info) => info !== primary);
+    // Linked orders: no score of their own.
+    for (const info of linked) {
+      const prior = info.prior;
+      const reason = `Same customer as #${primary.orderId} within ${scoring.linkWindowHours} hours: one transaction, scored on #${primary.orderId}.`;
+      if (prior?.status === "linked" && prior.linked_to_order_id === primary.orderId) continue;
+      if (prior?.status === "verified") reversals.push({ orderId: info.orderId, reason: `linked into #${primary.orderId}` });
+      writes.push({
+        ...(prior ? { id: prior.id } : {}),
+        org_id: challenge.org_id, branch_id: challenge.branch_id, challenge_id: challenge.id, order_id: info.orderId,
+        rep_id: prior?.rep_id ?? String(info.order.assigned_rep_id), team_id: prior?.team_id ?? teamOf.get(String(info.order.assigned_rep_id)) ?? null,
+        category: info.result ? (info.result.hasUpsell && info.result.hasCrossSell ? "both" : info.result.hasUpsell ? "upsell" : "cross_sell") : (prior?.category ?? "cross_sell"),
+        points: 0, rule_version: challenge.rule_version, rule_label: reason,
+        contribution: info.result?.contribution ?? 0, added_value: info.result?.revenue ?? 0, contribution_final: Boolean(info.delivered && info.paidTime),
+        delivered_at: info.delivered, paid_at: info.paidTime, qualified_at: null,
+        status: "linked", status_reason: reason, linked_to_order_id: primary.orderId, updated_at: new Date().toISOString()
+      });
+    }
+
+    const order = primary.order;
+    const orderId = primary.orderId;
+    const prior: any = primary.prior;
+    // Combined contribution of every live order in the transaction.
+    const parts = live.map((info) => info.result!);
+    const result = parts.length === 0 ? primary.result : parts.length === 1 ? parts[0] : {
+      ...parts[0],
+      hasUpsell: parts.some((part) => part.hasUpsell), hasCrossSell: parts.some((part) => part.hasCrossSell),
+      crossSellCount: parts.reduce((sum, part) => sum + part.crossSellCount, 0),
+      revenue: parts.reduce((sum, part) => sum + part.revenue, 0), productCost: parts.reduce((sum, part) => sum + part.productCost, 0),
+      logistics: parts.reduce((sum, part) => sum + part.logistics, 0), repBonus: parts.reduce((sum, part) => sum + part.repBonus, 0),
+      packaging: parts.reduce((sum, part) => sum + part.packaging, 0), gifts: parts.reduce((sum, part) => sum + part.gifts, 0),
+      adjustment: parts.reduce((sum, part) => sum + part.adjustment, 0), contribution: parts.reduce((sum, part) => sum + part.contribution, 0)
+    };
+    const allDelivered = live.length > 0 && live.every((info) => info.delivered);
+    const allPaid = live.length > 0 && live.every((info) => info.paidTime);
+    const delivered = live.length > 1 ? (allDelivered ? latest(live.map((info) => info.delivered)) : null) : primary.delivered;
+    const paidTime = live.length > 1 ? (allPaid ? latest(live.map((info) => info.paidTime)) : null) : primary.paidTime;
+    const final = Boolean(delivered && paidTime);
+    const status = primary.status;
     const owner = result && !result.hasUpsell && result.crossSellOwner && teamOf.has(result.crossSellOwner) ? result.crossSellOwner : String(order.assigned_rep_id);
     const teamId = prior?.team_id ?? teamOf.get(owner) ?? null;
 
@@ -193,10 +265,11 @@ async function syncEntries(challenge: any, teams: any[]) {
     }
     const points = pointsFor(result.contribution, scoring);
     const qualifiedAt = final ? (Date.parse(paidTime!) > Date.parse(delivered!) ? paidTime : delivered) : null;
+    const linkedNote = linked.length ? ` Includes linked order${linked.length === 1 ? "" : "s"} ${linked.map((info) => `#${info.orderId}`).join(", ")} (same customer).` : "";
 
     let auto: string;
     let reason: string | null = null;
-    if (["Failed", "Cancelled", "Returned"].includes(status)) { auto = prior?.status === "verified" ? "reversed" : "excluded"; reason = `Order ${status.toLowerCase()}: no contribution, no points.`; }
+    if (primary.cancelled) { auto = prior?.status === "verified" ? "reversed" : "excluded"; reason = `Order ${status.toLowerCase()}: no contribution, no points.`; }
     else if (order.review_hold) { auto = "excluded"; reason = "Held for review as a possible duplicate order."; }
     else if (!delivered) { auto = "awaiting_delivery"; }
     else if (!paidTime) { auto = "awaiting_payment"; }
@@ -221,7 +294,7 @@ async function syncEntries(challenge: any, teams: any[]) {
     const breakdown = {
       revenue: result.revenue, productCost: result.productCost, logistics: result.logistics, repBonus: result.repBonus,
       packaging: result.packaging, gifts: result.gifts, adjustment: result.adjustment,
-      upgrade: result.upgrade, crossSells: result.crossSellCount
+      upgrade: result.upgrade, crossSells: result.crossSellCount, linkedOrders: linked.map((info) => info.orderId)
     };
     const row = {
       ...(prior ? { id: prior.id } : {}),
@@ -229,7 +302,7 @@ async function syncEntries(challenge: any, teams: any[]) {
       rep_id: prior?.rep_id ?? owner, team_id: teamId,
       category: result.hasUpsell && result.hasCrossSell ? "both" : result.hasUpsell ? "upsell" : "cross_sell",
       points, rule_version: prior?.status === "verified" ? prior.rule_version : challenge.rule_version,
-      rule_label: `${final ? "Final" : "Estimated"} contribution ₦${Math.round(result.contribution).toLocaleString("en-NG")} → ${points} point${points === 1 ? "" : "s"}`,
+      rule_label: `${final ? "Final" : "Estimated"} contribution ₦${Math.round(result.contribution).toLocaleString("en-NG")} → ${points} point${points === 1 ? "" : "s"}.${linkedNote}`,
       original_snapshot: prior?.original_snapshot ?? {
         quantity: order.upsell_from_qty ?? order.original_quantity ?? order.quantity,
         amount: order.original_amount === null ? null : Number(order.original_amount), product: order.product_name, lockedAt: new Date().toISOString()
@@ -238,23 +311,35 @@ async function syncEntries(challenge: any, teams: any[]) {
         quantity: order.upsell_to_qty ?? order.quantity, amount: Number(order.amount) || 0, package: order.package_name, product: order.product_name,
         crossSells: (Array.isArray(order.cross_sell_lines) ? order.cross_sell_lines : []).filter((line: any) => Number(line?.amount) > 0)
           .map((line: any) => ({ product: line.productName ?? line.name ?? "Add-on", quantity: line.quantity ?? 1, amount: Number(line.amount) || 0 })),
-        gifts: (Array.isArray(order.free_gift_lines) ? order.free_gift_lines : []).map((line: any) => ({ product: line.productName ?? "Gift", quantity: line.quantity ?? 1 }))
+        gifts: (Array.isArray(order.free_gift_lines) ? order.free_gift_lines : []).map((line: any) => ({ product: line.productName ?? "Gift", quantity: line.quantity ?? 1 })),
+        linkedOrders: linked.map((info) => ({ orderId: info.orderId, amount: Number(info.order.amount) || 0, product: info.order.product_name, status: info.status }))
       },
       added_value: result.revenue, contribution: result.contribution, contribution_breakdown: breakdown, contribution_final: final,
       delivered_at: delivered, paid_at: paidTime, qualified_at: qualifiedAt,
-      status: next, status_reason: nextReason,
+      status: next, status_reason: nextReason, linked_to_order_id: null,
       decided_by: prior?.decided_by ?? null, decided_by_name: prior?.decided_by_name ?? null, decided_at: prior?.decided_at ?? null,
       verified_points: prior?.verified_points ?? null, rep_note: prior?.rep_note ?? null, review_requested_at: prior?.review_requested_at ?? null,
       adjustment_amount: prior?.adjustment_amount ?? 0, adjustment_reason: prior?.adjustment_reason ?? null, adjustment_by_name: prior?.adjustment_by_name ?? null, adjusted_at: prior?.adjusted_at ?? null,
       escalated_at: prior?.escalated_at ?? null, escalation_note: prior?.escalation_note ?? null,
       updated_at: new Date().toISOString()
     };
-    const changed = !prior || ["points", "category", "status", "status_reason", "delivered_at", "paid_at", "qualified_at", "added_value", "team_id", "contribution", "contribution_final"]
+    const changed = !prior || ["points", "category", "status", "status_reason", "delivered_at", "paid_at", "qualified_at", "added_value", "team_id", "contribution", "contribution_final", "rule_label"]
       .some((key) => String((prior as any)[key] ?? "") !== String((row as any)[key] ?? ""));
     if (changed) writes.push(row);
   }
-  for (let i = 0; i < writes.length; i += 200) {
-    const { error: writeError } = await supabase.from("team_challenge_entries").upsert(writes.slice(i, i + 200), { onConflict: "challenge_id,order_id" });
+  // Every row in a batch must carry the same columns: a bulk upsert fills a
+  // column one row lacks with NULL, which breaks the NOT NULL ones.
+  const COLUMNS: Record<string, unknown> = {
+    org_id: null, branch_id: null, challenge_id: null, order_id: null, rep_id: null, team_id: null, category: "cross_sell", points: 0,
+    rule_version: 1, rule_label: null, original_snapshot: null, revised_snapshot: null, added_value: 0, contribution: null,
+    contribution_breakdown: null, contribution_final: false, delivered_at: null, paid_at: null, qualified_at: null, status: "awaiting_delivery",
+    status_reason: null, linked_to_order_id: null, decided_by: null, decided_by_name: null, decided_at: null, verified_points: null, rep_note: null,
+    review_requested_at: null, adjustment_amount: 0, adjustment_reason: null, adjustment_by_name: null, adjusted_at: null, escalated_at: null,
+    escalation_note: null, updated_at: new Date().toISOString()
+  };
+  const normalised = writes.map((row) => Object.fromEntries(Object.entries(COLUMNS).map(([key, fallback]) => [key, row[key] ?? fallback])));
+  for (let i = 0; i < normalised.length; i += 200) {
+    const { error: writeError } = await supabase.from("team_challenge_entries").upsert(normalised.slice(i, i + 200), { onConflict: "challenge_id,order_id" });
     if (writeError) throw writeError;
   }
   for (const reversal of reversals) await log(challenge, null, "score_reversed", reversal);
@@ -262,10 +347,16 @@ async function syncEntries(challenge: any, teams: any[]) {
 
 const STAGE_COUNTS = ["awaiting_delivery", "awaiting_payment", "awaiting_verification", "correction_requested"];
 
-async function buildDetail(req: Request, challenge: any, teams: any[]) {
+/** Who is looking: a request's user, or the scheduler (sees everything, as the Owner). */
+type Viewer = { leader: boolean; id: string; owner: boolean };
+const viewerOf = (req: Request): Viewer => ({ leader: isLeader(req), id: scopeOf(req).id, owner: scopeOf(req).role === "Owner" });
+const SYSTEM_VIEWER: Viewer = { leader: true, id: "", owner: true };
+
+async function buildDetail(req: Request | Viewer, challenge: any, teams: any[]) {
   await syncEntries(challenge, teams);
-  const leader = isLeader(req);
-  const me = scopeOf(req).id;
+  const viewer = "leader" in req ? req : viewerOf(req);
+  const leader = viewer.leader;
+  const me = viewer.id;
   const milestones = normaliseMilestones(challenge.milestones);
   const scoring = normaliseScoring(challenge.scoring);
   const memberIds = Array.from(new Set(teams.flatMap((team) => team.member_ids ?? [])));
@@ -284,8 +375,20 @@ async function buildDetail(req: Request, challenge: any, teams: any[]) {
     teamId: row.team_id, repId: row.rep_id, points: counted(row) ? pointsOf(row) : 0, qualifiedAt: row.qualified_at, status: row.status
   })), milestones, closeAt);
 
+  // Lead allocation (Bright, 5 Oct 2026): how many orders each rep was given
+  // in the selling period and on which products, so a points gap can be read
+  // against opportunity. Context only - never part of the race score.
+  const { data: assignedRows } = memberIds.length ? await supabase.from("orders").select("assigned_rep_id, product_name, review_hold")
+    .eq("org_id", challenge.org_id).eq("branch_id", challenge.branch_id).in("assigned_rep_id", memberIds)
+    .gte("created_at", lagosStart(challenge.sell_from)).lte("created_at", lagosEnd(challenge.sell_to)).limit(10000) : { data: [] as any[] };
+  const assigned = ((assignedRows ?? []) as any[]).filter((row) => row.review_hold !== true);
+  const assignedTotal = assigned.length;
+
   const teamRows = teams.map((team) => {
     const rows = all.filter((row) => row.team_id === team.id);
+    const teamAssigned = assigned.filter((row) => (team.member_ids ?? []).includes(row.assigned_rep_id));
+    const mix = new Map<string, number>();
+    for (const row of teamAssigned) mix.set(row.product_name ?? "Other", (mix.get(row.product_name ?? "Other") ?? 0) + 1);
     const verified = rows.filter(counted);
     const points = verified.reduce((sum, row) => sum + pointsOf(row), 0);
     const entitlements = teamEntitlements(team.id, results).map((item) => {
@@ -311,15 +414,24 @@ async function buildDetail(req: Request, challenge: any, teams: any[]) {
           upsells: mine.filter((row) => row.category !== "cross_sell").length, crossSells: mine.filter((row) => row.category !== "upsell").length,
           onePoint: mine.filter((row) => pointsOf(row) === 1).length, twoPoint: mine.filter((row) => pointsOf(row) >= 2).length,
           contribution: mine.reduce((sum, row) => sum + Number(row.contribution || 0), 0),
+          assigned: teamAssigned.filter((row) => row.assigned_rep_id === id).length,
           pending: rows.filter((row) => row.rep_id === id && STAGE_COUNTS.includes(row.status)).length
         };
       }),
       points, orders: verified.length,
       onePoint: verified.filter((row) => pointsOf(row) === 1).length,
       twoPoint: verified.filter((row) => pointsOf(row) >= 2).length,
-      zeroPoint: rows.filter((row) => Number(row.points) === 0 && !["excluded", "reversed"].includes(row.status)).length,
+      zeroPoint: rows.filter((row) => Number(row.points) === 0 && !["excluded", "reversed", "linked"].includes(row.status)).length,
+      linked: rows.filter((row) => row.status === "linked").length,
       contribution: verified.reduce((sum, row) => sum + Number(row.contribution || 0), 0),
       reconciliation,
+      opportunity: {
+        assigned: teamAssigned.length,
+        share: assignedTotal > 0 ? Math.round((teamAssigned.length / assignedTotal) * 1000) / 10 : 0,
+        conversion: teamAssigned.length > 0 ? Math.round((rows.filter((row) => row.status === "verified").length / teamAssigned.length) * 1000) / 10 : 0,
+        pointsPer100: teamAssigned.length > 0 ? Math.round((rows.filter((row) => row.status === "verified").reduce((sum, row) => sum + (Number(row.verified_points ?? row.points) || 0), 0) / teamAssigned.length) * 1000) / 10 : 0,
+        products: Array.from(mix.entries()).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([name, count]) => ({ name, count }))
+      },
       memberPending: results.map((result) => {
         const pending = result.memberPending.find((item) => item.teamId === team.id);
         return pending ? { key: result.key, target: result.target, short: pending.short.map((item) => ({ ...item, name: nameOf.get(item.repId) ?? "Rep" })) } : null;
@@ -336,6 +448,10 @@ async function buildDetail(req: Request, challenge: any, teams: any[]) {
   });
   const leaderTeam = [...teamRows].sort((a, b) => b.points - a.points)[0];
   const second = [...teamRows].sort((a, b) => b.points - a.points)[1];
+
+  const summaryAll = closureSummary(challenge, teamRows, results, all, nameOf as Map<string, string>, milestones);
+  // Reps see the totals, never other reps' orders.
+  const summary = leader ? summaryAll : { ...summaryAll, exceptions: summaryAll.exceptions.filter((row) => all.some((entry) => entry.order_id === row.orderId && entry.rep_id === me)) };
 
   // Reps see only their own orders (never the rival team's customers).
   const myTeam = teams.find((team) => (team.member_ids ?? []).includes(me)) ?? null;
@@ -380,13 +496,148 @@ async function buildDetail(req: Request, challenge: any, teams: any[]) {
         repNote: row.rep_note, reviewRequestedAt: row.review_requested_at, updatedAt: row.updated_at,
         contribution: row.contribution === null ? null : Number(row.contribution), breakdown: row.contribution_breakdown, final: Boolean(row.contribution_final),
         adjustment: Number(row.adjustment_amount || 0), adjustmentReason: row.adjustment_reason, adjustmentBy: row.adjustment_by_name, adjustedAt: row.adjusted_at,
-        escalatedAt: row.escalated_at, escalationNote: row.escalation_note
+        escalatedAt: row.escalated_at, escalationNote: row.escalation_note, linkedTo: row.linked_to_order_id ?? null
       };
     }),
     log: (logRes.data ?? []).map((row: any) => ({ id: row.id, actor: row.actor_name, action: row.action, detail: row.detail, at: row.created_at })),
-    me: { id: me, teamId: myTeam?.id ?? null, leader, owner: scopeOf(req).role === "Owner" }
+    me: { id: me, teamId: myTeam?.id ?? null, leader, owner: viewer.owner },
+    summary
   };
 }
+
+/**
+ * The challenge in one page (Bright's closure summary): points, transactions,
+ * contribution, winners with times, exclusions and reversals, prizes earned,
+ * paid and outstanding, and the result against the pre-challenge baseline.
+ */
+function closureSummary(challenge: any, teamRows: any[], results: any[], all: any[], nameOf: Map<string, string>, milestones: Milestone[]) {
+  const teamName = new Map(teamRows.map((team) => [team.id, team.name]));
+  const days = Math.max(1, Math.round((Date.parse(`${challenge.sell_to}T12:00:00Z`) - Date.parse(`${challenge.sell_from}T12:00:00Z`)) / 86_400_000) + 1);
+  const totalPoints = teamRows.reduce((sum, team) => sum + team.points, 0);
+  const baselineMonthly = Number(challenge.baseline?.averagePoints ?? 0) || null;
+  const challengeMonthly = Math.round((totalPoints / days) * 30 * 10) / 10;
+  return {
+    sellingDays: days,
+    teams: teamRows.map((team) => ({
+      id: team.id, name: team.name, points: team.points, transactions: team.orders, onePoint: team.onePoint, twoPoint: team.twoPoint,
+      contribution: team.contribution, revenue: team.addedValue, assigned: team.opportunity.assigned, conversion: team.opportunity.conversion,
+      entitled: team.entitled, paid: team.paid, outstanding: team.outstanding,
+      members: team.members.map((member: any) => ({ id: member.id, name: member.name, points: member.points, transactions: member.orders, contribution: member.contribution }))
+    })),
+    milestones: results.map((result) => ({
+      target: result.target,
+      winners: result.winnerTeamIds.map((id: string) => ({ team: teamName.get(id) ?? "Team", at: result.reached.find((row: any) => row.teamId === id)?.at ?? null })),
+      others: result.runnerUpTeamIds.map((id: string) => ({ team: teamName.get(id) ?? "Team", at: result.reached.find((row: any) => row.teamId === id)?.at ?? null })),
+      provisional: result.provisional, tie: result.tie
+    })),
+    excluded: all.filter((row) => row.status === "excluded").length,
+    reversed: all.filter((row) => row.status === "reversed").length,
+    linked: all.filter((row) => row.status === "linked").length,
+    exceptions: all.filter((row) => row.status === "excluded" || row.status === "reversed").slice(0, 30).map((row) => ({ orderId: row.order_id, rep: nameOf.get(row.rep_id) ?? "Rep", status: row.status, reason: row.status_reason })),
+    entitled: teamRows.reduce((sum, team) => sum + team.entitled, 0),
+    paid: teamRows.reduce((sum, team) => sum + team.paid, 0),
+    outstanding: teamRows.reduce((sum, team) => sum + team.outstanding, 0),
+    maxBudget: maxBudget(milestones),
+    baselineMonthly, challengeMonthly,
+    uplift: baselineMonthly ? Math.round(((challengeMonthly - baselineMonthly) / baselineMonthly) * 1000) / 10 : null
+  };
+}
+
+// ── Alerts ───────────────────────────────────────────────────────────────────
+
+const ctxOf = (challenge: any) => ({ orgId: challenge.org_id, branchId: challenge.branch_id, challengeId: challenge.id, name: challenge.name });
+const allMembers = (teams: any[]) => teams.flatMap((team) => (team.member_ids ?? []).map(String));
+
+/**
+ * Announce what changed since last time - lead changes, milestones
+ * (provisional, then confirmed), linked orders, deadline reminders - each
+ * once (team_challenges.notify_state). Runs every 15 minutes and after a
+ * verification or payout.
+ */
+// One check per challenge at a time (the 15-minute job and the check after a
+// decision can overlap): each re-reads notify_state inside the lock, so an
+// alert is never announced twice.
+const watchLocks = new Map<string, Promise<void>>();
+export function watchChallenge(challenge: any, teams: any[]): Promise<void> {
+  const previous = watchLocks.get(challenge.id) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(async () => {
+    const { data: fresh } = await supabase.from("team_challenges").select("*").eq("id", challenge.id).maybeSingle();
+    if (fresh) await watchChallengeNow(fresh, teams);
+  });
+  watchLocks.set(challenge.id, next);
+  void next.finally(() => { if (watchLocks.get(challenge.id) === next) watchLocks.delete(challenge.id); }).catch(() => undefined);
+  return next;
+}
+
+async function watchChallengeNow(challenge: any, teams: any[]) {
+  if (!["active", "paused"].includes(challenge.status)) return;
+  const detail = await buildDetail(SYSTEM_VIEWER, challenge, teams);
+  const state: Record<string, any> = { ...(challenge.notify_state ?? {}) };
+  const before = JSON.stringify(state);
+  const ctx = ctxOf(challenge);
+  const members = allMembers(teams);
+  const teamById = new Map(detail.teams.map((team) => [team.id, team]));
+
+  const leaderId = detail.race.leaderTeamId;
+  if (leaderId && state.leader !== leaderId) {
+    const leaderTeam = teamById.get(leaderId)!;
+    const other = detail.teams.find((team) => team.id !== leaderId);
+    if (state.leader !== undefined || leaderTeam.points > 0) {
+      await notifyTeamChallenge(ctx, { kind: "lead_changed", repIds: members, leader: leaderTeam.name, leaderPoints: leaderTeam.points, other: other?.name ?? "the other team", otherPoints: other?.points ?? 0 });
+    }
+    state.leader = leaderId;
+  }
+  state.milestones = { ...(state.milestones ?? {}) };
+  for (const result of detail.race.results) {
+    for (const reached of result.reached) {
+      const key = `${result.key}:${reached.teamId}`;
+      const now = result.provisional ? "provisional" : "confirmed";
+      if (state.milestones[key] === now || state.milestones[key] === "confirmed") continue;
+      const team = teamById.get(reached.teamId);
+      const entitlement = team?.entitlements.find((item: any) => item.key === result.key);
+      await notifyTeamChallenge(ctx, { kind: "milestone", repIds: members, team: team?.name ?? "A team", target: result.target, confirmed: now === "confirmed", first: result.winnerTeamIds.includes(reached.teamId), amount: entitlement?.entitlement ?? 0 });
+      state.milestones[key] = now;
+    }
+  }
+  const announced = new Set<string>(state.linked ?? []);
+  for (const entry of detail.entries.filter((row) => row.status === "linked" && row.linkedTo && !announced.has(row.orderId))) {
+    await notifyTeamChallenge(ctx, { kind: "entry_linked", repId: entry.repId, orderId: entry.orderId, primaryOrderId: entry.linkedTo! });
+    announced.add(entry.orderId);
+  }
+  state.linked = Array.from(announced).slice(-500);
+  const today = lagosToday();
+  const daysTo = (day: string) => Math.round((Date.parse(`${day}T12:00:00Z`) - Date.parse(`${today}T12:00:00Z`)) / 86_400_000);
+  const sellLeft = daysTo(challenge.sell_to);
+  if (sellLeft >= 0 && sellLeft <= 2 && !state.sellingReminder) {
+    await notifyTeamChallenge(ctx, { kind: "deadline", repIds: members, which: "selling", date: challenge.sell_to, daysLeft: Math.max(1, sellLeft), pendingVerification: 0 });
+    state.sellingReminder = today;
+  }
+  const graceUntil = addDays(challenge.sell_to, challenge.grace_days);
+  const graceLeft = daysTo(graceUntil);
+  if (sellLeft < 0 && graceLeft >= 0 && graceLeft <= 2 && !state.deliveryReminder) {
+    await notifyTeamChallenge(ctx, { kind: "deadline", repIds: members, which: "delivery", date: graceUntil, daysLeft: Math.max(1, graceLeft), pendingVerification: detail.kpis.awaitingVerification });
+    state.deliveryReminder = today;
+  }
+  if (JSON.stringify(state) !== before) await supabase.from("team_challenges").update({ notify_state: state }).eq("id", challenge.id);
+}
+
+/** Every running challenge, every 15 minutes (index.ts cron). */
+export async function runTeamChallengeWatch() {
+  const { data: challenges, error } = await supabase.from("team_challenges").select("*").in("status", ["active", "paused"]);
+  if (error) throw error;
+  for (const challenge of challenges ?? []) {
+    try {
+      const { data: teams } = await supabase.from("team_challenge_teams").select("*").eq("challenge_id", challenge.id).order("sort_order");
+      await watchChallenge(challenge, teams ?? []);
+    } catch (watchError: any) {
+      console.warn("[team-challenges] watch failed:", challenge.id, watchError?.message ?? watchError);
+    }
+  }
+}
+const watchSoon = (challenge: any, teams: any[]) => {
+  // After a decision: announce what changed (alerts never fail the action).
+  void watchChallenge(challenge, teams).catch(() => undefined);
+};
 
 // ── Read ─────────────────────────────────────────────────────────────────────
 
@@ -428,7 +679,7 @@ const ChallengeSchema = z.object({
   milestones: z.array(MilestoneSchema).min(1).max(4),
   scoring: z.object({
     onePointFrom: z.coerce.number().min(0).max(100_000_000), twoPointsFrom: z.coerce.number().min(0).max(100_000_000),
-    packagingPerUnit: z.coerce.number().min(0).max(1_000_000).default(0), productIds: z.array(z.string().uuid()).max(100).default([])
+    packagingPerUnit: z.coerce.number().min(0).max(1_000_000).default(0), linkWindowHours: z.coerce.number().int().min(0).max(336).default(72), productIds: z.array(z.string().uuid()).max(100).default([])
   }),
   sponsorNote: z.string().trim().max(200).optional(),
   teams: z.array(z.object({ id: z.string().uuid().optional(), name: z.string().trim().min(1).max(40), color: z.string().trim().max(20).default("violet"), memberIds: z.array(z.string().uuid()).min(1).max(10) })).min(2).max(4),
@@ -506,6 +757,7 @@ router.put("/:id", requireRole(...LEADERS), async (req, res) => {
       before: { milestones: challenge.milestones, scoring: challenge.scoring, sellFrom: challenge.sell_from, sellTo: challenge.sell_to, graceDays: challenge.grace_days },
       after: { milestones: update.milestones, scoring: update.scoring, sellFrom: update.sell_from, sellTo: update.sell_to, graceDays: update.grace_days }
     } : {});
+    if (running) void notifyTeamChallenge(ctxOf(challenge), { kind: "rules_changed", repIds: allMembers(teams), reason: body.reason ?? "", ruleVersion: update.rule_version });
     res.json({ ok: true });
   } catch (error: any) { fail(res, error, "Couldn't save the challenge."); }
 });
@@ -532,6 +784,13 @@ router.post("/:id/publish", requireRole("Owner"), async (req, res) => {
     }).eq("id", challenge.id);
     if (error) throw error;
     await log(challenge, req, "published", { maxBudget: budget });
+    const { data: users } = await supabase.from("users").select("id, name").in("id", allMembers(teams));
+    const nameOf = new Map((users ?? []).map((row: any) => [row.id, row.name ?? "Rep"]));
+    const milestones = normaliseMilestones(challenge.milestones);
+    void notifyTeamChallenge(ctxOf(challenge), {
+      kind: "published", firstTarget: milestones[0]?.target ?? 0, firstPrize: milestones[0]?.winnerAmount ?? 0, sellFrom: challenge.sell_from, sellTo: challenge.sell_to,
+      teams: teams.map((team) => ({ name: team.name, memberIds: (team.member_ids ?? []).map(String), memberNames: (team.member_ids ?? []).map((id: string) => nameOf.get(id) ?? "Rep") }))
+    });
     res.json({ ok: true });
   } catch (error: any) { fail(res, error, "Couldn't publish the challenge."); }
 });
@@ -547,6 +806,13 @@ router.post("/:id/status", requireRole(...LEADERS), async (req, res) => {
     const { error } = await supabase.from("team_challenges").update({ status: parsed.data.status, updated_at: new Date().toISOString() }).eq("id", challenge.id);
     if (error) throw error;
     await log(challenge, req, `status_${parsed.data.status}`, { reason: parsed.data.reason ?? null });
+    if (parsed.data.status === "closed") {
+      const { data: teamRows } = await supabase.from("team_challenge_teams").select("*").eq("challenge_id", challenge.id).order("sort_order");
+      const detail = await buildDetail(SYSTEM_VIEWER, { ...challenge, status: "closed" }, teamRows ?? []);
+      const lines = detail.summary.teams.map((team: any) => `${team.name} ${team.points} points (${team.transactions} sales)`);
+      for (const m of detail.summary.milestones) if (m.winners.length) lines.push(`${m.target} points: ${m.winners.map((w: any) => w.team).join(" & ")} first`);
+      void notifyTeamChallenge(ctxOf(challenge), { kind: "closed", repIds: allMembers(teamRows ?? []), lines });
+    }
     res.json({ ok: true });
   } catch (error: any) { fail(res, error, "Couldn't change the challenge status."); }
 });
@@ -584,6 +850,9 @@ router.post("/:id/entries/:entryId/decision", requireRole(...LEADERS), async (re
     }).eq("id", entry.id);
     if (updateError) throw updateError;
     await log(challenge, req, `entry_${status}`, { orderId: entry.order_id, points: entry.points, note: note ?? null });
+    void notifyTeamChallenge(ctxOf(challenge), { kind: "entry_decided", repId: entry.rep_id, orderId: entry.order_id, status: status as any, points: entry.points, contribution: entry.contribution === null ? null : Number(entry.contribution), note: note ?? null });
+    const { data: teamRows } = await supabase.from("team_challenge_teams").select("*").eq("challenge_id", challenge.id).order("sort_order");
+    watchSoon(challenge, teamRows ?? []);
     res.json({ ok: true });
   } catch (error: any) { fail(res, error, "Couldn't save the decision."); }
 });
@@ -605,6 +874,7 @@ router.post("/:id/entries/:entryId/respond", async (req, res) => {
     }).eq("id", entry.id);
     if (error) throw error;
     await log(challenge, req, parsed.data.requestReview ? "review_requested" : "rep_responded", { orderId: entry.order_id, note: parsed.data.note });
+    void notifyTeamChallenge(ctxOf(challenge), { kind: "rep_responded", repName: req.user!.name ?? "A rep", orderId: entry.order_id, review: parsed.data.requestReview });
     res.json({ ok: true });
   } catch (error: any) { fail(res, error, "Couldn't send that."); }
 });
@@ -640,6 +910,7 @@ router.post("/:id/entries/:entryId/escalate", requireRole(...LEADERS), async (re
     const { error } = await supabase.from("team_challenge_entries").update({ escalated_at: new Date().toISOString(), escalation_note: parsed.data.note, updated_at: new Date().toISOString() }).eq("id", entry.id);
     if (error) throw error;
     await log(challenge, req, "escalated_to_owner", { orderId: entry.order_id, note: parsed.data.note });
+    void notifyTeamChallenge(ctxOf(challenge), { kind: "escalated", orderId: entry.order_id, by: req.user!.name ?? "A manager", note: parsed.data.note });
     res.json({ ok: true });
   } catch (error: any) { fail(res, error, "Couldn't escalate it."); }
 });
@@ -722,6 +993,7 @@ router.post("/:id/payouts", requireRole("Owner"), async (req, res) => {
     });
     if (error) throw error;
     await log(challenge, req, "payout_approved", { team: team.name, milestone: item.target, amount: item.step, perRep });
+    void notifyTeamChallenge(ctxOf(challenge), { kind: "payout", repIds: (teamRow?.member_ids ?? []).map(String), team: team.name, target: item.target, amount: item.step, perRep: perRep[0]?.amount ?? item.step, paid: false });
     res.json({ ok: true });
   } catch (error: any) { fail(res, error, "Couldn't approve the payout."); }
 });
@@ -737,6 +1009,9 @@ router.post("/:id/payouts/:payoutId/paid", requireRole("Owner"), async (req, res
     const { error } = await supabase.from("team_challenge_payouts").update({ paid_at: new Date().toISOString(), paid_reference: parsed.data.reference || null }).eq("id", payout.id);
     if (error) throw error;
     await log(challenge, req, "payout_paid", { amount: Number(payout.amount), reference: parsed.data.reference ?? null });
+    const { data: paidTeam } = await supabase.from("team_challenge_teams").select("name, member_ids").eq("id", payout.team_id).maybeSingle();
+    const target = normaliseMilestones(challenge.milestones).find((m) => m.key === payout.milestone_key)?.target ?? 0;
+    void notifyTeamChallenge(ctxOf(challenge), { kind: "payout", repIds: (paidTeam?.member_ids ?? []).map(String), team: paidTeam?.name ?? "Team", target, amount: Number(payout.amount), perRep: Number((payout.per_rep as any[])?.[0]?.amount ?? payout.amount), paid: true });
     res.json({ ok: true });
   } catch (error: any) { fail(res, error, "Couldn't mark it paid."); }
 });

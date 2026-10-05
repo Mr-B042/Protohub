@@ -4616,17 +4616,19 @@ export const trackingHubApi = {
 
 // ── Team Challenges (Bright, 3 Oct 2026) ─────────────────────────────────────
 export type TeamChallengeMilestone = { key: string; target: number; winnerAmount: number; runnerUpAmount: number; minPerMember: number };
-export type TeamChallengeScoring = { onePointFrom: number; twoPointsFrom: number; packagingPerUnit: number; productIds: string[] };
+export type TeamChallengeScoring = { onePointFrom: number; twoPointsFrom: number; packagingPerUnit: number; linkWindowHours: number; productIds: string[] };
 export type TeamChallengeBreakdown = { revenue: number; productCost: number; logistics: number; repBonus: number; packaging: number; gifts: number; adjustment: number; upgrade: { from: number; to: number } | null; crossSells: number };
 export type TeamChallengeBaseline = { computedAt: string; averagePoints: number; months: Array<{ month: string; transactions: number; points: number; contribution: number; byTeam: Record<string, { transactions: number; points: number; contribution: number }>; byRep: Record<string, { transactions: number; points: number }> }> };
-export type TeamChallengeEntryStatus = "awaiting_delivery" | "awaiting_payment" | "awaiting_verification" | "verified" | "correction_requested" | "excluded" | "reversed";
+export type TeamChallengeEntryStatus = "awaiting_delivery" | "awaiting_payment" | "awaiting_verification" | "verified" | "correction_requested" | "excluded" | "reversed" | "linked";
 export type TeamChallengeEntitlement = {
   key: string; target: number; reached: boolean; place: "winner" | "runner_up" | "tie" | null; entitlement: number; step: number; provisional: boolean;
   payout: { id: string; amount: number; perRep: Array<{ repId: string; name: string; amount: number }>; approvedAt: string; approvedBy: string | null; paidAt: string | null; reference: string | null } | null;
 };
 export type TeamChallengeTeam = {
   id: string; name: string; color: string;
-  members: Array<{ id: string; name: string; points: number; orders: number; upsells: number; crossSells: number; pending: number; onePoint: number; twoPoint: number; contribution: number }>;
+  members: Array<{ id: string; name: string; points: number; orders: number; upsells: number; crossSells: number; pending: number; onePoint: number; twoPoint: number; contribution: number; assigned: number }>;
+  linked: number;
+  opportunity: { assigned: number; share: number; conversion: number; pointsPer100: number; products: Array<{ name: string; count: number }> };
   points: number; orders: number; upsells: number; crossSells: number; addedValue: number;
   onePoint: number; twoPoint: number; zeroPoint: number; contribution: number;
   reconciliation: { paid: number; entitled: number; over: number } | null;
@@ -4644,7 +4646,16 @@ export type TeamChallengeEntry = {
   status: TeamChallengeEntryStatus; reason: string | null; decidedBy: string | null; decidedAt: string | null; repNote: string | null; reviewRequestedAt: string | null; updatedAt: string;
   contribution: number | null; breakdown: TeamChallengeBreakdown | null; final: boolean;
   adjustment: number; adjustmentReason: string | null; adjustmentBy: string | null; adjustedAt: string | null;
-  escalatedAt: string | null; escalationNote: string | null;
+  escalatedAt: string | null; escalationNote: string | null; linkedTo: string | null;
+};
+export type TeamChallengeSummary = {
+  sellingDays: number;
+  teams: Array<{ id: string; name: string; points: number; transactions: number; onePoint: number; twoPoint: number; contribution: number; revenue: number; assigned: number; conversion: number; entitled: number; paid: number; outstanding: number; members: Array<{ id: string; name: string; points: number; transactions: number; contribution: number }> }>;
+  milestones: Array<{ target: number; winners: Array<{ team: string; at: string | null }>; others: Array<{ team: string; at: string | null }>; provisional: boolean; tie: boolean }>;
+  excluded: number; reversed: number; linked: number;
+  exceptions: Array<{ orderId: string; rep: string; status: string; reason: string | null }>;
+  entitled: number; paid: number; outstanding: number; maxBudget: number;
+  baselineMonthly: number | null; challengeMonthly: number; uplift: number | null;
 };
 export type TeamChallengeDetail = {
   challenge: {
@@ -4660,6 +4671,7 @@ export type TeamChallengeDetail = {
   entries: TeamChallengeEntry[];
   log: Array<{ id: string; actor: string | null; action: string; detail: Record<string, unknown> | null; at: string }>;
   me: { id: string; teamId: string | null; leader: boolean; owner: boolean };
+  summary: TeamChallengeSummary;
 };
 export type TeamChallengeInput = {
   name: string; sellFrom: string; sellTo: string; graceDays: number;

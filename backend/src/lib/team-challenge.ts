@@ -20,9 +20,11 @@ export type Scoring = {
   onePointFrom: number;
   twoPointsFrom: number;
   packagingPerUnit: number;
+  /** Orders for the same customer within this many hours are one transaction (0 = off). */
+  linkWindowHours: number;
   productIds: string[];
 };
-export const DEFAULT_SCORING: Scoring = { onePointFrom: 10_000, twoPointsFrom: 50_000, packagingPerUnit: 500, productIds: [] };
+export const DEFAULT_SCORING: Scoring = { onePointFrom: 10_000, twoPointsFrom: 50_000, packagingPerUnit: 500, linkWindowHours: 72, productIds: [] };
 
 export type Milestone = { key: string; target: number; winnerAmount: number; runnerUpAmount: number; minPerMember: number };
 export const DEFAULT_MILESTONES: Milestone[] = [
@@ -41,6 +43,7 @@ export function normaliseScoring(raw: unknown): Scoring {
     onePointFrom: one,
     twoPointsFrom: Math.max(one, amount(value.twoPointsFrom, DEFAULT_SCORING.twoPointsFrom)),
     packagingPerUnit: amount(value.packagingPerUnit, DEFAULT_SCORING.packagingPerUnit),
+    linkWindowHours: Math.min(24 * 14, Math.round(amount(value.linkWindowHours, DEFAULT_SCORING.linkWindowHours))),
     productIds: Array.isArray(value.productIds) ? value.productIds.map(String) : []
   };
 }

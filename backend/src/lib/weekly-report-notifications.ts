@@ -40,17 +40,24 @@ export async function leadershipRecipients(orgId: string, branchId: string, role
     .map((user: any) => ({ id: user.id as string, role: String(user.role) }));
 }
 
-async function deliver(orgId: string, branchId: string, recipients: Recipient[], alert: { title: string; message: string; kind: string; tag: string; type?: "info" | "warning" | "success" }) {
+/** The bell's own enum: info / needs_attention (no warning, no success). */
+export const bellType = (type: "info" | "warning" | "success" | undefined) => (type === "warning" ? "needs_attention" : "info");
+
+/** Bell entry + phone push, each failure caught (shared by Team Challenges). */
+export async function deliver(orgId: string, branchId: string, recipients: Recipient[], alert: { title: string; message: string; kind: string; tag: string; type?: "info" | "warning" | "success"; link?: string }) {
   const unique = Array.from(new Map(recipients.map((recipient) => [recipient.id, recipient])).values());
   if (unique.length === 0) return;
   const rows = unique.map((recipient) => ({
     org_id: orgId,
     branch_id: branchId,
     recipient_id: recipient.id,
-    type: alert.type ?? "info",
+    // ⚠️ notification_type has NO "warning" or "success" (5 Oct 2026): sending
+    // them made the whole bell insert fail, so every late / returned /
+    // approved alert reached the phone only. Map onto the enum that exists.
+    type: bellType(alert.type),
     title: alert.title,
     message: alert.message,
-    link: LINK_FOR_ROLE(recipient.role),
+    link: alert.link ?? LINK_FOR_ROLE(recipient.role),
     read: false
   }));
   const { error } = await supabase.from("system_notifications").insert(rows);
@@ -61,7 +68,7 @@ async function deliver(orgId: string, branchId: string, recipients: Recipient[],
     title: alert.title,
     body: alert.message,
     kind: alert.kind,
-    url: LINK_FOR_ROLE(recipient.role),
+    url: alert.link ?? LINK_FOR_ROLE(recipient.role),
     tag: alert.tag,
     brandName: branding.brandName,
     brandLogo: branding.brandLogo

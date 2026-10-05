@@ -28396,6 +28396,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         setWeeklyReportSubPage("Manager Review");
         setManagerDashboardTab("Weekly Reports");
       }
+      // A Team Challenges alert for a manager / the Owner lands on that tab.
+      if ((section === "manager-overview" || section === "manager-dashboard") && parts[3] === "team-challenges") {
+        setManagerDashboardTab("Team Challenges");
+      }
       if (section === "orders" && parts[3] !== "new" && (!parts[4] || !["edit", "edit-customer", "reassign", "send-to-agent", "delete", "change-status", "add-cross-sell", "add-free-gift", "manual-bonus"].includes(parts[4])) && modal && ["editOrderItems", "editOrderCustomer", "reassignOrder", "sendToAgent", "deleteOrder", "changeOrderStatus", "addCrossSell", "addFreeGift", "manualBonus"].includes(modal)) {
         setModal(null);
       }
