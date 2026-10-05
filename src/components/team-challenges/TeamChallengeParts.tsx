@@ -143,7 +143,7 @@ export function TeamRaceCard({ team, milestones, leaderTeamId, gap, mine, meId }
           </div>
         ))}
       </div>
-      <p className="m-0 mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] font-semibold text-gray-700 dark:text-slate-300"><TrendingUp className={`h-4 w-4 ${tone.text}`} />{plural(team.upsells, "upsell")} <span className="text-gray-300">|</span> {plural(team.crossSells, "cross-sell")} <span className="text-gray-300">|</span> {team.onePoint} × 1-pt · {team.twoPoint} × 2-pt <span className="text-gray-300">|</span> {naira(team.contribution)} added contribution</p>
+      <p className="m-0 mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] font-semibold text-gray-700 dark:text-slate-300"><TrendingUp className={`h-4 w-4 ${tone.text}`} />{plural(team.upsells, "upsell")} <span className="text-gray-300">|</span> {plural(team.crossSells, "cross-sell")} <span className="text-gray-300">|</span> {team.onePoint} × 1-pt · {team.twoPoint} × 2+ pt <span className="text-gray-300">|</span> {naira(team.contribution)} added contribution</p>
       {team.memberPending.map((pending) => (
         <p key={pending.key} className="m-0 mt-2 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[12px] font-semibold text-amber-900">
           {pending.target} points reached: member requirement pending. {pending.short.map((item) => `${item.need} more point${item.need === 1 ? "" : "s"} needed from ${item.name}`).join("; ")} to unlock the prize.
@@ -194,7 +194,7 @@ export function SummaryPanel({ detail }: { detail: TeamChallengeDetail }) {
         {summary.teams.map((team) => (
           <div key={team.id} className="rounded-2xl border border-gray-200 p-4 dark:border-slate-700">
             <p className="m-0 text-[15px] font-black text-gray-900 dark:text-slate-50">{team.name} · {plural(team.points, "point")}</p>
-            <p className="m-0 text-[12.5px] text-gray-600 dark:text-slate-300">{plural(team.transactions, "sale")} ({team.onePoint} × 1-pt, {team.twoPoint} × 2-pt) · {naira(team.contribution)} contribution · {team.assigned} orders assigned · {team.conversion}% turned into a scored sale</p>
+            <p className="m-0 text-[12.5px] text-gray-600 dark:text-slate-300">{plural(team.transactions, "sale")} ({team.onePoint} × 1-pt, {team.twoPoint} × 2+ pt) · {naira(team.contribution)} contribution · {team.assigned} orders assigned · {team.conversion}% turned into a scored sale</p>
             <p className="m-0 mt-1 text-[12.5px] text-gray-600 dark:text-slate-300">Prize {naira(team.entitled)} · paid {naira(team.paid)} · to pay {naira(team.outstanding)}</p>
             <ul className="m-0 mt-2 list-none space-y-1 p-0">
               {team.members.map((member) => <li key={member.id} className="flex justify-between rounded-lg bg-gray-50 px-3 py-1.5 text-[12.5px] dark:bg-slate-800"><span>{member.name}</span><span className="font-bold">{plural(member.points, "pt")} · {plural(member.transactions, "sale")} · {naira(member.contribution)}</span></li>)}

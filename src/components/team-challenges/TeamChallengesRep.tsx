@@ -85,7 +85,7 @@ export default function TeamChallengesRep({ onToast, onOpenOrders, onOpenFollowU
           {tab === "race" ? (
             <div className="mt-4 space-y-4">
               <div className="grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4">
-                <Kpi icon={<CheckCircle2 className="h-5 w-5" />} tone="bg-emerald-50 text-emerald-600" label="My verified points" value={me?.points ?? 0} sub={`${me?.onePoint ?? 0} × 1-pt · ${me?.twoPoint ?? 0} × 2-pt · ${naira(me?.contribution ?? 0)} added`} hint="Only manager-verified, delivered and paid orders count." />
+                <Kpi icon={<CheckCircle2 className="h-5 w-5" />} tone="bg-emerald-50 text-emerald-600" label="My verified points" value={me?.points ?? 0} sub={`${me?.onePoint ?? 0} × 1-pt · ${me?.twoPoint ?? 0} × 2+ pt · ${naira(me?.contribution ?? 0)} added`} hint="Only manager-verified, delivered and paid orders count." />
                 <Kpi icon={<Users className="h-5 w-5" />} tone="bg-blue-50 text-blue-600" label="My team contribution" value={`${contribution}%`} sub={`${me?.points ?? 0} of ${myTeam?.points ?? 0} team points`} />
                 <Kpi icon={<Clock className="h-5 w-5" />} tone="bg-amber-50 text-amber-500" label="Awaiting delivery" value={awaitingDelivery} sub="Not counted yet" />
                 <Kpi icon={<FileText className="h-5 w-5" />} tone="bg-violet-50 text-violet-600" label="Awaiting verification" value={awaitingVerification} sub="Delivered + paid" />
@@ -120,7 +120,7 @@ export default function TeamChallengesRep({ onToast, onOpenOrders, onOpenFollowU
                 <Kpi icon={<Star className="h-5 w-5" />} tone="bg-violet-50 text-violet-600" label="My points" value={me?.points ?? 0} />
                 <Kpi icon={<CheckCircle2 className="h-5 w-5" />} tone="bg-emerald-50 text-emerald-600" label="Verified orders" value={me?.orders ?? 0} />
                 <Kpi icon={<Users className="h-5 w-5" />} tone="bg-blue-50 text-blue-600" label="Share of team" value={`${contribution}%`} />
-                <Kpi icon={<Clock className="h-5 w-5" />} tone="bg-amber-50 text-amber-500" label="Added contribution" value={naira(me?.contribution ?? 0)} sub={`${me?.onePoint ?? 0} one-point · ${me?.twoPoint ?? 0} two-point`} />
+                <Kpi icon={<Clock className="h-5 w-5" />} tone="bg-amber-50 text-amber-500" label="Added contribution" value={naira(me?.contribution ?? 0)} sub={`${me?.onePoint ?? 0} one-point · ${me?.twoPoint ?? 0} 2+ point`} />
               </div>
               <div className="rounded-2xl border border-gray-200 p-4 dark:border-slate-700">
                 <p className="m-0 text-[14px] font-black">Where my points came from</p>
@@ -144,7 +144,7 @@ export default function TeamChallengesRep({ onToast, onOpenOrders, onOpenFollowU
               <div className="rounded-2xl border border-gray-200 p-4 text-[13px] text-gray-700 dark:border-slate-700 dark:text-slate-300">
                 <p className="m-0 text-[14px] font-black text-gray-900 dark:text-slate-50">Challenge rules (v{detail.challenge.ruleVersion})</p>
                 <ul className="m-0 mt-1 list-disc space-y-0.5 pl-5">
-                  <li>Points come from the profit you add: {naira(detail.challenge.scoring.onePointFrom)} – {naira(detail.challenge.scoring.twoPointsFrom - 1)} added contribution = 1 point, {naira(detail.challenge.scoring.twoPointsFrom)}+ = 2 points, below {naira(detail.challenge.scoring.onePointFrom)} = 0 (your normal sales bonus still applies). Added contribution = extra amount collected − cost of what was added − extra delivery − your bonus − packaging − gifts.</li>
+                  <li>Points come from the profit you add: {naira(detail.challenge.scoring.onePointFrom)} – {naira(detail.challenge.scoring.twoPointsFrom - 1)} added contribution = 1 point, {naira(detail.challenge.scoring.twoPointsFrom)} = 2 points{detail.challenge.scoring.extraPointEvery > 0 ? `, then +1 for every further ${naira(detail.challenge.scoring.extraPointEvery)} (no cap)` : ""}, below {naira(detail.challenge.scoring.onePointFrom)} = 0 (your normal sales bonus still applies). Added contribution = extra amount collected − cost of what was added − extra delivery − your bonus − packaging − gifts.</li>
                   {detail.challenge.milestones.some((m) => m.minPerMember > 0) ? <li>Each team member needs at least {detail.challenge.milestones.map((m) => `${m.minPerMember} points at ${m.target}`).join(", ")} before the prize unlocks.</li> : null}
                   <li>Selling {shortDate(detail.challenge.sellFrom)} – {shortDate(detail.challenge.sellTo)}; orders must be delivered and paid by {shortDate(detail.challenge.graceUntil)}.</li>
                   <li>An order counts only when it is delivered, paid and verified by your manager. A cancelled or returned order is reversed with its reason.</li>

@@ -679,6 +679,7 @@ const ChallengeSchema = z.object({
   milestones: z.array(MilestoneSchema).min(1).max(4),
   scoring: z.object({
     onePointFrom: z.coerce.number().min(0).max(100_000_000), twoPointsFrom: z.coerce.number().min(0).max(100_000_000),
+    extraPointEvery: z.coerce.number().min(0).max(100_000_000).default(50_000),
     packagingPerUnit: z.coerce.number().min(0).max(1_000_000).default(0), linkWindowHours: z.coerce.number().int().min(0).max(336).default(72), productIds: z.array(z.string().uuid()).max(100).default([])
   }),
   sponsorNote: z.string().trim().max(200).optional(),
