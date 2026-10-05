@@ -170,7 +170,7 @@ export function PrizeTable({ milestones, memberCount, perRep }: { milestones: Te
           </div>
           <p className="m-0 mt-2 rounded-lg bg-gray-50 px-2.5 py-1.5 text-[12px] text-gray-600 dark:bg-slate-800 dark:text-slate-300">
             Other team reaching {milestone.target}: <strong>{naira(share(milestone.runnerUpAmount))}</strong>{perRep ? " your share" : ""}
-            {milestone.minPerMember > 0 ? <span className="block text-[11px] text-gray-500">Each member needs at least {milestone.minPerMember} points.</span> : null}
+            {milestone.minPerMember > 0 ? <span className="block text-[11px] text-gray-500">{perRep ? "You and your teammate" : "Both teammates"} must each score at least {milestone.minPerMember} of these {milestone.target} points - one person can't carry the team.</span> : null}
             {index > 0 ? <span className="block text-[11px] text-gray-500">Totals, not extra: earlier milestone payments are taken off.</span> : null}
           </p>
         </div>
