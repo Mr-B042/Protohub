@@ -26,7 +26,8 @@ export const ENTRY_STATUS: Record<TeamChallengeEntryStatus, { label: string; cls
   verified: { label: "Verified", cls: "bg-emerald-50 text-emerald-700 ring-emerald-200", counts: true },
   correction_requested: { label: "Returned for correction", cls: "bg-rose-50 text-rose-700 ring-rose-200", counts: false },
   excluded: { label: "Excluded", cls: "bg-gray-100 text-gray-600 ring-gray-200", counts: false },
-  reversed: { label: "Reversed", cls: "bg-rose-50 text-rose-700 ring-rose-200", counts: false }
+  reversed: { label: "Reversed", cls: "bg-rose-50 text-rose-700 ring-rose-200", counts: false },
+  linked: { label: "Linked (same customer)", cls: "bg-indigo-50 text-indigo-700 ring-indigo-200", counts: false }
 };
 
 export function EntryPill({ status }: { status: TeamChallengeEntryStatus }) {
@@ -174,6 +175,48 @@ export function PrizeTable({ milestones, memberCount, perRep }: { milestones: Te
           </p>
         </div>
       ))}
+    </div>
+  );
+}
+
+/** The end-of-challenge summary (manager Summary tab; reps see it once the challenge closes). */
+export function SummaryPanel({ detail }: { detail: TeamChallengeDetail }) {
+  const summary = detail.summary;
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Kpi icon={<Trophy className="h-5 w-5" />} tone="bg-violet-50 text-violet-600" label="Points" value={summary.teams.reduce((sum, team) => sum + team.points, 0)} sub={`${summary.teams.reduce((sum, team) => sum + team.transactions, 0)} verified sales`} />
+        <Kpi icon={<TrendingUp className="h-5 w-5" />} tone="bg-blue-50 text-blue-600" label="Added contribution" value={naira(summary.teams.reduce((sum, team) => sum + team.contribution, 0))} sub={`${naira(summary.teams.reduce((sum, team) => sum + team.revenue, 0))} extra revenue`} />
+        <Kpi icon={<Crown className="h-5 w-5" />} tone="bg-amber-50 text-amber-500" label="Prizes" value={naira(summary.entitled)} sub={`${naira(summary.paid)} paid · ${naira(summary.outstanding)} to pay`} />
+        <Kpi icon={<CalendarDays className="h-5 w-5" />} tone="bg-emerald-50 text-emerald-600" label="Against baseline" value={summary.uplift === null ? "—" : `${summary.uplift > 0 ? "+" : ""}${summary.uplift}%`} sub={summary.baselineMonthly === null ? "Calculate the baseline in Rules & settings" : `${summary.challengeMonthly} pts/month vs ${summary.baselineMonthly} before`} />
+      </div>
+      <div className="grid gap-3 lg:grid-cols-2">
+        {summary.teams.map((team) => (
+          <div key={team.id} className="rounded-2xl border border-gray-200 p-4 dark:border-slate-700">
+            <p className="m-0 text-[15px] font-black text-gray-900 dark:text-slate-50">{team.name} · {plural(team.points, "point")}</p>
+            <p className="m-0 text-[12.5px] text-gray-600 dark:text-slate-300">{plural(team.transactions, "sale")} ({team.onePoint} × 1-pt, {team.twoPoint} × 2-pt) · {naira(team.contribution)} contribution · {team.assigned} orders assigned · {team.conversion}% turned into a scored sale</p>
+            <p className="m-0 mt-1 text-[12.5px] text-gray-600 dark:text-slate-300">Prize {naira(team.entitled)} · paid {naira(team.paid)} · to pay {naira(team.outstanding)}</p>
+            <ul className="m-0 mt-2 list-none space-y-1 p-0">
+              {team.members.map((member) => <li key={member.id} className="flex justify-between rounded-lg bg-gray-50 px-3 py-1.5 text-[12.5px] dark:bg-slate-800"><span>{member.name}</span><span className="font-bold">{plural(member.points, "pt")} · {plural(member.transactions, "sale")} · {naira(member.contribution)}</span></li>)}
+            </ul>
+          </div>
+        ))}
+      </div>
+      <div className="rounded-2xl border border-gray-200 p-4 text-[13px] dark:border-slate-700">
+        <p className="m-0 text-[14px] font-black text-gray-900 dark:text-slate-50">Milestones</p>
+        {summary.milestones.map((milestone) => (
+          <p key={milestone.target} className="m-0 mt-1">
+            <strong>{plural(milestone.target, "point")}:</strong>{" "}
+            {milestone.winners.length ? `${milestone.winners.map((row) => `${row.team} first (${dateTime(row.at)})`).join(" & ")}${milestone.others.length ? ` · then ${milestone.others.map((row) => `${row.team} (${dateTime(row.at)})`).join(", ")}` : ""}${milestone.tie ? " · tie" : ""}${milestone.provisional ? " · provisional" : ""}` : "not reached"}
+          </p>
+        ))}
+        <p className="m-0 mt-2 text-[12.5px] text-gray-500">{summary.excluded} excluded · {summary.reversed} reversed · {summary.linked} linked into another order · maximum budget {naira(summary.maxBudget)}</p>
+        {summary.exceptions.length ? (
+          <details className="mt-2"><summary className="cursor-pointer text-[12.5px] font-bold">Excluded and reversed orders</summary>
+            <ul className="m-0 mt-1 list-disc pl-5 text-[12.5px] text-gray-600 dark:text-slate-300">{summary.exceptions.map((row) => <li key={row.orderId}>#{row.orderId} · {row.rep} · {row.status}: {row.reason ?? "—"}</li>)}</ul>
+          </details>
+        ) : null}
+      </div>
     </div>
   );
 }

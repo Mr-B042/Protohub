@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { BarChart3, Check, CheckCircle2, Clock, FileText, Gift, Pause, Pencil, Play, Plus, ShieldCheck, Star, X } from "lucide-react";
 import { teamChallengesApi, type TeamChallengeDetail, type TeamChallengeEntry, type TeamChallengeInput } from "../../lib/api";
 import {
-  CATEGORY_LABEL, ChallengeHeader, EntryPill, Kpi, PrizeTable, TeamRaceCard, contributionText, dateTime, naira, shortDate, toneOf, upgradeText
+  CATEGORY_LABEL, ChallengeHeader, EntryPill, Kpi, PrizeTable, SummaryPanel, plural, TeamRaceCard, contributionText, dateTime, naira, shortDate, toneOf, upgradeText
 } from "./TeamChallengeParts";
 
 // Team Challenges - manager / owner page, built to Bright's first design
@@ -11,10 +11,10 @@ import {
 // reps see it, approves every payout and is the only one who can change the
 // rules of a running challenge (with a reason, as a new rule version).
 
-type Tab = "race" | "teams" | "verification" | "rewards" | "rules" | "log";
+type Tab = "race" | "teams" | "verification" | "rewards" | "summary" | "rules" | "log";
 const TABS: Array<{ key: Tab; label: string }> = [
   { key: "race", label: "Live race" }, { key: "teams", label: "Teams & reps" }, { key: "verification", label: "Verification" },
-  { key: "rewards", label: "Rewards" }, { key: "rules", label: "Rules & settings" }, { key: "log", label: "Activity log" }
+  { key: "rewards", label: "Rewards" }, { key: "summary", label: "Summary" }, { key: "rules", label: "Rules & settings" }, { key: "log", label: "Activity log" }
 ];
 
 export default function TeamChallengesManager({ role, onToast }: { role: string; onToast: (message: string) => void }) {
@@ -124,6 +124,15 @@ export default function TeamChallengesManager({ role, onToast }: { role: string;
               onClose={() => { if (window.confirm("Close this challenge? No more orders will count.")) void run(() => teamChallengesApi.setStatus(c.id, "closed"), "Challenge closed."); }}
               onDelete={() => { if (window.confirm("Delete this draft?")) void run(async () => { await teamChallengesApi.remove(c.id); setSelected(null); }, "Draft deleted."); }} /> : null}
             {tab === "log" ? <LogTab detail={detail} /> : null}
+            {tab === "summary" ? (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="m-0 text-[13px] text-gray-500">{["closed", "finalising"].includes(c.phase) ? "Final summary." : "Summary so far - it becomes final when the challenge closes."}</p>
+                  <button type="button" onClick={() => downloadSummary(detail)} className="!min-h-[40px] rounded-xl border border-gray-200 px-3 text-[12.5px] font-bold">Download CSV</button>
+                </div>
+                <SummaryPanel detail={detail} />
+              </div>
+            ) : null}
           </div>
         </section>
       ) : null}
@@ -199,7 +208,7 @@ function TeamsTab({ detail }: { detail: TeamChallengeDetail }) {
         const tone = toneOf(team.color);
         return (
           <div key={team.id} className="rounded-2xl border border-gray-200 p-4 dark:border-slate-700">
-            <p className={`m-0 text-[15px] font-black ${tone.text}`}>{team.name} · {team.points} points · {team.orders} verified transactions</p>
+            <p className={`m-0 text-[15px] font-black ${tone.text}`}>{team.name} · {plural(team.points, "point")} · {plural(team.orders, "verified transaction")}</p>
             <p className="m-0 text-[12.5px] text-gray-700 dark:text-slate-300">{team.onePoint} one-point + {team.twoPoint} two-point = {team.onePoint + team.twoPoint * 2} points · {naira(team.contribution)} added contribution · {team.zeroPoint} below the 1-point level</p>
             <p className="m-0 text-[12px] text-gray-500">{team.awaitingDelivery} awaiting delivery · {team.awaitingPayment} awaiting payment · {team.awaitingVerification} awaiting verification · added {naira(team.addedValue)}</p>
             <div className="mt-3 space-y-2">
@@ -214,7 +223,13 @@ function TeamsTab({ detail }: { detail: TeamChallengeDetail }) {
                 );
               })}
             </div>
-            <p className="m-0 mt-2 text-[11.5px] text-gray-500">Teams are locked once the challenge starts; points never move with a rep.</p>
+            <div className="mt-3 rounded-xl border border-dashed border-gray-300 p-3 dark:border-slate-600">
+              <p className="m-0 text-[12.5px] font-black text-gray-900 dark:text-slate-100">Lead allocation (context, not score)</p>
+              <p className="m-0 mt-0.5 text-[12.5px] text-gray-700 dark:text-slate-300">{team.opportunity.assigned} orders assigned ({team.opportunity.share}% of both teams) · {team.opportunity.conversion}% became a scored sale · {team.opportunity.pointsPer100} points per 100 orders</p>
+              <p className="m-0 mt-0.5 text-[12px] text-gray-500">Product mix: {team.opportunity.products.map((row) => `${row.name} ${row.count}`).join(" · ") || "—"}</p>
+              <p className="m-0 mt-0.5 text-[12px] text-gray-500">Per rep: {team.members.map((member) => `${member.name} ${member.assigned} orders`).join(" · ")}</p>
+            </div>
+            <p className="m-0 mt-2 text-[11.5px] text-gray-500">Teams are locked once the challenge starts; points never move with a rep. A big gap in orders assigned explains a points gap - balance the round-robin if it is unfair.</p>
           </div>
         );
       })}
@@ -234,7 +249,7 @@ function VerificationTab({ detail, owner, onDecide, onAdjust, onEscalate }: {
     : filter === "owner" ? Boolean(row.escalatedAt)
     : filter === "queue" ? row.status === "awaiting_verification" || row.status === "correction_requested"
     : filter === "progress" ? row.status === "awaiting_delivery" || row.status === "awaiting_payment"
-    : ["verified", "excluded", "reversed"].includes(row.status))
+    : ["verified", "excluded", "reversed", "linked"].includes(row.status))
     .sort((a, b) => Date.parse(a.qualifiedAt ?? a.updatedAt) - Date.parse(b.qualifiedAt ?? b.updatedAt));
   const teamOf = new Map(detail.teams.map((team) => [team.id, team]));
   const ask = (entry: TeamChallengeEntry, action: "correction" | "exclude") => {
@@ -378,7 +393,7 @@ function RulesTab({ detail, owner, onEdit, onClose, onDelete, onBaseline }: { de
           <p className="m-0 mt-1">Below {naira(c.scoring.onePointFrom)}: <strong>0 points</strong> (still shown)</p>
           <p className="m-0">{naira(c.scoring.onePointFrom)} – {naira(c.scoring.twoPointsFrom - 1)}: <strong>1 point</strong></p>
           <p className="m-0">{naira(c.scoring.twoPointsFrom)} and above: <strong>2 points</strong></p>
-          <p className="m-0 mt-1 text-[12px] text-gray-500">Added contribution = additional amount collected − added product cost (Product Master, on the order's day) − extra delivery cost − the rep's upsell/cross-sell bonus − packaging ({naira(c.scoring.packagingPerUnit)} per added unit) − gifts. One transaction, one score, two points at most{c.scoring.productIds.length ? ` · ${c.scoring.productIds.length} eligible products` : " · all products"}.</p>
+          <p className="m-0 mt-1 text-[12px] text-gray-500">Added contribution = additional amount collected − added product cost (Product Master, on the order's day) − extra delivery cost − the rep's upsell/cross-sell bonus − packaging ({naira(c.scoring.packagingPerUnit)} per added unit) − gifts. One transaction, one score, two points at most; orders from the same customer within {c.scoring.linkWindowHours} hours are one transaction{c.scoring.productIds.length ? ` · ${c.scoring.productIds.length} eligible products` : " · all products"}.</p>
         </div>
       </div>
       <div className="rounded-2xl border border-gray-200 p-4 dark:border-slate-700">
@@ -465,7 +480,7 @@ function ChallengeEditor({ detail, onClose, onSave }: { detail: TeamChallengeDet
   } : {
     name: "Upsell & Cross-Sell Race", sellFrom: today, sellTo: plus(29), graceDays: 7,
     milestones: [{ target: 50, winnerAmount: 50000, runnerUpAmount: 10000, minPerMember: 10 }, { target: 100, winnerAmount: 150000, runnerUpAmount: 40000, minPerMember: 20 }],
-    scoring: { onePointFrom: 10000, twoPointsFrom: 50000, packagingPerUnit: 500, productIds: [] },
+    scoring: { onePointFrom: 10000, twoPointsFrom: 50000, packagingPerUnit: 500, linkWindowHours: 72, productIds: [] },
     teams: [{ name: "Team A", color: "violet", memberIds: [] }, { name: "Team B", color: "teal", memberIds: [] }]
   });
   const [saving, setSaving] = useState(false);
@@ -536,12 +551,12 @@ function ChallengeEditor({ detail, onClose, onSave }: { detail: TeamChallengeDet
           </div>
           <div>
             <p className="m-0 text-[13px] font-black">Points by added contribution</p>
-            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-              {([["onePointFrom", "1 point from (₦)"], ["twoPointsFrom", "2 points from (₦)"], ["packagingPerUnit", "Packaging per added unit (₦)"]] as const).map(([key, label]) => (
+            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {([["onePointFrom", "1 point from (₦)"], ["twoPointsFrom", "2 points from (₦)"], ["packagingPerUnit", "Packaging per added unit (₦)"], ["linkWindowHours", "Same-customer link window (hours)"]] as const).map(([key, label]) => (
                 <label key={key} className="block"><span className="mb-1 block text-[11.5px] text-gray-500">{label}</span><input type="number" min={0} className={field} value={form.scoring[key]} onChange={(event) => setForm({ ...form, scoring: { ...form.scoring, [key]: Number(event.target.value) } })} /></label>
               ))}
             </div>
-            <p className="m-0 mt-1 text-[11.5px] text-gray-500">Added contribution = additional amount collected − added product cost − extra delivery − rep bonus − packaging − gifts. Below the 1-point level scores 0; a transaction scores two points at most.</p>
+            <p className="m-0 mt-1 text-[11.5px] text-gray-500">Added contribution = additional amount collected − added product cost − extra delivery − rep bonus − packaging − gifts. Below the 1-point level scores 0; a transaction scores two points at most. Orders from the same customer within the link window are one transaction, scored once (0 turns this off).</p>
           </div>
           {running ? <label className="block"><span className="mb-1 block text-[12.5px] font-bold">Reason for the change (the reps see it)</span><input className={field} value={form.reason ?? ""} onChange={(event) => setForm({ ...form, reason: event.target.value })} /></label> : null}
           {error ? <p className="m-0 rounded-xl bg-rose-50 px-3 py-2 text-[12.5px] font-semibold text-rose-700">{error}</p> : null}
@@ -553,4 +568,19 @@ function ChallengeEditor({ detail, onClose, onSave }: { detail: TeamChallengeDet
       </div>
     </div>
   );
+}
+
+function downloadSummary(detail: TeamChallengeDetail) {
+  const esc = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const rows: unknown[][] = [["Team", "Rep", "Points", "Sales", "Contribution", "Orders assigned", "Prize entitled", "Paid", "To pay"]];
+  for (const team of detail.summary.teams) {
+    rows.push([team.name, "TEAM", team.points, team.transactions, Math.round(team.contribution), team.assigned, team.entitled, team.paid, team.outstanding]);
+    for (const member of team.members) rows.push([team.name, member.name, member.points, member.transactions, Math.round(member.contribution), "", "", "", ""]);
+  }
+  for (const milestone of detail.summary.milestones) rows.push([`${milestone.target} points`, milestone.winners.map((row) => `${row.team} ${row.at ?? ""}`).join(" & ") || "not reached", "", "", "", "", "", "", ""]);
+  const blob = new Blob([rows.map((row) => row.map(esc).join(",")).join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url; link.download = `${detail.challenge.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-summary.csv`; link.click();
+  URL.revokeObjectURL(url);
 }

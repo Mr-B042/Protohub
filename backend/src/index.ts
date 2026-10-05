@@ -52,7 +52,7 @@ import weeklyAccountingRoutes from "./routes/weekly-accounting.js";
 import bonusCoachRoutes from "./routes/bonus-coach.js";
 import managerBonusRoutes from "./routes/manager-bonuses.js";
 import managerProductChallengeRoutes from "./routes/manager-product-challenges.js";
-import teamChallengeRoutes from "./routes/team-challenges.js";
+import teamChallengeRoutes, { runTeamChallengeWatch } from "./routes/team-challenges.js";
 import deliveryGoalRoutes from "./routes/delivery-goals.js";
 import cashFlowRoutes from "./routes/cash-flow.js";
 import headOfSalesRepRoutes from "./routes/head-of-sales-rep.js";
@@ -582,6 +582,11 @@ cron.schedule("*/10 * * * *", async () => {
 });
 
 // ── SMS follow-up reminders — every 15 minutes ───────────
+// Team Challenges alerts: lead changes, milestones, linked orders, deadline reminders.
+cron.schedule("*/15 * * * *", async () => {
+  try { await runTeamChallengeWatch(); } catch (error: any) { console.warn("[cron] team challenge watch failed:", error?.message ?? error); }
+});
+
 cron.schedule("*/15 * * * *", async () => {
   logger.info("cron: syncing due sms follow-up reminders");
   try {

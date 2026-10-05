@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ArrowRight, CheckCircle2, Clock, ExternalLink, FileText, Info, ListChecks, Star, Truck, Users } from "lucide-react";
 import { teamChallengesApi, type TeamChallengeDetail, type TeamChallengeEntry } from "../../lib/api";
-import { CATEGORY_LABEL, ChallengeHeader, contributionText, plural, ENTRY_STATUS, EntryPill, Kpi, PrizeTable, TeamRaceCard, dateTime, naira, shortDate, upgradeText } from "./TeamChallengeParts";
+import { CATEGORY_LABEL, ChallengeHeader, SummaryPanel, contributionText, plural, ENTRY_STATUS, EntryPill, Kpi, PrizeTable, TeamRaceCard, dateTime, naira, shortDate, upgradeText } from "./TeamChallengeParts";
 
 // Team Challenges - the sales rep's page (Bright's second design, 3 Oct
 // 2026). The rep sees both team standings, their own contribution and their
@@ -138,6 +138,7 @@ export default function TeamChallengesRep({ onToast, onOpenOrders, onOpenFollowU
 
           {tab === "rewards" ? (
             <div className="mt-4 space-y-3">
+              {["closed", "finalising"].includes(detail.challenge.phase) ? <div><p className="m-0 mb-2 text-[15px] font-black">Final results</p><SummaryPanel detail={detail} /></div> : null}
               <RewardStatus detail={detail} myShare={myShare} />
               <WhatYouCanWin detail={detail} myShare={myShare} />
               <div className="rounded-2xl border border-gray-200 p-4 text-[13px] text-gray-700 dark:border-slate-700 dark:text-slate-300">
@@ -147,6 +148,7 @@ export default function TeamChallengesRep({ onToast, onOpenOrders, onOpenFollowU
                   {detail.challenge.milestones.some((m) => m.minPerMember > 0) ? <li>Each team member needs at least {detail.challenge.milestones.map((m) => `${m.minPerMember} points at ${m.target}`).join(", ")} before the prize unlocks.</li> : null}
                   <li>Selling {shortDate(detail.challenge.sellFrom)} – {shortDate(detail.challenge.sellTo)}; orders must be delivered and paid by {shortDate(detail.challenge.graceUntil)}.</li>
                   <li>An order counts only when it is delivered, paid and verified by your manager. A cancelled or returned order is reversed with its reason.</li>
+                  <li>Orders from the same customer within {detail.challenge.scoring.linkWindowHours} hours are one sale, scored once on the first order.</li>
                   <li>Each milestone has its own winner, timed by when the order was delivered and paid. Prizes are team totals split equally, paid separately from commission.</li>
                 </ul>
               </div>
