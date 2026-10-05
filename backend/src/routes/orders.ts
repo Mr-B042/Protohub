@@ -36,7 +36,7 @@ import { sendConnectedUserWhatsAppToJid } from "../lib/whatsapp-runtime.js";
 import { confirmationNeedsSalesExpansionLog } from "../lib/sales-expansion.js";
 import { inventoryOperationsOrder } from "../lib/inventory-operations-access.js";
 import { applyInventoryMovements } from "../lib/inventory-movements.js";
-import { availableAfterDeliveredReservations } from "../lib/delivered-stock-reservations.js";
+import { availableAfterDeliveredReservations, deliveredStockShortfallMessage } from "../lib/delivered-stock-reservations.js";
 
 import {
   checkAgentStock, normalizeAdditionalLines, orderMoneyBreakdown, stockShortfallMessage
@@ -547,6 +547,48 @@ const inventoryAvailabilityMap = async (
     pending = pendingRows ?? [];
   }
   return availableAfterDeliveredReservations(data ?? [], pending);
+};
+
+// Facts behind a delivery stock refusal: what is physically on the shelf and
+// which undelivered-to-the-officer orders already hold those units.
+const deliveredStockShortfallError = async (args: {
+  orgId: string;
+  agentId: string;
+  locationId: string | null | undefined;
+  productId: string;
+  productName: string;
+  needed: number;
+}) => {
+  const [{ data: agentRow }, shelf, hub, pending] = await Promise.all([
+    supabase.from("agents").select("name").eq("id", args.agentId).maybeSingle(),
+    args.locationId
+      ? supabase.from("agent_location_stock").select("quantity")
+          .eq("agent_location_id", args.locationId).eq("product_id", args.productId).maybeSingle()
+      : supabase.from("agent_stock").select("quantity")
+          .eq("agent_id", args.agentId).eq("product_id", args.productId).maybeSingle(),
+    args.locationId
+      ? supabase.from("agent_locations").select("name").eq("id", args.locationId).maybeSingle()
+      : Promise.resolve({ data: null }),
+    args.locationId
+      ? supabase.from("delivered_stock_reconciliation_lines").select("order_id, quantity")
+          .eq("org_id", args.orgId).eq("agent_location_id", args.locationId)
+          .eq("product_id", args.productId).in("status", ["pending", "exception"])
+      : Promise.resolve({ data: [] as any[] })
+  ]);
+  const byOrder = new Map<string, number>();
+  for (const row of (pending.data ?? []) as any[]) {
+    const orderId = String(row.order_id ?? "");
+    if (!orderId) continue;
+    byOrder.set(orderId, (byOrder.get(orderId) ?? 0) + Math.max(0, Number(row.quantity ?? 0)));
+  }
+  return deliveredStockShortfallMessage({
+    agentName: agentRow?.name ?? args.agentId,
+    hubName: (hub.data as any)?.name ?? null,
+    productName: args.productName,
+    needed: args.needed,
+    onShelf: Math.max(0, Number((shelf.data as any)?.quantity ?? 0)),
+    reservations: [...byOrder].map(([orderId, quantity]) => ({ orderId, quantity }))
+  });
 };
 
 type DeliveryStockMovementRow = {
@@ -1529,12 +1571,16 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
     );
     const shortfall = inventoryLines.find((line) => (availability.get(line.productId) ?? 0) < line.quantity);
     if (shortfall) {
-      const { data: agentRow } = await supabase
-        .from("agents").select("name").eq("id", effectiveAgentId).single();
-      const agentName = agentRow?.name ?? effectiveAgentId;
-      const available = availability.get(shortfall.productId) ?? 0;
       res.status(400).json({
-        error: `Not enough stock to mark this order Delivered. ${agentName} has ${available} unit${available === 1 ? "" : "s"} of ${shortfall.productName} in stock, but this order needs ${shortfall.quantity}. Restock ${agentName} or reassign this order to an agent with enough stock, then try again.`
+        error: await deliveredStockShortfallError({
+          orgId: req.user!.orgId,
+          agentId: effectiveAgentId,
+          locationId: resolvedLocation?.id,
+          productId: shortfall.productId,
+          productName: shortfall.productName,
+          needed: shortfall.quantity
+        }),
+        code: "INSUFFICIENT_STOCK"
       });
       return;
     }
@@ -1698,13 +1744,17 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
     if (linesNeedingStock.length > 0) {
       const availability = await inventoryAvailabilityMap(
         req.user!.orgId, effectiveAgentId, preflightLocation.id, linesNeedingStock.map((line) => line.productId));
-      const shortfalls = linesNeedingStock
-        .map((line) => ({ name: line.productName, need: line.quantity, have: availability.get(line.productId) ?? 0 }))
-        .filter((s) => s.have < s.need);
-      if (shortfalls.length > 0) {
-        const detail = shortfalls.map((s) => `${s.name} (need ${s.need}, have ${s.have})`).join("; ");
+      const shortfall = linesNeedingStock.find((line) => (availability.get(line.productId) ?? 0) < line.quantity);
+      if (shortfall) {
         res.status(400).json({
-          error: `Can't mark this order Delivered — not enough stock at ${preflightLocation.name ?? "the hub"}: ${detail}. Restock the hub or fix the routing, then mark it Delivered.`,
+          error: await deliveredStockShortfallError({
+            orgId: req.user!.orgId,
+            agentId: effectiveAgentId,
+            locationId: preflightLocation.id,
+            productId: shortfall.productId,
+            productName: shortfall.productName,
+            needed: shortfall.quantity
+          }),
           code: "INSUFFICIENT_STOCK"
         });
         return;
