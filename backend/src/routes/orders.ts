@@ -3351,6 +3351,31 @@ router.delete("/:id", requireRole("Owner", "Admin"), async (req, res) => {
 
   if (!existing) { res.status(404).json({ error: "Order not found." }); return; }
 
+  // Keep a permanent record first (Bright, 5 Oct 2026). The order_audit row
+  // written below goes when the order goes, so on its own a delete left no
+  // trace of who did it (order #4844). deleted_orders has no link to orders,
+  // so this survives. No record, no delete: nothing has been changed yet.
+  const { data: fullRow } = await supabase.from("orders").select("*")
+    .eq("id", req.params.id).eq("org_id", req.user!.orgId).maybeSingle();
+  const kept = await supabase.from("deleted_orders").insert({
+    org_id: req.user!.orgId,
+    branch_id: fullRow?.branch_id ?? null,
+    order_id: String(req.params.id),
+    source_cart_id: fullRow?.source_cart_id ?? null,
+    customer: existing.customer ?? null,
+    phone: fullRow?.phone ?? null,
+    product_name: existing.product_name ?? null,
+    amount: existing.amount ?? null,
+    status: existing.status ?? null,
+    deleted_by: req.user!.id,
+    deleted_by_name: req.user!.name ?? null,
+    order_snapshot: fullRow ?? existing
+  });
+  if (kept.error) {
+    res.status(500).json({ error: `Could not keep a record of this order, so it was not deleted: ${kept.error.message}` });
+    return;
+  }
+
   const inventoryLines = orderInventoryLinesFromRow(existing);
   const inventoryProductId = primaryInventoryProductId(inventoryLines, existing.product_id);
 
