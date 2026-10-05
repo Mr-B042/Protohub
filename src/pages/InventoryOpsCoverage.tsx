@@ -7,13 +7,18 @@
 import { useMemo, useState } from "react";
 import { AlertTriangle, Boxes, Calendar, CalendarDays, Download, Eye, MapPin, Rocket, Search, TrendingUp } from "lucide-react";
 import type { OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryLogisticsOperationsPage";
+import type { PendingDeductionLine } from "./product-availability-model";
 import { buildStateRows, coverText, downloadCsv, num, runRateText, statusText, statusTone, type StockStatus } from "./inventory-ops-model";
+
+const NO_PENDING: PendingDeductionLine[] = [];
 
 type Props = {
   products: OpsProduct[];
   stateHubs: OpsStateHub[];
   orders: OpsOrder[];
   waybills: OpsWaybill[];
+  /** Delivered lines awaiting the Inventory Officer - already promised stock. */
+  pendingLines?: PendingDeductionLine[];
   lookbackDays: number;
   criticalDays: number;
   watchDays: number;
@@ -21,7 +26,7 @@ type Props = {
 };
 
 export default function InventoryOpsCoverage({
-  products, stateHubs, orders, waybills, lookbackDays, criticalDays, watchDays, onOpenTransfers
+  products, stateHubs, orders, waybills, pendingLines = NO_PENDING, lookbackDays, criticalDays, watchDays, onOpenTransfers
 }: Props) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"all" | StockStatus>("all");
@@ -36,8 +41,8 @@ export default function InventoryOpsCoverage({
     : new Set(products.filter((product) => (product.category ?? "Uncategorised") === category).map((product) => product.id)), [products, category]);
 
   const rows = useMemo(
-    () => buildStateRows(stateHubs, orders, waybills, windowDays, criticalDays, watchDays, includedProductIds),
-    [stateHubs, orders, waybills, windowDays, criticalDays, watchDays, includedProductIds]
+    () => buildStateRows(stateHubs, orders, waybills, windowDays, criticalDays, watchDays, includedProductIds, pendingLines),
+    [stateHubs, orders, waybills, windowDays, criticalDays, watchDays, includedProductIds, pendingLines]
   );
   const nameById = useMemo(() => new Map(products.map((product) => [product.id, product.name])), [products]);
 

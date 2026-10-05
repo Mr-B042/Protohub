@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { availableAfterDeliveredReservations } from "./delivered-stock-reservations.js";
+import { availableAfterDeliveredReservations, deliveredStockShortfallMessage } from "./delivered-stock-reservations.js";
 
 test("pending delivered orders reserve stock without changing the physical balance", () => {
   const available = availableAfterDeliveredReservations(
@@ -24,4 +24,31 @@ test("over-committed stock never appears as negative availability", () => {
     [{ product_id: "hanger", quantity: 4 }]
   );
   assert.equal(available.get("hanger"), 0);
+});
+
+test("shortfall message names the reserving order instead of claiming zero stock", () => {
+  const message = deliveredStockShortfallMessage({
+    agentName: "Ideal Logistics",
+    hubName: "Rivers Hub",
+    productName: "Multi Corner Storage Shelf",
+    needed: 1,
+    onShelf: 1,
+    reservations: [{ orderId: "4750", quantity: 1 }]
+  });
+  assert.match(message, /Ideal Logistics \(Rivers Hub\) has 1 unit on the shelf/);
+  assert.match(message, /1 unit is already reserved for order 4750/);
+  assert.match(message, /0 units are free/);
+  assert.doesNotMatch(message, /has 0 units/);
+});
+
+test("shortfall message without reservations reports the shelf count", () => {
+  const message = deliveredStockShortfallMessage({
+    agentName: "Ideal Logistics",
+    productName: "Shelf",
+    needed: 2,
+    onShelf: 1,
+    reservations: []
+  });
+  assert.match(message, /Ideal Logistics has 1 unit on the shelf/);
+  assert.doesNotMatch(message, /reserved/);
 });

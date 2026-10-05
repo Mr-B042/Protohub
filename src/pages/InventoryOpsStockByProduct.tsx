@@ -14,13 +14,18 @@
 import { useMemo, useState } from "react";
 import { Box, CalendarDays, ChevronRight, Download, Search, X } from "lucide-react";
 import type { OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryLogisticsOperationsPage";
+import type { PendingDeductionLine } from "./product-availability-model";
 import { buildProductRows, buildStateRows, coverText, downloadCsv, runRateText, statesHoldingProduct, type ProductRow } from "./inventory-ops-model";
+
+const NO_PENDING: PendingDeductionLine[] = [];
 
 type Props = {
   products: OpsProduct[];
   stateHubs: OpsStateHub[];
   orders: OpsOrder[];
   waybills: OpsWaybill[];
+  /** Delivered lines awaiting the Inventory Officer - already promised stock. */
+  pendingLines?: PendingDeductionLine[];
   /** Days of sales history behind the daily-sales figure. */
   lookbackDays: number;
   /** Owner's own thresholds, so this page and Smart Stock agree. */
@@ -37,7 +42,7 @@ type Row = ProductRow & {
 };
 
 export default function InventoryOpsStockByProduct({
-  products, stateHubs, orders, waybills, lookbackDays, criticalDays, watchDays, onOpenProduct
+  products, stateHubs, orders, waybills, pendingLines = NO_PENDING, lookbackDays, criticalDays, watchDays, onOpenProduct
 }: Props) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
@@ -51,8 +56,8 @@ export default function InventoryOpsStockByProduct({
   );
 
   const rows = useMemo<Row[]>(() => {
-    const stateRows = buildStateRows(stateHubs, orders, waybills, windowDays, criticalDays, watchDays);
-    const modelRows = buildProductRows(products, stateRows, orders, windowDays, criticalDays, watchDays, waybills);
+    const stateRows = buildStateRows(stateHubs, orders, waybills, windowDays, criticalDays, watchDays, undefined, pendingLines);
+    const modelRows = buildProductRows(products, stateRows, orders, windowDays, criticalDays, watchDays, waybills, pendingLines);
     const productById = new Map(products.map((product) => [product.id, product]));
     return modelRows.map((row) => ({
       ...row,
@@ -66,7 +71,7 @@ export default function InventoryOpsStockByProduct({
         return { state: state.state, units, available, dailySales, coverDays: dailySales > 0 ? available / dailySales : Number.POSITIVE_INFINITY };
       }).filter((entry) => entry.units > 0 || entry.dailySales > 0).sort((a, b) => b.units - a.units)
     }));
-  }, [products, stateHubs, orders, waybills, windowDays, criticalDays, watchDays]);
+  }, [products, stateHubs, orders, waybills, pendingLines, windowDays, criticalDays, watchDays]);
 
   const categories = Array.from(new Set(rows.map((row) => row.category))).sort();
 

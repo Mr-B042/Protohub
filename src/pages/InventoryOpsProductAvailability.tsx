@@ -14,13 +14,17 @@ import {
   buildAvailabilityCells, crossSellRows, productRows, stateRowsFor,
   type AvailabilityCell, type Opportunity, type PendingDeductionLine
 } from "./product-availability-model";
-import { deliveredStockReconciliationApi } from "../lib/api";
+
+const NO_PENDING: PendingDeductionLine[] = [];
 
 type Props = {
   products: OpsProduct[];
   stateHubs: OpsStateHub[];
   orders: OpsOrder[];
   waybills: OpsWaybill[];
+  /** Delivered lines awaiting the Inventory Officer, loaded once by the parent. */
+  pendingLines?: PendingDeductionLine[];
+  pendingError?: string;
   onOpenAgent?: (agentId: string) => void;
 };
 
@@ -57,7 +61,7 @@ function Metric({ label, value, helper }: { label: string; value: string; helper
 }
 
 export default function InventoryOpsProductAvailability({
-  products, stateHubs, orders, waybills, onOpenAgent
+  products, stateHubs, orders, waybills, pendingLines = NO_PENDING, pendingError = "", onOpenAgent
 }: Props) {
   const [tab, setTab] = useState<Tab>("Products");
   const [search, setSearch] = useState("");
@@ -78,25 +82,8 @@ export default function InventoryOpsProductAvailability({
   // this page would count stock that has already been delivered - the single
   // biggest way "sellable" could lie. If the endpoint refuses (role, or the
   // feature not reachable) the page still works and says so, rather than
-  // silently overstating every figure.
-  const [pendingLines, setPendingLines] = useState<PendingDeductionLine[]>([]);
-  const [pendingError, setPendingError] = useState("");
-  useEffect(() => {
-    let cancelled = false;
-    deliveredStockReconciliationApi.list()
-      .then((result) => {
-        if (cancelled) return;
-        setPendingLines((result.rows ?? []).map((row) => ({
-          agentLocationId: row.agentLocationId,
-          productId: row.productId,
-          quantity: row.quantity,
-          status: row.status
-        })));
-      })
-      .catch(() => { if (!cancelled) setPendingError("Pending deductions could not be loaded, so available stock may read high until the delivered-stock queue is reachable."); });
-    return () => { cancelled = true; };
-  }, []);
-
+  // silently overstating every figure. The parent loads them once for every
+  // stock view.
   const cells = useMemo(
     () => buildAvailabilityCells(products, stateHubs, orders, waybills, pendingLines),
     [products, stateHubs, orders, waybills, pendingLines]

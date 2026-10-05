@@ -10,13 +10,18 @@
 import { useMemo, useState } from "react";
 import { AlertTriangle, ArrowDownWideNarrow, Boxes, CalendarDays, CheckCircle2, Download, MapPin, Package, Search } from "lucide-react";
 import type { OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryLogisticsOperationsPage";
+import type { PendingDeductionLine } from "./product-availability-model";
 import { buildProductRows, buildStateRows, coverText, downloadCsv, num, runRateText, statusText } from "./inventory-ops-model";
+
+const NO_PENDING: PendingDeductionLine[] = [];
 
 type Props = {
   products: OpsProduct[];
   stateHubs: OpsStateHub[];
   orders: OpsOrder[];
   waybills: OpsWaybill[];
+  /** Delivered lines awaiting the Inventory Officer - already promised stock. */
+  pendingLines?: PendingDeductionLine[];
   lookbackDays: number;
   criticalDays: number;
   watchDays: number;
@@ -26,7 +31,7 @@ type Props = {
 type Priority = "Critical" | "High" | "Medium" | "Healthy" | "No Data";
 
 export default function InventoryOpsRestockForecast({
-  products, stateHubs, orders, waybills, lookbackDays, criticalDays, watchDays, onOpenTransfers
+  products, stateHubs, orders, waybills, pendingLines = NO_PENDING, lookbackDays, criticalDays, watchDays, onOpenTransfers
 }: Props) {
   const [search, setSearch] = useState("");
   const [stateFilter, setStateFilter] = useState("all");
@@ -35,12 +40,12 @@ export default function InventoryOpsRestockForecast({
   const [windowDays, setWindowDays] = useState(lookbackDays);
 
   const stateRows = useMemo(
-    () => buildStateRows(stateHubs, orders, waybills, windowDays, criticalDays, watchDays),
-    [stateHubs, orders, waybills, windowDays, criticalDays, watchDays]
+    () => buildStateRows(stateHubs, orders, waybills, windowDays, criticalDays, watchDays, undefined, pendingLines),
+    [stateHubs, orders, waybills, windowDays, criticalDays, watchDays, pendingLines]
   );
   const rows = useMemo(
-    () => buildProductRows(products, stateRows, orders, windowDays, criticalDays, watchDays, waybills),
-    [products, stateRows, orders, windowDays, criticalDays, watchDays, waybills]
+    () => buildProductRows(products, stateRows, orders, windowDays, criticalDays, watchDays, waybills, pendingLines),
+    [products, stateRows, orders, windowDays, criticalDays, watchDays, waybills, pendingLines]
   );
 
   // Urgency reads off whichever runs out first - the state, or the network.
