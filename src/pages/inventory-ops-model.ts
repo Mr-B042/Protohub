@@ -5,8 +5,26 @@ import type { OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryL
 // ⚠️ NOT A PRIVATE ₦ FORMATTER. A local one ignores both the branch's currency
 // and the hide-money toggle - it is how this page printed naira against cedi.
 import { money as moneyAmount } from "../lib/money-privacy";
+import type { PendingDeductionLine } from "./product-availability-model";
 
 export const CLOSED_ORDER_STATES = new Set(["delivered", "cancelled", "failed"]);
+/**
+ * Delivered lines the Inventory Officer hasn't closed yet, as units per
+ * agent location and product. They are still in the shelf balance but already
+ * promised, exactly as the backend's delivery stock check treats them.
+ */
+export function awaitingCloseByLocation(lines: PendingDeductionLine[]) {
+  const units = new Map<string, Map<string, number>>();
+  for (const line of lines) {
+    if (line.status !== "pending" && line.status !== "exception") continue;
+    if (!line.agentLocationId || !line.productId) continue;
+    const byProduct = units.get(line.agentLocationId) ?? new Map<string, number>();
+    byProduct.set(line.productId, (byProduct.get(line.productId) ?? 0) + Math.max(0, Number(line.quantity) || 0));
+    units.set(line.agentLocationId, byProduct);
+  }
+  return units;
+}
+
 export const norm = (value?: string) => String(value ?? "").trim().toLowerCase();
 export const num = (value: number) => Math.max(0, Math.round(value)).toLocaleString("en-NG");
 export const money = (value: number) => moneyAmount(Math.max(0, value));
@@ -129,7 +147,8 @@ export function buildStateRows(
   lookbackDays: number,
   criticalDays: number,
   watchDays: number,
-  includedProductIds?: ReadonlySet<string>
+  includedProductIds?: ReadonlySet<string>,
+  pendingLines: PendingDeductionLine[] = []
 ): StateRow[] {
   type StateBucket = {
     label: string;
@@ -183,6 +202,18 @@ export function buildStateRows(
     } else if (!CLOSED_ORDER_STATES.has(status)) {
       bucket.openOrderIds.add(order);
       for (const line of lines) bucket.open.set(line.productId, (bucket.open.get(line.productId) ?? 0) + line.quantity);
+    }
+  }
+
+  // Delivered but not yet closed by the Inventory Officer: still on the shelf
+  // count, already spoken for. Reserved against the hub's state.
+  const hubStateByLocation = new Map(stateHubs.filter((hub) => hub.locationId).map((hub) => [hub.locationId as string, hub.state]));
+  for (const [locationId, byProduct] of awaitingCloseByLocation(pendingLines)) {
+    const bucket = bucketFor(hubStateByLocation.get(locationId));
+    if (!bucket) continue;
+    for (const [productId, units] of byProduct) {
+      if (includedProductIds && !includedProductIds.has(productId)) continue;
+      bucket.open.set(productId, (bucket.open.get(productId) ?? 0) + units);
     }
   }
 
@@ -247,7 +278,8 @@ export function buildProductRows(
   lookbackDays: number,
   criticalDays: number,
   watchDays: number,
-  waybills: OpsWaybill[] = []
+  waybills: OpsWaybill[] = [],
+  pendingLines: PendingDeductionLine[] = []
 ): ProductRow[] {
   const sold = new Map<string, number>();
   const reserved = new Map<string, number>();
@@ -278,6 +310,10 @@ export function buildProductRows(
     } else if (!CLOSED_ORDER_STATES.has(status)) {
       for (const line of lines) reserved.set(line.productId, (reserved.get(line.productId) ?? 0) + line.quantity);
     }
+  }
+
+  for (const byProduct of awaitingCloseByLocation(pendingLines).values()) {
+    for (const [productId, units] of byProduct) reserved.set(productId, (reserved.get(productId) ?? 0) + units);
   }
 
   for (const waybill of waybills) {

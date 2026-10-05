@@ -124,3 +124,33 @@ test("slow but real demand keeps full precision for forecasts", () => {
   expect(product.dailySales).toBeCloseTo(1 / 30, 8);
   expect(product.status).not.toBe("No Data");
 });
+
+test("delivered stock awaiting the Inventory Officer is reserved, not sellable", () => {
+  // Rivers Hub: 1 shelf on the count, already delivered on order 4750 but not
+  // yet closed, and order 4735 waiting on it. The screen must say short, not covered.
+  const products: OpsProduct[] = [{ id: "shelf", name: "Shelf", warehouseStock: 0, agentStock: 1, reorderPoint: 0 }];
+  const hubs: OpsStateHub[] = [{
+    state: "Rivers", agentName: "Ideal Logistics", locationId: "rivers-hub", stocks: [{ productId: "shelf", quantity: 1 }],
+  }];
+  const orders: OpsOrder[] = [{
+    id: "4735", state: "Rivers", quantity: 1, status: "Confirmed", createdAt: recent(0),
+    assignedAgentLocationId: "rivers-hub", inventoryItems: [{ productId: "shelf", quantity: 1 }],
+  }];
+  const pending = [
+    { agentLocationId: "rivers-hub", productId: "shelf", quantity: 1, status: "pending" },
+    { agentLocationId: "rivers-hub", productId: "shelf", quantity: 5, status: "reconciled" },
+  ];
+
+  const [rivers] = buildStateRows(hubs, orders, [], 7, 3, 7, undefined, pending);
+  expect(rivers.openUnits).toBe(2);
+  expect(rivers.available).toBe(0);
+  expect(rivers.status).toBe("Critical");
+
+  const [shelf] = buildProductRows(products, [rivers], orders, 7, 3, 7, [], pending);
+  expect(shelf.reserved).toBe(2);
+  expect(shelf.available).toBe(0);
+  expect(shelf.status).toBe("Critical");
+
+  const [withoutQueue] = buildStateRows(hubs, orders, [], 7, 3, 7);
+  expect(withoutQueue.openUnits).toBe(1);
+});

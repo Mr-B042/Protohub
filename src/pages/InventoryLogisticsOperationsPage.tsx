@@ -7,6 +7,7 @@ import InventoryOpsCoverage from "./InventoryOpsCoverage";
 import InventoryOpsRestockForecast from "./InventoryOpsRestockForecast";
 import InventoryOpsStateReplenishment, { type ReplenishmentTransferRequest } from "./InventoryOpsStateReplenishment";
 import DeliveredStockReconciliationPage from "./DeliveredStockReconciliationPage";
+import { usePendingDeductionLines } from "./use-pending-deductions";
 import { buildProductRows, buildStateRows, coverText, isInTransitWaybill, waybillInventoryLines } from "./inventory-ops-model";
 import {
   AlertTriangle,
@@ -270,12 +271,15 @@ export function InventoryLogisticsOperationsPage({
   // after them rather than before - a section switch must never change how many
   // hooks this component calls.
   const [query, setQuery] = useState("");
+  // One read of the delivered-stock queue for every stock view below, so each
+  // "available" number matches what the delivery check will actually allow.
+  const { lines: pendingLines, error: pendingError } = usePendingDeductionLines();
 
   const model = useMemo(() => {
     const now = new Date();
     const weekAgo = new Date(now.getTime() - 7 * 86_400_000);
-    const exactStateRows = buildStateRows(stateHubs, orders, waybills, lookbackDays, criticalDays, watchDays);
-    const exactProductRows = buildProductRows(products, exactStateRows, orders, lookbackDays, criticalDays, watchDays, waybills);
+    const exactStateRows = buildStateRows(stateHubs, orders, waybills, lookbackDays, criticalDays, watchDays, undefined, pendingLines);
+    const exactProductRows = buildProductRows(products, exactStateRows, orders, lookbackDays, criticalDays, watchDays, waybills, pendingLines);
     const toneFor = (label: string) => label === "Critical" ? "rose" as const
       : label === "Restock Soon" ? "orange" as const
         : label === "Watch" ? "amber" as const
@@ -361,7 +365,7 @@ export function InventoryLogisticsOperationsPage({
       criticalStates,
       health,
     };
-  }, [products, stateHubs, orders, waybills, lookbackDays, criticalDays, watchDays]);
+  }, [products, stateHubs, orders, waybills, pendingLines, lookbackDays, criticalDays, watchDays]);
 
   const healthRows = [
     { label: "Healthy", helper: `>${Math.round(watchDays * 1.5)} days`, value: model.health.Healthy ?? 0, color: "#10b981" },
@@ -400,11 +404,11 @@ export function InventoryLogisticsOperationsPage({
     { label: "Overall Coverage", value: Number.isFinite(model.overallCover) ? `${coverText(model.overallCover)} Days` : "No recent demand", helper: "Available stock cover", icon: ShieldCheck, tone: "blue" },
   ] as const;
 
-  const shared = { products, stateHubs, orders, waybills, lookbackDays, criticalDays, watchDays };
+  const shared = { products, stateHubs, orders, waybills, pendingLines, lookbackDays, criticalDays, watchDays };
   if (section === "stock-products") return <InventoryOpsStockByProduct {...shared} onOpenProduct={onOpenProduct} />;
   if (section === "delivered-reconciliation") return <DeliveredStockReconciliationPage />;
   if (section === "stock-states") return <InventoryOpsStockByState {...shared} onOpenForecast={() => onAction("forecast")} />;
-  if (section === "product-availability") return <InventoryOpsProductAvailability products={products} stateHubs={stateHubs} orders={orders} waybills={waybills} onOpenAgent={onOpenAgent} />;
+  if (section === "product-availability") return <InventoryOpsProductAvailability products={products} stateHubs={stateHubs} orders={orders} waybills={waybills} pendingLines={pendingLines} pendingError={pendingError} onOpenAgent={onOpenAgent} />;
   if (section === "stock-agents") {
     return (
       <InventoryOpsStockByAgent
@@ -412,6 +416,7 @@ export function InventoryLogisticsOperationsPage({
         stateHubs={stateHubs}
         orders={orders}
         waybills={waybills}
+        pendingLines={pendingLines}
         discrepancies={discrepancies}
         lookbackDays={lookbackDays}
         criticalDays={criticalDays}

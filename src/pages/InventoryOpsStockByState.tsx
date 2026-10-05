@@ -5,13 +5,18 @@
 import { useMemo, useState } from "react";
 import { AlertTriangle, Boxes, CalendarDays, ClipboardList, Download, Eye, MapPin, Search, Truck } from "lucide-react";
 import type { OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryLogisticsOperationsPage";
+import type { PendingDeductionLine } from "./product-availability-model";
 import { agentsInState, buildStateRows, coverText, downloadCsv, num, runRateText, statusText, statusTone } from "./inventory-ops-model";
+
+const NO_PENDING: PendingDeductionLine[] = [];
 
 type Props = {
   products: OpsProduct[];
   stateHubs: OpsStateHub[];
   orders: OpsOrder[];
   waybills: OpsWaybill[];
+  /** Delivered lines awaiting the Inventory Officer - already promised stock. */
+  pendingLines?: PendingDeductionLine[];
   lookbackDays: number;
   criticalDays: number;
   watchDays: number;
@@ -19,7 +24,7 @@ type Props = {
 };
 
 export default function InventoryOpsStockByState({
-  products, stateHubs, orders, waybills, lookbackDays, criticalDays, watchDays, onOpenForecast
+  products, stateHubs, orders, waybills, pendingLines = NO_PENDING, lookbackDays, criticalDays, watchDays, onOpenForecast
 }: Props) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
@@ -34,8 +39,8 @@ export default function InventoryOpsStockByState({
     : new Set(products.filter((product) => (product.category ?? "Uncategorised") === category).map((product) => product.id)), [products, category]);
 
   const rows = useMemo(
-    () => buildStateRows(stateHubs, orders, waybills, windowDays, criticalDays, watchDays, includedProductIds),
-    [stateHubs, orders, waybills, windowDays, criticalDays, watchDays, includedProductIds]
+    () => buildStateRows(stateHubs, orders, waybills, windowDays, criticalDays, watchDays, includedProductIds, pendingLines),
+    [stateHubs, orders, waybills, windowDays, criticalDays, watchDays, includedProductIds, pendingLines]
   );
   const nameById = useMemo(() => new Map(products.map((product) => [product.id, product.name])), [products]);
 

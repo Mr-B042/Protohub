@@ -2,13 +2,18 @@
 import { useMemo, useState } from "react";
 import { AlertTriangle, ArrowLeftRight, Boxes, CalendarDays, ClipboardCheck, Download, History, MessageCircle, PackageSearch, Search, Truck, UserCog, UserRound } from "lucide-react";
 import type { InventoryOperationsAction, OpsDiscrepancy, OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryLogisticsOperationsPage";
-import { CLOSED_ORDER_STATES, downloadCsv, inventoryLinesForOrder, isInTransitWaybill, isInsideWindow, norm, num, orderEventDate, statusFor, statusTone, waybillInventoryLines, type StockStatus } from "./inventory-ops-model";
+import type { PendingDeductionLine } from "./product-availability-model";
+import { CLOSED_ORDER_STATES, awaitingCloseByLocation, downloadCsv, inventoryLinesForOrder, isInTransitWaybill, isInsideWindow, norm, num, orderEventDate, statusFor, statusTone, waybillInventoryLines, type StockStatus } from "./inventory-ops-model";
+
+const NO_PENDING: PendingDeductionLine[] = [];
 
 type Props = {
   products: OpsProduct[];
   stateHubs: OpsStateHub[];
   orders: OpsOrder[];
   waybills: OpsWaybill[];
+  /** Delivered lines awaiting the Inventory Officer - already promised stock. */
+  pendingLines?: PendingDeductionLine[];
   discrepancies: OpsDiscrepancy[];
   lookbackDays: number;
   criticalDays: number;
@@ -34,7 +39,11 @@ type AgentRow = {
   productCount: number;
   total: number;
   reserved: number;
+  /** Delivered, not yet closed by the Inventory Officer. On the shelf, already gone. */
+  awaitingClose: number;
   available: number;
+  /** Units promised beyond what is on the shelf. */
+  short: number;
   inTransit: number;
   dailySales: number;
   coverDays: number;
@@ -43,7 +52,7 @@ type AgentRow = {
 };
 
 export default function InventoryOpsStockByAgent({
-  products, stateHubs, orders, waybills, discrepancies, lookbackDays, criticalDays, watchDays,
+  products, stateHubs, orders, waybills, pendingLines = NO_PENDING, discrepancies, lookbackDays, criticalDays, watchDays,
   canManage, onAction, onOpenAgent, onEditAgent, onViewAgentHistory
 }: Props) {
   const [search, setSearch] = useState("");
@@ -64,7 +73,11 @@ export default function InventoryOpsStockByAgent({
       if (hub.agentId) hubCountByAgent.set(hub.agentId, (hubCountByAgent.get(hub.agentId) ?? 0) + 1);
     }
 
+    const awaitingByLocation = awaitingCloseByLocation(pendingLines);
     const openByAgent = new Map<string, number>();
+    // Same open units per product, so a hub full of one product can't hide a
+    // shortage of another.
+    const openByAgentProduct = new Map<string, Map<string, number>>();
     const deliveredByAgent = new Map<string, number>();
     for (const order of orders) {
       if (!order.assignedAgentId) continue;
@@ -77,6 +90,9 @@ export default function InventoryOpsStockByAgent({
         deliveredByAgent.set(assignmentKey, (deliveredByAgent.get(assignmentKey) ?? 0) + units);
       } else if (!CLOSED_ORDER_STATES.has(orderStatus)) {
         openByAgent.set(assignmentKey, (openByAgent.get(assignmentKey) ?? 0) + units);
+        const byProduct = openByAgentProduct.get(assignmentKey) ?? new Map<string, number>();
+        for (const line of orderLines) byProduct.set(line.productId, (byProduct.get(line.productId) ?? 0) + line.quantity);
+        openByAgentProduct.set(assignmentKey, byProduct);
       }
     }
     const transitByAgent = new Map<string, number>();
@@ -102,7 +118,24 @@ export default function InventoryOpsStockByAgent({
       const agentFallback = agentKey && hubCountByAgent.get(agentKey) === 1 ? agentKey : "";
       const reserved = (assignmentKey ? openByAgent.get(assignmentKey) ?? 0 : 0)
         + (agentFallback && agentFallback !== assignmentKey ? openByAgent.get(agentFallback) ?? 0 : 0);
-      const available = Math.max(0, total - reserved);
+      // Delivered orders the officer hasn't closed are still in `total` but are
+      // already out the door - the backend refuses deliveries against them.
+      const awaitingByProduct = new Map(Array.from(awaitingByLocation.get(hub.locationId ?? "") ?? [])
+        .filter(([productId]) => !allowedIds || allowedIds.has(productId)));
+      const awaitingClose = Array.from(awaitingByProduct.values()).reduce((sum, units) => sum + units, 0);
+      const available = Math.max(0, total - reserved - awaitingClose);
+      const openByProduct = new Map<string, number>();
+      for (const key of [assignmentKey, agentFallback && agentFallback !== assignmentKey ? agentFallback : ""]) {
+        for (const [productId, units] of (key ? openByAgentProduct.get(key) : undefined) ?? []) {
+          openByProduct.set(productId, (openByProduct.get(productId) ?? 0) + units);
+        }
+      }
+      const shelfByProduct = new Map<string, number>();
+      for (const stock of visibleStocks) shelfByProduct.set(stock.productId, (shelfByProduct.get(stock.productId) ?? 0) + Math.max(0, stock.quantity));
+      let short = 0;
+      for (const productId of new Set([...openByProduct.keys(), ...awaitingByProduct.keys()])) {
+        short += Math.max(0, (openByProduct.get(productId) ?? 0) + (awaitingByProduct.get(productId) ?? 0) - (shelfByProduct.get(productId) ?? 0));
+      }
       const deliveredUnits = (assignmentKey ? deliveredByAgent.get(assignmentKey) ?? 0 : 0)
         + (agentFallback && agentFallback !== assignmentKey ? deliveredByAgent.get(agentFallback) ?? 0 : 0);
       const dailySales = deliveredUnits / Math.max(1, windowDays);
@@ -111,7 +144,7 @@ export default function InventoryOpsStockByAgent({
         .filter((stock) => stock.quantity > 0)
         .map((stock) => ({ name: nameById.get(stock.productId) ?? stock.productId, units: Math.max(0, stock.quantity) }))
         .sort((a, b) => b.units - a.units);
-      const status: StockStatus = total === 0 && reserved > 0 ? "Critical"
+      const status: StockStatus = short > 0 ? "Critical"
         : statusFor(coverDays, dailySales > 0, criticalDays, watchDays);
       const transitKey = hub.locationId || agentKey || norm(hub.agentName);
       const incoming = (transitByAgent.get(transitKey) ?? 0)
@@ -128,14 +161,14 @@ export default function InventoryOpsStockByAgent({
         joinedAt: hub.joinedAt ?? "",
         lastCountAt: hub.lastCountAt ?? "",
         productCount: lines.length,
-        total, reserved, available,
+        total, reserved, awaitingClose, available, short,
         inTransit: incoming || transitByAgent.get(norm(hub.agentName)) || 0,
         dailySales,
         coverDays,
         status, lines
       };
     }).sort((a, b) => b.total - a.total);
-  }, [products, stateHubs, orders, waybills, windowDays, criticalDays, watchDays, categoryFilter]);
+  }, [products, stateHubs, orders, waybills, pendingLines, windowDays, criticalDays, watchDays, categoryFilter]);
 
   const states = Array.from(new Set(rows.map((row) => row.state))).sort();
   const categories = Array.from(new Set(products.map((product) => product.category ?? "Uncategorised"))).sort();
@@ -192,7 +225,7 @@ export default function InventoryOpsStockByAgent({
         <div className="flex flex-wrap items-center gap-2">
         <label className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-700"><CalendarDays className="h-4 w-4 text-blue-600" /><select className="!min-h-0 border-0 bg-transparent p-0 outline-none" value={windowDays} onChange={(event) => setWindowDays(Number(event.target.value))}><option value={7}>Last 7 days</option><option value={14}>Last 14 days</option><option value={30}>Last 30 days</option></select></label>
         <button className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-700"
-          onClick={() => downloadCsv("stock-by-agent.csv", visible.map((row) => ({ Agent: row.name, State: row.state, Area: row.city, Products: row.productCount, Stock: row.total, Available: row.available, Reserved: row.reserved, "In transit": row.inTransit, "Daily sales": Math.round(row.dailySales * 10) / 10, "Days cover": Number.isFinite(row.coverDays) ? Math.round(row.coverDays * 10) / 10 : "-", Status: row.status })))}>
+          onClick={() => downloadCsv("stock-by-agent.csv", visible.map((row) => ({ Agent: row.name, State: row.state, Area: row.city, Products: row.productCount, Stock: row.total, Available: row.available, Reserved: row.reserved, "Delivered, awaiting close": row.awaitingClose, Short: row.short, "In transit": row.inTransit, "Daily sales": Math.round(row.dailySales * 10) / 10, "Days cover": Number.isFinite(row.coverDays) ? Math.round(row.coverDays * 10) / 10 : "-", Status: row.status })))}>
           <Download className="h-4 w-4" /> Export
         </button>
         </div>
@@ -238,13 +271,14 @@ export default function InventoryOpsStockByAgent({
                   <th className="px-3 py-3 text-right">Total stock</th>
                   <th className="px-3 py-3 text-right">Available</th>
                   <th className="px-3 py-3 text-right">Reserved</th>
+                  <th className="px-3 py-3 text-right" title="Marked Delivered, waiting for the Inventory Officer to close the stock">Awaiting close</th>
                   <th className="px-3 py-3 text-right">In transit</th>
                   <th className="px-3 py-3">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {visible.length === 0 ? (
-                  <tr><td colSpan={8} className="px-4 py-10 text-center text-sm italic text-gray-400">No agent matches those filters.</td></tr>
+                  <tr><td colSpan={9} className="px-4 py-10 text-center text-sm italic text-gray-400">No agent matches those filters.</td></tr>
                 ) : visible.map((row) => (
                   <tr key={row.key} className={`cursor-pointer border-b border-gray-50 ${selectedKey === row.key ? "bg-blue-50/40" : ""}`}
                     onClick={() => setSelectedKey(selectedKey === row.key ? null : row.key)}>
@@ -258,8 +292,11 @@ export default function InventoryOpsStockByAgent({
                     </td>
                     <td className="px-3 py-3 text-right text-gray-700">{row.productCount}</td>
                     <td className="px-3 py-3 text-right font-bold text-gray-900">{num(row.total)}</td>
-                    <td className="px-3 py-3 text-right font-semibold text-emerald-700">{num(row.available)}</td>
+                    <td className="px-3 py-3 text-right font-semibold text-emerald-700">
+                      {row.short > 0 ? <span className="text-rose-600">Short {num(row.short)}</span> : num(row.available)}
+                    </td>
                     <td className="px-3 py-3 text-right text-orange-600">{num(row.reserved)}</td>
+                    <td className="px-3 py-3 text-right text-rose-600">{num(row.awaitingClose)}</td>
                     <td className="px-3 py-3 text-right text-violet-700">{num(row.inTransit)}</td>
                     <td className="px-3 py-3"><span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${statusTone(row.status)}`}>{row.status}</span></td>
                   </tr>
@@ -268,7 +305,7 @@ export default function InventoryOpsStockByAgent({
             </table>
           </div>
           <p className="m-0 border-t border-gray-100 px-4 py-3 text-xs text-gray-400">
-            Showing {visible.length} of {rows.length} agent hubs · Reserved includes only orders explicitly assigned to that agent. Unassigned state demand stays at state/network level.
+            Showing {visible.length} of {rows.length} agent hubs · Reserved includes only orders explicitly assigned to that agent. Awaiting close is stock already delivered that the Inventory Officer hasn't deducted yet. Unassigned state demand stays at state/network level.
           </p>
         </section>
 
@@ -286,7 +323,9 @@ export default function InventoryOpsStockByAgent({
                     ["Joined on", displayDate(selected.joinedAt)],
                     ["Products held", String(selected.productCount)],
                     ["Total stock", num(selected.total)],
-                    ["Available", num(selected.available)],
+                    ["Reserved (open orders)", num(selected.reserved)],
+                    ["Delivered, awaiting close", num(selected.awaitingClose)],
+                    [selected.short > 0 ? "Short" : "Available", num(selected.short > 0 ? selected.short : selected.available)],
                     ["Avg. daily sales", `${Math.round(selected.dailySales * 10) / 10}`],
                     ["Days cover", Number.isFinite(selected.coverDays) ? `${Math.round(selected.coverDays * 10) / 10} days` : "No recent assigned sales"],
                   ] as Array<[string, string]>).map(([label, value]) => (
