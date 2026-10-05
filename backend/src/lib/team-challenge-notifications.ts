@@ -32,7 +32,8 @@ export type TeamChallengeEvent =
   | { kind: "milestone"; repIds: string[]; team: string; target: number; confirmed: boolean; first: boolean; amount: number }
   | { kind: "payout"; repIds: string[]; team: string; target: number; amount: number; perRep: number; paid: boolean }
   | { kind: "deadline"; repIds: string[]; which: "selling" | "delivery"; date: string; daysLeft: number; pendingVerification: number }
-  | { kind: "closed"; repIds: string[]; lines: string[] };
+  | { kind: "closed"; repIds: string[]; lines: string[] }
+  | { kind: "cancelled"; repIds: string[] };
 
 export async function notifyTeamChallenge(ctx: Ctx, event: TeamChallengeEvent): Promise<void> {
   try {
@@ -101,6 +102,9 @@ export async function notifyTeamChallenge(ctx: Ctx, event: TeamChallengeEvent): 
         }
         return;
       }
+      case "cancelled":
+        await toReps(ctx, event.repIds, { title: `${ctx.name} was cancelled`, message: "The Owner cancelled this team challenge. Your normal sales bonus is not affected.", kind: "team_challenge_cancelled", tag: tag("cancelled"), type: "warning" });
+        return;
       case "closed": {
         const alert = { title: `${ctx.name} is closed`, message: event.lines.join(" · "), kind: "team_challenge_closed", tag: tag("closed"), type: "success" as const };
         await toReps(ctx, event.repIds, alert);
