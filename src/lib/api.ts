@@ -4616,7 +4616,7 @@ export const trackingHubApi = {
 
 // ── Team Challenges (Bright, 3 Oct 2026) ─────────────────────────────────────
 export type TeamChallengeMilestone = { key: string; target: number; winnerAmount: number; runnerUpAmount: number; minPerMember: number };
-export type TeamChallengeScoring = { onePointFrom: number; twoPointsFrom: number; packagingPerUnit: number; linkWindowHours: number; productIds: string[] };
+export type TeamChallengeScoring = { onePointFrom: number; twoPointsFrom: number; extraPointEvery: number; packagingPerUnit: number; linkWindowHours: number; productIds: string[] };
 export type TeamChallengeBreakdown = { revenue: number; productCost: number; logistics: number; repBonus: number; packaging: number; gifts: number; adjustment: number; upgrade: { from: number; to: number } | null; crossSells: number };
 export type TeamChallengeBaseline = { computedAt: string; averagePoints: number; months: Array<{ month: string; transactions: number; points: number; contribution: number; byTeam: Record<string, { transactions: number; points: number; contribution: number }>; byRep: Record<string, { transactions: number; points: number }> }> };
 export type TeamChallengeEntryStatus = "awaiting_delivery" | "awaiting_payment" | "awaiting_verification" | "verified" | "correction_requested" | "excluded" | "reversed" | "linked";

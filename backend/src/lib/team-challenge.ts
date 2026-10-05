@@ -14,17 +14,20 @@
 //   additional amount collected − added product cost − extra logistics
 //   − rep bonus − packaging − gifts  (+ a manager adjustment, with a reason)
 // ₦10,000–₦49,999 = 1 point, ₦50,000+ = 2, below ₦10,000 = 0 (still shown).
-// One transaction = one score, two points at most, upsell and cross-sell
+// One transaction = one score (no cap: +1 point for every further step above
+// the 2-point level, Bright 5 Oct 2026), upsell and cross-sell
 // assessed together.
 export type Scoring = {
   onePointFrom: number;
   twoPointsFrom: number;
   packagingPerUnit: number;
+  /** Above the 2-point level, one more point for every this much (₦50,000: 100k = 3, 150k = 4). 0 = stop at 2. */
+  extraPointEvery: number;
   /** Orders for the same customer within this many hours are one transaction (0 = off). */
   linkWindowHours: number;
   productIds: string[];
 };
-export const DEFAULT_SCORING: Scoring = { onePointFrom: 10_000, twoPointsFrom: 50_000, packagingPerUnit: 500, linkWindowHours: 72, productIds: [] };
+export const DEFAULT_SCORING: Scoring = { onePointFrom: 10_000, twoPointsFrom: 50_000, extraPointEvery: 50_000, packagingPerUnit: 500, linkWindowHours: 72, productIds: [] };
 
 export type Milestone = { key: string; target: number; winnerAmount: number; runnerUpAmount: number; minPerMember: number };
 export const DEFAULT_MILESTONES: Milestone[] = [
@@ -42,6 +45,7 @@ export function normaliseScoring(raw: unknown): Scoring {
   return {
     onePointFrom: one,
     twoPointsFrom: Math.max(one, amount(value.twoPointsFrom, DEFAULT_SCORING.twoPointsFrom)),
+    extraPointEvery: amount(value.extraPointEvery, DEFAULT_SCORING.extraPointEvery),
     packagingPerUnit: amount(value.packagingPerUnit, DEFAULT_SCORING.packagingPerUnit),
     linkWindowHours: Math.min(24 * 14, Math.round(amount(value.linkWindowHours, DEFAULT_SCORING.linkWindowHours))),
     productIds: Array.isArray(value.productIds) ? value.productIds.map(String) : []
@@ -117,9 +121,16 @@ export function contributionOf(input: ContributionInput): Contribution | null {
   };
 }
 
-/** 0, 1 or 2 points - two at most, whatever the transaction contains. */
+/**
+ * Points for a transaction's added contribution: 0 below the 1-point level,
+ * 1, then 2 at the 2-point level and one more for every further step
+ * (default ₦50,000: 100k = 3, 150k = 4…) - a huge upsell is not capped.
+ */
 export function pointsFor(contribution: number, scoring: Scoring) {
-  if (contribution >= scoring.twoPointsFrom) return 2;
+  if (contribution >= scoring.twoPointsFrom) {
+    const step = scoring.extraPointEvery;
+    return step > 0 ? 2 + Math.floor((contribution - scoring.twoPointsFrom) / step) : 2;
+  }
   if (contribution >= scoring.onePointFrom) return 1;
   return 0;
 }

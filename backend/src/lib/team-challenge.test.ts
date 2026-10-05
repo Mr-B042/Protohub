@@ -17,12 +17,16 @@ test("contribution: Bright's example - 39,500 → 68,500 leaves 14,600 = 1 point
   assert.equal(pointsFor(result.contribution, DEFAULT_SCORING), 1);
 });
 
-test("points: below 10,000 = 0, 10,000-49,999 = 1, 50,000+ = 2 (two at most)", () => {
+test("points: 0 / 1 / 2, then +1 every further 50,000 (100k = 3, 150k = 4) - no cap", () => {
   assert.equal(pointsFor(9_999, DEFAULT_SCORING), 0);
   assert.equal(pointsFor(10_000, DEFAULT_SCORING), 1);
   assert.equal(pointsFor(49_999, DEFAULT_SCORING), 1);
   assert.equal(pointsFor(52_000, DEFAULT_SCORING), 2);
-  assert.equal(pointsFor(500_000, DEFAULT_SCORING), 2);
+  assert.equal(pointsFor(99_999, DEFAULT_SCORING), 2);
+  assert.equal(pointsFor(100_000, DEFAULT_SCORING), 3);
+  assert.equal(pointsFor(150_000, DEFAULT_SCORING), 4);
+  assert.equal(pointsFor(500_000, DEFAULT_SCORING), 11);
+  assert.equal(pointsFor(500_000, { ...DEFAULT_SCORING, extraPointEvery: 0 }), 2);
 });
 
 test("contribution: upsell + cross-sell are assessed together as one transaction", () => {

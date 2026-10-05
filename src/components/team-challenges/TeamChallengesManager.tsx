@@ -209,7 +209,7 @@ function TeamsTab({ detail }: { detail: TeamChallengeDetail }) {
         return (
           <div key={team.id} className="rounded-2xl border border-gray-200 p-4 dark:border-slate-700">
             <p className={`m-0 text-[15px] font-black ${tone.text}`}>{team.name} · {plural(team.points, "point")} · {plural(team.orders, "verified transaction")}</p>
-            <p className="m-0 text-[12.5px] text-gray-700 dark:text-slate-300">{team.onePoint} one-point + {team.twoPoint} two-point = {team.onePoint + team.twoPoint * 2} points · {naira(team.contribution)} added contribution · {team.zeroPoint} below the 1-point level</p>
+            <p className="m-0 text-[12.5px] text-gray-700 dark:text-slate-300">{team.onePoint} one-point + {team.twoPoint} 2+ point = {team.points} points · {naira(team.contribution)} added contribution · {team.zeroPoint} below the 1-point level</p>
             <p className="m-0 text-[12px] text-gray-500">{team.awaitingDelivery} awaiting delivery · {team.awaitingPayment} awaiting payment · {team.awaitingVerification} awaiting verification · added {naira(team.addedValue)}</p>
             <div className="mt-3 space-y-2">
               {team.members.map((member) => {
@@ -218,7 +218,7 @@ function TeamsTab({ detail }: { detail: TeamChallengeDetail }) {
                   <div key={member.id} className="rounded-xl bg-gray-50 p-3 dark:bg-slate-800">
                     <div className="flex items-center justify-between gap-2"><strong className="text-[14px]">{member.name}</strong><span className="text-[14px] font-black">{member.points} pts · {share}%</span></div>
                     <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-slate-700"><div className={`h-full ${tone.bar}`} style={{ width: `${share}%` }} /></div>
-                    <p className="m-0 mt-1.5 text-[12px] text-gray-500">{member.orders} verified · {member.onePoint} × 1-pt · {member.twoPoint} × 2-pt · {naira(member.contribution)} contribution · {member.upsells} upsells · {member.crossSells} cross-sells · {member.pending} in progress</p>
+                    <p className="m-0 mt-1.5 text-[12px] text-gray-500">{member.orders} verified · {member.onePoint} × 1-pt · {member.twoPoint} × 2+ pt · {naira(member.contribution)} contribution · {member.upsells} upsells · {member.crossSells} cross-sells · {member.pending} in progress</p>
                   </div>
                 );
               })}
@@ -392,8 +392,9 @@ function RulesTab({ detail, owner, onEdit, onClose, onDelete, onBaseline }: { de
           <p className="m-0 text-[14px] font-black text-gray-900 dark:text-slate-50">Points by added contribution (rules v{c.ruleVersion})</p>
           <p className="m-0 mt-1">Below {naira(c.scoring.onePointFrom)}: <strong>0 points</strong> (still shown)</p>
           <p className="m-0">{naira(c.scoring.onePointFrom)} – {naira(c.scoring.twoPointsFrom - 1)}: <strong>1 point</strong></p>
-          <p className="m-0">{naira(c.scoring.twoPointsFrom)} and above: <strong>2 points</strong></p>
-          <p className="m-0 mt-1 text-[12px] text-gray-500">Added contribution = additional amount collected − added product cost (Product Master, on the order's day) − extra delivery cost − the rep's upsell/cross-sell bonus − packaging ({naira(c.scoring.packagingPerUnit)} per added unit) − gifts. One transaction, one score, two points at most; orders from the same customer within {c.scoring.linkWindowHours} hours are one transaction{c.scoring.productIds.length ? ` · ${c.scoring.productIds.length} eligible products` : " · all products"}.</p>
+          <p className="m-0">{naira(c.scoring.twoPointsFrom)} – {naira(c.scoring.twoPointsFrom + (c.scoring.extraPointEvery || 0) - 1)}: <strong>2 points</strong></p>
+          {c.scoring.extraPointEvery > 0 ? <p className="m-0">Then <strong>+1 point for every further {naira(c.scoring.extraPointEvery)}</strong> ({naira(c.scoring.twoPointsFrom + c.scoring.extraPointEvery)} = 3, {naira(c.scoring.twoPointsFrom + 2 * c.scoring.extraPointEvery)} = 4…) - no cap</p> : <p className="m-0">Capped at 2 points.</p>}
+          <p className="m-0 mt-1 text-[12px] text-gray-500">Added contribution = additional amount collected − added product cost (Product Master, on the order's day) − extra delivery cost − the rep's upsell/cross-sell bonus − packaging ({naira(c.scoring.packagingPerUnit)} per added unit) − gifts. One transaction, one score; orders from the same customer within {c.scoring.linkWindowHours} hours are one transaction{c.scoring.productIds.length ? ` · ${c.scoring.productIds.length} eligible products` : " · all products"}.</p>
         </div>
       </div>
       <div className="rounded-2xl border border-gray-200 p-4 dark:border-slate-700">
@@ -480,7 +481,7 @@ function ChallengeEditor({ detail, onClose, onSave }: { detail: TeamChallengeDet
   } : {
     name: "Upsell & Cross-Sell Race", sellFrom: today, sellTo: plus(29), graceDays: 7,
     milestones: [{ target: 50, winnerAmount: 50000, runnerUpAmount: 10000, minPerMember: 10 }, { target: 100, winnerAmount: 150000, runnerUpAmount: 40000, minPerMember: 20 }],
-    scoring: { onePointFrom: 10000, twoPointsFrom: 50000, packagingPerUnit: 500, linkWindowHours: 72, productIds: [] },
+    scoring: { onePointFrom: 10000, twoPointsFrom: 50000, extraPointEvery: 50000, packagingPerUnit: 500, linkWindowHours: 72, productIds: [] },
     teams: [{ name: "Team A", color: "violet", memberIds: [] }, { name: "Team B", color: "teal", memberIds: [] }]
   });
   const [saving, setSaving] = useState(false);
@@ -551,12 +552,12 @@ function ChallengeEditor({ detail, onClose, onSave }: { detail: TeamChallengeDet
           </div>
           <div>
             <p className="m-0 text-[13px] font-black">Points by added contribution</p>
-            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {([["onePointFrom", "1 point from (₦)"], ["twoPointsFrom", "2 points from (₦)"], ["packagingPerUnit", "Packaging per added unit (₦)"], ["linkWindowHours", "Same-customer link window (hours)"]] as const).map(([key, label]) => (
+            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
+              {([["onePointFrom", "1 point from (₦)"], ["twoPointsFrom", "2 points from (₦)"], ["extraPointEvery", "Then +1 point every (₦)"], ["packagingPerUnit", "Packaging per added unit (₦)"], ["linkWindowHours", "Same-customer link window (hours)"]] as const).map(([key, label]) => (
                 <label key={key} className="block"><span className="mb-1 block text-[11.5px] text-gray-500">{label}</span><input type="number" min={0} className={field} value={form.scoring[key]} onChange={(event) => setForm({ ...form, scoring: { ...form.scoring, [key]: Number(event.target.value) } })} /></label>
               ))}
             </div>
-            <p className="m-0 mt-1 text-[11.5px] text-gray-500">Added contribution = additional amount collected − added product cost − extra delivery − rep bonus − packaging − gifts. Below the 1-point level scores 0; a transaction scores two points at most. Orders from the same customer within the link window are one transaction, scored once (0 turns this off).</p>
+            <p className="m-0 mt-1 text-[11.5px] text-gray-500">Added contribution = additional amount collected − added product cost − extra delivery − rep bonus − packaging − gifts. Below the 1-point level scores 0; above the 2-point level a transaction gets one more point for every further step (₦100,000 = 3, ₦150,000 = 4 with the defaults) - big sales are not capped. Set the step to 0 to stop at 2. Orders from the same customer within the link window are one transaction, scored once (0 turns this off).</p>
           </div>
           {running ? <label className="block"><span className="mb-1 block text-[12.5px] font-bold">Reason for the change (the reps see it)</span><input className={field} value={form.reason ?? ""} onChange={(event) => setForm({ ...form, reason: event.target.value })} /></label> : null}
           {error ? <p className="m-0 rounded-xl bg-rose-50 px-3 py-2 text-[12.5px] font-semibold text-rose-700">{error}</p> : null}
