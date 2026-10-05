@@ -763,12 +763,24 @@ router.put("/:id", requireRole(...LEADERS), async (req, res) => {
   } catch (error: any) { fail(res, error, "Couldn't save the challenge."); }
 });
 
+/**
+ * Delete a challenge (Bright, 5 Oct 2026: "no place to delete a challenge we
+ * don't want"). A draft: any leader. Running or closed: the Owner only, and
+ * never once a prize was approved or paid - that is a payment record; close
+ * it instead. Reps on a running challenge are told it was cancelled.
+ */
 router.delete("/:id", requireRole(...LEADERS), async (req, res) => {
   try {
-    const { challenge } = await loadChallenge(req, String(req.params.id));
-    if (challenge.status !== "draft") throw httpError(409, "Only a draft can be deleted. Close a running challenge instead.");
+    const { challenge, teams } = await loadChallenge(req, String(req.params.id));
+    if (challenge.status !== "draft" && scopeOf(req).role !== "Owner") throw httpError(403, "Only the Owner can delete a challenge that has started.");
+    const { count, error: payoutError } = await supabase.from("team_challenge_payouts").select("id", { count: "exact", head: true }).eq("challenge_id", challenge.id);
+    if (payoutError) throw payoutError;
+    if ((count ?? 0) > 0) throw httpError(409, "A prize was already approved or paid on this challenge, so it can't be deleted. Close it instead.");
     const { error } = await supabase.from("team_challenges").delete().eq("id", challenge.id);
     if (error) throw error;
+    if (challenge.status === "active" || challenge.status === "paused") {
+      void notifyTeamChallenge(ctxOf(challenge), { kind: "cancelled", repIds: allMembers(teams) });
+    }
     res.json({ ok: true });
   } catch (error: any) { fail(res, error, "Couldn't delete the challenge."); }
 });

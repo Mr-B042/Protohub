@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { BarChart3, Check, CheckCircle2, Clock, FileText, Gift, Pause, Pencil, Play, Plus, ShieldCheck, Star, X } from "lucide-react";
+import { BarChart3, Check, CheckCircle2, Clock, FileText, Gift, Pause, Pencil, Play, Plus, ShieldCheck, Star, Trash2, X } from "lucide-react";
 import { teamChallengesApi, type TeamChallengeDetail, type TeamChallengeEntry, type TeamChallengeInput } from "../../lib/api";
 import {
   CATEGORY_LABEL, ChallengeHeader, EntryPill, Kpi, PrizeTable, SummaryPanel, plural, TeamRaceCard, contributionText, dateTime, naira, shortDate, toneOf, upgradeText
@@ -64,6 +64,15 @@ export default function TeamChallengesManager({ role, onToast }: { role: string;
               {list.map((row) => <option key={row.id} value={row.id}>{row.name} ({row.status})</option>)}
             </select>
           ) : null}
+          {detail && c && (c.status === "draft" || owner) ? (
+            <button type="button" onClick={() => {
+              const running = c.status === "active" || c.status === "paused";
+              const message = c.status === "draft"
+                ? `Delete the draft "${c.name}"?`
+                : `Delete "${c.name}" for good?${running ? " It is running: the reps will be told it was cancelled." : ""} Its scores and history are removed. (A challenge with an approved or paid prize can't be deleted - close it instead.)`;
+              if (window.confirm(message)) void run(async () => { await teamChallengesApi.remove(c.id); setSelected(null); setDetail(null); }, "Challenge deleted.");
+            }} className="!min-h-[40px] inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-4 text-[13px] font-bold text-rose-600 dark:border-rose-500/40 dark:bg-slate-900"><Trash2 className="h-4 w-4" />Delete</button>
+          ) : null}
           {detail && c?.status !== "closed" ? <button type="button" onClick={() => setEditing("edit")} className="!min-h-[40px] inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 text-[13px] font-bold text-gray-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"><Pencil className="h-4 w-4" />Edit challenge</button> : null}
           <button type="button" onClick={() => setEditing("new")} className="!min-h-[40px] inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 text-[13px] font-bold text-white shadow-sm"><Plus className="h-4 w-4" />New challenge</button>
         </div>
@@ -122,7 +131,7 @@ export default function TeamChallengesManager({ role, onToast }: { role: string;
             {tab === "rules" ? <RulesTab detail={detail} owner={owner} onEdit={() => setEditing("edit")}
               onBaseline={() => run(() => teamChallengesApi.baseline(c.id), "Baseline calculated.")}
               onClose={() => { if (window.confirm("Close this challenge? No more orders will count.")) void run(() => teamChallengesApi.setStatus(c.id, "closed"), "Challenge closed."); }}
-              onDelete={() => { if (window.confirm("Delete this draft?")) void run(async () => { await teamChallengesApi.remove(c.id); setSelected(null); }, "Draft deleted."); }} /> : null}
+              onDelete={() => { if (window.confirm(c.status === "draft" ? "Delete this draft?" : `Delete "${c.name}" for good? Its scores and history are removed.`)) void run(async () => { await teamChallengesApi.remove(c.id); setSelected(null); setDetail(null); }, "Challenge deleted."); }} /> : null}
             {tab === "log" ? <LogTab detail={detail} /> : null}
             {tab === "summary" ? (
               <div className="space-y-3">
@@ -435,7 +444,7 @@ function RulesTab({ detail, owner, onEdit, onClose, onDelete, onBaseline }: { de
       <div className="flex flex-wrap gap-2">
         {c.status !== "closed" ? <button type="button" onClick={onEdit} className="!min-h-[44px] inline-flex items-center gap-2 rounded-xl border border-gray-200 px-4 text-[13px] font-bold"><Pencil className="h-4 w-4" />{c.status === "draft" ? "Edit draft" : owner ? "Change rules (Owner)" : "View settings"}</button> : null}
         {owner && c.status !== "draft" && c.status !== "closed" ? <button type="button" onClick={onClose} className="!min-h-[44px] rounded-xl border border-rose-200 px-4 text-[13px] font-bold text-rose-600">Close challenge</button> : null}
-        {c.status === "draft" ? <button type="button" onClick={onDelete} className="!min-h-[44px] rounded-xl border border-rose-200 px-4 text-[13px] font-bold text-rose-600">Delete draft</button> : null}
+        {c.status === "draft" || owner ? <button type="button" onClick={onDelete} className="!min-h-[44px] rounded-xl border border-rose-200 px-4 text-[13px] font-bold text-rose-600">{c.status === "draft" ? "Delete draft" : "Delete challenge"}</button> : null}
       </div>
     </div>
   );
