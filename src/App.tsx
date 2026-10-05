@@ -1505,6 +1505,10 @@ type AbandonedCartRecord = {
    *  who asked to be rung later. Who Needs Stock needs the difference. */
   lastOutcomeCode?: string;
   lastOutcomeAt?: string;
+  /** Set when the order this cart became was later deleted (Bright, 5 Oct
+   *  2026), from the deleted_orders record. Lets the list say so instead of a
+   *  bare "Converted" with no order behind it. */
+  deletedOrder?: { orderId: string; deletedAt: string; deletedByName: string | null; note: string | null };
   embedLabel?: string;
   preferredDelivery?: string;
   outageCaptured?: boolean;
@@ -7194,6 +7198,29 @@ const normalizeContactAttempt = (value: any): OrderContactAttempt => ({
   promiseWindow: (value.promiseWindow ?? value.promise_window ?? undefined) as OrderContactAttempt["promiseWindow"]
 });
 
+/**
+ * "Order #4844 was deleted · 5 Oct, 5:03 am by Onyin · this customer's order is
+ * #4819" under a converted cart whose order no longer exists (Bright, 5 Oct
+ * 2026). The other order is found by the same phone number.
+ */
+function DeletedCartOrderNote({ deleted, otherOrderId, onOpenOrder }: {
+  deleted: NonNullable<AbandonedCartRecord["deletedOrder"]>;
+  otherOrderId: string | null;
+  onOpenOrder?: (orderId: string) => void;
+}) {
+  const when = new Date(deleted.deletedAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Africa/Lagos" });
+  return (
+    <span className="block max-w-[260px] rounded-lg bg-rose-50 px-2 py-1 text-[11px] font-semibold leading-snug text-rose-700 dark:bg-rose-500/10 dark:text-rose-200">
+      Order #{deleted.orderId} was deleted · {when}{deleted.deletedByName ? ` by ${deleted.deletedByName}` : " (who deleted it was not recorded)"}.
+      {otherOrderId ? (
+        <> This customer's order is{" "}
+          {onOpenOrder ? <button type="button" className="!min-h-0 font-black underline" onClick={() => onOpenOrder(otherOrderId)}>#{otherOrderId}</button> : <strong>#{otherOrderId}</strong>}.
+        </>
+      ) : " No other order for this phone number."}
+    </span>
+  );
+}
+
 const normalizeRealtimeCart = (value: any): AbandonedCartRecord => {
   const cart = snakeToCamel<any>(value);
   return {
@@ -7233,6 +7260,8 @@ const normalizeRealtimeCart = (value: any): AbandonedCartRecord => {
     // off Who Needs Stock with nothing to show why.
     ...("lastOutcomeCode" in cart ? { lastOutcomeCode: cart.lastOutcomeCode ?? undefined } : {}),
     ...("lastOutcomeAt" in cart ? { lastOutcomeAt: cart.lastOutcomeAt ?? undefined } : {}),
+    // Same rule: realtime rows don't carry it, so never write undefined over it.
+    ...("deletedOrder" in cart ? { deletedOrder: (cart as any).deletedOrder ?? undefined } : {}),
     assignedAt: (cart as any).assignedAt ?? (cart as any).assigned_at ?? undefined,
     lastActivity: cart.lastActivity ?? cart.createdAt ?? "",
     createdAt: cart.createdAt ?? ""
@@ -20353,6 +20382,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         ? "Attributed orders grouped by product in the selected period."
         : "All orders (any status) created in the selected period";
   const OrderWorkspaceInsightIcon = orderWorkspaceInsight.icon;
+  const openOrderFromCartList = (orderId: string) => { setSelectedOrderId(orderId); setModal("orderDetails"); };
+  // For a cart whose order was deleted: the customer's other order, by phone.
+  const otherOrderForDeletedCart = (cart: AbandonedCartRecord) => {
+    if (!cart.deletedOrder) return null;
+    const phone = (cart.phone ?? "").replace(/\D/g, "").slice(-10);
+    if (phone.length < 10) return null;
+    return trackedOrders.find((order) => order.id !== cart.deletedOrder!.orderId && (order.phone ?? "").replace(/\D/g, "").slice(-10) === phone)?.id ?? null;
+  };
   const linkedOrderBySourceCartId = useMemo(() => {
     const next = new Map<string, TrackedOrder>();
     for (const order of trackedOrders) {
@@ -80042,6 +80079,9 @@ ${waybillLineItems(w).length > 1
                             </div>
                             <span className={`status-pill status-${slugify(cartListStatus(cart))} shrink-0`}>{cartListStatus(cart)}</span>
                           </div>
+                          {cart.status === "Converted" && !linkedOrderBySourceCartId.get(cart.id) && cart.deletedOrder && (
+                            <DeletedCartOrderNote deleted={cart.deletedOrder} otherOrderId={otherOrderForDeletedCart(cart)} onOpenOrder={openOrderFromCartList} />
+                          )}
                           <div className="min-w-0">
                             <div className="font-semibold text-sm text-gray-900 truncate">{cart.customer}</div>
                             <div className="text-xs text-gray-500">{cart.phone}</div>
@@ -80257,6 +80297,9 @@ ${waybillLineItems(w).length > 1
                                   );
                                 })()}
                                 {conversionStatusLabel && <span className="text-[11px] font-medium text-gray-500">{conversionStatusLabel}</span>}
+                                {cart.status === "Converted" && !linkedOrder && cart.deletedOrder && (
+                                  <DeletedCartOrderNote deleted={cart.deletedOrder} otherOrderId={otherOrderForDeletedCart(cart)} onOpenOrder={openOrderFromCartList} />
+                                )}
                                 {(() => {
                                   const clock = cartClockFor(cart, cartAttemptsById.get(cart.id) ?? 0, cartClockNow, autoSubmitMode, cartHandOutRules);
                                   if (!clock || clock.kind === "contacted") return null;

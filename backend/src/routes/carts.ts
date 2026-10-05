@@ -88,11 +88,33 @@ router.get("/", requireRole(...CART_LIST_ROLES), async (req, res) => {
   const stripped = req.user!.role === "Inventory Manager & Logistics Operations"
     || scopeOf(req).role === "Inventory Manager & Logistics Operations";
 
+  // A converted cart whose order was later deleted (Bright, 5 Oct 2026): say so
+  // instead of a bare "Converted" with no order behind it. Deleted orders are
+  // few, so this is one small read; the newest deletion per cart wins.
+  const deletedByCart = new Map<string, { order_id: string; deleted_at: string; deleted_by_name: string | null; note: string | null }>();
+  if (!stripped) {
+    const { data: deletedRows, error: deletedError } = await supabase
+      .from("deleted_orders")
+      .select("order_id, source_cart_id, deleted_at, deleted_by_name, note")
+      .eq("org_id", req.user!.orgId)
+      .not("source_cart_id", "is", null)
+      .order("deleted_at", { ascending: false })
+      .limit(REPORT_ROW_CEILING);
+    // Missing table (migration not yet applied) just means no notes.
+    if (deletedError && !/deleted_orders/i.test(deletedError.message ?? "")) { res.status(500).json({ error: deletedError.message }); return; }
+    for (const row of deletedRows ?? []) {
+      if (row.source_cart_id && !deletedByCart.has(row.source_cart_id)) {
+        deletedByCart.set(row.source_cart_id, { order_id: row.order_id, deleted_at: row.deleted_at, deleted_by_name: row.deleted_by_name ?? null, note: row.note ?? null });
+      }
+    }
+  }
+
   res.json(all.map((cart) => {
     const withOutcome = {
       ...cart,
       last_outcome_code: attempts.get(cart.id)?.code ?? null,
-      last_outcome_at: attempts.get(cart.id)?.at ?? null
+      last_outcome_at: attempts.get(cart.id)?.at ?? null,
+      ...(deletedByCart.has(cart.id) ? { deleted_order: deletedByCart.get(cart.id) } : {})
     };
     if (!stripped) return withOutcome;
     // Same allowlist idea as inventory-operations-access: name it or it does
