@@ -21,7 +21,7 @@ import type { WeeklyReportAuditEntry, WeeklyReportCorrection } from "../lib/api"
 // ── Formatting ──────────────────────────────────────────────────────────────
 
 export const nf = (value: number) => Math.round(value || 0).toLocaleString("en-NG");
-export const pctText = (value: number, digits = 1) => `${(Number.isFinite(value) ? value : 0).toFixed(digits)}%`;
+export const pctText = (value: number, _digits = 0) => `${Math.round(Number.isFinite(value) ? value : 0)}%`;
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sept", "Oct", "Nov", "Dec"];
 export const longDate = (key: string) => {

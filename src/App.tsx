@@ -25818,7 +25818,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return { performanceBonus: 0, performanceNote: "Profit target not met this week", supportBonus: evaluation.amount, supportNote: "Paid when the profit target is missed", total: evaluation.amount, deliveryRate: rate };
     }
     if (evaluation.status === "delivery_bonus") {
-      return { performanceBonus: evaluation.amount, performanceNote: `Delivery rate ${rate.toFixed(1)}% (${evaluation.label})`, supportBonus: 0, supportNote: "Replaced by the performance bonus", total: evaluation.amount, deliveryRate: rate };
+      return { performanceBonus: evaluation.amount, performanceNote: `Delivery rate ${Math.round(rate)}% (${evaluation.label})`, supportBonus: 0, supportNote: "Replaced by the performance bonus", total: evaluation.amount, deliveryRate: rate };
     }
     return { performanceBonus: evaluation.amount, performanceNote: firstTier !== null ? `Delivery rate below ${firstTier}%` : "Delivery rate below the first tier", supportBonus: 0, supportNote: "Not paid once the profit target is met", total: evaluation.amount, deliveryRate: rate };
   };
@@ -76326,8 +76326,8 @@ ${waybillLineItems(w).length > 1
                       <span className="text-sm font-bold text-[#1F8FE0]">+{conversion}pp</span>
                     </div>
                     <div className="flex items-baseline gap-2 flex-wrap">
-                      <strong className="text-4xl font-bold text-gray-900 leading-none tabular-nums">{dashboardTargetConversion.toFixed(1)}%</strong>
-                      <span className="text-sm text-gray-400">current {dashboardDeliveryRateExact.toFixed(1)}%</span>
+                      <strong className="text-4xl font-bold text-gray-900 leading-none tabular-nums">{Math.round(dashboardTargetConversion)}%</strong>
+                      <span className="text-sm text-gray-400">current {dashboardDeliveryRate}%</span>
                     </div>
                     <input
                       type="range"
@@ -76842,7 +76842,7 @@ ${waybillLineItems(w).length > 1
                         { label: "Gross Profit",  color: "emerald", formula: `${formatMoney(dashboardRevenue)} − ${formatMoney(dashboardCogs)} − ${formatMoney(dashboardLogistics)} = ${formatMoney(dashboardGrossProfit)}` },
                         { label: "Operating",     color: "violet",  formula: `${formatMoney(dashboardOperatingExpense)} expenses${dashboardSalesBonusEstimate > 0 ? ` incl. ${formatMoney(dashboardSalesBonusEstimate)} sales bonus est.` : ""}${dashboardManagerBonusExpense > 0 ? `${dashboardSalesBonusEstimate > 0 ? " + " : " incl. "}${formatMoney(dashboardManagerBonusExpense)} manager bonus` : ""}${dashboardNewEngineBonusEstimate > 0 ? ` (${formatMoney(dashboardNewEngineBonusEstimate)} of sales bonus is the engine)` : ""}` },
                         { label: "Net Profit",    color: "rose",    formula: `${formatMoney(dashboardGrossProfit)} − ${formatMoney(dashboardOperatingExpense)} = ${formatMoney(dashboardNetProfit)}` },
-                        { label: "Fulfillment",   color: "teal",    formula: `${dashboardDeliveredCohortOrders.length} delivered / ${dashboardOrders.length} orders = ${dashboardDeliveryRateExact.toFixed(1)}%` },
+                        { label: "Fulfillment",   color: "teal",    formula: `${dashboardDeliveredCohortOrders.length} delivered / ${dashboardOrders.length} orders = ${dashboardDeliveryRate}%` },
                         { label: "Net Margin",    color: "rose",    formula: `Net profit / revenue = ${dashboardNetMargin}%` },
                       ].map(({ label, formula, color }) => {
                         const dotMap: Record<string, string> = {

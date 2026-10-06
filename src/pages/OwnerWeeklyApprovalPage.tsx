@@ -406,7 +406,7 @@ export default function OwnerWeeklyApprovalPage({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
         <KpiCard tone="blue" icon={ShoppingCart} label="Total Orders" value={nf(totals.orders)} delta={deltaPct(totals.orders, prev?.orders)} sub={`vs previous week (${nf(prev?.orders ?? 0)})`} />
         <KpiCard tone="green" icon={Box} label="Delivered Orders" value={nf(totals.delivered)} delta={deltaPct(totals.delivered, prev?.delivered)} sub={`vs previous week (${nf(prev?.delivered ?? 0)})`} />
-        <KpiCard tone="orange" icon={Target} label="Delivery Rate" value={pctText(totals.deliveryRate)} delta={prev ? Math.round((totals.deliveryRate - prev.deliveryRate) * 10) / 10 : null} sub={`vs previous week (${pctText(prev?.deliveryRate ?? 0)})`} />
+        <KpiCard tone="orange" icon={Target} label="Delivery Rate" value={pctText(totals.deliveryRate)} delta={prev ? Math.round(totals.deliveryRate - prev.deliveryRate) : null} sub={`vs previous week (${pctText(prev?.deliveryRate ?? 0)})`} />
         <KpiCard tone="purple" icon={Wallet} label="Total Bonus Payable" labelTone="text-violet-700 dark:text-violet-300" value={`${sym}${nf(totals.totalBonus)}`} delta={deltaPct(totals.totalBonus, prev?.totalBonus)} sub={`vs previous week (${sym}${nf(prev?.totalBonus ?? 0)})`} />
         <KpiCard tone="red" icon={BarChart3} label="Net Profit (Est.)" value={`${sym}${nf(financial?.netProfit ?? 0)}`} delta={financial ? deltaPct(financial.netProfit, financial.previousNetProfit) : null} sub="After bonuses, ads & logistics" />
       </div>
