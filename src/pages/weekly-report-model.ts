@@ -633,7 +633,14 @@ export type CompanyWeeklySnapshot = {
 };
 
 /** Adds up rep snapshots into the company week. */
-export function buildCompanySnapshot(weekStart: string, weekEnd: string, reps: WeeklyReportSnapshot[], now = new Date(), monthlyIncentive: MonthlyIncentiveReport | null = null): CompanyWeeklySnapshot {
+export function buildCompanySnapshot(
+  weekStart: string,
+  weekEnd: string,
+  reps: WeeklyReportSnapshot[],
+  now = new Date(),
+  monthlyIncentive: MonthlyIncentiveReport | null = null,
+  managerDashboardDeliveryRate?: number
+): CompanyWeeklySnapshot {
   const sum = (pick: (snap: WeeklyReportSnapshot) => number) => reps.reduce((total, snap) => total + (pick(snap) || 0), 0);
   const orders = sum((snap) => snap.totals.orders);
   const delivered = sum((snap) => snap.totals.delivered);
@@ -662,7 +669,9 @@ export function buildCompanySnapshot(weekStart: string, weekEnd: string, reps: W
     totals: {
       orders,
       delivered,
-      deliveryRate: pct(delivered, orders),
+      deliveryRate: typeof managerDashboardDeliveryRate === "number" && Number.isFinite(managerDashboardDeliveryRate)
+        ? managerDashboardDeliveryRate
+        : pct(delivered, orders),
       baseBonus: sum((snap) => snap.totals.baseBonus),
       upsellBonus: sum((snap) => snap.totals.upsellBonus),
       crossSellBonus: sum((snap) => snap.totals.crossSellBonus),

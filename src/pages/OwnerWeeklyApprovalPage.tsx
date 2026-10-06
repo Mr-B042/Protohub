@@ -103,7 +103,10 @@ export default function OwnerWeeklyApprovalPage({
   // What the owner approves is what the manager submitted. Until then, the
   // reps' figures as they stand.
   const frozenCompany = (company?.companySnapshot as CompanyWeeklySnapshot | null) ?? null;
-  const liveCompany = useMemo(() => buildCompanySnapshot(weekStart, weekEnd, shown), [weekStart, weekEnd, shown]);
+  const liveCompany = useMemo(
+    () => buildCompanySnapshot(weekStart, weekEnd, shown, new Date(), null, managerBonus?.deliveryRate),
+    [weekStart, weekEnd, shown, managerBonus?.deliveryRate]
+  );
   const companySnap = frozenCompany ?? liveCompany;
   const totals = companySnap.totals;
   const prev = companySnap.previous;

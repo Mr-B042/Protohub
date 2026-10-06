@@ -31952,7 +31952,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             .filter((row) => row.expected || row.report)
             .map((row) => row.frozen ?? row.live)
             .filter((snap): snap is WeeklyReportSnapshot => !!snap);
-          const companySnapshot = buildCompanySnapshot(weeklyReportWeekStart, weeklyReportWeekEnd, approved, new Date(), weeklyIncentiveFor(weeklyReportWeekStart));
+          const companySnapshot = buildCompanySnapshot(
+            weeklyReportWeekStart,
+            weeklyReportWeekEnd,
+            approved,
+            new Date(),
+            weeklyIncentiveFor(weeklyReportWeekStart),
+            managerBonus?.deliveryRate
+          );
           await weeklyRun(() => weeklyReportsApi.submitCompany({
             weekStart: weeklyReportWeekStart,
             managerNote: note || undefined,

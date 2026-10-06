@@ -133,7 +133,10 @@ export default function ManagerWeeklyReviewPage({
   const frozenWeek = companyStatus === "submitted_to_owner" || companyStatus === "locked";
   const expectedRows = rows.filter((row) => row.expected || row.report);
   const shown = expectedRows.map(shownSnapshot).filter((snap): snap is WeeklyReportSnapshot => !!snap);
-  const companySnap = useMemo(() => buildCompanySnapshot(weekStart, weekEnd, shown), [weekStart, weekEnd, shown]);
+  const companySnap = useMemo(
+    () => buildCompanySnapshot(weekStart, weekEnd, shown, new Date(), null, managerBonus?.deliveryRate),
+    [weekStart, weekEnd, shown, managerBonus?.deliveryRate]
+  );
   const totals = companySnap.totals;
   // Orders placed in an earlier week, delivered and paid in this one, across
   // every rep shown (Bright, 3 Oct 2026). Older reports have no figure: 0.
