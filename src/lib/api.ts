@@ -3759,7 +3759,13 @@ export type CartLogMiss = {
   cartsDue: number; cartsLogged: number; cartsMissed: number; amount: number;
   status: "pending" | "approved" | "waived";
   reviewedByName: string; reviewedAt: string | null; reviewNote: string;
-  affectedCarts?: Array<{ id: string; customer: string; phone: string; productName: string; assignedAt: string | null; reason: string }>;
+  affectedCarts?: Array<{
+    id: string; customer: string; phone: string; productName: string; assignedAt: string | null; reason: string;
+    /** Last log on the cart before that day (anyone), and who made it. */
+    lastContactAt?: string | null; lastContactBy?: string | null; lastOutcome?: string | null;
+    /** Other reps who logged it that day (the assigned rep still owes it). */
+    loggedThatDayBy?: string[];
+  }>;
 };
 
 export type CartLogPenaltiesView = {

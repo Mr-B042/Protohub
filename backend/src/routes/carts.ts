@@ -2466,7 +2466,9 @@ router.get("/:id/live", async (req, res) => {
 export async function computeCartLogBoard(orgId: string, repFilter: string | null, from: string, to: string) {
     const days = to >= from ? chargeableDaysIn(from, to) : [];
     let cartQuery = supabase.from("abandoned_carts")
-      .select("id, status, assigned_rep_id, assigned_at, created_at")
+      // customer / phone / product: the charged-cart list names each cart (it
+      // printed "Unknown customer" for every one before 8 Oct 2026).
+      .select("id, status, assigned_rep_id, assigned_at, created_at, customer, phone, product_name, package_name")
       .eq("org_id", orgId).not("assigned_rep_id", "is", null);
     if (repFilter) cartQuery = cartQuery.eq("assigned_rep_id", repFilter);
     const { data: cartRows } = await cartQuery.limit(REPORT_ROW_CEILING);
@@ -2555,13 +2557,37 @@ export async function computeCartLogBoard(orgId: string, repFilter: string | nul
       touched.forEach((cartId) => { if (dueIds.has(cartId)) count += 1; });
       return count;
     };
+    // Every log ever made on the open carts (Bright, 8 Oct 2026: each charge
+    // must be traceable). Gives each charged cart its last contact before
+    // the day, and who - if anyone else - logged it on the day.
+    const history = new Map<string, Array<{ at: string; ms: number; repId: string | null; outcome: string | null }>>();
+    const openIds = openCarts.map((row) => String(row.id));
+    for (let i = 0; i < openIds.length && days.length > 0; i += 200) {
+      const { data: rows } = await supabase.from(CART_ATTEMPTS).select("cart_id, attempted_at, rep_id, outcome_code")
+        .eq("org_id", orgId).in("cart_id", openIds.slice(i, i + 200))
+        .lt("attempted_at", lagosStartOfDayUtc(addDays(to, 1))).order("attempted_at", { ascending: true }).limit(REPORT_ROW_CEILING);
+      for (const row of (rows ?? []) as any[]) {
+        const list = history.get(String(row.cart_id)) ?? [];
+        list.push({ at: row.attempted_at, ms: Date.parse(row.attempted_at), repId: row.rep_id ?? null, outcome: row.outcome_code ?? null });
+        history.set(String(row.cart_id), list);
+      }
+    }
     const affectedCartsFor = (repId: string, dateKey: string, dueIds: Set<string>) => {
       const touched = loggedCarts.get(`${repId}|${dateKey}`) ?? new Set<string>();
-      return openCarts.filter((cart) => cart.assigned_rep_id === repId && dueIds.has(cart.id) && !touched.has(cart.id)).map((cart) => ({
-        id: String(cart.id), customer: String(cart.customer ?? "Unknown customer"), phone: String(cart.phone ?? ""),
-        productName: String(cart.product_name ?? cart.package_name ?? "Cart"), assignedAt: cart.assigned_at ?? cart.created_at ?? null,
-        reason: "No follow-up activity logged"
-      }));
+      const dayStart = Date.parse(lagosStartOfDayUtc(dateKey));
+      const dayEnd = Date.parse(lagosStartOfDayUtc(addDays(dateKey, 1)));
+      return openCarts.filter((cart) => cart.assigned_rep_id === repId && dueIds.has(cart.id) && !touched.has(cart.id)).map((cart) => {
+        const logs = history.get(String(cart.id)) ?? [];
+        const before = logs.filter((log) => log.ms < dayStart).pop() ?? null;
+        const others = Array.from(new Set(logs.filter((log) => log.ms >= dayStart && log.ms < dayEnd && log.repId && log.repId !== repId).map((log) => repName.get(log.repId!) ?? "Another rep")));
+        return {
+          id: String(cart.id), customer: String(cart.customer ?? "Unknown customer"), phone: String(cart.phone ?? ""),
+          productName: String(cart.product_name ?? cart.package_name ?? "Cart"), assignedAt: cart.assigned_at ?? cart.created_at ?? null,
+          lastContactAt: before?.at ?? null, lastContactBy: before?.repId ? repName.get(before.repId) ?? "Another rep" : null, lastOutcome: before?.outcome ?? null,
+          loggedThatDayBy: others,
+          reason: others.length ? `Nothing logged by ${repName.get(repId) ?? "the assigned rep"}; logged by ${others.join(", ")}` : `Nothing logged by ${repName.get(repId) ?? "the assigned rep"} that day`
+        };
+      });
     };
     repIds.forEach((repId) => {
       const theirCarts = openCarts.filter((row) => row.assigned_rep_id === repId);
