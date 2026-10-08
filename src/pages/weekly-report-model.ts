@@ -41,7 +41,12 @@ export type WeeklyReportOrderInput = {
   /** Why this order's bonus is lower than its rule, in plain words, e.g. a
    *  halved upgrade (Bright, 3 Oct 2026). Only set when it applies. */
   bonusNote?: string;
+  /** How the bonus was worked out, line by line (rule matched, quantities,
+   *  gates). Frozen with the report so a submitted week keeps its reasons. */
+  bonusLines?: WeeklyBonusLine[];
 };
+
+export type WeeklyBonusLine = { label: string; amount: number; note: string; tone: "earned" | "blocked" | "info" };
 
 export type WeeklyReportBonusInput = {
   base: number;
@@ -93,6 +98,10 @@ export type WeeklyReportOrderRow = {
   bonusManuallyAdjusted: boolean;
   /** Why the bonus is lower than the rule (e.g. a halved upgrade). Missing on older reports. */
   bonusNote?: string;
+  /** The base part of `bonus` (bonus − upsell − cross-sell). */
+  baseBonus?: number;
+  /** How the bonus was worked out (Bright, 8 Oct 2026). Missing on reports built before. */
+  bonusLines?: WeeklyBonusLine[];
 };
 
 // ── Monthly incentive in the last week of the month (Bright, 3 Oct 2026) ────
@@ -393,8 +402,10 @@ export function buildRepWeeklySnapshot(input: {
       bonus: deliveredThisWeek ? Math.round(bonusFor(order.id)) : 0,
       upsellBonus: deliveredThisWeek ? Math.round(input.bonus.perOrder[order.id]?.upsell ?? 0) : 0,
       crossSellBonus: deliveredThisWeek ? Math.round(input.bonus.perOrder[order.id]?.crossSell ?? 0) : 0,
+      baseBonus: deliveredThisWeek ? Math.round(input.bonus.perOrder[order.id]?.base ?? 0) : 0,
       bonusManuallyAdjusted: order.bonusManuallyAdjusted,
-      ...(deliveredThisWeek && order.bonusNote ? { bonusNote: order.bonusNote } : {})
+      ...(deliveredThisWeek && order.bonusNote ? { bonusNote: order.bonusNote } : {}),
+      ...(deliveredThisWeek && order.bonusLines?.length ? { bonusLines: order.bonusLines } : {})
     });
   }
   orders.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));

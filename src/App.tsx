@@ -25701,6 +25701,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       });
       const perOrder: Record<string, { base: number; upsell: number; crossSell: number }> = {};
       for (const part of row?.orderComponents ?? []) perOrder[part.orderId] = { base: part.base, upsell: part.upsell, crossSell: part.crossSell };
+      // The bonus table's own per-order workings, so the report explains exactly what it pays.
+      const linesByOrder = new Map((row?.orderLines ?? []).map((line) => [line.orderId, line]));
       // Say why an upgrade paid half (Bright, 3 Oct 2026): the product's
       // upgrade rule pays in full only at its delivery-rate line, judged on
       // the rep's week exactly as buildManagerBonusRepRows does. Only noted
@@ -25734,7 +25736,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           hasUpsell: orderHasVerifiedUpsell(order),
           hasCrossSell: (order.crossSellLines?.length ?? 0) > 0,
           bonusManuallyAdjusted: !!order.bonusManuallyAdjusted,
-          bonusNote: bonusNoteFor(order)
+          bonusNote: bonusNoteFor(order),
+          // How each delivered order's bonus was worked out (Bright, 8 Oct 2026):
+          // the same lines as the Bonus page's order breakdown, kept with the
+          // report. Lines that say "nothing here" (no gift, no add-on) are left out.
+          bonusLines: linesByOrder.get(order.id)?.components
+            .filter((line) => line.amount !== 0 || line.tone === "blocked")
+            .map((line) => ({ label: line.label, amount: Math.round(line.amount), note: line.note.slice(0, 600), tone: line.tone }))
         })),
         bonus: { base: row?.base ?? 0, upsell: row?.upsell ?? 0, crossSell: row?.crossSell ?? 0, total: row?.total ?? 0, perOrder },
         fines: weekFines.filter((fine) => fine.repId === rep.id).map((fine) => ({ id: fine.id, label: fine.label, amount: fine.amount, date: fine.date })),
