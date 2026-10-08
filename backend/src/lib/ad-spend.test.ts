@@ -111,3 +111,13 @@ test("shares must add up to 100", () => {
   assert.match(validSplits([{ productId: "gone", share: 100 }], ids)!, /no longer exists/);
   assert.match(validSplits([], ids)!, /Pick a product/);
 });
+
+test("TikTok orders never count against Meta spend; untagged orders still do", () => {
+  const mappings = [{ level: "campaign" as const, meta_id: "c1", splits: [{ productId: "shelf", share: 100 }] }];
+  const orders = [order({ id: "1", campaignId: "c1" }), order({ id: "2" }), order({ id: "3", otherPlatform: "TikTok" }), order({ id: "4", otherPlatform: "TikTok", status: "Delivered" })];
+  const result = report([insight({ spend: 10000 })], orders, mappings);
+  assert.equal(result.rows[0].orders, 2);
+  assert.equal(result.rows[0].delivered, 0);
+  assert.equal(result.kpis.cpa, 5000);
+  assert.deepEqual(result.leftOut, [{ platform: "TikTok", orders: 2 }]);
+});

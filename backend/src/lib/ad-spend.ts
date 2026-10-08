@@ -12,9 +12,12 @@
 //   4. otherwise UNMAPPED - shown as such, never guessed.
 // A name match is only ever offered as a suggestion in the assign box.
 //
-// ⚠️ ORDERS: the Product view counts every order of the product (the same way
-// the manual Ad Spend expense is judged per product). Campaign / ad set / ad /
-// account views can only count orders that carry that Meta id.
+// ⚠️ ORDERS: the Product view counts every order of the product EXCEPT those
+// from another ad platform (TikTok, Google...): their spend is not Meta's, so
+// counting them made Meta's CPA look cheaper (Bright, 8 Oct 2026: 30 of the
+// Shelf's 139 orders in a week were TikTok). Untagged orders stay in - Meta is
+// the main source. Campaign / ad set / ad / account views can only count
+// orders that carry that Meta id.
 //
 // Delivered = orders PLACED in the period that are now Delivered (the Orders
 // page way), so today's CPDO fills in over the following days.
@@ -33,6 +36,8 @@ export type SpendMapping = { level: AdSpendLevel; meta_id: string; splits: Split
 export type SpendOrder = {
   id: string; day: string; productId: string | null; status: string; amount: number; productCost: number; deliveryFee: number;
   campaignId: string | null; adsetId: string | null; adId: string | null;
+  /** "TikTok", "Google"... when the order came from another ad platform. */
+  otherPlatform?: string | null;
 };
 export type AccountInfo = { accountId: string; name: string; businessKey: string; businessName: string };
 
@@ -163,7 +168,8 @@ export function buildReport(input: ReportInput) {
     && (!filters.businessKey || orderBusiness(order) === filters.businessKey);
 
   const pieces = input.pieces.filter(pieceMatches);
-  const orders = filters.productId === UNMAPPED ? [] : input.orders.filter(orderMatches);
+  const matched = filters.productId === UNMAPPED ? [] : input.orders.filter(orderMatches);
+  const orders = matched.filter((order) => !order.otherPlatform);
   const period = (rows: SpendPiece[], from: string, to: string) => rows.filter((piece) => inRange(piece.day, from, to));
   const periodOrders = (rows: SpendOrder[], from: string, to: string) => rows.filter((order) => inRange(order.day, from, to));
   const nowPieces = period(pieces, input.from, input.to);
@@ -181,6 +187,12 @@ export function buildReport(input: ReportInput) {
   };
   const sum = (rows: SpendPiece[]) => rows.reduce((total, piece) => total + piece.spend, 0);
   const kpis = metricsOf(sum(nowPieces), totalsOrders(nowPieces, nowOrders));
+  // Other platforms' orders of the same products, left out above (shown under the Orders card).
+  const counted = new Set(totalsOrders(nowPieces, nowOrders).map((order) => order.productId));
+  const leftOutByPlatform = new Map<string, number>();
+  for (const order of periodOrders(matched, input.from, input.to)) {
+    if (order.otherPlatform && order.productId && (counted.has(order.productId) || filters.productId)) leftOutByPlatform.set(order.otherPlatform, (leftOutByPlatform.get(order.otherPlatform) ?? 0) + 1);
+  }
   const previous = metricsOf(sum(prevPieces), totalsOrders(prevPieces, prevOrders));
 
   // ------------------------------------------------ rows of the chosen view
@@ -256,6 +268,7 @@ export function buildReport(input: ReportInput) {
   const unmappedPieces = nowPieces.filter((piece) => piece.productId === null);
   return {
     kpis, previous, rows, chart, byProduct,
+    leftOut: Array.from(leftOutByPlatform.entries()).map(([platform, orders]) => ({ platform, orders })).sort((a, b) => b.orders - a.orders),
     unmapped: { spend: sum(unmappedPieces), campaigns: distinct(unmappedPieces, (piece) => piece.campaignId) }
   };
 }

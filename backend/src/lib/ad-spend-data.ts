@@ -1,6 +1,6 @@
 import { supabase } from "./supabase.js";
 import { addDaysToDateKey, lagosDateKey } from "./sales-bonus-engine.js";
-import { orderAdIds, productFromName } from "./tracking-hub.js";
+import { orderAdIds, otherAdPlatform, productFromName } from "./tracking-hub.js";
 import { dayOfIso, endIso, journeyCounts, loadBasics, startIso, type Basics } from "./tracking-hub-data.js";
 import { refreshAccount, refreshTargets } from "./tracking-meta-refresh.js";
 import { linkEvidence, type AccountInfo, type SpendInsight, type SpendMapping, type SpendOrder } from "./ad-spend.js";
@@ -39,7 +39,7 @@ async function ordersBetween(orgId: string, branchId: string, from: string, to: 
       rows.push({
         id: String(order.id), day: dayOfIso(order.created_at), productId: order.product_id ?? null, status: String(order.status ?? ""),
         amount: Number(order.amount) || 0, productCost: Number(order.cogs_snapshot) || 0, deliveryFee: Number(order.logistics_cost) || 0,
-        campaignId: ids.campaignId, adsetId: ids.adsetId, adId: ids.adId
+        campaignId: ids.campaignId, adsetId: ids.adsetId, adId: ids.adId, otherPlatform: otherAdPlatform(order)
       });
     }
     if ((data ?? []).length < PAGE) break;

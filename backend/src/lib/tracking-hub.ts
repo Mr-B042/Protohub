@@ -72,6 +72,17 @@ const isMetaId = (value: unknown) => typeof value === "string" && /^\d{10,22}$/.
  *  utm_id 1877402734527570) that look like Meta ids but never are. */
 const NON_META_SOURCE = /tiktok|google|youtube|snap|twitter|bing|pinterest/i;
 
+const PLATFORM_NAMES: Array<[RegExp, string]> = [[/tiktok/i, "TikTok"], [/google|youtube/i, "Google"], [/snap/i, "Snapchat"], [/twitter/i, "X (Twitter)"], [/bing/i, "Bing"], [/pinterest/i, "Pinterest"]];
+
+/** The non-Meta ad platform an order came from (same test as orderAdIds), or null. */
+export function otherAdPlatform(order: { form_context?: Record<string, unknown> | null; utm_source?: string | null }): string | null {
+  const ctx = order.form_context ?? {};
+  if (typeof ctx.ttclid === "string" && ctx.ttclid) return "TikTok";
+  const source = String(order.utm_source ?? "");
+  if (!NON_META_SOURCE.test(source)) return null;
+  return PLATFORM_NAMES.find(([test]) => test.test(source))?.[1] ?? "Other ads";
+}
+
 export function orderAdIds(order: { form_context?: Record<string, unknown> | null; utm_content?: string | null; utm_term?: string | null; utm_campaign?: string | null; utm_source?: string | null }) {
   const ctx = order.form_context ?? {};
   if (NON_META_SOURCE.test(String(order.utm_source ?? "")) || (typeof ctx.ttclid === "string" && ctx.ttclid)) {

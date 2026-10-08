@@ -4574,6 +4574,7 @@ export type HubAdSpend = {
   chart: Array<{ day: string; spend: number; orders: number; delivered: number }>;
   byProduct: Array<{ id: string; name: string; spend: number; share: number }>;
   unmapped: { spend: number; campaigns: number };
+  leftOut: Array<{ platform: string; orders: number }>;
   final: boolean; autoSync: boolean; hasAccounts: boolean;
   lastSync: { at: string; ok: boolean; message: string | null; trigger: string | null } | null;
   mappings: Array<{ level: HubAdSpendLevel; metaId: string; label: string; splits: HubSpendSplit[]; by: string | null; at: string }>;
