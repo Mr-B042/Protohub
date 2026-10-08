@@ -23,7 +23,8 @@ import { buildPackageComponentSnapshot } from "../lib/order-inventory.js";
 import { packageAllowsState, packageHasAgentStateStock } from "../lib/package-availability.js";
 import { serverEventsAllowed, withDataSource } from "../lib/tracking-credentials.js";
 import { purchasePixelFor } from "../lib/tracking-click-pixel.js";
-import { orderAdIds } from "../lib/tracking-hub.js";
+import { orderAdIds, otherAdPlatform } from "../lib/tracking-hub.js";
+import { sendTikTokSale } from "../lib/tracking-tiktok.js";
 import { metaIdsFromFormContext, recordMetaCapiEvent, resolveMetaTrackingConfig, sendMetaCapiPurchase, type MetaTrackingConfig } from "../lib/meta-capi.js";
 import { readSettings } from "./embed-settings.js";
 import {
@@ -1583,6 +1584,19 @@ router.post("/", submitRateLimit, async (req, res) => {
       eventName: "Purchase", metaEventName: "Purchase", eventId: metaPurchaseEventId, result,
       testMode: Boolean(purchaseTarget.config.testMode || purchaseTarget.config.testEventCode), pixelId: purchaseTarget.pixelId, value: Number(order.amount ?? amount), currency: String(order.currency ?? pkg.currency)
     })).catch(() => undefined);
+  }
+
+  // TikTok orders: the sale also goes to TikTok's Events API, once, to the
+  // branch's ONE TikTok Pixel (lib/tracking-tiktok.ts). Meta never gets them
+  // counted against its ads, and TikTok never gets Meta's.
+  if (!reviewHold && otherAdPlatform({ form_context: formContext, utm_source: d.utmSource ?? null }) === "TikTok") {
+    void sendTikTokSale({
+      orgId: product.org_id, branchId: (order as any).branch_id ?? null, orderId: String(order.id),
+      ttclid: contextString(formContext, "ttclid") || null, eventSourceUrl: metaPageUrl ?? null, clientIp: metaSendArgs.clientIp ?? null, userAgent: metaSendArgs.userAgent || null,
+      phone: d.phone, email: d.email || null, value: metaSendArgs.value, currency: metaSendArgs.currency,
+      productId: metaSendArgs.productId, productName: metaSendArgs.productName, packageId: metaSendArgs.packageId, packageName: metaSendArgs.packageName, quantity: metaSendArgs.quantity,
+      legacy: storedMetaConfig ? { pixelId: (storedMetaConfig as any).tiktok_pixel_id ?? null, token: (storedMetaConfig as any).tiktok_access_token ?? null, testEventCode: (storedMetaConfig as any).test_event_code ?? null } : null
+    });
   }
 
   // 6. Audit, in-app notification, emails (fire-and-forget).

@@ -31,8 +31,10 @@ type SendTikTokArgs = {
   quantity?: number | null;
 };
 
-type TikTokSendResult = {
+export type TikTokSendResult = {
   status: "off" | "missing_config" | "sent" | "rejected" | "failed" | "duplicate";
+  /** TikTok's own words when it refused, for the Tracking Hub. */
+  message?: string;
 };
 
 const sentTikTokEventIds = new Map<string, number>();
@@ -124,13 +126,13 @@ export async function sendTikTokConversion(args: SendTikTokArgs): Promise<TikTok
     // TikTok returns { code: 0, message: "OK" } on success; non-zero code = error.
     if (!res.ok || (json?.code !== undefined && json.code !== 0)) {
       logger.warn("tiktok-events: rejected", { orderId: args.orderId, status: res.status, code: json?.code, message: json?.message });
-      return { status: "rejected" };
+      return { status: "rejected", message: json?.message || `TikTok returned HTTP ${res.status}` };
     }
     logger.info("tiktok-events: sent", { orderId: args.orderId, pixelId, eventId: args.eventId });
     return { status: "sent" };
   } catch (error: any) {
     logger.warn("tiktok-events: send failed", { orderId: args.orderId, error: error?.message ?? String(error) });
-    return { status: "failed" };
+    return { status: "failed", message: error?.message ?? "Could not reach TikTok." };
   }
 }
 
