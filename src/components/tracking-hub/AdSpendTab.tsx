@@ -57,7 +57,7 @@ const monthStart = (day: string) => `${day.slice(0, 8)}01`;
 
 // ---------------------------------------------------------------- small parts
 
-function KpiCard({ icon, tone, label, value, delta, invert, sub }: { icon: ReactNode; tone: string; label: string; value: string; delta: number | null; invert?: boolean; sub: string }) {
+function KpiCard({ icon, tone, label, value, delta, invert, sub, note }: { icon: ReactNode; tone: string; label: string; value: string; delta: number | null; invert?: boolean; sub: string; note?: string | null }) {
   return (
     <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-3.5 py-4 dark:border-slate-800 dark:bg-slate-900">
       <span className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${tone}`}>{icon}</span>
@@ -68,6 +68,7 @@ function KpiCard({ icon, tone, label, value, delta, invert, sub }: { icon: React
           <Delta value={delta === null ? null : Math.round(delta)} invert={invert} />
           <span className="whitespace-nowrap text-[10.5px] text-gray-400">{sub}</span>
         </span>
+        {note ? <span className="mt-1 block text-[10.5px] font-semibold leading-tight text-amber-700 dark:text-amber-400">{note}</span> : null}
       </div>
     </div>
   );
@@ -429,7 +430,8 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
         <KpiCard icon={<Wallet className="h-6 w-6" />} tone="bg-blue-50 text-blue-600 dark:bg-blue-950/40" label="Total Ad Spend" value={naira(k.spend)} delta={delta(k.spend, p.spend)} sub={sub} />
-        <KpiCard icon={<ShoppingCart className="h-6 w-6" />} tone="bg-rose-50 text-rose-600 dark:bg-rose-950/40" label="Total Orders" value={nf(k.orders)} delta={delta(k.orders, p.orders)} sub={sub} />
+        <KpiCard icon={<ShoppingCart className="h-6 w-6" />} tone="bg-rose-50 text-rose-600 dark:bg-rose-950/40" label="Total Orders" value={nf(k.orders)} delta={delta(k.orders, p.orders)} sub={sub}
+          note={data.leftOut.length ? `${data.leftOut.map((row) => `${nf(row.orders)} ${row.platform}`).join(", ")} order${data.leftOut.reduce((total, row) => total + row.orders, 0) === 1 ? "" : "s"} left out (not Meta)` : null} />
         <KpiCard icon={<Truck className="h-6 w-6" />} tone="bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40" label="Delivered Orders" value={nf(k.delivered)} delta={delta(k.delivered, p.delivered)} sub={sub} />
         <KpiCard icon={<Users className="h-6 w-6" />} tone="bg-violet-50 text-violet-600 dark:bg-violet-950/40" label="Cost Per Order (CPA)" value={money(k.cpa)} delta={delta(k.cpa, p.cpa)} invert sub={sub} />
         <KpiCard icon={<BarChart3 className="h-6 w-6" />} tone="bg-blue-50 text-blue-600 dark:bg-blue-950/40" label="Cost Per Delivered Order" value={money(k.cpdo)} delta={delta(k.cpdo, p.cpdo)} invert sub={sub} />

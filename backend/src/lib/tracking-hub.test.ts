@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { attributionCapture, domainOf, healthScore, humanMetaError, orderAdIds, productFromName, purchaseStatus, reconciliationVerdict } from "./tracking-hub.js";
+import { attributionCapture, otherAdPlatform, domainOf, healthScore, humanMetaError, orderAdIds, productFromName, purchaseStatus, reconciliationVerdict } from "./tracking-hub.js";
 
 test("browser + server with the same event id is one Purchase in Meta", () => {
   assert.equal(purchaseStatus({ serverStatus: "sent", serverEventId: "18452", browserEventId: "18452" }), "deduped");
@@ -60,4 +60,12 @@ test("productFromName uses words only one product has", () => {
 test("orderAdIds: a TikTok order never carries a Meta campaign id", () => {
   assert.deepEqual(orderAdIds({ utm_source: "tiktok", utm_campaign: "Shelf Corner Group", form_context: { utmId: "1877402734527570" } }), { campaignId: null, adsetId: null, adId: null });
   assert.equal(orderAdIds({ utm_source: "fb", utm_campaign: "120253933094970359" }).campaignId, "120253933094970359");
+});
+
+test("orders from other ad platforms are named; Meta and untagged orders are not", () => {
+  assert.equal(otherAdPlatform({ utm_source: "tiktok", form_context: {} }), "TikTok");
+  assert.equal(otherAdPlatform({ utm_source: null, form_context: { ttclid: "E.C.P.abc" } }), "TikTok");
+  assert.equal(otherAdPlatform({ utm_source: "google", form_context: {} }), "Google");
+  assert.equal(otherAdPlatform({ utm_source: "fb", form_context: { fbclid: "x" } }), null);
+  assert.equal(otherAdPlatform({ utm_source: null, form_context: null }), null);
 });
