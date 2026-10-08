@@ -849,13 +849,29 @@ export function RepReviewModal({ row, weekStart, weekEnd, sym, canAct, canFlag, 
   const status = row.report?.status ?? "draft";
   const diffKeys = new Set(row.differences.map((item) => item.key));
   const productDiff = row.differences.some((item) => item.key.startsWith("product:"));
-  const lines: Array<{ label: string; submitted: string; now: string; ok: boolean }> = submitted && live ? [
+  // Which orders make up the upsell / cross-sell counts (Bright, 8 Oct 2026):
+  // the orders placed this week with one, and what each paid (₦0 until delivered).
+  const expansionIds = (snap: WeeklyReportSnapshot, kind: "Upsell" | "Cross-Sell") => {
+    const paidOf = (order: WeeklyReportSnapshot["orders"][number]) => (kind === "Upsell" ? order.upsellBonus ?? 0 : order.crossSellBonus ?? 0);
+    // Placed this week with one, plus any earlier order that paid one this week, so the amounts add up to the total.
+    const rows = snap.orders.filter((order) => (order.placedThisWeek && (order.type === kind || order.type === "Upsell + Cross-Sell")) || paidOf(order) !== 0);
+    if (rows.length === 0) return null;
+    return (
+      <span className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[11.5px]">
+        {rows.map((order) => {
+          const paid = kind === "Upsell" ? order.upsellBonus ?? 0 : order.crossSellBonus ?? 0;
+          return <span key={order.id} className="whitespace-nowrap"><b className="text-gray-800 dark:text-slate-200">#{order.id}</b> <span className={paid ? "text-emerald-700" : "text-gray-400"}>{paid ? `${sym}${nf(paid)}` : order.status === "Delivered" ? `${sym}0` : `${order.status.toLowerCase()}, ${sym}0`}</span>{!order.placedThisWeek ? <span className="text-blue-700"> (placed earlier)</span> : null}</span>;
+        })}
+      </span>
+    );
+  };
+  const lines: Array<{ label: string; submitted: string; now: string; ok: boolean; submittedDetail?: ReactNode; nowDetail?: ReactNode }> = submitted && live ? [
     { label: "System Orders", submitted: nf(submitted.totals.orders), now: nf(live.totals.orders), ok: !diffKeys.has("orders") },
     { label: "Delivered", submitted: nf(submitted.totals.delivered), now: nf(live.totals.delivered), ok: !diffKeys.has("delivered") },
     { label: "Delivery Rate", submitted: pctText(submitted.totals.deliveryRate), now: pctText(live.totals.deliveryRate), ok: !diffKeys.has("deliveryRate") },
     { label: "Product Breakdown", submitted: `${submitted.products.length} products`, now: productDiff ? "Changed" : "Verified", ok: !productDiff },
-    { label: "Cross-sells", submitted: `${submitted.totals.crossSellOrders} · ${sym}${nf(submitted.totals.crossSellBonus)}`, now: `${live.totals.crossSellOrders} · ${sym}${nf(live.totals.crossSellBonus)}`, ok: !diffKeys.has("crossSellOrders") && !diffKeys.has("crossSellBonus") },
-    { label: "Upsells", submitted: `${submitted.totals.upsellOrders} · ${sym}${nf(submitted.totals.upsellBonus)}`, now: `${live.totals.upsellOrders} · ${sym}${nf(live.totals.upsellBonus)}`, ok: !diffKeys.has("upsellOrders") && !diffKeys.has("upsellBonus") },
+    { label: "Cross-sells", submitted: `${submitted.totals.crossSellOrders} · ${sym}${nf(submitted.totals.crossSellBonus)}`, now: `${live.totals.crossSellOrders} · ${sym}${nf(live.totals.crossSellBonus)}`, ok: !diffKeys.has("crossSellOrders") && !diffKeys.has("crossSellBonus"), submittedDetail: expansionIds(submitted, "Cross-Sell"), nowDetail: expansionIds(live, "Cross-Sell") },
+    { label: "Upsells", submitted: `${submitted.totals.upsellOrders} · ${sym}${nf(submitted.totals.upsellBonus)}`, now: `${live.totals.upsellOrders} · ${sym}${nf(live.totals.upsellBonus)}`, ok: !diffKeys.has("upsellOrders") && !diffKeys.has("upsellBonus"), submittedDetail: expansionIds(submitted, "Upsell"), nowDetail: expansionIds(live, "Upsell") },
     { label: "Base Bonus", submitted: `${sym}${nf(submitted.totals.baseBonus)}`, now: `${sym}${nf(live.totals.baseBonus)}`, ok: !diffKeys.has("baseBonus") },
     { label: "Fines / Deductions", submitted: `${sym}${nf(submitted.totals.fines)}`, now: `${sym}${nf(live.totals.fines)}`, ok: !diffKeys.has("fines") },
     { label: "Final Payable", submitted: `${sym}${nf(submitted.totals.finalBonus)}`, now: `${sym}${nf(live.totals.finalBonus)}`, ok: !diffKeys.has("finalBonus") }
@@ -883,8 +899,8 @@ export function RepReviewModal({ row, weekStart, weekEnd, sym, canAct, canFlag, 
                 {lines.map((line) => (
                   <tr key={line.label} className={`border-t border-gray-100 dark:border-slate-800 ${line.ok ? "" : "bg-amber-50/60 dark:bg-amber-500/10"}`}>
                     <td className="px-4 py-2.5 font-semibold text-gray-900 dark:text-slate-100">{line.label}</td>
-                    <td className="px-4 py-2.5 text-gray-700 dark:text-slate-300">{line.submitted}</td>
-                    <td className="px-4 py-2.5 text-gray-700 dark:text-slate-300">{line.now}</td>
+                    <td className="px-4 py-2.5 align-top text-gray-700 dark:text-slate-300">{line.submitted}{line.submittedDetail}</td>
+                    <td className="px-4 py-2.5 align-top text-gray-700 dark:text-slate-300">{line.now}{line.nowDetail}</td>
                     <td className="px-4 py-2.5 text-center">{line.ok ? <Check className="mx-auto h-4 w-4 text-emerald-600" strokeWidth={3} /> : <X className="mx-auto h-4 w-4 text-amber-600" strokeWidth={3} />}</td>
                   </tr>
                 ))}
