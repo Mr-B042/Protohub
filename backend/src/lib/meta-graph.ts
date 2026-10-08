@@ -326,3 +326,50 @@ export async function accountAdsetPixels(adAccountId: string, token: string) {
   if (!result.ok) return { ok: false as const, message: result.message };
   return { ok: true as const, rows: (result.data.data ?? []).map((row) => ({ adsetId: String(row.id), campaignId: row.campaign_id ? String(row.campaign_id) : null, pixelId: row.promoted_object?.pixel_id ? String(row.promoted_object.pixel_id) : null })) };
 }
+
+// ------------------------------------------------- Since Start (8 Oct 2026)
+
+export type AdLifetime = {
+  campaignId: string; campaignName: string; adsetId: string; adsetName: string; adId: string; adName: string;
+  firstDay: string | null; lastDay: string | null;
+  spend: number; impressions: number; linkClicks: number; video3s: number; thruplays: number; purchases: number;
+};
+
+const actionCount = (rows: Array<{ action_type: string; value: string }> | undefined, type: string) => Number((rows ?? []).find((row) => row.action_type === type)?.value) || 0;
+
+/**
+ * Each ad's numbers over its WHOLE life (date_preset=maximum), for just these
+ * campaigns. Hook rate = 3-second plays ("video_view") ÷ impressions; hold
+ * rate = ThruPlays ÷ 3-second plays.
+ */
+export async function adLifetime(adAccountId: string, token: string, campaignIds: string[]): Promise<{ ok: true; rows: AdLifetime[] } | { ok: false; message: string }> {
+  const account = adAccountId.startsWith("act_") ? adAccountId : `act_${adAccountId}`;
+  const rows: AdLifetime[] = [];
+  const unique = Array.from(new Set(campaignIds.filter(Boolean)));
+  for (let i = 0; i < unique.length; i += 50) {
+    let path = `${account}/insights`;
+    let params: Record<string, string> = {
+      level: "ad", date_preset: "maximum", limit: "500",
+      fields: "campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,spend,impressions,inline_link_clicks,actions,video_thruplay_watched_actions,date_start,date_stop",
+      filtering: JSON.stringify([{ field: "campaign.id", operator: "IN", value: unique.slice(i, i + 50) }])
+    };
+    for (let page = 0; page < 40; page += 1) {
+      const result = await graphGet<{ data?: any[]; paging?: { next?: string } }>(path, token, params);
+      if (!result.ok) return { ok: false, message: result.message };
+      for (const row of result.data.data ?? []) {
+        rows.push({
+          campaignId: String(row.campaign_id), campaignName: String(row.campaign_name ?? ""), adsetId: String(row.adset_id ?? ""), adsetName: String(row.adset_name ?? ""),
+          adId: String(row.ad_id), adName: String(row.ad_name ?? ""), firstDay: row.date_start ?? null, lastDay: row.date_stop ?? null,
+          spend: Number(row.spend) || 0, impressions: Number(row.impressions) || 0, linkClicks: Number(row.inline_link_clicks) || 0,
+          video3s: actionCount(row.actions, "video_view"), thruplays: actionCount(row.video_thruplay_watched_actions, "video_view"), purchases: pickAction(row.actions)
+        });
+      }
+      const next = result.data.paging?.next;
+      if (!next) break;
+      const nextUrl = new URL(next);
+      path = nextUrl.pathname.replace(/^\/v[\d.]+\//, "");
+      params = Object.fromEntries(Array.from(nextUrl.searchParams.entries()).filter(([key]) => key !== "access_token"));
+    }
+  }
+  return { ok: true, rows };
+}

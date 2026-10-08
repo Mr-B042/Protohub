@@ -73,3 +73,42 @@ export async function tiktokAdSpend(token: string, advertiserId: string, since: 
 
 /** The URL parameters to paste on every TikTok ad, so each order carries its campaign, ad group and ad. */
 export const TIKTOK_URL_PARAMETERS = "utm_source=tiktok&utm_medium=paid&utm_campaign=__CAMPAIGN_NAME__&utm_id=__CAMPAIGN_ID__&utm_term=__AID__&utm_content=__CID__";
+
+export type TikTokAdLifetime = { campaignId: string; campaignName: string; adgroupId: string; adgroupName: string; adId: string; adName: string; spend: number; impressions: number; clicks: number; video2s: number; videoFull: number; conversions: number };
+
+/** Each ad's numbers over its whole life (query_lifetime). TikTok's hook is 2-second views. */
+export async function tiktokAdLifetime(token: string, advertiserId: string): Promise<ApiResult<TikTokAdLifetime[]>> {
+  const rows: TikTokAdLifetime[] = [];
+  for (let page = 1; page <= 50; page += 1) {
+    const result = await apiGet<{ list?: Array<{ dimensions?: Record<string, string>; metrics?: Record<string, string> }>; page_info?: { total_page?: number } }>("report/integrated/get/", token, {
+      advertiser_id: advertiserId, report_type: "BASIC", data_level: "AUCTION_AD", query_lifetime: "true",
+      dimensions: JSON.stringify(["ad_id"]),
+      metrics: JSON.stringify(["spend", "impressions", "clicks", "video_watched_2s", "video_views_p100", "conversion", "campaign_id", "campaign_name", "adgroup_id", "adgroup_name", "ad_name"]),
+      page: String(page), page_size: "1000"
+    });
+    if (!result.ok) return result;
+    for (const row of result.data?.list ?? []) {
+      const m = row.metrics ?? {};
+      rows.push({
+        adId: String(row.dimensions?.ad_id ?? ""), campaignId: String(m.campaign_id ?? ""), campaignName: String(m.campaign_name ?? ""), adgroupId: String(m.adgroup_id ?? ""), adgroupName: String(m.adgroup_name ?? ""), adName: String(m.ad_name ?? ""),
+        spend: Number(m.spend) || 0, impressions: Number(m.impressions) || 0, clicks: Number(m.clicks) || 0, video2s: Number(m.video_watched_2s) || 0, videoFull: Number(m.video_views_p100) || 0, conversions: Number(m.conversion) || 0
+      });
+    }
+    if (page >= Number(result.data?.page_info?.total_page ?? 1)) break;
+  }
+  return { ok: true, data: rows.filter((row) => row.adId && row.spend > 0) };
+}
+
+/** When each campaign was created (TikTok's "start"). */
+export async function tiktokCampaignStarts(token: string, advertiserId: string): Promise<ApiResult<Array<{ campaignId: string; createdAt: string | null; status: string | null }>>> {
+  const rows: Array<{ campaignId: string; createdAt: string | null; status: string | null }> = [];
+  for (let page = 1; page <= 20; page += 1) {
+    const result = await apiGet<{ list?: Array<{ campaign_id?: string; create_time?: string; operation_status?: string; secondary_status?: string }>; page_info?: { total_page?: number } }>("campaign/get/", token, {
+      advertiser_id: advertiserId, page: String(page), page_size: "1000", fields: JSON.stringify(["campaign_id", "create_time", "operation_status", "secondary_status"])
+    });
+    if (!result.ok) return result;
+    for (const row of result.data?.list ?? []) rows.push({ campaignId: String(row.campaign_id ?? ""), createdAt: row.create_time ?? null, status: row.operation_status === "ENABLE" ? "ACTIVE" : row.operation_status === "DISABLE" ? "PAUSED" : row.secondary_status ?? null });
+    if (page >= Number(result.data?.page_info?.total_page ?? 1)) break;
+  }
+  return { ok: true, data: rows };
+}
