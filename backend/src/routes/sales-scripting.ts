@@ -319,22 +319,23 @@ router.get("/scripts/:id", async (req, res) => {
 
 // -------------------------------------------------- write: Head of Sales only
 
-const list = z.array(z.string().trim().min(1).max(300)).max(20);
+// Generous limits (Bright, 8 Oct 2026: "make it as much as possible") - the columns are plain text.
+const list = z.array(z.string().trim().min(1).max(2000)).max(50);
 const FieldsSchema = z.object({
-  title: z.string().trim().min(3).max(120),
-  scenario: z.string().trim().max(120).default(""),
-  objective: z.string().trim().max(500).default(""),
-  whenToUse: z.string().trim().max(1000).default(""),
-  trigger: z.string().trim().max(1000).default(""),
-  whatToSay: z.string().trim().min(10).max(4000),
+  title: z.string().trim().min(3).max(300),
+  scenario: z.string().trim().max(5000).default(""),
+  objective: z.string().trim().max(5000).default(""),
+  whenToUse: z.string().trim().max(10000).default(""),
+  trigger: z.string().trim().max(10000).default(""),
+  whatToSay: z.string().trim().min(10).max(50000),
   keyPoints: list.default([]),
   mustSay: list.default([]),
   neverSay: list.default([]),
-  desiredAction: z.string().trim().max(500).default(""),
+  desiredAction: z.string().trim().max(5000).default(""),
   priority: z.enum(["primary", "alternative", "experimental"]).default("primary"),
   impact: z.enum(["high", "medium", "low"]).default("medium"),
   closingStyle: z.enum(["direct", "choice", "delivery", "urgency", "confirmation"]).nullable().optional(),
-  objection: z.string().trim().max(300).nullable().optional(),
+  objection: z.string().trim().max(2000).nullable().optional(),
   upsellFromQty: z.number().int().min(1).max(1000).nullable().optional(),
   upsellToQty: z.number().int().min(1).max(1000).nullable().optional(),
   crossSellProductId: z.string().uuid().nullable().optional()

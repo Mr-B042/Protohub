@@ -506,12 +506,49 @@ function ScriptEditor({ library, product, script, category: initialCategory, onC
 }) {
   const base = script ? (script.latest && ["draft", "returned"].includes(script.latest.status) ? script.latest : script.live ?? script.latest) : null;
   const [category, setCategory] = useState<ScriptCategory>(script?.category ?? initialCategory);
-  const [fields, setFields] = useState<ScriptFields>(() => base ? fieldsOf(base) : {
+  const startFields = (): ScriptFields => base ? fieldsOf(base) : {
     title: "", scenario: "", objective: "", whenToUse: "", trigger: "", whatToSay: "", keyPoints: [],
     mustSay: library.settings.defaultMustSay, neverSay: library.settings.defaultNeverSay, desiredAction: "",
     priority: "primary", impact: "medium", closingStyle: initialCategory === "closing" ? "direct" : null, objection: null,
     upsellFromQty: null, upsellToQty: null, crossSellProductId: null
+  };
+  // ⚠️ UNSAVED WRITING IS KEPT IN THE BROWSER (Bright, 8 Oct 2026: writers lost
+  // their text "after a while" - a reload after a new version, or the page
+  // being swapped out, wiped what was only in memory). Saved every 1.5s, put
+  // back when the same script is opened again, cleared once saved. The key is
+  // deliberately NOT "protohub.*": the cache-version reset wipes those.
+  const draftKey = `ph-script-draft:${script?.id ?? `new:${product.id}:${initialCategory}`}`;
+  const [restoredAt, setRestoredAt] = useState<string | null>(null);
+  const [fields, setFields] = useState<ScriptFields>(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(draftKey) ?? "null");
+      if (saved?.fields && JSON.stringify(saved.fields) !== JSON.stringify(startFields())) return { ...startFields(), ...saved.fields };
+    } catch { /* storage off or unreadable */ }
+    return startFields();
   });
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(draftKey) ?? "null");
+      if (saved?.fields && saved.at && JSON.stringify(saved.fields) !== JSON.stringify(startFields())) {
+        setRestoredAt(saved.at);
+        if (!script && saved.category) setCategory(saved.category);
+      }
+    } catch { /* storage off */ }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        if (JSON.stringify(fields) === JSON.stringify(startFields())) window.localStorage.removeItem(draftKey);
+        else window.localStorage.setItem(draftKey, JSON.stringify({ fields, category, at: new Date().toISOString() }));
+      } catch { /* storage full or off: the text still lives on screen */ }
+    }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [fields, category]); // eslint-disable-line react-hooks/exhaustive-deps
+  const discardRestored = () => {
+    try { window.localStorage.removeItem(draftKey); } catch { /* storage off */ }
+    setFields(startFields());
+    setRestoredAt(null);
+  };
   const [warnings, setWarnings] = useState<ScriptWarnings | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -544,6 +581,8 @@ function ScriptEditor({ library, product, script, category: initialCategory, onC
     try {
       const body = { fields, submit };
       const result = script ? await salesScriptingApi.update(script.id, body) : await salesScriptingApi.create({ productId: product.id, category, ...body });
+      // Saved on the server: the browser copy is no longer needed.
+      try { window.localStorage.removeItem(draftKey); } catch { /* storage off */ }
       await onSaved(result.id, submit);
     } catch (err: any) {
       setError(err?.message ?? "Could not save the script.");
@@ -556,6 +595,12 @@ function ScriptEditor({ library, product, script, category: initialCategory, onC
   return (
     <Modal title={script ? `Edit script${script.live ? ` (new version ${(script.latest?.versionNo ?? 1) + (script.latest && ["draft", "returned"].includes(script.latest.status) ? 0 : 1)})` : ""}` : "Add Script"}
       subtitle={script?.live ? "Reps keep seeing the approved version until this one is approved." : "Every script goes to the manager for approval before reps can see it."} onClose={onClose} wide>
+      {restoredAt ? (
+        <div className="mx-6 mt-5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-[13px] text-amber-900">
+          <span>Restored your unsaved writing from {new Date(restoredAt).toLocaleString("en-NG", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}. Save the draft to keep it.</span>
+          <button type="button" onClick={discardRestored} className="!min-h-0 rounded-lg border border-amber-300 bg-white px-3 py-1 text-[12px] font-bold text-amber-800">Discard it</button>
+        </div>
+      ) : null}
       <div className="grid gap-5 px-6 py-5 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">
