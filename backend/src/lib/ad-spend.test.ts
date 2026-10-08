@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { UNMAPPED, allocate, buildReport, linkEvidence, mappingIndex, resolveSplits, validSplits, type AccountInfo, type SpendInsight, type SpendOrder } from "./ad-spend.js";
+import { UNMAPPED, allocate, buildReport, linkEvidence, mappingIndex, resolveSplits, tiktokOrderIds, validSplits, type AccountInfo, type SpendInsight, type SpendOrder } from "./ad-spend.js";
 
 const insight = (over: Partial<SpendInsight>): SpendInsight => ({
   day: "2026-10-08", spend: 1000, ad_account_id: "111", campaign_id: "c1", campaign_name: "Shelf Main", adset_id: "s1", adset_name: "Lagos", ad_id: "a1", ad_name: "Video 1", ...over
@@ -120,4 +120,34 @@ test("TikTok orders never count against Meta spend; untagged orders still do", (
   assert.equal(result.rows[0].delivered, 0);
   assert.equal(result.kpis.cpa, 5000);
   assert.deepEqual(result.leftOut, [{ platform: "TikTok", orders: 2 }]);
+});
+
+test("each platform's orders are measured against its own spend", () => {
+  const mappings = [
+    { level: "campaign" as const, meta_id: "c1", splits: [{ productId: "shelf", share: 100 }] },
+    { level: "campaign" as const, meta_id: "tt:9", splits: [{ productId: "shelf", share: 100 }] }
+  ];
+  const insights = [insight({ spend: 10000 }), insight({ platform: "tiktok", spend: 6000, campaign_id: "tt:9", ad_id: "tt:91", adset_id: "tt:90", ad_account_id: "tt:7" })];
+  const orders = [order({ id: "1" }), order({ id: "2" }), order({ id: "3", otherPlatform: "TikTok" }), order({ id: "4", otherPlatform: "TikTok" }), order({ id: "5", otherPlatform: "TikTok" })];
+  const run = (platform: "meta" | "tiktok" | "all", connected: Array<"meta" | "tiktok">) => buildReport({
+    view: "product", from: "2026-10-08", to: "2026-10-08", compareFrom: "2026-10-07", compareTo: "2026-10-07", trendDays: ["2026-10-08"], chartDays: ["2026-10-08"],
+    pieces: allocate(insights, mappingIndex(mappings), new Map(), accounts), orders, filters: { platform }, accounts, products, connected
+  }).kpis;
+  assert.deepEqual([run("meta", ["meta", "tiktok"]).spend, run("meta", ["meta", "tiktok"]).orders], [10000, 2]);
+  assert.deepEqual([run("tiktok", ["meta", "tiktok"]).spend, run("tiktok", ["meta", "tiktok"]).orders], [6000, 3]);
+  assert.deepEqual([run("all", ["meta", "tiktok"]).spend, run("all", ["meta", "tiktok"]).orders], [16000, 5]);
+  // TikTok spend not read yet: "All" must not count TikTok orders against Meta's spend.
+  assert.equal(run("all", ["meta"]).orders, 2);
+});
+
+test("a TikTok order finds its campaign by id, else by an unshared campaign name", () => {
+  const byName = new Map<string, string | null>([["shelf corner group", "tt:1"], ["twin", null]]);
+  assert.equal(tiktokOrderIds({ form_context: { utmId: "1844000000000001" }, utm_campaign: null }, byName).campaignId, "tt:1844000000000001");
+  const withId = new Map<string, string | null>([["shelf corner group", "tt:1"], ["racks", "tt:1844000000000001"]]);
+  assert.equal(tiktokOrderIds({ form_context: { utmId: "1844000000000001" }, utm_campaign: "Shelf Corner Group" }, withId).campaignId, "tt:1844000000000001");
+  assert.equal(tiktokOrderIds({ form_context: {}, utm_campaign: "  Shelf  Corner Group " }, byName).campaignId, "tt:1");
+  assert.equal(tiktokOrderIds({ form_context: {}, utm_campaign: "Twin" }, byName).campaignId, null);
+  // A stray id no TikTok campaign has loses to the name.
+  assert.equal(tiktokOrderIds({ form_context: { utmId: "120218799456" }, utm_campaign: "Shelf Corner Group" }, byName).campaignId, "tt:1");
+  assert.equal(tiktokOrderIds({ form_context: {}, utm_term: "1800000000000002", utm_content: "1800000000000003" }, byName).adId, "tt:1800000000000003");
 });

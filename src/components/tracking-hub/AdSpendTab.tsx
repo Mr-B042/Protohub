@@ -3,7 +3,7 @@ import { Bar, CartesianGrid, Cell, ComposedChart, LabelList, Line, Pie, PieChart
 import {
   AlertTriangle, ArrowUpDown, BarChart3, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Columns3, Database, Download, Filter, Plus, RefreshCw, ShoppingCart, Trash2, Truck, Users, Wallet, X
 } from "lucide-react";
-import { trackingHubApi, type HubAdSpend, type HubAdSpendLevel, type HubAdSpendRow, type HubAdSpendView, type HubSpendSplit, type HubUnmappedCampaign } from "../../lib/api";
+import { trackingHubApi, type HubAdPlatformChoice, type HubAdSpend, type HubAdSpendLevel, type HubAdSpendRow, type HubAdSpendView, type HubSpendSplit, type HubUnmappedCampaign } from "../../lib/api";
 import {
   ActionMenu, Card, CheckBox, DateRangeButton, Delta, EmptyRow, HubHeader, LoadState, Modal, PRESETS, ProductThumb, SearchBox, Sparkline, Toggle,
   compareWord, daysBetween, downloadCsv, labelCls, lagosToday, longDay, naira, nf, presetLabel, primaryButton, outlineButton, rowCls, selectCls, shift, shortDay, smallButton, tableCls,
@@ -250,6 +250,8 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
   const [campaign, setCampaign] = useState<{ id: string; name: string } | null>(null);
   const [adset, setAdset] = useState<{ id: string; name: string } | null>(null);
   const [assigned, setAssigned] = useState<"all" | "assigned" | "unassigned">("all");
+  // Empty = the page's default: every platform whose spend is read.
+  const [platform, setPlatform] = useState<HubAdPlatformChoice | "">("");
   const [showCharts, setShowCharts] = useState(true);
   const [sort, setSort] = useState<{ key: "spend" | ColumnKey; dir: 1 | -1 }>({ key: "spend", dir: -1 });
   const [page, setPage] = useState(1);
@@ -262,7 +264,7 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
     return new Set(COLUMNS.map((column) => column.key));
   });
   useEffect(() => { const timer = setTimeout(() => setQ(search), 300); return () => clearTimeout(timer); }, [search]);
-  useEffect(() => { setPage(1); setSelected(new Set()); }, [view, q, business, accountId, productId, campaign?.id, adset?.id, assigned, range.from, range.to]);
+  useEffect(() => { setPage(1); setSelected(new Set()); }, [platform, view, q, business, accountId, productId, campaign?.id, adset?.id, assigned, range.from, range.to]);
   const toggleColumn = (key: ColumnKey) => {
     const next = new Set(columns);
     if (next.has(key)) next.delete(key); else next.add(key);
@@ -272,7 +274,7 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
 
   const length = daysBetween(range.from, range.to);
   const query = {
-    from: range.from, to: range.to, compareFrom: shift(range.from, -length), compareTo: shift(range.from, -1), view, chartDays,
+    from: range.from, to: range.to, compareFrom: shift(range.from, -length), compareTo: shift(range.from, -1), view, chartDays, platform: platform || undefined,
     q: q || undefined, business: business || undefined, accountId: accountId || undefined, productId: productId || undefined, campaignId: campaign?.id, adsetId: adset?.id
   };
   const { data, error, reload, setData } = useLoad(() => trackingHubApi.adSpend(query), [JSON.stringify(query)]);
@@ -299,7 +301,7 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
 
   const sub = compareWord(range);
   const header = (
-    <HubHeader crumb="Ad Spend" title="Ad Spend & Performance" subtitle="Automatically track daily ad spend from Meta and see performance by product, campaign and ad." actions={
+    <HubHeader crumb="Ad Spend" title="Ad Spend & Performance" subtitle="Automatically track daily ad spend from Meta and TikTok and see performance by product, campaign and ad." actions={
       <>
         <DateRangeButton range={range} onChange={onRange} />
         <label className="relative flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-4 py-2.5 dark:border-slate-700 dark:bg-slate-900">
@@ -382,7 +384,9 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
         try { await trackingHubApi.clearAdSpendMapping({ level, metaId: row.id, label: row.name }); onToast("Removed. The spend now follows the next rule up (or shows as not assigned)."); reload(); }
         catch (err: any) { onToast(`Couldn't remove: ${err?.message ?? "try again."}`); }
       } });
-      if (level !== "account" && row.accountId) {
+      if (level !== "account" && row.accountId && row.platform === "tiktok") {
+        items.push({ label: "Open in TikTok Ads Manager", onClick: () => window.open(`https://ads.tiktok.com/i18n/perf/campaign?aadvid=${encodeURIComponent(row.accountId!.replace(/^tt:/, ""))}`, "_blank", "noopener") });
+      } else if (level !== "account" && row.accountId) {
         const param = level === "campaign" ? "selected_campaign_ids" : level === "adset" ? "selected_adset_ids" : "selected_ad_ids";
         items.push({ label: "Open in Ads Manager", onClick: () => window.open(`https://adsmanager.facebook.com/adsmanager/manage/${level === "campaign" ? "campaigns" : level === "adset" ? "adsets" : "ads"}?act=${encodeURIComponent(row.accountId!)}&${param}=${encodeURIComponent(row.id)}`, "_blank", "noopener") });
       }
@@ -423,7 +427,7 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
 
       {!data.hasAccounts ? (
         <Card className="flex flex-wrap items-center justify-between gap-3 border-amber-200 bg-amber-50/60 px-5 py-4 dark:border-amber-900 dark:bg-amber-950/20">
-          <span className="text-[13.5px] text-amber-900 dark:text-amber-200"><strong>No Meta ad account is switched on.</strong> Connect your Meta Business in Data Sources and switch on its ad accounts; their spend then arrives here by itself.</span>
+          <span className="text-[13.5px] text-amber-900 dark:text-amber-200"><strong>No ad account is switched on.</strong> Connect your Meta Business or TikTok Ads in Data Sources and switch on its ad accounts; their spend then arrives here by itself.</span>
           <button type="button" onClick={() => onTab("sources")} className={smallButton}>Open Data Sources</button>
         </Card>
       ) : null}
@@ -514,7 +518,7 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
 
       <Card className="p-4">
         <div className="flex flex-wrap items-center gap-2.5">
-          <SearchBox value={search} onChange={setSearch} placeholder="Search products, campaigns or ad accounts…" className="min-w-[200px] flex-1 xl:max-w-[290px]" />
+          <SearchBox value={search} onChange={setSearch} placeholder="Search products, campaigns or ad accounts…" className="min-w-[180px] flex-1 xl:max-w-[220px]" />
           <Popover align="left" width="w-72" button={(toggle) => <button type="button" onClick={toggle} className={filterButton}>Date: {dateLabel}<ChevronDown className="h-4 w-4 text-gray-500" /></button>}>
             {(close) => (
               <>
@@ -530,7 +534,12 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
               </>
             )}
           </Popover>
-          <select value={business} onChange={(event) => { setBusiness(event.target.value); setAccountId(""); }} className={`${selectCls} w-[195px]`}>
+          <select value={data.platform} onChange={(event) => { setPlatform(event.target.value as HubAdPlatformChoice); setBusiness(""); setAccountId(""); setCampaign(null); setAdset(null); }} className={`${selectCls} w-[140px]`} title={data.connected.includes("tiktok") ? undefined : "Connect TikTok Ads in Data Sources to read TikTok's spend"}>
+            <option value="all">All Platforms</option>
+            <option value="meta">Meta</option>
+            <option value="tiktok">TikTok{data.connected.includes("tiktok") ? "" : " (not connected)"}</option>
+          </select>
+          <select value={business} onChange={(event) => { setBusiness(event.target.value); setAccountId(""); }} className={`${selectCls} w-[180px]`}>
             <option value="">All Business Accounts</option>
             {data.filters.businesses.map((row) => <option key={row.key} value={row.key}>{row.name}</option>)}
           </select>

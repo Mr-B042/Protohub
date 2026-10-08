@@ -13,8 +13,9 @@ import {
   hubAudit, journeyCounts, kpisOf, ledgerRow, loadBasics, loadHubSettings, pct, sumVisits, type HubSettings, type JourneyRow, type LedgerRow
 } from "../lib/tracking-hub-data.js";
 import { refreshAccount, refreshTargets } from "../lib/tracking-meta-refresh.js";
-import { AD_SPEND_VIEWS, allocate, buildReport, mappingIndex, validSplits, type AdSpendView } from "../lib/ad-spend.js";
-import { loadAdSpendInputs, suggestProduct, syncAdSpend } from "../lib/ad-spend-data.js";
+import { AD_SPEND_VIEWS, allocate, buildReport, mappingIndex, validSplits, type AdSpendView, type PlatformChoice } from "../lib/ad-spend.js";
+import { loadAdSpendInputs, loadTikTokConnections, suggestProduct, syncAdSpend } from "../lib/ad-spend-data.js";
+import { TIKTOK_URL_PARAMETERS, tiktokAdvertisers } from "../lib/tiktok-ads.js";
 
 // Tracking Hub (Bright, 2 Oct 2026; redesigned to his seven tab images the
 // same day). Owner only - it holds the Meta tokens. Numbers come from
@@ -119,11 +120,15 @@ router.get("/data-sources/:id", async (req, res) => {
     const assessment = await assess(orgId, branchId);
     const source = assessment.sourceRows.find((row: any) => row.id === String(req.params.id));
     if (!source) throw httpError(404, "Data source not found.");
-    const [{ data: lastServer }, { data: lastBrowser }, { data: logs }, { data: sends }, { data: raw }] = await Promise.all([
-      supabase.from("meta_capi_events").select("sent_at, status").eq("org_id", orgId).eq("pixel_id", source.pixelId).eq("status", "sent").order("sent_at", { ascending: false }).limit(1),
+    // A TikTok Pixel's server sales live in tracking_tiktok_events (CompletePayment).
+    const serverTable = source.platform === "tiktok" ? "tracking_tiktok_events" : "meta_capi_events";
+    const [{ data: lastServer }, { data: lastBrowser }, { data: logs }, { data: sendRows }, { data: raw }] = await Promise.all([
+      supabase.from(serverTable).select("sent_at, status").eq("org_id", orgId).eq("pixel_id", source.pixelId).eq("status", "sent").order("sent_at", { ascending: false }).limit(1),
       supabase.from("tracking_browser_events").select("fired_at").eq("org_id", orgId).eq("pixel_id", source.pixelId).order("fired_at", { ascending: false }).limit(1),
       supabase.from("tracking_audit").select("action, subject_label, detail, actor_name, created_at").eq("org_id", orgId).eq("branch_id", branchId).eq("subject_id", source.id).order("created_at", { ascending: false }).limit(50),
-      supabase.from("meta_capi_events").select("order_id, event_name, meta_event_name, status, message, test_mode, sent_at").eq("org_id", orgId).eq("pixel_id", source.pixelId).order("sent_at", { ascending: false }).limit(30),
+      source.platform === "tiktok"
+        ? supabase.from("tracking_tiktok_events").select("order_id, event_name, status, message, test_mode, sent_at").eq("org_id", orgId).eq("pixel_id", source.pixelId).order("sent_at", { ascending: false }).limit(30)
+        : supabase.from("meta_capi_events").select("order_id, event_name, meta_event_name, status, message, test_mode, sent_at").eq("org_id", orgId).eq("pixel_id", source.pixelId).order("sent_at", { ascending: false }).limit(30),
       supabase.from("tracking_data_sources").select("meta_stats").eq("id", source.id).maybeSingle()
     ]);
     const stats = (raw?.meta_stats ?? {}) as Record<string, any>;
@@ -138,7 +143,7 @@ router.get("/data-sources/:id", async (req, res) => {
       counts7d: stats.counts7d ?? null, prev7d: stats.prev7d ?? null, recent, recentLoaded: Boolean(stats.counts24h),
       issues: assessment.issues.filter((issue) => issue.subjectId === source.id),
       logs: (logs ?? []).map((row: any) => ({ at: row.created_at, action: row.action, by: row.actor_name, detail: row.detail })),
-      sends: (sends ?? []).map((row: any) => ({ at: row.sent_at, orderId: row.order_id, event: row.meta_event_name, status: row.status, message: row.message, test: row.test_mode }))
+      sends: ((sendRows ?? []) as any[]).map((row) => ({ at: row.sent_at, orderId: row.order_id, event: row.meta_event_name ?? row.event_name, status: row.status, message: row.message, test: row.test_mode }))
     });
   } catch (error: any) { fail(res, error, "Could not load the data source."); }
 });
@@ -1563,20 +1568,23 @@ router.get("/ad-spend", async (req, res) => {
     const products = new Map(data.basics.products.map((row) => [row.id, { name: row.name, imageUrl: row.imageUrl ?? null }]));
     const pieces = allocate(data.insights, mappingIndex(data.mappings), data.evidence, data.accounts);
     const str = (key: string) => (typeof req.query[key] === "string" && req.query[key] ? String(req.query[key]) : undefined);
+    // Default: every platform whose spend is read; Meta alone until TikTok is connected.
+    const asked = String(req.query.platform ?? "");
+    const platform = (["meta", "tiktok", "all"].includes(asked) ? asked : data.connected.includes("tiktok") ? "all" : "meta") as PlatformChoice;
     const report = buildReport({
       view, from: period.from, to: period.to, compareFrom: period.compareFrom, compareTo: period.compareTo, trendDays, chartDays,
-      pieces, orders: data.orders, accounts: data.accounts, products,
-      filters: { productId: str("productId"), campaignId: str("campaignId"), adsetId: str("adsetId"), accountId: str("accountId")?.replace(/^act_/, ""), businessKey: str("business"), q: str("q") }
+      pieces, orders: data.orders, accounts: data.accounts, products, connected: data.connected,
+      filters: { platform, productId: str("productId"), campaignId: str("campaignId"), adsetId: str("adsetId"), accountId: str("accountId")?.replace(/^act_/, ""), businessKey: str("business"), q: str("q") }
     });
     const days: string[] = [];
     for (let day = period.from; day <= period.to; day = addDaysToDateKey(day, 1)) days.push(day);
     const accounts = Array.from(data.accounts.values());
     res.json({
-      period, view, ...report,
+      period, view, platform, connected: data.connected, ...report,
       final: days.every((day) => data.finalDays.has(day)),
       autoSync: data.state?.auto_sync !== false,
       lastSync: data.state?.last_sync_at ? { at: data.state.last_sync_at, ok: data.state.last_sync_ok !== false, message: data.state.last_sync_message ?? null, trigger: data.state.last_sync_trigger ?? null } : null,
-      hasAccounts: refreshTargets(data.basics).length > 0,
+      hasAccounts: refreshTargets(data.basics).length > 0 || data.connected.includes("tiktok"),
       mappings: data.mappings.map((row) => ({ level: row.level, metaId: row.meta_id, label: row.label, splits: row.splits, by: row.created_by_name, at: row.updated_at })),
       filters: {
         businesses: Array.from(new Map(accounts.filter((row) => row.businessKey).map((row) => [row.businessKey, row.businessName])).entries()).map(([key, name]) => ({ key, name })),
@@ -1681,6 +1689,102 @@ router.put("/ad-spend/auto-sync", async (req, res) => {
     await hubAudit(orgId, branchId, actorOf(req), parsed.data.on ? "ad_spend_auto_sync_on" : "ad_spend_auto_sync_off", { type: "ad_spend" });
     res.json({ ok: true, autoSync: parsed.data.on });
   } catch (error: any) { fail(res, error, "Could not save."); }
+});
+
+
+// ------------------------------------------------ TikTok Ads Manager (spend)
+// (Bright, 8 Oct 2026) A Marketing API token from a TikTok for Business
+// developer app, plus the advertiser accounts it was authorised to.
+
+const tiktokConnectionView = (row: any) => ({
+  id: row.id, name: row.name, hasToken: Boolean(row.access_token), advertisers: row.advertisers ?? [],
+  lastCheckAt: row.last_check_at, lastCheckOk: row.last_check_ok, lastCheckMessage: row.last_check_message
+});
+const advertiserIdsOf = (raw: string) => Array.from(new Set(raw.split(/[\s,;]+/).map((id) => id.trim()).filter(Boolean)));
+
+router.get("/tiktok-connections", async (req, res) => {
+  try {
+    res.json({ connections: (await loadTikTokConnections(req.user!.orgId, branchOf(req))).map(tiktokConnectionView), urlParameters: TIKTOK_URL_PARAMETERS });
+  } catch (error: any) { fail(res, error, "Could not load the TikTok connections."); }
+});
+
+async function checkTikTok(token: string, ids: string[], previous: any[] = []) {
+  if (ids.some((id) => !/^\d{6,22}$/.test(id))) throw httpError(400, "An advertiser ID is only digits (TikTok Ads Manager shows it under the account name).");
+  const result = await tiktokAdvertisers(token, ids);
+  if (!result.ok) throw httpError(400, `TikTok refused: ${result.message}`);
+  const before = new Map(previous.map((row) => [String(row.id), row]));
+  return result.data.map((row) => ({ ...row, active: before.has(row.id) ? before.get(row.id).active !== false && row.hasAccess : row.hasAccess }));
+}
+
+router.post("/tiktok-connections", async (req, res) => {
+  const parsed = z.object({ name: z.string().trim().max(120).default(""), accessToken: z.string().trim().min(10).max(500), advertiserIds: z.string().trim().min(1).max(2000) }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Paste the access token and at least one advertiser ID." }); return; }
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const advertisers = await checkTikTok(parsed.data.accessToken, advertiserIdsOf(parsed.data.advertiserIds));
+    const readable = advertisers.filter((row) => row.hasAccess).length;
+    const now = new Date().toISOString();
+    const { data, error } = await supabase.from("tracking_tiktok_connections").insert({
+      org_id: orgId, branch_id: branchId, name: parsed.data.name || advertisers.find((row) => row.name)?.name || "TikTok Ads", access_token: parsed.data.accessToken, advertisers,
+      last_check_at: now, last_check_ok: readable > 0, last_check_message: `${readable} of ${advertisers.length} advertiser account${advertisers.length === 1 ? "" : "s"} can be read.`, created_by: req.user!.id
+    }).select("*").single();
+    if (error) throw error;
+    await hubAudit(orgId, branchId, actorOf(req), "tiktok_connected", { type: "tiktok_connection", id: data.id, label: data.name }, { advertisers: advertisers.length, readable });
+    res.status(201).json(tiktokConnectionView(data));
+  } catch (error: any) { fail(res, error, "Could not connect TikTok."); }
+});
+
+router.put("/tiktok-connections/:id", async (req, res) => {
+  const parsed = z.object({ name: z.string().trim().max(120).optional(), accessToken: z.string().trim().max(500).optional(), advertiserIds: z.string().trim().max(2000).optional() }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Check the details." }); return; }
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const { data: row } = await supabase.from("tracking_tiktok_connections").select("*").eq("org_id", orgId).eq("branch_id", branchId).eq("id", String(req.params.id)).maybeSingle();
+    if (!row) throw httpError(404, "TikTok connection not found.");
+    const token = parsed.data.accessToken && parsed.data.accessToken !== SECRET_MASK ? parsed.data.accessToken : row.access_token;
+    if (!token) throw httpError(400, "Paste the access token.");
+    const ids = parsed.data.advertiserIds !== undefined ? advertiserIdsOf(parsed.data.advertiserIds) : ((row.advertisers ?? []) as any[]).map((adv) => String(adv.id));
+    const advertisers = await checkTikTok(token, ids, row.advertisers ?? []);
+    const readable = advertisers.filter((adv) => adv.hasAccess).length;
+    const { data, error } = await supabase.from("tracking_tiktok_connections").update({
+      name: parsed.data.name || row.name, access_token: token, advertisers, last_check_at: new Date().toISOString(), last_check_ok: readable > 0,
+      last_check_message: `${readable} of ${advertisers.length} advertiser account${advertisers.length === 1 ? "" : "s"} can be read.`, updated_at: new Date().toISOString()
+    }).eq("id", row.id).select("*").single();
+    if (error) throw error;
+    await hubAudit(orgId, branchId, actorOf(req), "tiktok_connection_updated", { type: "tiktok_connection", id: row.id, label: data.name }, { advertisers: advertisers.length, readable });
+    res.json(tiktokConnectionView(data));
+  } catch (error: any) { fail(res, error, "Could not save the TikTok connection."); }
+});
+
+router.put("/tiktok-connections/:id/advertisers/:advertiserId/active", async (req, res) => {
+  const parsed = z.object({ active: z.boolean() }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "On or off?" }); return; }
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const { data: row } = await supabase.from("tracking_tiktok_connections").select("id, name, advertisers").eq("org_id", orgId).eq("branch_id", branchId).eq("id", String(req.params.id)).maybeSingle();
+    if (!row) throw httpError(404, "TikTok connection not found.");
+    const advertisers = ((row.advertisers ?? []) as any[]).map((adv) => (String(adv.id) === String(req.params.advertiserId) ? { ...adv, active: parsed.data.active } : adv));
+    const { error } = await supabase.from("tracking_tiktok_connections").update({ advertisers, updated_at: new Date().toISOString() }).eq("id", row.id);
+    if (error) throw error;
+    await hubAudit(orgId, branchId, actorOf(req), parsed.data.active ? "tiktok_advertiser_on" : "tiktok_advertiser_off", { type: "tiktok_connection", id: row.id, label: row.name }, { advertiserId: req.params.advertiserId });
+    res.json({ ok: true });
+  } catch (error: any) { fail(res, error, "Could not save."); }
+});
+
+router.delete("/tiktok-connections/:id", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const { data: row } = await supabase.from("tracking_tiktok_connections").select("id, name").eq("org_id", orgId).eq("branch_id", branchId).eq("id", String(req.params.id)).maybeSingle();
+    if (!row) throw httpError(404, "TikTok connection not found.");
+    const { error } = await supabase.from("tracking_tiktok_connections").delete().eq("id", row.id);
+    if (error) throw error;
+    await hubAudit(orgId, branchId, actorOf(req), "tiktok_disconnected", { type: "tiktok_connection", id: row.id, label: row.name });
+    res.json({ ok: true });
+  } catch (error: any) { fail(res, error, "Could not remove the TikTok connection."); }
 });
 
 // ============================================================= DIAGNOSTICS

@@ -4565,12 +4565,17 @@ export type HubSpendSplit = { productId: string; share: number };
 export type HubAdSpendMetrics = { spend: number; orders: number; delivered: number; revenue: number; profit: number; cpa: number | null; cpdo: number | null; deliveredAov: number | null; roas: number | null };
 export type HubAdSpendRow = HubAdSpendMetrics & {
   id: string; name: string; image: string | null; campaigns: number; adsets: number; ads: number; accounts: number;
-  accountId: string | null; accountName: string | null; campaignId: string | null; campaignName: string | null; adsetId: string | null; adsetName: string | null;
+  platform: "meta" | "tiktok" | null; accountId: string | null; accountName: string | null; campaignId: string | null; campaignName: string | null; adsetId: string | null; adsetName: string | null;
   products: Array<{ id: string; name: string }>; mappingSource: HubAdSpendLevel | "link" | "mixed" | null; unassignedSpend: number;
   spendChange: number | null; trend: number[];
 };
+export type HubAdPlatformChoice = "meta" | "tiktok" | "all";
+export type HubTikTokConnection = {
+  id: string; name: string; hasToken: boolean; lastCheckAt: string | null; lastCheckOk: boolean | null; lastCheckMessage: string | null;
+  advertisers: Array<{ id: string; name: string; currency: string | null; timezone: string | null; hasAccess: boolean; active: boolean }>;
+};
 export type HubAdSpend = {
-  period: HubPeriod; view: HubAdSpendView; kpis: HubAdSpendMetrics; previous: HubAdSpendMetrics; rows: HubAdSpendRow[];
+  period: HubPeriod; view: HubAdSpendView; platform: HubAdPlatformChoice; connected: Array<"meta" | "tiktok">; kpis: HubAdSpendMetrics; previous: HubAdSpendMetrics; rows: HubAdSpendRow[];
   chart: Array<{ day: string; spend: number; orders: number; delivered: number }>;
   byProduct: Array<{ id: string; name: string; spend: number; share: number }>;
   unmapped: { spend: number; campaigns: number };
@@ -4644,7 +4649,12 @@ export const trackingHubApi = {
   saveAdSpendMapping: (body: { level: HubAdSpendLevel; metaId: string; adAccountId?: string | null; label: string; splits: HubSpendSplit[] }) => put<{ ok: true }>("/api/tracking-hub/ad-spend/mappings", body),
   clearAdSpendMapping: (body: { level: HubAdSpendLevel; metaId: string; label: string }) => post<{ ok: true }>("/api/tracking-hub/ad-spend/mappings/clear", body),
   syncAdSpend: (period: { from: string; to: string }) => post<{ ok: boolean; accounts: number; failed: string[]; message: string }>("/api/tracking-hub/ad-spend/sync", period),
-  setAdSpendAutoSync: (on: boolean) => put<{ ok: true; autoSync: boolean }>("/api/tracking-hub/ad-spend/auto-sync", { on })
+  setAdSpendAutoSync: (on: boolean) => put<{ ok: true; autoSync: boolean }>("/api/tracking-hub/ad-spend/auto-sync", { on }),
+  tiktokConnections: () => get<{ connections: HubTikTokConnection[]; urlParameters: string }>("/api/tracking-hub/tiktok-connections"),
+  connectTikTok: (body: { name: string; accessToken: string; advertiserIds: string }) => post<HubTikTokConnection>("/api/tracking-hub/tiktok-connections", body),
+  saveTikTok: (id: string, body: { name?: string; accessToken?: string; advertiserIds?: string }) => put<HubTikTokConnection>(`/api/tracking-hub/tiktok-connections/${hubId(id)}`, body),
+  setTikTokAdvertiserActive: (id: string, advertiserId: string, active: boolean) => put<{ ok: true }>(`/api/tracking-hub/tiktok-connections/${hubId(id)}/advertisers/${hubId(advertiserId)}/active`, { active }),
+  removeTikTok: (id: string) => del<{ ok: true }>(`/api/tracking-hub/tiktok-connections/${hubId(id)}`)
 };
 
 // ── Team Challenges (Bright, 3 Oct 2026) ─────────────────────────────────────

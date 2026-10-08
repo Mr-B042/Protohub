@@ -28,10 +28,38 @@ export const AD_SPEND_VIEWS: AdSpendView[] = ["product", "campaign", "adset", "a
 export type Split = { productId: string; share: number };
 export type MappingSource = AdSpendLevel | "link" | null;
 
+export type AdPlatform = "meta" | "tiktok";
+export type PlatformChoice = AdPlatform | "all";
+/** TikTok ids are kept as "tt:<id>" everywhere in this file, so they can never meet a Meta id. */
+export const TIKTOK_PREFIX = "tt:";
+
 export type SpendInsight = {
+  platform?: AdPlatform;
   day: string; spend: number; ad_account_id: string;
   campaign_id: string; campaign_name: string; adset_id: string; adset_name: string; ad_id: string; ad_name: string;
 };
+const TIKTOK_ID = /^\d{8,22}$/;
+export const nameKey = (name: unknown) => String(name ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+
+/**
+ * Campaign / ad group / ad of a TikTok order: the ids its ad link passed
+ * (utm_id / utm_term / utm_content, see TIKTOK_URL_PARAMETERS), else its
+ * campaign NAME when exactly one TikTok campaign has it - today's TikTok ads
+ * only pass utm_campaign=<name>. Only used to COUNT orders on a campaign row;
+ * spend never follows names.
+ */
+export function tiktokOrderIds(order: { form_context?: Record<string, unknown> | null; utm_campaign?: string | null; utm_term?: string | null; utm_content?: string | null }, campaignByName: Map<string, string | null>) {
+  const ctx = order.form_context ?? {};
+  const pick = (...values: unknown[]) => { for (const value of values) if (typeof value === "string" && TIKTOK_ID.test(value.trim())) return `${TIKTOK_PREFIX}${value.trim()}`; return null; };
+  // An id that is not one of the TikTok campaigns read gives way to a clear name match.
+  const byId = pick(ctx.campaignId, ctx.campaign_id, ctx.utmId, ctx.utm_id);
+  const byName = campaignByName.get(nameKey(order.utm_campaign ?? ctx.utmCampaign)) ?? null;
+  const known = new Set(Array.from(campaignByName.values()).filter(Boolean));
+  const campaignId = byId && (known.has(byId) || !byName) ? byId : byName ?? byId;
+  return { campaignId, adsetId: pick(ctx.adsetId, ctx.adset_id, order.utm_term), adId: pick(ctx.adId, ctx.ad_id, order.utm_content) };
+}
+
+/** Every order of the branch placed in the window (not only form orders); review holds left out. */
 export type SpendMapping = { level: AdSpendLevel; meta_id: string; splits: Split[] };
 export type SpendOrder = {
   id: string; day: string; productId: string | null; status: string; amount: number; productCost: number; deliveryFee: number;
@@ -42,6 +70,7 @@ export type SpendOrder = {
 export type AccountInfo = { accountId: string; name: string; businessKey: string; businessName: string };
 
 export type SpendPiece = {
+  platform: AdPlatform;
   day: string; spend: number; productId: string | null; source: MappingSource;
   accountId: string; businessKey: string; campaignId: string; campaignName: string; adsetId: string; adsetName: string; adId: string; adName: string;
 };
@@ -107,6 +136,7 @@ export function allocate(insights: SpendInsight[], index: Map<string, Split[]>, 
     if (spend === 0) continue;
     const account = accounts.get(row.ad_account_id);
     const base = {
+      platform: row.platform ?? ("meta" as AdPlatform),
       day: String(row.day).slice(0, 10), accountId: row.ad_account_id, businessKey: account?.businessKey ?? "",
       campaignId: row.campaign_id, campaignName: row.campaign_name, adsetId: row.adset_id, adsetName: row.adset_name, adId: row.ad_id, adName: row.ad_name
     };
@@ -119,7 +149,7 @@ export function allocate(insights: SpendInsight[], index: Map<string, Split[]>, 
 
 // ---------------------------------------------------------------- report
 
-export type ReportFilters = { productId?: string; campaignId?: string; adsetId?: string; accountId?: string; businessKey?: string; q?: string };
+export type ReportFilters = { platform?: PlatformChoice; productId?: string; campaignId?: string; adsetId?: string; accountId?: string; businessKey?: string; q?: string };
 export type Metrics = { spend: number; orders: number; delivered: number; revenue: number; profit: number; cpa: number | null; cpdo: number | null; deliveredAov: number | null; roas: number | null };
 
 function metricsOf(spend: number, orders: SpendOrder[]): Metrics {
@@ -137,6 +167,8 @@ export type ReportInput = {
   view: AdSpendView; from: string; to: string; compareFrom: string; compareTo: string; trendDays: string[]; chartDays: string[];
   pieces: SpendPiece[]; orders: SpendOrder[]; filters: ReportFilters;
   accounts: Map<string, AccountInfo>; products: Map<string, { name: string; imageUrl: string | null }>;
+  /** Platforms whose spend Protohub reads. "All" only counts orders of these. */
+  connected?: AdPlatform[];
 };
 
 export function buildReport(input: ReportInput) {
@@ -152,8 +184,19 @@ export function buildReport(input: ReportInput) {
   const orderAccount = (order: SpendOrder) => { const campaign = orderCampaign(order); return campaign ? accountOfCampaign.get(campaign) ?? null : null; };
   const orderBusiness = (order: SpendOrder) => { const account = orderAccount(order); return account ? input.accounts.get(account)?.businessKey ?? null : null; };
 
+  const platform: PlatformChoice = filters.platform ?? "meta";
+  const connected = new Set<AdPlatform>(input.connected ?? ["meta"]);
+  // Which orders this platform choice may count: Meta = not from another ad
+  // platform; TikTok = TikTok's; All = Meta's plus each connected platform's.
+  const orderPlatformOk = (order: SpendOrder) => {
+    const from = order.otherPlatform ?? null;
+    if (platform === "meta") return !from;
+    if (platform === "tiktok") return from === "TikTok";
+    return !from || (from === "TikTok" && connected.has("tiktok"));
+  };
   const pieceMatches = (piece: SpendPiece) =>
-    (!filters.productId || (filters.productId === UNMAPPED ? piece.productId === null : piece.productId === filters.productId))
+    (platform === "all" || piece.platform === platform)
+    && (!filters.productId || (filters.productId === UNMAPPED ? piece.productId === null : piece.productId === filters.productId))
     && (!filters.campaignId || piece.campaignId === filters.campaignId)
     && (!filters.adsetId || piece.adsetId === filters.adsetId)
     && (!filters.accountId || piece.accountId === filters.accountId)
@@ -169,7 +212,7 @@ export function buildReport(input: ReportInput) {
 
   const pieces = input.pieces.filter(pieceMatches);
   const matched = filters.productId === UNMAPPED ? [] : input.orders.filter(orderMatches);
-  const orders = matched.filter((order) => !order.otherPlatform);
+  const orders = matched.filter(orderPlatformOk);
   const period = (rows: SpendPiece[], from: string, to: string) => rows.filter((piece) => inRange(piece.day, from, to));
   const periodOrders = (rows: SpendOrder[], from: string, to: string) => rows.filter((order) => inRange(order.day, from, to));
   const nowPieces = period(pieces, input.from, input.to);
@@ -191,7 +234,7 @@ export function buildReport(input: ReportInput) {
   const counted = new Set(totalsOrders(nowPieces, nowOrders).map((order) => order.productId));
   const leftOutByPlatform = new Map<string, number>();
   for (const order of periodOrders(matched, input.from, input.to)) {
-    if (order.otherPlatform && order.productId && (counted.has(order.productId) || filters.productId)) leftOutByPlatform.set(order.otherPlatform, (leftOutByPlatform.get(order.otherPlatform) ?? 0) + 1);
+    if (order.otherPlatform && !orderPlatformOk(order) && order.productId && (counted.has(order.productId) || filters.productId)) leftOutByPlatform.set(order.otherPlatform, (leftOutByPlatform.get(order.otherPlatform) ?? 0) + 1);
   }
   const previous = metricsOf(sum(prevPieces), totalsOrders(prevPieces, prevOrders));
 
@@ -241,6 +284,7 @@ export function buildReport(input: ReportInput) {
       image: view === "product" && group.id !== UNMAPPED ? input.products.get(group.id)?.imageUrl ?? null : null,
       campaigns: distinct(group.pieces, (piece) => piece.campaignId), adsets: distinct(group.pieces, (piece) => piece.adsetId),
       ads: distinct(group.pieces, (piece) => piece.adId), accounts: distinct(group.pieces, (piece) => piece.accountId),
+      platform: first?.platform ?? null,
       accountId: first?.accountId ?? null, accountName, campaignId: first?.campaignId ?? null, campaignName: first?.campaignName ?? null, adsetId: first?.adsetId ?? null, adsetName: first?.adsetName ?? null,
       products: productIds.filter(Boolean).map((id) => ({ id: id!, name: input.products.get(id!)?.name ?? "Deleted product" })),
       // "ad" / "adset" / "campaign" / "account" = set by the Owner at that level; "link" = from the tracking link; "mixed" = parts differ.

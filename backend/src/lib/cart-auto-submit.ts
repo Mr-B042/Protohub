@@ -19,7 +19,7 @@ import { resolveMetaTrackingConfig, recordMetaCapiEvent, sendMetaCapiPurchase } 
 import { serverEventsAllowed, withDataSource } from "./tracking-credentials.js";
 import { purchasePixelFor } from "./tracking-click-pixel.js";
 import { orderAdIds } from "./tracking-hub.js";
-import { sendTikTokConversion } from "./tiktok-events.js";
+import { sendTikTokSale } from "./tracking-tiktok.js";
 import { assignOrderRep } from "./order-assignment.js";
 import { notifyOutageRecoveredOrder } from "./order-notifications.js";
 import { buildPackageComponentSnapshot } from "./order-inventory.js";
@@ -437,31 +437,20 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
       })).catch(() => {});
     }
 
-    // TikTok Events API — fire for TikTok-sourced orders (customer left, no pixel).
-    // Uses the same config row's TikTok credentials + the captured ttclid.
+    // TikTok orders (customer left, no pixel): the sale goes to the branch's ONE
+    // TikTok Pixel, once (lib/tracking-tiktok.ts, shared with the form).
     const ttclid = capturePayload.ttclid ?? formContext.ttclid ?? null;
     const isTikTok = source === "TikTok"
       || String(capturePayload.utm_source ?? capturePayload.utmSource ?? "").toLowerCase() === "tiktok"
       || Boolean(ttclid);
-    if (isTikTok && storedMetaConfig?.tiktok_pixel_id && storedMetaConfig?.tiktok_access_token) {
-      void sendTikTokConversion({
-        config: { pixelId: storedMetaConfig.tiktok_pixel_id, accessToken: storedMetaConfig.tiktok_access_token, testEventCode: storedMetaConfig.test_event_code ?? null },
-        eventId: String(order.id),
-        eventSourceUrl: capturePayload.landingUrl ?? null,
-        clientIp: null,
-        userAgent: null,
-        phone: customerPhone,
-        email: null,
-        ttclid,
-        value: amount,
-        currency: cart.currency ?? "NGN",
-        orderId: String(order.id),
-        productId: product.id,
-        productName: product.name,
-        packageId: pkg.id,
-        packageName: pkg.name,
-        quantity: pkg.quantity ?? 1
-      }).catch(() => {});
+    if (isTikTok) {
+      void sendTikTokSale({
+        orgId, branchId: autoBranchId ?? null, orderId: String(order.id), ttclid: ttclid ? String(ttclid) : null,
+        eventSourceUrl: capturePayload.landingPageUrl ?? capturePayload.landingUrl ?? null, clientIp: null, userAgent: null,
+        phone: customerPhone, email: null, value: amount, currency: cart.currency ?? "NGN",
+        productId: product.id, productName: product.name, packageId: pkg.id, packageName: pkg.name, quantity: pkg.quantity ?? 1,
+        legacy: storedMetaConfig ? { pixelId: storedMetaConfig.tiktok_pixel_id ?? null, token: storedMetaConfig.tiktok_access_token ?? null, testEventCode: storedMetaConfig.test_event_code ?? null } : null
+      });
     }
   } catch { /* tracking failure never blocks */ }
 }
