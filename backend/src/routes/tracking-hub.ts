@@ -14,7 +14,8 @@ import {
 } from "../lib/tracking-hub-data.js";
 import { refreshAccount, refreshTargets } from "../lib/tracking-meta-refresh.js";
 import { AD_SPEND_VIEWS, allocate, buildReport, mappingIndex, validSplits, type AdSpendView, type PlatformChoice } from "../lib/ad-spend.js";
-import { loadAdSpendInputs, loadTikTokConnections, suggestProduct, syncAdSpend } from "../lib/ad-spend-data.js";
+import { loadAdSpendInputs, loadSinceStart, loadTikTokConnections, suggestProduct, syncAdSpend } from "../lib/ad-spend-data.js";
+import { RULES as SINCE_START_RULES, VERDICT_ORDER } from "../lib/ad-since-start.js";
 import { TIKTOK_URL_PARAMETERS, tiktokAdvertisers } from "../lib/tiktok-ads.js";
 
 // Tracking Hub (Bright, 2 Oct 2026; redesigned to his seven tab images the
@@ -1676,6 +1677,37 @@ router.post("/ad-spend/sync", async (req, res) => {
     await hubAudit(orgId, branchId, actorOf(req), "ad_spend_synced", { type: "ad_spend" }, { from, to: today, accounts: result.accounts, ok: result.ok });
     res.json(result);
   } catch (error: any) { fail(res, error, "Couldn't read Meta's spend."); }
+});
+
+/** Since Start: each campaign over its whole life, with a verdict by Bright's rules. */
+router.get("/ad-spend/since-start", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const result = await loadSinceStart(orgId, branchId, lagosDateKey());
+    const platform = String(req.query.platform ?? "all");
+    const rows = result.rows.filter((row) => platform === "all" || row.platform === platform)
+      .sort((a, b) => VERDICT_ORDER.indexOf(a.verdict) - VERDICT_ORDER.indexOf(b.verdict) || b.spend - a.spend);
+    res.json({ ...result, rows, rules: SINCE_START_RULES });
+  } catch (error: any) { fail(res, error, "Could not load Since Start."); }
+});
+
+router.put("/ad-spend/targets", async (req, res) => {
+  const parsed = z.object({ productId: z.string().uuid(), targetCpa: z.number().positive().max(100_000_000).nullable() }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Type a cost per order above ₦0, or clear it." }); return; }
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const { productId, targetCpa } = parsed.data;
+    const { data: product } = await supabase.from("products").select("name").eq("org_id", orgId).eq("id", productId).maybeSingle();
+    if (!product) throw httpError(404, "Product not found.");
+    const result = targetCpa === null
+      ? await supabase.from("tracking_ad_spend_targets").delete().eq("org_id", orgId).eq("branch_id", branchId).eq("product_id", productId)
+      : await supabase.from("tracking_ad_spend_targets").upsert({ org_id: orgId, branch_id: branchId, product_id: productId, target_cpa: Math.round(targetCpa), updated_by_name: req.user!.name ?? null, updated_at: new Date().toISOString() }, { onConflict: "org_id,branch_id,product_id" });
+    if (result.error) throw result.error;
+    await hubAudit(orgId, branchId, actorOf(req), targetCpa === null ? "ad_spend_target_cleared" : "ad_spend_target_set", { type: "product", id: productId, label: product.name }, { targetCpa });
+    res.json({ ok: true });
+  } catch (error: any) { fail(res, error, "Could not save the target."); }
 });
 
 router.put("/ad-spend/auto-sync", async (req, res) => {

@@ -4570,6 +4570,20 @@ export type HubAdSpendRow = HubAdSpendMetrics & {
   spendChange: number | null; trend: number[];
 };
 export type HubAdPlatformChoice = "meta" | "tiktok" | "all";
+export type HubVerdict2 = "winning" | "keep" | "learning" | "turn_off" | "check_tracking" | "no_target";
+export type HubSinceStartRates = { spend: number; impressions: number; linkClicks: number; platformPurchases: number; hookRate: number | null; holdRate: number | null; ctr: number | null; cpm: number | null };
+export type HubSinceStartRow = HubSinceStartRates & {
+  campaignId: string; campaignName: string; platform: "meta" | "tiktok"; accountId: string; accountName: string; status: string | null; running: boolean;
+  start: string | null; days: number; ordersCountedFrom: string | null; productId: string | null; productName: string | null; products: number;
+  orders: number; delivered: number; cpa: number | null; cpdo: number | null; target: number | null; targetSource: "worked_out" | "set_by_you" | "mixed" | null;
+  verdict: HubVerdict2; reason: string; advice: string[];
+  ads: Array<HubSinceStartRates & { adId: string; adName: string; adsetName: string; firstDay: string | null; orders: number; cpa: number | null }>;
+};
+export type HubSinceStart = {
+  rows: HubSinceStartRow[]; ordersFrom: string; linkedShare: number | null; lastLifetimeAt: string | null;
+  rules: { minDays: number; minSpendTimesTarget: number; winningBelow: number; hookWeak: number; hookStrong: number; breakEvenMinOrders: number };
+  targets: Array<{ productId: string; name: string; breakEven: number | null; deliveryRate: number | null; margin: number | null; basedOn: number; own: number | null; ownBy: string | null }>;
+};
 export type HubTikTokConnection = {
   id: string; name: string; hasToken: boolean; lastCheckAt: string | null; lastCheckOk: boolean | null; lastCheckMessage: string | null;
   advertisers: Array<{ id: string; name: string; currency: string | null; timezone: string | null; hasAccess: boolean; active: boolean }>;
@@ -4650,6 +4664,8 @@ export const trackingHubApi = {
   clearAdSpendMapping: (body: { level: HubAdSpendLevel; metaId: string; label: string }) => post<{ ok: true }>("/api/tracking-hub/ad-spend/mappings/clear", body),
   syncAdSpend: (period: { from: string; to: string }) => post<{ ok: boolean; accounts: number; failed: string[]; message: string }>("/api/tracking-hub/ad-spend/sync", period),
   setAdSpendAutoSync: (on: boolean) => put<{ ok: true; autoSync: boolean }>("/api/tracking-hub/ad-spend/auto-sync", { on }),
+  sinceStart: (platform: string) => get<HubSinceStart>(`/api/tracking-hub/ad-spend/since-start?platform=${encodeURIComponent(platform)}`),
+  setAdSpendTarget: (productId: string, targetCpa: number | null) => put<{ ok: true }>("/api/tracking-hub/ad-spend/targets", { productId, targetCpa }),
   tiktokConnections: () => get<{ connections: HubTikTokConnection[]; urlParameters: string }>("/api/tracking-hub/tiktok-connections"),
   connectTikTok: (body: { name: string; accessToken: string; advertiserIds: string }) => post<HubTikTokConnection>("/api/tracking-hub/tiktok-connections", body),
   saveTikTok: (id: string, body: { name?: string; accessToken?: string; advertiserIds?: string }) => put<HubTikTokConnection>(`/api/tracking-hub/tiktok-connections/${hubId(id)}`, body),

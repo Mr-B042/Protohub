@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import SinceStartView from "./SinceStartView";
 import { Bar, CartesianGrid, Cell, ComposedChart, LabelList, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   AlertTriangle, ArrowUpDown, BarChart3, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Columns3, Database, Download, Filter, Plus, RefreshCw, ShoppingCart, Trash2, Truck, Users, Wallet, X
@@ -241,6 +242,8 @@ function UnmappedModal({ range, products, onClose, onSaved, onSplit, onToast }: 
 export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: { tabBar: ReactNode; range: Range; onRange: (range: Range) => void; onToast: Toast; onTab: (tab: HubTab) => void }) {
   const [compare, setCompare] = useState<"previous" | "none">("previous");
   const [view, setView] = useState<HubAdSpendView>("product");
+  // "Since Start" judges whole campaign lives, so it has its own filters and ignores the date.
+  const [sinceStart, setSinceStart] = useState(false);
   const [chartDays, setChartDays] = useState(7);
   const [search, setSearch] = useState("");
   const [q, setQ] = useState("");
@@ -517,6 +520,8 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
       ) : null}
 
       <Card className="p-4">
+        {!sinceStart ? (
+          <>
         <div className="flex flex-wrap items-center gap-2.5">
           <SearchBox value={search} onChange={setSearch} placeholder="Search products, campaigns or ad accounts…" className="min-w-[180px] flex-1 xl:max-w-[220px]" />
           <Popover align="left" width="w-72" button={(toggle) => <button type="button" onClick={toggle} className={filterButton}>Date: {dateLabel}<ChevronDown className="h-4 w-4 text-gray-500" /></button>}>
@@ -567,14 +572,18 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
           </div>
         </div>
 
+          </>
+        ) : null}
         <div className="mt-3 flex flex-wrap items-end justify-between gap-3 border-b border-gray-200 dark:border-slate-800">
           <div className="-mb-px flex min-w-0 overflow-x-auto">
             {VIEWS.map((item) => (
-              <button key={item.key} type="button" onClick={() => setView(item.key)}
-                className={`!min-h-0 whitespace-nowrap border-b-2 px-3 py-3 text-[13px] font-semibold ${view === item.key ? "border-blue-600 text-blue-600" : "border-transparent text-gray-600 hover:text-gray-900 dark:text-slate-300"}`}>{item.label}</button>
+              <button key={item.key} type="button" onClick={() => { setView(item.key); setSinceStart(false); }}
+                className={`!min-h-0 whitespace-nowrap border-b-2 px-3 py-3 text-[13px] font-semibold ${!sinceStart && view === item.key ? "border-blue-600 text-blue-600" : "border-transparent text-gray-600 hover:text-gray-900 dark:text-slate-300"}`}>{item.label}</button>
             ))}
+            <button type="button" onClick={() => setSinceStart(true)}
+              className={`!min-h-0 whitespace-nowrap border-b-2 px-3 py-3 text-[13px] font-semibold ${sinceStart ? "border-blue-600 text-blue-600" : "border-transparent text-gray-600 hover:text-gray-900 dark:text-slate-300"}`}>Since Start</button>
           </div>
-          <div className="ml-auto flex flex-wrap items-center gap-3 pb-2">
+          <div className={`ml-auto flex flex-wrap items-center gap-3 pb-2 ${sinceStart ? "hidden" : ""}`}>
             <span className="flex items-center gap-2 text-[13px] text-gray-700 dark:text-slate-300">Show Charts <Toggle checked={showCharts} onChange={setShowCharts} /></span>
             <div className="inline-flex rounded-lg border border-gray-200 p-0.5 dark:border-slate-700">
               {(["day", "week", "month"] as const).map((kind) => (
@@ -591,6 +600,8 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
           </div>
         </div>
 
+        {sinceStart ? <SinceStartView platform={data.platform} onToast={onToast} /> : (
+          <>
         {productId || campaign || adset || accountId || business ? (
           <div className="mt-3 flex flex-wrap items-center gap-2 text-[12.5px]">
             <span className="text-gray-500">Showing only:</span>
@@ -663,6 +674,8 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
             <button type="button" aria-label="Next" disabled={page >= pages} onClick={() => setPage(page + 1)} className="!min-h-0 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 text-gray-500 disabled:opacity-40 dark:border-slate-700"><ChevronRight className="h-4 w-4" /></button>
           </div>
         </div>
+          </>
+        )}
       </Card>
 
       {mapping ? (
