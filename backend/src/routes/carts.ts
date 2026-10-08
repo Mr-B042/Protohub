@@ -14,7 +14,7 @@ import {
   mondayOf, RANGE_PRESETS, repDayStatus, resolveRange, summariseRepPenalties, todayStanding,
   type RangePreset, type RepDayInput
 } from "../lib/cart-log-penalty.js";
-import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
+import { REPORT_ROW_CEILING, selectByIdBatches } from "../lib/query-limits.js";
 import {
   CLOSING_RUSH_WAIT_MINUTES, CLOSING_RUSH_WINDOW_MINUTES,
   DEFAULT_ASSIGNMENT_RULES, assignmentRulesForBranch, cartCanBecomeOrder,
@@ -1971,12 +1971,13 @@ router.get("/follow-up-grid",
         return;
       }
 
-      const { data: attempts } = await supabase.from(CART_ATTEMPTS)
+      // Up to 500 carts: their ids go in batches (one 500-id list is refused, see selectByIdBatches).
+      const attempts = await selectByIdBatches<any>(cartIds, (batch) => supabase.from(CART_ATTEMPTS)
         .select("cart_id, channel, outcome_code, custom_outcome, outcome_note, customer_reached, attempted_at, rep_name")
-        .eq("org_id", orgId).in("cart_id", cartIds)
+        .eq("org_id", orgId).in("cart_id", batch)
         .gte("attempted_at", lagosStartOfDayUtc(weekStart))
         .lt("attempted_at", lagosStartOfDayUtc(addDays(weekStart, 6)))
-        .order("attempted_at", { ascending: true });
+        .order("attempted_at", { ascending: true }));
 
       // One bucket per cart+day. Ascending order means the last write wins, so a
       // cell shows the day's FINAL outcome rather than its first.
@@ -1999,8 +2000,8 @@ router.get("/follow-up-grid",
       const { data: users } = await supabase.from("users").select("id, name").eq("org_id", orgId);
       const nameById = new Map((users ?? []).map((u: any) => [u.id, u.name]));
 
-      const { data: linkedOrders } = await supabase.from("orders")
-        .select("id, source_cart_id, status").eq("org_id", orgId).in("source_cart_id", cartIds);
+      const linkedOrders = await selectByIdBatches<any>(cartIds, (batch) => supabase.from("orders")
+        .select("id, source_cart_id, status").eq("org_id", orgId).in("source_cart_id", batch));
       const orderByCart = new Map((linkedOrders ?? []).map((o: any) => [o.source_cart_id, o]));
 
       // The grid's own attempts query is scoped to the displayed week, which is
@@ -2008,10 +2009,10 @@ router.get("/follow-up-grid",
       // finished. A customer who said "not interested" last month is still not
       // interested this week. So the closed/stale signals need the latest
       // attempt whenever it happened, not just one week of them.
-      const { data: latestAttempts } = await supabase.from(CART_ATTEMPTS)
+      const latestAttempts = await selectByIdBatches<any>(cartIds, (batch) => supabase.from(CART_ATTEMPTS)
         .select("cart_id, outcome_code, custom_outcome, outcome_note, attempted_at, next_action_at, rep_name")
-        .eq("org_id", orgId).in("cart_id", cartIds)
-        .order("attempted_at", { ascending: false });
+        .eq("org_id", orgId).in("cart_id", batch)
+        .order("attempted_at", { ascending: false }));
       const latestEverByCart = new Map<string, any>();
       // Every attempt ever, not just this week's - a cart carried in from an
       // earlier week would otherwise read as untouched on the row, and a rep
@@ -2144,12 +2145,10 @@ router.get("/follow-up-overview",
       const rows = carts ?? [];
       const cartIds = rows.map((row: any) => row.id);
 
-      const { data: attempts } = cartIds.length
-        ? await supabase.from(CART_ATTEMPTS)
-            .select("cart_id, outcome_code, custom_outcome, outcome_note, attempted_at, rep_name, customer_reached, next_action_at")
-            .eq("org_id", orgId).in("cart_id", cartIds)
-            .order("attempted_at", { ascending: false })
-        : { data: [] as any[] };
+      const attempts = await selectByIdBatches<any>(cartIds, (batch) => supabase.from(CART_ATTEMPTS)
+        .select("cart_id, outcome_code, custom_outcome, outcome_note, attempted_at, rep_name, customer_reached, next_action_at")
+        .eq("org_id", orgId).in("cart_id", batch)
+        .order("attempted_at", { ascending: false }));
 
       const latestByCart = new Map<string, any>();
       const countByCart = new Map<string, number>();
@@ -2161,12 +2160,10 @@ router.get("/follow-up-overview",
       const { data: users } = await supabase.from("users").select("id, name").eq("org_id", orgId);
       const nameById = new Map((users ?? []).map((u: any) => [u.id, u.name]));
 
-      const { data: linkedOrders } = cartIds.length
-        ? await supabase.from("orders")
-            .select("id, source_cart_id, status, amount, currency, created_at")
-            .limit(REPORT_ROW_CEILING)
-            .eq("org_id", orgId).in("source_cart_id", cartIds)
-        : { data: [] as any[] };
+      const linkedOrders = await selectByIdBatches<any>(cartIds, (batch) => supabase.from("orders")
+        .select("id, source_cart_id, status, amount, currency, created_at")
+        .limit(REPORT_ROW_CEILING)
+        .eq("org_id", orgId).in("source_cart_id", batch));
       const orderByCart = new Map((linkedOrders ?? []).map((o: any) => [o.source_cart_id, o]));
 
       res.json({
@@ -2471,11 +2468,13 @@ export async function computeCartLogBoard(orgId: string, repFilter: string | nul
       .select("id, status, assigned_rep_id, assigned_at, created_at, customer, phone, product_name, package_name")
       .eq("org_id", orgId).not("assigned_rep_id", "is", null);
     if (repFilter) cartQuery = cartQuery.eq("assigned_rep_id", repFilter);
-    const { data: cartRows } = await cartQuery.limit(REPORT_ROW_CEILING);
+    const { data: cartRows, error: cartError } = await cartQuery.limit(REPORT_ROW_CEILING);
+    // ⚠️ A failed read must stop the charge, never become one (see selectByIdBatches).
+    if (cartError) throw new Error(`Couldn't read the carts, so no charges are shown: ${cartError.message}`);
     const carts = (cartRows ?? []) as any[];
     const cartIds = carts.map((row) => row.id);
 
-    const [{ data: repRows }, { data: attemptRows }, { data: orderRows }, { data: decisionRows }] =
+    const [{ data: repRows, error: repError }, { data: attemptRows, error: attemptError }, { data: orderRows, error: orderError }, { data: decisionRows, error: decisionError }] =
       await Promise.all([
         supabase.from("users").select("id, name").eq("org_id", orgId).limit(REPORT_ROW_CEILING),
         days.length > 0
@@ -2498,10 +2497,14 @@ export async function computeCartLogBoard(orgId: string, repFilter: string | nul
     // delivered, converted, interested, rescheduled, declined or invalid,
     // it must never create a cart-log charge merely because the source-order
     // link was written late or is missing on an older conversion.
-    const { data: allOutcomeRows } = await supabase.from(CART_ATTEMPTS)
+    for (const [what, error] of [["reps", repError], ["follow-up logs", attemptError], ["orders", orderError], ["decisions", decisionError]] as const) {
+      if (error) throw new Error(`Couldn't read the ${what}, so no charges are shown: ${error.message}`);
+    }
+    const allOutcomeRows = await selectByIdBatches<any>(cartIds, (batch) => supabase.from(CART_ATTEMPTS)
       .select("cart_id, outcome_code")
-      .eq("org_id", orgId).in("cart_id", cartIds)
-      .in("outcome_code", ["Interested", "Rescheduled", "Not interested", "Wrong number"]);
+      .eq("org_id", orgId).in("cart_id", batch)
+      .in("outcome_code", ["Interested", "Rescheduled", "Not interested", "Wrong number"]))
+      .catch((error: any) => { throw new Error(`Couldn't check which carts are finished, so no charges are shown: ${error.message}`); });
     const terminalOutcomeCartIds = new Set((allOutcomeRows ?? []).map((row: any) => String(row.cart_id).trim()));
 
     const repName = new Map(((repRows ?? []) as any[]).map((row) => [row.id, row.name]));
@@ -2562,11 +2565,11 @@ export async function computeCartLogBoard(orgId: string, repFilter: string | nul
     // the day, and who - if anyone else - logged it on the day.
     const history = new Map<string, Array<{ at: string; ms: number; repId: string | null; outcome: string | null }>>();
     const openIds = openCarts.map((row) => String(row.id));
-    for (let i = 0; i < openIds.length && days.length > 0; i += 200) {
-      const { data: rows } = await supabase.from(CART_ATTEMPTS).select("cart_id, attempted_at, rep_id, outcome_code")
-        .eq("org_id", orgId).in("cart_id", openIds.slice(i, i + 200))
-        .lt("attempted_at", new Date(Date.parse(lagosStartOfDayUtc(addDays(to, 1))) + 3 * 3_600_000).toISOString()).order("attempted_at", { ascending: true }).limit(REPORT_ROW_CEILING);
-      for (const row of (rows ?? []) as any[]) {
+    if (days.length > 0) {
+      const rows = await selectByIdBatches<any>(openIds, (batch) => supabase.from(CART_ATTEMPTS).select("cart_id, attempted_at, rep_id, outcome_code")
+        .eq("org_id", orgId).in("cart_id", batch)
+        .lt("attempted_at", new Date(Date.parse(lagosStartOfDayUtc(addDays(to, 1))) + 3 * 3_600_000).toISOString()).order("attempted_at", { ascending: true }).limit(REPORT_ROW_CEILING));
+      for (const row of rows) {
         const list = history.get(String(row.cart_id)) ?? [];
         list.push({ at: row.attempted_at, ms: Date.parse(row.attempted_at), repId: row.rep_id ?? null, outcome: row.outcome_code ?? null });
         history.set(String(row.cart_id), list);
@@ -2709,13 +2712,13 @@ router.get("/recovery-summary",
         return;
       }
 
-      const [{ data: attempts }, { data: orders }, { data: people }] = await Promise.all([
-        supabase.from(CART_ATTEMPTS)
+      const [attempts, orders, { data: people }] = await Promise.all([
+        selectByIdBatches<any>(cartIds, (batch) => supabase.from(CART_ATTEMPTS)
           .select("cart_id, rep_id, attempted_at, customer_reached, outcome_code")
-          .eq("org_id", orgId).in("cart_id", cartIds)
-          .order("attempted_at", { ascending: true }).limit(REPORT_ROW_CEILING),
-        supabase.from("orders").select("source_cart_id, status, amount")
-          .eq("org_id", orgId).in("source_cart_id", cartIds).limit(REPORT_ROW_CEILING),
+          .eq("org_id", orgId).in("cart_id", batch)
+          .order("attempted_at", { ascending: true }).limit(REPORT_ROW_CEILING)),
+        selectByIdBatches<any>(cartIds, (batch) => supabase.from("orders").select("source_cart_id, status, amount")
+          .eq("org_id", orgId).in("source_cart_id", batch).limit(REPORT_ROW_CEILING)),
         supabase.from("users").select("id, name").eq("org_id", orgId).limit(REPORT_ROW_CEILING)
       ]);
 
