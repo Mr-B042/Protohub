@@ -1,12 +1,12 @@
 import { Router, type Request } from "express";
 import { z } from "zod";
+import { selectByIdBatches } from "../lib/query-limits.js";
 import { supabase } from "../lib/supabase.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import {
   DEFAULT_MILESTONES, DEFAULT_SCORING, contributionOf, maxBudget, normaliseMilestones, normaliseScoring, pointsFor, raceResults, splitEqually, teamEntitlements,
-  type Milestone, type Scoring
-} from "../lib/team-challenge.js";
+  type Milestone, type Scoring, needsManager } from "../lib/team-challenge.js";
 import { perOrderExpansionBonusBreakdownMapForDeliveredRange } from "../lib/sales-bonus-engine.js";
 import { notifyTeamChallenge } from "../lib/team-challenge-notifications.js";
 
@@ -139,17 +139,26 @@ async function syncEntries(challenge: any, teams: any[]) {
     ...(Array.isArray(order.free_gift_lines) ? order.free_gift_lines : []).map((line: any) => line?.productId)]);
   const [{ data: existingRows }, delivered, paid, cost, bonuses] = await Promise.all([
     supabase.from("team_challenge_entries").select("*").eq("challenge_id", challenge.id),
-    ids.length ? supabase.from("order_audit").select("order_id, created_at").eq("org_id", challenge.org_id).eq("to_status", "Delivered").in("order_id", ids) : Promise.resolve({ data: [] as any[] }),
-    ids.length ? supabase.from("remittance_transactions").select("order_id, received_at, delta_amount").eq("org_id", challenge.org_id).in("order_id", ids) : Promise.resolve({ data: [] as any[] }),
+    // Batched: one long id list is refused ("URI too long") and would leave paid orders stuck (see selectByIdBatches).
+    selectByIdBatches<any>(ids, (batch) => supabase.from("order_audit").select("order_id, created_at, from_status, to_status").eq("org_id", challenge.org_id).in("order_id", batch)).then((data) => ({ data })),
+    selectByIdBatches<any>(ids, (batch) => supabase.from("remittance_transactions").select("order_id, received_at, delta_amount").eq("org_id", challenge.org_id).in("order_id", batch)).then((data) => ({ data })),
     costBook(challenge.org_id, productIds),
     relevant.some((order: any) => order.status === "Delivered") ? repBonusByOrder(challenge) : Promise.resolve({} as Record<string, number>)
   ]);
   const existing = new Map((existingRows ?? []).map((row: any) => [String(row.order_id), row]));
   const deliveredAt = new Map<string, string>();
-  for (const row of (delivered as any).data ?? []) {
+  for (const row of ((delivered as any).data ?? []).filter((item: any) => item.to_status === "Delivered")) {
     const key = String(row.order_id);
     if (!deliveredAt.has(key) || Date.parse(row.created_at) > Date.parse(deliveredAt.get(key)!)) deliveredAt.set(key, row.created_at);
   }
+  // An edit made while the order was already Delivered (status unchanged, after the delivery time).
+  const editedAfterDelivery = new Set<string>();
+  for (const row of (delivered as any).data ?? []) {
+    const key = String(row.order_id);
+    const at = deliveredAt.get(key);
+    if (at && row.from_status === row.to_status && Date.parse(row.created_at) > Date.parse(at)) editedAfterDelivery.add(key);
+  }
+  const autoVerified: Array<{ orderId: string; repId: string; points: number; contribution: number }> = [];
   const paidAt = new Map<string, string>();
   for (const row of (paid as any).data ?? []) {
     if (Number(row.delta_amount) <= 0) continue;
@@ -291,6 +300,17 @@ async function syncEntries(challenge: any, teams: any[]) {
       }
       if (next === "reversed" && prior.status !== "reversed") reversals.push({ orderId, reason: reason ?? "" });
     }
+    // Delivered + paid + nothing unusual = verified by itself; otherwise say why a manager is needed.
+    let autoDecision = false;
+    if (next === "awaiting_verification" && scoring.autoVerifyClean && !(prior && Boolean(prior.decided_by))) {
+      const why = needsManager({
+        linkedOrders: linked.length, adjustment: Number(prior?.adjustment_amount ?? 0), editedAfterDelivery: live.some((info) => editedAfterDelivery.has(info.orderId)),
+        hasNoteOrEscalation: Boolean(prior?.escalated_at || prior?.review_requested_at || prior?.rep_note),
+        pointsChangedAfterVerification: Boolean(prior && prior.verified_points !== null && prior.verified_points !== undefined && Number(prior.verified_points) !== points)
+      });
+      if (why.length === 0) { next = "verified"; nextReason = "Verified automatically: delivered, paid, nothing unusual."; autoDecision = true; }
+      else if (!nextReason) nextReason = `Needs a manager: ${why.join("; ")}.`;
+    }
     const breakdown = {
       revenue: result.revenue, productCost: result.productCost, logistics: result.logistics, repBonus: result.repBonus,
       packaging: result.packaging, gifts: result.gifts, adjustment: result.adjustment,
@@ -317,8 +337,10 @@ async function syncEntries(challenge: any, teams: any[]) {
       added_value: result.revenue, contribution: result.contribution, contribution_breakdown: breakdown, contribution_final: final,
       delivered_at: delivered, paid_at: paidTime, qualified_at: qualifiedAt,
       status: next, status_reason: nextReason, linked_to_order_id: null,
-      decided_by: prior?.decided_by ?? null, decided_by_name: prior?.decided_by_name ?? null, decided_at: prior?.decided_at ?? null,
-      verified_points: prior?.verified_points ?? null, rep_note: prior?.rep_note ?? null, review_requested_at: prior?.review_requested_at ?? null,
+      decided_by: autoDecision ? null : prior?.decided_by ?? null,
+      decided_by_name: autoDecision ? "Protohub (automatic)" : prior?.decided_by_name ?? null,
+      decided_at: autoDecision ? new Date().toISOString() : prior?.decided_at ?? null,
+      verified_points: autoDecision ? points : prior?.verified_points ?? null, rep_note: prior?.rep_note ?? null, review_requested_at: prior?.review_requested_at ?? null,
       adjustment_amount: prior?.adjustment_amount ?? 0, adjustment_reason: prior?.adjustment_reason ?? null, adjustment_by_name: prior?.adjustment_by_name ?? null, adjusted_at: prior?.adjusted_at ?? null,
       escalated_at: prior?.escalated_at ?? null, escalation_note: prior?.escalation_note ?? null,
       updated_at: new Date().toISOString()
@@ -326,6 +348,7 @@ async function syncEntries(challenge: any, teams: any[]) {
     const changed = !prior || ["points", "category", "status", "status_reason", "delivered_at", "paid_at", "qualified_at", "added_value", "team_id", "contribution", "contribution_final", "rule_label"]
       .some((key) => String((prior as any)[key] ?? "") !== String((row as any)[key] ?? ""));
     if (changed) writes.push(row);
+    if (autoDecision && prior?.status !== "verified") autoVerified.push({ orderId, repId: String(row.rep_id), points, contribution: result.contribution });
   }
   // Every row in a batch must carry the same columns: a bulk upsert fills a
   // column one row lacks with NULL, which breaks the NOT NULL ones.
@@ -343,6 +366,11 @@ async function syncEntries(challenge: any, teams: any[]) {
     if (writeError) throw writeError;
   }
   for (const reversal of reversals) await log(challenge, null, "score_reversed", reversal);
+  // Same record and alert as a manager's verification, marked automatic.
+  for (const item of autoVerified) {
+    await log(challenge, null, "entry_auto_verified", { orderId: item.orderId, points: item.points });
+    void notifyTeamChallenge(ctxOf(challenge), { kind: "entry_decided", repId: item.repId, orderId: item.orderId, status: "verified" as any, points: item.points, contribution: item.contribution, note: "Verified automatically: delivered, paid, nothing unusual." });
+  }
 }
 
 const STAGE_COUNTS = ["awaiting_delivery", "awaiting_payment", "awaiting_verification", "correction_requested"];
@@ -680,7 +708,7 @@ const ChallengeSchema = z.object({
   scoring: z.object({
     onePointFrom: z.coerce.number().min(0).max(100_000_000), twoPointsFrom: z.coerce.number().min(0).max(100_000_000),
     extraPointEvery: z.coerce.number().min(0).max(100_000_000).default(50_000),
-    packagingPerUnit: z.coerce.number().min(0).max(1_000_000).default(0), linkWindowHours: z.coerce.number().int().min(0).max(336).default(72), productIds: z.array(z.string().uuid()).max(100).default([])
+    packagingPerUnit: z.coerce.number().min(0).max(1_000_000).default(0), linkWindowHours: z.coerce.number().int().min(0).max(336).default(72), productIds: z.array(z.string().uuid()).max(100).default([]), autoVerifyClean: z.boolean().default(true)
   }),
   sponsorNote: z.string().trim().max(200).optional(),
   teams: z.array(z.object({ id: z.string().uuid().optional(), name: z.string().trim().min(1).max(40), color: z.string().trim().max(20).default("violet"), memberIds: z.array(z.string().uuid()).min(1).max(10) })).min(2).max(4),

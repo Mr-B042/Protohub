@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DEFAULT_MILESTONES, DEFAULT_SCORING, contributionOf, maxBudget, pointsFor, raceResults, splitEqually, teamEntitlements, type ContributionInput } from "./team-challenge.js";
+import { DEFAULT_MILESTONES, DEFAULT_SCORING, contributionOf, maxBudget, pointsFor, raceResults, splitEqually, teamEntitlements, type ContributionInput, needsManager, normaliseScoring } from "./team-challenge.js";
 
 const costs: Record<string, number> = { rack: 11_500, brush: 4_000, hook: 300 };
 const input = (overrides: Partial<ContributionInput>): ContributionInput => ({
@@ -80,4 +80,19 @@ test("race: qualification time decides, not review order; earlier pending keeps 
 test("split: equal shares, kobo-exact", () => {
   assert.deepEqual(splitEqually(50_000, ["x", "y"]), [{ repId: "x", amount: 25_000 }, { repId: "y", amount: 25_000 }]);
   assert.equal(splitEqually(100, ["a", "b", "c"]).reduce((sum, row) => sum + row.amount, 0), 100);
+});
+
+test("a clean delivered + paid order needs no manager; anything unusual says why", () => {
+  const clean = { linkedOrders: 0, adjustment: 0, editedAfterDelivery: false, hasNoteOrEscalation: false, pointsChangedAfterVerification: false };
+  assert.deepEqual(needsManager(clean), []);
+  assert.match(needsManager({ ...clean, editedAfterDelivery: true })[0], /edited after it was delivered/);
+  assert.match(needsManager({ ...clean, adjustment: -2000 })[0], /adjusted by hand/);
+  assert.match(needsManager({ ...clean, linkedOrders: 2 })[0], /2 other orders of the same customer/);
+  assert.match(needsManager({ ...clean, pointsChangedAfterVerification: true })[0], /points changed/);
+  assert.match(needsManager({ ...clean, hasNoteOrEscalation: true })[0], /note or it was escalated/);
+});
+
+test("automatic verification is on unless the Owner switches it off", () => {
+  assert.equal(normaliseScoring({}).autoVerifyClean, true);
+  assert.equal(normaliseScoring({ autoVerifyClean: false }).autoVerifyClean, false);
 });
