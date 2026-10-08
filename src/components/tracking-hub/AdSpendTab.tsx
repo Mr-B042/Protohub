@@ -244,6 +244,7 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
   const [view, setView] = useState<HubAdSpendView>("product");
   // "Since Start" judges whole campaign lives, so it has its own filters and ignores the date.
   const [sinceStart, setSinceStart] = useState(false);
+  const [syncCount, setSyncCount] = useState(0);
   const [chartDays, setChartDays] = useState(7);
   const [search, setSearch] = useState("");
   const [q, setQ] = useState("");
@@ -288,6 +289,7 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
       const result = await trackingHubApi.syncAdSpend(range);
       onToast(result.ok ? `${result.message} Spend is up to date.` : result.message);
       reload();
+      setSyncCount((value) => value + 1);
     } catch (err: any) {
       onToast(`Couldn't sync: ${err?.message ?? "try again."}`);
     } finally { setSyncing(false); }
@@ -600,7 +602,7 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
           </div>
         </div>
 
-        {sinceStart ? <SinceStartView platform={data.platform} onToast={onToast} /> : (
+        {sinceStart ? <SinceStartView platform={data.platform} refreshKey={`${syncCount}:${data.lastSync?.at ?? ""}`} onToast={onToast} /> : (
           <>
         {productId || campaign || adset || accountId || business ? (
           <div className="mt-3 flex flex-wrap items-center gap-2 text-[12.5px]">
