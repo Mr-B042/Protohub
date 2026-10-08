@@ -3765,7 +3765,13 @@ export type CartLogMiss = {
     lastContactAt?: string | null; lastContactBy?: string | null; lastOutcome?: string | null;
     /** Other reps who logged it that day (the assigned rep still owes it). */
     loggedThatDayBy?: string[];
+    /** The rep logged ANOTHER cart of the same customer (same phone) that day. */
+    duplicateCartLogged?: { cartId: string; customer: string } | null;
+    /** The rep logged this cart in the first 3 hours after the day closed. */
+    loggedJustAfterMidnightAt?: string | null;
   }>;
+  /** The carts the rep DID log that day, first time each. */
+  loggedThatDay?: Array<{ cartId: string; customer: string; productName: string; at: string }>;
 };
 
 export type CartLogPenaltiesView = {

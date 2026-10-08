@@ -2565,26 +2565,50 @@ export async function computeCartLogBoard(orgId: string, repFilter: string | nul
     for (let i = 0; i < openIds.length && days.length > 0; i += 200) {
       const { data: rows } = await supabase.from(CART_ATTEMPTS).select("cart_id, attempted_at, rep_id, outcome_code")
         .eq("org_id", orgId).in("cart_id", openIds.slice(i, i + 200))
-        .lt("attempted_at", lagosStartOfDayUtc(addDays(to, 1))).order("attempted_at", { ascending: true }).limit(REPORT_ROW_CEILING);
+        .lt("attempted_at", new Date(Date.parse(lagosStartOfDayUtc(addDays(to, 1))) + 3 * 3_600_000).toISOString()).order("attempted_at", { ascending: true }).limit(REPORT_ROW_CEILING);
       for (const row of (rows ?? []) as any[]) {
         const list = history.get(String(row.cart_id)) ?? [];
         list.push({ at: row.attempted_at, ms: Date.parse(row.attempted_at), repId: row.rep_id ?? null, outcome: row.outcome_code ?? null });
         history.set(String(row.cart_id), list);
       }
     }
+    // Any cart (open or not) by id, and the same customer's carts by phone,
+    // for "what the rep did log" and the duplicate-cart check.
+    const cartById = new Map(carts.map((row) => [String(row.id), row]));
+    const phoneKey = (phone: unknown) => String(phone ?? "").replace(/\D+/g, "").slice(-10);
+    // What the rep DID log that day: each cart once, with the first time.
+    const loggedThatDayFor = (repId: string, dateKey: string) => {
+      const first = new Map<string, string>();
+      for (const row of (attemptRows ?? []) as any[]) {
+        if (row.rep_id !== repId || !row.cart_id || lagosDateKey(row.attempted_at) !== dateKey) continue;
+        const id = String(row.cart_id);
+        if (!first.has(id) || Date.parse(row.attempted_at) < Date.parse(first.get(id)!)) first.set(id, row.attempted_at);
+      }
+      return Array.from(first.entries()).sort((x, y) => Date.parse(x[1]) - Date.parse(y[1])).map(([id, at]) => {
+        const cart: any = cartById.get(id);
+        return { cartId: id, customer: String(cart?.customer ?? "Customer"), productName: String(cart?.product_name ?? cart?.package_name ?? "Cart"), at };
+      });
+    };
     const affectedCartsFor = (repId: string, dateKey: string, dueIds: Set<string>) => {
       const touched = loggedCarts.get(`${repId}|${dateKey}`) ?? new Set<string>();
+      // Phones of the carts this rep logged that day: a log on a DUPLICATE cart of the same customer.
+      const loggedPhones = new Map<string, string>();
+      touched.forEach((id) => { const key = phoneKey((cartById.get(String(id)) as any)?.phone); if (key.length >= 7) loggedPhones.set(key, String(id)); });
       const dayStart = Date.parse(lagosStartOfDayUtc(dateKey));
       const dayEnd = Date.parse(lagosStartOfDayUtc(addDays(dateKey, 1)));
       return openCarts.filter((cart) => cart.assigned_rep_id === repId && dueIds.has(cart.id) && !touched.has(cart.id)).map((cart) => {
         const logs = history.get(String(cart.id)) ?? [];
         const before = logs.filter((log) => log.ms < dayStart).pop() ?? null;
         const others = Array.from(new Set(logs.filter((log) => log.ms >= dayStart && log.ms < dayEnd && log.repId && log.repId !== repId).map((log) => repName.get(log.repId!) ?? "Another rep")));
+        // The three innocent explanations, checked for every charged cart.
+        const duplicateId = loggedPhones.get(phoneKey(cart.phone));
+        const duplicateCartLogged = duplicateId && duplicateId !== String(cart.id) ? { cartId: duplicateId, customer: String((cartById.get(duplicateId) as any)?.customer ?? "Customer") } : null;
+        const lateLog = logs.find((log) => log.repId === repId && log.ms >= dayEnd && log.ms < dayEnd + 3 * 3_600_000) ?? null;
         return {
           id: String(cart.id), customer: String(cart.customer ?? "Unknown customer"), phone: String(cart.phone ?? ""),
           productName: String(cart.product_name ?? cart.package_name ?? "Cart"), assignedAt: cart.assigned_at ?? cart.created_at ?? null,
           lastContactAt: before?.at ?? null, lastContactBy: before?.repId ? repName.get(before.repId) ?? "Another rep" : null, lastOutcome: before?.outcome ?? null,
-          loggedThatDayBy: others,
+          loggedThatDayBy: others, duplicateCartLogged, loggedJustAfterMidnightAt: lateLog?.at ?? null,
           reason: others.length ? `Nothing logged by ${repName.get(repId) ?? "the assigned rep"}; logged by ${others.join(", ")}` : `Nothing logged by ${repName.get(repId) ?? "the assigned rep"} that day`
         };
       });
@@ -2632,11 +2656,12 @@ export async function computeCartLogBoard(orgId: string, repFilter: string | nul
           reviewedAt: decision?.reviewed_at ?? null,
           reviewNote: decision?.review_note ?? ""
           ,affectedCarts: affectedCartsFor(input.repId, input.dateKey, new Set(openCarts.filter((row) => row.assigned_rep_id === input.repId && lagosDateKey(row.assigned_at ?? row.created_at) <= input.dateKey).map((row) => row.id)))
+          ,loggedThatDay: loggedThatDayFor(input.repId, input.dateKey)
         };
       })
       .sort((left, right) => right.missDate.localeCompare(left.missDate));
 
-    return { days, openCarts, repIds, repName, decisions, dueCartIdsFor, affectedCartsFor, logged, loggedDueCount, misses, inputs };
+    return { days, openCarts, repIds, repName, decisions, dueCartIdsFor, affectedCartsFor, loggedThatDayFor, logged, loggedDueCount, misses, inputs };
 }
 
 // ── GET /api/carts/log-penalties?range= ───────────────────
@@ -2787,7 +2812,7 @@ router.get("/log-penalties",
       const to = range.to;
       const days = to >= from ? chargeableDaysIn(from, to) : [];
 
-      const { days: _boardDays, openCarts, repIds, repName, decisions, dueCartIdsFor, affectedCartsFor, logged, loggedDueCount, misses, inputs } =
+      const { days: _boardDays, openCarts, repIds, repName, decisions, dueCartIdsFor, affectedCartsFor, loggedThatDayFor, logged, loggedDueCount, misses, inputs } =
         await computeCartLogBoard(orgId, repFilter, from, to);
 
       // ⚠️ Closed days in the CURRENT week, computed OUTSIDE the range filter -
@@ -2850,6 +2875,7 @@ router.get("/log-penalties",
               reviewedAt: decision?.reviewed_at ?? null,
               reviewNote: decision?.review_note ?? ""
               ,affectedCarts: affectedCartsFor(input.repId, input.dateKey, new Set(openCarts.filter((row) => row.assigned_rep_id === input.repId && lagosDateKey(row.assigned_at ?? row.created_at) <= input.dateKey).map((row) => row.id)))
+          ,loggedThatDay: loggedThatDayFor(input.repId, input.dateKey)
             };
           })
           .sort((left, right) => right.missDate.localeCompare(left.missDate));
