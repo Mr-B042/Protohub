@@ -31,9 +31,9 @@ export default function CartLogOwedBanner({
   // Every charged cart on every day, for anyone who wants to check the total line by line.
   const downloadList = () => {
     const cell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
-    const lines = [["Day", "Rep", "Cart", "Customer", "Phone", "Product", "Given to rep", "Last contact before that day", "Last contact by", "That day", "Charge (naira)", "Status"].map(cell).join(",")];
+    const lines = [["Day", "Rep", "Cart", "Customer", "Phone", "Product", "Given to rep", "Last contact before that day", "Last contact by", "That day", "Same customer's other cart logged", "Logged just after midnight", "Charge (naira)", "Status"].map(cell).join(",")];
     for (const row of rows) for (const cart of row.affectedCarts ?? []) {
-      lines.push([row.missDate, row.repName, cart.id, cart.customer, cart.phone, cart.productName, when(cart.assignedAt), cart.lastContactAt ? when(cart.lastContactAt) : "Never contacted", cart.lastContactBy ?? "", cart.reason, 500, statusWord(row)].map(cell).join(","));
+      lines.push([row.missDate, row.repName, cart.id, cart.customer, cart.phone, cart.productName, when(cart.assignedAt), cart.lastContactAt ? when(cart.lastContactAt) : "Never contacted", cart.lastContactBy ?? "", cart.reason, cart.duplicateCartLogged ? `${cart.duplicateCartLogged.customer} #${cart.duplicateCartLogged.cartId}` : "No", cart.loggedJustAfterMidnightAt ? when(cart.loggedJustAfterMidnightAt) : "No", 500, statusWord(row)].map(cell).join(","));
     }
     const link = document.createElement("a");
     link.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" }));
@@ -79,6 +79,27 @@ export default function CartLogOwedBanner({
             <Metric icon={<Calculator />} title="Charge per violation" text="₦500 per cart" />
             <Metric icon={<AlertTriangle />} title="Potential charge" text={`${row.cartsMissed} violations × ₦500 = ${money(row.amount)}`} />
           </div>
+          {(() => {
+            const carts = row.affectedCarts ?? [];
+            const duplicate = carts.filter((cart) => cart.duplicateCartLogged);
+            const byOther = carts.filter((cart) => (cart.loggedThatDayBy ?? []).length > 0);
+            const late = carts.filter((cart) => cart.loggedJustAfterMidnightAt);
+            const clean = duplicate.length + byOther.length + late.length === 0;
+            const logged = row.loggedThatDay ?? [];
+            const name = personal ? "You" : row.repName;
+            return <div className="space-y-2 border-b border-rose-100 p-3 text-[11.5px]">
+              <div className={`rounded-lg border px-3 py-2 ${clean ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+                <b>Checked automatically for these {carts.length} carts:</b>{" "}
+                {duplicate.length} logged on another cart of the same customer (same phone) · {byOther.length} logged by another rep · {late.length} logged in the first 3 hours after the day closed.
+                {clean ? " None of these applies: these carts had no log at all that day." : " Those carts are marked below. Check them before approving; waive them if the work was done."}
+              </div>
+              <details className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2">
+                <summary className="cursor-pointer font-bold text-slate-700">What {name} did log that day: {logged.length} cart{logged.length === 1 ? "" : "s"}{logged.length ? " (these were not charged)" : ""}</summary>
+                {logged.length ? <ul className="m-0 mt-2 grid list-none gap-1 p-0 sm:grid-cols-2 lg:grid-cols-3">{logged.map((item) => <li key={item.cartId} className="text-slate-600"><b className="text-slate-800">{when(item.at)}</b> · {item.customer} ({item.productName})</li>)}</ul>
+                  : <p className="m-0 mt-1 text-slate-500">No cart was logged by {name} that day.</p>}
+              </details>
+            </div>;
+          })()}
           <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-[11px]">
             <thead className="bg-slate-50 text-slate-500"><tr><th className="p-2">#</th>{individualDay === key && <th className="p-2">Review</th>}<th className="p-2">Cart / Customer</th><th className="p-2">Product</th><th className="p-2">Given to rep</th><th className="p-2">Last contact before that day</th><th className="p-2">That day</th><th className="p-2">Charge</th><th className="p-2" /></tr></thead>
             <tbody>{(row.affectedCarts ?? []).map((cart, index) => <tr key={cart.id} className="border-t border-slate-100">
@@ -87,7 +108,10 @@ export default function CartLogOwedBanner({
               <td className="p-2">{cart.productName}</td>
               <td className="p-2">{when(cart.assignedAt)}</td>
               <td className="p-2">{cart.lastContactAt ? <>{when(cart.lastContactAt)}<span className="block text-slate-400">{[cart.lastContactBy, cart.lastOutcome].filter(Boolean).join(" · ")}</span></> : <span className="text-slate-400">Never contacted</span>}</td>
-              <td className="p-2 text-rose-700">● {cart.reason}</td>
+              <td className="p-2 text-rose-700">● {cart.reason}
+                {cart.duplicateCartLogged && <span className="block font-semibold text-amber-700">⚠ Same customer's other cart was logged that day ({cart.duplicateCartLogged.customer}, #{cart.duplicateCartLogged.cartId.slice(0, 8)})</span>}
+                {cart.loggedJustAfterMidnightAt && <span className="block font-semibold text-amber-700">⚠ Logged {when(cart.loggedJustAfterMidnightAt)}, just after the day closed</span>}
+              </td>
               <td className="p-2"><b className="text-rose-700">₦500</b><span className="block text-[10px] font-bold uppercase text-slate-400">{statusWord(row)}</span></td>
               <td className="p-2"><button type="button" onClick={() => onViewCart?.(cart.id)} className="rounded-lg border bg-white px-3 py-1.5 font-bold">View cart <ExternalLink className="ml-1 inline h-3 w-3" /></button></td>
             </tr>)}</tbody>
