@@ -2,6 +2,7 @@ import trackingHubRoutes from "./routes/tracking-hub.js";
 import publicTrackingRoutes from "./routes/public-tracking.js";
 import { runMetaDeliveredEvents } from "./lib/meta-capi-delivered.js";
 import { runTrackingAlerts } from "./lib/tracking-alerts.js";
+import { runAdSpendAutoSync } from "./lib/ad-spend-data.js";
 import "./lib/load-env.js";
 import express from "express";
 import compression from "compression";
@@ -691,6 +692,17 @@ cron.schedule("7 * * * *", async () => {
     await runTrackingAlerts();
   } catch (e) {
     logger.error("cron: tracking alerts crashed", { error: (e as Error).message });
+  }
+});
+
+// ── Tracking Hub ad spend — every 30 minutes ─────────────
+// Today's Meta spend so far (and yesterday until it is final) for branches
+// with Auto Sync on (Tracking Hub → Ad Spend).
+cron.schedule("13,43 * * * *", async () => {
+  try {
+    await runAdSpendAutoSync();
+  } catch (e) {
+    logger.error("cron: ad spend sync crashed", { error: (e as Error).message });
   }
 });
 

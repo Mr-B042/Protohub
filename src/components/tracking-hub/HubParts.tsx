@@ -4,9 +4,9 @@ import {
 } from "lucide-react";
 import type { HubDataSource, HubLedgerStatus, HubPlatform } from "../../lib/api";
 
-// Shared pieces for the Tracking Hub tabs (Bright's seven tab images, 2 Oct 2026).
+// Shared pieces for the Tracking Hub tabs (Bright's seven tab images, 2 Oct 2026; Ad Spend 8 Oct).
 
-export type HubTab = "overview" | "sources" | "websites" | "links" | "ledger" | "reconciliation" | "diagnostics" | "settings";
+export type HubTab = "overview" | "sources" | "websites" | "links" | "ledger" | "reconciliation" | "adspend" | "diagnostics" | "settings";
 export type Range = { from: string; to: string };
 export type Toast = (message: string) => void;
 
@@ -73,11 +73,11 @@ export function Card({ children, className = "" }: { children: ReactNode; classN
 }
 
 /** Page header for a tab: breadcrumb, title, subtitle, actions. */
-export function HubHeader({ title, subtitle, actions }: { title: string; subtitle: string; actions?: ReactNode }) {
+export function HubHeader({ title, subtitle, actions, crumb }: { title: string; subtitle: string; actions?: ReactNode; crumb?: string }) {
   return (
     <div className="flex flex-wrap items-start justify-between gap-4 xl:flex-nowrap">
       <div className="min-w-0 flex-1">
-        <p className="m-0 flex items-center gap-2 text-[14px] text-gray-500 dark:text-slate-400">Tracking Hub <ChevronRight className="h-3.5 w-3.5" /> <span className="font-semibold text-gray-800 dark:text-slate-200">{title}</span></p>
+        <p className="m-0 flex items-center gap-2 text-[14px] text-gray-500 dark:text-slate-400">Tracking Hub <ChevronRight className="h-3.5 w-3.5" /> <span className="font-semibold text-gray-800 dark:text-slate-200">{crumb ?? title}</span></p>
         <h1 className="m-0 mt-2 text-[30px] font-black tracking-tight text-gray-900 dark:text-slate-50">{title}</h1>
         <p className="m-0 mt-1 text-[15px] text-gray-500 dark:text-slate-400">{subtitle}</p>
       </div>
