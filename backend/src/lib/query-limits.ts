@@ -67,3 +67,28 @@ export async function fetchAllRowsOrThrow<T>(
   if (error) throw new Error(error.message ?? String(error));
   return data ?? [];
 }
+
+/**
+ * Run a `.in(column, ids)` query in batches of at most 200 ids.
+ *
+ * ⚠️ ONE LONG LIST IS REFUSED. PostgREST puts the ids in the URL, and from
+ * roughly 500 cart ids the request fails with "URI too long" (reproduced
+ * 8 Oct 2026: 300 ok, 500 refused). The cart-log board sent all 751 assigned
+ * carts in one list; the refusal was ignored and read as "no finished carts",
+ * so every Interested / Wrong-number cart was charged ₦500 a day (₦86,000 for
+ * 5-7 Oct, all wrong). A refusal here THROWS - never read it as "none found".
+ */
+export async function selectByIdBatches<T>(
+  ids: string[],
+  run: (batch: string[]) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+  size = 200
+): Promise<T[]> {
+  const unique = Array.from(new Set(ids));
+  const rows: T[] = [];
+  for (let i = 0; i < unique.length; i += size) {
+    const { data, error } = await run(unique.slice(i, i + size));
+    if (error) throw new Error(error.message ?? String(error));
+    rows.push(...(data ?? []));
+  }
+  return rows;
+}
