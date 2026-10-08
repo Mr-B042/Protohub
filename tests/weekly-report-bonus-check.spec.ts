@@ -126,3 +126,22 @@ test("a carried-over delivery is paid this week but does not lift this week's de
   expect(live.products[0]).toMatchObject({ orders: 2, delivered: 1, deliveryRate: 50 });
   expect(live.daily.find((day) => day.date === "2026-09-21")).toMatchObject({ orders: 2, delivered: 1, deliveryRate: 50 });
 });
+
+test("each delivered order carries its base / upsell / cross-sell split and its workings, and they add up", () => {
+  const lines = [{ label: "Delivered base bonus", amount: 200, note: "Website order, 1 pcs. Matched 1 pcs rule worth ₦200.", tone: "earned" as const }];
+  const live = snapshot([
+    order({ id: "1", bonusLines: lines }),
+    order({ id: "2", hasCrossSell: true, bonusLines: [...lines, { label: "Cross-sell bonus", amount: 2500, note: "1 rep-added line.", tone: "earned" as const }] }),
+    order({ id: "3", status: "Confirmed", deliveredKey: null, bonusLines: lines })
+  ], { "1": { base: 200, upsell: 0, crossSell: 0 }, "2": { base: 200, upsell: 0, crossSell: 2500 } });
+  const byId = Object.fromEntries(live.orders.map((row) => [row.id, row]));
+  expect(byId["2"].baseBonus).toBe(200);
+  expect(byId["2"].crossSellBonus).toBe(2500);
+  expect(byId["2"].bonusLines?.map((line) => line.label)).toEqual(["Delivered base bonus", "Cross-sell bonus"]);
+  // Not delivered this week: no bonus, no workings.
+  expect(byId["3"].bonus).toBe(0);
+  expect(byId["3"].bonusLines).toBeUndefined();
+  const delivered = live.orders.filter((row) => row.bonus > 0);
+  expect(delivered.reduce((sum, row) => sum + (row.baseBonus ?? 0), 0)).toBe(live.totals.baseBonus);
+  expect(delivered.reduce((sum, row) => sum + (row.crossSellBonus ?? 0), 0)).toBe(live.totals.crossSellBonus);
+});

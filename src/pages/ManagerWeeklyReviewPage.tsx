@@ -1,5 +1,5 @@
 import MonthlyIncentiveSection from "./MonthlyIncentiveSection";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   AlertTriangle, Box, Check, CheckCircle2, ChevronRight, ClipboardList, Download, FileText, Inbox, MessageCircle, MoreVertical,
@@ -903,6 +903,8 @@ export function RepReviewModal({ row, weekStart, weekEnd, sym, canAct, canFlag, 
           </div>
         )}
 
+        {(submitted ?? live) && <BonusWorkings snapshot={(submitted ?? live)!} live={live} frozen={Boolean(submitted)} sym={sym} />}
+
         {row.report?.repNote && (
           <div><p className="m-0 text-[12px] font-bold text-gray-700 dark:text-slate-300">Rep's note</p><p className="m-0 mt-1 text-[13px] text-gray-800 dark:text-slate-200">{row.report.repNote}</p></div>
         )}
@@ -995,5 +997,142 @@ function ResolveQueryModal({ query, repName, sym, onCancel, onSubmit }: {
         </div>
       </div>
     </Modal>
+  );
+}
+
+/**
+ * Every naira of the week's bonus, order by order (Bright, 8 Oct 2026): the
+ * Base / Upsell / Cross-sell split of each delivered order, the rule each one
+ * matched, and the sum back to Final Payable. Uses the report as submitted;
+ * for reports built before the workings were kept, the explanation comes
+ * from today's records and says so.
+ */
+function BonusWorkings({ snapshot, live, frozen, sym }: { snapshot: WeeklyReportSnapshot; live: WeeklyReportSnapshot | null; frozen: boolean; sym: string }) {
+  type Filter = "paid" | "base" | "upsell" | "cross" | "zero";
+  const [filter, setFilter] = useState<Filter>("paid");
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const t = snapshot.totals;
+  const money = (value: number) => `${value < 0 ? "−" : ""}${sym}${nf(Math.abs(value))}`;
+  const liveLines = new Map((live?.orders ?? []).map((order) => [order.id, order.bonusLines]));
+  const inWeek = (day: string | null) => Boolean(day && day >= snapshot.weekStart && day <= snapshot.weekEnd);
+  const paidOrders = snapshot.orders.filter((order) => order.status === "Delivered" && inWeek(order.deliveredDate));
+  const partsOf = (order: WeeklyReportSnapshot["orders"][number]) => {
+    const upsell = order.upsellBonus ?? 0;
+    const cross = order.crossSellBonus ?? 0;
+    return { base: order.baseBonus ?? order.bonus - upsell - cross, upsell, cross, total: order.bonus };
+  };
+  const counts: Record<Filter, number> = {
+    paid: paidOrders.filter((order) => order.bonus > 0).length,
+    base: paidOrders.filter((order) => partsOf(order).base !== 0).length,
+    upsell: paidOrders.filter((order) => partsOf(order).upsell !== 0).length,
+    cross: paidOrders.filter((order) => partsOf(order).cross !== 0).length,
+    zero: paidOrders.filter((order) => order.bonus === 0).length
+  };
+  const shown = paidOrders.filter((order) => {
+    const parts = partsOf(order);
+    return filter === "paid" ? order.bonus > 0 : filter === "base" ? parts.base !== 0 : filter === "upsell" ? parts.upsell !== 0 : filter === "cross" ? parts.cross !== 0 : order.bonus === 0;
+  });
+  const sum = (pick: (parts: ReturnType<typeof partsOf>) => number) => paidOrders.reduce((total, order) => total + pick(partsOf(order)), 0);
+  const columnTotals = { base: sum((p) => p.base), upsell: sum((p) => p.upsell), cross: sum((p) => p.cross), total: sum((p) => p.total) };
+  const adjustments = t.adjustments ?? 0;
+  const carried = t.carriedFines ?? 0;
+  const formulaResult = Math.max(0, t.baseBonus + t.upsellBonus + t.crossSellBonus + adjustments - t.fines - carried);
+  const check = (label: string, orders: number, total: number) => (orders === total
+    ? <span className="text-emerald-700">✓ {label} adds up to {money(total)}</span>
+    : <span className="text-amber-700">⚠ {label}: orders add up to {money(orders)}, the total says {money(total)} (difference {money(total - orders)})</span>);
+  const toggle = (id: string) => { const next = new Set(open); if (next.has(id)) next.delete(id); else next.add(id); setOpen(next); };
+  const toneCls = { earned: "text-emerald-700 dark:text-emerald-300", blocked: "text-rose-700 dark:text-rose-300", info: "text-gray-600 dark:text-slate-400" };
+  const chips: Array<[Filter, string]> = [["paid", "Orders that paid"], ["base", "Base"], ["upsell", "Upsell"], ["cross", "Cross-sell"], ["zero", "Delivered, ₦0"]];
+
+  return (
+    <section className="space-y-3 rounded-xl border border-gray-200 p-4 dark:border-slate-700">
+      <div>
+        <h3 className="m-0 text-[15px] font-black text-gray-900 dark:text-slate-100">How the bonus was worked out</h3>
+        <p className="m-0 mt-0.5 text-[12px] text-gray-500">{frozen ? "As submitted." : "From today's records (not submitted yet)."} Paid on the {nf(paidOrders.length)} order{paidOrders.length === 1 ? "" : "s"} delivered {shortDay(snapshot.weekStart)} – {shortDay(snapshot.weekEnd)}{(t.carryOverOrders ?? 0) > 0 ? `, including ${t.carryOverOrders} placed in an earlier week (${money(t.carryOverBonus ?? 0)})` : ""}. Week delivery rate {pctText(t.deliveryRate)} ({nf(t.delivered)} of {nf(t.orders)} placed): the upgrade and quality gates are judged on it.</p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-gray-50 px-3 py-2.5 text-[13px] dark:bg-slate-800/60">
+        <span>Base <b>{money(t.baseBonus)}</b></span><span className="text-gray-400">+</span>
+        <span>Upsell <b>{money(t.upsellBonus)}</b></span><span className="text-gray-400">+</span>
+        <span>Cross-sell <b>{money(t.crossSellBonus)}</b></span>
+        {adjustments > 0 ? <><span className="text-gray-400">+</span><span>Corrections <b>{money(adjustments)}</b></span></> : null}
+        <span className="text-gray-400">−</span><span>Fines <b>{money(t.fines)}</b></span>
+        {carried > 0 ? <><span className="text-gray-400">−</span><span>Last week's unpaid fines <b>{money(carried)}</b></span></> : null}
+        <span className="text-gray-400">=</span><span className="font-black text-gray-900 dark:text-slate-100">Final payable {money(t.finalBonus)}</span>
+        {formulaResult !== t.finalBonus ? <span className="text-amber-700">⚠ the parts give {money(formulaResult)}</span> : <span className="text-emerald-700">✓</span>}
+      </div>
+
+      <div className="flex flex-wrap gap-1.5">
+        {chips.map(([key, label]) => (
+          <button key={key} type="button" onClick={() => setFilter(key)} className={`!min-h-0 rounded-full border px-3 py-1 text-[12px] font-semibold ${filter === key ? "border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-500/10" : "border-gray-200 text-gray-600 dark:border-slate-700 dark:text-slate-300"}`}>{label} ({counts[key]})</button>
+        ))}
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full !min-w-[860px] text-left text-[12px]">
+          <thead className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500 dark:bg-slate-800/60 [&_th]:bg-transparent [&_th]:[color:inherit]">
+            <tr><th className="w-6 px-2 py-2" /><th className="px-2 py-2">Order</th><th className="px-2 py-2">Customer · Product</th><th className="px-2 py-2">Delivered</th><th className="px-2 py-2 text-right">Base</th><th className="px-2 py-2 text-right">Upsell</th><th className="px-2 py-2 text-right">Cross-sell</th><th className="px-2 py-2 text-right">Order bonus</th></tr>
+          </thead>
+          <tbody>
+            {shown.length === 0 ? <tr><td colSpan={8} className="px-3 py-6 text-center text-gray-500">No orders here.</td></tr> : shown.map((order) => {
+              const parts = partsOf(order);
+              const lines = order.bonusLines ?? liveLines.get(order.id) ?? null;
+              const fromToday = !order.bonusLines && Boolean(liveLines.get(order.id));
+              const expanded = open.has(order.id);
+              const cell = (value: number) => <td className={`px-2 py-2 text-right ${value ? "font-semibold text-gray-900 dark:text-slate-100" : "text-gray-300"}`}>{value ? money(value) : "–"}</td>;
+              return (
+                <Fragment key={order.id}>
+                  <tr onClick={() => toggle(order.id)} className="cursor-pointer border-t border-gray-100 hover:bg-gray-50 dark:border-slate-800 dark:hover:bg-slate-800/40">
+                    <td className="px-2 py-2 text-gray-400">{expanded ? "▾" : "▸"}</td>
+                    <td className="px-2 py-2 font-bold">#{order.id}{order.bonusManuallyAdjusted ? <span className="ml-1 text-[10px] font-bold text-amber-600">edited</span> : null}</td>
+                    <td className="max-w-[260px] px-2 py-2"><span className="block truncate">{order.customer}</span><span className="block truncate text-gray-500">{order.product}</span></td>
+                    <td className="whitespace-nowrap px-2 py-2">{order.deliveredDate ? longDate(order.deliveredDate) : "–"}{!order.placedThisWeek ? <span className="block text-[10px] font-bold text-blue-700">placed {longDate(order.date)}</span> : null}</td>
+                    {cell(parts.base)}{cell(parts.upsell)}{cell(parts.cross)}
+                    <td className="px-2 py-2 text-right font-black">{money(parts.total)}</td>
+                  </tr>
+                  {expanded ? (
+                    <tr className="bg-gray-50/70 dark:bg-slate-800/30">
+                      <td />
+                      <td colSpan={7} className="px-2 pb-3 pt-1">
+                        {lines?.length ? (
+                          <ul className="m-0 list-none space-y-1.5 p-0">
+                            {lines.map((line, index) => (
+                              <li key={index} className="flex gap-3">
+                                <span className={`w-[92px] shrink-0 text-right font-bold ${toneCls[line.tone]}`}>{line.amount ? money(line.amount) : line.tone === "blocked" ? "not paid" : "–"}</span>
+                                <span><b className="text-gray-800 dark:text-slate-200">{line.label}.</b> <span className="text-gray-600 dark:text-slate-300">{line.note}</span></span>
+                              </li>
+                            ))}
+                            {fromToday ? <li className="text-[11px] text-gray-400">This report was submitted before the workings were saved with it; the explanation is from today's records.</li> : null}
+                          </ul>
+                        ) : <p className="m-0 text-gray-500">No details saved for this order.</p>}
+                        {order.bonusNote ? <p className="m-0 mt-1.5 font-semibold text-amber-700">{order.bonusNote}</p> : null}
+                      </td>
+                    </tr>
+                  ) : null}
+                </Fragment>
+              );
+            })}
+          </tbody>
+          <tfoot className="border-t-2 border-gray-200 text-[12px] font-black dark:border-slate-700">
+            <tr><td /><td className="px-2 py-2" colSpan={3}>All {nf(paidOrders.length)} delivered orders</td><td className="px-2 py-2 text-right">{money(columnTotals.base)}</td><td className="px-2 py-2 text-right">{money(columnTotals.upsell)}</td><td className="px-2 py-2 text-right">{money(columnTotals.cross)}</td><td className="px-2 py-2 text-right">{money(columnTotals.total)}</td></tr>
+          </tfoot>
+        </table>
+      </div>
+      <p className="m-0 flex flex-col gap-0.5 text-[12px]">
+        {check("Base", columnTotals.base, t.baseBonus)}
+        {check("Upsell", columnTotals.upsell, t.upsellBonus)}
+        {check("Cross-sell", columnTotals.cross, t.crossSellBonus)}
+      </p>
+
+      {(snapshot.fines.length > 0 || (snapshot.adjustments ?? []).length > 0) ? (
+        <div className="text-[12px]">
+          <p className="m-0 mb-1 font-bold text-gray-700 dark:text-slate-300">Fines and corrections</p>
+          <ul className="m-0 list-none space-y-0.5 p-0">
+            {(snapshot.adjustments ?? []).map((item) => <li key={item.id}>+ {money(item.amount)} · {item.label}</li>)}
+            {snapshot.fines.map((fine) => <li key={fine.id} className="text-rose-700">− {money(fine.amount)} · {fine.label}{fine.date ? ` (${longDate(fine.date)})` : ""}</li>)}
+          </ul>
+        </div>
+      ) : null}
+    </section>
   );
 }
