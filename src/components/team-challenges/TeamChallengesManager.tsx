@@ -403,7 +403,7 @@ function RulesTab({ detail, owner, onEdit, onClose, onDelete, onBaseline }: { de
           <p className="m-0">{naira(c.scoring.onePointFrom)} – {naira(c.scoring.twoPointsFrom - 1)}: <strong>1 point</strong></p>
           <p className="m-0">{naira(c.scoring.twoPointsFrom)} – {naira(c.scoring.twoPointsFrom + (c.scoring.extraPointEvery || 0) - 1)}: <strong>2 points</strong></p>
           {c.scoring.extraPointEvery > 0 ? <p className="m-0">Then <strong>+1 point for every further {naira(c.scoring.extraPointEvery)}</strong> ({naira(c.scoring.twoPointsFrom + c.scoring.extraPointEvery)} = 3, {naira(c.scoring.twoPointsFrom + 2 * c.scoring.extraPointEvery)} = 4…) - no cap</p> : <p className="m-0">Capped at 2 points.</p>}
-          <p className="m-0 mt-1 text-[12px] text-gray-500">Added contribution = additional amount collected − added product cost (Product Master, on the order's day) − extra delivery cost − the rep's upsell/cross-sell bonus − packaging ({naira(c.scoring.packagingPerUnit)} per added unit) − gifts. One transaction, one score; orders from the same customer within {c.scoring.linkWindowHours} hours are one transaction{c.scoring.productIds.length ? ` · ${c.scoring.productIds.length} eligible products` : " · all products"}.</p>
+          <p className="m-0 mt-1 text-[12px] text-gray-500">Added contribution = additional amount collected − added product cost (Product Master, on the order's day) − extra delivery cost − the rep's upsell/cross-sell bonus − packaging ({naira(c.scoring.packagingPerUnit)} per added unit) − gifts. One transaction, one score; orders from the same customer within {c.scoring.linkWindowHours} hours are one transaction{c.scoring.productIds.length ? ` · ${c.scoring.productIds.length} eligible products` : " · all products"}. {c.scoring.autoVerifyClean !== false ? "A delivered, paid order with nothing unusual is verified automatically; edited, hand-adjusted or linked orders wait for a manager." : "A manager verifies every order."}</p>
         </div>
       </div>
       <div className="rounded-2xl border border-gray-200 p-4 dark:border-slate-700">
@@ -490,7 +490,7 @@ function ChallengeEditor({ detail, onClose, onSave }: { detail: TeamChallengeDet
   } : {
     name: "Upsell & Cross-Sell Race", sellFrom: today, sellTo: plus(29), graceDays: 7,
     milestones: [{ target: 50, winnerAmount: 50000, runnerUpAmount: 10000, minPerMember: 10 }, { target: 100, winnerAmount: 150000, runnerUpAmount: 40000, minPerMember: 20 }],
-    scoring: { onePointFrom: 10000, twoPointsFrom: 50000, extraPointEvery: 50000, packagingPerUnit: 500, linkWindowHours: 72, productIds: [] },
+    scoring: { onePointFrom: 10000, twoPointsFrom: 50000, extraPointEvery: 50000, packagingPerUnit: 500, linkWindowHours: 72, productIds: [], autoVerifyClean: true },
     teams: [{ name: "Team A", color: "violet", memberIds: [] }, { name: "Team B", color: "teal", memberIds: [] }]
   });
   const [saving, setSaving] = useState(false);
@@ -576,6 +576,10 @@ function ChallengeEditor({ detail, onClose, onSave }: { detail: TeamChallengeDet
               ))}
             </div>
             <p className="m-0 mt-1 text-[11.5px] text-gray-500">Added contribution = additional amount collected − added product cost − extra delivery − rep bonus − packaging − gifts. Below the 1-point level scores 0; above the 2-point level a transaction gets one more point for every further step (₦100,000 = 3, ₦150,000 = 4 with the defaults) - big sales are not capped. Set the step to 0 to stop at 2. Orders from the same customer within the link window are one transaction, scored once (0 turns this off).</p>
+            <label className="mt-3 flex items-start gap-2 rounded-xl border border-gray-200 px-3 py-2.5 text-[12.5px]">
+              <input type="checkbox" className="mt-0.5 h-4 w-4 accent-violet-600" checked={form.scoring.autoVerifyClean !== false} onChange={(event) => setForm({ ...form, scoring: { ...form.scoring, autoVerifyClean: event.target.checked } })} />
+              <span><b>Verify clean orders automatically</b><span className="block text-gray-500">Once an order is delivered and its payment is recorded, its points count by themselves, unless it was edited after delivery, adjusted by hand, linked to another order of the same customer, changed after verifying, or has a note or escalation. Those wait for a manager. Recording the payment stays manual.</span></span>
+            </label>
           </div>
           {running ? <label className="block"><span className="mb-1 block text-[12.5px] font-bold">Reason for the change (the reps see it)</span><input className={field} value={form.reason ?? ""} onChange={(event) => setForm({ ...form, reason: event.target.value })} /></label> : null}
           {error ? <p className="m-0 rounded-xl bg-rose-50 px-3 py-2 text-[12.5px] font-semibold text-rose-700">{error}</p> : null}

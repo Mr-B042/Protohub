@@ -26,8 +26,14 @@ export type Scoring = {
   /** Orders for the same customer within this many hours are one transaction (0 = off). */
   linkWindowHours: number;
   productIds: string[];
+  /**
+   * Verify an order by itself once it is delivered and paid, unless something
+   * about it needs a person (Bright, 8 Oct 2026). Payment stays manual: it is
+   * the proof the money arrived. Off = a manager verifies every order.
+   */
+  autoVerifyClean: boolean;
 };
-export const DEFAULT_SCORING: Scoring = { onePointFrom: 10_000, twoPointsFrom: 50_000, extraPointEvery: 50_000, packagingPerUnit: 500, linkWindowHours: 72, productIds: [] };
+export const DEFAULT_SCORING: Scoring = { onePointFrom: 10_000, twoPointsFrom: 50_000, extraPointEvery: 50_000, packagingPerUnit: 500, linkWindowHours: 72, productIds: [], autoVerifyClean: true };
 
 export type Milestone = { key: string; target: number; winnerAmount: number; runnerUpAmount: number; minPerMember: number };
 export const DEFAULT_MILESTONES: Milestone[] = [
@@ -48,7 +54,8 @@ export function normaliseScoring(raw: unknown): Scoring {
     extraPointEvery: amount(value.extraPointEvery, DEFAULT_SCORING.extraPointEvery),
     packagingPerUnit: amount(value.packagingPerUnit, DEFAULT_SCORING.packagingPerUnit),
     linkWindowHours: Math.min(24 * 14, Math.round(amount(value.linkWindowHours, DEFAULT_SCORING.linkWindowHours))),
-    productIds: Array.isArray(value.productIds) ? value.productIds.map(String) : []
+    productIds: Array.isArray(value.productIds) ? value.productIds.map(String) : [],
+    autoVerifyClean: value.autoVerifyClean !== false
   };
 }
 
@@ -218,4 +225,18 @@ export function splitEqually(amount: number, memberIds: string[]) {
   const kobo = Math.round(amount * 100);
   const each = Math.floor(kobo / memberIds.length);
   return memberIds.map((id, index) => ({ repId: id, amount: (each + (index === 0 ? kobo - each * memberIds.length : 0)) / 100 }));
+}
+
+/**
+ * Why an order that is delivered and paid still needs a manager (empty = it
+ * can be verified automatically). Bright, 8 Oct 2026.
+ */
+export function needsManager(input: { linkedOrders: number; adjustment: number; editedAfterDelivery: boolean; hasNoteOrEscalation: boolean; pointsChangedAfterVerification: boolean }): string[] {
+  const reasons: string[] = [];
+  if (input.editedAfterDelivery) reasons.push("the order was edited after it was delivered");
+  if (input.adjustment !== 0) reasons.push("its contribution was adjusted by hand");
+  if (input.linkedOrders > 0) reasons.push(`it is one sale with ${input.linkedOrders} other order${input.linkedOrders === 1 ? "" : "s"} of the same customer`);
+  if (input.pointsChangedAfterVerification) reasons.push("its points changed after it was verified");
+  if (input.hasNoteOrEscalation) reasons.push("the rep left a note or it was escalated");
+  return reasons;
 }
