@@ -1,4 +1,4 @@
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { ArrowUpDown, ChevronDown, ChevronRight, Lightbulb, Target } from "lucide-react";
 import { trackingHubApi, type HubSinceStart, type HubSinceStartRow, type HubVerdict2 } from "../../lib/api";
 import { Card, LoadState, Modal, PlatformIcon, SearchBox, ago, longDay, naira, nf, outlineButton, primaryButton, rowCls, selectCls, smallButton, tableCls, useLoad, type Toast } from "./HubParts";
@@ -75,8 +75,13 @@ function TargetsModal({ data, onClose, onSaved, onToast }: { data: HubSinceStart
   );
 }
 
-export default function SinceStartView({ platform, onToast }: { platform: string; onToast: Toast }) {
-  const { data, error, reload } = useLoad(() => trackingHubApi.sinceStart(platform), [platform]);
+export default function SinceStartView({ platform, refreshKey, onToast }: { platform: string; refreshKey: string; onToast: Toast }) {
+  // refreshKey changes after Sync Now; it also reloads every 10 minutes while open (the auto sync runs every 30).
+  const { data, error, reload } = useLoad(() => trackingHubApi.sinceStart(platform), [platform, refreshKey]);
+  useEffect(() => {
+    const timer = setInterval(() => { if (document.visibilityState === "visible") reload(); }, 10 * 60_000);
+    return () => clearInterval(timer);
+  }, [platform]); // eslint-disable-line react-hooks/exhaustive-deps
   const [verdict, setVerdict] = useState<HubVerdict2 | "">("");
   const [band, setBand] = useState("");
   const [startFrom, setStartFrom] = useState("");

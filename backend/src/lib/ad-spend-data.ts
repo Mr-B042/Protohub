@@ -5,7 +5,7 @@ import { dayOfIso, endIso, journeyCounts, loadBasics, startIso, type Basics } fr
 import { refreshAccount, refreshTargets } from "./tracking-meta-refresh.js";
 import { TIKTOK_PREFIX, linkEvidence, nameKey, tiktokOrderIds, type AccountInfo, type AdPlatform, type SpendInsight, type SpendMapping, type SpendOrder } from "./ad-spend.js";
 import { tiktokAdLifetime, tiktokAdSpend, tiktokCampaignStarts } from "./tiktok-ads.js";
-import { adLifetime } from "./meta-graph.js";
+import { adLifetime, campaignsByIds } from "./meta-graph.js";
 import { breakEvenCpa, sinceStart, type LifetimeRow } from "./ad-since-start.js";
 import { mappingIndex } from "./ad-spend.js";
 
@@ -241,6 +241,21 @@ async function syncLifetime(orgId: string, branchId: string, opts: { targets: Re
     if (!ids.length) continue;
     const result = await adLifetime(target.account, target.token, ids);
     if (!result.ok) { console.warn("[ad-spend] since-start:", target.label, result.message); continue; }
+    // Campaigns Protohub never saved details for (they spent, but not in a recent
+    // daily read): ask Meta for their status and start date, and keep them.
+    const missing = Array.from(new Set(result.rows.map((row) => row.campaignId))).filter((id) => !info.get(id)?.status || !info.get(id)?.start_time);
+    if (missing.length) {
+      const details = await campaignsByIds(missing, target.token);
+      if (details.ok && details.rows.length) {
+        const fetched = new Date().toISOString();
+        const upsert = await supabase.from("tracking_meta_campaigns").upsert(details.rows.map((campaign) => ({
+          org_id: orgId, branch_id: branchId, data_source_id: target.sourceId, connection_id: target.connectionId, ad_account_id: target.account, campaign_id: campaign.id, name: campaign.name ?? "",
+          objective: campaign.objective ?? null, status: campaign.effective_status ?? null, start_time: campaign.start_time ?? null, stop_time: campaign.stop_time ?? null, fetched_at: fetched
+        })), { onConflict: target.connectionId ? "connection_id,campaign_id" : "data_source_id,campaign_id" });
+        if (upsert.error) console.warn("[ad-spend] since-start: could not save campaign details", upsert.error.message);
+        for (const campaign of details.rows) info.set(String(campaign.id), { campaign_id: campaign.id, status: campaign.effective_status ?? null, start_time: campaign.start_time ?? null });
+      } else if (!details.ok) console.warn("[ad-spend] since-start: campaign details", target.label, details.message);
+    }
     await save("meta", result.rows.map((row) => ({
       platform: "meta", account_id: target.account, campaign_id: row.campaignId, campaign_name: row.campaignName,
       campaign_status: info.get(row.campaignId)?.status ?? null, campaign_start: lagosDay(info.get(row.campaignId)?.start_time),
