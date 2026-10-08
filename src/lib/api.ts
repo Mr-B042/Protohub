@@ -4558,6 +4558,32 @@ export type HubSettingsResponse = {
   lastSentAt: string | null; owners: Array<{ name: string; email: string }>;
 };
 export type HubAuditEntry = { at: string; action: string; subjectType: string | null; subject: string | null; by: string | null; detail: Record<string, unknown> };
+// Tracking Hub -> Ad Spend (Bright, 8 Oct 2026)
+export type HubAdSpendView = "product" | "campaign" | "adset" | "ad" | "account" | "business";
+export type HubAdSpendLevel = "account" | "campaign" | "adset" | "ad";
+export type HubSpendSplit = { productId: string; share: number };
+export type HubAdSpendMetrics = { spend: number; orders: number; delivered: number; revenue: number; profit: number; cpa: number | null; cpdo: number | null; deliveredAov: number | null; roas: number | null };
+export type HubAdSpendRow = HubAdSpendMetrics & {
+  id: string; name: string; image: string | null; campaigns: number; adsets: number; ads: number; accounts: number;
+  accountId: string | null; accountName: string | null; campaignId: string | null; campaignName: string | null; adsetId: string | null; adsetName: string | null;
+  products: Array<{ id: string; name: string }>; mappingSource: HubAdSpendLevel | "link" | "mixed" | null; unassignedSpend: number;
+  spendChange: number | null; trend: number[];
+};
+export type HubAdSpend = {
+  period: HubPeriod; view: HubAdSpendView; kpis: HubAdSpendMetrics; previous: HubAdSpendMetrics; rows: HubAdSpendRow[];
+  chart: Array<{ day: string; spend: number; orders: number; delivered: number }>;
+  byProduct: Array<{ id: string; name: string; spend: number; share: number }>;
+  unmapped: { spend: number; campaigns: number };
+  final: boolean; autoSync: boolean; hasAccounts: boolean;
+  lastSync: { at: string; ok: boolean; message: string | null; trigger: string | null } | null;
+  mappings: Array<{ level: HubAdSpendLevel; metaId: string; label: string; splits: HubSpendSplit[]; by: string | null; at: string }>;
+  filters: { businesses: Array<{ key: string; name: string }>; accounts: Array<{ id: string; name: string; businessKey: string }>; products: Array<{ id: string; name: string; imageUrl: string | null }> };
+};
+export type HubUnmappedCampaign = {
+  campaignId: string; campaignName: string; accountId: string; accountName: string; spend: number; suggestion: string | null;
+  adsets: Array<{ adsetId: string; adsetName: string; spend: number; ads: Array<{ adId: string; adName: string; spend: number }> }>;
+};
+
 type HubQuery = Record<string, string | number | undefined | null>;
 const hubQuery = (query: HubQuery) => {
   const params = new URLSearchParams();
@@ -4611,7 +4637,13 @@ export const trackingHubApi = {
   validateUrl: (url: string) => post<{ host: string; path: string; ok: boolean; note: string; checks: Array<{ key: string; label: string; value: string | null; required: boolean; ok: boolean }> }>("/api/tracking-hub/diagnostics/validate-url", { url }),
   settings: () => get<HubSettingsResponse>("/api/tracking-hub/settings"),
   saveSettings: (settings: HubSettings) => put<{ settings: HubSettings }>("/api/tracking-hub/settings", settings),
-  audit: () => get<{ entries: HubAuditEntry[] }>("/api/tracking-hub/audit")
+  audit: () => get<{ entries: HubAuditEntry[] }>("/api/tracking-hub/audit"),
+  adSpend: (query: HubQuery) => get<HubAdSpend>(`/api/tracking-hub/ad-spend${hubQuery(query)}`),
+  adSpendUnmapped: (query: HubQuery) => get<{ campaigns: HubUnmappedCampaign[] }>(`/api/tracking-hub/ad-spend/unmapped${hubQuery(query)}`),
+  saveAdSpendMapping: (body: { level: HubAdSpendLevel; metaId: string; adAccountId?: string | null; label: string; splits: HubSpendSplit[] }) => put<{ ok: true }>("/api/tracking-hub/ad-spend/mappings", body),
+  clearAdSpendMapping: (body: { level: HubAdSpendLevel; metaId: string; label: string }) => post<{ ok: true }>("/api/tracking-hub/ad-spend/mappings/clear", body),
+  syncAdSpend: (period: { from: string; to: string }) => post<{ ok: boolean; accounts: number; failed: string[]; message: string }>("/api/tracking-hub/ad-spend/sync", period),
+  setAdSpendAutoSync: (on: boolean) => put<{ ok: true; autoSync: boolean }>("/api/tracking-hub/ad-spend/auto-sync", { on })
 };
 
 // ── Team Challenges (Bright, 3 Oct 2026) ─────────────────────────────────────

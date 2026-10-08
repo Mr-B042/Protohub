@@ -5,13 +5,16 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 import { addDaysToDateKey, lagosDateKey } from "../lib/sales-bonus-engine.js";
 import { sendMetaCapiPurchase, testMetaCapiConnection } from "../lib/meta-capi.js";
 import { testTikTokConnection } from "../lib/tiktok-events.js";
-import { accountAdsetPixels, adPurchases, campaignsByIds, checkDataset, datasetEventStats, datasetQuality, discoverAdAccounts, discoverPixels, metaBusiness, metaWhoAmI, scanPage } from "../lib/meta-graph.js";
+import { checkDataset, datasetEventStats, datasetQuality, discoverAdAccounts, discoverPixels, metaBusiness, metaWhoAmI, scanPage } from "../lib/meta-graph.js";
 import { connectionToken } from "../lib/tracking-credentials.js";
 import { ATTRIBUTION_FIELDS, attributionCapture, domainOf, humanMetaError, orderAdIds, pathOf, productFromName, reconciliationVerdict } from "../lib/tracking-hub.js";
 import {
   DEFAULT_HUB_SETTINGS, MODE_OF_STRATEGY, STRATEGY_OF_MODE, assess, change, dayOfIso, daysBetween, eventsFor, formOrders,
   hubAudit, journeyCounts, kpisOf, ledgerRow, loadBasics, loadHubSettings, pct, sumVisits, type HubSettings, type JourneyRow, type LedgerRow
 } from "../lib/tracking-hub-data.js";
+import { refreshAccount, refreshTargets } from "../lib/tracking-meta-refresh.js";
+import { AD_SPEND_VIEWS, allocate, buildReport, mappingIndex, validSplits, type AdSpendView } from "../lib/ad-spend.js";
+import { loadAdSpendInputs, suggestProduct, syncAdSpend } from "../lib/ad-spend-data.js";
 
 // Tracking Hub (Bright, 2 Oct 2026; redesigned to his seven tab images the
 // same day). Owner only - it holds the Meta tokens. Numbers come from
@@ -1510,66 +1513,6 @@ router.post("/reconciliation/notes", async (req, res) => {
   } catch (error: any) { fail(res, error, "Could not save."); }
 });
 
-type RefreshTarget = { label: string; account: string; token: string; sourceId: string | null; connectionId: string | null };
-
-/** What Refresh Data reads: connections' switched-on ad accounts (their token), then ad account ids typed on manually added Pixels. */
-function refreshTargets(basics: Awaited<ReturnType<typeof loadBasics>>): RefreshTarget[] {
-  const targets: RefreshTarget[] = [];
-  const seen = new Set<string>();
-  for (const connection of basics.connections as any[]) {
-    if (!connection.access_token) continue;
-    for (const account of (basics.adAccounts as any[]).filter((row) => row.connection_id === connection.id && row.active)) {
-      if (seen.has(account.account_id)) continue;
-      seen.add(account.account_id);
-      targets.push({ label: account.name || connection.name, account: account.account_id, token: connection.access_token, sourceId: null, connectionId: connection.id });
-    }
-  }
-  for (const source of (basics.sources as any[]).filter((row) => (row.platform ?? "meta") === "meta" && row.active !== false && row.access_token)) {
-    for (const account of (source.ad_account_ids ?? []) as string[]) {
-      if (seen.has(account)) continue;
-      seen.add(account);
-      targets.push({ label: source.name, account, token: source.access_token, sourceId: source.id, connectionId: null });
-    }
-  }
-  return targets;
-}
-
-/** One ad account: Meta's purchases per ad per day, then details of only the campaigns in them. */
-async function refreshAccount(orgId: string, branchId: string, target: RefreshTarget, from: string, to: string) {
-  const account = target.account;
-  const result = await adPurchases(account, target.token, from, to);
-  if (!result.ok) return { source: target.label, account, ok: false, message: humanMetaError(result.message, null).title, rows: 0 };
-  const clear = supabase.from("tracking_meta_ad_insights").delete().eq("ad_account_id", account).gte("day", from).lte("day", to);
-  await (target.connectionId ? clear.eq("connection_id", target.connectionId) : clear.eq("data_source_id", target.sourceId!));
-  for (let i = 0; i < result.rows.length; i += 500) {
-    const insert = await supabase.from("tracking_meta_ad_insights").insert(result.rows.slice(i, i + 500).map((row) => ({
-      org_id: orgId, branch_id: branchId, data_source_id: target.sourceId, connection_id: target.connectionId, ad_account_id: account, day: row.day,
-      campaign_id: row.campaignId, campaign_name: row.campaignName, adset_id: row.adsetId, adset_name: row.adsetName, ad_id: row.adId, ad_name: row.adName,
-      purchases: row.purchases, purchase_value: row.purchaseValue, spend: row.spend
-    })));
-    if (insert.error) throw insert.error;
-  }
-  const info = await campaignsByIds(result.rows.map((row) => row.campaignId), target.token);
-  if (info.ok && info.rows.length) {
-    const fetchedAt = new Date().toISOString();
-    const upsert = await supabase.from("tracking_meta_campaigns").upsert(info.rows.map((campaign) => ({
-      org_id: orgId, branch_id: branchId, data_source_id: target.sourceId, connection_id: target.connectionId, ad_account_id: account, campaign_id: campaign.id, name: campaign.name ?? "",
-      objective: campaign.objective ?? null, status: campaign.effective_status ?? null, start_time: campaign.start_time ?? null, stop_time: campaign.stop_time ?? null, fetched_at: fetchedAt
-    })), { onConflict: target.connectionId ? "connection_id,campaign_id" : "data_source_id,campaign_id" });
-    if (upsert.error) throw upsert.error;
-  }
-  // Each ad set's Pixel, so an order goes to the ONE Pixel of the ad clicked
-  // without asking Meta while the customer waits (lib/tracking-click-pixel.ts).
-  const adsets = await accountAdsetPixels(account, target.token);
-  if (adsets.ok && adsets.rows.length) {
-    const fetchedAt = new Date().toISOString();
-    await supabase.from("tracking_meta_adset_pixels").upsert(adsets.rows.map((row) => ({
-      org_id: orgId, adset_id: row.adsetId, campaign_id: row.campaignId, ad_account_id: account, pixel_id: row.pixelId, fetched_at: fetchedAt
-    })), { onConflict: "org_id,adset_id" });
-  }
-  return { source: target.label, account, ok: true, message: info.ok ? "Loaded." : `Loaded; campaign names not read (${humanMetaError(info.message, null).title}).`, rows: result.rows.length };
-}
-
 /** The ad accounts Refresh Data will read (the page refreshes them one by one to show progress). */
 router.get("/reconciliation/targets", async (req, res) => {
   try {
@@ -1597,6 +1540,147 @@ router.post("/reconciliation/refresh", async (req, res) => {
     await hubAudit(orgId, branchId, actorOf(req), "reconciliation_refreshed", { type: "reconciliation" }, { from, to: period.to, accounts: report.length });
     res.json({ report });
   } catch (error: any) { fail(res, error, "Could not read Meta's numbers."); }
+});
+
+// =============================================================== AD SPEND
+// (Bright, 8 Oct 2026) Meta spend per product, from every connected ad
+// account, mapped by Meta IDs. Maths in lib/ad-spend.ts.
+
+const LEVELS = ["account", "campaign", "adset", "ad"] as const;
+
+router.get("/ad-spend", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const period = periodOf(req.query);
+    const view = (AD_SPEND_VIEWS.includes(String(req.query.view) as AdSpendView) ? String(req.query.view) : "product") as AdSpendView;
+    const chartLength = [7, 14, 30].includes(Number(req.query.chartDays)) ? Number(req.query.chartDays) : 7;
+    const chartDays = lastNDays(period.to, chartLength);
+    const trendDays = lastNDays(period.to, 7);
+    const loadFrom = [period.from, period.compareFrom, chartDays[0], trendDays[0]].sort()[0];
+    if (daysBetween(loadFrom, period.to) > 200) throw httpError(400, "Pick a shorter period (at most about 3 months with the comparison).");
+    const data = await loadAdSpendInputs(orgId, branchId, loadFrom, period.to);
+    const products = new Map(data.basics.products.map((row) => [row.id, { name: row.name, imageUrl: row.imageUrl ?? null }]));
+    const pieces = allocate(data.insights, mappingIndex(data.mappings), data.evidence, data.accounts);
+    const str = (key: string) => (typeof req.query[key] === "string" && req.query[key] ? String(req.query[key]) : undefined);
+    const report = buildReport({
+      view, from: period.from, to: period.to, compareFrom: period.compareFrom, compareTo: period.compareTo, trendDays, chartDays,
+      pieces, orders: data.orders, accounts: data.accounts, products,
+      filters: { productId: str("productId"), campaignId: str("campaignId"), adsetId: str("adsetId"), accountId: str("accountId")?.replace(/^act_/, ""), businessKey: str("business"), q: str("q") }
+    });
+    const days: string[] = [];
+    for (let day = period.from; day <= period.to; day = addDaysToDateKey(day, 1)) days.push(day);
+    const accounts = Array.from(data.accounts.values());
+    res.json({
+      period, view, ...report,
+      final: days.every((day) => data.finalDays.has(day)),
+      autoSync: data.state?.auto_sync !== false,
+      lastSync: data.state?.last_sync_at ? { at: data.state.last_sync_at, ok: data.state.last_sync_ok !== false, message: data.state.last_sync_message ?? null, trigger: data.state.last_sync_trigger ?? null } : null,
+      hasAccounts: refreshTargets(data.basics).length > 0,
+      mappings: data.mappings.map((row) => ({ level: row.level, metaId: row.meta_id, label: row.label, splits: row.splits, by: row.created_by_name, at: row.updated_at })),
+      filters: {
+        businesses: Array.from(new Map(accounts.filter((row) => row.businessKey).map((row) => [row.businessKey, row.businessName])).entries()).map(([key, name]) => ({ key, name })),
+        accounts: accounts.map((row) => ({ id: row.accountId, name: row.name, businessKey: row.businessKey })),
+        products: data.basics.products.map((row) => ({ id: row.id, name: row.name, imageUrl: row.imageUrl ?? null })).sort((a, b) => a.name.localeCompare(b.name))
+      }
+    });
+  } catch (error: any) { fail(res, error, "Could not load ad spend."); }
+});
+
+/** Spend with no product yet, by campaign, then ad set and ad (for campaigns selling several products). */
+router.get("/ad-spend/unmapped", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const period = periodOf(req.query);
+    const data = await loadAdSpendInputs(orgId, branchId, period.from, period.to);
+    const pieces = allocate(data.insights, mappingIndex(data.mappings), data.evidence, data.accounts).filter((piece) => piece.productId === null);
+    const campaigns = new Map<string, { campaignId: string; campaignName: string; accountId: string; accountName: string; spend: number; adsets: Map<string, { adsetId: string; adsetName: string; spend: number; ads: Map<string, { adId: string; adName: string; spend: number }> }> }>();
+    for (const piece of pieces) {
+      const campaign = campaigns.get(piece.campaignId) ?? { campaignId: piece.campaignId, campaignName: piece.campaignName, accountId: piece.accountId, accountName: data.accounts.get(piece.accountId)?.name || `act_${piece.accountId}`, spend: 0, adsets: new Map() };
+      campaign.spend += piece.spend;
+      const adset = campaign.adsets.get(piece.adsetId) ?? { adsetId: piece.adsetId, adsetName: piece.adsetName, spend: 0, ads: new Map() };
+      adset.spend += piece.spend;
+      const ad = adset.ads.get(piece.adId) ?? { adId: piece.adId, adName: piece.adName, spend: 0 };
+      ad.spend += piece.spend;
+      adset.ads.set(piece.adId, ad); campaign.adsets.set(piece.adsetId, adset); campaigns.set(piece.campaignId, campaign);
+    }
+    res.json({
+      period,
+      campaigns: Array.from(campaigns.values()).sort((a, b) => b.spend - a.spend).map((campaign) => ({
+        ...campaign,
+        suggestion: suggestProduct([campaign.campaignName, ...Array.from(campaign.adsets.values()).map((row) => row.adsetName)], data.basics.products),
+        adsets: Array.from(campaign.adsets.values()).sort((a, b) => b.spend - a.spend).map((adset) => ({ ...adset, ads: Array.from(adset.ads.values()).sort((a, b) => b.spend - a.spend) }))
+      }))
+    });
+  } catch (error: any) { fail(res, error, "Could not load the unassigned spend."); }
+});
+
+router.put("/ad-spend/mappings", async (req, res) => {
+  const parsed = z.object({
+    level: z.enum(LEVELS), metaId: z.string().trim().min(1).max(64), adAccountId: z.string().trim().max(64).nullable().optional(), label: z.string().trim().max(300).default(""),
+    splits: z.array(z.object({ productId: z.string().uuid(), share: z.number() })).max(10)
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Pick a product." }); return; }
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const d = parsed.data;
+    const { data: products, error: productsError } = await supabase.from("products").select("id").eq("org_id", orgId).in("id", d.splits.map((split) => split.productId));
+    if (productsError) throw productsError;
+    const problem = validSplits(d.splits, new Set((products ?? []).map((row: any) => row.id)));
+    if (problem) throw httpError(400, problem);
+    const { error } = await supabase.from("tracking_ad_spend_mappings").upsert({
+      org_id: orgId, branch_id: branchId, level: d.level, meta_id: d.metaId.replace(/^act_/, ""), ad_account_id: d.adAccountId ? d.adAccountId.replace(/^act_/, "") : null, label: d.label,
+      splits: d.splits.map((split) => ({ productId: split.productId, share: Math.round(split.share * 100) / 100 })),
+      created_by: req.user!.id, created_by_name: req.user!.name ?? null, updated_at: new Date().toISOString()
+    }, { onConflict: "org_id,branch_id,level,meta_id" });
+    if (error) throw error;
+    await hubAudit(orgId, branchId, actorOf(req), "ad_spend_mapped", { type: d.level, id: d.metaId, label: d.label }, { splits: d.splits });
+    res.json({ ok: true });
+  } catch (error: any) { fail(res, error, "Could not save the product."); }
+});
+
+router.post("/ad-spend/mappings/clear", async (req, res) => {
+  const parsed = z.object({ level: z.enum(LEVELS), metaId: z.string().trim().min(1).max(64), label: z.string().trim().max(300).default("") }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Which one?" }); return; }
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const { error } = await supabase.from("tracking_ad_spend_mappings").delete().eq("org_id", orgId).eq("branch_id", branchId).eq("level", parsed.data.level).eq("meta_id", parsed.data.metaId.replace(/^act_/, ""));
+    if (error) throw error;
+    await hubAudit(orgId, branchId, actorOf(req), "ad_spend_unmapped", { type: parsed.data.level, id: parsed.data.metaId, label: parsed.data.label });
+    res.json({ ok: true });
+  } catch (error: any) { fail(res, error, "Could not remove the product."); }
+});
+
+/** Sync Now: the period shown (and today), from every switched-on ad account. */
+router.post("/ad-spend/sync", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const period = periodOf(req.body ?? {});
+    const today = lagosDateKey();
+    const from = period.from < today ? period.from : today;
+    if (daysBetween(from, today) > 92) throw httpError(400, "Sync at most 92 days at a time.");
+    const result = await syncAdSpend(orgId, branchId, { from, to: today, trigger: "manual" });
+    if (!result.accounts) throw httpError(400, result.message);
+    await hubAudit(orgId, branchId, actorOf(req), "ad_spend_synced", { type: "ad_spend" }, { from, to: today, accounts: result.accounts, ok: result.ok });
+    res.json(result);
+  } catch (error: any) { fail(res, error, "Couldn't read Meta's spend."); }
+});
+
+router.put("/ad-spend/auto-sync", async (req, res) => {
+  const parsed = z.object({ on: z.boolean() }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "On or off?" }); return; }
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = branchOf(req);
+    const { error } = await supabase.from("tracking_ad_spend_state").upsert({ org_id: orgId, branch_id: branchId, auto_sync: parsed.data.on, updated_at: new Date().toISOString() }, { onConflict: "org_id,branch_id" });
+    if (error) throw error;
+    await hubAudit(orgId, branchId, actorOf(req), parsed.data.on ? "ad_spend_auto_sync_on" : "ad_spend_auto_sync_off", { type: "ad_spend" });
+    res.json({ ok: true, autoSync: parsed.data.on });
+  } catch (error: any) { fail(res, error, "Could not save."); }
 });
 
 // ============================================================= DIAGNOSTICS
