@@ -8,7 +8,7 @@
 export type FundKind = "customer_payment" | "owner_funding" | "company_transfer_in" | "other_in" | "expense" | "remittance_out";
 export type FundCategory =
   | "logistics" | "meta_ads" | "airtime_data" | "packaging" | "office" | "customer_refund"
-  | "staff_expense" | "transportation" | "repairs" | "miscellaneous" | "other";
+  | "staff_expense" | "transportation" | "repairs" | "miscellaneous" | "other" | "waybill";
 
 export const MONEY_IN_KINDS: FundKind[] = ["customer_payment", "owner_funding", "company_transfer_in", "other_in"];
 
@@ -21,6 +21,9 @@ export const MONEY_IN_KINDS: FundKind[] = ["customer_payment", "owner_funding", 
  */
 export const FUND_CATEGORIES: Record<FundCategory, { label: string; expenseCategory: string }> = {
   logistics: { label: "Logistics / Rider Fees", expenseCategory: "Delivery" },
+  // A product's waybill cost (Bright, 9 Oct 2026). Counted once against the
+  // product's typed weekly waybill total - see lib/waybill-costs.ts.
+  waybill: { label: "Waybill", expenseCategory: "Waybill" },
   meta_ads: { label: "Facebook / Meta Ads", expenseCategory: "Ad Spend" },
   airtime_data: { label: "Airtime / Data", expenseCategory: "Airtime & Data" },
   packaging: { label: "Packaging", expenseCategory: "Other" },

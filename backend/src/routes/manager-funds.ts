@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { recomputeWaybillWeek } from "../lib/waybill-costs.js";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { humanFieldErrors } from "../lib/validation-message.js";
@@ -128,7 +129,7 @@ async function ensureWeek(orgId: string, branchId: string, managerId: string, wa
   return (await resolveOpening(orgId, branchId, managerId, weekStart)).row;
 }
 
-const TXN_COLUMNS = "id, manager_id, wallet_account_id, week_start, kind, category, amount, occurred_at, description, paid_to, payment_method, reference, order_ids, counterparty_account_id, evidence, expense_id, transfer_id, remittance_transaction_ids, status, return_reason, void_reason, voided_at, adjusts_transaction_id, version, created_by, created_by_name, created_at, updated_at";
+const TXN_COLUMNS = "id, manager_id, wallet_account_id, week_start, kind, category, product_id, amount, occurred_at, description, paid_to, payment_method, reference, order_ids, counterparty_account_id, evidence, expense_id, transfer_id, remittance_transaction_ids, status, return_reason, void_reason, voided_at, adjusts_transaction_id, version, created_by, created_by_name, created_at, updated_at";
 
 const toFundTxn = (row: any): FundTxn => ({
   id: row.id, kind: row.kind, category: row.category ?? null, amount: Number(row.amount ?? 0), occurredAt: row.occurred_at,
@@ -140,6 +141,7 @@ const mapTxn = (row: any, settings: FundSettings, countedOnOrders = 0) => ({
   /** Rider fees already on the orders: paid from the wallet, not a new cost. */
   countedOnOrders,
   id: row.id,
+  productId: row.product_id ?? null,
   managerId: row.manager_id,
   weekStart: row.week_start,
   kind: row.kind as FundKind,
@@ -310,7 +312,12 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
         decisionNote: row.decision_note ?? null, createdAt: row.created_at
       })),
       daily,
-      categories: Object.entries(FUND_CATEGORIES).map(([key, value]) => ({ key, label: value.label }))
+      categories: Object.entries(FUND_CATEGORIES).map(([key, value]) => ({ key, label: value.label })),
+      // For the "Waybill" category: which product's waybills a payment was for.
+      products: await (async () => {
+        const { data: rows } = await supabase.from("products").select("id, name, active").eq("org_id", orgId).order("name");
+        return ((rows ?? []) as any[]).filter((row) => row.active !== false).map((row) => ({ id: row.id, name: row.name }));
+      })()
     });
   } catch (error: any) {
     sendError(res, error, "Could not load the manager's funds.");
@@ -446,8 +453,8 @@ const currencyFor = async (branchId: string) => {
   return ["NGN", "USD", "GBP"].includes(String(data?.currency)) ? String(data!.currency) : "NGN";
 };
 
-const expenseRow = (input: { id: string; orgId: string; branchId: string; walletId: string; date: string; category: string; description: string; amount: number; paidBy: string; currency: string }) => ({
-  id: input.id, org_id: input.orgId, branch_id: input.branchId, date: input.date,
+const expenseRow = (input: { id: string; orgId: string; branchId: string; walletId: string; date: string; category: string; description: string; amount: number; paidBy: string; currency: string; productId?: string | null }) => ({
+  id: input.id, org_id: input.orgId, branch_id: input.branchId, date: input.date, product_id: input.productId ?? null,
   category: FUND_CATEGORIES[input.category as keyof typeof FUND_CATEGORIES].expenseCategory,
   description: input.description, amount: input.amount, currency: input.currency, paid_by: input.paidBy,
   bank_account_id: input.walletId
@@ -534,6 +541,8 @@ async function syncWalletExpense(input: {
   orgId: string; branchId: string; txnId: string; walletId: string; existingExpenseId: string | null;
   category: string; amount: number; occurredAt: string; description: string | null; paidTo: string | null; paidBy: string;
   orderIds: string[]; previousOrderIds: string[];
+  /** Waybill only: which product's waybills this payment was for. */
+  productId?: string | null; previousCategory?: string | null;
 }) {
   const split = await expenseSplit(input.orgId, input.category, input.amount, input.orderIds, input.txnId);
   const coveredIds = split.counted > 0 ? input.orderIds : [];
@@ -545,14 +554,14 @@ async function syncWalletExpense(input: {
   if (split.newCost > 0) {
     if (input.existingExpenseId) {
       const { error } = await supabase.from("expenses").update({
-        amount: split.newCost, date: lagosDay(input.occurredAt), description,
+        amount: split.newCost, date: lagosDay(input.occurredAt), description, product_id: input.productId ?? null,
         category: FUND_CATEGORIES[input.category as keyof typeof FUND_CATEGORIES].expenseCategory
       }).eq("id", input.existingExpenseId).eq("org_id", input.orgId);
       if (error) throw error;
     } else {
       const { error } = await supabase.from("expenses").insert(expenseRow({
         id: expenseId, orgId: input.orgId, branchId: input.branchId, walletId: input.walletId, date: lagosDay(input.occurredAt),
-        category: input.category, description, amount: split.newCost, paidBy: input.paidBy, currency: await currencyFor(input.branchId)
+        category: input.category, description, amount: split.newCost, paidBy: input.paidBy, currency: await currencyFor(input.branchId), productId: input.productId ?? null
       }));
       if (error) throw error;
     }
@@ -566,6 +575,8 @@ async function syncWalletExpense(input: {
       .eq("org_id", input.orgId).is("bank_account_id", null).in("id", feeExpenseIds(coveredIds));
     if (error) throw error;
   }
+  // A waybill payment counts toward the product's typed weekly total, not on top of it.
+  if (input.category === "waybill" || input.previousCategory === "waybill") await recomputeWaybillWeek(input.orgId, input.branchId, lagosDay(input.occurredAt));
   return { expenseId: split.newCost > 0 ? expenseId : null, counted: split.counted, newCost: split.newCost };
 }
 
@@ -585,7 +596,9 @@ const LogSchema = z.object({
   relatedOrderIds: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
   counterpartyAccountId: z.string().uuid().optional(),
   // Admin/Owner only: why a customer payment does not settle the order exactly.
-  varianceReason: z.string().trim().max(400).optional()
+  varianceReason: z.string().trim().max(400).optional(),
+  // Waybill expenses: which product's waybills (Bright, 9 Oct 2026).
+  productId: z.string().trim().min(1).max(60).optional()
 });
 
 router.post("/transactions", requireRole("Manager", "Admin"), async (req, res) => {
@@ -600,6 +613,7 @@ router.post("/transactions", requireRole("Manager", "Admin"), async (req, res) =
     const weekStart = sundayWeekStartForDateKey(lagosDay(body.occurredAt));
     await assertEditable(orgId, branchId, me.id, weekStart);
     if (body.kind === "expense" && !body.category) throw httpError(400, "Choose a category.");
+    if (body.kind === "expense" && body.category === "waybill" && !body.productId) throw httpError(400, "Choose which product's waybills this was for.");
     if (body.kind === "customer_payment" && !body.orderId) throw httpError(400, "Enter the order number this payment is for.");
     if (["owner_funding", "company_transfer_in", "remittance_out"].includes(body.kind)) await assertCompanyAccount(orgId, branchId, body.counterpartyAccountId);
 
@@ -614,6 +628,7 @@ router.post("/transactions", requireRole("Manager", "Admin"), async (req, res) =
       reference: body.reference || null,
       order_ids: orderId ? [orderId] : body.kind === "expense" ? (body.relatedOrderIds ?? []).map((id) => id.replace(/^#/, "")) : [],
       counterparty_account_id: body.counterpartyAccountId ?? null,
+      product_id: body.kind === "expense" && body.category === "waybill" ? body.productId ?? null : null,
       created_by: me.id, created_by_name: me.name
     }).select(TXN_COLUMNS).single();
     if (error) throw error;
@@ -627,7 +642,8 @@ router.post("/transactions", requireRole("Manager", "Admin"), async (req, res) =
         const synced = await syncWalletExpense({
           orgId, branchId, txnId: row.id, walletId: wallet.id, existingExpenseId: null, category: body.category!,
           amount: body.amount, occurredAt: body.occurredAt, description: body.description ?? null, paidTo: body.paidTo ?? null,
-          paidBy: me.name, orderIds: cleanOrderIds(row.order_ids), previousOrderIds: []
+          paidBy: me.name, orderIds: cleanOrderIds(row.order_ids), previousOrderIds: [],
+          productId: body.category === "waybill" ? body.productId ?? null : null
         });
         if (synced.expenseId) mirror.expense_id = synced.expenseId;
       } else if (body.kind === "owner_funding" || body.kind === "company_transfer_in" || body.kind === "remittance_out") {
@@ -686,7 +702,8 @@ const EditSchema = z.object({
   paymentMethod: z.enum(["cash", "transfer", "pos", "other"]).optional(),
   reference: z.string().trim().max(120).optional(),
   counterpartyAccountId: z.string().uuid().optional(),
-  relatedOrderIds: z.array(z.string().trim().min(1).max(60)).max(20).optional()
+  relatedOrderIds: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
+  productId: z.string().trim().min(1).max(60).optional()
 });
 
 router.patch("/transactions/:id", requireRole("Manager", "Admin"), async (req, res) => {
@@ -713,14 +730,17 @@ router.patch("/transactions/:id", requireRole("Manager", "Admin"), async (req, r
       reference: body.reference ?? row.reference,
       counterparty_account_id: body.counterpartyAccountId ?? row.counterparty_account_id,
       order_ids: row.kind === "expense" && body.relatedOrderIds ? cleanOrderIds(body.relatedOrderIds) : (row.order_ids ?? []),
-      expense_id: row.expense_id ?? null
+      expense_id: row.expense_id ?? null,
+      product_id: row.kind === "expense" && (body.category ?? row.category) === "waybill" ? body.productId ?? row.product_id ?? null : null
     };
+    if (row.kind === "expense" && next.category === "waybill" && !next.product_id) throw httpError(400, "Choose which product's waybills this was for.");
 
     if (row.kind === "expense") {
       const synced = await syncWalletExpense({
         orgId, branchId, txnId: row.id, walletId: row.wallet_account_id, existingExpenseId: row.expense_id ?? null, category: next.category!,
         amount: next.amount, occurredAt: next.occurred_at, description: next.description, paidTo: next.paid_to,
-        paidBy: row.created_by_name ?? req.user!.name ?? "Manager", orderIds: cleanOrderIds(next.order_ids), previousOrderIds: cleanOrderIds(row.order_ids)
+        paidBy: row.created_by_name ?? req.user!.name ?? "Manager", orderIds: cleanOrderIds(next.order_ids), previousOrderIds: cleanOrderIds(row.order_ids),
+        productId: next.product_id, previousCategory: row.category
       });
       next.expense_id = synced.expenseId;
     }
@@ -770,6 +790,8 @@ router.post("/transactions/:id/void", requireRole("Manager", "Admin"), async (re
       if (error) throw error;
     }
     if (row.kind === "expense") await releaseOrderFees(orgId, row.wallet_account_id, cleanOrderIds(row.order_ids));
+    // The product's typed waybill total takes back the part this payment covered.
+    if (row.category === "waybill") await recomputeWaybillWeek(orgId, branchId, lagosDay(row.occurred_at));
     if (row.transfer_id) {
       const { error } = await supabase.from("bank_account_transfers").delete().eq("id", row.transfer_id).eq("org_id", orgId);
       if (error) throw error;
@@ -956,7 +978,8 @@ router.post("/adjustments/:id/decide", requireRole("Owner"), async (req, res) =>
           const synced = await syncWalletExpense({
             orgId, branchId, txnId: txn.id, walletId: txn.wallet_account_id, existingExpenseId: txn.expense_id ?? null, category: txn.category ?? "other",
             amount, occurredAt: txn.occurred_at, description: txn.description, paidTo: txn.paid_to, paidBy: txn.created_by_name ?? "Manager",
-            orderIds: cleanOrderIds(txn.order_ids), previousOrderIds: cleanOrderIds(txn.order_ids)
+            orderIds: cleanOrderIds(txn.order_ids), previousOrderIds: cleanOrderIds(txn.order_ids),
+            productId: txn.product_id ?? null, previousCategory: txn.category
           });
           if ((synced.expenseId ?? null) !== (txn.expense_id ?? null)) {
             const { error: e } = await supabase.from("manager_fund_transactions").update({ expense_id: synced.expenseId }).eq("id", txn.id);
@@ -972,6 +995,7 @@ router.post("/adjustments/:id/decide", requireRole("Owner"), async (req, res) =>
       } else {
         if (txn.expense_id) await supabase.from("expenses").delete().eq("id", txn.expense_id).eq("org_id", orgId);
         if (txn.kind === "expense") await releaseOrderFees(orgId, txn.wallet_account_id, cleanOrderIds(txn.order_ids));
+        if (txn.category === "waybill") await recomputeWaybillWeek(orgId, branchId, lagosDay(txn.occurred_at));
         if (txn.transfer_id) await supabase.from("bank_account_transfers").delete().eq("id", txn.transfer_id).eq("org_id", orgId);
         const { error: e } = await supabase.from("manager_fund_transactions").update({
           status: "voided", void_reason: `Owner-approved adjustment to ₦0: ${request.reason}`, voided_by: req.user!.id, voided_at: new Date().toISOString(),

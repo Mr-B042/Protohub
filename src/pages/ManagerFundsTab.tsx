@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { Bar, CartesianGrid, Cell, ComposedChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Modal, Panel, dateTimeText, longDate, nf, shortDay } from "../components/WeeklyReportParts";
-import { managerFundsApi, type ManagerFundLogInput, type ManagerFundOrderCheck, type ManagerFundTxn, type ManagerFundWeek, type FundKindKey } from "../lib/api";
+import { expensesApi, managerFundsApi, type ManagerFundLogInput, type WaybillWeekPosition, type ManagerFundOrderCheck, type ManagerFundTxn, type ManagerFundWeek, type FundKindKey } from "../lib/api";
 import { currencySymbol } from "../lib/money-privacy";
 
 /**
@@ -88,6 +88,30 @@ function MethodPill({ method }: { method: string | null }) {
  * cost) and how much is new. Income for an order: amount − delivery fee −
  * already received = what is left, with a button to use it.
  */
+/**
+ * Waybill payments count toward the product's weekly waybill total typed on
+ * the Expenses page, never on top of it (Bright, 9 Oct 2026).
+ */
+function WaybillWeekNote({ date, productId, amount, sym, nf }: { date: string; productId: string; amount: number; sym: string; nf: (value: number) => string }) {
+  const [week, setWeek] = useState<WaybillWeekPosition | null>(null);
+  useEffect(() => {
+    if (!date) return;
+    let cancelled = false;
+    expensesApi.waybillWeek(date, productId || null).then((value) => { if (!cancelled) setWeek(value); }).catch(() => { if (!cancelled) setWeek(null); });
+    return () => { cancelled = true; };
+  }, [date, productId]);
+  if (!week || !week.active) return null;
+  const typed = week.typedTotals.reduce((sum, row) => sum + row.declared, 0);
+  const paid = week.walletPayments.reduce((sum, row) => sum + row.amount, 0);
+  return (
+    <p className="m-0 rounded-lg bg-blue-50 px-3 py-2 text-[12px] text-blue-900 dark:bg-blue-500/10 dark:text-blue-200">
+      {typed > 0
+        ? <>This week's waybill total typed on the Expenses page: <b>{sym}{nf(typed)}</b>. Your {sym}{nf(amount)} counts <b>toward it</b>, not on top of it.{paid + amount > typed ? <span className="mt-1 block font-semibold text-amber-700">Wallet payments ({sym}{nf(paid + amount)}) would be more than that total. Check the total or this amount.</span> : null}</>
+        : <>No weekly waybill total typed yet for this week. This payment counts as a cost now; when the week's total is typed on the Expenses page, only the rest is added (you won't be counted twice).</>}
+    </p>
+  );
+}
+
 function OrderMoneyCheck({ kind, category, amount, orderText, excludeTxnId, sym, nf, onUseAmount }: {
   kind: string; category: string; amount: string; orderText: string; excludeTxnId?: string; sym: string;
   nf: (value: number) => string; onUseAmount: (value: number) => void;
@@ -182,12 +206,14 @@ type Draft = {
   orderId: string;
   relatedOrders: string;
   counterpartyAccountId: string;
+  /** Waybill only: which product's waybills. */
+  productId: string;
   file: File | null;
 };
 
 const emptyDraft = (kind: FundKindKey): Draft => ({
   kind, category: kind === "expense" ? "logistics" : "", amount: "", occurredAt: nowLocalInput(), description: "", paidTo: "",
-  paymentMethod: "transfer", reference: "", orderId: "", relatedOrders: "", counterpartyAccountId: "", file: null
+  paymentMethod: "transfer", reference: "", orderId: "", relatedOrders: "", counterpartyAccountId: "", productId: "", file: null
 });
 
 export default function ManagerFundsTab({
@@ -288,7 +314,7 @@ export default function ManagerFundsTab({
     setFormError("");
     setEditing(txn);
     setDraft({
-      kind: txn.kind, category: txn.category ?? "", amount: String(txn.amount),
+      kind: txn.kind, category: txn.category ?? "", amount: String(txn.amount), productId: txn.productId ?? "",
       occurredAt: new Date(new Date(txn.occurredAt).getTime() + 60 * 60 * 1000).toISOString().slice(0, 16),
       description: txn.description ?? "", paidTo: txn.paidTo ?? "", paymentMethod: txn.paymentMethod ?? "transfer",
       reference: txn.reference ?? "", orderId: txn.orderIds[0] ?? "", relatedOrders: txn.kind === "expense" ? txn.orderIds.join(", ") : "",
@@ -316,6 +342,7 @@ export default function ManagerFundsTab({
         reference: draft.reference.trim() || undefined,
         ...(draft.kind === "expense" ? {
           category: draft.category,
+          ...(draft.category === "waybill" ? { productId: draft.productId || undefined } : {}),
           relatedOrderIds: draft.relatedOrders.split(/[\s,]+/).map((id) => id.replace(/^#/, "").trim()).filter(Boolean)
         } : {}),
         ...(draft.kind === "customer_payment" ? { orderId: draft.orderId.replace(/^#/, "").trim() } : {}),
@@ -726,6 +753,16 @@ export default function ManagerFundsTab({
                       {categories.map((category) => <option key={category.key} value={category.key}>{category.label}</option>)}
                     </select>
                   </label>
+                )}
+                {draft.kind === "expense" && draft.category === "waybill" && (
+                  <>
+                    <label className="block"><span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Which product's waybills?</span>
+                      <select className={field} value={draft.productId} onChange={(event) => setDraft({ ...draft, productId: event.target.value })}>
+                        <option value="">Choose the product</option>
+                        {(data?.products ?? []).map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
+                      </select></label>
+                    <WaybillWeekNote date={draft.occurredAt ? draft.occurredAt.slice(0, 10) : ""} productId={draft.productId} amount={Number(draft.amount) || 0} sym={sym} nf={nf} />
+                  </>
                 )}
                 <div className="grid grid-cols-2 gap-3">
                   <label className="block"><span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Amount ({sym})</span>
