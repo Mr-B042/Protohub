@@ -23562,7 +23562,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <span>
               {ownerApprovalGranted && <><strong>Owner approval:</strong> saving will approve and record this variance.</>}
               {adminVariancePending && <><strong>Owner approval is required</strong> to save this variance. Saving records this cash now and sends the variance to the Owner to approve.</>}
-              {ownerApprovalRequired && <><strong>This save is locked</strong> - only an Admin or the Owner can record cash variance.</>}
+              {ownerApprovalRequired && <><strong>This save is locked</strong> - only an Admin or the Owner can record cash variance.{!enteredCash && logisticsValue !== (order.logisticsCost ?? 0) ? <> No cash in yet? Use <strong>Save delivery fee only</strong> below.</> : null}</>}
             </span>
           </div>
         </section>
@@ -23570,6 +23570,32 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
       </>
     );
+  };
+  // ⚠️ Fee only, no cash (Bright, 9 Oct 2026). A rep who logs the courier's fee
+  // here before the agent has paid left "amount received" empty, which this
+  // form reads as ₦0 received - a full "short cash" variance only an Admin may
+  // record, so the save locked and she was told only an Admin could save it.
+  // The fee on its own is not cash: it saves exactly like the rep order page's
+  // "Save Delivery Fee" (logistics_cost + the Delivery expense + a note). The
+  // cash rule is unchanged for any save that records money received.
+  const saveRemittanceFeeOnly = (order: TrackedOrder, fee: number) => {
+    const by = currentRole === "Sales Rep" ? repScopeName : ownerName;
+    const nextNotes = [
+      orderTimelineNote(`Delivery fee set to ${formatProductMoney(fee, order.currency)}.`, { by }),
+      ...orderNotesFor(order)
+    ];
+    const orderSnapshot = order;
+    setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? { ...o, logisticsCost: fee, notes: nextNotes } : o));
+    syncOrderDeliveryExpense({ ...order, logisticsCost: fee });
+    ordersApi.update(order.id, { logistics_cost: fee, timeline_notes: nextNotes }).then(() => {
+      void loadFinanceSummaryData({ quiet: true });
+      void loadFinanceRemittanceData({ quiet: true });
+      void loadWeeklyAccountingData({ quiet: true });
+      showToast(`${order.id} delivery fee saved. Record the cash when the agent pays.`);
+    }).catch((err: any) => {
+      setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? orderSnapshot : o));
+      showToast(`Delivery fee for ${order.id} not saved: ${err?.message ?? "please retry"}.`);
+    });
   };
   // Both call sites end in the same row of buttons. The only difference is what
   // Cancel does - close the modal, or go back to the order list you came from.
@@ -23584,6 +23610,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       </span>
       <span className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
         <button className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-gray-200 px-5 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 sm:w-auto" onClick={options.onCancel}>{options.cancelLabel ?? "Cancel"}</button>
+        {!st.enteredCash && st.logisticsValue !== (order.logisticsCost ?? 0) && (
+          <button
+            className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-300 bg-white px-5 py-2.5 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-50 dark:border-emerald-800 dark:bg-transparent dark:text-emerald-300 sm:w-auto"
+            onClick={() => saveRemittanceFeeOnly(order, st.logisticsValue)}
+          >
+            Save delivery fee only
+          </button>
+        )}
         <button
           className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
           onClick={() => recordRemittance({ stayInModal: options.stayInModal })}
