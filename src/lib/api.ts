@@ -2193,7 +2193,14 @@ export const expensesApi = {
     return get<any[]>(`/api/expenses${qs}`);
   },
   create: (body: unknown) => post<any>("/api/expenses", body),
-  delete: (id: string) => del<void>(`/api/expenses/${id}`)
+  delete: (id: string) => del<void>(`/api/expenses/${id}`),
+  /** What the manager's wallet already paid toward this week's waybills (Bright, 9 Oct 2026). */
+  waybillWeek: (date: string, productId?: string | null) => get<WaybillWeekPosition>(`/api/expenses/waybill-week?date=${encodeURIComponent(date)}${productId ? `&productId=${encodeURIComponent(productId)}` : ""}`)
+};
+export type WaybillWeekPosition = {
+  weekStart: string; weekEnd: string; active: boolean;
+  walletPayments: Array<{ id: string; amount: number; productId: string | null; description: string }>;
+  typedTotals: Array<{ id: string; declared: number; booked: number; productId: string | null; description: string }>;
 };
 
 // ── Payroll ───────────────────────────────────────────────
@@ -4175,7 +4182,7 @@ export const weeklyReportsApi = {
 // ── Manager Funds & Expenses (manager wallet) ────────────────────────────────
 export type FundKindKey = "customer_payment" | "owner_funding" | "company_transfer_in" | "other_in" | "expense" | "remittance_out";
 export type ManagerFundTxn = {
-  id: string; managerId: string; weekStart: string; kind: FundKindKey; kindLabel: string;
+  id: string; productId?: string | null; managerId: string; weekStart: string; kind: FundKindKey; kindLabel: string;
   category: string | null; categoryLabel: string | null; amount: number; occurredAt: string;
   description: string | null; paidTo: string | null; paymentMethod: string | null; reference: string | null;
   orderIds: string[]; counterpartyAccountId: string | null;
@@ -4209,11 +4216,13 @@ export type ManagerFundWeek = {
   adjustments?: Array<{ id: string; transactionId: string; originalAmount: number; requestedAmount: number; reason: string; status: "pending" | "approved" | "rejected"; decidedByName: string | null; decidedAt: string | null; decisionNote: string | null; createdAt: string }>;
   daily?: Array<{ date: string; moneyIn: number; expenses: number; remitted: number }>;
   categories?: Array<{ key: string; label: string }>;
+  /** For "Waybill": which product's waybills a payment was for. */
+  products?: Array<{ id: string; name: string }>;
 };
 export type ManagerFundLogInput = {
   kind: FundKindKey; category?: string; amount: number; occurredAt: string; description?: string; paidTo?: string;
   paymentMethod?: "cash" | "transfer" | "pos" | "other"; reference?: string; orderId?: string; relatedOrderIds?: string[];
-  counterpartyAccountId?: string; varianceReason?: string;
+  counterpartyAccountId?: string; varianceReason?: string; productId?: string;
 };
 
 export const managerFundsApi = {

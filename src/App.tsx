@@ -8783,6 +8783,37 @@ function SortablePackageImage({
   );
 }
 
+/**
+ * Expenses form, "Waybill": what the manager's wallet already paid toward this
+ * week's waybills, so the team types the FULL weekly total and only the rest
+ * is added (Bright, 9 Oct 2026; backend lib/waybill-costs.ts).
+ */
+function WaybillWalletNote({ date, productId, amount }: { date: string; productId: string | null; amount: number }) {
+  const [week, setWeek] = useState<Awaited<ReturnType<typeof expensesApi.waybillWeek>> | null>(null);
+  useEffect(() => {
+    if (!date) return;
+    let cancelled = false;
+    expensesApi.waybillWeek(date, productId).then((value) => { if (!cancelled) setWeek(value); }).catch(() => { if (!cancelled) setWeek(null); });
+    return () => { cancelled = true; };
+  }, [date, productId]);
+  if (!week?.active) return null;
+  const naira = (value: number) => `₦${Math.round(value).toLocaleString("en-NG")}`;
+  const paid = week.walletPayments.reduce((sum, row) => sum + row.amount, 0);
+  return (
+    <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-[12px] text-blue-900">
+      {paid > 0 ? (
+        <>
+          <b>Already paid from the manager's wallet this week: {naira(paid)}</b>
+          <ul className="m-0 mt-1 list-disc pl-4">{week.walletPayments.map((row) => <li key={row.id}>{naira(row.amount)} · {row.description.replace(/^\[Manager wallet\] Waybill: ?/, "") || "Waybill"}</li>)}</ul>
+          Type the week's <b>full</b> waybill total{productId ? " for this product" : ""}. {amount > 0 ? <>Only <b>{naira(Math.max(0, amount - paid))}</b> will be added ({naira(amount)} − {naira(paid)}).</> : "Only the rest will be added."}
+          {amount > 0 && amount < paid ? <span className="mt-1 block font-semibold text-amber-700">That total is less than what the wallet already paid. Check the figure.</span> : null}
+        </>
+      ) : <>No waybill payments from the manager's wallet this week. The full amount you type is added.</>}
+      {!productId ? <span className="mt-1 block text-blue-700">Pick the product above so each product's waybills are matched exactly.</span> : null}
+    </div>
+  );
+}
+
 export function App({ onLogout }: { onLogout?: () => void }) {
   const authUser = auth.getUser();
   // Drives re-renders when the topbar "hide money" toggle flips - the flag
@@ -45597,7 +45628,15 @@ ${waybillLineItems(w).length > 1
     setExpenseCurrency("NGN");
     closeModal();
     showToast(`${expenseType} expense for ${new Intl.NumberFormat(currencies[expenseCurrency]?.locale ?? "en-NG", { style: "currency", currency: expenseCurrency, maximumFractionDigits: 0 }).format(amount)} created.`);
-    expensesApi.create({ id: record.id, date: record.date, category: record.type, description: record.description, amount: record.amount, currency: record.currency }).catch((err: any) => {
+    // ⚠️ productId was never sent (9 Oct 2026): typed expenses all landed with
+    // no product, so a product's costs could not be found from its expenses.
+    expensesApi.create({ id: record.id, date: record.date, category: record.type, description: record.description, amount: record.amount, currency: record.currency, productId: product?.id }).then((saved: any) => {
+      // A weekly Waybill total books only what the manager's wallet has not already paid.
+      if (saved && record.type === "Waybill" && Number(saved.amount) !== record.amount) {
+        setExpenses((prev) => prev.map((e) => (e.id === record.id ? { ...e, amount: Number(saved.amount), description: saved.description ?? e.description } : e)));
+        showToast(`Waybill total ${formatMoney(record.amount)}: ${formatMoney(record.amount - Number(saved.amount))} was already paid from the manager's wallet, so ${formatMoney(Number(saved.amount))} was added.`);
+      }
+    }).catch((err: any) => {
       setExpenses((prev) => prev.filter((e) => e.id !== record.id));
       showToast(`Failed to create expense: ${err.message}`);
     });
@@ -109091,6 +109130,7 @@ ${waybillLineItems(w).length > 1
             {modal === "addExpense" && (
               <div className="modal-form">
                 <label><span>Expense Type</span><select value={expenseType} onChange={(event) => setExpenseType(event.target.value as ExpenseType)}>{expenseTypes.map((type) => <option key={type}>{type}</option>)}</select></label>
+                {expenseType === "Waybill" && <WaybillWalletNote date={parseExpenseDateKey(expenseDate)} productId={products.some((item) => item.id === expenseProduct) ? expenseProduct : null} amount={Number(expenseAmount) || 0} />}
                 <label><span>Amount ({currencies[expenseCurrency]?.currency ?? expenseCurrency})</span><input value={expenseAmount} onChange={(event) => setExpenseAmount(event.target.value)} inputMode="decimal" /></label>
                 <label><span>Currency</span><select value={expenseCurrency} onChange={(event) => setExpenseCurrency(event.target.value as CurrencyCode)}>{Object.entries(productCurrencies).map(([code, item]) => <option key={code} value={code}>{item.symbol} - {item.label}</option>)}</select></label>
                 <label><span>Date</span><input type="date" className="h-9 px-3 border border-gray-200 rounded-lg text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} /></label>

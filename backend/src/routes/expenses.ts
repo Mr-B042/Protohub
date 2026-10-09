@@ -1,3 +1,4 @@
+import { WAYBILL_ONCE_FROM, recomputeWaybillWeek, waybillWeekPosition } from "../lib/waybill-costs.js";
 import { Router } from "express";
 import { fetchAllRowsOrThrow } from "../lib/query-limits.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
@@ -95,7 +96,33 @@ router.post("/", requireRole("Owner", "Admin", "Sales Rep"), async (req, res) =>
     )
     .select().single();
   if (error) { res.status(500).json({ error: error.message }); return; }
+  // A typed weekly "Waybill" total counts only what the manager's wallet has
+  // not already paid that week (lib/waybill-costs.ts). The full typed figure
+  // is kept as declared_total; the row's amount becomes the rest.
+  const typedWaybill = d.category === "Waybill" && d.date >= WAYBILL_ONCE_FROM && !d.id.startsWith("MGRF-") && !d.id.startsWith("EXP-WB-") && !(data as any)?.waybill_id;
+  if (typedWaybill) {
+    try {
+      await supabase.from("expenses").update({ declared_total: d.amount }).eq("id", d.id).eq("org_id", req.user!.orgId);
+      await recomputeWaybillWeek(req.user!.orgId, (data as any)?.branch_id ?? null, d.date);
+      const { data: fresh } = await supabase.from("expenses").select().eq("id", d.id).eq("org_id", req.user!.orgId).maybeSingle();
+      res.status(201).json(fresh ?? data);
+      return;
+    } catch (recomputeError: any) {
+      console.warn("[expenses] waybill week recompute failed:", recomputeError?.message ?? recomputeError);
+    }
+  }
   res.status(201).json(data);
+});
+
+/** What the manager's wallet already paid toward a week's waybills (the Expenses form shows it). */
+router.get("/waybill-week", requireRole("Owner", "Admin", "Manager"), async (req, res) => {
+  const date = String(req.query.date ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { res.status(400).json({ error: "Pick a date." }); return; }
+  try {
+    const branchId = req.user!.branchId;
+    if (!branchId) { res.json({ active: false, walletPayments: [], typedTotals: [] }); return; }
+    res.json(await waybillWeekPosition(req.user!.orgId, branchId, date, typeof req.query.productId === "string" && req.query.productId ? req.query.productId : null));
+  } catch (error: any) { res.status(500).json({ error: error?.message ?? "Could not check the week's waybills." }); }
 });
 
 router.post("/batch-ad-spend", requireRole("Owner", "Admin"), async (req, res) => {
@@ -155,10 +182,13 @@ router.post("/batch-ad-spend", requireRole("Owner", "Admin"), async (req, res) =
 });
 
 router.delete("/:id", requireRole("Owner", "Admin"), async (req, res) => {
+  const { data: before } = await supabase.from("expenses").select("category, date, branch_id").eq("id", req.params.id).eq("org_id", req.user!.orgId).maybeSingle();
   const { error } = await supabase
     .from("expenses").delete()
     .eq("id", req.params.id).eq("org_id", req.user!.orgId);
   if (error) { res.status(500).json({ error: error.message }); return; }
+  // Removing a waybill total or a wallet waybill payment re-balances that week.
+  if (before?.category === "Waybill") await recomputeWaybillWeek(req.user!.orgId, before.branch_id ?? null, String(before.date)).catch(() => undefined);
   res.status(204).send();
 });
 
