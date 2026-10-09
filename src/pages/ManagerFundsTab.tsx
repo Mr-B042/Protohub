@@ -216,6 +216,8 @@ type Draft = {
   products: Array<{ productId: string; amount: string }>;
   /** A share was typed by hand: stop re-splitting equally. */
   splitEdited: boolean;
+  /** Waybill only: ticked = its own cost, on top of the week's waybill total. */
+  ownCost: boolean;
   file: File | null;
 };
 
@@ -235,7 +237,7 @@ const withEqualShares = (draft: Draft): Draft => {
 
 const emptyDraft = (kind: FundKindKey): Draft => ({
   kind, category: kind === "expense" ? "logistics" : "", amount: "", occurredAt: nowLocalInput(), description: "", paidTo: "",
-  paymentMethod: "transfer", reference: "", orderId: "", relatedOrders: "", counterpartyAccountId: "", products: [{ productId: "", amount: "" }], splitEdited: false, file: null
+  paymentMethod: "transfer", reference: "", orderId: "", relatedOrders: "", counterpartyAccountId: "", products: [{ productId: "", amount: "" }], splitEdited: false, ownCost: false, file: null
 });
 
 export default function ManagerFundsTab({
@@ -341,6 +343,7 @@ export default function ManagerFundsTab({
         ? txn.productSplits.map((split) => ({ productId: split.productId, amount: String(split.amount) }))
         : [{ productId: txn.productId ?? "", amount: "" }],
       splitEdited: !!(txn.productSplits && txn.productSplits.length > 1),
+      ownCost: txn.ownCost === true,
       occurredAt: new Date(new Date(txn.occurredAt).getTime() + 60 * 60 * 1000).toISOString().slice(0, 16),
       description: txn.description ?? "", paidTo: txn.paidTo ?? "", paymentMethod: txn.paymentMethod ?? "transfer",
       reference: txn.reference ?? "", orderId: txn.orderIds[0] ?? "", relatedOrders: txn.kind === "expense" ? txn.orderIds.join(", ") : "",
@@ -378,9 +381,12 @@ export default function ManagerFundsTab({
         ...(draft.kind === "expense" ? {
           category: draft.category,
           ...(draft.category === "waybill"
-            ? waybillRows.length > 1
-              ? { productSplits: waybillRows.map((row) => ({ productId: row.productId, amount: Number(row.amount.replace(/[^0-9.]/g, "")) || 0 })) }
-              : { productId: waybillRows[0]?.productId }
+            ? {
+              ownCost: draft.ownCost,
+              ...(waybillRows.length > 1
+                ? { productSplits: waybillRows.map((row) => ({ productId: row.productId, amount: Number(row.amount.replace(/[^0-9.]/g, "")) || 0 })) }
+                : { productId: waybillRows[0]?.productId })
+            }
             : {}),
           relatedOrderIds: draft.relatedOrders.split(/[\s,]+/).map((id) => id.replace(/^#/, "").trim()).filter(Boolean)
         } : {}),
@@ -840,7 +846,16 @@ export default function ManagerFundsTab({
                         );
                       })()}
                     </div>
-                    <WaybillWeekNote date={draft.occurredAt ? draft.occurredAt.slice(0, 10) : ""} productId={draft.products.length === 1 ? draft.products[0].productId : ""} amount={draftAmount(draft)} sym={sym} nf={nf} />
+                    <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-gray-200 px-3 py-2.5 text-[12.5px] dark:border-slate-700">
+                      <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0" checked={draft.ownCost} onChange={(event) => setDraft({ ...draft, ownCost: event.target.checked })} />
+                      <span>
+                        <b className="block text-gray-800 dark:text-slate-100">This is its own cost: add it on top of the week's waybill total</b>
+                        <span className="text-gray-500 dark:text-slate-400">{draft.ownCost
+                          ? "Counted in full as an extra waybill cost. Don't include it in the weekly total typed on the Expenses page."
+                          : "Not ticked: this payment is part of the product's weekly waybill total typed on the Expenses page, so it is counted once."}</span>
+                      </span>
+                    </label>
+                    {!draft.ownCost && <WaybillWeekNote date={draft.occurredAt ? draft.occurredAt.slice(0, 10) : ""} productId={draft.products.length === 1 ? draft.products[0].productId : ""} amount={draftAmount(draft)} sym={sym} nf={nf} />}
                   </>
                 )}
                 <div className="grid grid-cols-2 gap-3">

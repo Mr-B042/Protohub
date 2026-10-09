@@ -9,7 +9,7 @@
 
 export const WAYBILL_LINES_FROM = "2026-09-27"; // backend WAYBILL_ONCE_FROM
 
-type Row = { id: string; type: string; amount: number; date: string; createdAt?: string; productId?: string; description: string; waybillId?: string };
+type Row = { id: string; type: string; amount: number; date: string; createdAt?: string; productId?: string; description: string; waybillId?: string; waybillOwnCost?: boolean };
 export type WaybillLine<T extends Row> = T & { walletPaid?: number; walletCount?: number; partIds?: string[] };
 
 const sundayOf = (dateKey: string) => {
@@ -20,7 +20,7 @@ const sundayOf = (dateKey: string) => {
 };
 const isWallet = (row: Row) => row.id.startsWith("MGRF-");
 const joins = (row: Row) => row.type === "Waybill" && !!row.productId && row.date >= WAYBILL_LINES_FROM
-  && !row.waybillId && !row.id.startsWith("EXP-WB-");
+  && !row.waybillId && !row.id.startsWith("EXP-WB-") && !row.waybillOwnCost; // ticked "its own cost" stays its own line
 /** The typed total's own words, without the "[total ...; ... already paid ...]" note. */
 const plainText = (text: string) => text.split(" · [")[0].replace(/ · share \d+ of \d+$/, "");
 

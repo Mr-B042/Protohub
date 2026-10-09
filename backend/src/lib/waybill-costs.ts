@@ -1,4 +1,5 @@
 import { supabase } from "./supabase.js";
+import { selectByIdBatches } from "./query-limits.js";
 import { addDaysToDateKey, sundayWeekStartForDateKey } from "./sales-bonus-engine.js";
 
 // Waybill costs counted once (Bright, 9 Oct 2026).
@@ -14,6 +15,8 @@ import { addDaysToDateKey, sundayWeekStartForDateKey } from "./sales-bonus-engin
 // Order does not matter: the week is recomputed whenever either side changes.
 // A typed total with a product absorbs that product's wallet payments first;
 // one with no product (most typed totals so far) absorbs whatever is left.
+// A wallet payment ticked "its own cost" (waybill_own_cost) is NOT part of any
+// total: it is extra cost, booked in full (Bright, 9 Oct 2026).
 
 // From the week of 27 Sep (Bright, 9 Oct 2026): that week's Rack/Shelf totals were
 // typed on 3 Oct and its wallet waybills were still being logged after the fix.
@@ -47,13 +50,30 @@ export function allocateWaybillWeek(typed: TypedTotal[], wallet: WalletPayment[]
 const naira = (value: number) => `₦${Math.round(value).toLocaleString("en-NG")}`;
 const baseText = (description: string | null) => String(description ?? "").split(NOTE)[0];
 
+/** A wallet expense's own id: MGRF-<txn uuid>, without a shared waybill's "-2", "-3". */
+export const walletBaseId = (id: string) => id.startsWith("MGRF-") ? id.slice(0, 41) : id;
+
+/** Wallet expense ids (base) whose payment was ticked "its own cost". */
+export async function ownCostExpenseIds(orgId: string, expenseIds: string[]) {
+  const bases = Array.from(new Set(expenseIds.filter((id) => id.startsWith("MGRF-")).map(walletBaseId)));
+  if (bases.length === 0) return new Set<string>();
+  // MGRF-<txn id>: matched on the payment's id, which exists before its expense_id is saved.
+  const txnIds = bases.map((id) => id.slice(5)).filter((id) => /^[0-9a-f-]{36}$/i.test(id));
+  if (txnIds.length === 0) return new Set<string>();
+  const rows = await selectByIdBatches<{ id: string }>(txnIds, (batch) => supabase.from("manager_fund_transactions")
+    .select("id").eq("org_id", orgId).eq("waybill_own_cost", true).in("id", batch));
+  return new Set(rows.map((row) => `MGRF-${row.id}`));
+}
+
 async function weekRows(orgId: string, branchId: string, weekStart: string) {
   const weekEnd = addDaysToDateKey(weekStart, 6);
   const { data, error } = await supabase.from("expenses").select("id, amount, declared_total, product_id, description, waybill_id")
     .eq("org_id", orgId).eq("branch_id", branchId).eq("category", "Waybill").gte("date", weekStart).lte("date", weekEnd);
   if (error) throw error;
   const rows = (data ?? []) as any[];
-  const wallet = rows.filter((row) => String(row.id).startsWith("MGRF-"));
+  // Wallet payments ticked "its own cost" are extra cost, not part of a total.
+  const ownCost = await ownCostExpenseIds(orgId, rows.map((row) => String(row.id)));
+  const wallet = rows.filter((row) => String(row.id).startsWith("MGRF-") && !ownCost.has(walletBaseId(String(row.id))));
   // Typed totals: not a wallet entry, not the waybill page's own per-waybill row.
   const typed = rows.filter((row) => !String(row.id).startsWith("MGRF-") && !String(row.id).startsWith("EXP-WB-") && !row.waybill_id);
   return { wallet, typed };
