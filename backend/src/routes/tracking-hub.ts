@@ -16,6 +16,7 @@ import { refreshAccount, refreshTargets } from "../lib/tracking-meta-refresh.js"
 import { AD_SPEND_VIEWS, allocate, buildReport, mappingIndex, validSplits, type AdSpendView, type PlatformChoice } from "../lib/ad-spend.js";
 import { loadAdSpendInputs, loadSinceStart, loadTikTokConnections, suggestProduct, syncAdSpend } from "../lib/ad-spend-data.js";
 import { RULES as SINCE_START_RULES, VERDICT_ORDER } from "../lib/ad-since-start.js";
+import { syncAdSpendExpenses } from "../lib/ad-spend-expenses.js";
 import { TIKTOK_URL_PARAMETERS, tiktokAdvertisers } from "../lib/tiktok-ads.js";
 
 // Tracking Hub (Bright, 2 Oct 2026; redesigned to his seven tab images the
@@ -1646,6 +1647,8 @@ router.put("/ad-spend/mappings", async (req, res) => {
     }, { onConflict: "org_id,branch_id,level,meta_id" });
     if (error) throw error;
     await hubAudit(orgId, branchId, actorOf(req), "ad_spend_mapped", { type: d.level, id: d.metaId, label: d.label }, { splits: d.splits });
+    // The spend moves to its product in Daily Ad Spend / P&L straight away.
+    await syncAdSpendExpenses(orgId, branchId).catch((err: any) => console.warn("[ad-spend] expense rows failed:", err?.message ?? err));
     res.json({ ok: true });
   } catch (error: any) { fail(res, error, "Could not save the product."); }
 });
@@ -1659,6 +1662,7 @@ router.post("/ad-spend/mappings/clear", async (req, res) => {
     const { error } = await supabase.from("tracking_ad_spend_mappings").delete().eq("org_id", orgId).eq("branch_id", branchId).eq("level", parsed.data.level).eq("meta_id", parsed.data.metaId.replace(/^act_/, ""));
     if (error) throw error;
     await hubAudit(orgId, branchId, actorOf(req), "ad_spend_unmapped", { type: parsed.data.level, id: parsed.data.metaId, label: parsed.data.label });
+    await syncAdSpendExpenses(orgId, branchId).catch((err: any) => console.warn("[ad-spend] expense rows failed:", err?.message ?? err));
     res.json({ ok: true });
   } catch (error: any) { fail(res, error, "Could not remove the product."); }
 });

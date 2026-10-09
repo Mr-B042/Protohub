@@ -19095,9 +19095,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       .filter((o) => o.productId === productId && normalizeDateKey(o.createdAt ?? o.date) === day && !o.reviewHold)
       .reduce((sum, o) => sum + o.amount, 0);
 
-  const existingAdSpend = (productId: string, day: string) =>
-    expenses.filter((e) => (e.type === "Ad Spend" || (e as any).category === "Ad Spend") && e.productId === productId && normalizeDateKey(e.date) === day)
+  // ⚠️ FROM SUN 4 OCT 2026 Meta (and, once connected, TikTok) ad spend fills
+  // in by itself: the server writes "ads-auto-<platform>-…" Ad Spend expenses
+  // from the Tracking Hub (backend lib/ad-spend-expenses.ts). What is typed
+  // here from then on is the TikTok row ("ads-tiktok-typed-…"). Earlier weeks
+  // keep their single typed figure (Bright, 9 Oct 2026).
+  const AUTO_AD_SPEND_FROM = "2026-10-04";
+  const isAdSpendExpense = (e: ExpenseRecord) => e.type === "Ad Spend" || (e as any).category === "Ad Spend";
+  const isAutoAdSpend = (e: ExpenseRecord) => String(e.id).startsWith("ads-auto-");
+  const autoAdSpend = (productId: string | null, day: string, platform: "meta" | "tiktok") =>
+    expenses.filter((e) => isAdSpendExpense(e) && String(e.id).startsWith(`ads-auto-${platform}-`) && (e.productId ?? null) === productId && normalizeDateKey(e.date) === day)
       .reduce((sum, e) => sum + e.amount, 0);
+  /** What was typed (never the automatic rows). */
+  const existingAdSpend = (productId: string, day: string) =>
+    expenses.filter((e) => isAdSpendExpense(e) && !isAutoAdSpend(e) && e.productId === productId && normalizeDateKey(e.date) === day)
+      .reduce((sum, e) => sum + e.amount, 0);
+  /** All spend for a product-day: typed + automatic Meta + automatic TikTok. */
+  const adSpendFor = (productId: string, day: string) =>
+    (parseFloat(adSpendDraft[`${productId}-${day}`] ?? "") || 0) + autoAdSpend(productId, day, "meta") + autoAdSpend(productId, day, "tiktok");
 
   // Sync draft when tab opens, week changes, or expenses load from API
   useEffect(() => {
@@ -19123,17 +19138,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         for (const day of adSpendWeekDays) {
           const key = `${product.id}-${day}`;
           const draftVal = parseFloat(adSpendDraft[key] ?? "") || 0;
-          const toDelete = expenses.filter((e) => (e.type === "Ad Spend" || (e as any).category === "Ad Spend") && e.productId === product.id && normalizeDateKey(e.date) === day);
+          const toDelete = expenses.filter((e) => isAdSpendExpense(e) && !isAutoAdSpend(e) && e.productId === product.id && normalizeDateKey(e.date) === day);
           for (const e of toDelete) {
             await expensesApi.delete(e.id);
             setExpenses((prev) => prev.filter((x) => x.id !== e.id));
           }
           if (draftVal > 0) {
+            const typedTikTok = day >= AUTO_AD_SPEND_FROM;
             const newExp: ExpenseRecord = {
-              id: `exp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+              id: `${typedTikTok ? "ads-tiktok-typed" : "exp"}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
               type: "Ad Spend", amount: draftVal, currency: productCurrency, date: day,
               productId: product.id, productName: product.name,
-              description: `Ad spend – ${product.name} – ${day}`
+              description: `${typedTikTok ? "TikTok ad spend" : "Ad spend"} – ${product.name} – ${day}`
             };
             await expensesApi.create({
               id: newExp.id, date: newExp.date, category: "Ad Spend",
@@ -92145,7 +92161,7 @@ ${waybillLineItems(w).length > 1
                 const activeProdRows = catalogProducts
                   .filter((p) => p.active)
                   .map((product) => {
-                    const weeklySpend = adSpendWeekDays.reduce((sum, day) => sum + (parseFloat(adSpendDraft[`${product.id}-${day}`] ?? "") || 0), 0);
+                    const weeklySpend = adSpendWeekDays.reduce((sum, day) => sum + adSpendFor(product.id, day), 0);
                     const weeklyRevenue = adSpendWeekDays.reduce((sum, day) => sum + revenueForProductDay(product.id, day), 0);
                     const weeklyOrders = adSpendWeekDays.reduce((sum, day) => sum + ordersForProductDay(product.id, day), 0);
                     const weeklyDelivered = adSpendWeekDays.reduce((sum, day) => sum + deliveredForProductDay(product.id, day), 0);
@@ -92166,9 +92182,13 @@ ${waybillLineItems(w).length > 1
                   );
                 const weekLabel = `${displayDateFromKey(adSpendWeekDays[0])} – ${displayDateFromKey(adSpendWeekDays[6])}`;
                 const todayKey2 = todayKey();
+                // Weeks from Sun 4 Oct: Meta fills in by itself; the typed box is TikTok's.
+                const autoWeek = adSpendWeekDays[0] >= AUTO_AD_SPEND_FROM;
+                const unassignedByDay = adSpendWeekDays.map((day) => autoAdSpend(null, day, "meta") + autoAdSpend(null, day, "tiktok"));
+                const unassignedWeek = unassignedByDay.reduce((sum, value) => sum + value, 0);
 
                 // Week totals
-                const weekTotalSpend = activeProdRows.reduce((sum, row) => sum + row.weeklySpend, 0);
+                const weekTotalSpend = activeProdRows.reduce((sum, row) => sum + row.weeklySpend, 0) + unassignedWeek;
                 const weekTotalRevenue = activeProdRows.reduce((sum, row) => sum + row.weeklyRevenue, 0);
 
                 return (
@@ -92209,6 +92229,12 @@ ${waybillLineItems(w).length > 1
                         </div>
                       ))}
                     </div>
+
+                    {autoWeek && (
+                      <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-[13px] text-blue-900">
+                        <b>Meta ad spend fills in by itself</b> from the Tracking Hub, per product, updated every 30 minutes. Type each day's <b>TikTok</b> spend in its own row until TikTok Ads Manager is connected; then it fills in by itself too.
+                      </div>
+                    )}
 
                     <div className="flex justify-end">
                       <button
@@ -92251,7 +92277,7 @@ ${waybillLineItems(w).length > 1
                                 <div className="grid grid-cols-1 gap-3">
                                   {adSpendWeekDays.map((day, i) => {
                                     const key = `${product.id}-${day}`;
-                                    const spend = parseFloat(adSpendDraft[key] ?? "") || 0;
+                                    const spend = adSpendFor(product.id, day);
                                     const rev = revenueForProductDay(product.id, day);
                                     const roas = spend > 0 ? rev / spend : null;
                                     const orders = ordersForProductDay(product.id, day);
@@ -92286,8 +92312,14 @@ ${waybillLineItems(w).length > 1
                                             )}
                                           </div>
                                         </div>
+                                        {autoWeek && (
+                                          <div className="flex items-center justify-between text-sm">
+                                            <span className="text-[10px] uppercase tracking-wider text-gray-400">Meta Ad Spend (automatic)</span>
+                                            <span className="font-semibold text-gray-800">{autoAdSpend(product.id, day, "meta") > 0 ? formatMoney(autoAdSpend(product.id, day, "meta")) : "-"}</span>
+                                          </div>
+                                        )}
                                         <div>
-                                          <span className="text-[10px] uppercase tracking-wider text-gray-400">Ad Spend</span>
+                                          <span className="text-[10px] uppercase tracking-wider text-gray-400">{autoWeek ? "TikTok Ad Spend" : "Ad Spend"}</span>
                                           <input
                                             type="number" min="0" placeholder="0"
                                             value={adSpendDraft[key] ?? ""}
@@ -92439,7 +92471,7 @@ ${waybillLineItems(w).length > 1
                                   <Fragment key={product.id}>
                                     {/* Spend row */}
                                     <tr className={pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
-                                      <td className="px-4 py-2 font-semibold text-gray-800 align-middle" rowSpan={adSpendShowBreakdown ? 13 : 4}>
+                                      <td className="px-4 py-2 font-semibold text-gray-800 align-middle" rowSpan={(adSpendShowBreakdown ? 13 : 4) + (autoWeek ? 1 : 0)}>
                                         <div className="text-sm">{product.name}</div>
                                         <div className="mt-1 text-[10px] font-medium text-gray-400">{adSpendShowBreakdown ? (weeklyOrders > 0 ? `${weeklyOrders} order${weeklyOrders === 1 ? "" : "s"} · ${weeklyPlaced} placed this week` : weeklyPlaced > 0 ? `${weeklyPlaced} placed this week` : "No orders yet") : (weeklyOrders > 0 ? `${weeklyOrders} order${weeklyOrders === 1 ? "" : "s"} this week` : "No orders yet")}</div>
                                         {rowRoas !== null && (
@@ -92453,22 +92485,57 @@ ${waybillLineItems(w).length > 1
                                           </span>
                                         )}
                                       </td>
-                                      <td className="px-3 py-2 text-[11px] font-semibold text-red-500 text-center whitespace-nowrap">Ad Spend</td>
-                                      {adSpendWeekDays.map((day) => {
-                                        const key = `${product.id}-${day}`;
-                                        return (
-                                          <td key={day} className={`px-2 py-2 ${day === todayKey2 ? "bg-blue-50/40" : ""}`}>
-                                            <input
-                                              type="number" min="0" placeholder="0"
-                                              value={adSpendDraft[key] ?? ""}
-                                              onChange={(e) => setAdSpendDraft((prev) => ({ ...prev, [key]: e.target.value }))}
-                                              className="w-full text-center text-xs border border-gray-200 rounded-md px-1 py-1.5 focus:outline-none focus:border-[#1F8FE0] focus:ring-1 focus:ring-[#1F8FE0] bg-white"
-                                            />
-                                          </td>
-                                        );
-                                      })}
-                                      <td className="px-3 py-2 text-center text-xs font-semibold text-red-600">{rowSpend > 0 ? formatMoney(rowSpend) : "-"}</td>
+                                      {autoWeek ? (
+                                        <>
+                                          <td className="px-3 py-2 text-[11px] font-semibold text-red-500 text-center whitespace-nowrap">Meta Ad Spend<span className="block text-[9px] font-medium text-gray-400">automatic</span></td>
+                                          {adSpendWeekDays.map((day) => {
+                                            const meta = autoAdSpend(product.id, day, "meta");
+                                            return <td key={day} className={`px-2 py-2 text-center text-xs font-semibold ${meta > 0 ? "text-gray-800" : "text-gray-300"} ${day === todayKey2 ? "bg-blue-50/40" : ""}`} title={day >= AUTO_AD_SPEND_FROM ? "From Meta via the Tracking Hub, updated every 30 minutes" : undefined}>{meta > 0 ? formatMoney(meta) : "-"}</td>;
+                                          })}
+                                          <td className="px-3 py-2 text-center text-xs font-semibold text-red-600">{adSpendWeekDays.reduce((sum, day) => sum + autoAdSpend(product.id, day, "meta"), 0) > 0 ? formatMoney(adSpendWeekDays.reduce((sum, day) => sum + autoAdSpend(product.id, day, "meta"), 0)) : "-"}</td>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <td className="px-3 py-2 text-[11px] font-semibold text-red-500 text-center whitespace-nowrap">Ad Spend</td>
+                                          {adSpendWeekDays.map((day) => {
+                                            const key = `${product.id}-${day}`;
+                                            return (
+                                              <td key={day} className={`px-2 py-2 ${day === todayKey2 ? "bg-blue-50/40" : ""}`}>
+                                                <input
+                                                  type="number" min="0" placeholder="0"
+                                                  value={adSpendDraft[key] ?? ""}
+                                                  onChange={(e) => setAdSpendDraft((prev) => ({ ...prev, [key]: e.target.value }))}
+                                                  className="w-full text-center text-xs border border-gray-200 rounded-md px-1 py-1.5 focus:outline-none focus:border-[#1F8FE0] focus:ring-1 focus:ring-[#1F8FE0] bg-white"
+                                                />
+                                              </td>
+                                            );
+                                          })}
+                                          <td className="px-3 py-2 text-center text-xs font-semibold text-red-600">{rowSpend > 0 ? formatMoney(rowSpend) : "-"}</td>
+                                        </>
+                                      )}
                                     </tr>
+                                    {autoWeek && (
+                                      <tr className={pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
+                                        <td className="px-3 py-2 text-[11px] font-semibold text-gray-900 text-center whitespace-nowrap">TikTok Ad Spend<span className="block text-[9px] font-medium text-gray-400">{adSpendWeekDays.some((day) => autoAdSpend(product.id, day, "tiktok") > 0) ? "automatic" : "type it"}</span></td>
+                                        {adSpendWeekDays.map((day) => {
+                                          const key = `${product.id}-${day}`;
+                                          const tiktokAuto = autoAdSpend(product.id, day, "tiktok");
+                                          return (
+                                            <td key={day} className={`px-2 py-2 ${day === todayKey2 ? "bg-blue-50/40" : ""}`}>
+                                              {tiktokAuto > 0 ? <span className="block text-center text-xs font-semibold text-gray-800" title="From TikTok Ads Manager via the Tracking Hub">{formatMoney(tiktokAuto)}</span> : (
+                                                <input
+                                                  type="number" min="0" placeholder="0"
+                                                  value={adSpendDraft[key] ?? ""}
+                                                  onChange={(e) => setAdSpendDraft((prev) => ({ ...prev, [key]: e.target.value }))}
+                                                  className="w-full text-center text-xs border border-gray-200 rounded-md px-1 py-1.5 focus:outline-none focus:border-[#1F8FE0] focus:ring-1 focus:ring-[#1F8FE0] bg-white"
+                                                />
+                                              )}
+                                            </td>
+                                          );
+                                        })}
+                                        <td className="px-3 py-2 text-center text-xs font-semibold text-red-600">{(() => { const total = adSpendWeekDays.reduce((sum, day) => sum + autoAdSpend(product.id, day, "tiktok") + (parseFloat(adSpendDraft[`${product.id}-${day}`] ?? "") || 0), 0); return total > 0 ? formatMoney(total) : "-"; })()}</td>
+                                      </tr>
+                                    )}
                                     {adSpendShowBreakdown && (
                                     <>
                                     {/* Revenue (All Placed) row - what Revenue would total if every order
@@ -92563,7 +92630,7 @@ ${waybillLineItems(w).length > 1
                                     <tr className={pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
                                       <td className="px-3 py-2 text-[11px] font-semibold text-gray-400 text-center whitespace-nowrap">ROAS (Delivered)</td>
                                       {adSpendWeekDays.map((day) => {
-                                        const spend = parseFloat(adSpendDraft[`${product.id}-${day}`] ?? "") || 0;
+                                        const spend = adSpendFor(product.id, day);
                                         const revDelivered = revenueDeliveredForProductDay(product.id, day);
                                         const roasDelivered = spend > 0 ? revDelivered / spend : null;
                                         return (
@@ -92591,7 +92658,7 @@ ${waybillLineItems(w).length > 1
                                       <td className="px-3 py-2 text-[11px] font-semibold text-green-600 text-center whitespace-nowrap">Revenue</td>
                                       {adSpendWeekDays.map((day) => {
                                         const rev = revenueForProductDay(product.id, day);
-                                        const spend = parseFloat(adSpendDraft[`${product.id}-${day}`] ?? "") || 0;
+                                        const spend = adSpendFor(product.id, day);
                                         const profitable = spend > 0 && rev >= spend;
                                         const losing = spend > 0 && rev < spend;
                                         return (
@@ -92653,7 +92720,7 @@ ${waybillLineItems(w).length > 1
                                     <tr className={`${pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"} border-b border-gray-100`}>
                                       <td className="px-3 py-2 text-[11px] font-semibold text-gray-400 text-center whitespace-nowrap">ROAS</td>
                                       {adSpendWeekDays.map((day) => {
-                                        const spend = parseFloat(adSpendDraft[`${product.id}-${day}`] ?? "") || 0;
+                                        const spend = adSpendFor(product.id, day);
                                         const rev = revenueForProductDay(product.id, day);
                                         const roas = spend > 0 ? rev / spend : null;
                                         return (
@@ -92677,6 +92744,14 @@ ${waybillLineItems(w).length > 1
                                   </Fragment>
                                 );
                               })}
+                              {autoWeek && unassignedWeek > 0 && (
+                                <tr className="bg-amber-50/60">
+                                  <td className="px-4 py-2 align-middle"><div className="text-sm font-semibold text-amber-900">Not assigned to a product</div><div className="mt-1 text-[10px] text-amber-700">Meta spend with no product yet. Assign it in Tracking Hub → Ad Spend.</div></td>
+                                  <td className="px-3 py-2 text-[11px] font-semibold text-red-500 text-center whitespace-nowrap">Meta Ad Spend<span className="block text-[9px] font-medium text-gray-400">automatic</span></td>
+                                  {adSpendWeekDays.map((day, index) => <td key={day} className={`px-2 py-2 text-center text-xs font-semibold ${unassignedByDay[index] > 0 ? "text-amber-900" : "text-gray-300"}`}>{unassignedByDay[index] > 0 ? formatMoney(unassignedByDay[index]) : "-"}</td>)}
+                                  <td className="px-3 py-2 text-center text-xs font-semibold text-red-600">{formatMoney(unassignedWeek)}</td>
+                                </tr>
+                              )}
                             </tbody>
                           </table>
                         </div>
