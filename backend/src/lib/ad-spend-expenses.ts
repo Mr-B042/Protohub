@@ -21,11 +21,20 @@ export const AUTO_AD_SPEND_FROM = "2026-10-04";
 export const autoExpenseId = (platform: AdPlatform, branchId: string, productId: string | null, day: string) =>
   `ads-auto-${platform}-${branchId.slice(0, 8)}-${productId ?? "unassigned"}-${day}`;
 
-/** Rewrite the branch's automatic Ad Spend expense rows from 4 Oct to today. */
-export async function syncAdSpendExpenses(orgId: string, branchId: string) {
+/**
+ * Rewrite the branch's automatic Ad Spend expense rows for the days given
+ * (default: the whole period from 4 Oct, used when a product is assigned).
+ * ⚠️ The 30-minute sync passes only the days it just read: rebuilding from
+ * 4 Oct every half hour loaded weeks of orders each time and doubled the
+ * server's memory (Railway bill, 9 Oct 2026).
+ */
+export async function syncAdSpendExpenses(orgId: string, branchId: string, window: { from?: string; to?: string } = {}) {
   const today = lagosDateKey();
   if (today < AUTO_AD_SPEND_FROM) return { written: 0, removed: 0 };
-  const data = await loadAdSpendInputs(orgId, branchId, AUTO_AD_SPEND_FROM, today);
+  const from = window.from && window.from > AUTO_AD_SPEND_FROM ? window.from : AUTO_AD_SPEND_FROM;
+  const to = window.to && window.to < today ? window.to : today;
+  if (from > to) return { written: 0, removed: 0 };
+  const data = await loadAdSpendInputs(orgId, branchId, from, to);
   const pieces = allocate(data.insights, mappingIndex(data.mappings), data.evidence, data.accounts);
   const currencyOf = new Map<string, string>();
   for (const account of data.basics.adAccounts as any[]) if (account.currency) currencyOf.set(String(account.account_id), String(account.currency));
@@ -34,7 +43,7 @@ export async function syncAdSpendExpenses(orgId: string, branchId: string) {
 
   const rows = new Map<string, any>();
   for (const piece of pieces) {
-    if (piece.day < AUTO_AD_SPEND_FROM || piece.day > today) continue;
+    if (piece.day < from || piece.day > to) continue;
     const id = autoExpenseId(piece.platform, branchId, piece.productId, piece.day);
     const row = rows.get(id) ?? {
       id, org_id: orgId, branch_id: branchId, date: piece.day, category: "Ad Spend", amount: 0,
@@ -52,7 +61,7 @@ export async function syncAdSpendExpenses(orgId: string, branchId: string) {
   }
   // Rows that no longer apply (spend moved to another product, or was zeroed).
   const { data: existing, error: readError } = await supabase.from("expenses").select("id")
-    .eq("org_id", orgId).like("id", `ads-auto-%-${branchId.slice(0, 8)}-%`).gte("date", AUTO_AD_SPEND_FROM).lte("date", today);
+    .eq("org_id", orgId).like("id", `ads-auto-%-${branchId.slice(0, 8)}-%`).gte("date", from).lte("date", to);
   if (readError) throw readError;
   const keepIds = new Set(keep.map((row) => row.id));
   const stale = ((existing ?? []) as any[]).map((row) => String(row.id)).filter((id) => !keepIds.has(id));

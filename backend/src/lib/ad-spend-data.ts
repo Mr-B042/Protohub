@@ -204,14 +204,15 @@ export async function syncAdSpend(orgId: string, branchId: string, opts: { from:
     org_id: orgId, branch_id: branchId, last_sync_at: now.toISOString(), last_sync_ok: ok, last_sync_message: message, last_sync_trigger: opts.trigger, updated_at: now.toISOString()
   }, { onConflict: "org_id,branch_id" });
   if (error) throw error;
-  // Whole-life numbers (Since Start): on every Sync Now, and at most every 3 hours by itself.
+  // Whole-life numbers (Since Start): on every Sync Now, and at most every 6 hours by itself
+  // (was 3: each read loads every campaign's ads, and memory is the Railway bill).
   const { data: state } = await supabase.from("tracking_ad_spend_state").select("last_lifetime_at").eq("org_id", orgId).eq("branch_id", branchId).maybeSingle();
-  if (opts.trigger === "manual" || !state?.last_lifetime_at || Date.parse(state.last_lifetime_at) < now.getTime() - 3 * 3_600_000) {
+  if (opts.trigger === "manual" || !state?.last_lifetime_at || Date.parse(state.last_lifetime_at) < now.getTime() - 6 * 3_600_000) {
     await syncLifetime(orgId, branchId, { targets, tiktokTargets, now }).catch((err: any) => console.warn("[ad-spend] since-start read failed:", err?.message ?? err));
   }
   // Daily Ad Spend (expenses) follows what was just read (lib/ad-spend-expenses.ts).
   const { syncAdSpendExpenses } = await import("./ad-spend-expenses.js");
-  await syncAdSpendExpenses(orgId, branchId).catch((err: any) => console.warn("[ad-spend] expense rows failed:", err?.message ?? err));
+  await syncAdSpendExpenses(orgId, branchId, { from: opts.from, to: opts.to }).catch((err: any) => console.warn("[ad-spend] expense rows failed:", err?.message ?? err));
   return { ok, accounts: report.length, failed: failed.map((row) => row.source), message };
 }
 
