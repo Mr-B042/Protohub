@@ -1,4 +1,4 @@
-import { WAYBILL_ONCE_FROM, recomputeWaybillWeek, waybillWeekPosition } from "../lib/waybill-costs.js";
+import { WAYBILL_ONCE_FROM, ownCostExpenseIds, recomputeWaybillWeek, walletBaseId, waybillWeekPosition } from "../lib/waybill-costs.js";
 import { Router } from "express";
 import { fetchAllRowsOrThrow, selectByIdBatches } from "../lib/query-limits.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
@@ -43,7 +43,13 @@ router.get("/", requireRole("Owner", "Admin"), async (req, res) => {
     const products = await selectByIdBatches<{ id: string; name: string }>(productIds, (batch) =>
       supabase.from("products").select("id, name").eq("org_id", req.user!.orgId).in("id", batch));
     const nameOf = new Map(products.map((product) => [String(product.id), product.name]));
-    res.json(rows.map((row) => ({ ...row, product_name: row.product_id ? nameOf.get(String(row.product_id)) ?? "" : "" })));
+    // Wallet waybills ticked "its own cost" stay their own line on the Expenses page.
+    const ownCost = await ownCostExpenseIds(req.user!.orgId, rows.filter((row) => row.category === "Waybill").map((row) => String(row.id)));
+    res.json(rows.map((row) => ({
+      ...row,
+      product_name: row.product_id ? nameOf.get(String(row.product_id)) ?? "" : "",
+      waybill_own_cost: ownCost.has(walletBaseId(String(row.id)))
+    })));
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Failed to load expenses." });
   }

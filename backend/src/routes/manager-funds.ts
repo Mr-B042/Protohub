@@ -129,7 +129,7 @@ async function ensureWeek(orgId: string, branchId: string, managerId: string, wa
   return (await resolveOpening(orgId, branchId, managerId, weekStart)).row;
 }
 
-const TXN_COLUMNS = "id, manager_id, wallet_account_id, week_start, kind, category, product_id, product_splits, amount, occurred_at, description, paid_to, payment_method, reference, order_ids, counterparty_account_id, evidence, expense_id, transfer_id, remittance_transaction_ids, status, return_reason, void_reason, voided_at, adjusts_transaction_id, version, created_by, created_by_name, created_at, updated_at";
+const TXN_COLUMNS = "id, manager_id, wallet_account_id, week_start, kind, category, product_id, product_splits, waybill_own_cost, amount, occurred_at, description, paid_to, payment_method, reference, order_ids, counterparty_account_id, evidence, expense_id, transfer_id, remittance_transaction_ids, status, return_reason, void_reason, voided_at, adjusts_transaction_id, version, created_by, created_by_name, created_at, updated_at";
 
 const toFundTxn = (row: any): FundTxn => ({
   id: row.id, kind: row.kind, category: row.category ?? null, amount: Number(row.amount ?? 0), occurredAt: row.occurred_at,
@@ -143,6 +143,8 @@ const mapTxn = (row: any, settings: FundSettings, countedOnOrders = 0) => ({
   id: row.id,
   productId: row.product_id ?? null,
   productSplits: Array.isArray(row.product_splits) ? row.product_splits as ProductSplit[] : null,
+  /** Waybill ticked "its own cost": on top of the weekly total, not part of it. */
+  ownCost: row.waybill_own_cost === true,
   managerId: row.manager_id,
   weekStart: row.week_start,
   kind: row.kind as FundKind,
@@ -568,13 +570,16 @@ async function syncWalletExpense(input: {
   productId?: string | null; previousCategory?: string | null;
   /** Waybill shared by 2+ products: one expense per product (MGRF-<id>, MGRF-<id>-2, ...). */
   productSplits?: ProductSplit[] | null;
+  /** Waybill ticked "its own cost": said in the expense's description. */
+  ownCost?: boolean;
 }) {
   const split = await expenseSplit(input.orgId, input.category, input.amount, input.orderIds, input.txnId);
   const coveredIds = split.counted > 0 ? input.orderIds : [];
   const covered = split.counted > 0
     ? ` · ${split.counted.toLocaleString("en-NG")} of it is the delivery fee already on order${coveredIds.length === 1 ? "" : "s"} ${coveredIds.map((id) => `#${id}`).join(", ")} (not counted again)`
     : "";
-  const description = `${expenseDescription(input.category, input.description, input.paidTo)}${covered}`.slice(0, 500);
+  const ownCostNote = input.category === "waybill" && input.ownCost ? " · own cost, on top of the week's waybill total" : "";
+  const description = `${expenseDescription(input.category, input.description, input.paidTo)}${covered}${ownCostNote}`.slice(0, 500);
   const expenseId = input.existingExpenseId ?? `MGRF-${input.txnId}`;
   const shares = input.category === "waybill" && (input.productSplits?.length ?? 0) > 1 && split.newCost > 0 ? input.productSplits! : null;
   if (shares) {
@@ -637,7 +642,9 @@ const LogSchema = z.object({
   // Waybill expenses: which product's waybills (Bright, 9 Oct 2026).
   productId: z.string().trim().min(1).max(60).optional(),
   // A waybill shared by several products, each with its share (Bright, 9 Oct 2026).
-  productSplits: z.array(z.object({ productId: z.string().trim().min(1).max(60), amount: z.number().positive() })).max(6).optional()
+  productSplits: z.array(z.object({ productId: z.string().trim().min(1).max(60), amount: z.number().positive() })).max(6).optional(),
+  // Waybill ticked "its own cost": added on top of the weekly total (Bright, 9 Oct 2026).
+  ownCost: z.boolean().optional()
 });
 
 router.post("/transactions", requireRole("Manager", "Admin"), async (req, res) => {
@@ -669,6 +676,7 @@ router.post("/transactions", requireRole("Manager", "Admin"), async (req, res) =
       order_ids: orderId ? [orderId] : body.kind === "expense" ? (body.relatedOrderIds ?? []).map((id) => id.replace(/^#/, "")) : [],
       counterparty_account_id: body.counterpartyAccountId ?? null,
       product_id: waybill.productId, product_splits: waybill.productSplits,
+      waybill_own_cost: body.kind === "expense" && body.category === "waybill" ? body.ownCost === true : false,
       created_by: me.id, created_by_name: me.name
     }).select(TXN_COLUMNS).single();
     if (error) throw error;
@@ -683,7 +691,7 @@ router.post("/transactions", requireRole("Manager", "Admin"), async (req, res) =
           orgId, branchId, txnId: row.id, walletId: wallet.id, existingExpenseId: null, category: body.category!,
           amount: body.amount, occurredAt: body.occurredAt, description: body.description ?? null, paidTo: body.paidTo ?? null,
           paidBy: me.name, orderIds: cleanOrderIds(row.order_ids), previousOrderIds: [],
-          productId: waybill.productId, productSplits: waybill.productSplits
+          productId: waybill.productId, productSplits: waybill.productSplits, ownCost: body.ownCost === true
         });
         if (synced.expenseId) mirror.expense_id = synced.expenseId;
       } else if (body.kind === "owner_funding" || body.kind === "company_transfer_in" || body.kind === "remittance_out") {
@@ -745,7 +753,9 @@ const EditSchema = z.object({
   relatedOrderIds: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
   productId: z.string().trim().min(1).max(60).optional(),
   // A waybill shared by several products, each with its share (Bright, 9 Oct 2026).
-  productSplits: z.array(z.object({ productId: z.string().trim().min(1).max(60), amount: z.number().positive() })).max(6).optional()
+  productSplits: z.array(z.object({ productId: z.string().trim().min(1).max(60), amount: z.number().positive() })).max(6).optional(),
+  // Waybill ticked "its own cost": added on top of the weekly total (Bright, 9 Oct 2026).
+  ownCost: z.boolean().optional()
 });
 
 router.patch("/transactions/:id", requireRole("Manager", "Admin"), async (req, res) => {
@@ -774,7 +784,8 @@ router.patch("/transactions/:id", requireRole("Manager", "Admin"), async (req, r
       order_ids: row.kind === "expense" && body.relatedOrderIds ? cleanOrderIds(body.relatedOrderIds) : (row.order_ids ?? []),
       expense_id: row.expense_id ?? null,
       product_id: null as string | null,
-      product_splits: null as ProductSplit[] | null
+      product_splits: null as ProductSplit[] | null,
+      waybill_own_cost: false
     };
     if (row.kind === "expense" && next.category === "waybill") {
       // New products sent: use them. Same products, new amount: keep each one's proportion.
@@ -784,6 +795,7 @@ router.patch("/transactions/:id", requireRole("Manager", "Admin"), async (req, r
         : stored && stored.length > 1 ? { productId: stored[0].productId, productSplits: scaleSplits(stored, next.amount) } : { productId: row.product_id ?? null, productSplits: null };
       next.product_id = chosen.productId;
       next.product_splits = chosen.productSplits;
+      next.waybill_own_cost = body.ownCost ?? row.waybill_own_cost === true;
     }
     if (row.kind === "expense" && next.category === "waybill" && !next.product_id) throw httpError(400, "Choose which product's waybills this was for.");
 
@@ -792,7 +804,7 @@ router.patch("/transactions/:id", requireRole("Manager", "Admin"), async (req, r
         orgId, branchId, txnId: row.id, walletId: row.wallet_account_id, existingExpenseId: row.expense_id ?? null, category: next.category!,
         amount: next.amount, occurredAt: next.occurred_at, description: next.description, paidTo: next.paid_to,
         paidBy: row.created_by_name ?? req.user!.name ?? "Manager", orderIds: cleanOrderIds(next.order_ids), previousOrderIds: cleanOrderIds(row.order_ids),
-        productId: next.product_id, productSplits: next.product_splits, previousCategory: row.category
+        productId: next.product_id, productSplits: next.product_splits, previousCategory: row.category, ownCost: next.waybill_own_cost
       });
       next.expense_id = synced.expenseId;
     }
@@ -814,6 +826,8 @@ router.patch("/transactions/:id", requireRole("Manager", "Admin"), async (req, r
     }).eq("id", row.id).eq("version", row.version).select("id");
     if (error) throw error;
     if (!updated || updated.length === 0) throw httpError(409, "This transaction changed while you were saving. Reload and try again.");
+    // The "its own cost" tick is read from the saved entry, so count the week again now it is saved.
+    if (next.category === "waybill" && next.waybill_own_cost !== (row.waybill_own_cost === true)) await recomputeWaybillWeek(orgId, branchId, lagosDay(next.occurred_at));
     await audit(req, branchId, row.week_start, "fund_edited", {
       managerId: row.manager_id, transactionId: row.id, kind: row.kind,
       before: { amount: Number(row.amount), category: row.category, description: row.description, occurredAt: row.occurred_at },
@@ -1033,7 +1047,8 @@ router.post("/adjustments/:id/decide", requireRole("Owner"), async (req, res) =>
             amount, occurredAt: txn.occurred_at, description: txn.description, paidTo: txn.paid_to, paidBy: txn.created_by_name ?? "Manager",
             orderIds: cleanOrderIds(txn.order_ids), previousOrderIds: cleanOrderIds(txn.order_ids),
             productId: txn.product_id ?? null, previousCategory: txn.category,
-            productSplits: Array.isArray(txn.product_splits) && txn.product_splits.length > 1 ? scaleSplits(txn.product_splits as ProductSplit[], amount) : null
+            productSplits: Array.isArray(txn.product_splits) && txn.product_splits.length > 1 ? scaleSplits(txn.product_splits as ProductSplit[], amount) : null,
+            ownCost: txn.waybill_own_cost === true
           });
           if ((synced.expenseId ?? null) !== (txn.expense_id ?? null)) {
             const { error: e } = await supabase.from("manager_fund_transactions").update({ expense_id: synced.expenseId }).eq("id", txn.id);

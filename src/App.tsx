@@ -1744,6 +1744,8 @@ type ExpenseRecord = {
   productName: string;
   description: string;
   waybillId?: string;
+  /** Wallet waybill ticked "its own cost": never folded into the week's waybill line. */
+  waybillOwnCost?: boolean;
 };
 type ManagerBonusTier = {
   id?: string;
@@ -7470,7 +7472,8 @@ const normalizeExpenseRecord = (value: any): ExpenseRecord => {
     productId: row.productId ?? undefined,
     productName: row.productName ?? "",
     description: row.description ?? "",
-    waybillId: row.waybillId ?? undefined
+    waybillId: row.waybillId ?? undefined,
+    waybillOwnCost: row.waybillOwnCost === true
   };
 };
 
