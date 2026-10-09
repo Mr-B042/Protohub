@@ -228,10 +228,18 @@ router.get("/library", async (req, res) => {
   try {
     const orgId = req.user!.orgId;
     const branchId = branchOf(req);
-    const canAuthor = await isHeadOfSales(req);
-    if (!canAuthor && !isApprover(req)) throw httpError(403, "Only the Head of Sales Rep and leadership manage scripts.");
-    const [settings, products, library] = await Promise.all([loadSettings(orgId, branchId), loadProducts(orgId, branchId), loadLibrary(orgId, branchId)]);
-    const scripts = library.items.map((item) => summarize(item, library.byScript.get(item.id) ?? [], products));
+    // Leadership write and edit too (Bright, 9 Oct 2026); what they publish goes live straight away.
+    const canAuthor = isApprover(req) || await isHeadOfSales(req);
+    if (!canAuthor) throw httpError(403, "Only the Head of Sales Rep and leadership manage scripts.");
+    const [settings, products, library, usesRes] = await Promise.all([
+      loadSettings(orgId, branchId), loadProducts(orgId, branchId), loadLibrary(orgId, branchId),
+      supabase.from("sales_script_uses").select("script_id").eq("org_id", orgId).eq("branch_id", branchId).limit(50000)
+    ]);
+    if (usesRes.error) throw usesRes.error;
+    // How many orders used each script: a used script can only be archived, not deleted.
+    const usesByScript = new Map<string, number>();
+    for (const row of (usesRes.data ?? []) as any[]) usesByScript.set(String(row.script_id), (usesByScript.get(String(row.script_id)) ?? 0) + 1);
+    const scripts = library.items.map((item) => ({ ...summarize(item, library.byScript.get(item.id) ?? [], products), usedOnOrders: usesByScript.get(String(item.id)) ?? 0 }));
     const current = scripts.filter((script) => !script.archivedAt);
     const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
     const approvedLast7 = Array.from(library.byScript.values()).flat().filter((version) => version.approved_at && version.approved_at >= weekAgo).length;
@@ -252,6 +260,7 @@ router.get("/library", async (req, res) => {
     res.json({
       canAuthor,
       canApprove: isApprover(req),
+      publishesDirectly: isApprover(req),
       settings,
       products: productRows,
       allProducts: Array.from(products.values()).map((product) => ({ id: product.id, name: product.name })).sort((a, b) => a.name.localeCompare(b.name)),
@@ -418,6 +427,46 @@ async function requireHead(req: Request) {
   if (!(await isHeadOfSales(req))) throw httpError(403, "Only the Head of Sales Rep writes scripts. Managers approve them.");
 }
 
+/**
+ * Who may write, edit, submit and delete scripts (Bright, 9 Oct 2026): the
+ * Head of Sales Rep AND leadership (Owner / Admin / Manager). Leadership are
+ * the approvers, so what they publish goes live straight away.
+ */
+async function requireAuthor(req: Request) {
+  if (isApprover(req)) return;
+  if (!(await isHeadOfSales(req))) throw httpError(403, "Only the Head of Sales Rep and leadership write scripts.");
+}
+
+/** Make a version the live one (what approving does). */
+async function publishVersion(req: Request, branchId: string, item: any, versionId: string, note: string | null) {
+  const now = new Date().toISOString();
+  const { data: version } = await supabase.from("sales_script_versions").select("title, version_no").eq("id", versionId).maybeSingle();
+  const { error } = await supabase.from("sales_script_versions").update({
+    status: "approved", approved_at: now, submitted_at: now, decided_by: req.user!.id, decided_by_name: req.user!.name ?? null, decided_at: now, decision_note: note, updated_at: now
+  }).eq("id", versionId);
+  if (error) throw error;
+  if (item.live_version_id && item.live_version_id !== versionId) {
+    const { error: archiveError } = await supabase.from("sales_script_versions")
+      .update({ status: "archived", archived_at: now, replaced_by_version_id: versionId, updated_at: now }).eq("id", item.live_version_id);
+    if (archiveError) throw archiveError;
+  }
+  const { error: itemError } = await supabase.from("sales_script_items")
+    .update({ live_version_id: versionId, deactivated_at: null, deactivated_by: null, deactivated_by_name: null, deactivation_note: null, updated_at: now }).eq("id", item.id);
+  if (itemError) throw itemError;
+  await audit(req, branchId, item.id, versionId, item.live_version_id ? "approved_replaced" : "approved_published", { note, versionNo: version?.version_no, byLeadership: true, replacedVersionId: item.live_version_id ?? null });
+  const { data: product } = await supabase.from("products").select("name").eq("id", item.product_id).maybeSingle();
+  void notifySalesScript(req.user!.orgId, branchId, {
+    kind: "approved", headId: item.created_by, deciderName: req.user!.name ?? "Manager", productName: product?.name ?? "",
+    category: CATEGORY_LABEL[item.category as ScriptCategory], title: version?.title ?? "", versionNo: version?.version_no ?? 1, note
+  });
+}
+
+/** Submit for approval, or - for leadership - publish straight away. */
+async function submitOrPublish(req: Request, branchId: string, item: any, versionId: string) {
+  if (isApprover(req)) await publishVersion(req, branchId, item, versionId, `Published by ${req.user!.name ?? req.user!.role}`);
+  else await submitVersion(req, branchId, item, versionId);
+}
+
 async function submitVersion(req: Request, branchId: string, item: any, versionId: string) {
   const now = new Date().toISOString();
   const { error } = await supabase.from("sales_script_versions").update({ status: "submitted", submitted_at: now, updated_at: now }).eq("id", versionId);
@@ -435,7 +484,7 @@ router.post("/scripts", async (req, res) => {
   const parsed = z.object({ productId: z.string().uuid(), category: z.enum(CATEGORIES), fields: FieldsSchema, submit: z.boolean().optional() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message ? `Check the form: ${parsed.error.issues[0].path.join(".")} ${parsed.error.issues[0].message}` : "Check the form." }); return; }
   try {
-    await requireHead(req);
+    await requireAuthor(req);
     const orgId = req.user!.orgId;
     const branchId = branchOf(req);
     const { productId, category, fields } = parsed.data;
@@ -456,7 +505,7 @@ router.post("/scripts", async (req, res) => {
       throw versionError;
     }
     await audit(req, branchId, item.id, version.id, "created", { title: fields.title, category });
-    if (parsed.data.submit) await submitVersion(req, branchId, item, version.id);
+    if (parsed.data.submit) await submitOrPublish(req, branchId, item, version.id);
     res.status(201).json({ id: item.id, warnings: await warningsFor(orgId, branchId, item.id, productId, category, fields) });
   } catch (error: any) {
     fail(res, error, "Could not save the script.");
@@ -476,16 +525,26 @@ router.put("/scripts/:id", async (req, res) => {
   const parsed = z.object({ fields: FieldsSchema, submit: z.boolean().optional() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Check the form." }); return; }
   try {
-    await requireHead(req);
+    await requireAuthor(req);
     const orgId = req.user!.orgId;
     const branchId = branchOf(req);
     const { item, latest } = await loadItem(req, branchId);
     if (item.archived_at) throw httpError(409, "This script is archived.");
     const category = item.category as ScriptCategory;
     checkCategoryFields(category, parsed.data.fields);
-    if (latest?.status === "submitted") throw httpError(409, "This version is waiting for approval. Ask the approver to return it before changing it.");
     let versionId: string;
     const now = new Date().toISOString();
+    // Editing a version that waits for approval takes it back to draft (Bright, 9 Oct 2026).
+    if (latest?.status === "submitted") {
+      const { error } = await supabase.from("sales_script_versions").update({ status: "draft", submitted_at: null, updated_at: now }).eq("id", latest.id);
+      if (error) throw error;
+      latest.status = "draft";
+      await audit(req, branchId, item.id, latest.id, "withdrawn", { versionNo: latest.version_no });
+      if (!isApprover(req)) {
+        const { data: product } = await supabase.from("products").select("name").eq("id", item.product_id).maybeSingle();
+        void notifySalesScript(orgId, branchId, { kind: "withdrawn", headName: req.user!.name ?? "Head of Sales", productName: product?.name ?? "", category: CATEGORY_LABEL[category], title: latest.title, versionNo: latest.version_no });
+      }
+    }
     if (latest && ["draft", "returned"].includes(latest.status)) {
       const { error } = await supabase.from("sales_script_versions").update({ ...versionColumns(category, parsed.data.fields), status: "draft", updated_at: now }).eq("id", latest.id);
       if (error) throw error;
@@ -503,7 +562,7 @@ router.put("/scripts/:id", async (req, res) => {
       await audit(req, branchId, item.id, versionId, "new_version", { versionNo });
     }
     await supabase.from("sales_script_items").update({ updated_at: now }).eq("id", item.id);
-    if (parsed.data.submit) await submitVersion(req, branchId, item, versionId);
+    if (parsed.data.submit) await submitOrPublish(req, branchId, item, versionId);
     res.json({ id: item.id, warnings: await warningsFor(orgId, branchId, item.id, item.product_id, category, parsed.data.fields) });
   } catch (error: any) {
     fail(res, error, "Could not save the script.");
@@ -512,11 +571,11 @@ router.put("/scripts/:id", async (req, res) => {
 
 router.post("/scripts/:id/submit", async (req, res) => {
   try {
-    await requireHead(req);
+    await requireAuthor(req);
     const branchId = branchOf(req);
     const { item, latest } = await loadItem(req, branchId);
     if (!latest || !["draft", "returned"].includes(latest.status)) throw httpError(409, "There is no draft to submit.");
-    await submitVersion(req, branchId, item, latest.id);
+    await submitOrPublish(req, branchId, item, latest.id);
     res.json({ ok: true });
   } catch (error: any) {
     fail(res, error, "Could not submit the script.");
@@ -525,15 +584,19 @@ router.post("/scripts/:id/submit", async (req, res) => {
 
 router.delete("/scripts/:id", async (req, res) => {
   try {
-    await requireHead(req);
+    await requireAuthor(req);
     const branchId = branchOf(req);
     const { item, versions } = await loadItem(req, branchId);
-    if (versions.length !== 1 || versions[0].status !== "draft" || versions[0].submitted_at) {
-      throw httpError(409, "Only a draft that was never submitted can be deleted. Ask the manager to archive it instead.");
-    }
+    // Any script no rep has recorded using on an order can go for good (Bright,
+    // 9 Oct 2026). A used one keeps the usage report and the Head of Sales
+    // bonus evidence, so it can only be archived.
+    const { count, error: usesError } = await supabase.from("sales_script_uses").select("id", { count: "exact", head: true }).eq("script_id", item.id);
+    if (usesError) throw usesError;
+    if ((count ?? 0) > 0) throw httpError(409, `Reps used this script on ${count} order${count === 1 ? "" : "s"}, so it can't be deleted (the usage report and bonus evidence need it). Archive it instead.`);
+    const title = versions[versions.length - 1]?.title ?? "";
     const { error } = await supabase.from("sales_script_items").delete().eq("id", item.id);
     if (error) throw error;
-    await audit(req, branchId, null, null, "draft_deleted", { title: versions[0].title });
+    await audit(req, branchId, null, null, versions.length === 1 && versions[0].status === "draft" ? "draft_deleted" : "deleted", { title, versions: versions.length, wasLive: Boolean(item.live_version_id) });
     res.json({ ok: true });
   } catch (error: any) {
     fail(res, error, "Could not delete the draft.");

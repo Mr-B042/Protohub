@@ -266,8 +266,12 @@ export default function SalesScriptingPage({ onToast }: { onToast: (message: str
                         <ScriptMenu script={script} library={library} onClose={() => setMenuFor(null)}
                           onEdit={() => setEditing({ script, category: script.category })}
                           onHistory={() => setHistoryFor(script.id)}
-                          onSubmit={async () => { await salesScriptingApi.submit(script.id); onToast("Submitted for approval."); await load(); }}
-                          onDelete={async () => { await salesScriptingApi.remove(script.id); onToast("Draft deleted."); setSelectedId(null); await load(); }}
+                          onSubmit={async () => { await salesScriptingApi.submit(script.id); onToast(library.publishesDirectly ? "Published. Reps can use it now." : "Submitted for approval."); await load(); }}
+                          onDelete={async () => {
+                            const title = (script.latest ?? script.live)?.title ?? "this script";
+                            if (!window.confirm(`Delete "${title}" for good? All its versions go too. This can't be undone.`)) return;
+                            await salesScriptingApi.remove(script.id); onToast("Script deleted."); setSelectedId(null); await load();
+                          }}
                           onRetire={(action) => action === "reactivate" ? void runDecision(script, "reactivate") : setDeciding({ script, action })}
                           onError={(message) => onToast(message)} />
                       ) : null}
@@ -303,7 +307,7 @@ export default function SalesScriptingPage({ onToast }: { onToast: (message: str
       {editing && product ? (
         <ScriptEditor library={library} product={library.products.find((row) => row.id === (editing.script?.productId ?? productId)) ?? product} script={editing.script} category={editing.category}
           onClose={() => setEditing(null)}
-          onSaved={async (id, submitted) => { setEditing(null); onToast(submitted ? "Submitted for approval. The manager has been told." : "Draft saved."); await load(); setSelectedId(id); }} />
+          onSaved={async (id, submitted) => { setEditing(null); onToast(submitted ? (library.publishesDirectly ? "Published. Reps can use it now." : "Submitted for approval. The manager has been told.") : "Draft saved."); await load(); setSelectedId(id); }} />
       ) : null}
       {previewAll && product ? <PreviewAllModal product={product} scripts={productScripts} onClose={() => setPreviewAll(false)} /> : null}
       {historyFor ? <HistoryModal scriptId={historyFor} onClose={() => setHistoryFor(null)} /> : null}
@@ -334,20 +338,24 @@ function ScriptMenu({ script, library, onClose, onEdit, onHistory, onSubmit, onD
     return () => document.removeEventListener("mousedown", close);
   }, [onClose]);
   const latest = script.latest;
-  const canEdit = library.canAuthor && latest?.status !== "submitted" && !script.archivedAt;
+  // Leadership edit and publish too; editing a version that waits for approval takes it back (Bright, 9 Oct 2026).
+  const canEdit = library.canAuthor && !script.archivedAt;
   const canSubmit = library.canAuthor && latest && ["draft", "returned"].includes(latest.status);
-  const canDelete = library.canAuthor && script.versionsCount === 1 && latest?.status === "draft" && !latest.submittedAt;
+  const used = script.usedOnOrders ?? 0;
+  const editLabel = latest?.status === "submitted" ? "Edit (takes it back from approval)" : script.live ? (library.publishesDirectly ? "Edit (goes live when you publish)" : "Edit (makes a new version)") : "Edit";
   const run = (fn: () => Promise<void> | void) => async () => { onClose(); try { await fn(); } catch (err: any) { onError(err?.message ?? "Something went wrong."); } };
   const item = "!min-h-0 block w-full rounded-md px-3 py-2 text-left text-[13px] font-semibold text-gray-700 hover:bg-gray-50 dark:text-slate-200 dark:hover:bg-slate-800";
   return (
     <div ref={ref} className="absolute right-2 top-12 z-20 w-56 rounded-xl border border-gray-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900">
-      {canEdit ? <button type="button" className={item} onClick={run(onEdit)}>{script.live ? "Edit (makes a new version)" : "Edit"}</button> : null}
-      {canSubmit ? <button type="button" className={item} onClick={run(onSubmit)}>Submit for approval</button> : null}
+      {canEdit ? <button type="button" className={item} onClick={run(onEdit)}>{editLabel}</button> : null}
+      {canSubmit ? <button type="button" className={item} onClick={run(onSubmit)}>{library.publishesDirectly ? "Publish (goes live now)" : "Submit for approval"}</button> : null}
       <button type="button" className={item} onClick={run(onHistory)}>Version history &amp; audit</button>
       {library.canApprove && script.live && !script.deactivatedAt ? <button type="button" className={item} onClick={run(() => onRetire("deactivate"))}>Deactivate</button> : null}
       {library.canApprove && script.deactivatedAt && !script.archivedAt ? <button type="button" className={item} onClick={run(() => onRetire("reactivate"))}>Reactivate</button> : null}
       {library.canApprove && !script.archivedAt ? <button type="button" className={`${item} !text-rose-700`} onClick={run(() => onRetire("archive"))}>Archive</button> : null}
-      {canDelete ? <button type="button" className={`${item} !text-rose-700`} onClick={run(onDelete)}>Delete draft</button> : null}
+      {library.canAuthor ? (used === 0
+        ? <button type="button" className={`${item} !text-rose-700`} onClick={run(onDelete)}>Delete</button>
+        : <span className={`${item} cursor-not-allowed !text-gray-400`} title="The usage report and Head of Sales bonus evidence need it">Delete (used on {used} order{used === 1 ? "" : "s"}: archive instead)</span>) : null}
     </div>
   );
 }
@@ -504,7 +512,8 @@ function ScriptEditor({ library, product, script, category: initialCategory, onC
   library: ScriptLibrary; product: ScriptProduct; script: ScriptSummary | null; category: ScriptCategory;
   onClose: () => void; onSaved: (id: string, submitted: boolean) => Promise<void>;
 }) {
-  const base = script ? (script.latest && ["draft", "returned"].includes(script.latest.status) ? script.latest : script.live ?? script.latest) : null;
+  // A version waiting for approval is what gets edited (it is taken back to draft on save).
+  const base = script ? (script.latest && ["draft", "returned", "submitted"].includes(script.latest.status) ? script.latest : script.live ?? script.latest) : null;
   const [category, setCategory] = useState<ScriptCategory>(script?.category ?? initialCategory);
   const startFields = (): ScriptFields => base ? fieldsOf(base) : {
     title: "", scenario: "", objective: "", whenToUse: "", trigger: "", whatToSay: "", keyPoints: [],
@@ -698,7 +707,7 @@ function ScriptEditor({ library, product, script, category: initialCategory, onC
           ) : null}
           {error ? <p className="m-0 rounded-lg bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700">{error}</p> : null}
           <div className="flex flex-col gap-2 pt-2">
-            <button type="button" disabled={busy} onClick={() => void save(true)} className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-lg bg-[#1F8FE0] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#1a7cc4] disabled:opacity-50"><Send className="h-4 w-4" /> Submit for Approval</button>
+            <button type="button" disabled={busy} onClick={() => void save(true)} className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-lg bg-[#1F8FE0] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#1a7cc4] disabled:opacity-50"><Send className="h-4 w-4" /> {library.publishesDirectly ? "Publish Now" : "Submit for Approval"}</button>
             <button type="button" disabled={busy} onClick={() => void save(false)} className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200">Save Draft</button>
           </div>
         </aside>

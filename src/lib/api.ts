@@ -4311,6 +4311,8 @@ export type ScriptSummary = {
   id: string; productId: string; category: ScriptCategory;
   status: "approved" | "pending" | "draft" | "returned" | "rejected" | "deactivated" | "archived";
   live: ScriptVersion | null; latest: ScriptVersion | null; hasPendingChange: boolean; versionsCount: number;
+  /** Orders a rep recorded using it on: a used script can be archived, not deleted. */
+  usedOnOrders?: number;
   createdByName: string | null; createdAt: string;
   deactivatedAt: string | null; deactivatedByName: string | null; deactivationNote: string | null; archivedAt: string | null;
   outdatedPrices: number[];
@@ -4328,6 +4330,8 @@ export type ScriptProduct = {
 };
 export type ScriptLibrary = {
   canAuthor: boolean; canApprove: boolean; settings: ScriptSettings;
+  /** Leadership: what they submit goes live straight away. */
+  publishesDirectly?: boolean;
   products: ScriptProduct[]; allProducts: Array<{ id: string; name: string }>;
   scripts: ScriptSummary[]; archivedCount: number;
   kpis: { total: number; approved: number; approvedLast7: number; pending: number; drafts: number };
