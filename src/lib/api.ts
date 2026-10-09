@@ -4785,3 +4785,24 @@ export const teamChallengesApi = {
   baseline: (id: string) => post<TeamChallengeBaseline>(`/api/team-challenges/${encodeURIComponent(id)}/baseline`, {}),
   markPaid: (id: string, payoutId: string, reference?: string) => post<{ ok: true }>(`/api/team-challenges/${encodeURIComponent(id)}/payouts/${encodeURIComponent(payoutId)}/paid`, { reference })
 };
+
+// ── Report a Bug / Send Feedback (Bright, 9 Oct 2026) ──
+export type BugReportKind = "issue" | "feature" | "ux" | "other";
+export type BugReportStatus = "new" | "looking" | "fixed" | "wont_fix";
+export type BugReport = {
+  id: string; reporterId: string | null; reporterName: string; reporterRole: string;
+  kind: BugReportKind; title: string; description: string; module: string; page: string | null;
+  steps: string[]; attachments: Array<{ path: string; name: string; mime: string; size: number }>;
+  wantsUpdates: boolean; status: BugReportStatus; ownerNote: string | null; statusChangedAt: string | null; createdAt: string;
+};
+export type BugReportInput = {
+  kind: BugReportKind; title: string; description: string; module: string; page?: string;
+  steps: string[]; wantsUpdates: boolean; files: Array<{ name: string; dataUrl: string }>;
+};
+export const bugReportsApi = {
+  create: (body: BugReportInput) => post<BugReport>("/api/bug-reports", body),
+  mine: () => get<BugReport[]>("/api/bug-reports/mine"),
+  all: () => get<BugReport[]>("/api/bug-reports"),
+  update: (id: string, body: { status?: BugReportStatus; ownerNote?: string | null }) => patch<BugReport>(`/api/bug-reports/${encodeURIComponent(id)}`, body),
+  fileUrl: (id: string, path: string) => get<{ url: string }>(`/api/bug-reports/${encodeURIComponent(id)}/file?path=${encodeURIComponent(path)}`)
+};

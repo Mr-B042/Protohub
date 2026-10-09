@@ -36,7 +36,8 @@ import {
   Trophy,
   Truck,
   Users,
-  WalletCards
+  WalletCards,
+  Bug
 } from "lucide-react";
 
 export const navItems = [
@@ -87,7 +88,9 @@ export const navItems = [
   { label: "Head of Sales Rep", icon: Crown },
   { label: "Bonuses", icon: HandCoins },
   { label: "Weekly Reports", icon: FileText },
-  { label: "Settings", icon: Settings }
+  { label: "Settings", icon: Settings },
+  // Report a Bug / Send Feedback (Bright, 9 Oct 2026): open to every role.
+  { label: "Report a Bug", icon: Bug }
 ];
 
 export const summaryCards = [
