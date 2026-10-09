@@ -8,7 +8,7 @@ import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { addDaysToDateKey, lagosDateKey, sundayWeekStartForDateKey, weekEndFromStart } from "../lib/sales-bonus-engine.js";
 import {
   DEFAULT_FUND_SETTINGS, FUND_CATEGORIES, KIND_LABEL, customerPaymentEffect, fundTotals, fundsEditable, fundsReadiness,
-  logisticsSplit, missingProof, type FundKind, type FundSettings, type FundTxn
+  logisticsSplit, missingProof, scaleSplits, splitProblem, type FundKind, type ProductSplit, type FundSettings, type FundTxn
 } from "../lib/manager-funds.js";
 import { notifyFunds } from "../lib/weekly-report-notifications.js";
 
@@ -129,7 +129,7 @@ async function ensureWeek(orgId: string, branchId: string, managerId: string, wa
   return (await resolveOpening(orgId, branchId, managerId, weekStart)).row;
 }
 
-const TXN_COLUMNS = "id, manager_id, wallet_account_id, week_start, kind, category, product_id, amount, occurred_at, description, paid_to, payment_method, reference, order_ids, counterparty_account_id, evidence, expense_id, transfer_id, remittance_transaction_ids, status, return_reason, void_reason, voided_at, adjusts_transaction_id, version, created_by, created_by_name, created_at, updated_at";
+const TXN_COLUMNS = "id, manager_id, wallet_account_id, week_start, kind, category, product_id, product_splits, amount, occurred_at, description, paid_to, payment_method, reference, order_ids, counterparty_account_id, evidence, expense_id, transfer_id, remittance_transaction_ids, status, return_reason, void_reason, voided_at, adjusts_transaction_id, version, created_by, created_by_name, created_at, updated_at";
 
 const toFundTxn = (row: any): FundTxn => ({
   id: row.id, kind: row.kind, category: row.category ?? null, amount: Number(row.amount ?? 0), occurredAt: row.occurred_at,
@@ -142,6 +142,7 @@ const mapTxn = (row: any, settings: FundSettings, countedOnOrders = 0) => ({
   countedOnOrders,
   id: row.id,
   productId: row.product_id ?? null,
+  productSplits: Array.isArray(row.product_splits) ? row.product_splits as ProductSplit[] : null,
   managerId: row.manager_id,
   weekStart: row.week_start,
   kind: row.kind as FundKind,
@@ -533,6 +534,28 @@ async function releaseOrderFees(orgId: string, walletId: string, orderIds: strin
   if (error) throw error;
 }
 
+/** Removes a shared waybill's extra product expenses beyond the first `keep`. */
+async function removeExtraShares(orgId: string, expenseId: string, keep: number) {
+  const { data, error } = await supabase.from("expenses").select("id").eq("org_id", orgId).like("id", `${expenseId}-%`);
+  if (error) throw error;
+  const extra = ((data ?? []) as any[]).map((row) => String(row.id))
+    .filter((id) => { const index = Number(id.slice(expenseId.length + 1)); return Number.isInteger(index) && index > keep; });
+  if (extra.length === 0) return;
+  const removed = await supabase.from("expenses").delete().eq("org_id", orgId).in("id", extra);
+  if (removed.error) throw removed.error;
+}
+
+/** The products a waybill payment is for: one (productId) or shared (2+ splits). */
+function waybillProducts(input: { productId?: string; productSplits?: ProductSplit[] }, amount: number) {
+  const splits = input.productSplits ?? [];
+  if (splits.length > 1) {
+    const problem = splitProblem(splits, amount);
+    if (problem) throw httpError(400, problem);
+    return { productId: splits[0].productId, productSplits: splits };
+  }
+  return { productId: splits[0]?.productId ?? input.productId ?? null, productSplits: null };
+}
+
 /**
  * Books (or updates / removes) the expense behind a wallet expense entry: only
  * its NEW cost. Returns the expense id to keep on the entry (null = none).
@@ -543,6 +566,8 @@ async function syncWalletExpense(input: {
   orderIds: string[]; previousOrderIds: string[];
   /** Waybill only: which product's waybills this payment was for. */
   productId?: string | null; previousCategory?: string | null;
+  /** Waybill shared by 2+ products: one expense per product (MGRF-<id>, MGRF-<id>-2, ...). */
+  productSplits?: ProductSplit[] | null;
 }) {
   const split = await expenseSplit(input.orgId, input.category, input.amount, input.orderIds, input.txnId);
   const coveredIds = split.counted > 0 ? input.orderIds : [];
@@ -551,7 +576,18 @@ async function syncWalletExpense(input: {
     : "";
   const description = `${expenseDescription(input.category, input.description, input.paidTo)}${covered}`.slice(0, 500);
   const expenseId = input.existingExpenseId ?? `MGRF-${input.txnId}`;
-  if (split.newCost > 0) {
+  const shares = input.category === "waybill" && (input.productSplits?.length ?? 0) > 1 && split.newCost > 0 ? input.productSplits! : null;
+  if (shares) {
+    // One expense per product; the first keeps the id the entry points to.
+    const currency = await currencyFor(input.branchId);
+    const rows = shares.map((share, index) => expenseRow({
+      id: index === 0 ? expenseId : `${expenseId}-${index + 1}`, orgId: input.orgId, branchId: input.branchId, walletId: input.walletId,
+      date: lagosDay(input.occurredAt), category: input.category, description: `${description} · share ${index + 1} of ${shares.length}`.slice(0, 500),
+      amount: share.amount, paidBy: input.paidBy, currency, productId: share.productId
+    }));
+    const { error } = await supabase.from("expenses").upsert(rows, { onConflict: "id" });
+    if (error) throw error;
+  } else if (split.newCost > 0) {
     if (input.existingExpenseId) {
       const { error } = await supabase.from("expenses").update({
         amount: split.newCost, date: lagosDay(input.occurredAt), description, product_id: input.productId ?? null,
@@ -569,6 +605,7 @@ async function syncWalletExpense(input: {
     const { error } = await supabase.from("expenses").delete().eq("id", input.existingExpenseId).eq("org_id", input.orgId);
     if (error) throw error;
   }
+  await removeExtraShares(input.orgId, expenseId, shares?.length ?? 1);
   await releaseOrderFees(input.orgId, input.walletId, input.previousOrderIds.filter((id) => !coveredIds.includes(id)));
   if (coveredIds.length > 0) {
     const { error } = await supabase.from("expenses").update({ bank_account_id: input.walletId })
@@ -598,7 +635,9 @@ const LogSchema = z.object({
   // Admin/Owner only: why a customer payment does not settle the order exactly.
   varianceReason: z.string().trim().max(400).optional(),
   // Waybill expenses: which product's waybills (Bright, 9 Oct 2026).
-  productId: z.string().trim().min(1).max(60).optional()
+  productId: z.string().trim().min(1).max(60).optional(),
+  // A waybill shared by several products, each with its share (Bright, 9 Oct 2026).
+  productSplits: z.array(z.object({ productId: z.string().trim().min(1).max(60), amount: z.number().positive() })).max(6).optional()
 });
 
 router.post("/transactions", requireRole("Manager", "Admin"), async (req, res) => {
@@ -613,7 +652,8 @@ router.post("/transactions", requireRole("Manager", "Admin"), async (req, res) =
     const weekStart = sundayWeekStartForDateKey(lagosDay(body.occurredAt));
     await assertEditable(orgId, branchId, me.id, weekStart);
     if (body.kind === "expense" && !body.category) throw httpError(400, "Choose a category.");
-    if (body.kind === "expense" && body.category === "waybill" && !body.productId) throw httpError(400, "Choose which product's waybills this was for.");
+    const waybill = body.kind === "expense" && body.category === "waybill" ? waybillProducts(body, body.amount) : { productId: null, productSplits: null };
+    if (body.kind === "expense" && body.category === "waybill" && !waybill.productId) throw httpError(400, "Choose which product's waybills this was for.");
     if (body.kind === "customer_payment" && !body.orderId) throw httpError(400, "Enter the order number this payment is for.");
     if (["owner_funding", "company_transfer_in", "remittance_out"].includes(body.kind)) await assertCompanyAccount(orgId, branchId, body.counterpartyAccountId);
 
@@ -628,7 +668,7 @@ router.post("/transactions", requireRole("Manager", "Admin"), async (req, res) =
       reference: body.reference || null,
       order_ids: orderId ? [orderId] : body.kind === "expense" ? (body.relatedOrderIds ?? []).map((id) => id.replace(/^#/, "")) : [],
       counterparty_account_id: body.counterpartyAccountId ?? null,
-      product_id: body.kind === "expense" && body.category === "waybill" ? body.productId ?? null : null,
+      product_id: waybill.productId, product_splits: waybill.productSplits,
       created_by: me.id, created_by_name: me.name
     }).select(TXN_COLUMNS).single();
     if (error) throw error;
@@ -643,7 +683,7 @@ router.post("/transactions", requireRole("Manager", "Admin"), async (req, res) =
           orgId, branchId, txnId: row.id, walletId: wallet.id, existingExpenseId: null, category: body.category!,
           amount: body.amount, occurredAt: body.occurredAt, description: body.description ?? null, paidTo: body.paidTo ?? null,
           paidBy: me.name, orderIds: cleanOrderIds(row.order_ids), previousOrderIds: [],
-          productId: body.category === "waybill" ? body.productId ?? null : null
+          productId: waybill.productId, productSplits: waybill.productSplits
         });
         if (synced.expenseId) mirror.expense_id = synced.expenseId;
       } else if (body.kind === "owner_funding" || body.kind === "company_transfer_in" || body.kind === "remittance_out") {
@@ -703,7 +743,9 @@ const EditSchema = z.object({
   reference: z.string().trim().max(120).optional(),
   counterpartyAccountId: z.string().uuid().optional(),
   relatedOrderIds: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
-  productId: z.string().trim().min(1).max(60).optional()
+  productId: z.string().trim().min(1).max(60).optional(),
+  // A waybill shared by several products, each with its share (Bright, 9 Oct 2026).
+  productSplits: z.array(z.object({ productId: z.string().trim().min(1).max(60), amount: z.number().positive() })).max(6).optional()
 });
 
 router.patch("/transactions/:id", requireRole("Manager", "Admin"), async (req, res) => {
@@ -731,8 +773,18 @@ router.patch("/transactions/:id", requireRole("Manager", "Admin"), async (req, r
       counterparty_account_id: body.counterpartyAccountId ?? row.counterparty_account_id,
       order_ids: row.kind === "expense" && body.relatedOrderIds ? cleanOrderIds(body.relatedOrderIds) : (row.order_ids ?? []),
       expense_id: row.expense_id ?? null,
-      product_id: row.kind === "expense" && (body.category ?? row.category) === "waybill" ? body.productId ?? row.product_id ?? null : null
+      product_id: null as string | null,
+      product_splits: null as ProductSplit[] | null
     };
+    if (row.kind === "expense" && next.category === "waybill") {
+      // New products sent: use them. Same products, new amount: keep each one's proportion.
+      const stored = Array.isArray(row.product_splits) ? row.product_splits as ProductSplit[] : null;
+      const chosen = body.productSplits?.length || body.productId
+        ? waybillProducts(body, next.amount)
+        : stored && stored.length > 1 ? { productId: stored[0].productId, productSplits: scaleSplits(stored, next.amount) } : { productId: row.product_id ?? null, productSplits: null };
+      next.product_id = chosen.productId;
+      next.product_splits = chosen.productSplits;
+    }
     if (row.kind === "expense" && next.category === "waybill" && !next.product_id) throw httpError(400, "Choose which product's waybills this was for.");
 
     if (row.kind === "expense") {
@@ -740,7 +792,7 @@ router.patch("/transactions/:id", requireRole("Manager", "Admin"), async (req, r
         orgId, branchId, txnId: row.id, walletId: row.wallet_account_id, existingExpenseId: row.expense_id ?? null, category: next.category!,
         amount: next.amount, occurredAt: next.occurred_at, description: next.description, paidTo: next.paid_to,
         paidBy: row.created_by_name ?? req.user!.name ?? "Manager", orderIds: cleanOrderIds(next.order_ids), previousOrderIds: cleanOrderIds(row.order_ids),
-        productId: next.product_id, previousCategory: row.category
+        productId: next.product_id, productSplits: next.product_splits, previousCategory: row.category
       });
       next.expense_id = synced.expenseId;
     }
@@ -788,6 +840,7 @@ router.post("/transactions/:id/void", requireRole("Manager", "Admin"), async (re
     if (row.expense_id) {
       const { error } = await supabase.from("expenses").delete().eq("id", row.expense_id).eq("org_id", orgId);
       if (error) throw error;
+      await removeExtraShares(orgId, row.expense_id, 1);
     }
     if (row.kind === "expense") await releaseOrderFees(orgId, row.wallet_account_id, cleanOrderIds(row.order_ids));
     // The product's typed waybill total takes back the part this payment covered.
@@ -979,7 +1032,8 @@ router.post("/adjustments/:id/decide", requireRole("Owner"), async (req, res) =>
             orgId, branchId, txnId: txn.id, walletId: txn.wallet_account_id, existingExpenseId: txn.expense_id ?? null, category: txn.category ?? "other",
             amount, occurredAt: txn.occurred_at, description: txn.description, paidTo: txn.paid_to, paidBy: txn.created_by_name ?? "Manager",
             orderIds: cleanOrderIds(txn.order_ids), previousOrderIds: cleanOrderIds(txn.order_ids),
-            productId: txn.product_id ?? null, previousCategory: txn.category
+            productId: txn.product_id ?? null, previousCategory: txn.category,
+            productSplits: Array.isArray(txn.product_splits) && txn.product_splits.length > 1 ? scaleSplits(txn.product_splits as ProductSplit[], amount) : null
           });
           if ((synced.expenseId ?? null) !== (txn.expense_id ?? null)) {
             const { error: e } = await supabase.from("manager_fund_transactions").update({ expense_id: synced.expenseId }).eq("id", txn.id);
@@ -993,7 +1047,10 @@ router.post("/adjustments/:id/decide", requireRole("Owner"), async (req, res) =>
         const { error: e } = await supabase.from("manager_fund_transactions").update({ amount, version: Number(txn.version ?? 1) + 1, updated_at: new Date().toISOString() }).eq("id", txn.id);
         if (e) throw e;
       } else {
-        if (txn.expense_id) await supabase.from("expenses").delete().eq("id", txn.expense_id).eq("org_id", orgId);
+        if (txn.expense_id) {
+          await supabase.from("expenses").delete().eq("id", txn.expense_id).eq("org_id", orgId);
+          await removeExtraShares(orgId, txn.expense_id, 1);
+        }
         if (txn.kind === "expense") await releaseOrderFees(orgId, txn.wallet_account_id, cleanOrderIds(txn.order_ids));
         if (txn.category === "waybill") await recomputeWaybillWeek(orgId, branchId, lagosDay(txn.occurred_at));
         if (txn.transfer_id) await supabase.from("bank_account_transfers").delete().eq("id", txn.transfer_id).eq("org_id", orgId);

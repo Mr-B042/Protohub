@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  DEFAULT_FUND_SETTINGS, customerPaymentEffect, fundTotals, fundsEditable, fundsReadiness, logisticsSplit, missingProof, type FundTxn
+  DEFAULT_FUND_SETTINGS, customerPaymentEffect, fundTotals, fundsEditable, fundsReadiness, logisticsSplit, missingProof, equalSplit, splitProblem, scaleSplits, type FundTxn
 } from "./manager-funds.js";
 
 const txn = (overrides: Partial<FundTxn>): FundTxn => ({
@@ -100,4 +100,23 @@ test("logisticsSplit: only the part above the orders' fees is a new cost", () =>
   assert.deepEqual(logisticsSplit(5000, 9000, 6000), { counted: 3000, newCost: 2000 });
   assert.deepEqual(logisticsSplit(5000, 0, 0), { counted: 0, newCost: 5000 });
   assert.deepEqual(logisticsSplit(5000, 4000, 9000), { counted: 0, newCost: 5000 });
+});
+
+test("waybill shared by products: equal shares add up to the payment", () => {
+  assert.deepEqual(equalSplit(9000, 3), [3000, 3000, 3000]);
+  assert.deepEqual(equalSplit(10000, 3), [3333.33, 3333.33, 3333.34]);
+  assert.deepEqual(equalSplit(9000, 1), [9000]);
+});
+
+test("waybill shared by products: shares must add up, products once", () => {
+  assert.equal(splitProblem([{ productId: "a", amount: 5000 }, { productId: "b", amount: 4000 }], 9000), null);
+  assert.match(splitProblem([{ productId: "a", amount: 5000 }, { productId: "b", amount: 3000 }], 9000) ?? "", /add up/);
+  assert.match(splitProblem([{ productId: "a", amount: 4500 }, { productId: "a", amount: 4500 }], 9000) ?? "", /once/);
+  assert.match(splitProblem([{ productId: "a", amount: 9000 }, { productId: "b", amount: 0 }], 9000) ?? "", /above zero/);
+});
+
+test("waybill shared by products: a new amount keeps each product's proportion", () => {
+  assert.deepEqual(scaleSplits([{ productId: "a", amount: 6000 }, { productId: "b", amount: 3000 }], 12000), [{ productId: "a", amount: 8000 }, { productId: "b", amount: 4000 }]);
+  const scaled = scaleSplits([{ productId: "a", amount: 1 }, { productId: "b", amount: 1 }, { productId: "c", amount: 1 }], 100);
+  assert.equal(Math.round(scaled.reduce((sum, split) => sum + split.amount, 0) * 100), 10000);
 });

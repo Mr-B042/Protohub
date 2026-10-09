@@ -228,3 +228,39 @@ export function logisticsSplit(amount: number, orderFees: number, claimedByOther
   const counted = round(Math.min(Math.max(0, amount), pool));
   return { counted, newCost: round(Math.max(0, amount) - counted) };
 }
+
+// ── Waybill shared by several products (Bright, 9 Oct 2026) ──
+// One wallet payment, one share per product. Equal by default; the person
+// logging may change any share as long as the shares add up to the payment.
+
+export type ProductSplit = { productId: string; amount: number };
+
+/** Equal shares to the kobo; the last share takes the rounding. */
+export function equalSplit(amount: number, count: number): number[] {
+  if (count <= 0) return [];
+  const kobo = Math.round(Math.max(0, amount) * 100);
+  const each = Math.floor(kobo / count);
+  return Array.from({ length: count }, (_, index) => (index === count - 1 ? kobo - each * (count - 1) : each) / 100);
+}
+
+/** Why these shares can't be saved, or null when they can. */
+export function splitProblem(splits: ProductSplit[], amount: number): string | null {
+  if (new Set(splits.map((split) => split.productId)).size !== splits.length) return "Each product can only be chosen once.";
+  if (splits.some((split) => !(split.amount > 0))) return "Every product needs a share above zero.";
+  const total = round(splits.reduce((sum, split) => sum + split.amount, 0));
+  if (Math.abs(total - round(amount)) > 0.009) return `The products' shares add up to ${total.toLocaleString("en-NG")}, not ${round(amount).toLocaleString("en-NG")}.`;
+  return null;
+}
+
+/** Keeps each product's proportion when the payment's amount changes. */
+export function scaleSplits(splits: ProductSplit[], amount: number): ProductSplit[] {
+  const total = splits.reduce((sum, split) => sum + split.amount, 0);
+  if (!(total > 0)) return splits.map((split, index) => ({ ...split, amount: equalSplit(amount, splits.length)[index] }));
+  const kobo = Math.round(amount * 100);
+  let used = 0;
+  return splits.map((split, index) => {
+    const share = index === splits.length - 1 ? kobo - used : Math.round((split.amount / total) * kobo);
+    used += share;
+    return { ...split, amount: share / 100 };
+  });
+}
