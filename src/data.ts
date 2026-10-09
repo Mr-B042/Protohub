@@ -37,7 +37,9 @@ import {
   Truck,
   Users,
   WalletCards,
-  Bug
+  Bug,
+  ClipboardList,
+  ShieldAlert
 } from "lucide-react";
 
 export const navItems = [
@@ -89,8 +91,11 @@ export const navItems = [
   { label: "Bonuses", icon: HandCoins },
   { label: "Weekly Reports", icon: FileText },
   { label: "Settings", icon: Settings },
-  // Report a Bug / Send Feedback (Bright, 9 Oct 2026): open to every role.
-  { label: "Report a Bug", icon: Bug }
+  // Help & Support (Bright, 9 Oct 2026): Report a Bug and My Reports are open
+  // to every role; Issue Management is the Owner's and Admins' bug centre.
+  { label: "Report a Bug", icon: Bug },
+  { label: "My Reports", icon: ClipboardList },
+  { label: "Issue Management", icon: ShieldAlert }
 ];
 
 export const summaryCards = [

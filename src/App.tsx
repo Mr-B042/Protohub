@@ -251,6 +251,12 @@ import EmbedTrackingChoice from "./components/EmbedTrackingChoice";
 import { MetaCapiSummary, MetaOrderEventsCard } from "./components/MetaCapiParts";
 import SalesScriptingPage, { SalesScriptingOverviewCard } from "./pages/SalesScriptingPage";
 import ReportBugPage from "./pages/ReportBugPage";
+import MyReportsPage from "./pages/MyReportsPage";
+import IssueManagementPage from "./pages/IssueManagementPage";
+import { installErrorRecorder } from "./lib/error-recorder";
+
+// Failed requests and page errors in this tab, for bug reports (Issue Management).
+installErrorRecorder();
 import ScriptUsageReportPage from "./pages/ScriptUsageReportPage";
 import ManagerFundsTab from "./pages/ManagerFundsTab";
 import ManagerWeeklyReviewPage, { type ReviewRepRow } from "./pages/ManagerWeeklyReviewPage";
@@ -315,7 +321,7 @@ type CurrencyCode = "NGN" | "GHS" | "KES" | "ZMW" | "XOF" | "XAF" | "TZS" | "MWK
 // currency no product can be priced in.
 type ProductCurrencyCode = CurrencyCode;
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "addBranch" | "cartAssignmentRules" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addExtraItems" | "addFreeGift" | "salesBonusFullReport" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | "pdaPortalCredentials" | null;
-type ActivePage = "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Team Challenges" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Tracking Hub" | "Marketing" | "Marketing Performance" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers" | "Weekly Reports" | "Report a Bug";
+type ActivePage = "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Team Challenges" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Tracking Hub" | "Marketing" | "Marketing Performance" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers" | "Weekly Reports" | "Report a Bug" | "My Reports" | "Issue Management";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type PendingSalesExpansionAction =
@@ -3015,6 +3021,8 @@ const dashboardHashByPage: Record<ActivePage, string> = {
   "Marketing Performance": "#/dashboard/admin/marketing-performance",
   "Weekly Reports": "#/dashboard/admin/weekly-reports",
   "Report a Bug": "#/dashboard/admin/report-a-bug",
+  "My Reports": "#/dashboard/admin/my-reports",
+  "Issue Management": "#/dashboard/admin/issue-management",
   "User Management": "#/dashboard/admin/users",
   "Round-Robin": "#/dashboard/admin/round-robin",
   "Embed Form": "#/dashboard/admin/embed",
@@ -3033,12 +3041,15 @@ const dashboardHashForRolePage = (page: ActivePage, role: EditableUserRole): str
 const SPY_AS_STORAGE_KEY = "protohub.viewAsUserId";
 const PREVIEW_ROLE_STORAGE_KEY = "protohub.previewRole";
 
-// Report a Bug is open to everyone (Bright, 9 Oct 2026), so it is added here
-// once instead of to every role's list.
+// Help & Support is open to everyone (Bright, 9 Oct 2026), so it is added here
+// once instead of to every role's list. Issue Management is the technical
+// team's: Owner and Admin only (Bright's choice).
+const SUPPORT_PAGES: AccessiblePage[] = ["Report a Bug", "My Reports"];
+const ISSUE_TEAM_ROLES: EditableUserRole[] = ["Owner", "Admin"];
 const allowedPagesFor = (role: EditableUserRole | undefined, extraPages: AccessiblePage[] = []): AccessiblePage[] => {
-  if (!role) return sanitizeActivePageList([...roleAllowedPages["Viewer"], "Report a Bug"]);
+  if (!role) return sanitizeActivePageList([...roleAllowedPages["Viewer"], ...SUPPORT_PAGES]);
   const base = roleAllowedPages[role] ?? [];
-  return sanitizeActivePageList([...base, ...extraPages, "Report a Bug"]);
+  return sanitizeActivePageList([...base, ...extraPages.filter((page) => page !== "Issue Management"), ...SUPPORT_PAGES, ...(ISSUE_TEAM_ROLES.includes(role) ? ["Issue Management" as AccessiblePage] : [])]);
 };
 const payStructureTypes: { value: PayStructureType; helper: string }[] = [
   { value: "Per Delivered Order", helper: "Rate × delivered orders" },
@@ -11469,6 +11480,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const activeHelp = PAGE_HELP[activePage] ?? DEFAULT_HELP;
   const activeHelpRoleNote = activeHelp.roleNotes?.[currentRole];
   const isPageAllowed = (page: ActivePage) => currentAllowedPages.includes(page);
+  // Issue Management (9 Oct 2026): the page someone was on before opening
+  // Report a Bug fills "Where did this happen?"; open ticket per page.
+  const lastWorkPageRef = useRef<ActivePage | null>(null);
+  useEffect(() => {
+    if (!["Report a Bug", "My Reports", "Issue Management"].includes(activePage)) lastWorkPageRef.current = activePage;
+  }, [activePage]);
+  const [myReportsOpenId, setMyReportsOpenId] = useState<string | null>(null);
+  const [issueOpenId, setIssueOpenId] = useState<string | null>(null);
   const canManageMessagingSettings = currentRole === "Owner";
   const canManageMetaCapiSettings = currentRole === "Owner";
   const canViewSmsHealth = currentRole === "Owner" || currentRole === "Admin";
@@ -28085,6 +28104,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       "marketing-performance": "Marketing Performance",
       "weekly-reports": "Weekly Reports",
       "report-a-bug": "Report a Bug",
+      "my-reports": "My Reports",
+      "issue-management": "Issue Management",
       users: "User Management",
       "user-management": "User Management",
       "round-robin": "Round-Robin",
@@ -37443,6 +37464,8 @@ ${waybillLineItems(w).length > 1
   "Marketing Performance": "#/dashboard/admin/marketing-performance",
   "Weekly Reports": "#/dashboard/admin/weekly-reports",
   "Report a Bug": "#/dashboard/admin/report-a-bug",
+  "My Reports": "#/dashboard/admin/my-reports",
+  "Issue Management": "#/dashboard/admin/issue-management",
       "User Management": "#/dashboard/admin/users",
       "Round-Robin": "#/dashboard/admin/round-robin",
       "Embed Form": "#/dashboard/admin/embed",
@@ -37539,7 +37562,7 @@ ${waybillLineItems(w).length > 1
       return;
     }
 
-    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory & Logistics Operations" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Head of Sales Rep" || label === "Sales Closers" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Tracking Hub" || label === "Marketing" || label === "Marketing Performance" || label === "Weekly Reports" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp" || label === "Report a Bug") {
+    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory & Logistics Operations" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Head of Sales Rep" || label === "Sales Closers" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Tracking Hub" || label === "Marketing" || label === "Marketing Performance" || label === "Weekly Reports" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp" || label === "Report a Bug" || label === "My Reports" || label === "Issue Management") {
       if (label === "Inventory & Logistics Operations") {
         setInventoryOperationsSection("dashboard");
       }
@@ -75552,9 +75575,11 @@ ${waybillLineItems(w).length > 1
                       ? "Tracking & Marketing"
                     : targetPage === "Call Rep Console"
                       ? "Administration"
-                    // "System" heads Settings, or Report a Bug for roles without Settings.
-                    : targetPage === "Settings" || (targetPage === "Report a Bug" && !currentAllowedPages.includes("Settings"))
+                    : targetPage === "Settings"
                       ? "System"
+                    // Report a Bug, My Reports, Issue Management (Bright, 9 Oct 2026).
+                    : targetPage === "Report a Bug"
+                      ? "Help & Support"
                       : null;
             const isBonusShortcut = targetPage === "Bonuses";
             const isWorkspaceBonusTab = activePage === "Sales Rep Workspace" && repConsoleTab === "Bonuses";
@@ -90634,10 +90659,21 @@ ${waybillLineItems(w).length > 1
           ) : activePage === "Report a Bug" ? (
             <ReportBugPage
               currentRole={currentRole}
-              modules={currentAllowedPages.filter((page) => page !== "Report a Bug")}
+              userName={currentManagedUser?.name ?? ownerName}
+              workspace={companyName || "Protohub"}
+              modules={currentAllowedPages.filter((page) => !["Report a Bug", "My Reports", "Issue Management"].includes(page))}
+              previousPage={lastWorkPageRef.current}
               showToast={showToast}
-              onCancel={() => handleNavClick(currentAllowedPages[0] ?? "Dashboard")}
+              onCancel={() => handleNavClick(lastWorkPageRef.current ?? currentAllowedPages[0] ?? "Dashboard")}
+              onViewReport={(id) => { setMyReportsOpenId(id); handleNavClick("My Reports"); }}
             />
+          ) : activePage === "My Reports" ? (
+            <MyReportsPage openId={myReportsOpenId} onOpenChange={setMyReportsOpenId} onNewReport={() => handleNavClick("Report a Bug")} showToast={showToast} />
+          ) : activePage === "Issue Management" ? (
+            // Owner + Admin only; on currentRole so "view as" a rep lands on a note.
+            currentRole === "Owner" || currentRole === "Admin"
+              ? <IssueManagementPage currentUserId={currentManagedUser?.id ?? null} openId={issueOpenId} onOpenChange={setIssueOpenId} showToast={showToast} />
+              : <div className="mx-auto max-w-[640px] rounded-2xl border border-gray-200 bg-white p-8 text-center text-[13px] text-gray-600">Issue Management is for the Owner and Admins. Your own reports are in <b>My Reports</b>.</div>
           ) : activePage === "Weekly Reports" ? (
             renderWeeklyReportsArea("sidebar")
           ) : activePage === "Tracking Hub" ? (
