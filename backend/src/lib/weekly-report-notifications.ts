@@ -344,11 +344,22 @@ export async function notifyHeadOfSales(orgId: string, branchId: string, event: 
 // Head of Sales; approved -> every sales rep (a new script is live).
 export type SalesScriptEvent =
   | { kind: "submitted"; headName: string; productName: string; category: string; title: string; versionNo: number }
+  | { kind: "withdrawn"; headName: string; productName: string; category: string; title: string; versionNo: number }
   | { kind: "approved" | "returned" | "rejected"; headId: string | null; deciderName: string; productName: string; category: string; title: string; versionNo: number; note: string | null };
 
 export async function notifySalesScript(orgId: string, branchId: string, event: SalesScriptEvent): Promise<void> {
   try {
     const where = `${event.productName} → ${event.category} → ${event.title}${event.versionNo > 1 ? ` (version ${event.versionNo})` : ""}`;
+    if (event.kind === "withdrawn") {
+      await deliver(orgId, branchId, await leadershipRecipients(orgId, branchId), {
+        title: "Sales script taken back for changes",
+        message: `${where}. ${event.headName} is changing it; it will come back for approval.`,
+        kind: "sales_script_withdrawn",
+        tag: `sales-script-withdrawn-${Date.now()}`,
+        type: "info"
+      });
+      return;
+    }
     if (event.kind === "submitted") {
       await deliver(orgId, branchId, await leadershipRecipients(orgId, branchId), {
         title: "New sales script waiting for approval",
