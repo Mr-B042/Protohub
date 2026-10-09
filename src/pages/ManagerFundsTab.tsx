@@ -100,7 +100,13 @@ function WaybillWeekNote({ date, productId, amount, sym, nf }: { date: string; p
     expensesApi.waybillWeek(date, productId || null).then((value) => { if (!cancelled) setWeek(value); }).catch(() => { if (!cancelled) setWeek(null); });
     return () => { cancelled = true; };
   }, [date, productId]);
-  if (!week || !week.active) return null;
+  if (!week) return null;
+  // Earlier weeks: say so instead of showing nothing (Bright, 9 Oct 2026).
+  if (!week.active) return (
+    <p className="m-0 rounded-lg bg-amber-50 px-3 py-2 text-[12px] text-amber-900 dark:bg-amber-500/10 dark:text-amber-200">
+      This week is before waybill costs were counted once. This payment will be added on top of any waybill total typed for the week on the Expenses page.
+    </p>
+  );
   const typed = week.typedTotals.reduce((sum, row) => sum + row.declared, 0);
   const paid = week.walletPayments.reduce((sum, row) => sum + row.amount, 0);
   return (

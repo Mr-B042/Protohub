@@ -15,7 +15,9 @@ import { addDaysToDateKey, sundayWeekStartForDateKey } from "./sales-bonus-engin
 // A typed total with a product absorbs that product's wallet payments first;
 // one with no product (most typed totals so far) absorbs whatever is left.
 
-export const WAYBILL_ONCE_FROM = "2026-10-04";
+// From the week of 27 Sep (Bright, 9 Oct 2026): that week's Rack/Shelf totals were
+// typed on 3 Oct and its wallet waybills were still being logged after the fix.
+export const WAYBILL_ONCE_FROM = "2026-09-27";
 const NOTE = " · [";
 
 export type TypedTotal = { id: string; declared: number; productId: string | null };
