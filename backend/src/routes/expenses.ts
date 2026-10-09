@@ -1,6 +1,6 @@
 import { WAYBILL_ONCE_FROM, recomputeWaybillWeek, waybillWeekPosition } from "../lib/waybill-costs.js";
 import { Router } from "express";
-import { fetchAllRowsOrThrow } from "../lib/query-limits.js";
+import { fetchAllRowsOrThrow, selectByIdBatches } from "../lib/query-limits.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
@@ -36,7 +36,14 @@ router.get("/", requireRole("Owner", "Admin"), async (req, res) => {
   // of ties per day.
   try {
     const rows = await fetchAllRowsOrThrow<any>(buildExpenseQuery);
-    res.json(rows);
+    // ⚠️ expenses keep only product_id; the "Product / Ref" column showed blank
+    // for every saved row until the name was filled in here (9 Oct 2026).
+    const productIds = Array.from(new Set(rows.map((row) => row.product_id).filter(Boolean).map(String)))
+      .filter((id) => /^[0-9a-f-]{36}$/i.test(id)); // a non-id would fail the whole list
+    const products = await selectByIdBatches<{ id: string; name: string }>(productIds, (batch) =>
+      supabase.from("products").select("id, name").eq("org_id", req.user!.orgId).in("id", batch));
+    const nameOf = new Map(products.map((product) => [String(product.id), product.name]));
+    res.json(rows.map((row) => ({ ...row, product_name: row.product_id ? nameOf.get(String(row.product_id)) ?? "" : "" })));
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Failed to load expenses." });
   }
