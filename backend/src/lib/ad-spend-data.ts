@@ -209,6 +209,9 @@ export async function syncAdSpend(orgId: string, branchId: string, opts: { from:
   if (opts.trigger === "manual" || !state?.last_lifetime_at || Date.parse(state.last_lifetime_at) < now.getTime() - 3 * 3_600_000) {
     await syncLifetime(orgId, branchId, { targets, tiktokTargets, now }).catch((err: any) => console.warn("[ad-spend] since-start read failed:", err?.message ?? err));
   }
+  // Daily Ad Spend (expenses) follows what was just read (lib/ad-spend-expenses.ts).
+  const { syncAdSpendExpenses } = await import("./ad-spend-expenses.js");
+  await syncAdSpendExpenses(orgId, branchId).catch((err: any) => console.warn("[ad-spend] expense rows failed:", err?.message ?? err));
   return { ok, accounts: report.length, failed: failed.map((row) => row.source), message };
 }
 
