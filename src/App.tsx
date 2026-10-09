@@ -7444,6 +7444,18 @@ const normalizeRealtimeUser = (value: any): ManagedUser => {
   };
 };
 
+/**
+ * A typed money amount: "5000", "5,000", "₦5,000", "NGN 5 000" all read 5000.
+ * Empty -> 0. Anything else (letters, two dots) -> NaN, so a fee is never
+ * saved as ₦0 by accident (Bright, 9 Oct 2026: a fee typed "5,000" in a
+ * type="number" box reached the server as ₦0, every time).
+ */
+const parseMoneyInput = (raw: string): number => {
+  const text = String(raw ?? "").replace(/₦|NGN|naira/gi, "").replace(/[\s,]/g, "").trim();
+  if (text === "") return 0;
+  return /^\d+(\.\d{1,2})?$/.test(text) ? Number(text) : Number.NaN;
+};
+
 const normalizeExpenseRecord = (value: any): ExpenseRecord => {
   const row = snakeToCamel<any>(value);
   const normalizedType = typeof (row.type ?? row.category) === "string"
@@ -23014,6 +23026,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const fee = Number(order.logisticsCost ?? 0);
     if (!fee || fee <= 0) {
       const removedExpense = expenses.find((e) => e.id === expenseId);
+      // Only the Owner/Admin may delete expenses (and only they load them).
+      // A rep's ₦0 fee asked the server to delete one anyway, got "not
+      // allowed", and read it as "only an admin can save the fee".
+      if (currentRole !== "Owner" && currentRole !== "Admin") return;
       setExpenses((prev) => prev.filter((e) => e.id !== expenseId));
       expensesApi.delete(expenseId).catch((err: any) => {
         if (removedExpense) setExpenses((prev) => [removedExpense, ...prev]);
@@ -26060,7 +26076,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   // ===== Rep workspace: delivery fee + auto remit + optional extra expenses =====
   const repExtrasTotal = repExtraExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
-  const repAutoAmountToRemit = (orderAmount: number) => Math.max(0, orderAmount - (Number(repDeliveryFee) || 0) - repExtrasTotal);
+  const repAutoAmountToRemit = (orderAmount: number) => Math.max(0, orderAmount - (parseMoneyInput(repDeliveryFee) || 0) - repExtrasTotal);
   const updateRepDeliveryFee = (val: string, orderAmount: number) => {
     setRepDeliveryFee(val);
     const fee = Number(val) || 0;
@@ -26070,7 +26086,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const next = repExtraExpenses.map((item, i) => i === index ? { ...item, [key]: val } : item);
     setRepExtraExpenses(next);
     const newTotal = next.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
-    const fee = Number(repDeliveryFee) || 0;
+    const fee = parseMoneyInput(repDeliveryFee) || 0;
     setRepAmountToRemit(String(Math.max(0, orderAmount - fee - newTotal)));
   };
   const addRepExtraExpense = () => setRepExtraExpenses((prev) => [...prev, { type: "Other", amount: "", description: "" }]);
@@ -26078,11 +26094,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const next = repExtraExpenses.filter((_, i) => i !== index);
     setRepExtraExpenses(next);
     const newTotal = next.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
-    const fee = Number(repDeliveryFee) || 0;
+    const fee = parseMoneyInput(repDeliveryFee) || 0;
     setRepAmountToRemit(String(Math.max(0, orderAmount - fee - newTotal)));
   };
   const saveRepDeliveryDetails = (order: TrackedOrder) => {
-    const fee = Math.max(0, Number(repDeliveryFee) || 0);
+    const parsedFee = parseMoneyInput(repDeliveryFee);
+    if (Number.isNaN(parsedFee)) {
+      showToast(`"${repDeliveryFee}" is not an amount. Type the fee as a number, e.g. 5000.`);
+      return;
+    }
+    const fee = Math.max(0, parsedFee);
     const nextNotes = [
       orderTimelineNote(`Delivery fee set to ${formatProductMoney(fee, order.currency)}.`, { by: repScopeName }),
       ...orderNotesFor(order)
@@ -102496,13 +102517,18 @@ ${waybillLineItems(w).length > 1
 	                          <div className={`flex items-center gap-1.5 px-3 py-2 rounded-lg ${orderSecondaryButtonClass}`}>
 	                            <span className={`text-xs font-bold ${orderMutedTextClass}`}>{selectedOrder.currency || "₦"}</span>
 	                            <input
-	                              type="number"
-	                              min={0}
+	                              type="text"
+	                              inputMode="decimal"
 	                              placeholder="0"
 	                              defaultValue={selectedOrder.logisticsCost ?? ""}
 	                              onBlur={(e) => {
-	                                const fee = Math.max(0, Number(e.target.value) || 0);
-	                                if (fee === (selectedOrder.logisticsCost ?? 0)) return;
+	                                const parsed = parseMoneyInput(e.target.value);
+	                                if (Number.isNaN(parsed)) {
+	                                  showToast(`"${e.target.value}" is not an amount. Type the fee as a number, e.g. 5000.`);
+	                                  return;
+	                                }
+	                                const fee = Math.max(0, parsed);
+	                                if (fee === Number(selectedOrder.logisticsCost ?? 0)) return;
 	                                const orderSnapshot = selectedOrder;
 	                                const updated = { ...selectedOrder, logisticsCost: fee };
 	                                setTrackedOrders((prev) => prev.map((o) => o.id === selectedOrder.id ? updated : o));
