@@ -65,7 +65,7 @@ import managerFundsRoutes from "./routes/manager-funds.js";
 import logMissRoutes from "./routes/log-misses.js";
 import salesScriptRoutes from "./routes/sales-scripts.js";
 import salesScriptingRoutes from "./routes/sales-scripting.js";
-import bugReportRoutes from "./routes/bug-reports.js";
+import bugReportRoutes, { runIssueResponseAlerts } from "./routes/bug-reports.js";
 import { runWeeklyReportReminders } from "./lib/weekly-report-data.js";
 import recoveryRepKpiRoutes from "./routes/recovery-rep-kpi.js";
 import recoveryTemplateRoutes from "./routes/recovery-templates.js";
@@ -246,7 +246,9 @@ app.use(cors({
     callback(null, false);
   },
   credentials: true,
-  maxAge: 86400
+  maxAge: 86400,
+  // The browser must be able to read it for a bug report (Issue Management).
+  exposedHeaders: ["X-Request-Id"]
 }));
 // Global rate limit — skip for local development
 app.use(rateLimit({
@@ -281,8 +283,12 @@ const authRateLimit = rateLimit({
 app.use(express.json({ limit: "90mb" }));
 
 // ── Request logger (before routes so every request is captured) ───
-app.use((req, _res, next) => {
-  logger.info("request", { method: req.method, path: req.path });
+// Every response carries a short request ID, also in this log line, so a
+// failed request attached to a bug report can be found in the server logs.
+app.use((req, res, next) => {
+  const requestId = `REQ-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
+  res.setHeader("X-Request-Id", requestId);
+  logger.info("request", { method: req.method, path: req.path, requestId });
   next();
 });
 
@@ -438,6 +444,18 @@ app.listen(PORT, () => {
   // report - which is exactly how it showed up this time.
   void logRowCapAtBoot().catch(() => undefined);
 });
+
+// ── Issue Management: response-time alert — hourly ──
+// A P0/P1/P2 ticket nobody has answered tells the team once, at 75% of its
+// target (4h / 24h / 72h).
+if (ENABLE_BACKGROUND_JOBS) {
+cron.schedule("7 * * * *", async () => {
+  try {
+    const { sent } = await runIssueResponseAlerts();
+    if (sent > 0) logger.info("cron: issue response alerts", { sent });
+  } catch (e) { logger.error("cron: issue response alerts crashed", { error: (e as Error).message }); }
+});
+}
 
 // ── Server-side cart auto-submit — every 2 minutes ───────
 // Catches customers who closed the tab before the client-side countdown fired.

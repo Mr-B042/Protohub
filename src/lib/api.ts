@@ -2,6 +2,7 @@
 // All requests go through `request()` which attaches the Bearer token
 // and auto-refreshes if the token has expired (401).
 
+import { recordFailedRequest } from "./error-recorder";
 import { auth, type AuthSessionSnapshot } from "./auth";
 import { fetchWithApiFailover } from "./backend-origin";
 import { snakeToCamel } from "./normalize";
@@ -329,6 +330,7 @@ async function request<T>(
       await sleep(400 * (transientAttempt + 1));
       return request<T>(method, path, body, retried, transientAttempt + 1);
     }
+    recordFailedRequest({ method, path, status: 0, message: "No answer from the server" });
     throw await noAnswerError();
   }
 
@@ -357,6 +359,8 @@ async function request<T>(
 
   if (!res.ok) {
     const payload = await res.json().catch(() => ({ error: res.statusText }));
+    // Kept in this tab only, for a bug report to attach (error-recorder.ts).
+    recordFailedRequest({ method, path, status: res.status, message: extractErrorMessage(payload, res.statusText || "Request failed."), requestId: res.headers.get("x-request-id") ?? undefined });
     throw new ApiError(res.status, extractErrorMessage(payload, res.statusText || "Request failed."), typeof payload?.code === "string" ? payload.code : undefined);
   }
 
@@ -4786,23 +4790,59 @@ export const teamChallengesApi = {
   markPaid: (id: string, payoutId: string, reference?: string) => post<{ ok: true }>(`/api/team-challenges/${encodeURIComponent(id)}/payouts/${encodeURIComponent(payoutId)}/paid`, { reference })
 };
 
-// ── Report a Bug / Send Feedback (Bright, 9 Oct 2026) ──
+// ── Issue & Feedback Management (Bright, 9 Oct 2026) ──
 export type BugReportKind = "issue" | "feature" | "ux" | "other";
-export type BugReportStatus = "new" | "looking" | "fixed" | "wont_fix";
+export type BugReportStatus =
+  | "new" | "triaged" | "assigned" | "in_progress" | "testing" | "resolved" | "closed" | "reopened"
+  | "needs_info" | "duplicate" | "wont_fix" | "planned" | "under_review" | "approved" | "in_development" | "released";
+export type IssuePriority = "P0" | "P1" | "P2" | "P3";
+export type IssueImpact = "low" | "medium" | "high" | "critical";
+export type IssueAffected = "only_me" | "one_customer" | "several_users" | "department" | "everyone" | "not_sure";
+export type IssueFrequency = "first_time" | "sometimes" | "every_time" | "started_today" | "several_days" | "not_sure";
+export type IssueRefKind = "order" | "customer" | "product" | "delivery" | "sales_rep";
+export type IssueDetails = {
+  tried?: string; actual?: string; expected?: string; errorMessage?: string;
+  problem?: string; solution?: string; users?: string[]; usefulness?: string; benefits?: string[]; benefitOther?: string;
+  uxProblems?: string[]; uxOther?: string; goal?: string; improvement?: string; more?: string;
+};
 export type BugReport = {
-  id: string; reporterId: string | null; reporterName: string; reporterRole: string;
-  kind: BugReportKind; title: string; description: string; module: string; page: string | null;
-  steps: string[]; attachments: Array<{ path: string; name: string; mime: string; size: number }>;
-  wantsUpdates: boolean; status: BugReportStatus; ownerNote: string | null; statusChangedAt: string | null; createdAt: string;
+  id: string; ticketNo: number; code: string;
+  reporterId: string | null; reporterName: string; reporterRole: string; department: string | null;
+  kind: BugReportKind; title: string; description: string; details: IssueDetails;
+  module: string; page: string | null; steps: string[];
+  attachments: Array<{ path: string; name: string; mime: string; size: number }>;
+  impact: IssueImpact | null; affected: IssueAffected | null; affectedRefKind: IssueRefKind | null; affectedRef: string | null; frequency: IssueFrequency | null;
+  environment: Record<string, any>; errorContext?: Record<string, any>;
+  wantsUpdates: boolean; mayContact: boolean;
+  status: BugReportStatus; statusLabel: string; priority: IssuePriority | null; priorityOverridden: boolean;
+  assigneeId: string | null; assigneeName: string | null; duplicateOf: string | null; duplicateOfCode?: string | null;
+  affectedCount: number; firstResponseAt: string | null; resolvedAt: string | null; closedAt: string | null; reopenedCount: number;
+  statusChangedAt: string | null; createdAt: string; updatedAt: string; following?: boolean;
 };
+export type BugReportEvent = { id: string; actorId: string | null; actorName: string; kind: string; internal: boolean; body: string | null; meta: Record<string, any>; createdAt: string };
 export type BugReportInput = {
-  kind: BugReportKind; title: string; description: string; module: string; page?: string;
-  steps: string[]; wantsUpdates: boolean; files: Array<{ name: string; dataUrl: string }>;
+  kind: BugReportKind; title: string; details: IssueDetails; module: string; page?: string; steps: string[];
+  impact?: IssueImpact; affected?: IssueAffected; affectedRefKind?: IssueRefKind; affectedRef?: string; frequency?: IssueFrequency;
+  environment: Record<string, unknown>; errorContext: Record<string, unknown>; wantsUpdates: boolean; mayContact: boolean;
+  files: Array<{ name: string; mime: string; size: number }>;
 };
+export type SimilarIssue = { id: string; code: string; title: string; module: string; status: BugReportStatus; statusLabel: string; affectedCount: number; mine: boolean };
 export const bugReportsApi = {
-  create: (body: BugReportInput) => post<BugReport>("/api/bug-reports", body),
+  create: (body: BugReportInput) => post<{ report: BugReport; uploads: Array<{ name: string; path: string; signedUrl: string }> }>("/api/bug-reports", body),
+  attach: (id: string, files: Array<{ path: string; name: string }>) => post<{ attached: number; missing: number }>(`/api/bug-reports/${encodeURIComponent(id)}/attachments`, { files }),
+  similar: (title: string, module: string, kind: BugReportKind) => get<SimilarIssue[]>(`/api/bug-reports/similar?${new URLSearchParams({ title, module, kind }).toString()}`),
+  meToo: (id: string) => post<BugReport>(`/api/bug-reports/${encodeURIComponent(id)}/me-too`, {}),
   mine: () => get<BugReport[]>("/api/bug-reports/mine"),
   all: () => get<BugReport[]>("/api/bug-reports"),
-  update: (id: string, body: { status?: BugReportStatus; ownerNote?: string | null }) => patch<BugReport>(`/api/bug-reports/${encodeURIComponent(id)}`, body),
+  teamMembers: () => get<Array<{ id: string; name: string; role: string }>>("/api/bug-reports/team-members"),
+  get: (id: string) => get<{ report: BugReport; events: BugReportEvent[] }>(`/api/bug-reports/${encodeURIComponent(id)}`),
+  update: (id: string, body: { status?: BugReportStatus; priority?: IssuePriority | "auto"; assigneeId?: string | null; duplicateOf?: string | null; note?: string }) => patch<BugReport>(`/api/bug-reports/${encodeURIComponent(id)}`, body),
+  message: (id: string, body: string, internal: boolean) => post<{ ok: true }>(`/api/bug-reports/${encodeURIComponent(id)}/messages`, { body, internal }),
+  verify: (id: string, fixed: boolean, comment?: string) => post<BugReport>(`/api/bug-reports/${encodeURIComponent(id)}/verify`, { fixed, comment }),
   fileUrl: (id: string, path: string) => get<{ url: string }>(`/api/bug-reports/${encodeURIComponent(id)}/file?path=${encodeURIComponent(path)}`)
 };
+/** Upload one file straight to storage through a signed link (no server hop). */
+export async function uploadToSignedUrl(signedUrl: string, file: Blob) {
+  const res = await fetch(signedUrl, { method: "PUT", headers: { "Content-Type": file.type || "application/octet-stream", "x-upsert": "false" }, body: file });
+  if (!res.ok) throw new Error(`Upload failed (${res.status}).`);
+}

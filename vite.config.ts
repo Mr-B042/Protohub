@@ -15,6 +15,10 @@ const excludeHostedDownloads = () => ({
 
 export default defineConfig({
   plugins: [react(), excludeHostedDownloads()],
+  // The build a bug report was sent from (Issue Management, 9 Oct 2026).
+  define: {
+    __APP_BUILD__: JSON.stringify(process.env.VERCEL_GIT_COMMIT_SHA ? process.env.VERCEL_GIT_COMMIT_SHA.slice(0, 7) : "local")
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
