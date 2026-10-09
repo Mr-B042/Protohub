@@ -212,14 +212,30 @@ type Draft = {
   orderId: string;
   relatedOrders: string;
   counterpartyAccountId: string;
-  /** Waybill only: which product's waybills. */
-  productId: string;
+  /** Waybill only: which products' waybills, and each one's share when 2+. */
+  products: Array<{ productId: string; amount: string }>;
+  /** A share was typed by hand: stop re-splitting equally. */
+  splitEdited: boolean;
   file: File | null;
+};
+
+/** Equal shares to the kobo; the last share takes the rounding (as the server does). */
+const equalShares = (amount: number, count: number) => {
+  const kobo = Math.round(Math.max(0, amount) * 100);
+  const each = Math.floor(kobo / Math.max(1, count));
+  return Array.from({ length: count }, (_, index) => (index === count - 1 ? kobo - each * (count - 1) : each) / 100);
+};
+const draftAmount = (draft: Draft) => Number(draft.amount.replace(/[^0-9.]/g, "")) || 0;
+/** Re-split the waybill equally across its products, unless a share was typed by hand. */
+const withEqualShares = (draft: Draft): Draft => {
+  if (draft.splitEdited || draft.products.length < 2) return draft;
+  const shares = equalShares(draftAmount(draft), draft.products.length);
+  return { ...draft, products: draft.products.map((row, index) => ({ ...row, amount: shares[index] ? String(shares[index]) : "" })) };
 };
 
 const emptyDraft = (kind: FundKindKey): Draft => ({
   kind, category: kind === "expense" ? "logistics" : "", amount: "", occurredAt: nowLocalInput(), description: "", paidTo: "",
-  paymentMethod: "transfer", reference: "", orderId: "", relatedOrders: "", counterpartyAccountId: "", productId: "", file: null
+  paymentMethod: "transfer", reference: "", orderId: "", relatedOrders: "", counterpartyAccountId: "", products: [{ productId: "", amount: "" }], splitEdited: false, file: null
 });
 
 export default function ManagerFundsTab({
@@ -320,7 +336,11 @@ export default function ManagerFundsTab({
     setFormError("");
     setEditing(txn);
     setDraft({
-      kind: txn.kind, category: txn.category ?? "", amount: String(txn.amount), productId: txn.productId ?? "",
+      kind: txn.kind, category: txn.category ?? "", amount: String(txn.amount),
+      products: txn.productSplits && txn.productSplits.length > 1
+        ? txn.productSplits.map((split) => ({ productId: split.productId, amount: String(split.amount) }))
+        : [{ productId: txn.productId ?? "", amount: "" }],
+      splitEdited: !!(txn.productSplits && txn.productSplits.length > 1),
       occurredAt: new Date(new Date(txn.occurredAt).getTime() + 60 * 60 * 1000).toISOString().slice(0, 16),
       description: txn.description ?? "", paidTo: txn.paidTo ?? "", paymentMethod: txn.paymentMethod ?? "transfer",
       reference: txn.reference ?? "", orderId: txn.orderIds[0] ?? "", relatedOrders: txn.kind === "expense" ? txn.orderIds.join(", ") : "",
@@ -332,6 +352,15 @@ export default function ManagerFundsTab({
     if (!draft) return;
     const amount = Number(draft.amount.replace(/[^0-9.]/g, ""));
     if (!(amount > 0)) { setFormError("Enter the amount."); return; }
+    const waybillRows = draft.products.filter((row) => row.productId);
+    if (draft.kind === "expense" && draft.category === "waybill") {
+      if (waybillRows.length === 0) { setFormError("Choose which product's waybills this was for."); return; }
+      if (new Set(waybillRows.map((row) => row.productId)).size !== waybillRows.length) { setFormError("Each product can only be chosen once."); return; }
+      if (waybillRows.length > 1) {
+        const shares = waybillRows.reduce((sum, row) => sum + (Number(row.amount.replace(/[^0-9.]/g, "")) || 0), 0);
+        if (Math.abs(shares - amount) > 0.009) { setFormError(`The products' shares add up to ${sym}${nf(shares)}, not ${sym}${nf(amount)}.`); return; }
+      }
+    }
     // The date decides the week. If it is not the week on screen, say so first.
     if (!editing && data?.weekStart && draft.occurredAt && sundayOf(draft.occurredAt) !== data.weekStart
       && !window.confirm(`This date is in the week of ${weekText(sundayOf(draft.occurredAt))}, not the week you're viewing (${weekText(data.weekStart)}). It will be recorded in ${weekText(sundayOf(draft.occurredAt))}. Continue?`)) return;
@@ -348,7 +377,11 @@ export default function ManagerFundsTab({
         reference: draft.reference.trim() || undefined,
         ...(draft.kind === "expense" ? {
           category: draft.category,
-          ...(draft.category === "waybill" ? { productId: draft.productId || undefined } : {}),
+          ...(draft.category === "waybill"
+            ? waybillRows.length > 1
+              ? { productSplits: waybillRows.map((row) => ({ productId: row.productId, amount: Number(row.amount.replace(/[^0-9.]/g, "")) || 0 })) }
+              : { productId: waybillRows[0]?.productId }
+            : {}),
           relatedOrderIds: draft.relatedOrders.split(/[\s,]+/).map((id) => id.replace(/^#/, "").trim()).filter(Boolean)
         } : {}),
         ...(draft.kind === "customer_payment" ? { orderId: draft.orderId.replace(/^#/, "").trim() } : {}),
@@ -762,17 +795,57 @@ export default function ManagerFundsTab({
                 )}
                 {draft.kind === "expense" && draft.category === "waybill" && (
                   <>
-                    <label className="block"><span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Which product's waybills?</span>
-                      <select className={field} value={draft.productId} onChange={(event) => setDraft({ ...draft, productId: event.target.value })}>
-                        <option value="">Choose the product</option>
-                        {(data?.products ?? []).map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
-                      </select></label>
-                    <WaybillWeekNote date={draft.occurredAt ? draft.occurredAt.slice(0, 10) : ""} productId={draft.productId} amount={Number(draft.amount) || 0} sym={sym} nf={nf} />
+                    <div className="block">
+                      <span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Which product's waybills?</span>
+                      <div className="space-y-2">
+                        {draft.products.map((row, index) => (
+                          <div key={index} className="flex items-center gap-2">
+                            <select className={field} value={row.productId} aria-label={`Product ${index + 1}`}
+                              onChange={(event) => setDraft({ ...draft, products: draft.products.map((item, at) => at === index ? { ...item, productId: event.target.value } : item) })}>
+                              <option value="">Choose the product</option>
+                              {(data?.products ?? []).map((product) => <option key={product.id} value={product.id} disabled={product.id !== row.productId && draft.products.some((item) => item.productId === product.id)}>{product.name}</option>)}
+                            </select>
+                            {draft.products.length > 1 && (
+                              <>
+                                <input className={`${field} !w-32 shrink-0`} inputMode="decimal" value={row.amount} aria-label={`Share for product ${index + 1}`}
+                                  onChange={(event) => setDraft({ ...draft, splitEdited: true, products: draft.products.map((item, at) => at === index ? { ...item, amount: event.target.value } : item) })} />
+                                <button type="button" title="Remove this product" aria-label={`Remove product ${index + 1}`}
+                                  className="!min-h-0 shrink-0 rounded-lg px-2 py-1 text-[16px] font-bold text-gray-400 hover:bg-rose-50 hover:text-rose-600"
+                                  onClick={() => setDraft(withEqualShares({ ...draft, products: draft.products.filter((_, at) => at !== index) }))}>×</button>
+                              </>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-3 text-[12px]">
+                        {draft.products.length < 6 && (
+                          <button type="button" className="!min-h-0 font-bold text-[#1F8FE0] hover:underline"
+                            onClick={() => setDraft(withEqualShares({ ...draft, products: [...draft.products, { productId: "", amount: "" }] }))}>+ Add another product</button>
+                        )}
+                        {draft.products.length > 1 && draft.splitEdited && (
+                          <button type="button" className="!min-h-0 font-bold text-gray-600 hover:underline"
+                            onClick={() => setDraft(withEqualShares({ ...draft, splitEdited: false }))}>Split equally again</button>
+                        )}
+                      </div>
+                      {draft.products.length > 1 && (() => {
+                        const shares = draft.products.reduce((sum, row) => sum + (Number(row.amount.replace(/[^0-9.]/g, "")) || 0), 0);
+                        const total = draftAmount(draft);
+                        const matches = Math.abs(shares - total) <= 0.009;
+                        return (
+                          <p className={`m-0 mt-2 text-[12px] ${matches ? "text-gray-500" : "font-semibold text-amber-700"}`}>
+                            {matches
+                              ? <>One payment of {sym}{nf(total)}, shared by {draft.products.length} products. Each product's waybill cost gets its share.</>
+                              : <>The shares add up to {sym}{nf(shares)}, but the amount is {sym}{nf(total)}. Make them match.</>}
+                          </p>
+                        );
+                      })()}
+                    </div>
+                    <WaybillWeekNote date={draft.occurredAt ? draft.occurredAt.slice(0, 10) : ""} productId={draft.products.length === 1 ? draft.products[0].productId : ""} amount={draftAmount(draft)} sym={sym} nf={nf} />
                   </>
                 )}
                 <div className="grid grid-cols-2 gap-3">
                   <label className="block"><span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Amount ({sym})</span>
-                    <input className={field} inputMode="decimal" value={draft.amount} onChange={(event) => setDraft({ ...draft, amount: event.target.value })} placeholder="e.g. 6500" /></label>
+                    <input className={field} inputMode="decimal" value={draft.amount} onChange={(event) => setDraft(withEqualShares({ ...draft, amount: event.target.value }))} placeholder="e.g. 6500" /></label>
                   <label className="block"><span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Date & time</span>
                     <input className={field} type="datetime-local" value={draft.occurredAt} onChange={(event) => setDraft({ ...draft, occurredAt: event.target.value })} /></label>
                 </div>

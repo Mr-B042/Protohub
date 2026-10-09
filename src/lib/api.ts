@@ -4182,7 +4182,7 @@ export const weeklyReportsApi = {
 // ── Manager Funds & Expenses (manager wallet) ────────────────────────────────
 export type FundKindKey = "customer_payment" | "owner_funding" | "company_transfer_in" | "other_in" | "expense" | "remittance_out";
 export type ManagerFundTxn = {
-  id: string; productId?: string | null; managerId: string; weekStart: string; kind: FundKindKey; kindLabel: string;
+  id: string; productId?: string | null; productSplits?: Array<{ productId: string; amount: number }> | null; managerId: string; weekStart: string; kind: FundKindKey; kindLabel: string;
   category: string | null; categoryLabel: string | null; amount: number; occurredAt: string;
   description: string | null; paidTo: string | null; paymentMethod: string | null; reference: string | null;
   orderIds: string[]; counterpartyAccountId: string | null;
@@ -4223,6 +4223,8 @@ export type ManagerFundLogInput = {
   kind: FundKindKey; category?: string; amount: number; occurredAt: string; description?: string; paidTo?: string;
   paymentMethod?: "cash" | "transfer" | "pos" | "other"; reference?: string; orderId?: string; relatedOrderIds?: string[];
   counterpartyAccountId?: string; varianceReason?: string; productId?: string;
+  /** A waybill shared by 2+ products, each with its share. */
+  productSplits?: Array<{ productId: string; amount: number }>;
 };
 
 export const managerFundsApi = {

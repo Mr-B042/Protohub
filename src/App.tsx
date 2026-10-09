@@ -1,4 +1,5 @@
 import { type Dispatch, type ReactNode, type SetStateAction, Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { mergeWaybillWeeks } from "./lib/waybill-expense-lines";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { PAGE_HELP, DEFAULT_HELP } from "./help-content";
@@ -86528,9 +86529,11 @@ ${waybillLineItems(w).length > 1
 
               {(() => {
                 const EXP_PAGE_SIZE = 25;
-                const expTotalPages = Math.max(1, Math.ceil(filteredExpenses.length / EXP_PAGE_SIZE));
+                // One line per product-week for waybills (display only; amounts add up the same).
+                const listedExpenses = mergeWaybillWeeks(filteredExpenses);
+                const expTotalPages = Math.max(1, Math.ceil(listedExpenses.length / EXP_PAGE_SIZE));
                 const expPageClamped = Math.min(expensePage, expTotalPages);
-                const pagedExpenses = filteredExpenses.slice((expPageClamped - 1) * EXP_PAGE_SIZE, expPageClamped * EXP_PAGE_SIZE);
+                const pagedExpenses = listedExpenses.slice((expPageClamped - 1) * EXP_PAGE_SIZE, expPageClamped * EXP_PAGE_SIZE);
                 const filteredExpenseTotal = filteredExpenses.reduce((sum, expense) => sum + expense.amount, 0);
                 const pagedExpenseTotal = pagedExpenses.reduce((sum, expense) => sum + expense.amount, 0);
                 return (
@@ -86558,6 +86561,7 @@ ${waybillLineItems(w).length > 1
                             <div className="flex flex-col gap-0.5">
                               <span className="font-semibold uppercase tracking-wide text-gray-400">Description</span>
                               <span className="text-gray-600">{expense.description || "No description"}</span>
+                              {expense.walletPaid ? <span className="mt-1 block text-[11px] font-semibold text-blue-700">Includes {formatMoney(expense.walletPaid)} paid from the manager's wallet{(expense.walletCount ?? 0) > 1 ? ` (${expense.walletCount} payments)` : ""}</span> : null}
                             </div>
                             {expense.waybillId && <span className="inline-flex items-center self-start px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-600">from Waybill</span>}
                           </div>
@@ -86599,7 +86603,7 @@ ${waybillLineItems(w).length > 1
                             <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-700">{expense.type}</span></td>
                             <td className="px-4 py-4 text-gray-700">{expense.productName}</td>
                             <td className="px-4 py-4 font-bold text-gray-900">{formatMoney(expense.amount)}</td>
-                            <td className="px-4 py-4 text-gray-500 text-xs">{expense.description}{expense.waybillId && <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-50 text-blue-600">from Waybill</span>}</td>
+                            <td className="px-4 py-4 text-gray-500 text-xs">{expense.description}{expense.waybillId && <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-50 text-blue-600">from Waybill</span>}{expense.walletPaid ? <span className="mt-1 block text-[11px] font-semibold text-blue-700">Includes {formatMoney(expense.walletPaid)} paid from the manager's wallet{(expense.walletCount ?? 0) > 1 ? ` (${expense.walletCount} payments)` : ""}</span> : null}</td>
                             <td className="px-4 py-4">
                               <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openAdminExpenseDetail(expense.id)}>Details</button>
                             </td>
@@ -86611,7 +86615,7 @@ ${waybillLineItems(w).length > 1
                       <tfoot>
                         <tr className="border-t border-gray-200 bg-gray-50 font-bold">
                           <td className="px-4 py-3 text-gray-900">Filtered total</td>
-                          <td className="px-4 py-3 text-gray-700">{filteredExpenses.length} expense{filteredExpenses.length === 1 ? "" : "s"}</td>
+                          <td className="px-4 py-3 text-gray-700">{listedExpenses.length} expense{listedExpenses.length === 1 ? "" : "s"}</td>
                           <td className="px-4 py-3 text-gray-400">{expTotalPages > 1 ? `This page: ${formatMoney(pagedExpenseTotal)}` : "All rows shown"}</td>
                           <td className="px-4 py-3 text-gray-900">{formatMoney(filteredExpenseTotal)}</td>
                           <td className="px-4 py-3 text-gray-400">-</td>
@@ -86622,7 +86626,7 @@ ${waybillLineItems(w).length > 1
                   </table>
                 </div>
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
-                  <span>{filteredExpenses.length} expense{filteredExpenses.length === 1 ? "" : "s"} · {formatMoney(filteredExpenseTotal)}</span>
+                  <span>{listedExpenses.length} expense{listedExpenses.length === 1 ? "" : "s"} · {formatMoney(filteredExpenseTotal)}</span>
                   {expTotalPages > 1 && (
                     <div className="flex items-center gap-1">
                       <button disabled={expPageClamped <= 1} className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40" onClick={() => setExpensePage(expPageClamped - 1)}>&laquo; Prev</button>
