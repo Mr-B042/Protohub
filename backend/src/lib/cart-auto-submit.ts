@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { sendOrderNewCustomerWhatsApp, sendOrderNewRepWhatsApp, sendOrderUpsellWhatsApp } from "./whatsapp.js";
-import { resolveMetaTrackingConfig, recordMetaCapiEvent, sendMetaCapiPurchase } from "./meta-capi.js";
+import { resolveMetaTrackingConfig, recordMetaCapiEvent, sendMetaCapiPurchase, fbclidSeenAt } from "./meta-capi.js";
 import { serverEventsAllowed, withDataSource } from "./tracking-credentials.js";
 import { purchasePixelFor } from "./tracking-click-pixel.js";
 import { orderAdIds } from "./tracking-hub.js";
@@ -409,6 +409,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
       fbp: capturePayload.fbp ?? null,
       fbc: capturePayload.fbc ?? null,
       fbclid: capturePayload.fbclid ?? null,
+      fbclidSeenAtMs: fbclidSeenAt(null, cart.created_at ?? null), // the cart began when the customer arrived
       value: amount,
       currency: cart.currency ?? "NGN",
       orderId: String(order.id),

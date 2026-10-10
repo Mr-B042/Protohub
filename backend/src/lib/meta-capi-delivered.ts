@@ -2,7 +2,7 @@ import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { addDaysToDateKey, lagosDateKey } from "./sales-bonus-engine.js";
 import { serverEventsAllowed, withDataSource } from "./tracking-credentials.js";
-import { deliveredEventTime, metaIdsFromFormContext, recordMetaCapiEvent, sendMetaCapiDelivered, type MetaTrackingConfig } from "./meta-capi.js";
+import { deliveredEventTime, fbclidSeenAt, metaIdsFromFormContext, recordMetaCapiEvent, sendMetaCapiDelivered, type MetaTrackingConfig } from "./meta-capi.js";
 
 // The delivered-sale event for Meta (Bright, 1 Oct 2026).
 //
@@ -43,7 +43,7 @@ export async function runMetaDeliveredEvents(): Promise<{ sent: number; skipped:
   for (const orgId of Array.from(new Set(usable.map((row) => row.org_id)))) {
     const orgConfigs = usable.filter((row) => row.org_id === orgId);
     const { data: orders, error: orderError } = await supabase.from("orders")
-      .select("id, org_id, branch_id, customer, phone, email, city, state, amount, currency, product_id, product_name, package_id, package_name, quantity, delivered_date, review_hold, form_context")
+      .select("id, org_id, branch_id, customer, phone, email, city, state, amount, currency, product_id, product_name, package_id, package_name, quantity, delivered_date, review_hold, form_context, created_at")
       .eq("org_id", orgId).eq("status", "Delivered").gte("delivered_date", since)
       .order("delivered_date", { ascending: true }).limit(500);
     if (orderError) throw orderError;
@@ -86,7 +86,7 @@ export async function runMetaDeliveredEvents(): Promise<{ sent: number; skipped:
         userAgent: typeof context.userAgent === "string" ? context.userAgent : null,
         customer: String(order.customer ?? ""), phone: String(order.phone ?? ""), email: order.email ?? null,
         city: order.city ?? null, state: order.state ?? null, country: "ng",
-        fbp: ids.fbp, fbc: ids.fbc, fbclid: ids.fbclid,
+        fbp: ids.fbp, fbc: ids.fbc, fbclid: ids.fbclid, fbclidSeenAtMs: fbclidSeenAt(context, order.created_at),
         value, currency, orderId: String(order.id),
         productId: String(order.product_id ?? ""), productName: String(order.product_name ?? ""),
         packageId: String(order.package_id ?? ""), packageName: String(order.package_name ?? ""),
