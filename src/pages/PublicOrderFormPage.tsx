@@ -1439,6 +1439,22 @@ export default function PublicOrderFormPage() {
     metaEventIdsRef.current[key] = eventId.slice(0, 120);
     return metaEventIdsRef.current[key];
   }, []);
+  // Manual advanced matching (Meta, 10 Oct 2026): what the customer typed,
+  // for the Pixel's init. The Pixel normalises and hashes it; the server's copy
+  // of the event already carries the same details, hashed.
+  const metaUserData = useCallback(() => {
+    const digits = orderFormPhone.replace(/\D+/g, "");
+    const phone = !digits ? "" : digits.startsWith("234") ? digits : digits.startsWith("0") ? `234${digits.slice(1)}` : digits.length === 10 ? `234${digits}` : digits;
+    const parts = orderFormName.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const data: Record<string, string> = { country: "ng" };
+    if (phone) data.ph = phone;
+    if (parts[0]) data.fn = parts[0];
+    if (parts.length > 1) data.ln = parts[parts.length - 1];
+    if (orderFormCity.trim()) data.ct = orderFormCity.trim().toLowerCase();
+    if (orderFormState.trim()) data.st = orderFormState.trim().toLowerCase();
+    if (orderFormEmail.trim()) data.em = orderFormEmail.trim().toLowerCase();
+    return data;
+  }, [orderFormCity, orderFormEmail, orderFormName, orderFormPhone, orderFormState]);
   const postMetaBrowserEvent = useCallback((
     eventName: "Lead" | "Purchase",
     eventId: string,
@@ -1464,12 +1480,13 @@ export default function PublicOrderFormPage() {
         trackingMode: publicMetaTrackingMode,
         testMode: publicMetaTestMode,
         testEventCode: publicMetaTestEventCode || null,
-        customData
+        customData,
+        userData: metaUserData()
       }, "*");
     } catch {
       // Browser-side Meta bridge is best-effort only.
     }
-  }, [publicEmbedIsPreview, publicMetaPixelId, publicMetaTestEventCode, publicMetaTestMode, publicMetaTrackingMode]);
+  }, [metaUserData, publicEmbedIsPreview, publicMetaPixelId, publicMetaTestEventCode, publicMetaTestMode, publicMetaTrackingMode]);
   const publicJourneyAttributionMetadata = useMemo(
     () => ({
       source: orderSourceFromUtm(publicUtmSource),
