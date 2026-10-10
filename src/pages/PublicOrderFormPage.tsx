@@ -1155,6 +1155,33 @@ function publicCookieValue(name: string) {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
+// Meta's visitor id (external_id, 10 Oct 2026): one random id per browser,
+// kept so the same visitor carries it on every order. 64 hex characters, the
+// shape of a hashed value, so the Pixel and the server send it unchanged and
+// Meta can match the two copies of an event.
+const PUBLIC_VISITOR_ID_KEY = "protohub_visitor_id";
+let publicVisitorIdMemo = "";
+function publicVisitorId() {
+  if (publicVisitorIdMemo) return publicVisitorIdMemo;
+  if (typeof window === "undefined") return "";
+  try {
+    const saved = window.localStorage.getItem(PUBLIC_VISITOR_ID_KEY) ?? "";
+    if (/^[a-f0-9]{64}$/.test(saved)) return (publicVisitorIdMemo = saved);
+  } catch {
+    // Storage blocked: the id still holds for this visit.
+  }
+  if (!window.crypto?.getRandomValues) return "";
+  const bytes = new Uint8Array(32);
+  window.crypto.getRandomValues(bytes);
+  publicVisitorIdMemo = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  try {
+    window.localStorage.setItem(PUBLIC_VISITOR_ID_KEY, publicVisitorIdMemo);
+  } catch {
+    // Storage blocked: the id still holds for this visit.
+  }
+  return publicVisitorIdMemo;
+}
+
 function parsePublicMetaTrackingMode(value: string | null | undefined): PublicMetaTrackingMode {
   const normalized = (value ?? "").trim().toLowerCase().replace(/-/g, "_");
   if (normalized === "off" || normalized === "disabled" || normalized === "none") return "off";
@@ -1224,6 +1251,7 @@ function buildPublicFormHiddenContext(params: URLSearchParams | null): PublicFor
   }
   context.fbp = context.fbp || safeHiddenContextValue(publicCookieValue("_fbp"), 180);
   context.fbc = context.fbc || safeHiddenContextValue(publicCookieValue("_fbc"), 180);
+  context.visitorId = publicVisitorId() || null;
 
   return context;
 }
@@ -1453,6 +1481,8 @@ export default function PublicOrderFormPage() {
     if (orderFormCity.trim()) data.ct = orderFormCity.trim().toLowerCase();
     if (orderFormState.trim()) data.st = orderFormState.trim().toLowerCase();
     if (orderFormEmail.trim()) data.em = orderFormEmail.trim().toLowerCase();
+    const visitorId = publicVisitorId();
+    if (visitorId) data.external_id = visitorId;
     return data;
   }, [orderFormCity, orderFormEmail, orderFormName, orderFormPhone, orderFormState]);
   const postMetaBrowserEvent = useCallback((

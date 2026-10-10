@@ -3,12 +3,12 @@ import test from "node:test";
 import { deliveredEventTime, deriveFbc, fbclidSeenAt, metaIdsFromFormContext } from "./meta-capi.js";
 
 test("fbp/fbc saved on the order are used as they are", () => {
-  assert.deepEqual(metaIdsFromFormContext({ fbp: "fb.1.1.111", fbc: "fb.1.2.abc", fbclid: "abc" }), { fbp: "fb.1.1.111", fbc: "fb.1.2.abc", fbclid: "abc" });
+  assert.deepEqual(metaIdsFromFormContext({ fbp: "fb.1.1.111", fbc: "fb.1.2.abc", fbclid: "abc" }), { fbp: "fb.1.1.111", fbc: "fb.1.2.abc", fbclid: "abc", visitorId: null });
 });
 
 test("when the form dropped them, they are read back from the form's address (the #/route?query part)", () => {
   const landingUrl = "https://app.protohub.ng/#/order-form/embed?product=x&fbclid=CLICK&fbp=fb.1.1700.999&fbc=fb.1.1700.CLICK";
-  assert.deepEqual(metaIdsFromFormContext({ fbp: null, fbc: "", landingUrl }), { fbp: "fb.1.1700.999", fbc: "fb.1.1700.CLICK", fbclid: "CLICK" });
+  assert.deepEqual(metaIdsFromFormContext({ fbp: null, fbc: "", landingUrl }), { fbp: "fb.1.1700.999", fbc: "fb.1.1700.CLICK", fbclid: "CLICK", visitorId: null });
 });
 
 test("old underscore names in the address are understood too", () => {
@@ -16,8 +16,8 @@ test("old underscore names in the address are understood too", () => {
 });
 
 test("nothing to find gives nulls, never empty strings", () => {
-  assert.deepEqual(metaIdsFromFormContext({ landingUrl: "not a url" }), { fbp: null, fbc: null, fbclid: null });
-  assert.deepEqual(metaIdsFromFormContext(null), { fbp: null, fbc: null, fbclid: null });
+  assert.deepEqual(metaIdsFromFormContext({ landingUrl: "not a url" }), { fbp: null, fbc: null, fbclid: null, visitorId: null });
+  assert.deepEqual(metaIdsFromFormContext(null), { fbp: null, fbc: null, fbclid: null, visitorId: null });
 });
 
 
@@ -54,4 +54,12 @@ test("an older click in the _fbc cookie gives way to the click in the address", 
   assert.ok(String(deriveFbc(null, "AbC-123_xYz", 5, 10)).endsWith(".AbC-123_xYz"));
   // A first-seen time in the future is not allowed.
   assert.equal(deriveFbc(null, "abc", 9_999_999_999_999, 1000), "fb.1.1000.abc");
+});
+
+test("the form's visitor id is passed on only when it is the 64 hex characters the form makes", () => {
+  const id = "a".repeat(64);
+  assert.equal(metaIdsFromFormContext({ visitorId: id }).visitorId, id);
+  assert.equal(metaIdsFromFormContext({ visitorId: ` ${id.toUpperCase()} ` }).visitorId, id);
+  assert.equal(metaIdsFromFormContext({ visitorId: "08031234567" }).visitorId, null);
+  assert.equal(metaIdsFromFormContext({ visitorId: 12345 }).visitorId, null);
 });
