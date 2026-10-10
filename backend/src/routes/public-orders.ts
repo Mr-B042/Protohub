@@ -1561,6 +1561,7 @@ router.post("/", submitRateLimit, async (req, res) => {
     fbc: metaIds.fbc,
     fbclid: metaIds.fbclid,
     fbclidSeenAtMs: fbclidSeenAt(formContext),
+    visitorId: metaIds.visitorId,
     value: Number(order.amount ?? amount),
     currency: String(order.currency ?? pkg.currency),
     orderId: String(order.id),

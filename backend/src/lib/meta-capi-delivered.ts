@@ -87,6 +87,7 @@ export async function runMetaDeliveredEvents(): Promise<{ sent: number; skipped:
         customer: String(order.customer ?? ""), phone: String(order.phone ?? ""), email: order.email ?? null,
         city: order.city ?? null, state: order.state ?? null, country: "ng",
         fbp: ids.fbp, fbc: ids.fbc, fbclid: ids.fbclid, fbclidSeenAtMs: fbclidSeenAt(context, order.created_at),
+        visitorId: ids.visitorId,
         value, currency, orderId: String(order.id),
         productId: String(order.product_id ?? ""), productName: String(order.product_name ?? ""),
         packageId: String(order.package_id ?? ""), packageName: String(order.package_name ?? ""),

@@ -410,6 +410,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
       fbc: capturePayload.fbc ?? null,
       fbclid: capturePayload.fbclid ?? null,
       fbclidSeenAtMs: fbclidSeenAt(null, cart.created_at ?? null), // the cart began when the customer arrived
+      visitorId: capturePayload.formContext?.visitorId ?? null,
       value: amount,
       currency: cart.currency ?? "NGN",
       orderId: String(order.id),

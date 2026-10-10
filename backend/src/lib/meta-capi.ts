@@ -39,6 +39,8 @@ type SendMetaPurchaseArgs = {
   fbclid?: string | null;
   /** When the fbclid was first seen (ms), for an fbc built from it. */
   fbclidSeenAtMs?: number | null;
+  /** The form's visitor id (64 hex characters), sent to Meta as external_id. */
+  visitorId?: string | null;
   value: number;
   currency: string;
   orderId: string;
@@ -318,7 +320,9 @@ async function sendMetaCapiEvent(args: SendMetaPurchaseArgs & { eventName: strin
     st: sha256(args.state),
     country: sha256(args.country || "ng"),
     fbp: args.fbp || undefined,
-    fbc
+    fbc,
+    // Already the shape of a hashed value: sent as the browser sent it.
+    external_id: cleanVisitorId(args.visitorId) || undefined
   };
 
   for (const key of Object.keys(userData)) {
@@ -440,6 +444,12 @@ export async function recordMetaCapiEvent(supabase: any, args: {
  * 1 Oct 2026 fix dropped fbp/fbc on the way into formContext, so fall back to
  * reading them from the saved address (search part or the #/route?query part).
  */
+/** The form's visitor id, only when it is the 64 hex characters the form makes. */
+export function cleanVisitorId(value: unknown): string | null {
+  const text = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return /^[a-f0-9]{64}$/.test(text) ? text : null;
+}
+
 export function metaIdsFromFormContext(formContext: Record<string, unknown> | null | undefined) {
   const context = formContext ?? {};
   const pick = (...keys: string[]) => {
@@ -465,7 +475,8 @@ export function metaIdsFromFormContext(formContext: Record<string, unknown> | nu
   return {
     fbp: pick("fbp", "_fbp", "Fbp") || address("fbp", "_fbp") || null,
     fbc: pick("fbc", "_fbc", "Fbc") || address("fbc", "_fbc") || null,
-    fbclid: pick("fbclid") || address("fbclid") || null
+    fbclid: pick("fbclid") || address("fbclid") || null,
+    visitorId: cleanVisitorId(context.visitorId)
   };
 }
 
