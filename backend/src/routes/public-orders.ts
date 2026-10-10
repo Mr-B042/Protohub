@@ -25,7 +25,7 @@ import { serverEventsAllowed, withDataSource } from "../lib/tracking-credentials
 import { purchasePixelFor } from "../lib/tracking-click-pixel.js";
 import { orderAdIds, otherAdPlatform } from "../lib/tracking-hub.js";
 import { sendTikTokSale } from "../lib/tracking-tiktok.js";
-import { metaIdsFromFormContext, recordMetaCapiEvent, resolveMetaTrackingConfig, sendMetaCapiPurchase, type MetaTrackingConfig } from "../lib/meta-capi.js";
+import { metaIdsFromFormContext, fbclidSeenAt, recordMetaCapiEvent, resolveMetaTrackingConfig, sendMetaCapiPurchase, type MetaTrackingConfig } from "../lib/meta-capi.js";
 import { readSettings } from "./embed-settings.js";
 import {
   sendNewOrderEmail,
@@ -1560,6 +1560,7 @@ router.post("/", submitRateLimit, async (req, res) => {
     fbp: metaIds.fbp,
     fbc: metaIds.fbc,
     fbclid: metaIds.fbclid,
+    fbclidSeenAtMs: fbclidSeenAt(formContext),
     value: Number(order.amount ?? amount),
     currency: String(order.currency ?? pkg.currency),
     orderId: String(order.id),

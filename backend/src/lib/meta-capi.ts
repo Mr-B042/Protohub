@@ -37,6 +37,8 @@ type SendMetaPurchaseArgs = {
   fbp?: string | null;
   fbc?: string | null;
   fbclid?: string | null;
+  /** When the fbclid was first seen (ms), for an fbc built from it. */
+  fbclidSeenAtMs?: number | null;
   value: number;
   currency: string;
   orderId: string;
@@ -171,11 +173,41 @@ function splitName(value: string) {
   };
 }
 
-function deriveFbc(fbc?: string | null, fbclid?: string | null) {
+/**
+ * The fbc Meta gets (fixed 10 Oct 2026 after two Events Manager errors).
+ *
+ * Meta's rule: fbc = fb.1.<creationTime in MILLISECONDS when the fbclid was
+ * first seen>.<the fbclid exactly as in the address>.
+ *   - "creationTime" error: with no _fbc cookie we built fb.1.<now in
+ *     SECONDS>... - read as milliseconds that is January 1970, "before the
+ *     click"; and "now" is the send time, days late for a delivered sale.
+ *   - "modified fbclid" error: a customer's _fbc cookie can hold an OLDER
+ *     click than the fbclid in the page address. Sending the cookie made the
+ *     click id disagree with the click the event came from.
+ * So: the address has an fbclid -> keep the cookie only if it is that same
+ * click, otherwise build fbc from the fbclid and when it was first seen. No
+ * fbclid -> the cookie as it is.
+ */
+export function deriveFbc(fbc?: string | null, fbclid?: string | null, seenAtMs?: number | null, now = Date.now()) {
   const cleanFbc = String(fbc ?? "").trim();
-  if (cleanFbc) return cleanFbc;
-  const cleanFbclid = String(fbclid ?? "").trim();
-  return cleanFbclid ? `fb.1.${Math.floor(Date.now() / 1000)}.${cleanFbclid}` : undefined;
+  const clickId = String(fbclid ?? "").trim();
+  if (!clickId) return cleanFbc || undefined;
+  const cookieClick = cleanFbc.match(/^fb\.\d+\.\d+\.(.+)$/)?.[1];
+  if (cookieClick === clickId) return cleanFbc;
+  const seen = Number(seenAtMs);
+  const at = Number.isFinite(seen) && seen > 0 ? Math.min(Math.round(seen), now) : now;
+  return `fb.1.${at}.${clickId}`;
+}
+
+/**
+ * When the customer arrived with this click (ms): the order's time less how
+ * long the form had been open (formContext.secondsSinceOpen).
+ */
+export function fbclidSeenAt(formContext: Record<string, unknown> | null | undefined, at?: string | number | null) {
+  const base = at === undefined || at === null ? Date.now() : new Date(at).getTime();
+  if (!Number.isFinite(base)) return null;
+  const open = Number((formContext ?? {}).secondsSinceOpen);
+  return Math.round(base - (Number.isFinite(open) && open > 0 ? open * 1000 : 0));
 }
 
 function markDuplicate(pixelId: string | undefined, eventId: string, eventName: string) {
@@ -274,7 +306,7 @@ async function sendMetaCapiEvent(args: SendMetaPurchaseArgs & { eventName: strin
   }
 
   const { firstName, lastName } = splitName(args.customer);
-  const fbc = deriveFbc(args.fbc, args.fbclid);
+  const fbc = deriveFbc(args.fbc, args.fbclid, args.fbclidSeenAtMs);
   const userData: Record<string, unknown> = {
     client_ip_address: args.clientIp || undefined,
     client_user_agent: args.userAgent || undefined,
