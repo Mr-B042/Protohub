@@ -92618,14 +92618,19 @@ ${waybillLineItems(w).length > 1
                             <tbody>
                               {activeProdRows.map(({ product, weeklySpend: rowSpend, weeklyRevenue: rowRevenue, weeklyOrders, weeklyDelivered, weeklyRevenueDelivered, weeklyStillInPipeline, weeklyRevenueStillInPipeline, weeklyPlaced, weeklyRevenuePlaced, weeklyCancelledFailed, weeklyRevenueCancelledFailed }, pi) => {
                                 const rowRoas = rowSpend === 0 ? null : rowRevenue / rowSpend;
+                                // Each product reads as one block (Bright, 10 Oct 2026): it was hard
+                                // to tell which spend rows belonged to which product.
+                                const groupBg = pi % 2 === 0 ? "bg-white" : "bg-slate-50";
+                                const groupAccent = ["border-l-[#1F8FE0]", "border-l-emerald-500", "border-l-amber-500", "border-l-violet-500", "border-l-rose-500", "border-l-cyan-500"][pi % 6];
                                 const rowRoasDelivered = rowSpend === 0 ? null : weeklyRevenueDelivered / rowSpend;
 
                                 return (
                                   <Fragment key={product.id}>
-                                    {/* Spend row */}
-                                    <tr className={pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
-                                      <td className="px-4 py-2 font-semibold text-gray-800 align-middle" rowSpan={(adSpendShowBreakdown ? 13 : 4) + (autoWeek ? 1 : 0)}>
+                                    {/* Spend row - a thick line starts each product's block */}
+                                    <tr className={`${groupBg} border-t-[3px] border-slate-300`}>
+                                      <td className={`px-4 py-3 font-semibold text-gray-800 align-top border-l-4 ${groupAccent}`} rowSpan={(adSpendShowBreakdown ? 13 : 4) + (autoWeek ? 1 : 0)}>
                                         <div className="text-sm">{product.name}</div>
+                                        <div className={`mt-1 text-[11px] font-bold ${rowSpend > 0 ? "text-red-600" : "text-gray-400"}`}>{rowSpend > 0 ? `Ad spend this week: ${formatMoney(rowSpend)}` : "No ad spend this week"}</div>
                                         <div className="mt-1 text-[10px] font-medium text-gray-400">{adSpendShowBreakdown ? (weeklyOrders > 0 ? `${weeklyOrders} order${weeklyOrders === 1 ? "" : "s"} · ${weeklyPlaced} placed this week` : weeklyPlaced > 0 ? `${weeklyPlaced} placed this week` : "No orders yet") : (weeklyOrders > 0 ? `${weeklyOrders} order${weeklyOrders === 1 ? "" : "s"} this week` : "No orders yet")}</div>
                                         {rowRoas !== null && (
                                           <span className={`mt-1 inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${rowRoas >= 2 ? "bg-green-100 text-green-700" : rowRoas >= 1 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-600"}`}>
@@ -92668,7 +92673,7 @@ ${waybillLineItems(w).length > 1
                                       )}
                                     </tr>
                                     {autoWeek && (
-                                      <tr className={pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
+                                      <tr className={groupBg}>
                                         <td className="px-3 py-2 text-[11px] font-semibold text-gray-900 text-center whitespace-nowrap">TikTok Ad Spend<span className="block text-[9px] font-medium text-gray-400">{adSpendWeekDays.some((day) => autoAdSpend(product.id, day, "tiktok") > 0) ? "automatic" : "type it"}</span></td>
                                         {adSpendWeekDays.map((day) => {
                                           const key = `${product.id}-${day}`;
@@ -92693,7 +92698,7 @@ ${waybillLineItems(w).length > 1
                                     <>
                                     {/* Revenue (All Placed) row - what Revenue would total if every order
                                         that day counted, cancelled/failed included. Not used for ROAS. */}
-                                    <tr className={pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
+                                    <tr className={groupBg}>
                                       <td className="px-3 py-2 text-[11px] font-semibold text-gray-500 text-center whitespace-nowrap">Revenue (All Placed)</td>
                                       {adSpendWeekDays.map((day) => {
                                         const revPlaced = totalRevenuePlacedForProductDay(product.id, day);
@@ -92708,7 +92713,7 @@ ${waybillLineItems(w).length > 1
                                     {/* Total Placed row - every order placed that day, any status (incl.
                                         cancelled/failed/rejected), unlike Orders below which only counts
                                         ones still worth crediting to ad performance. */}
-                                    <tr className={pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
+                                    <tr className={groupBg}>
                                       <td className="px-3 py-2 text-[11px] font-semibold text-gray-500 text-center whitespace-nowrap">Total Placed</td>
                                       {adSpendWeekDays.map((day) => {
                                         const placed = totalPlacedForProductDay(product.id, day);
@@ -92722,7 +92727,7 @@ ${waybillLineItems(w).length > 1
                                     </tr>
                                     {/* Delivered row - narrowest tier: orders that have actually reached
                                         Delivered status (as of now), not just "still open/not dead". */}
-                                    <tr className={pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
+                                    <tr className={groupBg}>
                                       <td className="px-3 py-2 text-[11px] font-semibold text-blue-800 text-center whitespace-nowrap">Delivered</td>
                                       {adSpendWeekDays.map((day) => {
                                         const delivered = deliveredForProductDay(product.id, day);
@@ -92737,7 +92742,7 @@ ${waybillLineItems(w).length > 1
                                     {/* Cancelled/Failed row - the other side of the Total Placed vs Orders
                                         gap: orders placed that day that ended up dead. Total Placed =
                                         Orders + this number, so this is what "dropped out" of the funnel. */}
-                                    <tr className={pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
+                                    <tr className={groupBg}>
                                       <td className="px-3 py-2 text-[11px] font-semibold text-red-400 text-center whitespace-nowrap">Cancelled/Failed</td>
                                       {adSpendWeekDays.map((day) => {
                                         const cancelledFailed = cancelledFailedForProductDay(product.id, day);
@@ -92751,7 +92756,7 @@ ${waybillLineItems(w).length > 1
                                     </tr>
                                     {/* Revenue (Cancelled/Failed) row - the amount-equivalent of
                                         Cancelled/Failed above. Revenue (All Placed) = Revenue + this. */}
-                                    <tr className={pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
+                                    <tr className={groupBg}>
                                       <td className="px-3 py-2 text-[11px] font-semibold text-red-400 text-center whitespace-nowrap">Revenue (Cancelled/Failed)</td>
                                       {adSpendWeekDays.map((day) => {
                                         const revCancelledFailed = revenueCancelledFailedForProductDay(product.id, day);
@@ -92764,7 +92769,7 @@ ${waybillLineItems(w).length > 1
                                       <td className="px-3 py-2 text-center text-xs font-semibold text-red-500">{weeklyRevenueCancelledFailed > 0 ? formatMoney(weeklyRevenueCancelledFailed) : "-"}</td>
                                     </tr>
                                     {/* Revenue (Delivered) row - the amount-equivalent of Delivered above. */}
-                                    <tr className={pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
+                                    <tr className={groupBg}>
                                       <td className="px-3 py-2 text-[11px] font-semibold text-blue-800 text-center whitespace-nowrap">Revenue (Delivered)</td>
                                       {adSpendWeekDays.map((day) => {
                                         const revDelivered = revenueDeliveredForProductDay(product.id, day);
@@ -92780,7 +92785,7 @@ ${waybillLineItems(w).length > 1
                                         ROAS below (which stays tied to the live/non-cancelled-failed
                                         Revenue figure) - this only credits spend against orders that have
                                         actually delivered. */}
-                                    <tr className={pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
+                                    <tr className={groupBg}>
                                       <td className="px-3 py-2 text-[11px] font-semibold text-gray-400 text-center whitespace-nowrap">ROAS (Delivered)</td>
                                       {adSpendWeekDays.map((day) => {
                                         const spend = adSpendFor(product.id, day);
@@ -92807,7 +92812,7 @@ ${waybillLineItems(w).length > 1
                                     </>
                                     )}
                                     {/* Revenue row */}
-                                    <tr className={pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
+                                    <tr className={groupBg}>
                                       <td className="px-3 py-2 text-[11px] font-semibold text-green-600 text-center whitespace-nowrap">Revenue</td>
                                       {adSpendWeekDays.map((day) => {
                                         const rev = revenueForProductDay(product.id, day);
@@ -92823,7 +92828,7 @@ ${waybillLineItems(w).length > 1
                                       <td className="px-3 py-2 text-center text-xs font-semibold text-green-600">{rowRevenue > 0 ? formatMoney(rowRevenue) : "-"}</td>
                                     </tr>
                                     {/* Orders row - total orders brought in, per day + week total */}
-                                    <tr className={pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
+                                    <tr className={groupBg}>
                                       <td className="px-3 py-2 text-[11px] font-semibold text-blue-600 text-center whitespace-nowrap">Orders</td>
                                       {adSpendWeekDays.map((day) => {
                                         const orders = ordersForProductDay(product.id, day);
@@ -92841,7 +92846,7 @@ ${waybillLineItems(w).length > 1
                                         subset of Orders, so this is exactly the alive orders that haven't
                                         reached Delivered yet (still New/Confirmed/In Process/Dispatched/
                                         Postponed) - not a separate bucket to add on top of either number. */}
-                                    <tr className={pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
+                                    <tr className={groupBg}>
                                       <td className="px-3 py-2 text-[11px] font-semibold text-gray-500 text-center whitespace-nowrap">Still in Pipeline</td>
                                       {adSpendWeekDays.map((day) => {
                                         const stillInPipeline = stillInPipelineForProductDay(product.id, day);
@@ -92855,7 +92860,7 @@ ${waybillLineItems(w).length > 1
                                     </tr>
                                     {/* Revenue (Still in Pipeline) row - the amount-equivalent of Still in
                                         Pipeline above. Revenue = Revenue (Delivered) + this number. */}
-                                    <tr className={pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
+                                    <tr className={groupBg}>
                                       <td className="px-3 py-2 text-[11px] font-semibold text-gray-500 text-center whitespace-nowrap">Revenue (Still in Pipeline)</td>
                                       {adSpendWeekDays.map((day) => {
                                         const revStillInPipeline = revenueStillInPipelineForProductDay(product.id, day);
