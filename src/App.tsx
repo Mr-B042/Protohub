@@ -79140,6 +79140,31 @@ ${waybillLineItems(w).length > 1
                                 </tr>
                               ))}
                             </tbody>
+                            {/* Team total (Bright, 10 Oct 2026). Rate and AOV are worked out
+                                from the totals, the same way each rep's are - not averaged. */}
+                            {teamRows.length > 0 && (() => {
+                              const sum = (pick: (row: (typeof teamRows)[number]) => number) => teamRows.reduce((total, row) => total + (Number(pick(row)) || 0), 0);
+                              const placed = sum((row) => row.placed);
+                              const delivered = sum((row) => row.delivered);
+                              const revenue = sum((row) => row.revenue);
+                              const rate = placed ? Math.round((delivered / placed) * 100) : 0;
+                              return (
+                                <tfoot>
+                                  <tr className="border-t-2 border-gray-200 bg-gray-50 font-bold">
+                                    <td className="px-4 py-3 text-gray-900">Team total<span className="block text-[10px] font-semibold text-gray-400">{teamRows.length} rep{teamRows.length === 1 ? "" : "s"}</span></td>
+                                    <td className="px-4 py-3 text-right text-gray-900">{placed}</td>
+                                    <td className="px-4 py-3 text-right text-gray-900">{delivered}</td>
+                                    <td className={`px-4 py-3 text-right ${rate >= 70 ? "text-emerald-600" : rate >= 50 ? "text-amber-600" : "text-rose-600"}`}>{placed ? `${rate}%` : "-"}</td>
+                                    <td className="px-4 py-3 text-right text-gray-900">{delivered ? formatMoney(Math.round(revenue / delivered)) : "-"}</td>
+                                    <td className="px-4 py-3 text-right"><span className="text-violet-700">{sum((row) => row.repUpsells)}</span><span className="block text-[10px] font-semibold text-gray-500">{formatMoney(sum((row) => row.upsellBonus))} earned</span></td>
+                                    <td className="px-4 py-3 text-right"><span className="text-amber-700">{sum((row) => row.repXs)}</span><span className="block text-[10px] font-semibold text-gray-500">{formatMoney(sum((row) => row.repCrossSellBonus))} earned</span></td>
+                                    <td className="px-4 py-3 text-right"><span className="text-sky-700">{sum((row) => row.custAddOns)}</span><span className="block text-[10px] font-semibold text-gray-500">{formatMoney(sum((row) => row.customerAddOnBonus))} earned</span></td>
+                                    <td className="px-4 py-3 text-right text-gray-900">{formatMoney(revenue)}</td>
+                                    <td className="px-4 py-3 text-right text-emerald-700">{formatMoney(sum((row) => row.bonus))}</td>
+                                  </tr>
+                                </tfoot>
+                              );
+                            })()}
                           </table>
                         </div>
                       </section>
@@ -79237,6 +79262,23 @@ ${waybillLineItems(w).length > 1
                                 </tr>
                               ))}
                             </tbody>
+                            {/* Team total (Bright, 10 Oct 2026); matches Total Team Bonus above. */}
+                            {bonusRows.length > 0 && (() => {
+                              const sum = (pick: (row: (typeof bonusRows)[number]) => number) => bonusRows.reduce((total, row) => total + (Number(pick(row)) || 0), 0);
+                              return (
+                                <tfoot>
+                                  <tr className="border-t-2 border-gray-200 bg-gray-50">
+                                    <td className="px-4 py-3 font-bold text-gray-900">Team total<span className="block text-[10px] font-semibold text-gray-400">{bonusRows.length} rep{bonusRows.length === 1 ? "" : "s"}</span></td>
+                                    <td className="px-4 py-3 text-right"><div className="font-bold text-gray-900">{formatMoney(sum((row) => row.base))}</div><div className="text-[10px] font-semibold text-gray-500">{sum((row) => row.deliveredCount)} deliveries</div></td>
+                                    <td className="px-4 py-3 text-right"><div className="font-bold text-violet-700">{formatMoney(sum((row) => row.upsell))}</div><div className="text-[10px] font-semibold text-gray-500">{sum((row) => row.upsellCount)} upgrades</div></td>
+                                    <td className="px-4 py-3 text-right"><div className="font-bold text-sky-700">{formatMoney(sum((row) => row.crossSell))}</div><div className="text-[10px] font-semibold text-gray-500">{sum((row) => row.crossSellCount)} cross-sells</div></td>
+                                    <td className="px-4 py-3 text-right font-extrabold text-gray-900">{formatMoney(sum((row) => row.total))}</td>
+                                    <td className="px-4 py-3 text-[11px] text-gray-500">{bonusRows.filter((row) => row.status === "qualified").length} of {bonusRows.length} qualified</td>
+                                    <td className="px-4 py-3" />
+                                  </tr>
+                                </tfoot>
+                              );
+                            })()}
                           </table>
                         </div>
                         <p className="text-[11px] text-gray-400 flex items-center gap-1.5">
