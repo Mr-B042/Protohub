@@ -1977,6 +1977,8 @@ router.post("/diagnostics/validate-url", async (req, res) => {
 const SettingsSchema = z.object({
   enabled: z.boolean(), currency: z.string().trim().max(8), timezone: z.string().trim().max(60),
   sendBrowser: z.boolean(), sendCapi: z.boolean(), multiPlatform: z.boolean(), logAllEvents: z.boolean(),
+  sendDelivered: z.boolean().default(false),
+  deliveredEventName: z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_]{1,49}$/, "Event name: letters, numbers and _ only, starting with a letter.").default("OrderDelivered"),
   trackingMode: z.enum(["order_based", "thank_you", "hybrid"]),
   defaultDataSources: z.record(z.string()).default({}), defaultEventValue: z.literal("order_total").default("order_total"),
   defaultWebsiteId: z.string().uuid().nullable(), defaultProfileId: z.string().uuid().nullable(),
@@ -2026,7 +2028,7 @@ router.put("/settings", async (req, res) => {
     const settings: HubSettings = { ...DEFAULT_HUB_SETTINGS, ...d, defaultStrategy };
     const { error } = await supabase.from("tracking_settings").upsert({ org_id: orgId, branch_id: branchId, settings, updated_by: req.user!.id, updated_at: new Date().toISOString() }, { onConflict: "org_id,branch_id" });
     if (error) throw error;
-    await hubAudit(orgId, branchId, actorOf(req), "settings_changed", { type: "settings" }, { trackingMode: d.trackingMode, enabled: d.enabled });
+    await hubAudit(orgId, branchId, actorOf(req), "settings_changed", { type: "settings" }, { trackingMode: d.trackingMode, enabled: d.enabled, sendDelivered: d.sendDelivered, deliveredEventName: d.deliveredEventName });
     res.json({ settings });
   } catch (error: any) { fail(res, error, "Could not save the settings."); }
 });
