@@ -1,6 +1,7 @@
 import { supabase } from "./supabase.js";
 import { buildHeadReview } from "../routes/sales-scripts.js";
 import { addDaysToDateKey, lagosDateKey, sundayWeekStartForDateKey, weekEndFromStart } from "./sales-bonus-engine.js";
+import { previousWeekGate } from "./weekly-report-workflow.js";
 import { notifyHeadOfSales, notifyManagersOverdue, notifyReportReminder } from "./weekly-report-notifications.js";
 
 // Shared by the weekly-report routes and the Tuesday/Wednesday reminder job.
@@ -83,6 +84,15 @@ export async function runWeeklyReportReminders(when: "due_today" | "overdue"): P
     }
     const expected = await expectedRepIdsForWeek(branch.org_id, branch.id, weekStart);
     if (expected.length === 0) continue;
+    // Reps cannot send this report while the week before is still with the
+    // manager (Bright, 11 Oct 2026), so reminding them would only be noise.
+    const previousStart = addDaysToDateKey(weekStart, -7);
+    const [previousExpected, { data: previousCompany }] = await Promise.all([
+      expectedRepIdsForWeek(branch.org_id, branch.id, previousStart),
+      supabase.from("company_weekly_reports").select("submit_count")
+        .eq("org_id", branch.org_id).eq("branch_id", branch.id).eq("week_start", previousStart).maybeSingle()
+    ]);
+    if (!previousWeekGate({ weekStart, previousExpectedReps: previousExpected.length, previousSubmitCount: Number(previousCompany?.submit_count ?? 0) }).ok) continue;
     const submitted = await submittedRepIds(branch.org_id, branch.id, weekStart);
     const missing = expected.filter((id) => !submitted.has(id));
     if (missing.length === 0) continue;

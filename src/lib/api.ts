@@ -4121,6 +4121,16 @@ export type WeeklyReportAuditEntry = {
 };
 export type WeeklyReportFineRow = { id: string; repId: string; label: string; amount: number; date: string };
 export type WeeklyReportAdjustmentRow = { id: string; repId: string; label: string; amount: number };
+/** The manager's change to a rep's final payout: added (+) or taken off (-), with a reason. */
+export type WeeklyPayoutChange = {
+  id: string; repId: string; repReportId: string; weekStart: string;
+  systemAmount: number; amount: number; reason: string;
+  changedBy: string | null; changedByName: string | null; changedByRole: string | null; changedAt: string;
+};
+/** Whether this week's report can be sent yet (last week must be with the owner), and the day it is due. */
+export type WeeklySendGate = { blocked: boolean; message: string | null; dueDate: string };
+/** A payout change the Owner approved, dated on the last day of its week. */
+export type ApprovedPayoutChange = { repId: string; weekStart: string; date: string; amount: number; systemAmount: number; reason: string };
 export type WeeklyLogMissRow = {
   kind: "follow_up" | "cart_log"; ref: string; repId: string; missDate: string; amount: number;
   status: "pending" | "approved" | "waived"; label: string; orderId?: string | null; cartsMissed?: number;
@@ -4146,10 +4156,11 @@ export const weeklyReportsApi = {
   mine: (weekStart: string) =>
     get<{ weekStart: string; weekEnd: string; report: WeeklyRepReport | null; companyStatus: WeeklyCompanyReportStatus; corrections: WeeklyReportCorrection[]; audit: WeeklyReportAuditEntry[]; fines: WeeklyReportFineRow[]; previousFines: WeeklyReportFineRow[];
       adjustments: WeeklyReportAdjustmentRow[]; previousAdjustments: WeeklyReportAdjustmentRow[]; bonusQueries: WeeklyBonusQuery[];
-      logMisses: WeeklyLogMissRow[]; previousLogMisses: WeeklyLogMissRow[]; logMissDisputes: LogMissDispute[]; carriedFines: number }>(
+      logMisses: WeeklyLogMissRow[]; previousLogMisses: WeeklyLogMissRow[]; logMissDisputes: LogMissDispute[]; carriedFines: number;
+      payoutChange?: WeeklyPayoutChange | null; gate?: WeeklySendGate }>(
       `/api/weekly-reports/mine?${new URLSearchParams({ weekStart }).toString()}`
     ),
-  myHistory: () => get<{ rows: Array<WeeklyRepReport & { openReturns: number }> }>("/api/weekly-reports/mine/history"),
+  myHistory: () => get<{ rows: Array<WeeklyRepReport & { openReturns: number; payoutChange?: WeeklyPayoutChange | null }> }>("/api/weekly-reports/mine/history"),
   submitMine: (body: { weekStart: string; snapshot: unknown; note?: string; responses?: WeeklyReportResponseInput[] }) =>
     post<{ ok: true }>("/api/weekly-reports/mine/submit", body),
   week: (weekStart: string) =>
@@ -4160,6 +4171,7 @@ export const weeklyReportsApi = {
       fines: WeeklyReportFineRow[]; previousFines: WeeklyReportFineRow[];
       adjustments: WeeklyReportAdjustmentRow[]; previousAdjustments: WeeklyReportAdjustmentRow[]; bonusQueries: WeeklyBonusQuery[];
       logMisses: WeeklyLogMissRow[]; previousLogMisses: WeeklyLogMissRow[]; logMissDisputes: LogMissDispute[]; carriedFines: Record<string, number>;
+      payoutChanges?: WeeklyPayoutChange[]; gate?: WeeklySendGate;
       funds?: Array<{ managerId: string; managerName: string; totals: ManagerFundTotals; readiness: string[]; locked: boolean; varianceExplanation: string | null; notes: string | null; returned: number }>;
     }>(`/api/weekly-reports/week?${new URLSearchParams({ weekStart }).toString()}`),
   history: () => get<{ rows: Array<{ weekStart: string; weekEnd: string; company: WeeklyCompanyReport | null; repStatusCounts: Record<string, number> }> }>("/api/weekly-reports/history"),
@@ -4169,6 +4181,11 @@ export const weeklyReportsApi = {
     post<{ ok: true }>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/return`, body),
   flagRep: (repId: string, body: WeeklyReportCorrectionInput) =>
     post<{ ok: true }>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/flag`, body),
+  savePayoutChange: (repId: string, body: { weekStart: string; amount: number; reason: string }) =>
+    put<{ ok: true }>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/payout-change`, body),
+  removePayoutChange: (repId: string, weekStart: string) =>
+    del<{ ok: true }>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/payout-change?${new URLSearchParams({ weekStart }).toString()}`),
+  approvedPayoutChanges: () => get<{ rows: ApprovedPayoutChange[] }>("/api/weekly-reports/payout-changes/approved"),
   submitCompany: (body: { weekStart: string; managerNote?: string; companySnapshot: unknown; managerBonusSnapshot?: unknown; responses?: WeeklyReportResponseInput[] }) =>
     post<{ ok: true }>("/api/weekly-reports/company/submit", body),
   approveLock: (body: { weekStart: string; note?: string }) => post<{ ok: true }>("/api/weekly-reports/company/approve-lock", body),

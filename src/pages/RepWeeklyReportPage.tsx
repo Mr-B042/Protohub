@@ -7,8 +7,8 @@ import {
   RepStatusPill, StepBadge, WeekPicker, WorkflowSteps, dailyChartRows, dateTimeText, deltaPct, downloadCsv, longDate, nf,
   pctText, shortDateTime, topProductsWithOthers, type WorkflowStep
 } from "../components/WeeklyReportParts";
-import { CORRECTION_SECTION_LABEL, type BonusCheckFinding, type WeeklyReportSnapshot } from "./weekly-report-model";
-import type { LogMissDispute, WeeklyLogMissRow, WeeklyBonusQuery, WeeklyReportCorrection, WeeklyRepReport, WeeklyCompanyReportStatus, WeeklyReportResponseInput } from "../lib/api";
+import { CORRECTION_SECTION_LABEL, signedMoney, withPayoutChange, type BonusCheckFinding, type WeeklyReportSnapshot } from "./weekly-report-model";
+import type { WeeklyPayoutChange, LogMissDispute, WeeklyLogMissRow, WeeklyBonusQuery, WeeklyReportCorrection, WeeklyRepReport, WeeklyCompanyReportStatus, WeeklyReportResponseInput } from "../lib/api";
 import { Modal } from "../components/WeeklyReportParts";
 import { MyMissedLogsPanel } from "../components/LogMissParts";
 import { HeadOfSalesBadge } from "../components/HeadOfSalesParts";
@@ -28,9 +28,15 @@ export default function RepWeeklyReportPage({
   live, report, companyStatus, corrections, loading, error, canSubmitNow, beforeStart = false, dueDate, todayKey, submittedLate, productImageByKey,
   bonusQueries, onRunBonusCheck, onSendBonusQuery,
   logMisses = [], logMissDisputes = [], canDispute = true, onCheckLogMiss, onEscalateLogMiss, onLogMissChecked,
-  isHeadOfSales = false, renderHeadOfSales,
+  isHeadOfSales = false, renderHeadOfSales, payoutChange = null, blockedMessage = null, opensOn,
   onSubmit, onOpenOrder, onBack
 }: {
+  /** The manager's change to this rep's final payout, with its reason. */
+  payoutChange?: WeeklyPayoutChange | null;
+  /** Set while last week has not been sent to the owner: this report cannot be sent yet. */
+  blockedMessage?: string | null;
+  /** The Tuesday the report opens. The due date can be later for a rep who had to wait. */
+  opensOn?: string;
   /** Missed follow-up / cart log charges this week, and the rep's disputes. */
   logMisses?: WeeklyLogMissRow[];
   logMissDisputes?: LogMissDispute[];
@@ -61,7 +67,7 @@ export default function RepWeeklyReportPage({
   canSubmitNow: boolean;
   /** A week before reports started: settled, nothing to submit (a returned report can still be answered). */
   beforeStart?: boolean;
-  /** The Tuesday after the week. Submitting after it is allowed but marked Late. */
+  /** The day it is due: the Tuesday after the week, or a day later for a rep who had to wait for last week. Later is allowed but marked Late. */
   dueDate: string;
   todayKey: string;
   submittedLate: boolean;
@@ -72,7 +78,10 @@ export default function RepWeeklyReportPage({
 }) {
   const status = report?.status ?? "draft";
   const showingFrozen = status !== "draft" && status !== "returned" && !!report?.snapshot;
-  const snap: WeeklyReportSnapshot | null = showingFrozen ? (report!.snapshot as WeeklyReportSnapshot) : live;
+  // The manager changes the figure the rep SUBMITTED, so the change only shows on the submitted copy.
+  const snap: WeeklyReportSnapshot | null = showingFrozen ? withPayoutChange(report!.snapshot as WeeklyReportSnapshot, payoutChange) : live;
+  const openDay = opensOn ?? dueDate;
+  const blocked = !!blockedMessage && status === "draft";
   const openReturns = corrections.filter((row) => row.kind === "return" && row.status === "open");
   const [note, setNote] = useState(report?.repNote ?? "");
   const [responses, setResponses] = useState<Record<string, string>>({});
@@ -92,7 +101,7 @@ export default function RepWeeklyReportPage({
 
   const canSubmit = (status === "draft" || status === "returned")
     && companyStatus !== "submitted_to_owner" && companyStatus !== "locked"
-    && canSubmitNow && !!live && !loading && !(beforeStart && status === "draft")
+    && canSubmitNow && !blocked && !!live && !loading && !(beforeStart && status === "draft")
     && openReturns.every((row) => (responses[row.id] ?? "").trim().length >= 2);
 
   const steps: WorkflowStep[] = [
@@ -193,7 +202,7 @@ export default function RepWeeklyReportPage({
             <KpiCard tone="blue" icon={ShoppingCart} label="Total Orders" value={nf(totals?.orders ?? 0)} delta={deltaPct(totals?.orders ?? 0, prev?.orders)} sub={`vs previous week (${nf(prev?.orders ?? 0)})`} />
             <KpiCard tone="green" icon={Box} label="Delivered Orders" value={nf(totals?.delivered ?? 0)} delta={deltaPct(totals?.delivered ?? 0, prev?.delivered)} sub={`vs previous week (${nf(prev?.delivered ?? 0)})`} />
             <KpiCard tone="orange" icon={Target} label="Delivery Rate" value={pctText(totals?.deliveryRate ?? 0)} delta={prev ? Math.round(((totals?.deliveryRate ?? 0) - prev.deliveryRate) * 10) / 10 : null} sub={`vs previous week (${pctText(prev?.deliveryRate ?? 0)})`} />
-            <KpiCard tone="purple" icon={Wallet} label="Total Bonus Earned" labelTone="text-violet-700 dark:text-violet-300" value={`${sym}${nf(totals?.finalBonus ?? 0)}`} delta={null} sub="Calculated automatically" />
+            <KpiCard tone="purple" icon={Wallet} label="Total Bonus Earned" labelTone="text-violet-700 dark:text-violet-300" value={`${sym}${nf(totals?.finalBonus ?? 0)}`} delta={null} sub={snap?.payoutChangeDetail ? `Changed by your manager (${signedMoney(snap.payoutChangeDetail.amount, sym)})` : "Calculated automatically"} />
           </div>
 
           <div className="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
@@ -347,6 +356,21 @@ export default function RepWeeklyReportPage({
                         <td className="px-3 py-1.5 text-right italic text-amber-800 dark:text-amber-200">{nf(totals?.pendingLogMisses ?? 0)}</td>
                       </tr>
                     )}
+                    {snap?.payoutChangeDetail && (
+                      <>
+                        <tr className="border-t border-gray-100 dark:border-slate-800">
+                          <td className="px-3 py-2">System figure<span className="block text-[11px] text-gray-500">What the system worked out</span></td>
+                          <td className="px-3 py-2 text-right">{nf(totals?.systemFinalBonus ?? 0)}</td>
+                        </tr>
+                        <tr className="border-t border-gray-100 bg-amber-50/60 dark:border-slate-800 dark:bg-amber-500/10 [&>td]:[color:inherit]">
+                          <td className="px-3 py-2 text-amber-900 dark:text-amber-100">
+                            Changed by {snap.payoutChangeDetail.changedByName ?? "your manager"}
+                            <span className="block text-[11px] font-normal text-amber-800 dark:text-amber-200">Reason: {snap.payoutChangeDetail.reason}</span>
+                          </td>
+                          <td className={`px-3 py-2 text-right font-semibold ${snap.payoutChangeDetail.amount < 0 ? "text-rose-600" : "text-emerald-700"}`}>{signedMoney(snap.payoutChangeDetail.amount, sym)}</td>
+                        </tr>
+                      </>
+                    )}
                     <tr className="bg-emerald-50 font-bold text-gray-900 dark:bg-emerald-500/10 dark:text-slate-50 [&>td]:[color:inherit]">
                       <td className="px-3 py-2.5">Final Bonus Payable</td>
                       <td className="px-3 py-2.5 text-right text-[15px] text-emerald-700 dark:text-emerald-300">{sym}{nf(totals?.finalBonus ?? 0)}</td>
@@ -390,14 +414,16 @@ export default function RepWeeklyReportPage({
               <Send className="h-4 w-4" /> {submitting ? "Submitting…" : status === "returned" ? "Resubmit to Manager" : "Submit to Manager"}
             </button>
             {(status === "draft" || status === "returned") && (
-              <p className={`m-0 mt-2 text-[11px] ${!canSubmitNow ? "text-gray-500" : todayKey > dueDate && status === "draft" ? "font-semibold text-rose-600" : "text-gray-600 dark:text-slate-300"}`}>
+              <p className={`m-0 mt-2 text-[11px] ${!canSubmitNow ? "text-gray-500" : blocked ? "font-semibold text-amber-700 dark:text-amber-300" : todayKey > dueDate && status === "draft" ? "font-semibold text-rose-600" : "text-gray-600 dark:text-slate-300"}`}>
                 {beforeStart && status === "draft"
                   ? "Weekly reports start with the week of 27 Sept - 3 Oct 2026. This week is already settled, so there is nothing to submit."
                   : !canSubmitNow
-                  ? `Opens on Tuesday, ${longDate(dueDate)}. Submit it that day, after the weekend's orders are attended to.`
+                  ? `Opens on Tuesday, ${longDate(openDay)}. Submit it that day, after the weekend's orders are attended to.`
+                  : blocked
+                  ? `${blockedMessage} You will not be marked late for the wait.`
                   : todayKey > dueDate && status === "draft"
-                    ? `Late: this was due by the end of Tuesday, ${longDate(dueDate)}. You can still submit; it will be marked late.`
-                    : status === "draft" ? `Due today, by the end of Tuesday ${longDate(dueDate)}.` : "Answer each comment, then resubmit."}
+                    ? `Late: this was due by the end of ${longDate(dueDate)}. You can still submit; it will be marked late.`
+                    : status === "draft" ? (todayKey === dueDate ? `Due today, by the end of ${longDate(dueDate)}.` : `Due by the end of ${longDate(dueDate)}.`) : "Answer each comment, then resubmit."}
               </p>
             )}
             {status === "returned" && openReturns.some((row) => !(responses[row.id] ?? "").trim()) && (
@@ -562,7 +588,7 @@ export default function RepWeeklyReportPage({
           onClose={() => setCheckOpen(false)}
           onRun={onRunBonusCheck}
           onSend={onSendBonusQuery}
-          finalBonus={totals?.finalBonus ?? 0}
+          finalBonus={totals?.systemFinalBonus ?? totals?.finalBonus ?? 0}
         />
       )}
 

@@ -4,16 +4,21 @@ import { humanFieldErrors } from "../lib/validation-message.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { expectedRepIdsForWeek } from "../lib/weekly-report-data.js";
+import { approvedPayoutChanges } from "../lib/weekly-payout-changes.js";
 import { notifyWeeklyReport } from "../lib/weekly-report-notifications.js";
 import { branchFundManagers, loadFundWeek } from "./manager-funds.js";
 import { disputesForWeek, logMissesForWeek } from "./log-misses.js";
 import { addDaysToDateKey, sundayWeekStartForDateKey, lagosDateKey, weekEndFromStart } from "../lib/sales-bonus-engine.js";
 import { FIRST_REPORT_WEEK,
   CORRECTION_SECTIONS,
+  canChangePayout,
   canManagerAct,
   canOwnerAct,
   canRepSubmit,
   canSubmitToOwner,
+  effectiveDueDate,
+  payoutChangeProblem,
+  previousWeekGate,
   reportDueDate,
   type CompanyReportStatus,
   type RepReportStatus
@@ -357,6 +362,65 @@ async function adjustmentsForWeek(orgId: string, branchId: string, repIds: strin
   }));
 }
 
+// ── The manager's change to a rep's payout (Bright, 11 Oct 2026) ───────────
+// See migration 299. The rep's submitted figure stays as it is; the change
+// sits beside it. system_amount is read from the report on the SERVER, never
+// taken from the browser.
+
+const PAYOUT_COLUMNS = "id, rep_id, rep_report_id, week_start, system_amount, amount, reason, changed_by, changed_by_name, changed_by_role, created_at, updated_at";
+
+const mapPayoutChange = (row: any) => ({
+  id: row.id,
+  repId: row.rep_id,
+  repReportId: row.rep_report_id,
+  weekStart: row.week_start,
+  systemAmount: Number(row.system_amount ?? 0),
+  amount: Number(row.amount ?? 0),
+  reason: row.reason ?? "",
+  changedBy: row.changed_by ?? null,
+  changedByName: row.changed_by_name ?? null,
+  changedByRole: row.changed_by_role ?? null,
+  changedAt: row.updated_at ?? row.created_at
+});
+
+async function payoutChangesForWeek(orgId: string, branchId: string, repIds: string[] | null, weekStart: string) {
+  let query = supabase.from("weekly_report_payout_changes").select(PAYOUT_COLUMNS)
+    .eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart);
+  if (repIds) query = query.in("rep_id", repIds);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data ?? []).map(mapPayoutChange);
+}
+
+/**
+ * Whether a rep may send this week's report yet, and the day it is due.
+ * Last week must have been sent to the owner first; a rep who had to wait for
+ * that gets until the end of the next day (see previousWeekGate, effectiveDueDate).
+ */
+async function sendGateFor(orgId: string, branchId: string, weekStart: string) {
+  const previousStart = addDaysToDateKey(weekStart, -7);
+  if (previousStart < FIRST_REPORT_WEEK) return { blocked: false, message: null as string | null, dueDate: reportDueDate(weekStart) };
+  const [previous, expected, firstSent] = await Promise.all([
+    loadCompanyReport(orgId, branchId, previousStart),
+    expectedRepIdsForWeek(orgId, branchId, previousStart),
+    supabase.from("weekly_report_audit").select("created_at")
+      .eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", previousStart).eq("action", "company_submitted")
+      .order("created_at", { ascending: true }).limit(1)
+  ]);
+  if (firstSent.error) throw firstSent.error;
+  const verdict = previousWeekGate({
+    weekStart,
+    previousExpectedReps: expected.length,
+    previousSubmitCount: Number(previous?.submit_count ?? 0)
+  });
+  const sentAt = firstSent.data?.[0]?.created_at ?? previous?.submitted_at ?? null;
+  return {
+    blocked: !verdict.ok,
+    message: verdict.ok ? null : verdict.error,
+    dueDate: effectiveDueDate(weekStart, verdict.ok && sentAt ? lagosDateKey(sentAt) : null)
+  };
+}
+
 const sendError = (res: any, error: any, fallback: string) => {
   res.status(error?.status ?? 500).json({ error: error?.message ?? fallback });
 };
@@ -371,7 +435,7 @@ router.get("/mine", requireScopedRep, async (req, res) => {
     const orgId = req.user!.orgId;
     const repId = scopeOf(req).id;
     const weekStart = parsed.data.weekStart ?? sundayWeekStartForDateKey(lagosDateKey());
-    const [report, company, fines, previousFines, adjustments, previousAdjustments, bonusQueries] = await Promise.all([
+    const [report, company, fines, previousFines, adjustments, previousAdjustments, bonusQueries, payoutChanges, gate] = await Promise.all([
       loadRepReport(orgId, branchId, repId, weekStart),
       loadCompanyReport(orgId, branchId, weekStart),
       finesForWeek(orgId, [repId], weekStart),
@@ -380,7 +444,9 @@ router.get("/mine", requireScopedRep, async (req, res) => {
       adjustmentsForWeek(orgId, branchId, [repId], addDaysToDateKey(weekStart, -7)),
       supabase.from("weekly_bonus_queries").select(BONUS_QUERY_COLUMNS)
         .eq("org_id", orgId).eq("branch_id", branchId).eq("rep_id", repId)
-        .order("created_at", { ascending: false }).limit(50)
+        .order("created_at", { ascending: false }).limit(50),
+      payoutChangesForWeek(orgId, branchId, [repId], weekStart),
+      sendGateFor(orgId, branchId, weekStart)
     ]);
     if (bonusQueries.error) throw bonusQueries.error;
     const [logMisses, previousLogMisses, logMissDisputes, carried] = await Promise.all([
@@ -413,6 +479,11 @@ router.get("/mine", requireScopedRep, async (req, res) => {
       previousLogMisses,
       logMissDisputes,
       carriedFines: carried[repId] ?? 0,
+      // The manager's change to this rep's payout, if any. Shown to the rep
+      // with its reason, so the amount on their report is the amount they get.
+      payoutChange: payoutChanges[0] ?? null,
+      // Last week must reach the owner before this one can be sent.
+      gate,
       // Flags are for the owner. The rep sees returns, not flags.
       corrections: (corrections.data ?? []).filter((row: any) => row.kind === "return").map(mapCorrection),
       audit: (auditRows.data ?? []).filter((row: any) => row.action !== "rep_flagged").map(mapAudit)
@@ -444,8 +515,13 @@ router.get("/mine/history", requireScopedRep, async (req, res) => {
     if (returnsError) throw returnsError;
     const openByReport = new Map<string, number>();
     for (const row of openReturns ?? []) openByReport.set(row.rep_report_id, (openByReport.get(row.rep_report_id) ?? 0) + 1);
+    const { data: changes, error: changesError } = ids.length > 0
+      ? await supabase.from("weekly_report_payout_changes").select(PAYOUT_COLUMNS).eq("org_id", orgId).eq("rep_id", repId).in("rep_report_id", ids)
+      : { data: [], error: null };
+    if (changesError) throw changesError;
+    const changeByReport = new Map((changes ?? []).map((row: any) => [row.rep_report_id, mapPayoutChange(row)]));
     res.json({
-      rows: (data ?? []).map((row: any) => ({ ...mapRep(row), openReturns: openByReport.get(row.id) ?? 0 }))
+      rows: (data ?? []).map((row: any) => ({ ...mapRep(row), openReturns: openByReport.get(row.id) ?? 0, payoutChange: changeByReport.get(row.id) ?? null }))
     });
   } catch (error: any) {
     sendError(res, error, "Could not load your report history.");
@@ -474,8 +550,14 @@ router.post("/mine/submit", requireRole("Sales Rep"), async (req, res) => {
     if (weekStart < FIRST_REPORT_WEEK && existing?.status !== "returned") {
       throw httpError(400, "Weekly reports start with the week of 27 Sept - 3 Oct 2026. Earlier weeks are already settled, so there is nothing to submit.");
     }
-    const dueDate = reportDueDate(weekStart);
-    if (today < dueDate) throw httpError(400, `This week's report opens on Tuesday ${dueDate}. Submit it that day.`);
+    const opensOn = reportDueDate(weekStart);
+    if (today < opensOn) throw httpError(400, `This week's report opens on Tuesday ${opensOn}. Submit it that day.`);
+    // Last week must be with the owner first (Bright, 11 Oct 2026). Answering
+    // a report the manager returned is not a new report, so it is not held.
+    const gate = await sendGateFor(orgId, branchId, weekStart);
+    if (gate.blocked && existing?.status !== "returned") throw httpError(409, gate.message ?? "Last week's report has not been sent to the owner yet.");
+    // A rep who had to wait for that gets until the end of the next day.
+    const dueDate = gate.dueDate;
     const late = today > dueDate;
 
     const company = await loadCompanyReport(orgId, branchId, weekStart);
@@ -520,6 +602,19 @@ router.post("/mine/submit", requireRole("Sales Rep"), async (req, res) => {
         .update({ status: "resolved", response: responseById.get(row.id), resolved_by: req.user!.id, resolved_at: now })
         .eq("id", row.id).eq("status", "open");
       if (resolveError) throw resolveError;
+    }
+    // A payout change was made against the figures the rep sent before. New
+    // figures need a fresh look, so the old change does not carry over.
+    if (isResubmit) {
+      const { data: dropped, error: dropError } = await supabase.from("weekly_report_payout_changes")
+        .delete().eq("org_id", orgId).eq("rep_report_id", report.id).select("amount, system_amount, reason");
+      if (dropError) throw dropError;
+      for (const row of dropped ?? []) {
+        await audit(req, {
+          branchId, weekStart, action: "payout_change_removed", repReportId: report.id, repId: req.user!.id,
+          detail: { systemAmount: Number(row.system_amount), amount: Number(row.amount), reason: row.reason, why: "The rep resubmitted the report, so the change must be made again on the new figures." }
+        });
+      }
     }
 
     const totals = (snapshot as any)?.totals ?? {};
@@ -674,7 +769,7 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
     const branchId = requireBranch(req);
     const orgId = req.user!.orgId;
     const weekStart = parsed.data.weekStart ?? sundayWeekStartForDateKey(lagosDateKey());
-    const [company, repReports, corrections, auditRows, expectedRepIds, fines, previousFines, adjustments, previousAdjustments, bonusQueries] = await Promise.all([
+    const [company, repReports, corrections, auditRows, expectedRepIds, fines, previousFines, adjustments, previousAdjustments, bonusQueries, payoutChanges, gate] = await Promise.all([
       loadCompanyReport(orgId, branchId, weekStart),
       supabase.from("rep_weekly_reports").select(REP_COLUMNS).eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart),
       supabase.from("weekly_report_corrections").select(CORRECTION_COLUMNS).eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart).order("created_at", { ascending: true }),
@@ -688,7 +783,9 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
       supabase.from("weekly_bonus_queries").select(BONUS_QUERY_COLUMNS)
         .eq("org_id", orgId).eq("branch_id", branchId)
         .or(`status.eq.open,week_start.eq.${weekStart},correction_week_start.eq.${weekStart}`)
-        .order("created_at", { ascending: false }).limit(200)
+        .order("created_at", { ascending: false }).limit(200),
+      payoutChangesForWeek(orgId, branchId, null, weekStart),
+      sendGateFor(orgId, branchId, weekStart)
     ]);
     if (repReports.error) throw repReports.error;
     if (bonusQueries.error) throw bonusQueries.error;
@@ -709,6 +806,8 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
       adjustments,
       previousAdjustments,
       bonusQueries: (bonusQueries.data ?? []).map(mapBonusQuery),
+      payoutChanges,
+      gate,
       logMisses: await logMissesForWeek(orgId, null, weekStart),
       previousLogMisses: await logMissesForWeek(orgId, null, addDaysToDateKey(weekStart, -7)),
       logMissDisputes: await disputesForWeek(orgId, branchId, null, weekStart),
@@ -871,6 +970,103 @@ const CompanySubmitSchema = z.object({
   companySnapshot: snapshotSchema,
   managerBonusSnapshot: snapshotSchema.nullable().optional(),
   responses: z.array(z.object({ correctionId: z.string().uuid(), response: z.string().trim().min(2).max(2000) })).optional()
+});
+
+// ── Payout change: the manager corrects a rep's final payout ───────────────
+
+const PayoutChangeSchema = z.object({
+  weekStart: weekStartSchema,
+  // Signed: a plus adds to the payout, a minus takes off.
+  amount: z.number().int("Use whole naira.").refine((value) => value !== 0, { message: "Enter the amount to add or take off." })
+    .refine((value) => Math.abs(value) <= 100_000_000, { message: "That amount is too large." }),
+  reason: z.string().trim().min(3, "Say why the payout is being changed.").max(600)
+});
+
+async function payoutChangeContext(req: Request, weekStart: string) {
+  const branchId = requireBranch(req);
+  const orgId = req.user!.orgId;
+  const repId = String(req.params.repId);
+  const [report, company] = await Promise.all([
+    loadRepReport(orgId, branchId, repId, weekStart),
+    loadCompanyReport(orgId, branchId, weekStart)
+  ]);
+  const verdict = canChangePayout((report?.status ?? null) as RepReportStatus | null, (company?.status ?? null) as CompanyReportStatus | null);
+  if (!verdict.ok || !report) throw httpError(409, verdict.ok ? "The rep has not submitted this report yet." : verdict.error);
+  return { branchId, orgId, repId, report };
+}
+
+router.put("/rep/:repId/payout-change", requireRole(...REVIEWERS), async (req, res) => {
+  const parsed = PayoutChangeSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+  const { weekStart, amount, reason } = parsed.data;
+  try {
+    const { branchId, orgId, repId, report } = await payoutChangeContext(req, weekStart);
+    const systemAmount = Math.max(0, Math.round(Number((report.snapshot as any)?.totals?.finalBonus ?? 0)));
+    const problem = payoutChangeProblem(systemAmount, amount);
+    if (problem) throw httpError(400, problem);
+
+    const { data: before, error: beforeError } = await supabase.from("weekly_report_payout_changes")
+      .select("amount, reason").eq("org_id", orgId).eq("rep_report_id", report.id).maybeSingle();
+    if (beforeError) throw beforeError;
+    const now = new Date().toISOString();
+    const { error } = await supabase.from("weekly_report_payout_changes").upsert({
+      org_id: orgId, branch_id: branchId, week_start: weekStart, rep_report_id: report.id, rep_id: repId,
+      system_amount: systemAmount, amount, reason,
+      changed_by: req.user!.id, changed_by_name: req.user!.name ?? null, changed_by_role: req.user!.role,
+      updated_at: now
+    }, { onConflict: "rep_report_id" });
+    if (error) throw error;
+    await audit(req, {
+      branchId, weekStart, action: "payout_changed", repReportId: report.id, repId,
+      detail: {
+        systemAmount, amount, newAmount: systemAmount + amount, reason,
+        previousAmount: before ? Number(before.amount) : null,
+        previousReason: before?.reason ?? null
+      }
+    });
+    res.json({ ok: true });
+  } catch (error: any) {
+    sendError(res, error, "Could not change this payout.");
+  }
+});
+
+router.delete("/rep/:repId/payout-change", requireRole(...REVIEWERS), async (req, res) => {
+  const parsed = z.object({ weekStart: weekStartSchema }).safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+  const { weekStart } = parsed.data;
+  try {
+    const { branchId, orgId, repId, report } = await payoutChangeContext(req, weekStart);
+    const { data: removed, error } = await supabase.from("weekly_report_payout_changes")
+      .delete().eq("org_id", orgId).eq("rep_report_id", report.id).select("amount, system_amount, reason");
+    if (error) throw error;
+    if (!removed || removed.length === 0) throw httpError(404, "There is no payout change on this report.");
+    await audit(req, {
+      branchId, weekStart, action: "payout_change_removed", repReportId: report.id, repId,
+      detail: { systemAmount: Number(removed[0].system_amount), amount: Number(removed[0].amount), reason: removed[0].reason }
+    });
+    res.json({ ok: true });
+  } catch (error: any) {
+    sendError(res, error, "Could not remove this payout change.");
+  }
+});
+
+/**
+ * Payout changes the Owner has approved (the week is locked), for the pages
+ * that count bonus as a cost. Each is dated on the last day of its week, so a
+ * page adds the ones that fall inside the period it is showing.
+ * A rep sees only their own; roles that never see bonus money get none.
+ */
+router.get("/payout-changes/approved", async (req, res) => {
+  const parsed = z.object({ from: z.string().regex(DATE_KEY).optional(), to: z.string().regex(DATE_KEY).optional() }).safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+  try {
+    const scoped = scopeOf(req);
+    const seesAll = scoped.role === "Owner" || scoped.role === "Admin" || scoped.role === "Manager";
+    if (!seesAll && scoped.role !== "Sales Rep") { res.json({ rows: [] }); return; }
+    res.json({ rows: await approvedPayoutChanges(req.user!.orgId, { from: parsed.data.from, to: parsed.data.to, repId: seesAll ? null : scoped.id }) });
+  } catch (error: any) {
+    sendError(res, error, "Could not load the approved payout changes.");
+  }
 });
 
 router.post("/company/submit", requireRole(...REVIEWERS), async (req, res) => {

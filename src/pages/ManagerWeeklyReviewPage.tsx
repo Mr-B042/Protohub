@@ -4,10 +4,10 @@ import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   AlertTriangle, Box, Check, CheckCircle2, ChevronRight, ClipboardList, Download, FileText, Inbox, MessageCircle, MoreVertical,
-  RotateCcw, Search, Send, ShoppingCart, Target, Undo2, Wallet, X, Crown, Flag, History, Users, BarChart3, ChevronLeft
+  Pencil, RotateCcw, Search, Send, ShoppingCart, Target, Undo2, Wallet, X, Crown, Flag, History, Users, BarChart3, ChevronLeft
 } from "lucide-react";
 import {
-  Avatar, AuditTable, ChartLegend, CorrectionForm, CorrectionList, KpiCard, Modal, NoteBox, NumberedHeader, OrderStatusPill,
+  Avatar, AuditTable, ChartLegend, CorrectionForm, CorrectionList, KpiCard, Modal, NoteBox, NumberedHeader, OrderStatusPill, PayoutChangeForm, PayoutChangeNote,
   OrderTypePill, OrdersRateChart, Panel, ProductDonut, RateBar, RepStatusPill, StepBadge, WeekPicker, WorkflowSteps,
   dailyChartRows, deltaPct, downloadCsv, longDate, nf, pctText, shortDateTime, shortDay, type CorrectionDraft, type WorkflowStep
 } from "../components/WeeklyReportParts";
@@ -17,7 +17,7 @@ import {
   CORRECTION_SECTION_LABEL, buildCompanySnapshot, type ManagerBonusPreview, type MonthlyIncentiveReport, type SnapshotDifference, type WeeklyReportSnapshot
 } from "./weekly-report-model";
 import type {
-  LogMissDispute, ManagerFundTotals, WeeklyBonusQuery, WeeklyCompanyReport, WeeklyRepReport, WeeklyReportAuditEntry, WeeklyReportCorrection, WeeklyReportResponseInput
+  LogMissDispute, ManagerFundTotals, WeeklyBonusQuery, WeeklyPayoutChange, WeeklyCompanyReport, WeeklyRepReport, WeeklyReportAuditEntry, WeeklyReportCorrection, WeeklyReportResponseInput
 } from "../lib/api";
 import { currencySymbol } from "../lib/money-privacy";
 
@@ -42,6 +42,8 @@ export type ReviewRepRow = {
   overdue?: boolean;
   /** The Head of Sales Rep: shown with the lilac crown badge. */
   isHeadOfSales?: boolean;
+  /** The manager's change to this rep's final payout (already laid over live/frozen). */
+  payoutChange?: WeeklyPayoutChange | null;
 };
 
 /** The figures a row shows: what was submitted, or today's if not submitted yet. */
@@ -66,8 +68,14 @@ export default function ManagerWeeklyReviewPage({
   bonusQueries = [], canResolveQueries = false, onResolveBonusQuery,
   renderFunds, fundsPending, fundsSummary, onSaveDraftNote, initialTab, logMissDisputes = [], onDecideLogMiss,
   renderHeadOfSales, headOfSalesAttention = false,
-  onApprove, onReturn, onFlag, onSubmitToOwner, onBack, onEditManagerBonus, monthlyIncentive = null
+  onApprove, onReturn, onFlag, onSubmitToOwner, onBack, onEditManagerBonus, monthlyIncentive = null,
+  onSavePayoutChange, onRemovePayoutChange, repsWaiting = false
 }: {
+  /** Add to or take off a rep's final payout (signed amount), with a reason. */
+  onSavePayoutChange?: (repId: string, amount: number, reason: string) => Promise<void>;
+  onRemovePayoutChange?: (repId: string) => Promise<void>;
+  /** Reps cannot send THIS week's report yet: last week is not with the owner. */
+  repsWaiting?: boolean;
   /** The month's incentive, only in the week the month ends. */
   monthlyIncentive?: MonthlyIncentiveReport | null;
   bonusQueries?: WeeklyBonusQuery[];
@@ -119,6 +127,7 @@ export default function ManagerWeeklyReviewPage({
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [returning, setReturning] = useState<string | null>(null);
   const [flagging, setFlagging] = useState<string | null>(null);
+  const [changingPayout, setChangingPayout] = useState<string | null>(null);
   const [menuFor, setMenuFor] = useState<{ repId: string; x: number; y: number } | null>(null);
   const [managerNote, setManagerNote] = useState(company?.managerNote ?? "");
   const [ownerResponses, setOwnerResponses] = useState<Record<string, string>>({});
@@ -132,6 +141,10 @@ export default function ManagerWeeklyReviewPage({
 
   const companyStatus = company?.status ?? "open";
   const frozenWeek = companyStatus === "submitted_to_owner" || companyStatus === "locked";
+  // A payout is changed on a submitted report, while the week is still with the manager.
+  const canChangePayout = (row: ReviewRepRow) => canAct && !frozenWeek && !!onSavePayoutChange && !!row.frozen
+    && (row.report?.status === "submitted" || row.report?.status === "manager_approved");
+  const payoutRow = changingPayout ? rows.find((row) => row.repId === changingPayout) ?? null : null;
   const expectedRows = rows.filter((row) => row.expected || row.report);
   const shown = expectedRows.map(shownSnapshot).filter((snap): snap is WeeklyReportSnapshot => !!snap);
   const companySnap = useMemo(
@@ -176,7 +189,7 @@ export default function ManagerWeeklyReviewPage({
           : "";
 
   const steps: WorkflowStep[] = [
-    { title: "Sales Reps Submit", detail: dueDate ? `Due by the end of Tuesday, ${longDate(dueDate)}` : "Reps submit their weekly reports", state: total > 0 && inCount === total ? "done" : "current", badge: <StepBadge tone="green">{inCount} of {total} submitted</StepBadge> },
+    { title: "Sales Reps Submit", detail: dueDate ? `Due by the end of ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date(`${dueDate}T12:00:00Z`).getUTCDay()]}, ${longDate(dueDate)}` : "Reps submit their weekly reports", state: total > 0 && inCount === total ? "done" : "current", badge: <StepBadge tone="green">{inCount} of {total} submitted</StepBadge> },
     { title: "Manager Review", detail: "Review all reports, verify data and request corrections if needed", state: frozenWeek || (allApproved && companyStatus !== "returned_to_manager") ? "done" : "current", badge: frozenWeek ? <StepBadge tone="green">Done</StepBadge> : <StepBadge tone="blue">In Progress</StepBadge> },
     { title: "Submit to Owner", detail: "Send complete weekly report to owner", state: frozenWeek ? "done" : allApproved ? "current" : "pending", badge: <StepBadge tone={frozenWeek ? "green" : "gray"}>{frozenWeek ? "Submitted" : "Pending"}</StepBadge> },
     { title: "Owner Approval", detail: "Final approval and bonus lock", state: companyStatus === "locked" ? "done" : companyStatus === "submitted_to_owner" ? "current" : "pending", badge: <StepBadge tone={companyStatus === "locked" ? "green" : companyStatus === "submitted_to_owner" ? "blue" : "gray"}>{companyStatus === "locked" ? "Approved" : companyStatus === "submitted_to_owner" ? "In Progress" : "Pending"}</StepBadge> }
@@ -362,6 +375,12 @@ export default function ManagerWeeklyReviewPage({
       </div>
 
       {error && <p className="m-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-[13px] font-semibold text-rose-700">{error}</p>}
+      {repsWaiting && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-[13px] text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+          <span><strong>Reps cannot send this week's report yet.</strong> Last week has not been sent to the owner. Once it is sent, they can submit, and they will not be marked late for the wait.</span>
+          <button type="button" onClick={() => onShiftWeek(-1)} className="!min-h-0 rounded-lg bg-amber-600 px-3 py-1.5 text-[12px] font-bold text-white hover:bg-amber-700">Go to last week</button>
+        </div>
+      )}
 
       {/* ── Top tabs ──────────────────────────────────────────── */}
       <div className="flex gap-1 overflow-x-auto rounded-2xl bg-gray-100 p-1 dark:bg-slate-800" role="tablist">
@@ -491,7 +510,16 @@ export default function ManagerWeeklyReviewPage({
                               <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.crossSellBonus ?? 0)}</td>
                               <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.upsellBonus ?? 0)}</td>
                               <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.baseBonus ?? 0)}</td>
-                              <td className="px-2 py-3 font-bold text-gray-900 dark:text-slate-100">{nf(snap?.totals.finalBonus ?? 0)}</td>
+                              <td className="px-2 py-3 font-bold text-gray-900 dark:text-slate-100">
+                                <span className="flex items-center gap-1">
+                                  {nf(snap?.totals.finalBonus ?? 0)}
+                                  {canChangePayout(row) && (
+                                    <button type="button" aria-label={`Change ${row.repName}'s payout`} title="Change payout" onClick={() => setChangingPayout(row.repId)}
+                                      className="!min-h-0 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-[#1F8FE0] dark:hover:bg-slate-800"><Pencil className="h-3 w-3" /></button>
+                                  )}
+                                </span>
+                                {row.payoutChange && <PayoutChangeNote change={row.payoutChange} sym={sym} />}
+                              </td>
                               <td className="px-2 py-3">
                                 <span className="flex items-center gap-1">
                                   <button type="button" onClick={() => setReviewing(row.repId)} className="!min-h-0 rounded-lg bg-blue-50 px-2 py-1.5 text-[12px] font-bold text-blue-700 hover:bg-blue-100 dark:bg-blue-500/15 dark:text-blue-200">Review</button>
@@ -519,7 +547,10 @@ export default function ManagerWeeklyReviewPage({
                           <td className="px-2 py-3">{nf(totals.crossSellBonus)}</td>
                           <td className="px-2 py-3">{nf(totals.upsellBonus)}</td>
                           <td className="px-2 py-3">{nf(totals.baseBonus)}</td>
-                          <td className="px-2 py-3">{nf(totals.totalBonus)}</td>
+                          <td className="px-2 py-3">
+                            {nf(totals.totalBonus)}
+                            {(totals.payoutChanges ?? 0) !== 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-amber-700 dark:text-amber-300">incl. {(totals.payoutChanges ?? 0) < 0 ? "-" : "+"}{sym}{nf(Math.abs(totals.payoutChanges ?? 0))} payout changes</span>}
+                          </td>
                           <td />
                         </tr>
                       </tbody>
@@ -634,9 +665,28 @@ export default function ManagerWeeklyReviewPage({
             <MenuItem icon={ClipboardList} label="Review report" onClick={() => { setReviewing(menuFor.repId); setMenuFor(null); }} />
             {canAct && !frozenWeek && <MenuItem icon={Undo2} label="Return for correction" onClick={() => { setReturning(menuFor.repId); setMenuFor(null); }} />}
             {canAct && companyStatus !== "locked" && <MenuItem icon={Flag} label="Flag issue" onClick={() => { setFlagging(menuFor.repId); setMenuFor(null); }} />}
+            {(() => {
+              const menuRow = rows.find((row) => row.repId === menuFor.repId);
+              return menuRow && canChangePayout(menuRow)
+                ? <MenuItem icon={Pencil} label={menuRow.payoutChange ? "Edit payout change" : "Change payout"} onClick={() => { setChangingPayout(menuFor.repId); setMenuFor(null); }} />
+                : null;
+            })()}
           </div>
         </div>,
         document.body
+      )}
+
+      {/* ── Change a rep's payout ───────────────────────────────── */}
+      {payoutRow && onSavePayoutChange && (
+        <PayoutChangeForm
+          repName={payoutRow.repName}
+          sym={sym}
+          systemAmount={payoutRow.frozen?.totals.systemFinalBonus ?? payoutRow.frozen?.totals.finalBonus ?? 0}
+          existing={payoutRow.payoutChange ? { amount: payoutRow.payoutChange.amount, reason: payoutRow.payoutChange.reason } : null}
+          onCancel={() => setChangingPayout(null)}
+          onSave={async (amount, reason) => { await onSavePayoutChange(payoutRow.repId, amount, reason); setChangingPayout(null); }}
+          onRemove={onRemovePayoutChange ? async () => { await onRemovePayoutChange(payoutRow.repId); setChangingPayout(null); } : undefined}
+        />
       )}
 
       {/* ── Sales Rep Report Review (side-by-side check) ───────── */}

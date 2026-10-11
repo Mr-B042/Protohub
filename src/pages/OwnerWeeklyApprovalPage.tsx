@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import {
   AuditTable, Avatar, ChartLegend, CompanyStatusPill, CorrectionForm, CorrectionList, KpiCard, Modal, NoteBox, NumberedHeader,
-  OrdersRateChart, Panel, ProductDonut, RateBar, RepStatusPill, StepBadge, WeekPicker, WorkflowSteps, dailyChartRows, deltaPct,
+  OrdersRateChart, Panel, PayoutChangeNote, ProductDonut, RateBar, RepStatusPill, StepBadge, WeekPicker, WorkflowSteps, dailyChartRows, deltaPct,
   downloadCsv, longDate, nf, pctText, shortDateTime, type CorrectionDraft, type WorkflowStep
 } from "../components/WeeklyReportParts";
 import { CompanyProductTable, OrdersTable, RepBonusTable, RepReviewModal, shownSnapshot, type ReviewRepRow } from "./ManagerWeeklyReviewPage";
@@ -119,10 +119,21 @@ export default function OwnerWeeklyApprovalPage({
     const flags: RedFlag[] = [];
     const missing = rows.filter((row) => row.expected && (!row.report || row.report.status === "draft"));
     const overdue = missing.filter((row) => row.overdue);
-    if (overdue.length > 0) flags.push({ severity: "high", title: `${overdue.length} report${overdue.length === 1 ? "" : "s"} overdue`, detail: `${overdue.map((row) => row.repName).join(", ")}: not submitted by the end of Tuesday${dueDate ? `, ${longDate(dueDate)}` : ""}.` });
+    if (overdue.length > 0) flags.push({ severity: "high", title: `${overdue.length} report${overdue.length === 1 ? "" : "s"} overdue`, detail: `${overdue.map((row) => row.repName).join(", ")}: not submitted by the end of ${dueDate ? longDate(dueDate) : "the due day"}.` });
     else if (missing.length > 0) flags.push({ severity: "high", title: `${missing.length} report${missing.length === 1 ? "" : "s"} missing`, detail: missing.map((row) => row.repName).join(", ") });
     const late = rows.filter((row) => row.submittedLate);
-    if (late.length > 0) flags.push({ severity: "medium", title: `${late.length} report${late.length === 1 ? "" : "s"} submitted late`, detail: `${late.map((row) => row.repName).join(", ")}: after the end of Tuesday${dueDate ? `, ${longDate(dueDate)}` : ""}.` });
+    if (late.length > 0) flags.push({ severity: "medium", title: `${late.length} report${late.length === 1 ? "" : "s"} submitted late`, detail: `${late.map((row) => row.repName).join(", ")}: after the end of ${dueDate ? longDate(dueDate) : "the due day"}.` });
+    // Payouts the manager changed (Bright, 11 Oct 2026): the owner sees every
+    // one, with the system figure it replaced, before approving.
+    for (const row of expectedRows) {
+      const change = row.payoutChange;
+      if (!change) continue;
+      flags.push({
+        severity: "medium", repId: row.repId,
+        title: `${row.repName}: payout changed${change.changedByName ? ` by ${change.changedByName}` : ""}`,
+        detail: `System ${sym}${nf(change.systemAmount)} → ${sym}${nf(change.systemAmount + change.amount)} (${change.amount < 0 ? "-" : "+"}${sym}${nf(Math.abs(change.amount))}). Reason: ${change.reason}`
+      });
+    }
     for (const row of expectedRows) {
       if (row.differences.length > 0) {
         flags.push({
@@ -238,7 +249,10 @@ export default function OwnerWeeklyApprovalPage({
                 <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.crossSellBonus ?? 0)}</td>
                 <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.upsellBonus ?? 0)}</td>
                 <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.baseBonus ?? 0)}</td>
-                <td className="px-2 py-3 font-bold text-gray-900 dark:text-slate-100">{nf(snap?.totals.finalBonus ?? 0)}</td>
+                <td className="px-2 py-3 font-bold text-gray-900 dark:text-slate-100">
+                  {nf(snap?.totals.finalBonus ?? 0)}
+                  {row.payoutChange && <PayoutChangeNote change={row.payoutChange} sym={sym} />}
+                </td>
                 <td className="px-2 py-3">
                   <span className="flex items-center gap-1">
                     <button type="button" onClick={() => setViewing(row.repId)} className="!min-h-0 rounded-lg bg-blue-50 px-2 py-1.5 text-[12px] font-bold text-blue-700 hover:bg-blue-100 dark:bg-blue-500/15 dark:text-blue-200">View</button>
@@ -254,7 +268,10 @@ export default function OwnerWeeklyApprovalPage({
             <td className="px-2 py-3">{nf(totals.orders)}</td><td className="px-2 py-3">{nf(totals.delivered)}</td>
             <td className="px-2 py-3"><span className="flex items-center gap-2"><span className="w-11">{pctText(totals.deliveryRate)}</span><span className="w-14"><RateBar value={totals.deliveryRate} tone="green" /></span></span></td>
             <td className="px-2 py-3">{nf(totals.crossSellBonus)}</td><td className="px-2 py-3">{nf(totals.upsellBonus)}</td>
-            <td className="px-2 py-3">{nf(totals.baseBonus)}</td><td className="px-2 py-3">{nf(totals.totalBonus)}</td><td />
+            <td className="px-2 py-3">{nf(totals.baseBonus)}</td><td className="px-2 py-3">
+              {nf(totals.totalBonus)}
+              {(totals.payoutChanges ?? 0) !== 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-amber-700 dark:text-amber-300">incl. {(totals.payoutChanges ?? 0) < 0 ? "-" : "+"}{sym}{nf(Math.abs(totals.payoutChanges ?? 0))} payout changes</span>}
+            </td><td />
           </tr>
         </tbody>
       </table>
@@ -262,10 +279,11 @@ export default function OwnerWeeklyApprovalPage({
   );
 
   const exportReps = () => downloadCsv(`weekly-report-${weekStart}.csv`,
-    ["Sales Rep", "Status", "Orders", "Delivered", "Delivery Rate", "Cross-Sell Bonus", "Upsell Bonus", "Base Bonus", "Fines", "Final Bonus"],
+    ["Sales Rep", "Status", "Orders", "Delivered", "Delivery Rate", "Cross-Sell Bonus", "Upsell Bonus", "Base Bonus", "Fines", "Final Bonus", "System Figure", "Payout Change", "Reason For Change", "Changed By"],
     expectedRows.map((row) => {
       const snap = shownSnapshot(row);
-      return [row.repName, row.report?.status ?? "draft", snap?.totals.orders ?? 0, snap?.totals.delivered ?? 0, snap?.totals.deliveryRate ?? 0, snap?.totals.crossSellBonus ?? 0, snap?.totals.upsellBonus ?? 0, snap?.totals.baseBonus ?? 0, snap?.totals.fines ?? 0, snap?.totals.finalBonus ?? 0];
+      return [row.repName, row.report?.status ?? "draft", snap?.totals.orders ?? 0, snap?.totals.delivered ?? 0, snap?.totals.deliveryRate ?? 0, snap?.totals.crossSellBonus ?? 0, snap?.totals.upsellBonus ?? 0, snap?.totals.baseBonus ?? 0, snap?.totals.fines ?? 0, snap?.totals.finalBonus ?? 0,
+        snap?.totals.systemFinalBonus ?? snap?.totals.finalBonus ?? 0, snap?.totals.payoutChange ?? 0, row.payoutChange?.reason ?? "", row.payoutChange?.changedByName ?? ""];
     }));
 
   const managerReportPanel = (

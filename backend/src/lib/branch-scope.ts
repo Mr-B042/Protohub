@@ -83,6 +83,8 @@ const BRANCH_TABLES = new Set([
   // first row and every key is per branch, so these are safe to list at once.
   "rep_weekly_reports", "company_weekly_reports",
   "weekly_report_corrections", "weekly_report_audit", "weekly_bonus_queries",
+  // The manager's change to a rep's payout (migration 299), branch_id NOT NULL from the first row.
+  "weekly_report_payout_changes",
   // Manager Funds & Expenses (migration 271), branch_id NOT NULL from the first row.
   "manager_fund_settings", "manager_fund_transactions", "manager_fund_weeks", "manager_fund_adjustment_requests",
   // Missed-log disputes (migration 272), branch_id NOT NULL from the first row.

@@ -145,3 +145,48 @@ test("each delivered order carries its base / upsell / cross-sell split and its 
   expect(delivered.reduce((sum, row) => sum + (row.baseBonus ?? 0), 0)).toBe(live.totals.baseBonus);
   expect(delivered.reduce((sum, row) => sum + (row.crossSellBonus ?? 0), 0)).toBe(live.totals.crossSellBonus);
 });
+
+// ── The manager's change to a rep's payout (Bright, 11 Oct 2026) ────────────
+
+test("a payout change replaces the final bonus and keeps the system figure beside it", async () => {
+  const { withPayoutChange, buildCompanySnapshot, compareSnapshots } = await import("../src/pages/weekly-report-model");
+  const raw = snapshot([order({})], { "4400": { base: 2000, upsell: 0, crossSell: 0 } });
+  const change = { amount: -500, reason: "Counted twice", changedByName: "Onyin", changedByRole: "Admin", changedAt: "2026-10-11T08:00:00Z" };
+  const changed = withPayoutChange(raw, change);
+  expect(raw.totals.finalBonus).toBe(2000);
+  expect(changed.totals.finalBonus).toBe(1500);
+  expect(changed.totals.systemFinalBonus).toBe(2000);
+  expect(changed.totals.payoutChange).toBe(-500);
+  expect(changed.payoutChangeDetail?.reason).toBe("Counted twice");
+  // The rep's own figures are untouched, so nothing reads as "changed since submit".
+  expect(raw.totals.systemFinalBonus).toBeUndefined();
+  expect(compareSnapshots(raw, raw)).toEqual([]);
+  // Laying it on twice does not take the amount off twice.
+  expect(withPayoutChange(changed, change).totals.finalBonus).toBe(1500);
+  // No change, or a zero one, leaves the snapshot exactly as it was.
+  expect(withPayoutChange(raw, null)).toBe(raw);
+  expect(withPayoutChange(raw, { ...change, amount: 0 })).toBe(raw);
+  // Never below nothing, and the recorded change is what was really taken off.
+  const drained = withPayoutChange(raw, { ...change, amount: -9000 });
+  expect(drained.totals.finalBonus).toBe(0);
+  expect(drained.totals.payoutChange).toBe(-2000);
+
+  const company = buildCompanySnapshot(WEEK, WEEK_END, [changed, raw], new Date("2026-09-29T09:00:00Z"));
+  expect(company.totals.totalBonus).toBe(3500);
+  expect(company.totals.payoutChanges).toBe(-500);
+  expect(company.reps[0].systemFinalBonus).toBe(2000);
+  expect(company.reps[0].payoutChange).toBe(-500);
+  expect(company.reps[1].payoutChange).toBeUndefined();
+});
+
+test("lateness follows the server's verdict, so a rep held up by the manager is not late", async () => {
+  const { wasSubmittedLate } = await import("../src/pages/weekly-report-model");
+  const entry = (createdAt: string, detail?: Record<string, unknown>) => [{ action: "rep_submitted", repId: "rep-1", createdAt, detail }];
+  // Sent the Thursday after the Tuesday, but the server gave an extra day: not late.
+  expect(wasSubmittedLate("2026-10-04", entry("2026-10-15T09:00:00Z", { late: false }), "rep-1")).toBe(false);
+  expect(wasSubmittedLate("2026-10-04", entry("2026-10-13T09:00:00Z", { late: true }), "rep-1")).toBe(true);
+  // Older reports carry no verdict: the Tuesday rule decides.
+  expect(wasSubmittedLate("2026-09-27", entry("2026-10-08T09:00:00Z"), "rep-1")).toBe(true);
+  expect(wasSubmittedLate("2026-09-27", entry("2026-10-06T09:00:00Z"), "rep-1")).toBe(false);
+  expect(wasSubmittedLate("2026-09-27", [], "rep-1")).toBe(false);
+});
