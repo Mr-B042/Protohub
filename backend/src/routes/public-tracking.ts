@@ -3,6 +3,7 @@ import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { domainOf } from "../lib/tracking-hub.js";
+import { logger } from "../lib/logger.js";
 
 // The WordPress embed reports each browser Pixel event it fires (Tracking Hub,
 // 2 Oct 2026), so the hub can count browser events and see whether a page has
@@ -25,7 +26,23 @@ router.post("/browser-event", beaconLimit, async (req, res) => {
   let body: unknown = req.body;
   if (typeof body === "string") { try { body = JSON.parse(body); } catch { body = {}; } }
   const parsed = BeaconSchema.safeParse(body);
-  if (!parsed.success) { res.status(400).json({ error: "Bad event." }); return; }
+  if (!parsed.success) {
+    // Why it was refused (11 Oct 2026: 64 of 66 real reports were, and nothing
+    // said which field). Shapes only - types and lengths, never the values.
+    const raw = body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : {};
+    const shape = (value: unknown) => Array.isArray(value) ? `array(${value.length}; longest ${value.reduce((max: number, item) => Math.max(max, String(item ?? "").length), 0)})`
+      : typeof value === "string" ? `string(${value.length})` : value === null ? "null" : typeof value;
+    logger.warn("browser-event refused", {
+      issues: parsed.error.issues.slice(0, 6).map((issue) => `${issue.path.join(".") || "(body)"}: ${issue.code}`),
+      bodyType: Array.isArray(req.body) ? "array" : typeof req.body,
+      bodyLength: typeof req.body === "string" ? req.body.length : null,
+      contentType: req.headers["content-type"] ?? null,
+      contentLength: req.headers["content-length"] ?? null,
+      fields: Object.fromEntries(Object.keys(raw).slice(0, 12).map((key) => [key, shape(raw[key])]))
+    });
+    res.status(400).json({ error: "Bad event." });
+    return;
+  }
   const event = parsed.data;
   try {
     const { data: order } = await supabase.from("orders").select("id, org_id, branch_id").eq("id", event.orderId).maybeSingle();
