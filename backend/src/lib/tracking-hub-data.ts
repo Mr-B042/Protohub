@@ -166,6 +166,11 @@ export const DEFAULT_HUB_SETTINGS = {
   timezone: "Africa/Lagos",
   sendBrowser: true,
   sendCapi: true,
+  // The delivered-sale event (Bright, 11 Oct 2026): one extra event to Meta
+  // when an order is DELIVERED, so ads can be optimised on customers who pay.
+  // Off until switched on here; the event name is the one Meta will show.
+  sendDelivered: false,
+  deliveredEventName: "OrderDelivered",
   multiPlatform: true,
   logAllEvents: true,
   trackingMode: "order_based" as "order_based" | "thank_you" | "hybrid",

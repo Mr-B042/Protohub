@@ -4594,6 +4594,8 @@ export type HubDiagnostics = {
 };
 export type HubSettings = {
   enabled: boolean; currency: string; timezone: string; sendBrowser: boolean; sendCapi: boolean; multiPlatform: boolean; logAllEvents: boolean;
+  /** One extra event to Meta when an order is delivered, and the name Meta shows it under. */
+  sendDelivered?: boolean; deliveredEventName?: string;
   trackingMode: "order_based" | "thank_you" | "hybrid"; defaultStrategy: HubStrategy; defaultDataSources: Record<string, string>; defaultEventValue: "order_total";
   defaultWebsiteId: string | null; defaultProfileId: string | null;
   notifications: { capiFailures: boolean; connection: boolean; duplicatePixel: boolean; lostParameters: boolean; dailySummary: boolean };

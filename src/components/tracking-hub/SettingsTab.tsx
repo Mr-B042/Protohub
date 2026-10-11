@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
   ArrowRight, Bell, CheckCircle2, CircleCheck, Clock, Copy, Database, FileText, Globe, Info, Link2, Plus, Radio, Settings as SettingsIcon,
-  Shield, ShoppingCart, SlidersHorizontal, Sparkles, TriangleAlert, Users
+  Shield, ShoppingCart, SlidersHorizontal, Sparkles, TriangleAlert, Truck, Users
 } from "lucide-react";
 import { trackingHubApi, type HubAuditEntry, type HubProfile, type HubSettings, type HubSettingsResponse, type HubStrategy } from "../../lib/api";
 import {
@@ -231,9 +231,19 @@ function GeneralSection({ data, draft, set, saveButton, onToast, onTab }: { data
             <ToggleTile icon={<Sparkles className="h-4 w-4" />} title="Auto-capture Meta Parameters" sub="Automatically capture fbclid, fbp, fbc and campaign parameters. Always on." checked onChange={() => undefined} disabled />
             <ToggleTile icon={<Globe className="h-4 w-4" />} title="Send Browser Pixel Events" sub="Fire Purchase event on customer's browser." checked={draft.sendBrowser} onChange={(value) => set({ sendBrowser: value, defaultStrategy: draft.trackingMode === "thank_you" ? "landing_page" : value ? "browser_capi" : "capi_only" })} />
             <ToggleTile icon={<Radio className="h-4 w-4" />} title="Send Server Events (CAPI)" sub="Send Purchase event via Conversions API." checked={draft.sendCapi} onChange={(value) => set({ sendCapi: value })} />
+            <ToggleTile icon={<Truck className="h-4 w-4" />} title="Send Delivered Sales to Meta" sub="One extra event when an order is delivered, so ads can learn who pays." checked={draft.sendDelivered === true} onChange={(value) => set({ sendDelivered: value, deliveredEventName: draft.deliveredEventName || "OrderDelivered" })} />
             <ToggleTile icon={<ShoppingCart className="h-4 w-4" />} title="Allow Multiple Platforms" sub="Enable tracking for Meta, TikTok, Google Ads, etc." checked={draft.multiPlatform} onChange={(value) => set({ multiPlatform: value })} />
             <ToggleTile icon={<Link2 className="h-4 w-4" />} title="Log All Events" sub="Keep a detailed log of all events for debugging." checked={draft.logAllEvents} onChange={(value) => set({ logAllEvents: value })} />
           </div>
+          {draft.sendDelivered ? (
+            <div className="mt-3 rounded-lg bg-emerald-50 p-3 text-[12.5px] text-emerald-900">
+              <label className="block font-semibold">Event name in Meta
+                <input value={draft.deliveredEventName ?? "OrderDelivered"} maxLength={50} onChange={(e) => set({ deliveredEventName: e.target.value.replace(/[^A-Za-z0-9_]/g, "") })} className={`${input} mt-1 font-mono`} placeholder="OrderDelivered" />
+              </label>
+              <p className="m-0 mt-2">Sent once per order when it is marked Delivered, with the amount collected, to the same Pixel as the order's Purchase. It is a separate event, so it never adds to your Purchase count. To make ads look for customers who pay, create a custom conversion from this event in Meta and choose it in the ad set.</p>
+              <p className="m-0 mt-1 text-emerald-800">When first switched on, orders delivered in the last 7 days are sent too. Meta does not accept older ones.</p>
+            </div>
+          ) : null}
           {!draft.enabled ? <p className="m-0 mt-3 rounded-lg bg-amber-50 p-3 text-[12.5px] text-amber-800">With the hub off, Protohub stops sending Purchase and Delivered events to Meta. Orders are still taken.</p> : null}
         </Card>
 
