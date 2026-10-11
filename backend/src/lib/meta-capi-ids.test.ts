@@ -63,3 +63,29 @@ test("the form's visitor id is passed on only when it is the 64 hex characters t
   assert.equal(metaIdsFromFormContext({ visitorId: "08031234567" }).visitorId, null);
   assert.equal(metaIdsFromFormContext({ visitorId: 12345 }).visitorId, null);
 });
+
+test("a click id the form cut at 180 characters is sent whole, from the form's saved address", () => {
+  const whole = `IwY2xjawN${"aB3dE".repeat(36)}_aem_XyZabcd`; // 201 characters, mixed case
+  assert.equal(whole.length, 201);
+  const cut = whole.slice(0, 180);
+  const landingUrl = `https://app.protohub.ng/#/order-form/embed?product=x&fbclid=${whole}&fbc=fb.1.1760000000000.${whole}`;
+  const ids = metaIdsFromFormContext({ fbclid: cut, fbc: `fb.1.1760000000000.${whole}`.slice(0, 180), landingUrl });
+  assert.equal(ids.fbclid, whole);
+  assert.equal(ids.fbc, `fb.1.1760000000000.${whole}`);
+  // Sent to Meta unchanged: same letters, same case, nothing dropped.
+  assert.equal(deriveFbc(ids.fbc, ids.fbclid, 1760000000000), `fb.1.1760000000000.${whole}`);
+
+  // A DIFFERENT click in the address is not a longer copy of the saved one: the saved one stays.
+  const other = `Other${"zZ9".repeat(60)}`;
+  assert.equal(metaIdsFromFormContext({ fbclid: cut, landingUrl: `https://x.test/#/f?fbclid=${other}` }).fbclid, cut);
+  // A short saved value is never swapped for something that merely starts the same.
+  assert.equal(metaIdsFromFormContext({ fbclid: "abc", landingUrl: "https://x.test/#/f?fbclid=abcdef" }).fbclid, "abc");
+});
+
+test("a cookie cut short is the same click: keep its time, send the whole click id", () => {
+  const whole = `IwY2xjawN${"aB3dE".repeat(36)}_aem_XyZabcd`;
+  const cutCookie = `fb.1.1759990000000.${whole}`.slice(0, 180);
+  assert.equal(deriveFbc(cutCookie, whole, 1760000000000), `fb.1.1759990000000.${whole}`);
+  // An older, different click in the cookie still loses to the click in the address.
+  assert.equal(deriveFbc(`fb.1.1750000000000.${"q".repeat(170)}`, whole, 1760000000000, 1760000500000), `fb.1.1760000000000.${whole}`);
+});

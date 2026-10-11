@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { sendOrderNewCustomerWhatsApp, sendOrderNewRepWhatsApp, sendOrderUpsellWhatsApp } from "./whatsapp.js";
-import { resolveMetaTrackingConfig, recordMetaCapiEvent, sendMetaCapiPurchase, fbclidSeenAt } from "./meta-capi.js";
+import { metaIdsFromFormContext, resolveMetaTrackingConfig, recordMetaCapiEvent, sendMetaCapiPurchase, fbclidSeenAt } from "./meta-capi.js";
 import { serverEventsAllowed, withDataSource } from "./tracking-credentials.js";
 import { purchasePixelFor } from "./tracking-click-pixel.js";
 import { orderAdIds } from "./tracking-hub.js";
@@ -396,6 +396,15 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     });
 
     const autoBranchId = (order as any).branch_id ?? (cart as any).branch_id ?? null;
+    // The same reading as a submitted order: a click id the form cut short is
+    // taken whole from the form's saved address.
+    const autoMetaIds = metaIdsFromFormContext({
+      ...(capturePayload.formContext ?? {}),
+      ...(capturePayload.fbp ? { fbp: capturePayload.fbp } : {}),
+      ...(capturePayload.fbc ? { fbc: capturePayload.fbc } : {}),
+      ...(capturePayload.fbclid ? { fbclid: capturePayload.fbclid } : {}),
+      ...(capturePayload.landingUrl ? { landingUrl: capturePayload.landingUrl } : {})
+    });
     const autoSendArgs = {
       eventSourceUrl: capturePayload.landingPageUrl ?? capturePayload.formContext?.landingPageUrl ?? capturePayload.landingUrl ?? null,
       clientIp: null,
@@ -406,9 +415,9 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
       city: customerCity,
       state: customerState,
       country: "ng",
-      fbp: capturePayload.fbp ?? null,
-      fbc: capturePayload.fbc ?? null,
-      fbclid: capturePayload.fbclid ?? null,
+      fbp: autoMetaIds.fbp,
+      fbc: autoMetaIds.fbc,
+      fbclid: autoMetaIds.fbclid,
       fbclidSeenAtMs: fbclidSeenAt(null, cart.created_at ?? null), // the cart began when the customer arrived
       visitorId: capturePayload.formContext?.visitorId ?? null,
       value: amount,
