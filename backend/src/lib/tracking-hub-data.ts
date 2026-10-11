@@ -1,7 +1,7 @@
 import { supabase } from "./supabase.js";
 import { addDaysToDateKey, lagosDateKey } from "./sales-bonus-engine.js";
 import {
-  PURCHASE_STATUS_LABEL, attributionCapture, domainOf, healthScore, humanMetaError, orderAdIds, pathOf, purchaseStatus,
+  PURCHASE_STATUS_LABEL, attributionCapture, domainOf, healthScore, humanMetaError, metaClickWithoutCampaign, orderAdIds, pathOf, purchaseStatus,
   reconciliationVerdict, type HealthItem, type PurchaseStatus
 } from "./tracking-hub.js";
 
@@ -80,6 +80,8 @@ export function ledgerRow(order: OrderRow, events: Events) {
     orderId: order.id, createdAt: order.created_at, product: order.product_name ?? "", productId: order.product_id,
     website: domainOf(landing) ?? domainOf(order.referrer) ?? null, landingPath: pathOf(landing),
     source: order.utm_source ?? null, campaignId: ids.campaignId, adsetId: ids.adsetId, adId: ids.adId,
+    // From a Facebook / Instagram link, but with no campaign details on it.
+    metaNoCampaign: metaClickWithoutCampaign(order),
     value: Number(order.amount) || 0, currency: order.currency ?? "NGN", orderStatus: order.status,
     trackingMode: mode, trackingKey: ctx.metaTrackingKey ? String(ctx.metaTrackingKey).toLowerCase() : null,
     browser: Boolean(browser), browserAt: browser?.fired_at ?? null,

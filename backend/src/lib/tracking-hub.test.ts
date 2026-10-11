@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { attributionCapture, otherAdPlatform, domainOf, healthScore, humanMetaError, orderAdIds, productFromName, purchaseStatus, reconciliationVerdict } from "./tracking-hub.js";
+import { metaClickWithoutCampaign, attributionCapture, otherAdPlatform, domainOf, healthScore, humanMetaError, orderAdIds, productFromName, purchaseStatus, reconciliationVerdict } from "./tracking-hub.js";
 
 test("browser + server with the same event id is one Purchase in Meta", () => {
   assert.equal(purchaseStatus({ serverStatus: "sent", serverEventId: "18452", browserEventId: "18452" }), "deduped");
@@ -68,4 +68,19 @@ test("orders from other ad platforms are named; Meta and untagged orders are not
   assert.equal(otherAdPlatform({ utm_source: "google", form_context: {} }), "Google");
   assert.equal(otherAdPlatform({ utm_source: "fb", form_context: { fbclid: "x" } }), null);
   assert.equal(otherAdPlatform({ utm_source: null, form_context: null }), null);
+});
+
+test("an order from a Facebook link with no campaign on it counts as from Meta, campaign not known", () => {
+  // Order 5106, 11 Oct 2026: a click id, source "direct", campaign "embed".
+  assert.equal(metaClickWithoutCampaign({ utm_source: "direct", utm_campaign: "embed", form_context: { fbclid: "IwY2xjawNabc" } }), true);
+  // The click id only in the form's saved address still counts.
+  assert.equal(metaClickWithoutCampaign({ utm_source: "direct", form_context: { landingUrl: "https://app.test/#/order-form/embed?product=x&fbclid=IwY2xjawNabc&fbp=fb.1.1.2" } }), true);
+  // A campaign id is known: it is an ordinary Meta-ad order, not this case.
+  assert.equal(metaClickWithoutCampaign({ utm_source: "fb", utm_campaign: "120253933366360359", form_context: { fbclid: "IwY2xjawNabc", utmId: "120253933366360359" } }), false);
+  // TikTok, even with a stray Meta click id, is TikTok.
+  assert.equal(metaClickWithoutCampaign({ utm_source: "tiktok", form_context: { ttclid: "E.C.P.abc", fbclid: "IwY2xjawNabc" } }), false);
+  // No click id: a saved cookie alone, or nothing at all, does not count.
+  assert.equal(metaClickWithoutCampaign({ utm_source: "website", utm_campaign: "cart_recovery", form_context: { fbc: "fb.1.1750000000000.Old" } }), false);
+  assert.equal(metaClickWithoutCampaign({ utm_source: "direct", form_context: {} }), false);
+  assert.equal(metaClickWithoutCampaign({ form_context: null }), false);
 });
