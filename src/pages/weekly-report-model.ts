@@ -236,7 +236,12 @@ export type WeeklyReportSnapshot = {
     carriedFines?: number;
     /** Fines this week's bonus could not cover: carried into next week. */
     unpaidFines?: number;
+    /** What the rep is paid. With a payout change this is the CHANGED amount. */
     finalBonus: number;
+    /** Only with a payout change: the system's own figure before the change. */
+    systemFinalBonus?: number;
+    /** Only with a payout change: what the manager added (+) or took off (-). */
+    payoutChange?: number;
     upsellOrders: number;
     crossSellOrders: number;
     manuallyAdjustedOrders: number;
@@ -256,6 +261,8 @@ export type WeeklyReportSnapshot = {
   };
   fines: WeeklyReportFine[];
   adjustments?: WeeklyReportFine[];
+  /** The manager's change to the final payout, when there is one (see withPayoutChange). */
+  payoutChangeDetail?: SnapshotPayoutChange;
   /** Every missed-log charge of the week, any status. */
   logMisses?: WeeklyLogMiss[];
   orders: WeeklyReportOrderRow[];
@@ -279,6 +286,51 @@ export const addDaysKey = (dateKey: string, days: number) => {
  * bonus lands in the week they are delivered (carry-over).
  */
 export const reportDueDate = (weekStart: string) => addDaysKey(weekStart, 9);
+
+// ── The manager's change to a rep's payout (Bright, 11 Oct 2026) ────────────
+// "In most cases the system doesn't read 100% accuracy": a Manager or Admin
+// can add to or take off a rep's FINAL payout before the week goes to the
+// Owner, with a reason. The rep's submitted figures are never rewritten - the
+// change is kept beside them (migration 299) and laid over the snapshot here,
+// so every screen shows the amount that will really be paid AND the system's
+// own figure it replaced.
+
+export type SnapshotPayoutChange = {
+  amount: number;
+  reason: string;
+  changedByName: string | null;
+  changedByRole: string | null;
+  changedAt: string;
+};
+
+/**
+ * The snapshot with the payout change laid over it: `finalBonus` becomes the
+ * changed amount, `systemFinalBonus` keeps the system's figure.
+ *
+ * ⚠️ Never send the result back to the server as a rep's report, and never
+ * compare it against a raw snapshot (compareSnapshots): the change is not a
+ * figure the system worked out. Lay it on AFTER comparing.
+ */
+export function withPayoutChange<T extends WeeklyReportSnapshot | null>(
+  snapshot: T,
+  change: (SnapshotPayoutChange & { amount: number }) | null | undefined
+): T {
+  if (!snapshot || !change || !Number.isFinite(change.amount) || Math.round(change.amount) === 0) return snapshot;
+  const system = snapshot.totals.systemFinalBonus ?? snapshot.totals.finalBonus;
+  const changed = Math.max(0, Math.round(system + change.amount));
+  return {
+    ...snapshot,
+    totals: { ...snapshot.totals, finalBonus: changed, systemFinalBonus: system, payoutChange: changed - system },
+    payoutChangeDetail: {
+      amount: changed - system, reason: change.reason,
+      changedByName: change.changedByName, changedByRole: change.changedByRole, changedAt: change.changedAt
+    }
+  };
+}
+
+/** "+₦2,000" / "-₦2,000", for the line that says what was changed. */
+export const signedMoney = (amount: number, symbol = "₦") =>
+  `${amount < 0 ? "-" : "+"}${symbol}${Math.abs(Math.round(amount)).toLocaleString("en-NG")}`;
 /** First week reps submit (Bright, 3 Oct 2026); earlier weeks are settled. Same as the server. */
 export const FIRST_REPORT_WEEK = "2026-09-27";
 /** Submit opens on the due Tuesday itself. */
@@ -288,6 +340,23 @@ export const isLateSubmission = (weekStart: string, submittedIso: string | null 
   if (!submittedIso) return false;
   const lagosDay = new Date(new Date(submittedIso).getTime() + 60 * 60 * 1000).toISOString().slice(0, 10);
   return lagosDay > reportDueDate(weekStart);
+};
+/**
+ * Whether the rep's first submit was late, as the SERVER judged it at the
+ * time. The server knows when last week reached the owner and gives a rep who
+ * had to wait an extra day (Bright, 11 Oct 2026), so its answer wins; reports
+ * from before that rule carry no answer and fall back to the Tuesday rule.
+ */
+export const wasSubmittedLate = (
+  weekStart: string,
+  audit: Array<{ action: string; repId?: string | null; createdAt: string; detail?: any }>,
+  repId: string
+) => {
+  const first = audit
+    .filter((entry) => entry.action === "rep_submitted" && entry.repId === repId)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+  if (!first) return false;
+  return typeof first.detail?.late === "boolean" ? first.detail.late : isLateSubmission(weekStart, first.createdAt);
 };
 /** When the rep FIRST submitted, from the audit trail (a resubmission after a return is not late). */
 export const firstSubmittedAt = (
@@ -582,6 +651,8 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   owner_approved_locked: "Approved & locked by owner",
   owner_returned: "Returned to manager",
   owner_reopened: "Week reopened by owner",
+  payout_changed: "Payout changed by manager",
+  payout_change_removed: "Payout change removed",
   bonus_check_accurate: "Checked bonus: accurate",
   bonus_query_opened: "Bonus query sent to manager",
   bonus_query_resolved: "Bonus query answered",
@@ -632,7 +703,10 @@ export type CompanyWeeklySnapshot = {
     upsellBonus: number;
     crossSellBonus: number;
     fines: number;
+    /** What the reps are paid in all, payout changes included. */
     totalBonus: number;
+    /** The manager's payout changes added up (already inside totalBonus). */
+    payoutChanges?: number;
     reps: number;
   };
   previous: { orders: number; delivered: number; deliveryRate: number; totalBonus: number } | null;
@@ -640,7 +714,7 @@ export type CompanyWeeklySnapshot = {
   monthlyIncentive?: MonthlyIncentiveReport | null;
   products: WeeklyReportProductRow[];
   daily: WeeklyReportDayRow[];
-  reps: Array<{ repId: string; repName: string; orders: number; delivered: number; deliveryRate: number; crossSellBonus: number; upsellBonus: number; baseBonus: number; fines: number; finalBonus: number }>;
+  reps: Array<{ repId: string; repName: string; orders: number; delivered: number; deliveryRate: number; crossSellBonus: number; upsellBonus: number; baseBonus: number; fines: number; finalBonus: number; systemFinalBonus?: number; payoutChange?: number; payoutChangeReason?: string; payoutChangedBy?: string | null }>;
 };
 
 /** Adds up rep snapshots into the company week. */
@@ -688,6 +762,8 @@ export function buildCompanySnapshot(
       crossSellBonus: sum((snap) => snap.totals.crossSellBonus),
       fines: sum((snap) => snap.totals.fines),
       totalBonus: sum((snap) => snap.totals.finalBonus),
+      // Payout changes by the manager, already inside totalBonus.
+      payoutChanges: sum((snap) => snap.totals.payoutChange ?? 0),
       reps: reps.length
     },
     previous: withPrevious.length > 0 ? {
@@ -711,7 +787,13 @@ export function buildCompanySnapshot(
       upsellBonus: snap.totals.upsellBonus,
       baseBonus: snap.totals.baseBonus,
       fines: snap.totals.fines,
-      finalBonus: snap.totals.finalBonus
+      finalBonus: snap.totals.finalBonus,
+      ...(snap.payoutChangeDetail ? {
+        systemFinalBonus: snap.totals.systemFinalBonus ?? snap.totals.finalBonus,
+        payoutChange: snap.payoutChangeDetail.amount,
+        payoutChangeReason: snap.payoutChangeDetail.reason,
+        payoutChangedBy: snap.payoutChangeDetail.changedByName
+      } : {})
     }))
   };
 }

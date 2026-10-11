@@ -94,6 +94,70 @@ export function canSubmitToOwner(
   return ok;
 }
 
+/**
+ * Changing a rep's final payout (Bright, 11 Oct 2026). The manager changes the
+ * figure the rep SUBMITTED, so there has to be a submitted report, and the
+ * week must still be with the manager: once it is with the owner or locked,
+ * the change the owner is looking at cannot move under them.
+ */
+export function canChangePayout(rep: RepReportStatus | null, company: CompanyReportStatus | null): Verdict {
+  const frozen = companyFrozen(company);
+  if (frozen) return frozen;
+  const status = rep ?? "draft";
+  if (status === "submitted" || status === "manager_approved") return ok;
+  if (status === "returned") return no("This report is back with the rep. Change the payout after they resubmit.");
+  if (status === "draft") return no("The rep has not submitted this report yet.");
+  return no("This week is approved and locked.");
+}
+
+/** A change may add or take off, but never leave the rep owing money. */
+export function payoutChangeProblem(systemAmount: number, amount: number): string | null {
+  if (!Number.isFinite(amount) || Math.round(amount) === 0) return "Enter the amount to add or take off.";
+  if (systemAmount + amount < 0) return `You cannot take off more than the payout (${Math.round(systemAmount).toLocaleString("en-NG")}).`;
+  return null;
+}
+
+/**
+ * A rep cannot send a new report while the week before is still with the
+ * manager (Bright, 11 Oct 2026): "the previous ones must be submitted to the
+ * owner for approval before sales reps can send another report".
+ *
+ * "Sent" means the manager has submitted that week to the owner at least once.
+ * If the owner later returns it to the manager, the reps stay free: the delay
+ * is no longer theirs to wait on. A week nobody had to report on, and weeks
+ * before reports began, never block.
+ */
+export function previousWeekGate(input: {
+  weekStart: string;
+  previousExpectedReps: number;
+  previousSubmitCount: number;
+}): Verdict {
+  const previousStart = shiftDateKey(input.weekStart, -7);
+  if (previousStart < FIRST_REPORT_WEEK) return ok;
+  if (input.previousExpectedReps <= 0) return ok;
+  if (input.previousSubmitCount > 0) return ok;
+  return no("Last week's report has not been sent to the owner yet. You can send this one as soon as your manager sends it.");
+}
+
+const shiftDateKey = (dateKey: string, days: number) => {
+  const date = new Date(`${dateKey}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+};
+
+/**
+ * The day a report is due. Normally the Tuesday after the week. A rep who was
+ * held up because last week reached the owner late gets until the end of the
+ * NEXT day after it was sent, so the manager's delay is never marked against
+ * the rep (Bright, 11 Oct 2026).
+ */
+export function effectiveDueDate(weekStart: string, previousSentDateKey: string | null): string {
+  const tuesday = reportDueDate(weekStart);
+  if (!previousSentDateKey) return tuesday;
+  const dayAfter = shiftDateKey(previousSentDateKey, 1);
+  return dayAfter > tuesday ? dayAfter : tuesday;
+}
+
 export type OwnerAction = "approve_lock" | "return" | "reopen";
 
 export function canOwnerAct(action: OwnerAction, company: CompanyReportStatus | null): Verdict {

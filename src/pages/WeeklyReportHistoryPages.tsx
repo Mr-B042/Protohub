@@ -28,7 +28,7 @@ const addDays = (key: string, days: number) => {
 };
 
 export function MyReportsHistoryPage({ rows, loading, error, onOpenWeek }: {
-  rows: Array<WeeklyRepReport & { openReturns: number }>;
+  rows: Array<WeeklyRepReport & { openReturns: number; payoutChange?: { amount: number; reason: string } | null }>;
   loading: boolean;
   error: string;
   onOpenWeek: (weekStart: string) => void;
@@ -55,7 +55,10 @@ export function MyReportsHistoryPage({ rows, loading, error, onOpenWeek }: {
                     <td className="px-3 py-3">{totals ? nf(totals.orders) : "-"}</td>
                     <td className="px-3 py-3">{totals ? nf(totals.delivered) : "-"}</td>
                     <td className="px-3 py-3">{totals ? pctText(totals.deliveryRate) : "-"}</td>
-                    <td className="px-3 py-3 font-bold">{totals ? nf(totals.finalBonus) : "-"}</td>
+                    <td className="px-3 py-3 font-bold">
+                      {totals ? nf(Math.max(0, totals.finalBonus + (row.payoutChange?.amount ?? 0))) : "-"}
+                      {totals && row.payoutChange ? <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-amber-700 dark:text-amber-300" title={row.payoutChange.reason}>Changed by manager · system {nf(totals.finalBonus)}</span> : null}
+                    </td>
                     <td className="px-3 py-3">
                       <RepStatusPill status={row.status} />
                       {row.openReturns > 0 && <span className="ml-1.5 text-[11px] font-bold text-rose-600">{row.openReturns} to answer</span>}

@@ -460,6 +460,105 @@ export function Modal({ title, subtitle, onClose, children, wide }: {
   );
 }
 
+// ── Payout change (Bright, 11 Oct 2026) ─────────────────────────────────────
+
+/** What a payout line needs to say it was changed: the system figure, the change, who and why. */
+export type PayoutChangeView = { systemAmount: number; amount: number; reason: string; changedByName: string | null };
+
+/**
+ * Under a rep's Total: "System 21,150 · -2,000" with an Edited tag, so the
+ * changed amount never appears without the figure it replaced.
+ */
+export function PayoutChangeNote({ change, sym }: { change: PayoutChangeView; sym: string }) {
+  return (
+    <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-amber-700 dark:text-amber-300" title={`Changed by ${change.changedByName ?? "a manager"}: ${change.reason}`}>
+      <span className="mr-1 rounded bg-amber-50 px-1 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-200">Edited</span>
+      System {sym}{nf(change.systemAmount)} · {change.amount < 0 ? "-" : "+"}{sym}{nf(Math.abs(change.amount))}
+    </span>
+  );
+}
+
+/**
+ * The manager adds to, or takes off, a rep's final payout. A reason is
+ * required, and the payout cannot go below nothing. The system's own figure
+ * stays on record beside the change for the owner to compare.
+ */
+export function PayoutChangeForm({ repName, sym, systemAmount, existing, onCancel, onSave, onRemove }: {
+  repName: string;
+  sym: string;
+  /** The rep's final bonus as the system worked it out. */
+  systemAmount: number;
+  existing: { amount: number; reason: string } | null;
+  onCancel: () => void;
+  onSave: (amount: number, reason: string) => Promise<void>;
+  onRemove?: () => Promise<void>;
+}) {
+  const [direction, setDirection] = useState<"off" | "add">(existing && existing.amount > 0 ? "add" : "off");
+  const [amountText, setAmountText] = useState(existing ? String(Math.abs(Math.round(existing.amount))) : "");
+  const [reason, setReason] = useState(existing?.reason ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  // "5,000" and "₦5,000" are read as 5000; anything else is not a number.
+  const cleaned = amountText.replace(/[₦,\s]/g, "");
+  const typed = /^\d+$/.test(cleaned) ? Number(cleaned) : Number.NaN;
+  const signed = direction === "off" ? -typed : typed;
+  const result = systemAmount + (Number.isFinite(signed) ? signed : 0);
+  const problem = !amountText.trim() ? ""
+    : !Number.isFinite(typed) || typed <= 0 ? "Enter a whole amount above 0."
+      : result < 0 ? `You cannot take off more than the payout (${sym}${nf(systemAmount)}).` : "";
+  const ready = Number.isFinite(typed) && typed > 0 && result >= 0 && reason.trim().length >= 3;
+  const run = async (action: () => Promise<void>) => {
+    setSaving(true);
+    setError("");
+    try { await action(); } catch (err: any) { setError(err?.message ?? "Could not save."); } finally { setSaving(false); }
+  };
+  const field = "w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-[13px] text-gray-800 outline-none focus:border-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
+  const choice = (key: "off" | "add", label: string) => (
+    <button type="button" onClick={() => setDirection(key)}
+      className={`!min-h-0 flex-1 rounded-lg px-3 py-2 text-[12px] font-bold ${direction === key ? (key === "off" ? "bg-rose-600 text-white" : "bg-emerald-600 text-white") : "bg-gray-100 text-gray-700 dark:bg-slate-800 dark:text-slate-200"}`}>
+      {label}
+    </button>
+  );
+  return (
+    <Modal title={`Change ${repName}'s payout`} subtitle="The system figure stays on record. The owner sees the change before approving." onClose={onCancel}>
+      <div className="space-y-4 px-6 py-5">
+        <div className="flex items-center justify-between rounded-xl bg-gray-50 px-4 py-3 dark:bg-slate-800/60">
+          <span className="text-[12px] font-semibold text-gray-600 dark:text-slate-300">System figure</span>
+          <strong className="text-[15px] text-gray-900 dark:text-slate-50">{sym}{nf(systemAmount)}</strong>
+        </div>
+        <div>
+          <span className="mb-1.5 block text-[12px] font-bold text-gray-700 dark:text-slate-300">What do you want to do?</span>
+          <div className="flex gap-2">{choice("off", "Take off")}{choice("add", "Add")}</div>
+        </div>
+        <label className="block">
+          <span className="mb-1.5 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Amount ({sym})</span>
+          <input className={field} inputMode="numeric" value={amountText} onChange={(event) => setAmountText(event.target.value)} placeholder="e.g. 2,000" />
+          {problem && <span className="mt-1 block text-[11px] font-semibold text-rose-600">{problem}</span>}
+        </label>
+        <label className="block">
+          <span className="mb-1.5 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Reason</span>
+          <textarea className={`${field} min-h-[84px]`} maxLength={600} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="e.g. Order #4381 was counted as an upgrade but the customer bought 1 piece" />
+        </label>
+        <div className={`flex items-center justify-between rounded-xl px-4 py-3 ${Number.isFinite(typed) && typed > 0 && result >= 0 ? "bg-emerald-50 dark:bg-emerald-500/10" : "bg-gray-50 dark:bg-slate-800/60"}`}>
+          <span className="text-[12px] font-semibold text-gray-700 dark:text-slate-300">Payout after the change</span>
+          <strong className="text-[16px] text-emerald-700 dark:text-emerald-300">{sym}{nf(Math.max(0, result))}</strong>
+        </div>
+        {error && <p className="m-0 rounded-lg bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700">{error}</p>}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+          {existing && onRemove
+            ? <button type="button" disabled={saving} onClick={() => run(onRemove)} className="!min-h-0 rounded-xl px-3 py-2.5 text-[12px] font-bold text-rose-700 hover:bg-rose-50 disabled:opacity-40">Remove the change</button>
+            : <span />}
+          <span className="flex gap-2">
+            <button type="button" onClick={onCancel} className="!min-h-0 rounded-xl border border-gray-200 px-4 py-2.5 text-[13px] font-semibold text-gray-700 dark:border-slate-700 dark:text-slate-200">Cancel</button>
+            <button type="button" disabled={!ready || saving} onClick={() => run(() => onSave(signed, reason.trim()))}
+              className="!min-h-0 rounded-xl bg-[#1F8FE0] px-4 py-2.5 text-[13px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">{saving ? "Saving…" : "Save change"}</button>
+          </span>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // ── Return / flag form ──────────────────────────────────────────────────────
 
 export type CorrectionDraft = { section: string; problem: string; comment: string; orderRef: string };
@@ -597,6 +696,15 @@ const auditDetailText = (entry: WeeklyReportAuditEntry) => {
   if (detail.comment) parts.push(`"${detail.comment}"`);
   if (detail.orders !== undefined && detail.orders !== null) parts.push(`${detail.orders} orders, ${detail.delivered ?? 0} delivered`);
   if (detail.finalBonus !== undefined && detail.finalBonus !== null) parts.push(`bonus ${money(Number(detail.finalBonus))}`);
+  if (entry.action === "payout_changed" && detail.systemAmount !== undefined) {
+    parts.push(`system ${money(Number(detail.systemAmount))} → ${money(Number(detail.newAmount ?? 0))} (${Number(detail.amount) < 0 ? "-" : "+"}${money(Math.abs(Number(detail.amount ?? 0)))})`);
+    if (detail.previousAmount !== null && detail.previousAmount !== undefined) parts.push(`the change before was ${Number(detail.previousAmount) < 0 ? "-" : "+"}${money(Math.abs(Number(detail.previousAmount)))}`);
+    if (detail.reason) parts.push(`reason: ${detail.reason}`);
+  }
+  if (entry.action === "payout_change_removed" && detail.systemAmount !== undefined) {
+    parts.push(`${Number(detail.amount) < 0 ? "-" : "+"}${money(Math.abs(Number(detail.amount ?? 0)))} removed, back to the system figure ${money(Number(detail.systemAmount))}`);
+    if (detail.why) parts.push(String(detail.why));
+  }
   if (detail.totalBonus !== undefined && detail.totalBonus !== null) parts.push(`bonus ${money(Number(detail.totalBonus))}`);
   if (detail.repReportsLocked !== undefined) parts.push(`${detail.repReportsLocked} rep reports locked`);
   if (detail.reason) parts.push(`Reason: ${detail.reason}`);

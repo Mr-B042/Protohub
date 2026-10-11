@@ -1,5 +1,6 @@
 import { supabase } from "./supabase.js";
 import { calculateSalesBonusPayroll } from "./sales-bonus-engine.js";
+import { approvedPayoutChanges } from "./weekly-payout-changes.js";
 import { REPORT_ROW_CEILING } from "./query-limits.js";
 
 type BonusRule = { quantity: number; amount: number };
@@ -458,6 +459,19 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
     periodEndDate: bounds.periodEndDate
   });
 
+  // Payout changes the Owner approved on the weekly reports (migration 299).
+  // The bonus on record for a rep's week is the system figure plus the
+  // change, so payroll adds it: a bonus a manager took off is not paid, one
+  // they added is. Each change counts in the month its week ENDS in.
+  const approvedChanges = await approvedPayoutChanges(orgId, {
+    from: bounds.periodStartDate,
+    to: addDaysToDateKey(bounds.periodEndDate, -1)
+  });
+  const approvedChangeByRep = new Map<string, number>();
+  for (const change of approvedChanges) {
+    approvedChangeByRep.set(change.repId, (approvedChangeByRep.get(change.repId) ?? 0) + change.amount);
+  }
+
   const rows: PayrollEntry[] = users
     .map((user): PayrollEntry | null => {
       const structure = structures.find((entry) => entry.user_id === user.id);
@@ -490,7 +504,10 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
           const context = weeklyBonusContextForOrder(order, weeklyBonusContexts);
           return sum + computeOrderBonus(order, productMap, context.rate, context.aov, context.count);
         }, 0);
-      const autoBonus = engineRuleBonus + legacyOrderBonus + adjustedTierBonus;
+      const systemBonus = engineRuleBonus + legacyOrderBonus + adjustedTierBonus;
+      // Never below nothing: a change cannot take more than the bonus there is.
+      const approvedPayoutChange = Math.max(-systemBonus, approvedChangeByRep.get(user.id) ?? 0);
+      const autoBonus = systemBonus + approvedPayoutChange;
       const deductions = penalties
         .filter((penalty) => penalty.rep_id === user.id)
         .reduce((sum, penalty) => sum + Number(penalty.amount ?? 0), 0);
@@ -508,6 +525,9 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
           engineManualAdjustmentsExcludedFromEngine: engineManualAdjustments,
           legacyOrderBonus,
           combinedSalesBonus: engineRuleBonus + legacyOrderBonus,
+          // Owner-approved changes from the weekly reports, already inside autoBonus.
+          approvedPayoutChange,
+          bonusBeforeApprovedPayoutChange: systemBonus,
           legacyPerformanceTierBeforeCompliance: Number(tierBonus ?? 0),
           legacyPerformanceTierAfterCompliance: adjustedTierBonus,
           legacyPerformanceTierComplianceReduction: Math.max(0, Number(tierBonus ?? 0) - adjustedTierBonus)

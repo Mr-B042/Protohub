@@ -169,7 +169,7 @@ import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, ordersExtraApi, productCostApi, stockApi as _stockApi,
   weeklyReportsApi, managerFundsApi, logMissApi, salesScriptApi, embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, upsellPerformanceApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, targetPeriodsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
-  branchesApi, setApiSpyUserId, type CartAssignmentPanel, type CartHandOutRules,
+  branchesApi, setApiSpyUserId, type ApprovedPayoutChange, type CartAssignmentPanel, type CartHandOutRules,
   setApiPreviewReadOnly,
   PreviewReadOnlyError, type BranchWorkspace
 } from "./lib/api";
@@ -265,8 +265,8 @@ import TeamChallengesRep from "./components/team-challenges/TeamChallengesRep";
 import OwnerWeeklyApprovalPage, { type WeeklyFinancialSummary } from "./pages/OwnerWeeklyApprovalPage";
 import { CompanyReportHistoryPage, MyReportsHistoryPage, WeeklyAuditLogPage } from "./pages/WeeklyReportHistoryPages";
 import {
-  buildCompanySnapshot, buildRepWeeklySnapshot, compareSnapshots, firstSubmittedAt, isLateSubmission,
-  FIRST_REPORT_WEEK, monthlyIncentiveForWeek, reportDueDate, reportOpensOn, runBonusCheck, type ManagerBonusPreview, type NamedOrderLookup, type WeeklyReportSnapshot
+  buildCompanySnapshot, buildRepWeeklySnapshot, compareSnapshots,
+  FIRST_REPORT_WEEK, monthlyIncentiveForWeek, reportDueDate, reportOpensOn, runBonusCheck, wasSubmittedLate, withPayoutChange, type ManagerBonusPreview, type NamedOrderLookup, type WeeklyReportSnapshot
 } from "./pages/weekly-report-model";
 import type { CorrectionDraft } from "./components/WeeklyReportParts";
 import {
@@ -9558,6 +9558,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Dashboard/Finance/Weekly-Accounting/Reports each have different period
   // pickers - see central data loader.
   const [newEngineBonusByOrderId, setNewEngineBonusByOrderId] = useState<Record<string, number>>({});
+  // Payout changes the Owner approved on weekly reports (migration 299). The
+  // bonus on record for a rep's week is the system figure plus this change,
+  // so every company-level bonus cost below adds it. Empty for roles that do
+  // not see bonus money.
+  const [approvedPayoutChanges, setApprovedPayoutChanges] = useState<ApprovedPayoutChange[]>([]);
   const [newEngineBonusSettlementByOrderId, setNewEngineBonusSettlementByOrderId] = useState<Record<string, SalesBonusOrderSettlement>>({});
   // Itemized per-rule breakdown for whichever single order is currently open
   // in an order-detail view. Gross settlement is checked instead of payable
@@ -19328,10 +19333,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     );
     return Math.max(0, Math.round((tier?.amount ?? settings.belowTierAmount) || 0));
   };
+  /**
+   * Owner-approved payout changes for the given Sunday weeks, added up.
+   * Minus when a manager took bonus off, plus when one was added.
+   */
+  const approvedPayoutChangeForWeeks = (weeks?: Array<{ start: string; end: string }>) => {
+    if (!weeks || weeks.length === 0 || approvedPayoutChanges.length === 0) return 0;
+    const starts = new Set(weeks.map((week) => week.start));
+    return approvedPayoutChanges.reduce((sum, change) => sum + (starts.has(change.weekStart) ? change.amount : 0), 0);
+  };
   const summarizeRecognizedProfit = (
     deliveredRows: TrackedOrder[],
     periodExpenses: ExpenseRecord[],
-    options?: { placedRows?: TrackedOrder[]; includeManagerBonus?: boolean; managerBonusWeeks?: Array<{ start: string; end: string }> }
+    options?: {
+      placedRows?: TrackedOrder[]; includeManagerBonus?: boolean; managerBonusWeeks?: Array<{ start: string; end: string }>;
+      /**
+       * The Sunday weeks this window covers, for a caller that has no
+       * managerBonusWeeks (a single-week view). Owner-approved payout changes
+       * of those weeks are added to the sales bonus.
+       */
+      payoutChangeWeeks?: Array<{ start: string; end: string }>;
+    }
   ) => {
     const revenue = deliveredRows.reduce((sum, order) => sum + order.amount, 0);
     const cogs = deliveredRows.reduce((sum, order) => sum + costForOrder(order), 0);
@@ -19344,7 +19366,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const recordedOperatingExpense = expenseRowsExDelivery.reduce((sum, expense) => sum + expense.amount, 0);
     const legacyBonusEstimate = legacyBonusTotalForRows(deliveredRows);
     const newEngineBonusEstimate = newEngineBonusTotalForRows(deliveredRows);
-    const bonusEstimate = legacyBonusEstimate + newEngineBonusEstimate;
+    // Payout changes the Owner approved on the weekly reports (Bright, 11 Oct
+    // 2026): the bonus on record is the system figure plus the change, so a
+    // bonus the manager took off is not counted as paid. A change belongs to a
+    // rep's whole week, never to one product, so it is added only on a
+    // company-level view (the same views that carry the manager bonus) and
+    // only for the weeks the window owns.
+    const payoutChangeWeeks = options?.payoutChangeWeeks ?? (options?.includeManagerBonus ? options?.managerBonusWeeks : undefined);
+    const systemBonusEstimate = legacyBonusEstimate + newEngineBonusEstimate;
+    const approvedPayoutChange = Math.max(-systemBonusEstimate, approvedPayoutChangeForWeeks(payoutChangeWeeks));
+    const bonusEstimate = systemBonusEstimate + approvedPayoutChange;
     const grossProfit = revenue - cogs - recognizedLogistics;
     const operatingExpenseBeforeManagerBonus = recordedOperatingExpense + bonusEstimate;
     const netProfitBeforeManagerBonus = grossProfit - operatingExpenseBeforeManagerBonus;
@@ -19373,7 +19404,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             const weekDeliveryExpense = weekExpenses.filter((expense) => expense.type === "Delivery").reduce((total, expense) => total + expense.amount, 0);
             const weekLogistics = weekLogisticsFromOrders > 0 ? weekLogisticsFromOrders : weekDeliveryExpense;
             const weekOperating = weekExpenses.filter((expense) => expense.type !== "Delivery").reduce((total, expense) => total + expense.amount, 0);
-            const weekSalesBonus = legacyBonusTotalForRows(weekDelivered) + newEngineBonusTotalForRows(weekDelivered);
+            const weekSystemBonus = legacyBonusTotalForRows(weekDelivered) + newEngineBonusTotalForRows(weekDelivered);
+            const weekSalesBonus = weekSystemBonus + Math.max(-weekSystemBonus, payoutChangeWeeks ? approvedPayoutChangeForWeeks([week]) : 0);
             const weekNetBefore = weekRevenue - weekCogs - weekLogistics - weekOperating - weekSalesBonus;
             return sum + managerBonusExpenseForProfit(weekNetBefore, deliveryRateForManagerBonus(weekPlaced));
           }, 0);
@@ -19392,6 +19424,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       deliveryExpenseNotRecognized: logisticsFromOrders > 0 ? recordedDeliveryExpense : 0,
       recordedOperatingExpense,
       bonusEstimate,
+      // What the system worked out, and the Owner-approved change on top of it.
+      systemBonusEstimate,
+      approvedPayoutChange,
       legacyBonusEstimate,
       newEngineBonusEstimate,
       managerBonusExpense,
@@ -25721,6 +25756,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [weeklyReload, setWeeklyReload] = useState(0);
   const weeklyReportWeekEnd = windowShiftDay(weeklyReportWeekStart, 6);
   const weeklyIsRep = currentRole === "Sales Rep";
+  // Owner-approved payout changes, for the profit pages and the bonus table.
+  // Reloaded after any weekly report action (an approval or a reopen changes them).
+  useEffect(() => {
+    if (!currentManagedUser || (currentRole !== "Owner" && currentRole !== "Admin" && currentRole !== "Manager")) { setApprovedPayoutChanges([]); return; }
+    let cancelled = false;
+    weeklyReportsApi.approvedPayoutChanges()
+      .then((result) => { if (!cancelled) setApprovedPayoutChanges(result.rows ?? []); })
+      .catch(() => { if (!cancelled) setApprovedPayoutChanges([]); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentManagedUser?.id, currentRole, weeklyReload, activeBranchId]);
   const weeklySubPage = weeklyReportSubPagesForRole(currentRole).includes(weeklyReportSubPage)
     ? weeklyReportSubPage
     : defaultWeeklyReportSubPage(currentRole);
@@ -30527,7 +30573,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     );
     const dashboardAlignedProfit = summarizeRecognizedProfit(bonusWeekDeliveredOrders, bonusWeekExpenses, {
       placedRows: bonusWeekPlacedOrders,
-      includeManagerBonus: true
+      includeManagerBonus: true,
+      payoutChangeWeeks: managerProductFilterKeys.size === 0 ? [weekFromAnchor(managerBonusWeekStart)] : undefined
     });
     const dashboardAlignedBreakEven = computeBreakEven(bonusWeekPlacedOrders, bonusWeekExpenses, { includeManagerBonus: true });
     const bonusWeekLabel = managerBonusWeekStart === getSundayKey() ? "this week" : "selected week";
@@ -31892,7 +31939,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ? (weeklyReportSubPage === "Report History" ? "Report History" : "Manager Review")
       : weeklySubPage;
     const todayKey = lagosDateKeyNow();
-    const dueDate = reportDueDate(weeklyReportWeekStart);
+    // The server gives the due date: a rep who had to wait for last week to
+    // reach the owner gets an extra day (Bright, 11 Oct 2026).
+    const loadedGate = weeklyIsRep
+      ? (weeklyMine && weeklyMine.weekStart === weeklyReportWeekStart ? weeklyMine.gate : undefined)
+      : (weeklyWeek && weeklyWeek.weekStart === weeklyReportWeekStart ? weeklyWeek.gate : undefined);
+    const dueDate = loadedGate?.dueDate ?? reportDueDate(weeklyReportWeekStart);
     const weekProps = {
       weekStart: weeklyReportWeekStart,
       weekEnd: weeklyReportWeekEnd,
@@ -31926,8 +31978,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           canSubmitNow={todayKey >= reportOpensOn(weeklyReportWeekStart)}
           beforeStart={weeklyReportWeekStart < FIRST_REPORT_WEEK}
           dueDate={dueDate}
+          opensOn={reportOpensOn(weeklyReportWeekStart)}
+          blockedMessage={loadedGate?.blocked ? loadedGate.message : null}
+          payoutChange={mine?.payoutChange ?? null}
           todayKey={todayKey}
-          submittedLate={me ? isLateSubmission(weeklyReportWeekStart, firstSubmittedAt(mine?.audit ?? [], me.id)) : false}
+          submittedLate={me ? wasSubmittedLate(weeklyReportWeekStart, mine?.audit ?? [], me.id) : false}
           bonusQueries={mine?.bonusQueries ?? []}
           logMisses={mine?.logMisses ?? []}
           logMissDisputes={mine?.logMissDisputes ?? []}
@@ -31967,17 +32022,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const report = week.repReports.find((item) => item.repId === repId) ?? null;
       const live = buildWeeklyRepSnapshot({ id: repId, name: repName(repId) }, weeklyReportWeekStart, week.fines ?? [], week.previousFines ?? [], week.adjustments ?? [], week.previousAdjustments ?? [], week.logMisses ?? [], week.previousLogMisses ?? [], week.carriedFines?.[repId] ?? 0);
       const frozen = report && report.status !== "draft" && report.snapshot ? report.snapshot as WeeklyReportSnapshot : null;
+      // The manager's change to this rep's payout. Compared first, laid on
+      // after: the change is not a figure the system worked out, so it must
+      // never show up as "a figure changed since the rep submitted".
+      const payoutChange = frozen ? (week.payoutChanges ?? []).find((item) => item.repId === repId) ?? null : null;
       return {
         repId,
         repName: repName(repId),
         isHeadOfSales: Boolean(users.find((user) => user.id === repId)?.isHeadOfSalesRep),
         expected: week.expectedRepIds.includes(repId),
         report,
-        live,
-        frozen,
+        live: withPayoutChange(live, payoutChange),
+        frozen: withPayoutChange(frozen, payoutChange),
+        payoutChange,
         differences: frozen && report?.status !== "returned" ? compareSnapshots(frozen, live) : [],
-        submittedLate: isLateSubmission(weeklyReportWeekStart, firstSubmittedAt(week.audit ?? [], repId)),
-        overdue: week.expectedRepIds.includes(repId) && (!report || report.status === "draft") && todayKey > dueDate,
+        submittedLate: wasSubmittedLate(weeklyReportWeekStart, week.audit ?? [], repId),
+        // Not overdue while the rep is still waiting for last week to reach the owner.
+        overdue: week.expectedRepIds.includes(repId) && (!report || report.status === "draft") && todayKey > dueDate && !week.gate?.blocked,
         editedAfterSubmit: (week.editedAfterSubmit ?? []).filter((edit) => edit.repId === repId)
       };
     }).sort((a, b) => a.repName.localeCompare(b.repName)) : [];
@@ -32001,7 +32062,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         const delivered = trackedOrders.filter((order) => (order.status ?? "New") === "Delivered" && inWeek(orderDeliveredKey(order), start));
         const placed = trackedOrders.filter((order) => !order.reviewHold && inWeek(orderCreatedKey(order), start));
         const weekExpenses = expenses.filter((expense) => inWeek(normalizeDateKey(expense.date), start));
-        const econ = summarizeRecognizedProfit(delivered, weekExpenses, { placedRows: placed, includeManagerBonus: true });
+        const econ = summarizeRecognizedProfit(delivered, weekExpenses, { placedRows: placed, includeManagerBonus: true, payoutChangeWeeks: [weekFromAnchor(start)] });
         const adSpend = weekExpenses.filter((expense) => expense.type === "Ad Spend").reduce((sum, expense) => sum + expense.amount, 0);
         return { econ, adSpend };
       };
@@ -32087,6 +32148,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         onApprove={(repId, note) => weeklyRun(() => weeklyReportsApi.approveRep(repId, { weekStart: weeklyReportWeekStart, ...(note ? { note } : {}) }), `${repName(repId)}'s report approved.`)}
         onReturn={(repId, draft) => weeklyRun(() => weeklyReportsApi.returnRep(repId, correctionBody(draft)), `Returned to ${repName(repId)} for correction.`)}
         onFlag={(repId, draft) => weeklyRun(() => weeklyReportsApi.flagRep(repId, correctionBody(draft)), "Issue flagged for the owner.")}
+        onSavePayoutChange={(repId, amount, reason) => weeklyRun(() => weeklyReportsApi.savePayoutChange(repId, { weekStart: weeklyReportWeekStart, amount, reason }), `${repName(repId)}'s payout changed. The owner will see the change.`)}
+        onRemovePayoutChange={(repId) => weeklyRun(() => weeklyReportsApi.removePayoutChange(repId, weeklyReportWeekStart), `${repName(repId)}'s payout is back to the system figure.`)}
+        repsWaiting={Boolean(week?.gate?.blocked)}
         onSubmitToOwner={async (note, responses) => {
           const approved = reviewRows
             .filter((row) => row.expected || row.report)
@@ -78709,7 +78773,10 @@ ${waybillLineItems(w).length > 1
                     isInPeriod(expense.date, managerPeriod, managerDateRange)
                     && expenseMatchesProductKeys(expense, managerProductFilterKeys)
                   );
-                  const overviewFinanceProfit = summarizeRecognizedProfit(mgrDeliveredInPeriod, mgrExpenses, { placedRows: mgrPlaced, includeManagerBonus: true });
+                  const overviewFinanceProfit = summarizeRecognizedProfit(mgrDeliveredInPeriod, mgrExpenses, {
+                    placedRows: mgrPlaced, includeManagerBonus: true,
+                    payoutChangeWeeks: managerProductFilterKeys.size === 0 ? sundayWeeksForPeriod(managerPeriod, managerDateRange) : undefined
+                  });
                   const overviewFinanceBreakEven = computeBreakEven(mgrPlaced, mgrExpenses, { includeManagerBonus: true });
                   const overviewDeliveryRate = mgrPlaced.length > 0 ? Math.round((mgrDeliveredInPeriod.length / mgrPlaced.length) * 100) : 0;
                   const overviewBreakEvenHelper = overviewFinanceBreakEven.breakEvenRate != null
@@ -79174,7 +79241,25 @@ ${waybillLineItems(w).length > 1
                         // below - driven by the page's Period control, never by
                         // the Bonus tab's own week.
                         const bonusRows = managerBonusRows;
-                        const totalTeamBonus = bonusRows.reduce((sum, r) => sum + r.total, 0);
+                        // Payout changes the Owner approved on the weekly reports of
+                        // this window's weeks. Base + Upsell + Cross-sell still add
+                        // up to Total Bonus; the change is shown under it, with the
+                        // amount actually payable. A change belongs to a rep's whole
+                        // week, so it is left out while a product filter is on.
+                        const approvedChangeWeekStarts = new Set(
+                          (managerProductFilterKeys.size === 0 ? sundayWeeksForPeriod(managerPeriod, managerDateRange) : []).map((week) => week.start)
+                        );
+                        const approvedChangeByRep = new Map<string, number>();
+                        for (const change of approvedPayoutChanges) {
+                          if (approvedChangeWeekStarts.has(change.weekStart)) approvedChangeByRep.set(change.repId, (approvedChangeByRep.get(change.repId) ?? 0) + change.amount);
+                        }
+                        const teamApprovedChange = bonusRows.reduce((sum, r) => sum + (approvedChangeByRep.get(r.repId) ?? 0), 0);
+                        const approvedChangeLine = (system: number, change: number) => change === 0 ? null : (
+                          <div className="text-[10px] font-semibold text-amber-700" title="Changed by a manager on the weekly report and approved by the Owner.">
+                            {change < 0 ? "-" : "+"}{formatMoney(Math.abs(change))} approved change · payable {formatMoney(Math.max(0, system + change))}
+                          </div>
+                        );
+                        const totalTeamBonus = Math.max(0, bonusRows.reduce((sum, r) => sum + r.total, 0) + teamApprovedChange);
                         return (
                       <section className="space-y-3">
                         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-1">
@@ -79230,7 +79315,7 @@ ${waybillLineItems(w).length > 1
                                     <div className="font-bold text-sky-700">{formatMoney(r.crossSell)}</div>
                                     <div className="text-[10px] text-gray-400">{r.crossSellCount} cross-sells</div>
                                   </td>
-                                  <td className="px-4 py-3 text-right font-extrabold text-gray-900">{formatMoney(r.total)}</td>
+                                  <td className="px-4 py-3 text-right font-extrabold text-gray-900">{formatMoney(r.total)}{approvedChangeLine(r.total, approvedChangeByRep.get(r.repId) ?? 0)}</td>
                                   <td className="px-4 py-3">
                                     {r.status === "qualified" ? (
                                       <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-bold text-emerald-700">
@@ -79272,7 +79357,7 @@ ${waybillLineItems(w).length > 1
                                     <td className="px-4 py-3 text-right"><div className="font-bold text-gray-900">{formatMoney(sum((row) => row.base))}</div><div className="text-[10px] font-semibold text-gray-500">{sum((row) => row.deliveredCount)} deliveries</div></td>
                                     <td className="px-4 py-3 text-right"><div className="font-bold text-violet-700">{formatMoney(sum((row) => row.upsell))}</div><div className="text-[10px] font-semibold text-gray-500">{sum((row) => row.upsellCount)} upgrades</div></td>
                                     <td className="px-4 py-3 text-right"><div className="font-bold text-sky-700">{formatMoney(sum((row) => row.crossSell))}</div><div className="text-[10px] font-semibold text-gray-500">{sum((row) => row.crossSellCount)} cross-sells</div></td>
-                                    <td className="px-4 py-3 text-right font-extrabold text-gray-900">{formatMoney(sum((row) => row.total))}</td>
+                                    <td className="px-4 py-3 text-right font-extrabold text-gray-900">{formatMoney(sum((row) => row.total))}{approvedChangeLine(sum((row) => row.total), teamApprovedChange)}</td>
                                     <td className="px-4 py-3 text-[11px] text-gray-500">{bonusRows.filter((row) => row.status === "qualified").length} of {bonusRows.length} qualified</td>
                                     <td className="px-4 py-3" />
                                   </tr>

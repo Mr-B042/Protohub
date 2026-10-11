@@ -173,6 +173,8 @@ export default function WeeklyRepReportModal(props: WeeklyRepReportModalProps) {
     : status === "manager_approved" ? ["Manager approved", "bg-blue-50 text-blue-700"] : ownerDone ? ["Approved", "bg-emerald-50 text-emerald-700"] : ["Not submitted", "bg-gray-100 text-gray-600"];
 
   const t = shown?.totals;
+  const payoutBy = shown?.payoutChangeDetail?.changedByName ?? null;
+  const payoutReason = shown?.payoutChangeDetail?.reason ?? null;
   const kpis: Array<{ icon: ReactNode; tone: string; label: string; value: string; sub: string; ok: boolean | null }> = shown && t ? [
     { icon: <ShoppingCart />, tone: "bg-blue-50 text-blue-600", label: "System Orders", value: nf((live ?? shown).totals.orders), sub: frozen ? `Submitted: ${nf(frozen.totals.orders)}` : "Not submitted", ok: frozen ? !diffKeys.has("orders") : null },
     { icon: <Truck />, tone: "bg-emerald-50 text-emerald-600", label: "Delivered", value: nf((live ?? shown).totals.delivered), sub: frozen ? `Submitted: ${nf(frozen.totals.delivered)}` : "Not submitted", ok: frozen ? !diffKeys.has("delivered") : null },
@@ -321,9 +323,15 @@ export default function WeeklyRepReportModal(props: WeeklyRepReportModalProps) {
                     <span className="text-[16px] font-bold text-gray-400">=</span>
                     <div className="flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-2 py-2 dark:bg-emerald-500/10">
                       <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-50 text-blue-600"><Wallet className="h-4 w-4" /></span>
-                      <span><span className="block whitespace-nowrap text-[11px] text-gray-700">Final Payable</span><strong className="block whitespace-nowrap text-[14px] font-black text-emerald-700">{money(t.finalBonus)}</strong></span>
+                      <span><span className="block whitespace-nowrap text-[11px] text-gray-700">{t.systemFinalBonus !== undefined ? "System figure" : "Final Payable"}</span><strong className="block whitespace-nowrap text-[14px] font-black text-emerald-700">{money(t.systemFinalBonus ?? t.finalBonus)}</strong></span>
                     </div>
                   </div>
+                  {t.systemFinalBonus !== undefined && (
+                    <p className="m-0 mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] leading-snug text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+                      <strong>Payout changed{payoutBy ? ` by ${payoutBy}` : ""}:</strong> {money(t.systemFinalBonus)} → {money(t.finalBonus)} ({(t.payoutChange ?? 0) < 0 ? "-" : "+"}{money(Math.abs(t.payoutChange ?? 0))}).
+                      {payoutReason ? <span className="block">Reason: {payoutReason}</span> : null}
+                    </p>
+                  )}
                 </div>
               ) : null}
 
