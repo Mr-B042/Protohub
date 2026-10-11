@@ -22,7 +22,7 @@ const VIEW_TABS: Array<{ key: HubReconView; label: string; noun: string; head: s
 ];
 const STATUS_PILL: Record<HubReconRow["status"], ["green" | "red" | "blue" | "gray" | "orange", string]> = {
   matched: ["green", "Matched"], investigate: ["red", "Investigate"], resolved: ["blue", "Resolved"], no_meta: ["gray", "No Meta data"],
-  meta_higher: ["orange", "Meta higher"], protohub_higher: ["orange", "Protohub higher"]
+  meta_higher: ["orange", "Meta higher"], protohub_higher: ["orange", "Protohub higher"], no_campaign: ["gray", "Campaign not known"]
 };
 // ⚠️ FACTS ONLY (Bright, 3 Oct 2026): no status may guess which campaign Meta
 // credited a sale to - Meta does not say. The panel lists what is known.
@@ -96,7 +96,7 @@ export default function ReconciliationTab({ tabBar, onToast, range, onRange, onO
       {tabBar}
       {k ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
-          <Kpi icon={<ShoppingCart className="h-7 w-7" />} tone="green" label="Protohub Orders from Meta ads" value={nf(k.protohub)} delta={<span className="leading-tight"><Delta value={k.protohubChange} /><span className="block text-[11px] font-normal text-gray-400">{compareWord(range)}</span>{k.protohubAll !== undefined ? <span className="block text-[11px] font-normal text-gray-500">{nf(k.protohubAll)} orders in total{k.pendingMeta ? ` · ${nf(k.pendingMeta)} after Meta's last load` : ""}</span> : null}</span>} />
+          <Kpi icon={<ShoppingCart className="h-7 w-7" />} tone="green" label="Protohub Orders from Meta ads" value={nf(k.protohub)} delta={<span className="leading-tight"><Delta value={k.protohubChange} /><span className="block text-[11px] font-normal text-gray-400">{compareWord(range)}</span>{k.protohubAll !== undefined ? <span className="block text-[11px] font-normal text-gray-500">{nf(k.protohubAll)} orders in total{k.noCampaign ? ` · ${nf(k.noCampaign)} with no campaign` : ""}{k.pendingMeta ? ` · ${nf(k.pendingMeta)} after Meta's last load` : ""}</span> : null}</span>} />
           <Kpi icon={<PlatformIcon platform="meta" />} tone="blue" label="Meta Purchases" value={k.meta === null ? "—" : nf(k.meta)} delta={<span className="text-[11px] text-gray-400">{k.meta === null ? "press Refresh Data" : "(Meta's own attribution)"}</span>} />
           <Kpi icon={<ArrowLeftRight className="h-7 w-7" />} tone="orange" label="Difference" value={<span className={k.difference === null ? "" : k.difference === 0 ? "text-emerald-600" : "text-amber-600"}>{signed(k.difference)}</span>} sub={k.difference === null ? "" : k.difference > 0 ? "Meta higher" : k.difference < 0 ? "Protohub higher" : "Same"} />
           <Kpi icon={<Ring value={k.matchRate ?? 0} size={60} stroke={6}><span className="text-[12px] font-black text-gray-900 dark:text-slate-100">{k.matchRate === null ? "—" : `${k.matchRate}%`}</span></Ring>} tone="gray" label="Match Rate" value={<span className={rateColor(k.matchRate)}>{rating(k.matchRate)}</span>} sub={k.matched === null ? "" : `${nf(k.matched)} / ${nf(k.matchedOf ?? 0)} matched`} />

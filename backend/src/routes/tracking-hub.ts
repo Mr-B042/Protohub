@@ -7,7 +7,7 @@ import { sendMetaCapiPurchase, testMetaCapiConnection } from "../lib/meta-capi.j
 import { testTikTokConnection } from "../lib/tiktok-events.js";
 import { checkDataset, datasetEventStats, datasetQuality, discoverAdAccounts, discoverPixels, metaBusiness, metaWhoAmI, scanPage } from "../lib/meta-graph.js";
 import { connectionToken } from "../lib/tracking-credentials.js";
-import { ATTRIBUTION_FIELDS, attributionCapture, domainOf, humanMetaError, orderAdIds, pathOf, productFromName, reconciliationVerdict } from "../lib/tracking-hub.js";
+import { ATTRIBUTION_FIELDS, NO_CAMPAIGN_ID, NO_CAMPAIGN_NAME, attributionCapture, domainOf, humanMetaError, metaClickWithoutCampaign, orderAdIds, pathOf, productFromName, reconciliationVerdict } from "../lib/tracking-hub.js";
 import {
   DEFAULT_HUB_SETTINGS, MODE_OF_STRATEGY, STRATEGY_OF_MODE, assess, change, dayOfIso, daysBetween, eventsFor, formOrders,
   hubAudit, journeyCounts, kpisOf, ledgerRow, loadBasics, loadHubSettings, pct, sumVisits, type HubSettings, type JourneyRow, type LedgerRow
@@ -1268,7 +1268,8 @@ function reconProducts(data: { rows: LedgerRow[]; insights: any[]; adHome: Map<s
   const byProduct = new Map<string, { protohub: number; meta: number; pending: number }>();
   const get = (id: string) => { const entry = byProduct.get(id) ?? { protohub: 0, meta: 0, pending: 0 }; byProduct.set(id, entry); return entry; };
   for (const row of data.rows) {
-    if (!row.productId || !row.campaignId) continue;
+    // From Meta: a campaign id, or a Facebook / Instagram link with no campaign on it.
+    if (!row.productId || !(row.campaignId || row.metaNoCampaign)) continue;
     const entry = get(row.productId);
     if (lastLoaded && Date.parse(row.createdAt) > Date.parse(lastLoaded)) entry.pending += 1; else entry.protohub += 1;
   }
@@ -1286,7 +1287,9 @@ type ReconData = Awaited<ReturnType<typeof reconData>>;
 
 function reconKey(view: ReconView, order: LedgerRow | null, insight: any | null, adHome: ReconData["adHome"]): { id: string; name: string } | null {
   if (order) {
-    if (view === "campaign") return order.campaignId ? { id: order.campaignId, name: "" } : null;
+    // An order from a Facebook / Instagram link with no campaign on it gets a
+    // row of its own: listed, never pinned on a campaign it may not belong to.
+    if (view === "campaign") return order.campaignId ? { id: order.campaignId, name: "" } : order.metaNoCampaign ? { id: NO_CAMPAIGN_ID, name: NO_CAMPAIGN_NAME } : null;
     if (view === "adset") return order.adsetId ? { id: order.adsetId, name: "" } : null;
     if (view === "ad") return order.adId ? { id: order.adId, name: "" } : null;
     if (view === "landing_page") return order.website ? { id: `${order.website}${order.landingPath && order.landingPath !== "/" ? order.landingPath : ""}`, name: "" } : null;
@@ -1330,6 +1333,25 @@ function reconRows(view: ReconView, data: ReconData, settings: HubSettings) {
   return Array.from(groups.values()).map((group) => {
     // FACTS ONLY (Bright, 3 Oct 2026). An order placed after Meta's numbers
     // were loaded cannot be in them, so it is held out of the comparison.
+    if (group.id === NO_CAMPAIGN_ID) {
+      // Nothing on Meta's side to compare with: Meta files each purchase under
+      // a campaign, and these orders did not say which.
+      const firstProduct: any = productOf.get(group.orders.find((row) => row.productId)?.productId ?? "");
+      const list = group.orders.slice(0, 8).map((row) => `#${row.orderId} (${lagosWhen(row.createdAt)}, ${row.product || "product not known"})`).join("; ");
+      return {
+        id: group.id, name: group.name, view, image: firstProduct?.imageUrl ?? null, productName: null,
+        account: "—", accountId: null, dataSourceName: null, businessName: null,
+        protohub: group.orders.length, meta: null, difference: null, matchRate: null, spend: 0, pendingMeta: 0,
+        status: "no_campaign" as const,
+        verdict: reconciliationVerdict({
+          protohubOrders: group.orders.length,
+          purchaseEvents: group.orders.filter((row) => row.browser || row.serverStatus === "sent").length,
+          sentToMeta: group.orders.filter((row) => row.serverStatus === "sent" || row.serverStatus === "dry_run").length,
+          duplicates: 0, metaPurchases: null
+        }),
+        explanation: `${list}. ${group.orders.length === 1 ? "This order" : "These orders"} came through a Facebook or Instagram link, but the link carried no campaign, ad set or ad. That happens when an ad's link has no tracking details set, or when the customer came from a post or page link, not an ad. Meta may have counted ${group.orders.length === 1 ? "it" : "them"} under one of the campaigns above; Protohub does not guess which.`
+      };
+    }
     const loadedAt = group.loadedAt ?? lastLoaded;
     const afterLoad = metaLoaded && loadedAt ? group.orders.filter((row) => Date.parse(row.createdAt) > Date.parse(loadedAt)) : [];
     const compared = group.orders.filter((row) => !afterLoad.includes(row));
@@ -1407,18 +1429,21 @@ router.get("/reconciliation", async (req, res) => {
     if (websiteDomain) rows = rows.filter((row) => row.id.startsWith(websiteDomain) || data.rows.some((order) => order.website === websiteDomain && reconKey(view, order, null, data.adHome)?.id === row.id));
     const metaTotal = data.insights.length ? Math.round(data.insights.reduce((sum: number, row: any) => sum + (Number(row.purchases) || 0), 0)) : null;
     const protohubAll = data.rows.length;
-    // The Meta comparison counts only orders from Meta ads (a Meta campaign id),
+    // The Meta comparison counts orders from Meta (a Meta campaign id, or a
+    // Facebook / Instagram link with no campaign on it - Bright, 11 Oct 2026),
     // placed before Meta's numbers were loaded.
     const loadedAt = lastLoadedOf(data.insights);
-    const fromMeta = data.rows.filter((row) => row.campaignId);
-    const pendingMeta = loadedAt ? fromMeta.filter((row) => Date.parse(row.createdAt) > Date.parse(loadedAt)).length : 0;
+    const fromMeta = data.rows.filter((row) => row.campaignId || row.metaNoCampaign);
+    const isPending = (row: LedgerRow) => Boolean(loadedAt) && Date.parse(row.createdAt) > Date.parse(loadedAt!);
+    const pendingMeta = fromMeta.filter(isPending).length;
     const protohub = fromMeta.length - pendingMeta;
+    const noCampaign = fromMeta.filter((row) => !row.campaignId && !isPending(row)).length;
     const lastFetched = data.insights.map((row: any) => row.fetched_at).sort().pop() ?? null;
     res.json({
       period, view, lastFetched,
       kpis: {
-        protohub, protohubChange: change(protohub, previous.filter((order) => orderAdIds(order).campaignId).length),
-        protohubAll, pendingMeta, loadedAt,
+        protohub, protohubChange: change(protohub, previous.filter((order) => orderAdIds(order).campaignId || metaClickWithoutCampaign(order)).length),
+        protohubAll, pendingMeta, noCampaign, loadedAt,
         meta: metaTotal, difference: metaTotal === null ? null : metaTotal - protohub,
         matchRate: metaTotal === null ? null : Math.max(protohub, metaTotal) === 0 ? 100 : Math.round((Math.min(protohub, metaTotal) / Math.max(protohub, metaTotal)) * 1000) / 10,
         matched: metaTotal === null ? null : Math.min(protohub, metaTotal), matchedOf: metaTotal === null ? null : Math.max(protohub, metaTotal),
@@ -1463,7 +1488,7 @@ router.get("/reconciliation/item", async (req, res) => {
     const orders = periodData.rows.filter(matchesOrder);
     const insights = periodData.insights.filter(matchesInsight);
     const firstInsight: any = insights[0] ?? data.insights.find(matchesInsight) ?? null;
-    const campaignId = view === "campaign" ? id : firstInsight?.campaign_id ?? orders.find((row) => row.campaignId)?.campaignId ?? null;
+    const campaignId = id === NO_CAMPAIGN_ID ? null : view === "campaign" ? id : firstInsight?.campaign_id ?? orders.find((row) => row.campaignId)?.campaignId ?? null;
     const campaign: any = campaignId ? data.campaigns.find((row: any) => row.campaign_id === campaignId) : null;
     const source: any = data.basics.sources.find((row: any) => row.id === (firstInsight?.data_source_id ?? campaign?.data_source_id));
     const connection: any = (data.basics.connections as any[]).find((row) => row.id === (firstInsight?.connection_id ?? campaign?.connection_id));

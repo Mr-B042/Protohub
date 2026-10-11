@@ -83,6 +83,29 @@ export function otherAdPlatform(order: { form_context?: Record<string, unknown> 
   return PLATFORM_NAMES.find(([test]) => test.test(source))?.[1] ?? "Other ads";
 }
 
+/**
+ * The order came through a Facebook or Instagram link (Meta's click id is on
+ * it) but carries NO campaign id. Meta adds a click id to every link opened
+ * from its apps, so this is an ad whose link has no campaign details, or a
+ * post / page link. Either way the customer came from Meta and the order
+ * belongs in the Meta count; which campaign is not known, and is never guessed
+ * (Bright, 11 Oct 2026: 16 Meta orders, the card said 15).
+ *
+ * A saved cookie on its own does not count: it only says the browser clicked
+ * something on Meta some time in the last 90 days.
+ */
+export function metaClickWithoutCampaign(order: { form_context?: Record<string, unknown> | null; utm_content?: string | null; utm_term?: string | null; utm_campaign?: string | null; utm_source?: string | null }): boolean {
+  if (otherAdPlatform(order)) return false;
+  if (orderAdIds(order).campaignId) return false;
+  const ctx = order.form_context ?? {};
+  if (typeof ctx.fbclid === "string" && ctx.fbclid.trim()) return true;
+  return typeof ctx.landingUrl === "string" && /[?&]fbclid=[^&#]+/.test(ctx.landingUrl);
+}
+
+/** The campaign table's row for those orders. */
+export const NO_CAMPAIGN_ID = "meta-no-campaign";
+export const NO_CAMPAIGN_NAME = "Facebook / Instagram link, campaign not known";
+
 export function orderAdIds(order: { form_context?: Record<string, unknown> | null; utm_content?: string | null; utm_term?: string | null; utm_campaign?: string | null; utm_source?: string | null }) {
   const ctx = order.form_context ?? {};
   if (NON_META_SOURCE.test(String(order.utm_source ?? "")) || (typeof ctx.ttclid === "string" && ctx.ttclid)) {
