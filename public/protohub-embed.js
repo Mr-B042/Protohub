@@ -60,6 +60,31 @@
     if (fbp) { embedParams.set("fbp", fbp); changed = true; }
     if (fbc) { embedParams.set("fbc", fbc); changed = true; }
     if (changed) iframe.src = beforeHash + hashPath + "?" + embedParams.toString();
+
+    // Meta's cookies, handed to the form when they turn up (11 Oct 2026). The
+    // Pixel creates _fbp / _fbc on this page, and for a first-time visitor it
+    // has usually not done so yet when the lines above run - only 20-40% of
+    // orders carried a browser id. So keep looking for a minute. Posted, not
+    // put in the address: changing the address would reload the form under
+    // the customer.
+    function sendMetaIds() {
+      var nowFbp = readCookie("_fbp");
+      var nowFbc = readCookie("_fbc");
+      if (!nowFbp && !nowFbc) return;
+      try {
+        iframe.contentWindow && iframe.contentWindow.postMessage({ type: "ordo-meta-ids", fbp: nowFbp || "", fbc: nowFbc || "" }, "*");
+      } catch (_) {}
+    }
+    var metaIdTicks = 0;
+    var metaIdTimer = setInterval(function() {
+      metaIdTicks += 1;
+      sendMetaIds();
+      if (metaIdTicks >= 60) clearInterval(metaIdTimer);
+    }, 1000);
+    iframe.addEventListener("load", sendMetaIds);
+    // Once more when the customer starts on the form or comes back to the tab.
+    window.addEventListener("focus", sendMetaIds);
+    document.addEventListener("visibilitychange", sendMetaIds);
     function truthy(value) {
       return /^(1|true|yes|on|test|dry_run|dry-run)$/i.test(String(value || "").trim());
     }

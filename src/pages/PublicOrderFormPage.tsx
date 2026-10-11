@@ -1182,6 +1182,27 @@ function publicVisitorId() {
   return publicVisitorIdMemo;
 }
 
+// Meta's browser id and click cookie, handed over by the landing page AFTER
+// the form opened (Bright, 11 Oct 2026). The Pixel creates those cookies on
+// the landing page, and for a first-time visitor it has usually not done so
+// yet when the embed script first looks - only 20-40% of orders carried a
+// browser id. The embed script now keeps looking and posts them here.
+// Only the page that holds this form may send them, and only values shaped
+// like Meta's are kept.
+const lateMetaIds: { fbp: string; fbc: string } = { fbp: "", fbc: "" };
+export const cleanLateMetaId = (kind: "fbp" | "fbc", value: unknown): string => {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text || text.length > 500) return "";
+  return (kind === "fbp" ? /^fb\.\d+\.\d+\.\d+$/ : /^fb\.\d+\.\d+\.[A-Za-z0-9_-]+$/).test(text) ? text : "";
+};
+if (typeof window !== "undefined") {
+  window.addEventListener("message", (event: MessageEvent) => {
+    if (event.source !== window.parent || window.parent === window || event.data?.type !== "ordo-meta-ids") return;
+    lateMetaIds.fbp = cleanLateMetaId("fbp", event.data.fbp) || lateMetaIds.fbp;
+    lateMetaIds.fbc = cleanLateMetaId("fbc", event.data.fbc) || lateMetaIds.fbc;
+  });
+}
+
 function parsePublicMetaTrackingMode(value: string | null | undefined): PublicMetaTrackingMode {
   const normalized = (value ?? "").trim().toLowerCase().replace(/-/g, "_");
   if (normalized === "off" || normalized === "disabled" || normalized === "none") return "off";
@@ -1251,8 +1272,8 @@ function buildPublicFormHiddenContext(params: URLSearchParams | null): PublicFor
     const value = safeHiddenContextValue(hiddenParams.get(key), 500);
     if (value !== null || context[name] === undefined) context[name] = value;
   }
-  context.fbp = context.fbp || safeHiddenContextValue(publicCookieValue("_fbp"), 500);
-  context.fbc = context.fbc || safeHiddenContextValue(publicCookieValue("_fbc"), 500);
+  context.fbp = context.fbp || lateMetaIds.fbp || safeHiddenContextValue(publicCookieValue("_fbp"), 500);
+  context.fbc = context.fbc || lateMetaIds.fbc || safeHiddenContextValue(publicCookieValue("_fbc"), 500);
   context.visitorId = publicVisitorId() || null;
 
   return context;
