@@ -190,12 +190,35 @@ function splitName(value: string) {
  * click, otherwise build fbc from the fbclid and when it was first seen. No
  * fbclid -> the cookie as it is.
  */
+/** A saved value shorter than this is never treated as a cut-off piece of a longer one. */
+const CUT_CLICK_MIN_LENGTH = 100;
+
+/**
+ * The whole value when the saved one is only its beginning.
+ *
+ * Until 11 Oct 2026 the order form capped every hidden value at 180
+ * characters, while Meta's click ids run to 201: a third of Purchases went
+ * out with a click id cut short, which Meta rejects ("Server sending modified
+ * fbclid value"). The form's own address was saved whole, so the complete
+ * value is still there for those orders.
+ */
+function wholeValue(saved: string, fromAddress: string) {
+  if (!saved) return fromAddress;
+  return fromAddress.length > saved.length && saved.length >= CUT_CLICK_MIN_LENGTH && fromAddress.startsWith(saved) ? fromAddress : saved;
+}
+
 export function deriveFbc(fbc?: string | null, fbclid?: string | null, seenAtMs?: number | null, now = Date.now()) {
   const cleanFbc = String(fbc ?? "").trim();
   const clickId = String(fbclid ?? "").trim();
   if (!clickId) return cleanFbc || undefined;
-  const cookieClick = cleanFbc.match(/^fb\.\d+\.\d+\.(.+)$/)?.[1];
+  const cookie = cleanFbc.match(/^(fb\.\d+\.\d+)\.(.+)$/);
+  const cookieClick = cookie?.[2];
   if (cookieClick === clickId) return cleanFbc;
+  // The same click, with the cookie's copy cut short (the form used to cap
+  // values at 180 characters): keep the cookie's time, send the whole click id.
+  if (cookie && cookieClick && cookieClick.length >= CUT_CLICK_MIN_LENGTH && clickId.length > cookieClick.length && clickId.startsWith(cookieClick)) {
+    return `${cookie[1]}.${clickId}`;
+  }
   const seen = Number(seenAtMs);
   const at = Number.isFinite(seen) && seen > 0 ? Math.min(Math.round(seen), now) : now;
   return `fb.1.${at}.${clickId}`;
@@ -474,8 +497,8 @@ export function metaIdsFromFormContext(formContext: Record<string, unknown> | nu
   const address = (...keys: string[]) => keys.map((key) => fromAddress.get(key)?.trim() ?? "").find(Boolean) ?? "";
   return {
     fbp: pick("fbp", "_fbp", "Fbp") || address("fbp", "_fbp") || null,
-    fbc: pick("fbc", "_fbc", "Fbc") || address("fbc", "_fbc") || null,
-    fbclid: pick("fbclid") || address("fbclid") || null,
+    fbc: wholeValue(pick("fbc", "_fbc", "Fbc"), address("fbc", "_fbc")) || null,
+    fbclid: wholeValue(pick("fbclid"), address("fbclid")) || null,
     visitorId: cleanVisitorId(context.visitorId)
   };
 }

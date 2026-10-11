@@ -1246,11 +1246,13 @@ function buildPublicFormHiddenContext(params: URLSearchParams | null): PublicFor
     // must not wipe out a value already read - it did, and every order lost
     // Meta's browser id even when the WordPress embed passed it (1 Oct 2026).
     const name = hiddenContextParamKey(key);
-    const value = safeHiddenContextValue(hiddenParams.get(key), 180);
+    // 500, not 180: Meta's click ids run past 180 characters (201 seen, Oct
+    // 2026), and a click id cut short is one Meta rejects as "modified".
+    const value = safeHiddenContextValue(hiddenParams.get(key), 500);
     if (value !== null || context[name] === undefined) context[name] = value;
   }
-  context.fbp = context.fbp || safeHiddenContextValue(publicCookieValue("_fbp"), 180);
-  context.fbc = context.fbc || safeHiddenContextValue(publicCookieValue("_fbc"), 180);
+  context.fbp = context.fbp || safeHiddenContextValue(publicCookieValue("_fbp"), 500);
+  context.fbc = context.fbc || safeHiddenContextValue(publicCookieValue("_fbc"), 500);
   context.visitorId = publicVisitorId() || null;
 
   return context;
