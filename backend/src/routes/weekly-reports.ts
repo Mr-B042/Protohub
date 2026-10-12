@@ -254,6 +254,10 @@ async function ensureRepReport(orgId: string, branchId: string, repId: string, w
  */
 async function ordersEditedAfterSubmit(orgId: string, reports: any[]) {
   const results: Array<{ repId: string; orderId: string; editedAt: string; what: string; by: string | null }> = [];
+  // ⚠️ All reports and chunks at once (12 Oct 2026). This ran one report after
+  // another, and each database call costs ~175 ms from the server, so a week of
+  // four reports spent well over a second here before the page could load.
+  const jobs: Array<Promise<void>> = [];
   for (const report of reports) {
     if (!report.submitted_at) continue;
     const orderIds: string[] = Array.isArray(report.snapshot?.orderIds)
@@ -261,23 +265,26 @@ async function ordersEditedAfterSubmit(orgId: string, reports: any[]) {
       : [];
     for (let index = 0; index < orderIds.length; index += 150) {
       const chunk = orderIds.slice(index, index + 150);
-      const [{ data: edits, error: editsError }, { data: statusChanges, error: statusError }] = await Promise.all([
-        supabase.from("order_field_edits").select("order_id, field_name, changed_by_name, created_at")
-          .eq("org_id", orgId).in("order_id", chunk).gt("created_at", report.submitted_at).limit(1000),
-        supabase.from("order_audit").select("order_id, from_status, to_status, created_at")
-          .eq("org_id", orgId).in("order_id", chunk).gt("created_at", report.submitted_at).limit(1000)
-      ]);
-      if (editsError) throw editsError;
-      if (statusError) throw statusError;
-      for (const row of edits ?? []) {
-        results.push({ repId: report.rep_id, orderId: row.order_id, editedAt: row.created_at, what: `${row.field_name} changed`, by: row.changed_by_name ?? null });
-      }
-      for (const row of statusChanges ?? []) {
-        if (row.from_status === row.to_status) continue;
-        results.push({ repId: report.rep_id, orderId: row.order_id, editedAt: row.created_at, what: `Status ${row.from_status ?? "?"} → ${row.to_status ?? "?"}`, by: null });
-      }
+      jobs.push((async () => {
+        const [{ data: edits, error: editsError }, { data: statusChanges, error: statusError }] = await Promise.all([
+          supabase.from("order_field_edits").select("order_id, field_name, changed_by_name, created_at")
+            .eq("org_id", orgId).in("order_id", chunk).gt("created_at", report.submitted_at).limit(1000),
+          supabase.from("order_audit").select("order_id, from_status, to_status, created_at")
+            .eq("org_id", orgId).in("order_id", chunk).gt("created_at", report.submitted_at).limit(1000)
+        ]);
+        if (editsError) throw editsError;
+        if (statusError) throw statusError;
+        for (const row of edits ?? []) {
+          results.push({ repId: report.rep_id, orderId: row.order_id, editedAt: row.created_at, what: `${row.field_name} changed`, by: row.changed_by_name ?? null });
+        }
+        for (const row of statusChanges ?? []) {
+          if (row.from_status === row.to_status) continue;
+          results.push({ repId: report.rep_id, orderId: row.order_id, editedAt: row.created_at, what: `Status ${row.from_status ?? "?"} → ${row.to_status ?? "?"}`, by: null });
+        }
+      })());
     }
   }
+  await Promise.all(jobs);
   return results.sort((a, b) => b.editedAt.localeCompare(a.editedAt));
 }
 
@@ -799,9 +806,15 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
     const branchId = requireBranch(req);
     const orgId = req.user!.orgId;
     const weekStart = parsed.data.weekStart ?? sundayWeekStartForDateKey(lagosDateKey());
-    const [company, repReports, corrections, auditRows, expectedRepIds, fines, previousFines, adjustments, previousAdjustments, bonusQueries, payoutChanges, gate] = await Promise.all([
+    // ⚠️ EVERYTHING AT ONCE (12 Oct 2026). Half of this used to run one call
+    // after another once the first batch finished - missed logs for two weeks,
+    // disputes, carried fines, funds, waiting weeks, edits after submit - and
+    // the page took 7-8 seconds to answer. They do not depend on each other.
+    const repReportsQuery = supabase.from("rep_weekly_reports").select(REP_COLUMNS).eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart);
+    const [company, repReports, corrections, auditRows, expectedRepIds, fines, previousFines, adjustments, previousAdjustments, bonusQueries, payoutChanges, gate,
+      editedAfterSubmit, waitingWeeks, logMisses, previousLogMisses, logMissDisputes, carriedFines, funds] = await Promise.all([
       loadCompanyReport(orgId, branchId, weekStart),
-      supabase.from("rep_weekly_reports").select(REP_COLUMNS).eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart),
+      repReportsQuery,
       supabase.from("weekly_report_corrections").select(CORRECTION_COLUMNS).eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart).order("created_at", { ascending: true }),
       supabase.from("weekly_report_audit").select(AUDIT_COLUMNS).eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart).order("created_at", { ascending: true }),
       expectedRepIdsForWeek(orgId, branchId, weekStart),
@@ -815,13 +828,21 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
         .or(`status.eq.open,week_start.eq.${weekStart},correction_week_start.eq.${weekStart}`)
         .order("created_at", { ascending: false }).limit(200),
       payoutChangesForWeek(orgId, branchId, null, weekStart),
-      sendGateFor(orgId, branchId, weekStart)
+      sendGateFor(orgId, branchId, weekStart),
+      // Needs the reports, so it reads them itself rather than wait for the batch.
+      supabase.from("rep_weekly_reports").select("rep_id, submitted_at, snapshot").eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart)
+        .then(({ data, error }) => { if (error) throw error; return ordersEditedAfterSubmit(orgId, data ?? []); }),
+      waitingWeeksFor(orgId, branchId),
+      logMissesForWeek(orgId, null, weekStart),
+      logMissesForWeek(orgId, null, addDaysToDateKey(weekStart, -7)),
+      disputesForWeek(orgId, branchId, null, weekStart),
+      carriedFinesFor(orgId, branchId, null, weekStart),
+      fundsForWeek(orgId, branchId, weekStart)
     ]);
     if (repReports.error) throw repReports.error;
     if (bonusQueries.error) throw bonusQueries.error;
     if (corrections.error) throw corrections.error;
     if (auditRows.error) throw auditRows.error;
-    const editedAfterSubmit = await ordersEditedAfterSubmit(orgId, repReports.data ?? []);
     res.json({
       weekStart,
       weekEnd: weekEndFromStart(weekStart),
@@ -838,12 +859,12 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
       bonusQueries: (bonusQueries.data ?? []).map(mapBonusQuery),
       payoutChanges,
       gate,
-      waitingWeeks: await waitingWeeksFor(orgId, branchId),
-      logMisses: await logMissesForWeek(orgId, null, weekStart),
-      previousLogMisses: await logMissesForWeek(orgId, null, addDaysToDateKey(weekStart, -7)),
-      logMissDisputes: await disputesForWeek(orgId, branchId, null, weekStart),
-      carriedFines: await carriedFinesFor(orgId, branchId, null, weekStart),
-      funds: (await fundsForWeek(orgId, branchId, weekStart)).map(({ manager, fund }) => ({
+      waitingWeeks,
+      logMisses,
+      previousLogMisses,
+      logMissDisputes,
+      carriedFines,
+      funds: funds.map(({ manager, fund }) => ({
         managerId: manager.id,
         managerName: manager.name,
         totals: fund.totals,
