@@ -35,7 +35,7 @@ import { generateOrderReceiptPdf, fetchReceiptBranding } from "../lib/order-rece
 import { sendConnectedUserWhatsAppToJid } from "../lib/whatsapp-runtime.js";
 import { confirmationNeedsSalesExpansionLog } from "../lib/sales-expansion.js";
 import { inventoryOperationsOrder } from "../lib/inventory-operations-access.js";
-import { applyInventoryMovements } from "../lib/inventory-movements.js";
+import { applyInventoryMovements, classifyDatabaseError } from "../lib/inventory-movements.js";
 import { availableAfterDeliveredReservations, deliveredStockShortfallMessage } from "../lib/delivered-stock-reservations.js";
 
 import {
@@ -2766,7 +2766,19 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Reco
     "agent_id", "agentId", "agent_location_id", "agentLocationId",
     "package_components_snapshot", "packageComponentsSnapshot"
   ]);
-  if (isTerminal && canEditDelivered && current.stock_deducted === true) {
+  // ⚠️ CORRECTED IN PLACE, NOT REFUSED (Bright, 12 Oct 2026). These fields
+  // used to be refused once stock was closed, and the only way round was
+  // Delivered -> Failed -> Delivered: a false Failed in the order's history,
+  // its waybill record deleted, and stock that was never put back. They now
+  // go through correct_delivered_order (migration 301), which moves the stock
+  // lines and the order row in one transaction. A reason is required.
+  //
+  // It applies to EVERY delivered order with stock lines, closed or still
+  // pending: changing the agent of a pending order by a plain update left its
+  // pending line on the old agent's hub.
+  let deliveredCorrectionReason: string | null = null;
+  const stockTracked = ["pending", "partial", "exception", "reconciled"].includes(String(current.stock_reconciliation_status ?? ""));
+  if (isTerminal && canEditDelivered && (current.stock_deducted === true || stockTracked)) {
     const stockMoving = Array.from(requestedTerminalSafeKeys).filter((key) => {
       if (!STOCK_MOVING_FIELDS.has(key)) return false;
       // Only an actual CHANGE counts. The edit form posts every field back, so
@@ -2783,11 +2795,15 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Reco
       return !sameFieldValue(next, before);
     });
     if (stockMoving.length > 0) {
-      res.status(409).json({
-        error: "Stock has already been deducted for this delivery, so the product, quantity or agent cannot be changed here. "
-          + "Everything else on the order is editable. To change what shipped, reverse the delivery first so the agent's stock is put back."
-      });
-      return;
+      const reason = String(req.body.correction_reason ?? req.body.correctionReason ?? "").trim().slice(0, 500);
+      if (reason.length < 5) {
+        res.status(400).json({
+          error: "This order is already delivered. Say why its agent, product or quantity is being corrected.",
+          code: "CORRECTION_REASON_REQUIRED"
+        });
+        return;
+      }
+      deliveredCorrectionReason = reason;
     }
   }
   if (updates.scheduled_at !== undefined || updates.timeline_notes !== undefined) {
@@ -2925,31 +2941,130 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Reco
     }
   }
 
-  let { data, error } = await supabase
-    .from("orders")
-    .update(updates)
-    .eq("id", req.params.id)
-    .eq("org_id", req.user!.orgId)
-    .select()
-    .single();
+  let data: any = null;
+  let error: { message: string } | null = null;
+  let deliveredCorrection: { agentChanged: boolean; unitsPutBack: number; linesToVerify: number; linesRemoved: number } | null = null;
 
-  if (error && (isMissingPlannedColumnsError(error) || isMissingDateAuditColumnsError(error))) {
-    const legacyUpdates = stripUpdateKeys(updates, [
-      "scheduled_at",
-      "timeline_notes",
-      ...DATE_AUDIT_UPDATE_KEYS
-    ]);
+  if (deliveredCorrectionReason) {
+    // The order row and its stock lines change together, or not at all.
+    const merged = { ...current, ...updates } as Record<string, unknown>;
+    if (!merged.agent_id) {
+      res.status(400).json({ error: "A delivered order needs a delivery agent. Choose the agent who delivered it." });
+      return;
+    }
+    if (!merged.agent_location_id) {
+      res.status(409).json({
+        error: `${merged.agent_name_snapshot ?? "That agent"} has no stock hub in ${merged.state ?? "the customer's state"}, so the order cannot be moved to them. Set up a hub for that state, or choose another agent.`
+      });
+      return;
+    }
+    const correctedLines = orderInventoryLinesFromRow(merged as any)
+      .map((line) => ({ productId: line.productId, productName: line.productName, quantity: line.quantity }));
+    if (correctedLines.length === 0) {
+      res.status(400).json({ error: "A delivered order needs at least one product with a quantity." });
+      return;
+    }
+    // What was shipped changed, so what it cost changed too. The order's cost
+    // is frozen at delivery (see the delivery path); a correction to its
+    // contents re-freezes it for the corrected contents. An agent-only
+    // correction leaves the cost alone.
+    const shape = (lines: Array<{ productId: string; quantity: number }>) =>
+      lines.map((line) => `${line.productId}:${line.quantity}`).sort().join("|");
+    if (shape(orderInventoryLinesFromRow(current as any)) !== shape(correctedLines)) {
+      try {
+        const costs = await loadDeliveryCostMap();
+        updates.cogs_snapshot = correctedLines.reduce((sum, line) => sum + line.quantity * deliveryUnitCost(costs, line.productId, String(merged.currency ?? current.currency ?? "")), 0);
+        updates.cogs_snapshot_at = new Date().toISOString();
+        updates.cogs_snapshot_source = "delivered_correction";
+      } catch (costError: any) {
+        logger.warn("cogs snapshot on delivered correction failed", { orderId: req.params.id, error: costError?.message });
+      }
+    }
+    const { data: corrected, error: correctionError } = await supabase.rpc("correct_delivered_order", {
+      p_org_id: req.user!.orgId,
+      p_order_id: String(req.params.id),
+      p_order_patch: updates,
+      p_lines: correctedLines,
+      p_actor_user_id: req.user!.id,
+      p_actor_name: req.user!.name ?? null,
+      p_reason: deliveredCorrectionReason
+    });
+    if (correctionError) {
+      const classified = classifyDatabaseError(correctionError.message);
+      logger.warn("delivered order correction refused", { orderId: req.params.id, code: classified.code, message: classified.message });
+      res.status(classified.status ?? 409).json({ error: classified.message, code: classified.code });
+      return;
+    }
+    data = (corrected as any)?.order ?? null;
+    deliveredCorrection = {
+      agentChanged: (corrected as any)?.agentChanged === true,
+      unitsPutBack: Number((corrected as any)?.unitsPutBack ?? 0),
+      linesToVerify: Number((corrected as any)?.linesToVerify ?? 0),
+      linesRemoved: Number((corrected as any)?.linesRemoved ?? 0)
+    };
+  } else {
     ({ data, error } = await supabase
       .from("orders")
-      .update(legacyUpdates)
+      .update(updates)
       .eq("id", req.params.id)
       .eq("org_id", req.user!.orgId)
       .select()
       .single());
+
+    if (error && (isMissingPlannedColumnsError(error) || isMissingDateAuditColumnsError(error))) {
+      const legacyUpdates = stripUpdateKeys(updates, [
+        "scheduled_at",
+        "timeline_notes",
+        ...DATE_AUDIT_UPDATE_KEYS
+      ]);
+      ({ data, error } = await supabase
+        .from("orders")
+        .update(legacyUpdates)
+        .eq("id", req.params.id)
+        .eq("org_id", req.user!.orgId)
+        .select()
+        .single());
+    }
   }
 
   if (error) { res.status(500).json({ error: error.message }); return; }
   if (!data)  { res.status(404).json({ error: "Order not found." }); return; }
+
+  if (deliveredCorrection && deliveredCorrectionReason) {
+    // The order's own history: who corrected it, what moved, and why. Status
+    // stays Delivered on both sides, which is how every other "edited after
+    // delivery" check already reads it.
+    const changes: string[] = [];
+    if (deliveredCorrection.agentChanged) changes.push(`agent ${current.agent_name_snapshot ?? "none"} → ${data.agent_name_snapshot ?? "none"}`);
+    if (String(current.product_id ?? "") !== String(data.product_id ?? "")) changes.push(`product ${current.product_name ?? "?"} → ${data.product_name ?? "?"}`);
+    if (Number(current.quantity ?? 0) !== Number(data.quantity ?? 0)) changes.push(`quantity ${current.quantity ?? 0} → ${data.quantity ?? 0}`);
+    if (changes.length === 0) changes.push("items changed");
+    const stockNote = [
+      deliveredCorrection.unitsPutBack > 0 ? `${deliveredCorrection.unitsPutBack} unit${deliveredCorrection.unitsPutBack === 1 ? "" : "s"} put back` : null,
+      deliveredCorrection.linesToVerify > 0 ? `${deliveredCorrection.linesToVerify} stock line${deliveredCorrection.linesToVerify === 1 ? "" : "s"} sent to the inventory officer to verify` : null
+    ].filter(Boolean).join("; ");
+    const { error: correctionAuditError } = await supabase.from("order_audit").insert({
+      order_id: req.params.id,
+      org_id: req.user!.orgId,
+      changed_by: req.user!.id,
+      from_status: "Delivered",
+      to_status: "Delivered",
+      note: `Delivered order corrected by ${req.user!.name ?? "a manager"}: ${changes.join(", ")}.${stockNote ? ` ${stockNote}.` : ""} Reason: ${deliveredCorrectionReason}`.slice(0, 1000)
+    });
+    if (correctionAuditError) logger.error("delivered order correction: history row failed", { orderId: req.params.id, error: correctionAuditError.message });
+
+    // The delivery's waybill record names the agent and what was sent. Keep it true.
+    const { error: waybillError } = await supabase.from("waybill_records").update({
+      agent_id: data.agent_id,
+      from_agent_id: data.agent_id,
+      from_agent_location_id: data.agent_location_id,
+      from_location: data.agent_location_name_snapshot ?? data.agent_name_snapshot ?? null,
+      product_id: data.product_id,
+      product_name: data.product_name,
+      quantity: Number(data.quantity) || 1
+    }).eq("org_id", req.user!.orgId).eq("to_location", `Customer:${req.params.id}`);
+    if (waybillError) logger.warn("delivered order correction: waybill record not updated", { orderId: req.params.id, error: waybillError.message });
+  }
 
   if (typeof updates.call_outcome === "string") {
     await recordOrderDetailCallOutcomeLog({

@@ -125,7 +125,7 @@ export function atomicInventoryPayload(lines: AtomicInventoryMovement[]) {
   });
 }
 
-const classifyDatabaseError = (message: string) => {
+export const classifyDatabaseError = (message: string) => {
   const normalized = message.trim();
   if (normalized.startsWith("INSUFFICIENT_STOCK|")) {
     return new InventoryMovementError(normalized.split("|").slice(1).join("|") || "Not enough stock.", "INSUFFICIENT_STOCK", 409);
