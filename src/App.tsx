@@ -41235,6 +41235,43 @@ ${waybillLineItems(w).length > 1
     openAdminOrderDetail(order.id);
   };
 
+  /**
+   * Correcting a DELIVERED order (Bright, 12 Oct 2026). Changing its agent,
+   * product or quantity moves stock, so the server asks for a reason and only
+   * takes it from an Admin, Manager or the Owner. Ask for it here, before the
+   * save, so nobody has to mark the order Failed to fix a wrong agent.
+   *
+   * Returns the reason; undefined when no reason is needed; null when the
+   * person backed out (the caller must stop).
+   */
+  const askDeliveredCorrectionReason = (order: TrackedOrder, next: { agentId?: string; productId?: string; quantity?: number }): string | undefined | null => {
+    if ((order.status ?? "New") !== "Delivered") return undefined;
+    const changed = [
+      next.agentId !== undefined && (next.agentId || "") !== (order.agentId || "") ? "the delivery agent" : null,
+      next.productId !== undefined && next.productId !== order.productId ? "the product" : null,
+      next.quantity !== undefined && next.quantity !== Number(order.quantity ?? quantityForOrder(order)) ? "the quantity" : null
+    ].filter((item): item is string => !!item);
+    if (changed.length === 0) return undefined;
+    if (currentRole !== "Owner" && currentRole !== "Admin" && currentRole !== "Manager") {
+      showToast("This order is delivered. Only an Admin, Manager or the Owner can change its agent, product or quantity.");
+      return null;
+    }
+    if (typeof window === "undefined") return null;
+    const what = changed.length === 1 ? changed[0] : `${changed.slice(0, -1).join(", ")} and ${changed[changed.length - 1]}`;
+    const answer = window.prompt(
+      `Order ${order.id} is already delivered, and you are changing ${what}.\n\n`
+      + "The order stays Delivered. Stock already taken off is put back, and the corrected stock goes to the inventory officer to verify. "
+      + "If the right agent does not have the stock, the change is refused.\n\n"
+      + "Why is this order being corrected?"
+    );
+    if (answer === null) return null;
+    if (answer.trim().length < 5) {
+      showToast("Give a short reason for the correction, then save again.");
+      return null;
+    }
+    return answer.trim().slice(0, 500);
+  };
+
   const saveOrderAgent = (targetOrder?: TrackedOrder) => {
     const orderToUpdate = targetOrder ?? selectedOrder;
     if (!orderToUpdate) {
@@ -41244,6 +41281,8 @@ ${waybillLineItems(w).length > 1
       showToast("The selected agent is still syncing. Try again in a moment.");
       return;
     }
+    const agentCorrectionReason = askDeliveredCorrectionReason(orderToUpdate, { agentId: createOrderAgentId || "" });
+    if (agentCorrectionReason === null) return;
 
     const agentName = agents.find((agent) => agent.id === createOrderAgentId)?.name ?? "Unassigned";
     const orderSnapshot = orderToUpdate;
@@ -41268,12 +41307,12 @@ ${waybillLineItems(w).length > 1
     if (modal !== "orderWorkflow") {
       closeModal();
     }
-    ordersApi.update(_soaId, { agent_id: createOrderAgentId || null, response: nextResponse, timeline_notes: nextNotes })
+    ordersApi.update(_soaId, { agent_id: createOrderAgentId || null, response: nextResponse, timeline_notes: nextNotes, ...(agentCorrectionReason ? { correction_reason: agentCorrectionReason } : {}) })
       .then((updated: any) => {
         if (updated && updated.id === _soaId) {
           setTrackedOrders((value) => value.map((o) => o.id === _soaId ? { ...o, ...normalizeTrackedOrder(updated) } : o));
         }
-        showToast(`${_soaId} delivery agent updated.`);
+        showToast(agentCorrectionReason ? `${_soaId} corrected. It stays Delivered; the stock is with the inventory officer to verify.` : `${_soaId} delivery agent updated.`);
       })
       .catch((err: any) => {
         setTrackedOrders((value) => value.map((o) => o.id === _soaId ? orderSnapshot : o));
@@ -41398,9 +41437,13 @@ ${waybillLineItems(w).length > 1
       showToast(`This cancels the ${selectedOrder.upsellFromQty}→${selectedOrder.upsellToQty} upgrade. Tick the box to confirm the upsell commission stops counting.`);
       return;
     }
+    const editCorrectionReason = askDeliveredCorrectionReason(selectedOrder, { agentId: createOrderAgentId || "", productId: product.id, quantity });
+    if (editCorrectionReason === null) return;
     const nextNotes = [
       orderTimelineNote(
-        autoUpsell
+        editCorrectionReason
+          ? `Delivered order corrected. Reason: ${editCorrectionReason}`
+          : autoUpsell
           ? `Order edited · upsell recorded ${prevQty} → ${quantity} pcs.`
           : reversesUpsell
             ? `Order edited · upsell ${selectedOrder.upsellFromQty} → ${selectedOrder.upsellToQty} pcs cancelled at ${quantity} pcs - no longer counts for commission.`
@@ -41442,7 +41485,7 @@ ${waybillLineItems(w).length > 1
           : order
       )
     );
-    ordersApi.update(_soeId, { customer: createOrderCustomer.trim(), phone: createOrderPhone.trim(), whatsapp: createOrderWhatsapp.trim(), address: createOrderAddress.trim(), city: createOrderCity.trim(), state: createOrderState.trim(), product_id: product.id, package_id: packageRecord?.id ?? null, product_name: product.name, package_name: packageRecord?.name ?? null, quantity, amount, source: createOrderSource, assigned_rep_id: createOrderRepId === "auto" ? selectedOrder.assignedRepId : createOrderRepId, agent_id: createOrderAgentId || null, scheduled_date: createOrderScheduleEnabled ? orderScheduleDate : null, scheduled_at: createOrderScheduleEnabled ? plannedMoment.iso : null, response: nextResponse, ...(autoUpsell ? { upsell_from_qty: autoUpsell.upsellFromQty, upsell_to_qty: autoUpsell.upsellToQty } : {}), ...(reversesUpsell ? { upsell_from_qty: null, upsell_to_qty: null, upsell_note: null } : {}), timeline_notes: nextNotes }).catch((err: any) => {
+    ordersApi.update(_soeId, { ...(editCorrectionReason ? { correction_reason: editCorrectionReason } : {}), customer: createOrderCustomer.trim(), phone: createOrderPhone.trim(), whatsapp: createOrderWhatsapp.trim(), address: createOrderAddress.trim(), city: createOrderCity.trim(), state: createOrderState.trim(), product_id: product.id, package_id: packageRecord?.id ?? null, product_name: product.name, package_name: packageRecord?.name ?? null, quantity, amount, source: createOrderSource, assigned_rep_id: createOrderRepId === "auto" ? selectedOrder.assignedRepId : createOrderRepId, agent_id: createOrderAgentId || null, scheduled_date: createOrderScheduleEnabled ? orderScheduleDate : null, scheduled_at: createOrderScheduleEnabled ? plannedMoment.iso : null, response: nextResponse, ...(autoUpsell ? { upsell_from_qty: autoUpsell.upsellFromQty, upsell_to_qty: autoUpsell.upsellToQty } : {}), ...(reversesUpsell ? { upsell_from_qty: null, upsell_to_qty: null, upsell_note: null } : {}), timeline_notes: nextNotes }).catch((err: any) => {
       setTrackedOrders((value) => value.map((o) => o.id === _soeId ? orderSnapshot : o));
       showToast(`Failed to save edits to ${_soeId}: ${err?.message ?? "please retry"}.`);
     });
