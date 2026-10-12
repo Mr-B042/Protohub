@@ -58,6 +58,18 @@ const defaultOccurredAt = (viewedWeekStart: string | undefined) => {
   // A future week (should not happen) still falls back to now.
   return endKey > now.slice(0, 10) ? now : `${endKey}T12:00`;
 };
+/**
+ * The same clock time on the matching day of another week: picking "Last
+ * week" on a Tuesday entry gives last week's Tuesday. A day still to come is
+ * pulled back to now, since nothing can be logged in the future.
+ */
+export const moveToWeek = (occurredAt: string, targetWeekStart: string, now = nowLocalInput()) => {
+  const base = occurredAt && occurredAt.length >= 16 ? occurredAt : now;
+  const dayIndex = new Date(`${base.slice(0, 10)}T12:00:00Z`).getUTCDay();
+  const day = new Date(`${targetWeekStart}T12:00:00Z`); day.setUTCDate(day.getUTCDate() + dayIndex);
+  const moved = `${day.toISOString().slice(0, 10)}T${base.slice(11, 16)}`;
+  return moved > now ? now : moved;
+};
 /** "2026-09-29T10:00" (Lagos, from the input) -> ISO with +01:00. */
 const lagosInputToIso = (value: string) => `${value}:00+01:00`;
 
@@ -242,8 +254,14 @@ const emptyDraft = (kind: FundKindKey): Draft => ({
 
 export default function ManagerFundsTab({
   data, loading, error, mode, canWrite, onSelectManager, onLog, onUpload, onEdit, onVoid, onOpenEvidence,
-  onSaveWeek, onRequestAdjustment, onDecideAdjustment, onReturnTransaction, onSaveSettings, footer
+  onSaveWeek, onRequestAdjustment, onDecideAdjustment, onReturnTransaction, onSaveSettings, footer,
+  onShiftWeek, canGoNext = false, onGoToWeek
 }: {
+  /** Move the whole report to the week before (-1) or after (+1). */
+  onShiftWeek?: (weeks: number) => void;
+  canGoNext?: boolean;
+  /** Open a given week (its Sunday), e.g. the week an entry was just saved in. */
+  onGoToWeek?: (weekStart: string) => void;
   data: ManagerFundWeek | null;
   loading: boolean;
   error: string;
@@ -365,8 +383,10 @@ export default function ManagerFundsTab({
       }
     }
     // The date decides the week. If it is not the week on screen, say so first.
-    if (!editing && data?.weekStart && draft.occurredAt && sundayOf(draft.occurredAt) !== data.weekStart
-      && !window.confirm(`This date is in the week of ${weekText(sundayOf(draft.occurredAt))}, not the week you're viewing (${weekText(data.weekStart)}). It will be recorded in ${weekText(sundayOf(draft.occurredAt))}. Continue?`)) return;
+    const savedWeek = draft.occurredAt ? sundayOf(draft.occurredAt) : "";
+    const otherWeek = !editing && !!data?.weekStart && !!savedWeek && savedWeek !== data.weekStart;
+    if (otherWeek && !onGoToWeek
+      && !window.confirm(`This date is in the week of ${weekText(savedWeek)}, not the week you're viewing (${weekText(data!.weekStart)}). It will be recorded in ${weekText(savedWeek)}. Continue?`)) return;
     setSaving(true);
     setFormError("");
     try {
@@ -403,6 +423,9 @@ export default function ManagerFundsTab({
       if (draft.file) await onUpload(id, draft.file);
       setDraft(null);
       setEditing(null);
+      // Saved into another week: open that week, so the entry is in front of
+      // the manager and not "missing" from the week they were on.
+      if (otherWeek) onGoToWeek?.(savedWeek);
     } catch (err: any) {
       setFormError(err?.message ?? "Could not save.");
     } finally {
@@ -474,6 +497,25 @@ export default function ManagerFundsTab({
   return (
     <div className="space-y-5">
       {error && <p className="m-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-[13px] font-semibold text-rose-700">{error}</p>}
+
+      {/* ── Which week (Bright, 12 Oct 2026) ─────────────────────
+          Staff read the page as one running list: "it is not separated week
+          by week". Every week keeps its own entries, filed by each entry's
+          date - so say which week this is, and put the way to the others here. */}
+      {data?.weekStart && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 dark:border-blue-500/30 dark:bg-blue-500/10">
+          <div>
+            <p className="m-0 text-[14px] font-bold text-gray-900 dark:text-slate-50">Week of {weekText(data.weekStart)}{sundayOf(nowLocalInput()) === data.weekStart ? " (this week)" : ""}</p>
+            <p className="m-0 mt-0.5 text-[12px] text-gray-600 dark:text-slate-300">Only this week's money is shown here. Each week keeps its own entries, filed by the date on the entry.</p>
+          </div>
+          {onShiftWeek && (
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => onShiftWeek(-1)} className="!min-h-0 inline-flex items-center gap-1 rounded-lg bg-white px-3 py-2 text-[12px] font-bold text-gray-800 ring-1 ring-gray-200 hover:bg-gray-50 dark:bg-slate-900 dark:text-slate-100 dark:ring-slate-700"><ChevronLeft className="h-4 w-4" /> Week before</button>
+              <button type="button" disabled={!canGoNext} onClick={() => onShiftWeek(1)} className="!min-h-0 inline-flex items-center gap-1 rounded-lg bg-white px-3 py-2 text-[12px] font-bold text-gray-800 ring-1 ring-gray-200 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-slate-900 dark:text-slate-100 dark:ring-slate-700">Week after <ChevronRight className="h-4 w-4" /></button>
+            </div>
+          )}
+        </div>
+      )}
 
       {(mode === "owner" && (data?.managers?.length ?? 0) > 1) && (
         <div className="flex flex-wrap items-center gap-2">
@@ -864,11 +906,31 @@ export default function ManagerFundsTab({
                   <label className="block"><span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Date & time</span>
                     <input className={field} type="datetime-local" value={draft.occurredAt} onChange={(event) => setDraft({ ...draft, occurredAt: event.target.value })} /></label>
                 </div>
-                {draft.occurredAt ? (
-                  data?.weekStart && sundayOf(draft.occurredAt) !== data.weekStart
-                    ? <p className="m-0 rounded-lg bg-amber-50 px-3 py-2 text-[12px] font-semibold text-amber-800">This date is in the week of {weekText(sundayOf(draft.occurredAt))}, not the week you're viewing ({weekText(data.weekStart)}). It will be recorded there.</p>
-                    : <p className="m-0 text-[11.5px] text-gray-500">This will be recorded in the week of {weekText(sundayOf(draft.occurredAt))}.</p>
-                ) : null}
+                {!editing && draft.occurredAt ? (() => {
+                  // Which week is this for? One tap moves the date into that
+                  // week, so an older expense is never filed under today.
+                  const thisWeek = sundayOf(nowLocalInput());
+                  const shift = (sunday: string, weeks: number) => { const date = new Date(`${sunday}T12:00:00Z`); date.setUTCDate(date.getUTCDate() + weeks * 7); return date.toISOString().slice(0, 10); };
+                  const choices = [{ label: "This week", week: thisWeek }, { label: "Last week", week: shift(thisWeek, -1) }, { label: "Week before", week: shift(thisWeek, -2) }];
+                  if (data?.weekStart && !choices.some((choice) => choice.week === data.weekStart) && data.weekStart < thisWeek) choices.push({ label: "Week on screen", week: data.weekStart });
+                  const chosen = sundayOf(draft.occurredAt);
+                  return (
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-800/60">
+                      <span className="block text-[12px] font-bold text-gray-700 dark:text-slate-300">Which week is this for?</span>
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {choices.map((choice) => (
+                          <button key={choice.week} type="button" onClick={() => setDraft({ ...draft, occurredAt: moveToWeek(draft.occurredAt, choice.week) })}
+                            className={`!min-h-0 rounded-lg px-2.5 py-1.5 text-[11.5px] font-bold ${chosen === choice.week ? "bg-[#1F6FEB] text-white" : "bg-white text-gray-700 ring-1 ring-gray-200 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700"}`}>
+                            {choice.label}<span className="block text-[10px] font-semibold opacity-80">{weekText(choice.week)}</span>
+                          </button>
+                        ))}
+                      </div>
+                      <p className={`m-0 mt-2 text-[12px] font-semibold ${data?.weekStart && chosen !== data.weekStart ? "text-amber-700 dark:text-amber-300" : "text-gray-700 dark:text-slate-200"}`}>
+                        Will be recorded in the week of {weekText(chosen)}.{data?.weekStart && chosen !== data.weekStart ? ` That is not the week on screen (${weekText(data.weekStart)})${onGoToWeek ? "; the page will open that week after saving." : "."}` : ""}
+                      </p>
+                    </div>
+                  );
+                })() : draft.occurredAt ? <p className="m-0 text-[11.5px] text-gray-500">Recorded in the week of {weekText(sundayOf(draft.occurredAt))}. Keep the date inside that week; to move it, remove it and log it again.</p> : null}
                 {draft.kind === "customer_payment" && (
                   <label className="block"><span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Order number</span>
                     <input className={field} value={draft.orderId} disabled={!!editing} onChange={(event) => setDraft({ ...draft, orderId: event.target.value })} placeholder="e.g. 4358" />
