@@ -25945,6 +25945,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         mode={mode}
         canWrite={mode === "manager" && mine && !!funds?.editable && !isSpying}
         onSelectManager={(id) => setWeeklyFundsManagerId(id)}
+        onShiftWeek={weeklyShiftWeek}
+        canGoNext={weeklyCanGoNext}
+        onGoToWeek={(week) => { if (week !== weeklyReportWeekStart) weeklyPickWeek(week); }}
         onLog={async (body) => { const result = await managerFundsApi.log(body); showToast("Logged."); weeklyRefresh(); return result; }}
         onUpload={async (id, file) => {
           const dataUrl = await new Promise<string>((resolve, reject) => {
