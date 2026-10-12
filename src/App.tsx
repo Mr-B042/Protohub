@@ -25741,6 +25741,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     settlement: Record<string, SalesBonusOrderSettlement>;
   } | null>(null);
   const weeklyAutoOpenedRef = useRef(false);
+  // What was fetched for the weekly page and when, so a refresh after an
+  // approval does not fetch again what an approval cannot change.
+  const weeklyBonusMapsCacheRef = useRef(new Map<string, { attribution: Record<string, SalesBonusOrderAttribution[]> | null; settlement: Record<string, SalesBonusOrderSettlement>; at: number }>());
+  const weeklyChallengesFetchedAtRef = useRef(0);
+  const weeklyChallengeRowsRef = useRef<ManagerProductChallenge[]>([]);
   const [weeklyMine, setWeeklyMine] = useState<Awaited<ReturnType<typeof weeklyReportsApi.mine>> | null>(null);
   const [weeklyWeek, setWeeklyWeek] = useState<Awaited<ReturnType<typeof weeklyReportsApi.week>> | null>(null);
   const [weeklyMyHistory, setWeeklyMyHistory] = useState<Awaited<ReturnType<typeof weeklyReportsApi.myHistory>>["rows"]>([]);
@@ -25757,6 +25762,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [weeklyReload, setWeeklyReload] = useState(0);
   const weeklyReportWeekEnd = windowShiftDay(weeklyReportWeekStart, 6);
   const weeklyIsRep = currentRole === "Sales Rep";
+  // "View as" starts where THAT person starts (Bright, 12 Oct 2026). The week
+  // on screen is the viewer's own, kept from wherever they last were, and the
+  // jump to the earliest waiting week had already been used up - so the Owner
+  // viewing as the Admin could sit on a different week from the one the
+  // Admin's own screen opens on. Starting or leaving a preview goes back to
+  // the default week and lets the page pick the waiting week again.
+  const weeklyPreviewKey = `${spyAsUserId ?? ""}|${previewRole ?? ""}`;
+  const weeklyPreviewKeyRef = useRef(weeklyPreviewKey);
+  useEffect(() => {
+    if (weeklyPreviewKeyRef.current === weeklyPreviewKey) return;
+    weeklyPreviewKeyRef.current = weeklyPreviewKey;
+    weeklyAutoOpenedRef.current = false;
+    setWeeklyReportWeekStart(weeklyReportDefaultWeek());
+    setWeeklyFundsManagerId(undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weeklyPreviewKey]);
   // Owner-approved payout changes, for the profit pages and the bonus table.
   // Reloaded after any weekly report action (an approval or a reopen changes them).
   useEffect(() => {
@@ -25795,48 +25816,74 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setWeeklyError("");
     (async () => {
       try {
-        const [attribution, settlement] = await Promise.all([
-          salesBonusesApi.orderExpansionAttributionMap(weekEnd, previousStart).catch(() => null),
-          salesBonusesApi.orderBonusSettlementMap(weekEnd, previousStart).catch(() => ({}))
-        ]);
-        if (cancelled) return;
-        setWeeklyBonusMaps({ weekStart, attribution: (attribution ?? null) as any, settlement: (settlement ?? {}) as any });
-        void managerProductChallengesApi.list()
-          .then((result: any) => { if (!cancelled) setWeeklyChallenges({ weekStart, rows: Array.isArray(result?.challenges) ? result.challenges : [] }); })
-          .catch(() => { if (!cancelled) setWeeklyChallenges({ weekStart, rows: [] }); });
+        // ⚠️ EVERYTHING STARTS TOGETHER (Bright, 12 Oct 2026: "it takes decades
+        // to load"). This used to wait for the two bonus maps (5-7 s), THEN ask
+        // for the week (7-8 s), THEN the funds (1-2 s): about 15 seconds, and
+        // again after every approval. Nothing here depends on anything else.
+        //
+        // The bonus maps and the challenge list are also kept for two minutes:
+        // approving a report changes neither, so a refresh must not fetch them
+        // again. The week itself is always read fresh.
+        const cachedMaps = weeklyBonusMapsCacheRef.current.get(weekStart);
+        const mapsFresh = !!cachedMaps && Date.now() - cachedMaps.at < 120_000;
+        // Going back to a week seen a moment ago shows its figures at once.
+        if (mapsFresh) setWeeklyBonusMaps({ weekStart, attribution: cachedMaps!.attribution, settlement: cachedMaps!.settlement });
+        const mapsJob = mapsFresh
+          ? Promise.resolve()
+          : Promise.all([
+              salesBonusesApi.orderExpansionAttributionMap(weekEnd, previousStart).catch(() => null),
+              salesBonusesApi.orderBonusSettlementMap(weekEnd, previousStart).catch(() => ({}))
+            ]).then(([attribution, settlement]) => {
+              const next = { attribution: (attribution ?? null) as any, settlement: (settlement ?? {}) as any };
+              weeklyBonusMapsCacheRef.current.set(weekStart, { ...next, at: Date.now() });
+              if (!cancelled) setWeeklyBonusMaps({ weekStart, ...next });
+            });
+        if (Date.now() - weeklyChallengesFetchedAtRef.current > 120_000) {
+          weeklyChallengesFetchedAtRef.current = Date.now();
+          void managerProductChallengesApi.list()
+            .then((result: any) => { weeklyChallengeRowsRef.current = Array.isArray(result?.challenges) ? result.challenges : []; if (!cancelled) setWeeklyChallenges({ weekStart, rows: weeklyChallengeRowsRef.current }); })
+            .catch(() => { weeklyChallengesFetchedAtRef.current = 0; if (!cancelled) setWeeklyChallenges({ weekStart, rows: [] }); });
+        } else {
+          setWeeklyChallenges({ weekStart, rows: weeklyChallengeRowsRef.current });
+        }
         if (weeklyIsRep) {
-          const [mine, history] = await Promise.all([
+          const mineJob = Promise.all([
             weeklyReportsApi.mine(weekStart),
             weeklySubPage === "My Reports History" ? weeklyReportsApi.myHistory() : Promise.resolve(null)
-          ]);
-          if (cancelled) return;
-          setWeeklyMine(mine);
-          if (history) setWeeklyMyHistory(history.rows ?? []);
+          ]).then(([mine, history]) => {
+            if (cancelled) return;
+            setWeeklyMine(mine);
+            if (history) setWeeklyMyHistory(history.rows ?? []);
+            // The report can be read as soon as it is here; the maps fill in the live figures.
+            setWeeklyLoading(false);
+          });
+          await Promise.all([mapsJob, mineJob]);
         } else {
-          const [week, history, bonus] = await Promise.all([
+          const weekJob = Promise.all([
             weeklyReportsApi.week(weekStart),
             weeklySubPage === "Report History" ? weeklyReportsApi.history() : Promise.resolve(null),
             managerBonusApi.summary(weekStart).catch(() => null)
-          ]);
-          if (cancelled) return;
-          setWeeklyWeek(week);
-          // Open on the week that needs the manager (Bright, 12 Oct 2026). The
-          // page starts on the most recent week; if an EARLIER week still has
-          // reports to approve or send, go there - once per visit, so moving
-          // between weeks by hand afterwards is never undone.
-          const earliestWaiting = (week.waitingWeeks ?? [])[0]?.weekStart;
-          if (!weeklyAutoOpenedRef.current && (currentRole === "Manager" || currentRole === "Admin")) {
-            weeklyAutoOpenedRef.current = true;
-            if (earliestWaiting && earliestWaiting < weekStart) { setWeeklyReportWeekStart(earliestWaiting); return; }
-          }
-          if (history) setWeeklyHistory(history.rows ?? []);
-          setWeeklyManagerBonus(bonus as ManagerBonusSummary | null);
-          try {
-            const funds = await managerFundsApi.week(weekStart, weeklyFundsManagerId);
-            if (!cancelled) { setWeeklyFunds(funds); setWeeklyFundsError(""); }
-          } catch (fundsError: any) {
-            if (!cancelled) setWeeklyFundsError(fundsError?.message ?? "Could not load Funds & Expenses.");
-          }
+          ]).then(([week, history, bonus]) => {
+            if (cancelled) return;
+            setWeeklyWeek(week);
+            // Open on the week that needs the manager (Bright, 12 Oct 2026). The
+            // page starts on the most recent week; if an EARLIER week still has
+            // reports to approve or send, go there - once per visit, so moving
+            // between weeks by hand afterwards is never undone.
+            const earliestWaiting = (week.waitingWeeks ?? [])[0]?.weekStart;
+            if (!weeklyAutoOpenedRef.current && (currentRole === "Manager" || currentRole === "Admin")) {
+              weeklyAutoOpenedRef.current = true;
+              if (earliestWaiting && earliestWaiting < weekStart) { setWeeklyReportWeekStart(earliestWaiting); return; }
+            }
+            if (history) setWeeklyHistory(history.rows ?? []);
+            setWeeklyManagerBonus(bonus as ManagerBonusSummary | null);
+            // Submitted reports show at once; the maps fill in the live figures.
+            setWeeklyLoading(false);
+          });
+          const fundsJob = managerFundsApi.week(weekStart, weeklyFundsManagerId)
+            .then((funds) => { if (!cancelled) { setWeeklyFunds(funds); setWeeklyFundsError(""); } })
+            .catch((fundsError: any) => { if (!cancelled) setWeeklyFundsError(fundsError?.message ?? "Could not load Funds & Expenses."); });
+          await Promise.all([mapsJob, weekJob, fundsJob]);
         }
       } catch (error: any) {
         if (!cancelled) setWeeklyError(error?.message ?? "Could not load the weekly report.");
@@ -25945,7 +25992,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   /** The Funds & Expenses tab for the manager (her wallet) or the owner (any wallet). */
   const renderManagerFunds = (mode: "manager" | "owner", footer?: ReactNode, onReturnTransaction?: (txn: ManagerFundTxn, comment: string) => Promise<void>) => {
     const funds = weeklyFunds && weeklyFunds.weekStart === weeklyReportWeekStart ? weeklyFunds : null;
-    const mine = !!funds?.manager && funds.manager.id === (realManagedUser?.id ?? authUser?.id);
+    // Under "View as" the wallet belongs to the person being viewed, so the
+    // Owner sees her add and edit buttons exactly as she does. Nothing is
+    // saved from them: the preview blocks every save while it is read-only,
+    // and the server only lets the wallet's own manager write to it.
+    const mine = !!funds?.manager && funds.manager.id === (isSpying && spiedUser ? spiedUser.id : (realManagedUser?.id ?? authUser?.id));
     const run = async (action: () => Promise<unknown>, done?: string) => { await action(); if (done) showToast(done); weeklyRefresh(); };
     return (
       <ManagerFundsTab
@@ -25953,7 +26004,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         loading={weeklyLoading}
         error={weeklyFundsError}
         mode={mode}
-        canWrite={mode === "manager" && mine && !!funds?.editable && !isSpying}
+        canWrite={mode === "manager" && mine && !!funds?.editable}
         onSelectManager={(id) => setWeeklyFundsManagerId(id)}
         onShiftWeek={weeklyShiftWeek}
         canGoNext={weeklyCanGoNext}

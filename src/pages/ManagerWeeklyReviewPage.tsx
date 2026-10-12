@@ -21,6 +21,8 @@ import type {
 } from "../lib/api";
 import { currencySymbol } from "../lib/money-privacy";
 
+type RepFilter = "all" | "pending" | "sent" | "awaiting" | "approved" | "returned";
+
 export type TopTab = "overview" | "reps" | "bonus" | "headOfSales" | "funds" | "financial" | "orders" | "audit";
 
 export type ReviewRepRow = {
@@ -130,6 +132,7 @@ export default function ManagerWeeklyReviewPage({
   const [returning, setReturning] = useState<string | null>(null);
   const [flagging, setFlagging] = useState<string | null>(null);
   const [changingPayout, setChangingPayout] = useState<string | null>(null);
+  const [repFilter, setRepFilter] = useState<RepFilter>("all");
   // `up`: the row is near the bottom of the screen, so the menu opens upward.
   const [menuFor, setMenuFor] = useState<{ repId: string; x: number; y: number; up?: boolean } | null>(null);
   const [managerNote, setManagerNote] = useState(company?.managerNote ?? "");
@@ -148,6 +151,24 @@ export default function ManagerWeeklyReviewPage({
   const canChangePayout = (row: ReviewRepRow) => canAct && !frozenWeek && !!onSavePayoutChange && !!row.frozen
     && (row.report?.status === "submitted" || row.report?.status === "manager_approved");
   const payoutRow = changingPayout ? rows.find((row) => row.repId === changingPayout) ?? null : null;
+  // "This Week" (Bright, 12 Oct 2026): one press back to the current week.
+  const todayKey = new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 10);
+  const onThisWeek = todayKey >= weekStart && todayKey <= weekEnd;
+  // Filter the rep list by where each report stands (Bright, 12 Oct 2026).
+  const repFilters: Array<{ key: RepFilter; label: string; test: (status: string) => boolean }> = [
+    { key: "all", label: "All", test: () => true },
+    { key: "pending", label: "Pending", test: (status) => status === "draft" },
+    { key: "sent", label: "Sent", test: (status) => status !== "draft" },
+    { key: "awaiting", label: "Awaiting approval", test: (status) => status === "submitted" },
+    { key: "approved", label: "Approved", test: (status) => isApproved(status) },
+    { key: "returned", label: "Returned", test: (status) => status === "returned" }
+  ];
+  const statusOf = (row: ReviewRepRow) => row.report?.status ?? "draft";
+  const activeRepFilter = repFilters.find((item) => item.key === repFilter) ?? repFilters[0];
+  // The pinned Actions column. `!` because the app's table styles set every
+  // cell's background, and a see-through pinned cell shows the figures under it.
+  const pinnedCell = "sticky right-0 z-[1] !bg-white shadow-[-10px_0_10px_-10px_rgba(15,23,42,0.18)] dark:!bg-slate-900";
+  const pinnedHead = "sticky right-0 z-[1] !bg-gray-50 shadow-[-10px_0_10px_-10px_rgba(15,23,42,0.18)] dark:!bg-slate-800";
   // Approve straight from the list (Bright, 12 Oct 2026). Approving is the main
   // thing a manager does here, and it lived only at the bottom of the Review
   // window, where the Admin did not find it. Same rule as that window: only a
@@ -381,6 +402,8 @@ export default function ManagerWeeklyReviewPage({
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <button type="button" onClick={() => onShiftWeek(-1)} className="!min-h-0 inline-flex h-11 items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 text-[13px] font-semibold text-gray-800 shadow-sm hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"><ChevronLeft className="h-4 w-4" /> Previous Week</button>
+          <button type="button" disabled={onThisWeek} onClick={() => onPickWeek(todayKey)} title="Go to the current week"
+            className="!min-h-0 inline-flex h-11 items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 text-[13px] font-bold text-blue-700 shadow-sm hover:bg-blue-100 disabled:cursor-default disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200">This Week</button>
           <button type="button" disabled={!canGoNext} onClick={() => onShiftWeek(1)} className="!min-h-0 inline-flex h-11 items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 text-[13px] font-semibold text-gray-800 shadow-sm hover:bg-gray-50 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">Next Week <ChevronRight className="h-4 w-4" /></button>
           {onOpenHistory && (
             <button type="button" onClick={onOpenHistory} className="!min-h-0 inline-flex h-11 items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 text-[13px] font-semibold text-gray-800 shadow-sm hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
@@ -512,17 +535,33 @@ export default function ManagerWeeklyReviewPage({
                       <p className="m-0 mt-2 text-[11px] text-gray-500">{approvedCount} of {total} reports reviewed</p>
                     </div>
                   </div>
-                  <div className="overflow-x-auto px-3 pb-3">
+                  <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
+                    <span className="text-[12px] font-bold text-gray-600 dark:text-slate-300">Show:</span>
+                    {repFilters.filter((item) => item.key !== "returned" || expectedRows.some((row) => statusOf(row) === "returned")).map((item) => {
+                      const count = expectedRows.filter((row) => item.test(statusOf(row))).length;
+                      const active = repFilter === item.key;
+                      return (
+                        <button key={item.key} type="button" onClick={() => setRepFilter(item.key)}
+                          className={`!min-h-0 rounded-full px-3 py-1.5 text-[12px] font-bold ${active ? "bg-[#1F6FEB] text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-slate-800 dark:text-slate-200"}`}>
+                          {item.label} <span className={active ? "opacity-90" : "text-gray-500"}>{count}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="mx-3 overflow-x-auto pb-3">
                     <table className="w-full !min-w-[820px] text-left text-[12px]">
                       <thead className="text-[11px] text-gray-600 dark:text-slate-400 [&_th]:[color:inherit]">
                         <tr className="bg-gray-50 dark:bg-slate-800/60 [&>th]:bg-transparent [&>th]:[color:inherit]">
                           {["#", "Sales Rep", "Report Status", "Orders", "Delivered", "Delivery Rate", `Cross-Sell (${sym})`, `Upsell (${sym})`, `Base (${sym})`, `Total (${sym})`, "Actions"].map((h) => (
-                            <th key={h} className="whitespace-nowrap px-2 py-2.5 font-bold">{h}</th>
+                            // ⚠️ Actions stays pinned to the right edge (12 Oct 2026). On a
+                            // laptop the table is wider than its box, and Review / Approve
+                            // sat past the edge where nobody scrolled to.
+                            <th key={h} className={`whitespace-nowrap px-2 py-2.5 font-bold ${h === "Actions" ? pinnedHead : ""}`}>{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        {expectedRows.map((row, index) => {
+                        {expectedRows.filter((row) => activeRepFilter.test(statusOf(row))).map((row, index) => {
                           const snap = shownSnapshot(row);
                           const status = row.report?.status ?? "draft";
                           return (
@@ -555,7 +594,7 @@ export default function ManagerWeeklyReviewPage({
                                 </span>
                                 {row.payoutChange && <PayoutChangeNote change={row.payoutChange} sym={sym} />}
                               </td>
-                              <td className="px-2 py-3">
+                              <td className={`px-2 py-3 ${pinnedCell}`}>
                                 <span className="flex items-center gap-1">
                                   <button type="button" onClick={() => setReviewing(row.repId)} className="!min-h-0 rounded-lg bg-blue-50 px-2 py-1.5 text-[12px] font-bold text-blue-700 hover:bg-blue-100 dark:bg-blue-500/15 dark:text-blue-200">Review</button>
                                   {canApproveFromList(row) && (
@@ -577,8 +616,11 @@ export default function ManagerWeeklyReviewPage({
                         {expectedRows.length === 0 && (
                           <tr><td colSpan={11} className="px-2 py-8 text-center text-gray-500">{loading ? "Loading reports…" : "No sales rep had orders this week."}</td></tr>
                         )}
+                        {expectedRows.length > 0 && expectedRows.every((row) => !activeRepFilter.test(statusOf(row))) && (
+                          <tr><td colSpan={11} className="px-2 py-8 text-center text-gray-500">No report is "{activeRepFilter.label}" this week. <button type="button" onClick={() => setRepFilter("all")} className="!min-h-0 font-bold text-blue-700 underline">Show all</button></td></tr>
+                        )}
                         <tr className="border-t border-gray-200 font-bold text-gray-900 dark:border-slate-700 dark:text-slate-50 [&>td]:[color:inherit]">
-                          <td className="px-2 py-3" colSpan={2}>Total</td>
+                          <td className="px-2 py-3" colSpan={2}>Total{repFilter !== "all" ? <span className="block text-[10.5px] font-semibold text-gray-500">all reps, not only the ones shown</span> : null}</td>
                           <td className="px-2 py-3">-</td>
                           <td className="px-2 py-3">{nf(totals.orders)}</td>
                           <td className="px-2 py-3">
