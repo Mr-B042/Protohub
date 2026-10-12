@@ -91,7 +91,7 @@ export default function RepWeeklyReportPage({
   const [productFilter, setProductFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
-  const [menuFor, setMenuFor] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [menuFor, setMenuFor] = useState<{ id: string; x: number; y: number; up?: boolean } | null>(null);
   const [checkOpen, setCheckOpen] = useState(false);
   const [orderPage, setOrderPage] = useState(0);
   const PAGE_SIZE = 10;
@@ -555,7 +555,9 @@ export default function RepWeeklyReportPage({
                       aria-label={`More for order ${row.id}`}
                       onClick={(event) => {
                         const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-                        setMenuFor(menuFor?.id === row.id ? null : { id: row.id, x: rect.right, y: rect.bottom });
+                        // Near the bottom of the screen the menu opens upward, or it runs off the edge.
+                        const up = window.innerHeight - rect.bottom < 120 && rect.top > 120;
+                        setMenuFor(menuFor?.id === row.id ? null : { id: row.id, x: rect.right, y: up ? window.innerHeight - rect.top : rect.bottom, up });
                       }}
                       className="!min-h-0 rounded p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-slate-800"
                     >
@@ -596,7 +598,7 @@ export default function RepWeeklyReportPage({
         <div className="fixed inset-0 z-[70]" onClick={() => setMenuFor(null)}>
           <div
             className="absolute w-44 rounded-xl border border-gray-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-900"
-            style={{ top: menuFor.y + 4, left: Math.max(8, menuFor.x - 176) }}
+            style={menuFor.up ? { bottom: menuFor.y + 4, left: Math.max(8, menuFor.x - 176) } : { top: menuFor.y + 4, left: Math.max(8, menuFor.x - 176) }}
             onClick={(event) => event.stopPropagation()}
           >
             {onOpenOrder && (

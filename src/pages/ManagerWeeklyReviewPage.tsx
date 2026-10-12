@@ -128,7 +128,8 @@ export default function ManagerWeeklyReviewPage({
   const [returning, setReturning] = useState<string | null>(null);
   const [flagging, setFlagging] = useState<string | null>(null);
   const [changingPayout, setChangingPayout] = useState<string | null>(null);
-  const [menuFor, setMenuFor] = useState<{ repId: string; x: number; y: number } | null>(null);
+  // `up`: the row is near the bottom of the screen, so the menu opens upward.
+  const [menuFor, setMenuFor] = useState<{ repId: string; x: number; y: number; up?: boolean } | null>(null);
   const [managerNote, setManagerNote] = useState(company?.managerNote ?? "");
   const [ownerResponses, setOwnerResponses] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -145,6 +146,19 @@ export default function ManagerWeeklyReviewPage({
   const canChangePayout = (row: ReviewRepRow) => canAct && !frozenWeek && !!onSavePayoutChange && !!row.frozen
     && (row.report?.status === "submitted" || row.report?.status === "manager_approved");
   const payoutRow = changingPayout ? rows.find((row) => row.repId === changingPayout) ?? null : null;
+  // Approve straight from the list (Bright, 12 Oct 2026). Approving is the main
+  // thing a manager does here, and it lived only at the bottom of the Review
+  // window, where the Admin did not find it. Same rule as that window: only a
+  // report that is Submitted, while the week is still with the manager.
+  const canApproveFromList = (row: ReviewRepRow) => canAct && !frozenWeek && row.report?.status === "submitted";
+  const approveFromList = (row: ReviewRepRow) => {
+    const shown = shownSnapshot(row);
+    const warning = row.differences.length > 0
+      ? `\n\n${row.differences.length} figure${row.differences.length === 1 ? " has" : "s have"} changed since ${row.repName} submitted. Press Cancel and open Review if you have not looked at them.`
+      : "";
+    if (!window.confirm(`Approve ${row.repName}'s report for this week?\n\nFinal payout: ${sym}${nf(shown?.totals.finalBonus ?? 0)}${warning}`)) return;
+    void onApprove(row.repId).catch((err: any) => window.alert(`${row.repName}'s report was not approved.\n\n${err?.message ?? "Please try again."}`));
+  };
   const expectedRows = rows.filter((row) => row.expected || row.report);
   const shown = expectedRows.map(shownSnapshot).filter((snap): snap is WeeklyReportSnapshot => !!snap);
   const companySnap = useMemo(
@@ -523,9 +537,16 @@ export default function ManagerWeeklyReviewPage({
                               <td className="px-2 py-3">
                                 <span className="flex items-center gap-1">
                                   <button type="button" onClick={() => setReviewing(row.repId)} className="!min-h-0 rounded-lg bg-blue-50 px-2 py-1.5 text-[12px] font-bold text-blue-700 hover:bg-blue-100 dark:bg-blue-500/15 dark:text-blue-200">Review</button>
+                                  {canApproveFromList(row) && (
+                                    <button type="button" onClick={() => approveFromList(row)} className="!min-h-0 rounded-lg bg-emerald-600 px-2 py-1.5 text-[12px] font-bold text-white hover:bg-emerald-700">Approve</button>
+                                  )}
                                   <button type="button" aria-label={`More for ${row.repName}`} onClick={(event) => {
                                     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-                                    setMenuFor(menuFor?.repId === row.repId ? null : { repId: row.repId, x: rect.right, y: rect.bottom });
+                                    // ⚠️ The menu cannot scroll. Opened downward from a row near the
+                                    // bottom of the screen, its lower items ran off the edge and could
+                                    // not be seen or pressed (the Admin saw 3 of 5). Open upward there.
+                                    const up = window.innerHeight - rect.bottom < 240 && rect.top > 240;
+                                    setMenuFor(menuFor?.repId === row.repId ? null : { repId: row.repId, x: rect.right, y: up ? window.innerHeight - rect.top : rect.bottom, up });
                                   }} className="!min-h-0 rounded p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-slate-800"><MoreVertical className="h-4 w-4" /></button>
                                 </span>
                               </td>
@@ -661,8 +682,14 @@ export default function ManagerWeeklyReviewPage({
       {/* ── Row menu ────────────────────────────────────────────── */}
       {menuFor && createPortal(
         <div className="fixed inset-0 z-[70]" onClick={() => setMenuFor(null)}>
-          <div className="absolute w-52 rounded-xl border border-gray-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-900" style={{ top: menuFor.y + 4, left: Math.max(8, menuFor.x - 208) }} onClick={(event) => event.stopPropagation()}>
+          <div className="absolute w-52 rounded-xl border border-gray-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-900" style={menuFor.up ? { bottom: menuFor.y + 4, left: Math.max(8, menuFor.x - 208) } : { top: menuFor.y + 4, left: Math.max(8, menuFor.x - 208) }} onClick={(event) => event.stopPropagation()}>
             <MenuItem icon={ClipboardList} label="Review report" onClick={() => { setReviewing(menuFor.repId); setMenuFor(null); }} />
+            {(() => {
+              const menuRow = rows.find((row) => row.repId === menuFor.repId);
+              return menuRow && canApproveFromList(menuRow)
+                ? <MenuItem icon={Check} label="Approve report" onClick={() => { setMenuFor(null); approveFromList(menuRow); }} />
+                : null;
+            })()}
             {canAct && !frozenWeek && <MenuItem icon={Undo2} label="Return for correction" onClick={() => { setReturning(menuFor.repId); setMenuFor(null); }} />}
             {canAct && companyStatus !== "locked" && <MenuItem icon={Flag} label="Flag issue" onClick={() => { setFlagging(menuFor.repId); setMenuFor(null); }} />}
             {(() => {
