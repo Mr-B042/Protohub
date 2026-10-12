@@ -421,6 +421,36 @@ async function sendGateFor(orgId: string, branchId: string, weekStart: string) {
   };
 }
 
+/**
+ * Weeks whose reps have sent their reports but which have not gone to the
+ * owner yet (Bright, 12 Oct 2026). The review page opens on the most recent
+ * week, so an Admin sat on a week nobody had submitted - no Approve anywhere -
+ * while four reports waited in the week before. The page now says which weeks
+ * are waiting, whichever week is on screen.
+ */
+async function waitingWeeksFor(orgId: string, branchId: string) {
+  const [{ data: reports, error: reportsError }, { data: companies, error: companiesError }] = await Promise.all([
+    supabase.from("rep_weekly_reports").select("week_start, status")
+      .eq("org_id", orgId).eq("branch_id", branchId).gte("week_start", FIRST_REPORT_WEEK)
+      .in("status", ["submitted", "returned", "manager_approved"]).limit(2000),
+    supabase.from("company_weekly_reports").select("week_start, status")
+      .eq("org_id", orgId).eq("branch_id", branchId).gte("week_start", FIRST_REPORT_WEEK).limit(500)
+  ]);
+  if (reportsError) throw reportsError;
+  if (companiesError) throw companiesError;
+  const sent = new Set((companies ?? []).filter((row: any) => row.status === "submitted_to_owner" || row.status === "locked").map((row: any) => row.week_start as string));
+  const byWeek = new Map<string, { weekStart: string; toApprove: number; approved: number; returned: number }>();
+  for (const row of reports ?? []) {
+    if (sent.has(row.week_start)) continue;
+    const entry = byWeek.get(row.week_start) ?? { weekStart: row.week_start as string, toApprove: 0, approved: 0, returned: 0 };
+    if (row.status === "submitted") entry.toApprove += 1;
+    else if (row.status === "manager_approved") entry.approved += 1;
+    else entry.returned += 1;
+    byWeek.set(row.week_start, entry);
+  }
+  return Array.from(byWeek.values()).sort((a, b) => a.weekStart.localeCompare(b.weekStart));
+}
+
 const sendError = (res: any, error: any, fallback: string) => {
   res.status(error?.status ?? 500).json({ error: error?.message ?? fallback });
 };
@@ -808,6 +838,7 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
       bonusQueries: (bonusQueries.data ?? []).map(mapBonusQuery),
       payoutChanges,
       gate,
+      waitingWeeks: await waitingWeeksFor(orgId, branchId),
       logMisses: await logMissesForWeek(orgId, null, weekStart),
       previousLogMisses: await logMissesForWeek(orgId, null, addDaysToDateKey(weekStart, -7)),
       logMissDisputes: await disputesForWeek(orgId, branchId, null, weekStart),
