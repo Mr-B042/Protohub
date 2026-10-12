@@ -23041,7 +23041,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Inline editor for an order's delivery fee - used in Recent Transactions
   // and Scheduled Deliveries tables. Saves on blur, books to expenses.
   const renderDeliveryFeeCell = (order: TrackedOrder) => {
-    const editable = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Sales Rep";
+    const editable = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager" || currentRole === "Sales Rep";
     const fee = Number(order.logisticsCost ?? 0);
     const isFailed = order.status === "Failed" || order.status === "Cancelled";
     if (!editable) {
@@ -23074,25 +23074,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     );
   };
 
-  // Single helper that books / updates / removes the delivery-fee expense for an
-  // order. Status determines the category:
-  //   • Failed / Cancelled → "Failed Delivery" (the trip cost money but no revenue)
-  //   • Anything else      → "Delivery"
-  // Zero/missing fee removes the auto-booked expense entirely.
+  // ⚠️ THE SERVER BOOKS THE COST NOW (Bright, 12 Oct 2026). This only keeps the
+  // Expenses list on screen in step until the next reload. It used to send the
+  // expense itself as a second request, which could fail or be refused (a
+  // Recovery Rep may type a fee but not save an expense) and left the fee on
+  // the order with no cost behind it. Both order routes now do it on save.
   const syncOrderDeliveryExpense = (order: TrackedOrder) => {
     const expenseId = `EXP-DEL-${order.id}`;
     const fee = Number(order.logisticsCost ?? 0);
     if (!fee || fee <= 0) {
-      const removedExpense = expenses.find((e) => e.id === expenseId);
-      // Only the Owner/Admin may delete expenses (and only they load them).
-      // A rep's ₦0 fee asked the server to delete one anyway, got "not
-      // allowed", and read it as "only an admin can save the fee".
-      if (currentRole !== "Owner" && currentRole !== "Admin") return;
       setExpenses((prev) => prev.filter((e) => e.id !== expenseId));
-      expensesApi.delete(expenseId).catch((err: any) => {
-        if (removedExpense) setExpenses((prev) => [removedExpense, ...prev]);
-        showToast(`Failed to remove delivery expense: ${err.message}`);
-      });
       return;
     }
     const failed = order.status === "Failed" || order.status === "Cancelled";
@@ -23100,27 +23091,25 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const desc = failed
       ? `Failed delivery cost for ${order.id} - ${order.customer} (${order.status})`
       : `Delivery cost for ${order.id} - ${order.customer}`;
-    // Backend expects YYYY-MM-DD. Use deliveredDate / createdAt / today, sliced.
-    const rawDate = order.deliveredDate ?? order.createdAt ?? todayKey();
-    const date = String(rawDate).slice(0, 10);
-    const expenseRecord: ExpenseRecord = {
-      id: expenseId,
-      type: category,
-      amount: fee,
-      currency: (["NGN", "USD", "GBP"].includes(order.currency) ? order.currency : "NGN") as CurrencyCode,
-      date,
-      productId: order.productId,
-      productName: order.productName,
-      description: desc
-    };
-    setExpenses((prev) => [expenseRecord, ...prev.filter((e) => e.id !== expenseId)]);
-    expensesApi.create({
-      id: expenseRecord.id, date: expenseRecord.date, category: expenseRecord.type,
-      description: expenseRecord.description, amount: expenseRecord.amount, currency: expenseRecord.currency,
-      productId: expenseRecord.productId
-    } as any).catch((err: any) => {
-      setExpenses((prev) => prev.filter((e) => e.id !== expenseId));
-      showToast(`Failed to sync delivery expense: ${err.message}`);
+    setExpenses((prev) => {
+      const existing = prev.find((e) => e.id === expenseId);
+      // A failed trip is a cost of the day it failed, not of the day the order
+      // was placed. Keep the day already booked when it is already a failed cost.
+      const date = failed
+        ? (existing?.type === "Failed Delivery" ? existing.date : todayKey())
+        : String(order.deliveredDate ?? order.createdAt ?? todayKey()).slice(0, 10);
+      const expenseRecord: ExpenseRecord = {
+        ...(existing ?? {}),
+        id: expenseId,
+        type: category,
+        amount: fee,
+        currency: (["NGN", "USD", "GBP"].includes(order.currency) ? order.currency : "NGN") as CurrencyCode,
+        date,
+        productId: order.productId,
+        productName: order.productName,
+        description: desc
+      };
+      return [expenseRecord, ...prev.filter((e) => e.id !== expenseId)];
     });
   };
 
@@ -102798,7 +102787,7 @@ ${waybillLineItems(w).length > 1
 	                        edit on its own skips the remittance-variance branch
 	                        entirely. The settled-remittance lock still applies to
 	                        her exactly as it does to a Sales Rep. */}
-	                    {(currentRole === "Owner" || currentRole === "Admin" || currentRole === "Sales Rep" || currentRole === "Recovery Rep") && (
+	                    {(currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager" || currentRole === "Sales Rep" || currentRole === "Recovery Rep") && (
 	                      <div className="col-span-2">
 	                        {(selectedOrder.status === "Failed" || selectedOrder.status === "Cancelled") ? (
 	                          <p className="text-xs font-bold uppercase tracking-wide m-0 text-rose-600 dark:text-rose-400">Failed delivery charge</p>

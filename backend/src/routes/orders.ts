@@ -13,6 +13,7 @@ import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 import { formatOrderForWhatsAppDispatch, type WhatsAppDispatchOrderRow } from "../lib/order-whatsapp-dispatch.js";
 import { isPerUserWhatsAppDispatch } from "../lib/whatsapp-dispatch-mode.js";
 import { logger } from "../lib/logger.js";
+import { syncOrderDeliveryExpense } from "../lib/order-delivery-expense.js";
 import { supabase } from "../lib/supabase.js";
 import { applyBranchScope, requireAuth, requireRole } from "../middleware/auth.js";
 import { isFrontlineRepRole } from "../lib/roles.js";
@@ -1694,7 +1695,10 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
     // Clear remittance so a un-delivered order is not flagged as overdue by
     // the remittance cron or shown as outstanding in the finance dashboard.
     updates.amount_remitted   = 0;
-    updates.logistics_cost    = 0;
+    // A delivered order marked Failed/Cancelled KEEPS its fee: the trip was
+    // paid for, and that fee is the failed-delivery cost. Wiping it left the
+    // order showing no fee while the cost sat in Expenses (orders 4610, 3458).
+    if (status !== "Failed" && status !== "Cancelled") updates.logistics_cost = 0;
     updates.remittance_status = "Pending";
     // The cash is gone, so any prior variance-approval state is stale — clear it
     // (don't leave a 'pending' lingering in the Owner's queue for cash that's zeroed).
@@ -2043,6 +2047,11 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
       : (req.body.reason ?? null)
   });
   if (auditErr) console.error("Audit insert failed:", auditErr.message);
+
+  // The fee's cost row follows the order: category and date change with the
+  // status, and it goes when the fee does. After the history row above, which
+  // is where a failed order's cost gets its date.
+  await syncOrderDeliveryExpense(req.user!.orgId, data as any);
 
   if (isDeliveredDateCorrection) {
     res.json(data);
@@ -3029,6 +3038,11 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Reco
 
   if (error) { res.status(500).json({ error: error.message }); return; }
   if (!data)  { res.status(404).json({ error: "Order not found." }); return; }
+
+  // Whoever typed the fee, the server books its cost (lib/order-delivery-expense.ts).
+  if (hasOwn(updates, "logistics_cost") || deliveredCorrection) {
+    await syncOrderDeliveryExpense(req.user!.orgId, data as any);
+  }
 
   if (deliveredCorrection && deliveredCorrectionReason) {
     // The order's own history: who corrected it, what moved, and why. Status
