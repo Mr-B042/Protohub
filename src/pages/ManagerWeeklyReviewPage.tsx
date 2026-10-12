@@ -69,8 +69,10 @@ export default function ManagerWeeklyReviewPage({
   renderFunds, fundsPending, fundsSummary, onSaveDraftNote, initialTab, logMissDisputes = [], onDecideLogMiss,
   renderHeadOfSales, headOfSalesAttention = false,
   onApprove, onReturn, onFlag, onSubmitToOwner, onBack, onEditManagerBonus, monthlyIncentive = null,
-  onSavePayoutChange, onRemovePayoutChange, repsWaiting = false
+  onSavePayoutChange, onRemovePayoutChange, repsWaiting = false, waitingWeeks = []
 }: {
+  /** Weeks with reports waiting on the manager (any week, not only the one on screen). */
+  waitingWeeks?: Array<{ weekStart: string; toApprove: number; approved: number; returned: number }>;
   /** Add to or take off a rep's final payout (signed amount), with a reason. */
   onSavePayoutChange?: (repId: string, amount: number, reason: string) => Promise<void>;
   onRemovePayoutChange?: (repId: string) => Promise<void>;
@@ -389,6 +391,25 @@ export default function ManagerWeeklyReviewPage({
       </div>
 
       {error && <p className="m-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-[13px] font-semibold text-rose-700">{error}</p>}
+      {/* ── Work waiting in ANOTHER week (Bright, 12 Oct 2026) ─────
+          The page opens on the most recent week. An Admin spent a morning on a
+          week nobody had submitted, looking for an Approve button, while four
+          reports waited in the week before. Say it wherever she is. */}
+      {canAct && waitingWeeks.filter((item) => item.weekStart !== weekStart).map((item) => {
+        const end = new Date(`${item.weekStart}T12:00:00Z`); end.setUTCDate(end.getUTCDate() + 6);
+        const label = `${shortDay(item.weekStart)} – ${shortDay(end.toISOString().slice(0, 10))}`;
+        const parts = [
+          item.toApprove > 0 ? `${item.toApprove} report${item.toApprove === 1 ? "" : "s"} to approve` : null,
+          item.returned > 0 ? `${item.returned} back with the rep` : null,
+          item.toApprove === 0 && item.returned === 0 ? `all ${item.approved} approved: ready to send to the owner` : item.approved > 0 ? `${item.approved} approved` : null
+        ].filter(Boolean).join(" · ");
+        return (
+          <div key={item.weekStart} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 border-rose-300 bg-rose-50 px-4 py-3 text-[14px] text-rose-900 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-100">
+            <span><strong>Waiting for you: week of {label}.</strong> {parts}. You are looking at a different week.</span>
+            <button type="button" onClick={() => onPickWeek(item.weekStart)} className="!min-h-0 rounded-lg bg-rose-600 px-4 py-2 text-[13px] font-bold text-white hover:bg-rose-700">Open week of {label}</button>
+          </div>
+        );
+      })}
       {repsWaiting && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-[13px] text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
           <span><strong>Reps cannot send this week's report yet.</strong> Last week has not been sent to the owner. Once it is sent, they can submit, and they will not be marked late for the wait.</span>

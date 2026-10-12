@@ -25740,6 +25740,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     attribution: Record<string, SalesBonusOrderAttribution[]> | null;
     settlement: Record<string, SalesBonusOrderSettlement>;
   } | null>(null);
+  const weeklyAutoOpenedRef = useRef(false);
   const [weeklyMine, setWeeklyMine] = useState<Awaited<ReturnType<typeof weeklyReportsApi.mine>> | null>(null);
   const [weeklyWeek, setWeeklyWeek] = useState<Awaited<ReturnType<typeof weeklyReportsApi.week>> | null>(null);
   const [weeklyMyHistory, setWeeklyMyHistory] = useState<Awaited<ReturnType<typeof weeklyReportsApi.myHistory>>["rows"]>([]);
@@ -25819,6 +25820,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           ]);
           if (cancelled) return;
           setWeeklyWeek(week);
+          // Open on the week that needs the manager (Bright, 12 Oct 2026). The
+          // page starts on the most recent week; if an EARLIER week still has
+          // reports to approve or send, go there - once per visit, so moving
+          // between weeks by hand afterwards is never undone.
+          const earliestWaiting = (week.waitingWeeks ?? [])[0]?.weekStart;
+          if (!weeklyAutoOpenedRef.current && (currentRole === "Manager" || currentRole === "Admin")) {
+            weeklyAutoOpenedRef.current = true;
+            if (earliestWaiting && earliestWaiting < weekStart) { setWeeklyReportWeekStart(earliestWaiting); return; }
+          }
           if (history) setWeeklyHistory(history.rows ?? []);
           setWeeklyManagerBonus(bonus as ManagerBonusSummary | null);
           try {
@@ -32154,6 +32164,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         onSavePayoutChange={(repId, amount, reason) => weeklyRun(() => weeklyReportsApi.savePayoutChange(repId, { weekStart: weeklyReportWeekStart, amount, reason }), `${repName(repId)}'s payout changed. The owner will see the change.`)}
         onRemovePayoutChange={(repId) => weeklyRun(() => weeklyReportsApi.removePayoutChange(repId, weeklyReportWeekStart), `${repName(repId)}'s payout is back to the system figure.`)}
         repsWaiting={Boolean(week?.gate?.blocked)}
+        waitingWeeks={week?.waitingWeeks ?? []}
         onSubmitToOwner={async (note, responses) => {
           const approved = reviewRows
             .filter((row) => row.expected || row.report)

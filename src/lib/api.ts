@@ -4172,6 +4172,8 @@ export const weeklyReportsApi = {
       adjustments: WeeklyReportAdjustmentRow[]; previousAdjustments: WeeklyReportAdjustmentRow[]; bonusQueries: WeeklyBonusQuery[];
       logMisses: WeeklyLogMissRow[]; previousLogMisses: WeeklyLogMissRow[]; logMissDisputes: LogMissDispute[]; carriedFines: Record<string, number>;
       payoutChanges?: WeeklyPayoutChange[]; gate?: WeeklySendGate;
+      /** Weeks with reports sent in by reps that have not gone to the owner yet. */
+      waitingWeeks?: Array<{ weekStart: string; toApprove: number; approved: number; returned: number }>;
       funds?: Array<{ managerId: string; managerName: string; totals: ManagerFundTotals; readiness: string[]; locked: boolean; varianceExplanation: string | null; notes: string | null; returned: number }>;
     }>(`/api/weekly-reports/week?${new URLSearchParams({ weekStart }).toString()}`),
   history: () => get<{ rows: Array<{ weekStart: string; weekEnd: string; company: WeeklyCompanyReport | null; repStatusCounts: Record<string, number> }> }>("/api/weekly-reports/history"),
