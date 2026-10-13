@@ -1079,6 +1079,13 @@ router.put("/rep/:repId/payout-change", requireRole(...REVIEWERS), async (req, r
         previousReason: before?.reason ?? null
       }
     });
+    // Tell the rep and the Owner, unless the same figure was only saved again.
+    if (!before || Number(before.amount) !== amount) {
+      const { data: person } = await supabase.from("users").select("name").eq("id", repId).eq("org_id", orgId).maybeSingle();
+      void notifyWeeklyReport(orgId, branchId, weekStart, {
+        kind: "payout_changed", repId, repName: String(person?.name ?? "A sales rep"), byName: req.user!.name ?? "the manager", systemAmount, amount, reason
+      });
+    }
     res.json({ ok: true });
   } catch (error: any) {
     sendError(res, error, "Could not change this payout.");
@@ -1098,6 +1105,11 @@ router.delete("/rep/:repId/payout-change", requireRole(...REVIEWERS), async (req
     await audit(req, {
       branchId, weekStart, action: "payout_change_removed", repReportId: report.id, repId,
       detail: { systemAmount: Number(removed[0].system_amount), amount: Number(removed[0].amount), reason: removed[0].reason }
+    });
+    const { data: person } = await supabase.from("users").select("name").eq("id", repId).eq("org_id", orgId).maybeSingle();
+    void notifyWeeklyReport(orgId, branchId, weekStart, {
+      kind: "payout_changed", repId, repName: String(person?.name ?? "A sales rep"), byName: req.user!.name ?? "the manager",
+      systemAmount: Number(removed[0].system_amount), amount: 0, reason: String(removed[0].reason ?? ""), removed: true
     });
     res.json({ ok: true });
   } catch (error: any) {
@@ -1303,7 +1315,12 @@ router.post("/company/return", requireRole("Owner"), async (req, res) => {
       branchId, weekStart, action: "owner_returned", companyReportId: company.id,
       detail: { correctionId: correction.id, section, problem, comment, orderRef: orderRef || null, repIds: sentBack.map((row) => row.rep_id) }
     });
-    void notifyWeeklyReport(orgId, branchId, weekStart, { kind: "owner_returned", problem });
+    let repNames: string[] = [];
+    if (sentBack.length > 0) {
+      const { data: people } = await supabase.from("users").select("id, name").eq("org_id", orgId).in("id", sentBack.map((row) => row.rep_id));
+      repNames = (people ?? []).map((row: any) => String(row.name ?? "A sales rep"));
+    }
+    void notifyWeeklyReport(orgId, branchId, weekStart, { kind: "owner_returned", problem, comment, repNames });
     res.json({ ok: true });
   } catch (error: any) {
     sendError(res, error, "Could not return this week to the manager.");
