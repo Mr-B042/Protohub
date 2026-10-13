@@ -26094,7 +26094,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     section: draft.section,
     problem: draft.problem,
     comment: draft.comment,
-    ...(draft.orderRef ? { orderRef: draft.orderRef } : {})
+    ...(draft.orderRef ? { orderRef: draft.orderRef } : {}),
+    ...(draft.repIds && draft.repIds.length > 0 ? { repIds: draft.repIds } : {})
   });
 
   // Projected bonus: what the rep would earn IF this order is delivered - ignores status check

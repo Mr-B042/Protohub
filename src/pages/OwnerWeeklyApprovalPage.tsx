@@ -589,6 +589,11 @@ export default function OwnerWeeklyApprovalPage({
       )}
       {returning && (
         <CorrectionForm title="Return to Manager" subtitle="Say exactly what needs fixing. The manager must answer before resubmitting." submitLabel="Return to Manager" tone="rose"
+          // Send back only some reps (Bright, 13 Oct 2026): the ones ticked go
+          // back for the manager to put the actual bonus; the rest stay approved.
+          reps={rows.filter((row) => row.report?.status === "manager_approved").map((row) => ({
+            id: row.repId, name: row.repName, amountLabel: `${sym}${nf((row.frozen ?? row.live)?.totals.finalBonus ?? 0)}`
+          }))}
           initialComment={requestChanges} onCancel={() => setReturning(false)}
           onSubmit={async (draft) => { await onReturnToManager(draft); setReturning(false); setRequestChanges(""); }} />
       )}

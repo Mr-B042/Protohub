@@ -60,7 +60,10 @@ const correctionBodySchema = z.object({
   comment: z.string().trim().min(3, "Add a comment.").max(2000),
   orderRef: z.string().trim().max(60).optional(),
   // The owner can return the week over one Funds & Expenses entry.
-  fundTransactionId: z.string().uuid().optional()
+  fundTransactionId: z.string().uuid().optional(),
+  // The owner's return can name the reps whose bonus needs correcting. Only
+  // those go back for the manager to approve again; the rest stay approved.
+  repIds: z.array(z.string().uuid()).max(200).optional()
 });
 
 /** Every manager wallet's money side for the week (only the ones with anything in them). */
@@ -1245,6 +1248,23 @@ router.post("/company/return", requireRole("Owner"), async (req, res) => {
     const verdict = canOwnerAct("return", company?.status ?? null);
     if (!verdict.ok || !company) throw httpError(409, verdict.ok ? "The manager has not submitted this week yet." : verdict.error);
 
+    // ── Only these reps (Bright, 13 Oct 2026) ──────────────────────────────
+    // "Instead of returning the whole for correction we can also select the
+    // sale rep needs to be corrected and send it back to admin to put actually
+    // bonus to be paid." A named rep's report goes back to Submitted, so the
+    // manager has to approve it again - and Approve asks for the actual bonus
+    // to be paid. Reports not named stay approved. Checked before anything is
+    // changed, so a bad pick returns nothing.
+    const repIds = Array.from(new Set(parsed.data.repIds ?? []));
+    let sentBack: Array<{ id: string; rep_id: string }> = [];
+    if (repIds.length > 0) {
+      const { data: picked, error: pickedError } = await supabase.from("rep_weekly_reports").select("id, rep_id, status")
+        .eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart).in("rep_id", repIds);
+      if (pickedError) throw pickedError;
+      sentBack = ((picked ?? []) as any[]).filter((row) => row.status === "manager_approved").map((row) => ({ id: row.id as string, rep_id: row.rep_id as string }));
+      if (sentBack.length !== repIds.length) throw httpError(400, "One of the sales reps you picked has no approved report this week. Reload and pick again.");
+    }
+
     const now = new Date().toISOString();
     const { data: updated, error } = await supabase.from("company_weekly_reports")
       .update({ status: "returned_to_manager", updated_at: now })
@@ -1267,9 +1287,21 @@ router.post("/company/return", requireRole("Owner"), async (req, res) => {
       raised_by: req.user!.id, raised_by_name: req.user!.name ?? null, raised_by_role: req.user!.role
     }).select("id").single();
     if (correctionError) throw correctionError;
+    if (sentBack.length > 0) {
+      const { error: repError } = await supabase.from("rep_weekly_reports")
+        .update({ status: "submitted", updated_at: now })
+        .in("id", sentBack.map((row) => row.id)).eq("status", "manager_approved");
+      if (repError) throw repError;
+      for (const row of sentBack) {
+        await audit(req, {
+          branchId, weekStart, action: "owner_sent_back_rep", companyReportId: company.id, repReportId: row.id, repId: row.rep_id,
+          detail: { correctionId: correction.id, problem, comment }
+        });
+      }
+    }
     await audit(req, {
       branchId, weekStart, action: "owner_returned", companyReportId: company.id,
-      detail: { correctionId: correction.id, section, problem, comment, orderRef: orderRef || null }
+      detail: { correctionId: correction.id, section, problem, comment, orderRef: orderRef || null, repIds: sentBack.map((row) => row.rep_id) }
     });
     void notifyWeeklyReport(orgId, branchId, weekStart, { kind: "owner_returned", problem });
     res.json({ ok: true });
