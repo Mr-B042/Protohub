@@ -331,7 +331,7 @@ type OrderScheduleFilter = "All schedule marks" | "Scheduled Delivered" | "Sched
 type OrderSource = "All Sources" | "TikTok" | "Facebook" | "Instagram" | "Messenger" | "Audience Network" | "Threads" | "WhatsApp" | "Website" | "Direct";
 type OrderLocation = string; // "All Locations" or any state present in the orders
 type CartStatus = "All statuses" | "Open abandoned" | "In progress" | "Abandoned" | "Assigned" | "Contacted" | "Converted" | "No response" | "Not interested";
-type CartConversionFilter = "All conversion paths" | "Recovered by Team" | "Recovered Delivered" | "Recovered Pending" | "Recovered Failed / Cancelled" | "Customer Finished Later";
+type CartConversionFilter = "All conversion paths" | "Recovered by Team" | "Recovered Delivered" | "Recovered Pending" | "Recovered Failed / Cancelled" | "Customer Finished Later" | "Ordered Straight Away";
 type DeliveryAgent = string;
 type ScheduleRange = "Today" | "Tomorrow" | "Day After" | "Custom";
 type ScheduleAuditMode = "Active" | "On Time" | "Late" | "Missed" | "History";
@@ -1583,7 +1583,7 @@ type ConvertedCartLinkRepairReport = {
   manualReviewCount: number;
   rows: ConvertedCartLinkRepairRow[];
 };
-type AbandonedCartConversionKind = "manual_recovery" | "customer_self_completed";
+type AbandonedCartConversionKind = "manual_recovery" | "customer_self_completed" | "ordered_straight_away";
 type DeliveryAgentCoverage = {
   id?: string;
   state: string;
@@ -2453,7 +2453,7 @@ const cartListStatus = (cart: Pick<AbandonedCartRecord, "status" | "assignedRepI
   if (!cart.assignedRepId && cart.status === "Assigned") return "Open abandoned";
   return cart.status;
 };
-const cartConversionFilters: CartConversionFilter[] = ["All conversion paths", "Recovered by Team", "Recovered Delivered", "Recovered Pending", "Recovered Failed / Cancelled", "Customer Finished Later"];
+const cartConversionFilters: CartConversionFilter[] = ["All conversion paths", "Recovered by Team", "Recovered Delivered", "Recovered Pending", "Recovered Failed / Cancelled", "Customer Finished Later", "Ordered Straight Away"];
 const scheduleRanges: ScheduleRange[] = ["Today", "Tomorrow", "Day After", "Custom"];
 const scheduleAuditModes: { value: ScheduleAuditMode; label: string }[] = [
   { value: "Active", label: "Active" },
@@ -7002,7 +7002,30 @@ const sourceCartIdForOrder = (order: Partial<TrackedOrder> | null | undefined): 
   const raw = order?.sourceCartId ?? (order as { source_cart_id?: unknown } | null | undefined)?.source_cart_id;
   return typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : "";
 };
-const abandonedCartConversionKindFor = (order: Partial<TrackedOrder> | null | undefined): AbandonedCartConversionKind | null => {
+// ── Three ways a cart becomes an order (Bright, 13 Oct 2026) ────────────────
+// The form saves a cart the moment a customer starts typing, so EVERY order has
+// a cart behind it. With only two groups, a customer who filled the form and
+// sent it in two minutes was counted as "Customer finished later" - 19 of them
+// in a day when no abandoned cart had come back at all - and the page's
+// Captured and Conversion Rate were mostly ordinary orders.
+//   • manual_recovery        a rep turned the cart into an order
+//   • customer_self_completed the customer LEFT and came back: the cart had
+//                             already been handed to a rep, or the order came
+//                             15+ minutes after the cart started (the same wait
+//                             before a cart is handed out)
+//   • ordered_straight_away   the customer sent the form in one go: never abandoned
+const CART_CAME_BACK_AFTER_MS = 15 * 60 * 1000;
+type CartTimes = { createdAt?: string | null; assignedAt?: string | null } | null | undefined;
+const cartCustomerCameBack = (order: Partial<TrackedOrder> | null | undefined, cart: CartTimes): boolean => {
+  const ordered = new Date(String((order as any)?.createdAt ?? "")).getTime();
+  const started = new Date(String(cart?.createdAt ?? "")).getTime();
+  const handed = new Date(String(cart?.assignedAt ?? "")).getTime();
+  // No usable times (an order with only a date): leave it where it always was.
+  if (!Number.isFinite(ordered) || !Number.isFinite(started) || String((order as any)?.createdAt ?? "").length <= 10) return true;
+  if (Number.isFinite(handed) && handed < ordered) return true;
+  return ordered - started >= CART_CAME_BACK_AFTER_MS;
+};
+const abandonedCartConversionKindFor = (order: Partial<TrackedOrder> | null | undefined, cart?: CartTimes): AbandonedCartConversionKind | null => {
   const cartId = sourceCartIdForOrder(order);
   if (!cartId) return null;
 
@@ -7026,26 +7049,34 @@ const abandonedCartConversionKindFor = (order: Partial<TrackedOrder> | null | un
     notesText.includes("order submitted from public embed form") ||
     notesText.includes("order submitted from embed preview")
   ) {
-    return "customer_self_completed";
+    return cart === undefined || cartCustomerCameBack(order, cart) ? "customer_self_completed" : "ordered_straight_away";
   }
 
-  return "customer_self_completed";
+  return cart === undefined || cartCustomerCameBack(order, cart) ? "customer_self_completed" : "ordered_straight_away";
 };
-const abandonedCartConversionPathLabel = (order: Partial<TrackedOrder> | null | undefined): string | null => {
-  const kind = abandonedCartConversionKindFor(order);
+const abandonedCartConversionPathLabel = (order: Partial<TrackedOrder> | null | undefined, cart?: CartTimes): string | null => {
+  const kind = abandonedCartConversionKindFor(order, cart);
   if (kind === "manual_recovery") return "Recovered by team";
   if (kind === "customer_self_completed") return "Customer finished later";
+  if (kind === "ordered_straight_away") return "Ordered straight away";
   return null;
 };
-const abandonedCartConversionStatusLabel = (order: Partial<TrackedOrder> | null | undefined): string | null => {
-  const path = abandonedCartConversionPathLabel(order);
+const abandonedCartConversionStatusLabel = (order: Partial<TrackedOrder> | null | undefined, cart?: CartTimes): string | null => {
+  const path = abandonedCartConversionPathLabel(order, cart);
   if (!path) return null;
   const status = typeof order?.status === "string" && order.status.trim().length > 0 ? order.status.trim() : "New";
   return `${path} · ${status}`;
 };
-const abandonedCartConversionMarkerFor = (order: Partial<TrackedOrder> | null | undefined) => {
-  const kind = abandonedCartConversionKindFor(order);
+const abandonedCartConversionMarkerFor = (order: Partial<TrackedOrder> | null | undefined, cart?: CartTimes) => {
+  const kind = abandonedCartConversionKindFor(order, cart);
   const status = typeof order?.status === "string" && order.status.trim().length > 0 ? order.status.trim() : "New";
+  if (kind === "ordered_straight_away") {
+    return {
+      label: "Ordered Straight Away",
+      detail: status === "Delivered" ? "Customer sent the form in one go and it delivered" : `Never abandoned. Linked order is ${status}`,
+      pillClass: "bg-gray-100 text-gray-600"
+    };
+  }
   if (kind === "manual_recovery") {
     return {
       label: status === "Delivered" ? "Recovered · Delivered" : "Recovered by Team",
@@ -20524,7 +20555,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const filteredAbandonedCarts = abandonedCarts.filter((cart) => {
     const search = cartSearch.trim().toLowerCase();
     const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
-    const conversionKind = abandonedCartConversionKindFor(linkedOrder);
+    const conversionKind = abandonedCartConversionKindFor(linkedOrder, cart);
     const linkedOrderStatus = linkedOrder?.status ?? "New";
     const embedLabel = cartEmbedLabelFor(cart, linkedOrder, abandonedCartJourneyMap[cart.id] ?? []);
     const matchesSearch = !search || `${cart.id} ${cart.customer} ${cart.phone} ${cart.productName} ${cart.packageName} ${cart.source} ${embedLabel}`.toLowerCase().includes(search);
@@ -20540,7 +20571,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               ? conversionKind === "manual_recovery" && abandonedCartIsPendingRecoveredOutcome(linkedOrderStatus)
               : cartConversionFilter === "Recovered Failed / Cancelled"
                 ? conversionKind === "manual_recovery" && abandonedCartIsBadRecoveredOutcome(linkedOrderStatus)
-                : conversionKind === "customer_self_completed";
+                : cartConversionFilter === "Ordered Straight Away"
+                  ? conversionKind === "ordered_straight_away"
+                  : conversionKind === "customer_self_completed";
     // A cart is in the period if it was CREATED then OR last worked then.
     // Filtering on creation alone made assigned carts vanish: assigning a
     // three-week-old cart is today's work, but the cart still reads as three
@@ -20576,7 +20609,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   })();
   const abandonedCartRecoveryRows = filteredAbandonedCarts.map((cart) => {
     const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
-    const conversionKind = abandonedCartConversionKindFor(linkedOrder);
+    const conversionKind = abandonedCartConversionKindFor(linkedOrder, cart);
     const linkedStatus = linkedOrder?.status ?? "New";
     const recoveryNote = abandonedCartRecoveryNoteFor(linkedOrder, cart.id);
     const converterName = recoveryNote?.by
@@ -20601,7 +20634,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     .filter((cart) => matchesProductFilter(cart.productId, cart.productName, cartProductIds) && (viewerScopeRepId === null || cart.assignedRepId === viewerScopeRepId))
     .map((cart) => {
       const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
-      const conversionKind = abandonedCartConversionKindFor(linkedOrder);
+      const conversionKind = abandonedCartConversionKindFor(linkedOrder, cart);
       const linkedStatus = linkedOrder?.status ?? "New";
       const recoveryNote = abandonedCartRecoveryNoteFor(linkedOrder, cart.id);
       const converterName = recoveryNote?.by ?? users.find((u) => u.id === linkedOrder?.assignedRepId)?.name ?? users.find((u) => u.id === cart.assignedRepId)?.name ?? "Team";
@@ -20613,6 +20646,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     isInPeriod(orderCreatedKey(row.linkedOrder!), cartsPeriod, cartsDateRange)
   );
   const customerFinishedLaterRows = abandonedCartRecoveryRows.filter((row) => row.conversionKind === "customer_self_completed");
+  const orderedStraightAwayRows = abandonedCartRecoveryRows.filter((row) => row.conversionKind === "ordered_straight_away");
+  // Never abandoned: the customer sent the form in one go. Kept out of
+  // Captured, Contacted and the Conversion Rate, which are about carts that
+  // were actually left.
+  const cartOrderedStraightAway = (cart: AbandonedCartRecord) =>
+    cart.status === "Converted" && abandonedCartConversionKindFor(linkedOrderBySourceCartId.get(cart.id), cart) === "ordered_straight_away";
   const teamRecoveredDeliveredRows = teamRecoveredCartRows.filter((row) => row.linkedStatus === "Delivered");
   const teamRecoveredFailedRows = teamRecoveredCartRows.filter((row) => abandonedCartIsBadRecoveredOutcome(row.linkedStatus));
   const teamRecoveredPendingRows = teamRecoveredCartRows.filter((row) => abandonedCartIsPendingRecoveredOutcome(row.linkedStatus));
@@ -45114,11 +45153,14 @@ ${waybillLineItems(w).length > 1
   };
 
   const exportCartsCsv = () => {
-    const exportConverted = filteredAbandonedCarts.filter((c) => c.status === "Converted").length;
+    // Same as the cards: customers who ordered straight away were never
+    // abandoned, so they are left out of Converted and the rate.
+    const exportAbandoned = filteredAbandonedCarts.filter((c) => !cartOrderedStraightAway(c));
+    const exportConverted = exportAbandoned.filter((c) => c.status === "Converted").length;
     const exportLost = filteredAbandonedCarts.filter((c) => ["No response", "Not interested"].includes(c.status)).length;
-    const exportRate = filteredAbandonedCarts.length === 0
+    const exportRate = exportAbandoned.length === 0
       ? 0
-      : Math.round((exportConverted / filteredAbandonedCarts.length) * 100);
+      : Math.round((exportConverted / exportAbandoned.length) * 100);
     const rows: (string | number | null | undefined)[][] = [
       ["Abandoned Carts Report"],
       csvWorkspaceRow(),
@@ -45128,8 +45170,8 @@ ${waybillLineItems(w).length > 1
       ["Search", cartSearch || "All"],
       ["Status", cartStatus],
       ["Product Filter", cartProductIds.size === 0 ? "All Products" : products.filter(p => cartProductIds.has(p.id)).map(p => p.name).join(", ")],
-      ["Total Captured", String(filteredAbandonedCarts.length)],
-      ["Converted", String(exportConverted)],
+      ["Abandoned Carts (left the form)", String(exportAbandoned.length)],
+      ["Won Back", String(exportConverted)],
       ["Team Converted", String(teamRecoveredCartRows.length)],
       ["Team Converted Delivered", String(teamRecoveredDeliveredRows.length)],
       ["Team Converted Pending", String(teamRecoveredPendingRows.length)],
@@ -45138,8 +45180,9 @@ ${waybillLineItems(w).length > 1
       ["Pending Recovered Value", formatProductMoney(teamRecoveredPipelineValue, teamRecoveryCurrency)],
       ["Converted With Missing Linked Order", String(convertedMissingLinkedOrderRows.length)],
       ["Customer Finished Later", String(customerFinishedLaterRows.length)],
+      ["Ordered Straight Away (never abandoned)", String(orderedStraightAwayRows.length)],
       ["Lost", String(exportLost)],
-      ["Conversion Rate", `${exportRate}%`],
+      ["Won Back Rate", `${exportRate}%`],
       [],
       ["Cart ID", "Customer", "Phone", "Product", "Package", "Amount", "Cart Status", "Conversion Path", "Linked Order", "Linked Order Status", "Recovered By", "Outcome Bucket", "Source", "Embed Label", "Rep", "Created", "Last Activity"],
       ...filteredAbandonedCarts.map((cart) => {
@@ -45153,6 +45196,8 @@ ${waybillLineItems(w).length > 1
               : "Pending"
           : recoveryRow?.conversionKind === "customer_self_completed"
             ? "Customer finished later"
+            : recoveryRow?.conversionKind === "ordered_straight_away"
+              ? "Ordered straight away"
             : cart.status === "Converted"
               ? "Converted but missing linked order"
               : "";
@@ -45164,7 +45209,7 @@ ${waybillLineItems(w).length > 1
           cart.packageName,
           formatProductMoney(cart.amount, cart.currency),
           cart.status,
-          recoveryRow?.conversionKind === "manual_recovery" ? "Recovered by Team" : recoveryRow?.conversionKind === "customer_self_completed" ? "Customer Finished Later" : "",
+          recoveryRow?.conversionKind === "manual_recovery" ? "Recovered by Team" : recoveryRow?.conversionKind === "customer_self_completed" ? "Customer Finished Later" : recoveryRow?.conversionKind === "ordered_straight_away" ? "Ordered Straight Away" : "",
           recoveryRow?.linkedOrder?.id ?? "",
           linkedStatus,
           recoveryRow?.conversionKind === "manual_recovery" ? recoveryRow.converterName : "",
@@ -80065,7 +80110,10 @@ ${waybillLineItems(w).length > 1
                   // Always use pfCarts (period + product only) for the summary stat cards
                   // so changing the date filter always shows the full picture. The
                   // search/status/conversion filters only affect the cart LIST below.
-                  const scoped = pfCarts;
+                  // Only carts that were really left. A customer who ordered
+                  // straight away was never abandoned (Bright, 13 Oct 2026).
+                  const straightAway = pfCarts.filter(cartOrderedStraightAway).length;
+                  const scoped = pfCarts.filter((cart) => !cartOrderedStraightAway(cart));
                   const active = scoped.filter((cart) => ["Open abandoned", "Abandoned", "In progress", "Assigned"].includes(cartListStatus(cart))).length;
                   const assigned = scoped.filter((cart) => cart.assignedRepId && cart.status !== "Converted").length;
                   const contacted = scoped.filter((cart) => ["Contacted", "Converted", "No response", "Not interested"].includes(cart.status)).length;
@@ -80073,12 +80121,12 @@ ${waybillLineItems(w).length > 1
                   const lost = scoped.filter((cart) => ["No response", "Not interested"].includes(cart.status)).length;
                   const rate = scoped.length === 0 ? 0 : Math.round((converted / scoped.length) * 100);
                   return [
-                    { label: "Captured", value: scoped.length, sub: "in this period", icon: ShoppingCart },
+                    { label: "Abandoned", value: scoped.length, sub: `left the form · ${straightAway} more ordered straight away`, icon: ShoppingCart },
                     { label: "Active", value: active, sub: "open / abandoned / in progress", icon: Clock },
                     { label: "Assigned", value: assigned, sub: "with a rep, not converted", icon: UserRound },
                     { label: "Contacted", value: contacted, sub: "any outcome recorded", icon: BadgeCheck },
-                    { label: "Customer finished", value: customerFinishedLaterRows.length, sub: "self-completed later", icon: ShoppingBag },
-                    { label: "Conversion Rate", value: `${rate}%`, sub: `${converted} converted · ${lost} lost`, icon: TrendingUp }
+                    { label: "Customer came back", value: scoped.filter((cart) => cart.status === "Converted" && abandonedCartConversionKindFor(linkedOrderBySourceCartId.get(cart.id), cart) === "customer_self_completed").length, sub: "left, then finished the order alone", icon: ShoppingBag },
+                    { label: "Won Back", value: `${rate}%`, sub: `${converted} of ${scoped.length} abandoned carts · ${lost} lost`, icon: TrendingUp }
                   ];
                 })().map(({ label, value, sub, icon: Icon }) => (
                   <article key={label} className="bg-white rounded-xl border border-gray-200 p-5 flex items-center justify-between shadow-sm dark:border-slate-800 dark:bg-[#101a24]">
@@ -80457,7 +80505,7 @@ ${waybillLineItems(w).length > 1
                       const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
                       const embedLabel = cartEmbedLabelFor(cart, linkedOrder, abandonedCartJourneyMap[cart.id] ?? []);
                       const recovery = abandonedCartRecoveryById[cart.id];
-                      const conversionMarker = cart.status === "Converted" ? abandonedCartConversionMarkerFor(linkedOrder) : null;
+                      const conversionMarker = cart.status === "Converted" ? abandonedCartConversionMarkerFor(linkedOrder, cart) : null;
                       return (
                         <article key={cart.id} className="px-4 py-4 flex flex-col gap-3">
                           <div className="flex items-start justify-between gap-3">
@@ -80607,8 +80655,8 @@ ${waybillLineItems(w).length > 1
                         pagedAbandonedCarts.map((cart) => {
                           const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
                           const embedLabel = cartEmbedLabelFor(cart, linkedOrder, abandonedCartJourneyMap[cart.id] ?? []);
-                          const conversionStatusLabel = cart.status === "Converted" ? abandonedCartConversionStatusLabel(linkedOrder) : null;
-                          const conversionMarker = cart.status === "Converted" ? abandonedCartConversionMarkerFor(linkedOrder) : null;
+                          const conversionStatusLabel = cart.status === "Converted" ? abandonedCartConversionStatusLabel(linkedOrder, cart) : null;
+                          const conversionMarker = cart.status === "Converted" ? abandonedCartConversionMarkerFor(linkedOrder, cart) : null;
                           return (
                           <tr key={cart.id} className={`group hover:bg-gray-50 transition-colors ${selectedCartIds.has(cart.id) ? "bg-blue-50" : ""}`}>
                             <td className={`hidden sm:table-cell px-4 py-3 w-8 sticky left-0 z-10 border-r border-gray-200 group-hover:bg-gray-50 ${selectedCartIds.has(cart.id) ? "bg-blue-50" : "bg-white"}`}>
@@ -92380,7 +92428,7 @@ ${waybillLineItems(w).length > 1
                                 const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
                                 const sourceKey = normalizeAdTrackingSource(attribution.utmSource || cart.source);
                                 const sourceLabel = sourceKey ? adTrackingSourceLabel(sourceKey) : (attribution.utmSource || cart.source);
-                                const conversionStatus = cart.status === "Converted" ? abandonedCartConversionStatusLabel(linkedOrder) : null;
+                                const conversionStatus = cart.status === "Converted" ? abandonedCartConversionStatusLabel(linkedOrder, cart) : null;
                                 const statusTone = cart.status === "Converted"
                                   ? "bg-emerald-100 text-emerald-700"
                                   : cart.status === "Contacted"
@@ -92457,7 +92505,7 @@ ${waybillLineItems(w).length > 1
                                   const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
                                   const sourceKey = normalizeAdTrackingSource(attribution.utmSource || cart.source);
                                   const sourceLabel = sourceKey ? adTrackingSourceLabel(sourceKey) : (attribution.utmSource || cart.source);
-                                  const conversionStatus = cart.status === "Converted" ? abandonedCartConversionStatusLabel(linkedOrder) : null;
+                                  const conversionStatus = cart.status === "Converted" ? abandonedCartConversionStatusLabel(linkedOrder, cart) : null;
                                   const statusTone = cart.status === "Converted"
                                     ? "bg-emerald-100 text-emerald-700"
                                     : cart.status === "Contacted"
@@ -104846,7 +104894,7 @@ ${waybillLineItems(w).length > 1
 	              const product = products.find((p) => p.id === selectedCart.productId);
 	              const pkg     = product?.packages.find((pk) => pk.id === selectedCart.packageId);
 	              const linkedOrder = linkedOrderBySourceCartId.get(selectedCart.id);
-	              const conversionPathLabel = abandonedCartConversionPathLabel(linkedOrder);
+	              const conversionPathLabel = abandonedCartConversionPathLabel(linkedOrder, selectedCart);
 	              const repName = users.find((u) => u.id === selectedCart.assignedRepId)?.name ?? "Unassigned";
 	              const phoneClean    = (selectedCart.phone ?? "").replace(/\D/g, "");
 		              const whatsappClean = (selectedCart.whatsapp ?? selectedCart.phone ?? "").replace(/\D/g, "");
