@@ -2727,15 +2727,30 @@ const resolveOrderStatusView = (status?: string | null, outcome?: string | null)
   return orderStatusViewByLabel.get(label.toLowerCase())
     ?? { label, status: s as OrderStatusAction, outcome: null, group: "working" };
 };
-const orderStatusLabelFor = (order: Pick<TrackedOrder, "status" | "callOutcome">): string =>
-  resolveOrderStatusView(order.status, order.callOutcome).label;
+// ── "Scheduled" as the main label (Bright, 13 Oct 2026) ─────────────────────
+// A confirmed order with a delivery date used to show TWO things: "Pending" as
+// its status and a small "Scheduled" tag under it, which read as two statuses.
+// When the label would be Pending and a delivery date is set, the one label is
+// "Scheduled". Display only: the stored status and call result are untouched,
+// so every report still reads the same thing. Orders with a clearer label
+// (Ready, Rescheduled, Call Back...) keep it.
+const ORDER_SCHEDULED_LABEL = "Scheduled";
+type OrderStatusLabelInput = Pick<TrackedOrder, "status" | "callOutcome"> & Partial<Pick<TrackedOrder, "scheduledAt" | "scheduledDate">>;
+const orderShowsAsScheduled = (order: OrderStatusLabelInput): boolean =>
+  Boolean(order.scheduledAt || order.scheduledDate)
+  && resolveOrderStatusView(order.status, order.callOutcome).label === "Pending";
+const orderStatusLabelFor = (order: OrderStatusLabelInput): string =>
+  orderShowsAsScheduled(order) ? ORDER_SCHEDULED_LABEL : resolveOrderStatusView(order.status, order.callOutcome).label;
+/** Puts "Scheduled" right after "Pending" in a status filter's choices. */
+const withScheduledChoice = (labels: string[]): string[] =>
+  labels.flatMap((label) => (label === "Pending" ? [label, ORDER_SCHEDULED_LABEL] : [label]));
 // Color classes for a friendly status pill (combine with the call site's own size classes).
 const orderStatusPillClass = (status?: string | null, outcome?: string | null): string =>
   `${statusBadgeBaseClasses} ${orderStatusGroupBadge[resolveOrderStatusView(status, outcome).group]}`;
 // Friendly-label options for the order-list status filters (compared against the
 // resolved label, so "All Orders" + the granular labels relevant to each workspace).
-const orderStatusFilterOptions: string[] = ["All Orders", ...orderStatusViews.map((v) => v.label)];
-const followUpStatusFilterOptions: string[] = ["All Orders", ...orderStatusViews.filter((v) => v.status === "New" || v.status === "Confirmed" || v.status === "Postponed").map((v) => v.label)];
+const orderStatusFilterOptions: string[] = ["All Orders", ...withScheduledChoice(orderStatusViews.map((v) => v.label))];
+const followUpStatusFilterOptions: string[] = ["All Orders", ...withScheduledChoice(orderStatusViews.filter((v) => v.status === "New" || v.status === "Confirmed" || v.status === "Postponed").map((v) => v.label))];
 // One-tap outcome tags for the Daily Log cell logger - consistent buckets the
 // reports group by, mapped to the existing recovery_bucket / outcome_group values.
 const FOLLOW_UP_QUICK_TAGS: { bucket: string; group: string; label: string }[] = [
@@ -3962,7 +3977,7 @@ const renderCustomerSignalBadge = (
   );
 };
 const renderOrderStatusSummary = (
-  order: Pick<TrackedOrder, "status" | "callOutcome">,
+  order: OrderStatusLabelInput,
   align: "left" | "center" | "right" = "left"
 ) => {
   const status = order.status ?? "New";
@@ -3981,7 +3996,7 @@ const renderOrderStatusSummary = (
   return (
     <div className={`flex min-w-0 flex-col gap-1.5 ${alignClass}`}>
       <span className={`inline-flex items-center justify-center rounded-full px-3 py-1.5 text-[11px] font-black tracking-[0.01em] whitespace-nowrap ${statusBadgeBaseClasses} ${orderStatusGroupBadge[view.group]}`}>
-        {view.label}
+        {orderShowsAsScheduled(order) ? ORDER_SCHEDULED_LABEL : view.label}
       </span>
       {outcomeAddsInfo ? renderCustomerSignalBadge(outcome, status, { label: "Customer note" }) : null}
     </div>
@@ -4577,12 +4592,15 @@ const orderScheduleMarkerForOrder = (
 };
 const renderScheduleResultBadge = (
   marker: Pick<DeliveryScheduleOutcome, "label" | "detail" | "actualDetail" | "pillClass">,
-  options?: { align?: "left" | "right"; className?: string; detailClassName?: string }
+  // hidePill: the row's main label already says "Scheduled", so only the due
+  // date is shown under it.
+  options?: { align?: "left" | "right"; className?: string; detailClassName?: string; hidePill?: boolean }
 ) => {
   const [primaryLabel, secondaryLabel] = marker.label.split("·").map((part) => part.trim()).filter(Boolean);
   const alignRight = options?.align === "right";
   return (
     <div className={`inline-flex min-w-0 max-w-full flex-col gap-1 ${alignRight ? "items-end text-right" : "items-start text-left"} ${options?.className ?? ""}`}>
+      {!options?.hidePill && (
       <div className={`flex max-w-full flex-wrap gap-1 ${alignRight ? "justify-end" : "justify-start"}`}>
         <span className={`inline-flex max-w-full items-center rounded-full px-2.5 py-1 text-[10px] font-black leading-none whitespace-nowrap ${marker.pillClass}`}>
           {primaryLabel || marker.label}
@@ -4593,6 +4611,7 @@ const renderScheduleResultBadge = (
           </span>
         ) : null}
       </div>
+      )}
       <span className={`max-w-[13rem] text-[11px] font-semibold leading-4 text-gray-500 dark:text-slate-400 ${options?.detailClassName ?? ""}`}>
         {marker.detail}
       </span>
@@ -78436,7 +78455,7 @@ ${waybillLineItems(w).length > 1
 
                           {scheduleMarker && (
                             <section className="relative mt-4 rounded-[24px] border border-blue-100 bg-blue-50/80 px-4 py-3 shadow-[0_14px_32px_rgba(37,99,235,0.10)] dark:border-sky-400/20 dark:bg-sky-400/10">
-                              {renderScheduleResultBadge(scheduleMarker, { detailClassName: `text-sm leading-5 ${orderBodyTextClass}` })}
+                              {renderScheduleResultBadge(scheduleMarker, { detailClassName: `text-sm leading-5 ${orderBodyTextClass}`, hidePill: orderShowsAsScheduled(order) })}
                             </section>
                           )}
 
@@ -78662,7 +78681,7 @@ ${waybillLineItems(w).length > 1
                                 );
                               })()}
                                 {scheduleMarker ? (
-                                  renderScheduleResultBadge(scheduleMarker, { className: "mt-1.5" })
+                                  renderScheduleResultBadge(scheduleMarker, { className: "mt-1.5", hidePill: orderShowsAsScheduled(order) })
                                 ) : null}
                                 {orderWorkspacePage === "Follow-up Queue" && latestAttempt && (
                                   <div className="mt-1 flex flex-wrap items-center gap-1">
