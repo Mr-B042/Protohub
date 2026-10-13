@@ -223,6 +223,12 @@ export default function ManagerWeeklyReviewPage({
   const total = expectedRows.length;
   const allApproved = total > 0 && approvedCount === total;
   const ownerReturns = corrections.filter((row) => row.companyReportId && row.kind === "return" && row.status === "open");
+  // The reps the owner sent back on their own (Bright, 13 Oct 2026): from the
+  // newest owner return, while their report still waits for approval again.
+  const lastOwnerReturn = [...audit].filter((entry) => entry.action === "owner_returned").sort((x, y) => String(y.createdAt).localeCompare(String(x.createdAt)))[0];
+  const ownerSentBackIds = new Set<string>(companyStatus === "returned_to_manager" && Array.isArray(lastOwnerReturn?.detail?.repIds) ? lastOwnerReturn.detail.repIds : []);
+  const ownerSentBack = (row: ReviewRepRow) => ownerSentBackIds.has(row.repId) && row.report?.status === "submitted";
+  const ownerSentBackRows = rows.filter(ownerSentBack);
   const repCorrections = corrections.filter((row) => row.repReportId);
   const repNameByReportId = (id: string | null) => rows.find((row) => row.report?.id === id)?.repName ?? "-";
   const repNameById = (id: string | null) => rows.find((row) => row.repId === id)?.repName ?? "-";
@@ -303,6 +309,11 @@ export default function ManagerWeeklyReviewPage({
         {companyStatus === "returned_to_manager" && ownerReturns.length > 0 && (
           <div className="mt-4 space-y-2 rounded-xl border border-rose-200 bg-rose-50 p-3 dark:border-rose-500/30 dark:bg-rose-500/10">
             <p className="m-0 text-[12px] font-bold text-rose-800 dark:text-rose-200">Returned by the owner</p>
+            {ownerSentBackRows.length > 0 && (
+              <p className="m-0 rounded-lg bg-white px-2.5 py-2 text-[12px] text-rose-900 dark:bg-slate-900 dark:text-rose-100">
+                Put the actual bonus to be paid for <strong>{ownerSentBackRows.map((row) => row.repName).join(", ")}</strong>, then approve {ownerSentBackRows.length === 1 ? "that report" : "those reports"} again. The other reports stay approved.
+              </p>
+            )}
             {ownerReturns.map((row) => (
               <div key={row.id}>
                 <p className="m-0 text-[12px] text-rose-900 dark:text-rose-100"><strong>{CORRECTION_SECTION_LABEL[row.section]}:</strong> {row.problem}{row.orderRef ? ` (${row.orderRef})` : ""} — "{row.comment}"</p>
@@ -590,6 +601,7 @@ export default function ManagerWeeklyReviewPage({
                                 <span className="mt-0.5 block text-[11px] text-gray-500">{row.report?.submittedAt ? shortDateTime(row.report.submittedAt) : "Not submitted"}</span>
                                 {row.submittedLate && <span className="mt-0.5 inline-block rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">Late</span>}
                                 {row.overdue && <span className="mt-0.5 inline-block rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">Overdue</span>}
+                                {ownerSentBack(row) && <span className="mt-0.5 block w-fit rounded bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold text-white">Owner sent back: check bonus</span>}
                                 {row.differences.length > 0 && <span className="mt-0.5 flex items-center gap-1 text-[11px] font-bold text-amber-600"><AlertTriangle className="h-3 w-3" />{row.differences.length} figure{row.differences.length === 1 ? "" : "s"} changed</span>}
                               </td>
                               <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.orders ?? 0)}</td>

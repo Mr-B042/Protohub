@@ -4149,7 +4149,7 @@ export type WeeklyBonusQuery = {
   managerResponse: string | null; correctionAmount: number; correctionWeekStart: string | null;
   resolvedBy: string | null; resolvedByName: string | null; resolvedAt: string | null; createdAt: string;
 };
-export type WeeklyReportCorrectionInput = { weekStart: string; section: string; problem: string; comment: string; orderRef?: string; fundTransactionId?: string };
+export type WeeklyReportCorrectionInput = { weekStart: string; section: string; problem: string; comment: string; orderRef?: string; fundTransactionId?: string; repIds?: string[] };
 export type WeeklyReportResponseInput = { correctionId: string; response: string };
 
 export const weeklyReportsApi = {

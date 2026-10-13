@@ -561,19 +561,23 @@ export function PayoutChangeForm({ repName, sym, systemAmount, existing, onCance
 
 // ── Return / flag form ──────────────────────────────────────────────────────
 
-export type CorrectionDraft = { section: string; problem: string; comment: string; orderRef: string };
+export type CorrectionDraft = { section: string; problem: string; comment: string; orderRef: string; repIds?: string[] };
+/** A rep the owner can send back on its own: name and the bonus now on the report. */
+export type CorrectionRepChoice = { id: string; name: string; amountLabel: string };
 
 /**
  * No vague returns: a section, a problem and a comment are all required
  * (Bright, 1 Oct 2026). Used for the manager's Return / Flag and the owner's
  * Return to Manager.
  */
-export function CorrectionForm({ title, subtitle, submitLabel, tone, initialComment, onCancel, onSubmit }: {
+export function CorrectionForm({ title, subtitle, submitLabel, tone, initialComment, reps, onCancel, onSubmit }: {
   title: string;
   subtitle: string;
   submitLabel: string;
   tone: "rose" | "amber";
   initialComment?: string;
+  /** Owner's return only: tick the reps whose bonus needs correcting. */
+  reps?: CorrectionRepChoice[];
   onCancel: () => void;
   onSubmit: (draft: CorrectionDraft) => Promise<void>;
 }) {
@@ -581,6 +585,13 @@ export function CorrectionForm({ title, subtitle, submitLabel, tone, initialComm
   const [customProblem, setCustomProblem] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [pickedReps, setPickedReps] = useState<string[]>([]);
+  const toggleRep = (id: string) => {
+    const next = pickedReps.includes(id) ? pickedReps.filter((item) => item !== id) : [...pickedReps, id];
+    setPickedReps(next);
+    // Picking a rep is about their bonus: save the owner a step.
+    if (next.length > 0 && !draft.section) setDraft({ ...draft, section: "bonus", problem: "" });
+  };
   const problems = draft.section ? CORRECTION_PROBLEMS[draft.section] ?? [] : [];
   const problem = draft.problem === "__other" || (draft.section === "other") ? customProblem.trim() : draft.problem;
   const ready = !!draft.section && problem.length >= 3 && draft.comment.trim().length >= 3;
@@ -588,6 +599,31 @@ export function CorrectionForm({ title, subtitle, submitLabel, tone, initialComm
   return (
     <Modal title={title} subtitle={subtitle} onClose={onCancel}>
       <div className="space-y-4 px-6 py-5">
+        {reps && reps.length > 0 && (
+          <div>
+            <span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Which sales reps need their bonus corrected?</span>
+            <span className="mb-2 block text-[11.5px] text-gray-500 dark:text-slate-400">Tick only the ones to send back. The others stay approved. Tick none to return the whole week.</span>
+            <div className="max-h-52 space-y-1.5 overflow-y-auto pr-1">
+              {reps.map((rep) => {
+                const on = pickedReps.includes(rep.id);
+                return (
+                  <button key={rep.id} type="button" role="checkbox" aria-checked={on} onClick={() => toggleRep(rep.id)}
+                    className={`!min-h-0 flex w-full items-center gap-3 rounded-xl border px-3 py-2 text-left ${on ? "border-rose-300 bg-rose-50 dark:border-rose-500/40 dark:bg-rose-500/10" : "border-gray-200 bg-white hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900"}`}>
+                    <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${on ? "border-rose-600 bg-rose-600 text-white" : "border-gray-300 bg-white dark:border-slate-600 dark:bg-slate-900"}`}>{on && <Check className="h-3.5 w-3.5" />}</span>
+                    <Avatar name={rep.name} size={26} />
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-gray-800 dark:text-slate-100">{rep.name}</span>
+                    <span className="shrink-0 text-[13px] font-bold text-gray-900 dark:text-slate-50">{rep.amountLabel}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {pickedReps.length > 0 && (
+              <p className="m-0 mt-2 rounded-lg bg-rose-50 px-3 py-2 text-[11.5px] font-semibold text-rose-700 dark:bg-rose-500/10 dark:text-rose-200">
+                {pickedReps.length} sales rep{pickedReps.length === 1 ? "" : "s"} will go back to the manager to put the actual bonus to be paid.
+              </p>
+            )}
+          </div>
+        )}
         <label className="block">
           <span className="mb-1.5 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Which section?</span>
           <select className={field} value={draft.section} onChange={(event) => setDraft({ ...draft, section: event.target.value, problem: "" })}>
@@ -629,7 +665,7 @@ export function CorrectionForm({ title, subtitle, submitLabel, tone, initialComm
               setSaving(true);
               setError("");
               try {
-                await onSubmit({ ...draft, problem, comment: draft.comment.trim(), orderRef: draft.orderRef.trim() });
+                await onSubmit({ ...draft, problem, comment: draft.comment.trim(), orderRef: draft.orderRef.trim(), ...(pickedReps.length > 0 ? { repIds: pickedReps } : {}) });
               } catch (err: any) {
                 setError(err?.message ?? "Could not save.");
                 setSaving(false);

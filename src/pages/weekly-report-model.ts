@@ -650,6 +650,7 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   company_resubmitted: "Resubmitted to owner",
   owner_approved_locked: "Approved & locked by owner",
   owner_returned: "Returned to manager",
+  owner_sent_back_rep: "Owner sent this rep back to correct the bonus",
   owner_reopened: "Week reopened by owner",
   payout_changed: "Payout changed by manager",
   payout_change_removed: "Payout change removed",
