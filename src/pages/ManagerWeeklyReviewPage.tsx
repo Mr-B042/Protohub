@@ -132,6 +132,12 @@ export default function ManagerWeeklyReviewPage({
   const [returning, setReturning] = useState<string | null>(null);
   const [flagging, setFlagging] = useState<string | null>(null);
   const [changingPayout, setChangingPayout] = useState<string | null>(null);
+  // The "is this the bonus to be paid?" window (Bright, 13 Oct 2026).
+  const [approving, setApproving] = useState<string | null>(null);
+  const [approveBusy, setApproveBusy] = useState(false);
+  const [approveError, setApproveError] = useState("");
+  // Came to the payout change from that window: go back to it after saving.
+  const [backToApprove, setBackToApprove] = useState(false);
   const [repFilter, setRepFilter] = useState<RepFilter>("all");
   // `up`: the row is near the bottom of the screen, so the menu opens upward.
   const [menuFor, setMenuFor] = useState<{ repId: string; x: number; y: number; up?: boolean } | null>(null);
@@ -174,13 +180,24 @@ export default function ManagerWeeklyReviewPage({
   // window, where the Admin did not find it. Same rule as that window: only a
   // report that is Submitted, while the week is still with the manager.
   const canApproveFromList = (row: ReviewRepRow) => canAct && !frozenWeek && row.report?.status === "submitted";
-  const approveFromList = (row: ReviewRepRow) => {
-    const shown = shownSnapshot(row);
-    const warning = row.differences.length > 0
-      ? `\n\n${row.differences.length} figure${row.differences.length === 1 ? " has" : "s have"} changed since ${row.repName} submitted. Press Cancel and open Review if you have not looked at them.`
-      : "";
-    if (!window.confirm(`Approve ${row.repName}'s report for this week?\n\nFinal payout: ${sym}${nf(shown?.totals.finalBonus ?? 0)}${warning}`)) return;
-    void onApprove(row.repId).catch((err: any) => window.alert(`${row.repName}'s report was not approved.\n\n${err?.message ?? "Please try again."}`));
+  // Approve asks one question first, in its own window: is this the bonus to
+  // be paid? Yes approves. No opens the payout change, and saving it comes
+  // back here with the new figure (Bright, 13 Oct 2026). It replaced a plain
+  // browser prompt, which could not offer "adjust it".
+  const approveFromList = (row: ReviewRepRow) => { setApproveError(""); setApproving(row.repId); };
+  const approveRow = approving ? rows.find((row) => row.repId === approving) ?? null : null;
+  const confirmApprove = async () => {
+    if (!approveRow) return;
+    setApproveBusy(true);
+    setApproveError("");
+    try { await onApprove(approveRow.repId); setApproving(null); }
+    catch (err: any) { setApproveError(err?.message ?? "The report was not approved. Please try again."); }
+    finally { setApproveBusy(false); }
+  };
+  const closePayoutChange = () => {
+    if (backToApprove && changingPayout) { setApproveError(""); setApproving(changingPayout); }
+    setBackToApprove(false);
+    setChangingPayout(null);
   };
   const expectedRows = rows.filter((row) => row.expected || row.report);
   const shown = expectedRows.map(shownSnapshot).filter((snap): snap is WeeklyReportSnapshot => !!snap);
@@ -773,11 +790,86 @@ export default function ManagerWeeklyReviewPage({
           sym={sym}
           systemAmount={payoutRow.frozen?.totals.systemFinalBonus ?? payoutRow.frozen?.totals.finalBonus ?? 0}
           existing={payoutRow.payoutChange ? { amount: payoutRow.payoutChange.amount, reason: payoutRow.payoutChange.reason } : null}
-          onCancel={() => setChangingPayout(null)}
-          onSave={async (amount, reason) => { await onSavePayoutChange(payoutRow.repId, amount, reason); setChangingPayout(null); }}
-          onRemove={onRemovePayoutChange ? async () => { await onRemovePayoutChange(payoutRow.repId); setChangingPayout(null); } : undefined}
+          onCancel={closePayoutChange}
+          onSave={async (amount, reason) => { await onSavePayoutChange(payoutRow.repId, amount, reason); closePayoutChange(); }}
+          onRemove={onRemovePayoutChange ? async () => { await onRemovePayoutChange(payoutRow.repId); closePayoutChange(); } : undefined}
         />
       )}
+
+      {/* ── Approve: is this the bonus to be paid? ──────────────── */}
+      {approveRow && !changingPayout && (() => {
+        const snap = shownSnapshot(approveRow);
+        const t = snap?.totals;
+        const finalBonus = t?.finalBonus ?? 0;
+        const change = t?.payoutChange ?? 0;
+        const takenOff = (t?.fines ?? 0) + (t?.carriedFines ?? 0);
+        const lines: Array<{ label: string; value: number; minus?: boolean }> = [
+          { label: "Base bonus", value: t?.baseBonus ?? 0 },
+          { label: "Upsell bonus", value: t?.upsellBonus ?? 0 },
+          { label: "Cross-sell bonus", value: t?.crossSellBonus ?? 0 },
+          ...((t?.adjustments ?? 0) !== 0 ? [{ label: "Bonus corrections", value: Math.abs(t?.adjustments ?? 0), minus: (t?.adjustments ?? 0) < 0 }] : []),
+          ...(takenOff > 0 ? [{ label: "Fines taken off", value: takenOff, minus: true }] : []),
+          ...(change !== 0 ? [{ label: change < 0 ? "Taken off by manager" : "Added by manager", value: Math.abs(change), minus: change < 0 }] : [])
+        ];
+        const canAdjust = canChangePayout(approveRow);
+        return (
+          <Modal title="Approve report" subtitle={`${approveRow.repName} · ${longDate(weekStart)} to ${longDate(weekEnd)}`} onClose={() => { if (!approveBusy) setApproving(null); }}>
+            <div className="space-y-4 px-6 py-5">
+              <div className="rounded-2xl bg-gradient-to-br from-emerald-50 to-teal-50 px-5 py-5 text-center ring-1 ring-emerald-100 dark:from-emerald-500/10 dark:to-teal-500/10 dark:ring-emerald-500/20">
+                <div className="mx-auto mb-2 flex w-fit items-center gap-2">
+                  <Avatar name={approveRow.repName} />
+                  <span className="text-[13px] font-bold text-gray-800 dark:text-slate-100">{approveRow.repName}</span>
+                </div>
+                <p className="m-0 text-[11px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">Bonus to be paid</p>
+                <p className="m-0 mt-1 text-[34px] font-extrabold leading-none text-gray-900 dark:text-slate-50">{sym}{nf(finalBonus)}</p>
+                <p className="m-0 mt-2 text-[12px] text-gray-600 dark:text-slate-300">{nf(t?.delivered ?? 0)} delivered of {nf(t?.orders ?? 0)} orders · {pctText(t?.deliveryRate ?? 0)} delivery rate</p>
+              </div>
+
+              <div className="divide-y divide-gray-100 rounded-xl border border-gray-100 dark:divide-slate-800 dark:border-slate-800">
+                {lines.map((line) => (
+                  <div key={line.label} className="flex items-center justify-between px-4 py-2.5 text-[13px]">
+                    <span className="text-gray-600 dark:text-slate-300">{line.label}</span>
+                    <span className={`font-bold ${line.minus ? "text-rose-600" : "text-gray-900 dark:text-slate-100"}`}>{line.minus ? "-" : ""}{sym}{nf(line.value)}</span>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between bg-gray-50 px-4 py-2.5 text-[13px] dark:bg-slate-800/60">
+                  <span className="font-bold text-gray-800 dark:text-slate-100">Bonus to be paid</span>
+                  <span className="font-extrabold text-emerald-700 dark:text-emerald-300">{sym}{nf(finalBonus)}</span>
+                </div>
+              </div>
+
+              {approveRow.payoutChange && <PayoutChangeNote change={approveRow.payoutChange} sym={sym} />}
+
+              {approveRow.differences.length > 0 && (
+                <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-4 py-3 text-[12px] text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>
+                    <strong>{approveRow.differences.length} figure{approveRow.differences.length === 1 ? " has" : "s have"} changed</strong> since {approveRow.repName} submitted.{" "}
+                    <button type="button" onClick={() => { setApproving(null); setReviewing(approveRow.repId); }} className="!min-h-0 font-bold underline">Open the review</button> if you have not looked at them.
+                  </span>
+                </div>
+              )}
+
+              <p className="m-0 text-center text-[15px] font-bold text-gray-900 dark:text-slate-50">Is this the actual bonus to be paid?</p>
+              {approveError && <p className="m-0 rounded-lg bg-rose-50 px-3 py-2 text-center text-[12px] font-semibold text-rose-700">{approveError}</p>}
+
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <button type="button" disabled={approveBusy || !canAdjust}
+                  title={canAdjust ? undefined : "The payout cannot be changed on this report."}
+                  onClick={() => { setBackToApprove(true); setChangingPayout(approveRow.repId); }}
+                  className="!min-h-0 flex flex-1 items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 text-[13px] font-bold text-gray-800 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+                  <Pencil className="h-4 w-4" /> No, adjust it
+                </button>
+                <button type="button" disabled={approveBusy} onClick={() => void confirmApprove()}
+                  className="!min-h-0 flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-[13px] font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60">
+                  <Check className="h-4 w-4" /> {approveBusy ? "Approving..." : "Yes, approve"}
+                </button>
+              </div>
+              <p className="m-0 text-center text-[11px] text-gray-500 dark:text-slate-400">Nothing is paid yet. The owner still gives the final approval.</p>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {/* ── Sales Rep Report Review (side-by-side check) ───────── */}
       {reviewRow && (
@@ -790,7 +882,10 @@ export default function ManagerWeeklyReviewPage({
           canFlag={canAct && companyStatus !== "locked"}
           corrections={corrections.filter((row) => reviewRow.report && row.repReportId === reviewRow.report.id)}
           onClose={() => setReviewing(null)}
-          onApprove={async () => { await onApprove(reviewRow.repId); setReviewing(null); }}
+          // Every Approve asks the same question first (Bright, 13 Oct 2026):
+          // the Review window's button opens it too, so the payout can still
+          // be adjusted before the report is approved.
+          onApprove={async () => { const row = reviewRow; setReviewing(null); approveFromList(row); }}
           onReturn={() => { setReturning(reviewRow.repId); setReviewing(null); }}
           onFlag={() => { setFlagging(reviewRow.repId); setReviewing(null); }}
         />
