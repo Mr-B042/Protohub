@@ -565,6 +565,46 @@ export type CorrectionDraft = { section: string; problem: string; comment: strin
 /** A rep the owner can send back on its own: name and the bonus now on the report. */
 export type CorrectionRepChoice = { id: string; name: string; amountLabel: string };
 
+// Ready-made comments (Bright, 13 Oct 2026: "a quick comment suggestions so we
+// dont need to type all the time"). One press fills the box; it can still be
+// edited or added to. Chosen by section, so they fit what is being returned.
+const COMMENT_SUGGESTIONS: Record<string, string[]> = {
+  bonus: [
+    "Put the actual bonus to be paid.",
+    "Bonus looks too high. Check and put the correct amount.",
+    "Bonus looks too low. Check and put the correct amount.",
+    "Check the upsell bonus and correct it.",
+    "Check the cross-sell bonus and correct it.",
+    "Take off the bonus for the order that was not delivered."
+  ],
+  orders: [
+    "Order count does not match. Check and correct.",
+    "An order here belongs to another rep. Check and correct.",
+    "A duplicate order was counted. Remove it."
+  ],
+  delivery: [
+    "Delivered count does not match. Check and correct.",
+    "An order marked delivered was not delivered. Correct it.",
+    "Delivery rate looks wrong. Check the figures."
+  ],
+  upsell_cross_sell: [
+    "Upsell was counted but the customer bought the normal package. Correct it.",
+    "Cross-sell was counted but the customer did not take it. Correct it.",
+    "Check the upsell and cross-sell orders and confirm each one."
+  ],
+  product_breakdown: [
+    "Product figures do not add up. Check and correct.",
+    "Wrong product on an order. Correct it."
+  ],
+  funds: [
+    "Add the receipt or proof for this entry.",
+    "This amount looks wrong. Check and correct it.",
+    "This entry is in the wrong week. Move it."
+  ],
+  other: ["Please check this and correct it.", "Explain this figure before I approve."]
+};
+const DEFAULT_COMMENT_SUGGESTIONS = ["Put the actual bonus to be paid.", "Please check this and correct it.", "Explain this figure before I approve."];
+
 /**
  * No vague returns: a section, a problem and a comment are all required
  * (Bright, 1 Oct 2026). Used for the manager's Return / Flag and the owner's
@@ -653,6 +693,24 @@ export function CorrectionForm({ title, subtitle, submitLabel, tone, initialComm
         </label>
         <label className="block">
           <span className="mb-1.5 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Comment</span>
+          <span className="mb-1.5 block text-[11.5px] text-gray-500 dark:text-slate-400">Press one to add it, or type your own.</span>
+          <span className="mb-2 flex flex-wrap gap-1.5">
+            {(COMMENT_SUGGESTIONS[draft.section] ?? DEFAULT_COMMENT_SUGGESTIONS).map((text) => {
+              const used = draft.comment.includes(text);
+              return (
+                <button key={text} type="button" aria-pressed={used}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    // Press to add it after what is there; press again to take it out.
+                    const next = used ? draft.comment.replace(text, "").replace(/\s{2,}/g, " ").trim() : `${draft.comment.trim()} ${text}`.trim();
+                    setDraft({ ...draft, comment: next.slice(0, 2000) });
+                  }}
+                  className={`!min-h-0 rounded-full border px-2.5 py-1 text-left text-[11.5px] font-semibold ${used ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200" : "border-gray-200 bg-gray-50 text-gray-700 hover:border-[#1F8FE0] hover:bg-blue-50 hover:text-[#1F8FE0] dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"}`}>
+                  {used ? "✓ " : "+ "}{text}
+                </button>
+              );
+            })}
+          </span>
           <textarea className={`${field} resize-none`} rows={4} maxLength={2000} value={draft.comment} onChange={(event) => setDraft({ ...draft, comment: event.target.value })} placeholder="What should be checked or fixed?" />
         </label>
         {error && <p className="m-0 rounded-lg bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700">{error}</p>}

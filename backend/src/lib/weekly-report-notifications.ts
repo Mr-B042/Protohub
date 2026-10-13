@@ -89,7 +89,8 @@ export type WeeklyReportEvent =
   | { kind: "manager_returned"; repId: string; problem: string; orderRef?: string | null }
   | { kind: "rep_flagged"; repName: string; problem: string }
   | { kind: "company_submitted"; resubmitted: boolean }
-  | { kind: "owner_returned"; problem: string }
+  | { kind: "owner_returned"; problem: string; comment?: string; repNames?: string[] }
+  | { kind: "payout_changed"; repId: string; repName: string; byName: string; systemAmount: number; amount: number; reason: string; removed?: boolean }
   | { kind: "owner_locked"; repIds: string[] }
   | { kind: "owner_reopened"; reason: string }
   | { kind: "bonus_query_opened"; repName: string; despiteAccurate: boolean; findings: number }
@@ -139,14 +140,49 @@ export async function notifyWeeklyReport(orgId: string, branchId: string, weekSt
           kind: "weekly_report_company_submitted",
           tag: `weekly-report-${weekStart}-company-submitted`
         });
-      case "owner_returned":
-        return await deliver(orgId, branchId, await leadershipRecipients(orgId, branchId, MANAGERS), {
-          title: "The owner returned the weekly report",
-          message: `Week ${week}: ${event.problem}. Correct it and resubmit.`,
-          kind: "weekly_report_owner_returned",
-          tag: `weekly-report-${weekStart}-owner-returned`,
+      case "owner_returned": {
+        // Names the reps when the owner sent back only some of them, and
+        // carries the owner's own words (Bright, 13 Oct 2026).
+        const names = event.repNames ?? [];
+        const said = event.comment ? ` "${event.comment.slice(0, 160)}"` : "";
+        return await deliver(orgId, branchId, await leadershipRecipients(orgId, branchId, MANAGERS), names.length > 0
+          ? {
+              title: `The owner sent back ${names.length} sales rep${names.length === 1 ? "" : "s"} to correct the bonus`,
+              message: `Week ${week}: ${names.join(", ")}. ${event.problem}.${said} Put the actual bonus to be paid, approve again and resubmit.`,
+              kind: "weekly_report_owner_returned",
+              tag: `weekly-report-${weekStart}-owner-returned`,
+              type: "warning"
+            }
+          : {
+              title: "The owner returned the weekly report",
+              message: `Week ${week}: ${event.problem}.${said} Correct it and resubmit.`,
+              kind: "weekly_report_owner_returned",
+              tag: `weekly-report-${weekStart}-owner-returned`,
+              type: "warning"
+            });
+      }
+      case "payout_changed": {
+        // A bonus correction reaches the rep it is about and the Owner who
+        // will approve it (Bright, 13 Oct 2026).
+        const after = event.systemAmount + event.amount;
+        const figures = event.removed
+          ? `back to the system figure, ${naira(event.systemAmount)}`
+          : `${naira(event.systemAmount)} changed to ${naira(after)}`;
+        await deliver(orgId, branchId, [{ id: event.repId, role: "Sales Rep" }], {
+          title: event.removed ? "Your weekly bonus is back to the system figure" : "Your weekly bonus was changed",
+          message: `Week ${week}: ${figures}.${event.removed ? "" : ` Reason: ${event.reason.slice(0, 160)}`}`,
+          kind: "weekly_report_payout_changed",
+          tag: `weekly-report-${weekStart}-${event.repId}-payout`,
           type: "warning"
         });
+        return await deliver(orgId, branchId, (await leadershipRecipients(orgId, branchId)).filter((user) => user.role === "Owner"), {
+          title: `${event.repName}'s weekly bonus was ${event.removed ? "put back" : "changed"} by ${event.byName}`,
+          message: `Week ${week}: ${figures}.${event.removed ? "" : ` Reason: ${event.reason.slice(0, 160)}`}`,
+          kind: "weekly_report_payout_changed",
+          tag: `weekly-report-${weekStart}-${event.repId}-payout-owner`,
+          type: "warning"
+        });
+      }
       case "owner_locked":
         return await deliver(orgId, branchId, [
           ...(await leadershipRecipients(orgId, branchId, MANAGERS)),
