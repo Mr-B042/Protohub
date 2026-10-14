@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { cartsApi, embedSettingsApi, productsApi, publicOrdersApi } from "../lib/api";
 import { browserSupabaseClient } from "../lib/realtime";
 import { makeCartId } from "../lib/cart-id";
+import { itemCountLabel } from "../lib/item-count-label";
 import type { ProductCurrencyCode } from "../types";
 
 type PublicPricing = {
@@ -120,6 +121,9 @@ type PublicProduct = {
   id: string;
   orgId: string;
   name: string;
+  /** How one of this product is counted ("set"/"sets"); empty = worked out from the name. */
+  unitSingular?: string | null;
+  unitPlural?: string | null;
   description: string;
   packageDescription?: string;
   active: boolean;
@@ -488,9 +492,10 @@ function componentListSummary(
     .map((component) => {
       const productId = component.productId || component.product_id || "";
       const isFreeGift = Boolean(component.isFreeGift ?? component.is_free_gift);
-      const productName = products.find((product) => product.id === productId)?.name ?? "Item";
+      const product = products.find((candidate) => candidate.id === productId);
+      const productName = product?.name ?? "Item";
       const qty = Math.max(1, Number(component.quantity) || 1);
-      return `${isFreeGift ? "FREE " : ""}${qty} ${packageUnitFor(unitSource, qty)} of ${productName}`;
+      return `${isFreeGift ? "FREE " : ""}${itemCountLabel(qty, productName, product, { singular: unitSource?.unitSingular as string | undefined, plural: unitSource?.unitPlural as string | undefined })}`;
     })
     .join(" + ");
 }
@@ -508,13 +513,14 @@ function componentFreeGiftItems(
     .filter((component) => (component.productId || component.product_id) && Boolean(component.isFreeGift ?? component.is_free_gift))
     .map((component) => {
       const productId = component.productId || component.product_id || "";
-      const productName = products.find((product) => product.id === productId)?.name ?? "Free gift";
+      const giftProduct = products.find((product) => product.id === productId);
+      const productName = giftProduct?.name ?? "Free gift";
       const qty = Math.max(1, Number(component.quantity) || 1);
       return {
         id: component.componentId || component.component_id || productId,
         name: productName,
         quantity: qty,
-        label: `${qty} ${packageUnitFor(unitSource, qty)} of ${productName}`
+        label: itemCountLabel(qty, productName, giftProduct, { singular: unitSource?.unitSingular as string | undefined, plural: unitSource?.unitPlural as string | undefined })
       };
     });
 }

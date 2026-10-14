@@ -1,4 +1,5 @@
 import { supabase } from "./supabase.js";
+import { itemCountLabel } from "./item-count-label.js";
 import { logger } from "./logger.js";
 import { ensureWhatsAppReady, sendConnectedWhatsApp } from "./whatsapp-runtime.js";
 import { isWithinWorkingSchedule, nextWorkingScheduleAt, type WorkingSchedule } from "./business-schedule.js";
@@ -1646,7 +1647,7 @@ function buildAddonsLine(order: OrderEventPayload, currency?: string): string {
     const name = (c?.productName ?? "").trim();
     if (!name) continue;
     const qty = Math.max(1, Math.round(Number(c?.quantity ?? 1) || 1));
-    parts.push(`  + ${c?.isFreeGift ? "FREE " : ""}${qty} pc${qty === 1 ? "" : "s"} of ${name}`);
+    parts.push(`  + ${c?.isFreeGift ? "FREE " : ""}${itemCountLabel(qty, name)}`);
   }
   // Cross-sell add-ons (priced).
   for (const l of (order.crossSellLines ?? [])) {

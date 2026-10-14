@@ -1,3 +1,4 @@
+import { itemCountLabel } from "./item-count-label.js";
 type InventoryComponentSnapshot = {
   productId?: string | null;
   productName?: string | null;
@@ -96,10 +97,10 @@ function componentDetail(value: unknown) {
   if (!visible.length) return "";
   const paid = visible
     .filter((line) => !line.isFreeGift)
-    .map((line) => `${line.quantity} ${line.quantity === 1 ? "pc" : "pcs"} of ${line.productName}`);
+    .map((line) => itemCountLabel(line.quantity, line.productName));
   const gifts = visible
     .filter((line) => line.isFreeGift)
-    .map((line) => `FREE ${line.quantity} ${line.quantity === 1 ? "pc" : "pcs"} of ${line.productName}`);
+    .map((line) => `FREE ${itemCountLabel(line.quantity, line.productName)}`);
   return [...paid, ...gifts].join(" + ");
 }
 

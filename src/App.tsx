@@ -260,6 +260,7 @@ installErrorRecorder();
 import ScriptUsageReportPage from "./pages/ScriptUsageReportPage";
 import ManagerFundsTab from "./pages/ManagerFundsTab";
 import ManagerWeeklyReviewPage, { type ReviewRepRow } from "./pages/ManagerWeeklyReviewPage";
+import { itemCountLabel } from "./lib/item-count-label";
 import TeamChallengesManager from "./components/team-challenges/TeamChallengesManager";
 import TeamChallengesRep from "./components/team-challenges/TeamChallengesRep";
 import OwnerWeeklyApprovalPage, { type WeeklyFinancialSummary } from "./pages/OwnerWeeklyApprovalPage";
@@ -1142,6 +1143,9 @@ type Product = {
   freeGiftProductIds?: string[];
   freeGiftStateRestrictions?: { [productId: string]: string[] };
   formCustomText?: string;
+  /** How one of this product is counted ("set"/"sets"). Empty = worked out from the name. */
+  unitSingular?: string | null;
+  unitPlural?: string | null;
 };
 type CrossSellLine = {
   id: string;
@@ -5670,8 +5674,8 @@ const orderLineComponentsDescribeCombo = (components?: OrderInventoryComponentSn
 const orderLineComponentDetail = (components?: OrderInventoryComponentSnapshot[] | null) =>
   visibleOrderLineComponents(components)
     .map((line) => line.isFreeGift
-      ? `FREE ${orderLineQtyLabel(line.quantity)} of ${line.productName}`
-      : `${orderLineQtyLabel(line.quantity)} of ${line.productName}`)
+      ? `FREE ${itemCountLabel(line.quantity, line.productName)}`
+      : itemCountLabel(line.quantity, line.productName))
     .join(" + ");
 const orderLineComponentTitle = (components?: OrderInventoryComponentSnapshot[] | null) => {
   const visible = visibleOrderLineComponents(components);
@@ -6315,17 +6319,15 @@ const packageUnitFor = (
 };
 const summarizePackageComponents = (
   components: PackageComponent[] | undefined,
-  products: Pick<Product, "id" | "name">[]
+  products: Array<Pick<Product, "id" | "name"> & { unitSingular?: string | null; unitPlural?: string | null }>
 ) => {
   if (!components || components.length === 0) return "";
   return components
     .filter((component) => component.productId)
     .map((component) => {
-      const productName = products.find((product) => product.id === component.productId)?.name || "Item";
-      const qtyLabel = formatBundleUnitLabel(component.quantity);
-      return component.isFreeGift
-        ? `FREE ${qtyLabel} ${productName}`
-        : `${qtyLabel} ${productName}`;
+      const product = products.find((candidate) => candidate.id === component.productId);
+      const label = itemCountLabel(component.quantity, product?.name || "Item", product);
+      return component.isFreeGift ? `FREE ${label}` : label;
     })
     .join(" + ");
 };
@@ -9298,6 +9300,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [productDescription, setProductDescription] = useState("");
   const [productSku, setProductSku] = useState("");
   const [productCatalogType, setProductCatalogType] = useState<ProductCatalogType>("standard");
+  // How one of this product is counted on the form ("set"/"sets"). Optional.
+  const [productUnitSingular, setProductUnitSingular] = useState("");
+  const [productUnitPlural, setProductUnitPlural] = useState("");
   const [productPublicOrderAssignmentMode, setProductPublicOrderAssignmentMode] = useState<ProductPublicOrderAssignmentMode>("inherit");
   const [productFootageImage, setProductFootageImage] = useState<string>("");
   const [productFootageUploading, setProductFootageUploading] = useState(false);
@@ -38302,6 +38307,8 @@ ${waybillLineItems(w).length > 1
     setProductActive(product.active);
     setReorderPoint(String(product.reorderPoint));
     setProductPublicOrderAssignmentMode(product.publicOrderAssignmentMode ?? "inherit");
+    setProductUnitSingular(String(product.unitSingular ?? (product as any).unit_singular ?? ""));
+    setProductUnitPlural(String(product.unitPlural ?? (product as any).unit_plural ?? ""));
     setProductFootageImage((product as any).whatsappFootageImageUrl ?? "");
     setProductImage((product as any).imageUrl ?? "");
     openInventoryEditProductRoute(product.id);
@@ -38324,12 +38331,14 @@ ${waybillLineItems(w).length > 1
       active: productActive,
       reorderPoint: Number(reorderPoint) || 0,
       publicOrderAssignmentMode: productPublicOrderAssignmentMode,
+      unitSingular: productUnitSingular.trim() || null,
+      unitPlural: productUnitPlural.trim() || null,
       whatsappFootageImageUrl: productFootageImage || null,
       imageUrl: productImage || null
     } : p));
     closeModal();
     showToast(`${productName.trim()} saved.`);
-    productsApi.update(_epId, { name: productName.trim(), description: productDescription.trim(), sku: productSku.trim() || selectedProduct.sku, active: productActive, reorder_point: Number(reorderPoint) || 0, public_order_assignment_mode: productPublicOrderAssignmentMode, whatsapp_footage_image_url: productFootageImage || null, image_url: productImage || null }).catch((err: any) => {
+    productsApi.update(_epId, { name: productName.trim(), description: productDescription.trim(), sku: productSku.trim() || selectedProduct.sku, active: productActive, reorder_point: Number(reorderPoint) || 0, public_order_assignment_mode: productPublicOrderAssignmentMode, unit_singular: productUnitSingular.trim() || null, unit_plural: productUnitPlural.trim() || null, whatsapp_footage_image_url: productFootageImage || null, image_url: productImage || null }).catch((err: any) => {
       setProducts((prev) => prev.map((p) => p.id === _epId ? productSnapshot : p));
       showToast(`Failed to save ${productSnapshot.name}: ${err?.message ?? "please retry"}.`);
     });
@@ -112289,6 +112298,15 @@ ${waybillLineItems(w).length > 1
                 </label>
                 <p className="text-[11px] text-gray-500 -mt-1">
                   Use this when only this product should arrive unassigned for manual review. Other products keep the global order assignment setting.
+                </p>
+                {/* How one of this product is counted when it is a free gift or an
+                    item inside a package (Bright, 14 Oct 2026). */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label><span>Unit word - one (optional)</span><input value={productUnitSingular} onChange={(e) => setProductUnitSingular(e.target.value)} placeholder="set" maxLength={20} /></label>
+                  <label><span>Unit word - more than one (optional)</span><input value={productUnitPlural} onChange={(e) => setProductUnitPlural(e.target.value)} placeholder="sets" maxLength={20} /></label>
+                </div>
+                <p className="text-[11px] text-gray-500 -mt-1">
+                  How this product is counted when it is a free gift or inside a package, e.g. "1 set of {productName.trim() || "Kitchen Knives"}". Leave empty and it is worked out from the name: "{itemCountLabel(1, productName.trim() || "8pc Kitchen Knife Set", { unitSingular: productUnitSingular, unitPlural: productUnitPlural })}".
                 </p>
                 <label>
                   <span>Product image</span>
