@@ -7,14 +7,14 @@ import {
   Pencil, RotateCcw, Search, Send, ShoppingCart, Target, Undo2, Wallet, X, Crown, Flag, History, Users, BarChart3, ChevronLeft
 } from "lucide-react";
 import {
-  Avatar, AuditTable, ChartLegend, CorrectionForm, CorrectionList, KpiCard, Modal, NoteBox, NumberedHeader, OrderStatusPill, PayoutChangeForm, PayoutChangeNote,
+  Avatar, AuditTable, BonusInitialCells, ChartLegend, CorrectionForm, CorrectionList, KpiCard, Modal, NoteBox, NumberedHeader, OrderStatusPill, PayoutChangeForm, PayoutChangeNote,
   OrderTypePill, OrdersRateChart, Panel, ProductDonut, RateBar, RepStatusPill, StepBadge, WeekPicker, WorkflowSteps,
   dailyChartRows, deltaPct, downloadCsv, longDate, nf, pctText, shortDateTime, shortDay, type CorrectionDraft, type WorkflowStep
 } from "../components/WeeklyReportParts";
 import { LogMissDisputesPanel } from "../components/LogMissParts";
 import { HeadOfSalesBadge } from "../components/HeadOfSalesParts";
 import {
-  CORRECTION_SECTION_LABEL, buildCompanySnapshot, type ManagerBonusPreview, type MonthlyIncentiveReport, type SnapshotDifference, type WeeklyReportSnapshot
+  CORRECTION_SECTION_LABEL, bonusInitialFinal, buildCompanySnapshot, type ManagerBonusPreview, type MonthlyIncentiveReport, type SnapshotDifference, type WeeklyReportSnapshot
 } from "./weekly-report-model";
 import type {
   LogMissDispute, ManagerFundTotals, WeeklyBonusQuery, WeeklyPayoutChange, WeeklyCompanyReport, WeeklyRepReport, WeeklyReportAuditEntry, WeeklyReportCorrection, WeeklyReportResponseInput
@@ -206,6 +206,11 @@ export default function ManagerWeeklyReviewPage({
     [weekStart, weekEnd, shown, managerBonus?.deliveryRate]
   );
   const totals = companySnap.totals;
+  // Initial / Taken off / Final for every rep shown in the total row.
+  const splitTotals = shown.map(bonusInitialFinal).reduce(
+    (sum, item) => ({ initial: sum.initial + item.initial, takenOff: sum.takenOff + item.takenOff, final: sum.final + item.final }),
+    { initial: 0, takenOff: 0, final: 0 }
+  );
   // Orders placed in an earlier week, delivered and paid in this one, across
   // every rep shown (Bright, 3 Oct 2026). Older reports have no figure: 0.
   const carryOver = expectedRows.reduce((sum, row) => {
@@ -580,7 +585,7 @@ export default function ManagerWeeklyReviewPage({
                     <table className="w-full !min-w-[820px] text-left text-[12px]">
                       <thead className="text-[11px] text-gray-600 dark:text-slate-400 [&_th]:[color:inherit]">
                         <tr className="bg-gray-50 dark:bg-slate-800/60 [&>th]:bg-transparent [&>th]:[color:inherit]">
-                          {["#", "Sales Rep", "Report Status", "Orders", "Delivered", "Delivery Rate", `Cross-Sell (${sym})`, `Upsell (${sym})`, `Base (${sym})`, `Total (${sym})`, "Actions"].map((h) => (
+                          {["#", "Sales Rep", "Report Status", "Orders", "Delivered", "Delivery Rate", `Cross-Sell (${sym})`, `Upsell (${sym})`, `Base (${sym})`, `Initial (${sym})`, `Taken off (${sym})`, `Final (${sym})`, "Actions"].map((h) => (
                             // ⚠️ Actions stays pinned to the right edge (12 Oct 2026). On a
                             // laptop the table is wider than its box, and Review / Approve
                             // sat past the edge where nobody scrolled to.
@@ -613,14 +618,16 @@ export default function ManagerWeeklyReviewPage({
                               <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.crossSellBonus ?? 0)}</td>
                               <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.upsellBonus ?? 0)}</td>
                               <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.baseBonus ?? 0)}</td>
+                              {snap ? <BonusInitialCells info={bonusInitialFinal(snap)} sym={sym} /> : <><td className="px-2 py-3">-</td><td className="px-2 py-3">-</td></>}
                               <td className="px-2 py-3 font-bold text-gray-900 dark:text-slate-100">
                                 <span className="flex items-center gap-1">
-                                  {nf(snap?.totals.finalBonus ?? 0)}
+                                  {nf(snap ? bonusInitialFinal(snap).final : 0)}
                                   {canChangePayout(row) && (
                                     <button type="button" aria-label={`Change ${row.repName}'s payout`} title="Change payout" onClick={() => setChangingPayout(row.repId)}
                                       className="!min-h-0 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-[#1F8FE0] dark:hover:bg-slate-800"><Pencil className="h-3 w-3" /></button>
                                   )}
                                 </span>
+                                {snap && bonusInitialFinal(snap).rewardPaid > 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-violet-700 dark:text-violet-300">incl. monthly reward {sym}{nf(bonusInitialFinal(snap).rewardPaid)}</span>}
                                 {row.payoutChange && <PayoutChangeNote change={row.payoutChange} sym={sym} />}
                               </td>
                               <td className={`px-2 py-3 ${pinnedCell}`}>
@@ -643,10 +650,10 @@ export default function ManagerWeeklyReviewPage({
                           );
                         })}
                         {expectedRows.length === 0 && (
-                          <tr><td colSpan={11} className="px-2 py-8 text-center text-gray-500">{loading ? "Loading reports…" : "No sales rep had orders this week."}</td></tr>
+                          <tr><td colSpan={13} className="px-2 py-8 text-center text-gray-500">{loading ? "Loading reports…" : "No sales rep had orders this week."}</td></tr>
                         )}
                         {expectedRows.length > 0 && expectedRows.every((row) => !activeRepFilter.test(statusOf(row))) && (
-                          <tr><td colSpan={11} className="px-2 py-8 text-center text-gray-500">No report is "{activeRepFilter.label}" this week. <button type="button" onClick={() => setRepFilter("all")} className="!min-h-0 font-bold text-blue-700 underline">Show all</button></td></tr>
+                          <tr><td colSpan={13} className="px-2 py-8 text-center text-gray-500">No report is "{activeRepFilter.label}" this week. <button type="button" onClick={() => setRepFilter("all")} className="!min-h-0 font-bold text-blue-700 underline">Show all</button></td></tr>
                         )}
                         <tr className="border-t border-gray-200 font-bold text-gray-900 dark:border-slate-700 dark:text-slate-50 [&>td]:[color:inherit]">
                           <td className="px-2 py-3" colSpan={2}>Total{repFilter !== "all" ? <span className="block text-[10.5px] font-semibold text-gray-500">all reps, not only the ones shown</span> : null}</td>
@@ -660,8 +667,10 @@ export default function ManagerWeeklyReviewPage({
                           <td className="px-2 py-3">{nf(totals.crossSellBonus)}</td>
                           <td className="px-2 py-3">{nf(totals.upsellBonus)}</td>
                           <td className="px-2 py-3">{nf(totals.baseBonus)}</td>
+                          <td className="px-2 py-3">{nf(splitTotals.initial)}</td>
+                          <td className="px-2 py-3 text-rose-600">{splitTotals.takenOff > 0 ? `-${nf(splitTotals.takenOff)}` : "0"}</td>
                           <td className="px-2 py-3">
-                            {nf(totals.totalBonus)}
+                            {nf(splitTotals.final)}
                             {(totals.payoutChanges ?? 0) !== 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-amber-700 dark:text-amber-300">incl. {(totals.payoutChanges ?? 0) < 0 ? "-" : "+"}{sym}{nf(Math.abs(totals.payoutChanges ?? 0))} payout changes</span>}
                           </td>
                           <td />

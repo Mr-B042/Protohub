@@ -126,3 +126,14 @@ test("Multi Corner Storage Shelf order 4092 earns its configured 3 to 6 upgrade"
   assert.equal(computeOrderBonus(order4092, productMap, 60, 0, 1), 12_650);
   assert.equal(computeOrderBonus(order4092, productMap, 59, 0, 1), 6_425);
 });
+
+test("weekly rate rule from 11 Oct 2026: 65%+ full, 60-64% extras half, under 60% all half", async () => {
+  const { weeklyRateFactors } = await import("./payroll-calculator.js");
+  assert.equal(weeklyRateFactors("2026-10-10", 50, 40), null, "orders before the week of 11 Oct keep the old rules");
+  assert.deepEqual(weeklyRateFactors("2026-10-12", 70, 40), { base: 1, extras: 1 });
+  assert.deepEqual(weeklyRateFactors("2026-10-12", 65, 40), { base: 1, extras: 1 });
+  assert.deepEqual(weeklyRateFactors("2026-10-12", 64, 40), { base: 1, extras: 0.5 });
+  assert.deepEqual(weeklyRateFactors("2026-10-12", 60, 40), { base: 1, extras: 0.5 });
+  assert.deepEqual(weeklyRateFactors("2026-10-12", 59, 40), { base: 0.5, extras: 0.5 });
+  assert.deepEqual(weeklyRateFactors("2026-10-12", 30, 19), { base: 1, extras: 1 }, "under 20 orders: paid in full");
+});

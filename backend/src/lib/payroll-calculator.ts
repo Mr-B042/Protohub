@@ -298,6 +298,19 @@ export const buildProductBonusConfigMap = (products: ProductRecord[]) => {
   return productMap;
 };
 
+// ── Weekly delivery-rate rule (Bright, 14 Oct 2026) ─────────────────────────
+// Same rule as the weekly report (src/pages/weekly-report-model.ts), for orders
+// delivered from the week of 11 Oct 2026. Earlier orders keep the old
+// per-product gates. Under 20 orders in the week: paid in full.
+//   65%+: full · 60-64%: upsell, cross-sell and gifts at half · under 60%: all at half
+export const WEEKLY_RATE_RULE_FROM = "2026-10-11";
+export function weeklyRateFactors(deliveredKey: string | null | undefined, rate: number, orders: number) {
+  if (!deliveredKey || sundayWeekStartForDateKey(deliveredKey.slice(0, 10)) < WEEKLY_RATE_RULE_FROM) return null;
+  if (orders < 20 || rate >= 65) return { base: 1, extras: 1 };
+  if (rate >= 60) return { base: 1, extras: 0.5 };
+  return { base: 0.5, extras: 0.5 };
+}
+
 export const computeOrderBonus = (
   order: PayrollOrder,
   productMap: Map<string, Required<ProductBonusConfig>>,
@@ -316,6 +329,7 @@ export const computeOrderBonus = (
   const cfg = productMap.get(order.product_id ?? "") ?? defaultBonusConfig();
   const qty = quantityForOrder(order);
   const isManualSourced = order.source === "WhatsApp";
+  const newRule = weeklyRateFactors(order.delivered_date, repWeeklyDeliveryRate, repWeeklyOrderCount);
 
   let base = 0;
   if (isManualSourced) {
@@ -337,7 +351,7 @@ export const computeOrderBonus = (
     const rule = cfg.upgradeBonuses.find((entry) => entry.fromQty === order.upsell_from_qty && entry.toQty === order.upsell_to_qty);
     const full = Number(rule?.amount ?? 0);
     if (full > 0) {
-      const meetsGate = repWeeklyDeliveryRate >= cfg.upgradeRequiresMinDeliveryRate;
+      const meetsGate = Boolean(newRule) || repWeeklyDeliveryRate >= cfg.upgradeRequiresMinDeliveryRate;
       upgrade = meetsGate ? full : Math.round(full / 2);
     }
   }
@@ -349,6 +363,11 @@ export const computeOrderBonus = (
     + (cfg.crossSellFixed * normalizedLineCount(repDrivenCrossSellLines));
 
   const freeGift = cfg.freeGiftBonus * normalizedLineCount(order.free_gift_lines);
+
+  if (newRule) {
+    void repWeeklyAov;
+    return Math.round(base * newRule.base) + Math.round((upgrade + crossSell + freeGift) * newRule.extras);
+  }
 
   if (repWeeklyOrderCount >= cfg.deliveryRateMinOrders && repWeeklyDeliveryRate < cfg.poorDeliveryRatePercent) {
     return base;

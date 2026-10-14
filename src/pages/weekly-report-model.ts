@@ -55,6 +55,9 @@ export type WeeklyReportBonusInput = {
   total: number;
   /** orderId -> that order's bonus (base + upsell + cross-sell). */
   perOrder: Record<string, { base: number; upsell: number; crossSell: number }>;
+  /** From 11 Oct 2026: the figures before the delivery-rate cut, and why. */
+  beforeRateCut?: { base: number; upsell: number; crossSell: number };
+  rateCutLabel?: string;
 };
 
 export type WeeklyReportFine = { id: string; label: string; amount: number; date: string };
@@ -238,6 +241,11 @@ export type WeeklyReportSnapshot = {
     unpaidFines?: number;
     /** What the rep is paid. With a payout change this is the CHANGED amount. */
     finalBonus: number;
+    /** From 11 Oct 2026: base + upsell + cross-sell BEFORE the delivery-rate
+     *  cut, and how much the cut took off. Missing on older reports. */
+    bonusBeforeRateCut?: number;
+    rateCut?: number;
+    rateCutLabel?: string;
     /** Only with a payout change: the system's own figure before the change. */
     systemFinalBonus?: number;
     /** Only with a payout change: what the manager added (+) or took off (-). */
@@ -326,6 +334,53 @@ export function withPayoutChange<T extends WeeklyReportSnapshot | null>(
       changedByName: change.changedByName, changedByRole: change.changedByRole, changedAt: change.changedAt
     }
   };
+}
+
+// ── Weekly delivery-rate rule (Bright, 14 Oct 2026) ─────────────────────────
+// From the week of 11 Oct 2026 (not earlier weeks), judged on the week's rate
+// (orders the rep got that week that were delivered / all of them):
+//   65% and above   base, upsell and cross-sell all paid in full
+//   60% to under 65 base in full; upsell and cross-sell paid at half
+//   under 60%       base, upsell and cross-sell all paid at half
+// A rep with fewer than 20 orders that week is paid in full: one or two
+// failed deliveries swing a small week too much. It replaces the older
+// per-product gates (upgrade at half, "base only") for those weeks.
+export const WEEKLY_RATE_RULE_FROM = "2026-10-11";
+export const WEEKLY_RATE_RULE_MIN_ORDERS = 20;
+export type WeeklyRateRule = { level: "full" | "extras_half" | "all_half"; base: number; extras: number; label: string };
+export function weeklyRateRule(weekStart: string | null | undefined, rate: number, orders: number): WeeklyRateRule | null {
+  if (!weekStart || weekStart < WEEKLY_RATE_RULE_FROM) return null;
+  if (orders < WEEKLY_RATE_RULE_MIN_ORDERS) return { level: "full", base: 1, extras: 1, label: `Paid in full: fewer than ${WEEKLY_RATE_RULE_MIN_ORDERS} orders this week` };
+  if (rate >= 65) return { level: "full", base: 1, extras: 1, label: "Paid in full: delivery rate 65% or more" };
+  if (rate >= 60) return { level: "extras_half", base: 1, extras: 0.5, label: `Delivery rate ${rate}% (60–64%): upsell and cross-sell paid at half, base in full` };
+  return { level: "all_half", base: 0.5, extras: 0.5, label: `Delivery rate ${rate}% (under 60%): base, upsell and cross-sell all paid at half` };
+}
+
+/**
+ * A rep's week as Initial -> Taken off -> Final (Bright, 14 Oct 2026), for the
+ * Admin's and the Owner's rep tables. Initial is everything earned before any
+ * cut; each item says what came off; Final is what is paid. They always add
+ * up: Initial - items = Final. The month's challenge reward is included in the
+ * week it is paid.
+ */
+export function bonusInitialFinal(snap: WeeklyReportSnapshot) {
+  const t = snap.totals;
+  const before = t.bonusBeforeRateCut ?? (t.baseBonus + t.upsellBonus + t.crossSellBonus);
+  const adjustments = Math.max(0, t.adjustments ?? 0);
+  const change = t.payoutChange ?? 0;
+  const lines = snap.monthlyIncentive?.lines ?? [];
+  const rewardEarned = Math.round(lines.reduce((sum, line) => sum + Math.max(0, line.earned), 0));
+  const rewardPaid = Math.round(lines.reduce((sum, line) => sum + Math.max(0, line.payable), 0));
+  const initial = Math.round(before + adjustments + Math.max(0, change) + rewardEarned);
+  const final = Math.round(t.finalBonus + rewardPaid);
+  const finesApplied = Math.max(0, (t.fines ?? 0) + (t.carriedFines ?? 0) - (t.unpaidFines ?? 0));
+  const items = [
+    { label: t.rateCutLabel ?? "Delivery-rate cut", amount: Math.round(t.rateCut ?? 0) },
+    { label: (t.carriedFines ?? 0) > 0 ? "Fines (incl. carried from last week)" : "Fines", amount: Math.round(finesApplied) },
+    { label: "Taken off by the manager", amount: Math.round(Math.max(0, -change)) },
+    { label: "Monthly reward: low delivery rate for the month", amount: Math.max(0, rewardEarned - rewardPaid) }
+  ].filter((item) => item.amount > 0);
+  return { initial, takenOff: Math.max(0, initial - final), final, items, rewardEarned, rewardPaid };
 }
 
 /** "+₦2,000" / "-₦2,000", for the line that says what was changed. */
@@ -508,6 +563,8 @@ export function buildRepWeeklySnapshot(input: {
   const upsellBonus = Math.round(input.bonus.upsell);
   const crossSellBonus = Math.round(input.bonus.crossSell);
   const earned = baseBonus + upsellBonus + crossSellBonus;
+  const beforeRateCut = input.bonus.beforeRateCut;
+  const bonusBeforeRateCut = beforeRateCut ? Math.round(beforeRateCut.base + beforeRateCut.upsell + beforeRateCut.crossSell) : null;
   const adjustments = input.adjustments ?? [];
   const adjustmentTotal = Math.round(adjustments.reduce((sum, item) => sum + Math.max(0, item.amount), 0));
 
@@ -535,6 +592,11 @@ export function buildRepWeeklySnapshot(input: {
       // cover carries on (Bright, 1 Oct 2026).
       finalBonus: Math.max(0, earned + adjustmentTotal - Math.round(fineTotal) - carriedFines),
       unpaidFines: Math.max(0, Math.round(fineTotal) + carriedFines - earned - adjustmentTotal),
+      ...(bonusBeforeRateCut !== null ? {
+        bonusBeforeRateCut,
+        rateCut: Math.max(0, bonusBeforeRateCut - earned),
+        ...(input.bonus.rateCutLabel ? { rateCutLabel: input.bonus.rateCutLabel } : {})
+      } : {}),
       upsellOrders: upsellPlaced.length,
       crossSellOrders: crossPlaced.length,
       manuallyAdjustedOrders: orders.filter((order) => order.bonusManuallyAdjusted && order.bonus > 0).length,

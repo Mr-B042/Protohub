@@ -5,14 +5,14 @@ import {
   ShieldAlert, ShoppingCart, Target, Unlock, Wallet, CheckCircle2, Clock3
 } from "lucide-react";
 import {
-  AuditTable, Avatar, ChartLegend, CompanyStatusPill, CorrectionForm, CorrectionList, KpiCard, Modal, NoteBox, NumberedHeader,
+  AuditTable, Avatar, BonusInitialCells, ChartLegend, CompanyStatusPill, CorrectionForm, CorrectionList, KpiCard, Modal, NoteBox, NumberedHeader,
   OrdersRateChart, Panel, PayoutChangeNote, ProductDonut, RateBar, RepStatusPill, StepBadge, WeekPicker, WorkflowSteps, dailyChartRows, deltaPct,
   downloadCsv, longDate, nf, pctText, shortDateTime, type CorrectionDraft, type WorkflowStep
 } from "../components/WeeklyReportParts";
 import { CompanyProductTable, OrdersTable, RepBonusTable, RepReviewModal, shownSnapshot, type ReviewRepRow } from "./ManagerWeeklyReviewPage";
 import { LogMissDisputesPanel } from "../components/LogMissParts";
 import { HeadOfSalesBadge, headOfSalesBonusStatus } from "../components/HeadOfSalesParts";
-import { buildCompanySnapshot, type CompanyWeeklySnapshot, type ManagerBonusPreview, type MonthlyIncentiveReport, type WeeklyReportSnapshot } from "./weekly-report-model";
+import { bonusInitialFinal, buildCompanySnapshot, type CompanyWeeklySnapshot, type ManagerBonusPreview, type MonthlyIncentiveReport, type WeeklyReportSnapshot } from "./weekly-report-model";
 import type { HeadOfSalesReview, LogMissDispute, WeeklyLogMissRow, ManagerFundTotals, WeeklyBonusQuery, WeeklyCompanyReport, WeeklyReportAuditEntry, WeeklyReportCorrection } from "../lib/api";
 import { currencySymbol } from "../lib/money-privacy";
 
@@ -100,6 +100,11 @@ export default function OwnerWeeklyApprovalPage({
   const status = company?.status ?? "open";
   const expectedRows = rows.filter((row) => row.expected || row.report);
   const shown = expectedRows.map(shownSnapshot).filter((snap): snap is WeeklyReportSnapshot => !!snap);
+  // Initial / Taken off / Final for the total row (Bright, 14 Oct 2026).
+  const splitTotals = shown.map(bonusInitialFinal).reduce(
+    (sum, item) => ({ initial: sum.initial + item.initial, takenOff: sum.takenOff + item.takenOff, final: sum.final + item.final }),
+    { initial: 0, takenOff: 0, final: 0 }
+  );
   // What the owner approves is what the manager submitted. Until then, the
   // reps' figures as they stand.
   const frozenCompany = (company?.companySnapshot as CompanyWeeklySnapshot | null) ?? null;
@@ -226,7 +231,7 @@ export default function OwnerWeeklyApprovalPage({
       <table className="w-full !min-w-[820px] text-left text-[12px]">
         <thead className="text-[11px] text-gray-600 dark:text-slate-400 [&_th]:[color:inherit]">
           <tr className="bg-gray-50 dark:bg-slate-800/60 [&>th]:bg-transparent [&>th]:[color:inherit]">
-            {["#", "Sales Rep", "Report Status", "Orders", "Delivered", "Delivery Rate", `Cross-Sell (${sym})`, `Upsell (${sym})`, `Base (${sym})`, `Final (${sym})`, "Actions"].map((h) => <th key={h} className="whitespace-nowrap px-2 py-2.5 font-bold">{h}</th>)}
+            {["#", "Sales Rep", "Report Status", "Orders", "Delivered", "Delivery Rate", `Cross-Sell (${sym})`, `Upsell (${sym})`, `Base (${sym})`, `Initial (${sym})`, `Taken off (${sym})`, `Final (${sym})`, "Actions"].map((h) => <th key={h} className="whitespace-nowrap px-2 py-2.5 font-bold">{h}</th>)}
           </tr>
         </thead>
         <tbody>
@@ -249,8 +254,10 @@ export default function OwnerWeeklyApprovalPage({
                 <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.crossSellBonus ?? 0)}</td>
                 <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.upsellBonus ?? 0)}</td>
                 <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.baseBonus ?? 0)}</td>
+                {snap ? <BonusInitialCells info={bonusInitialFinal(snap)} sym={sym} /> : <><td className="px-2 py-3">-</td><td className="px-2 py-3">-</td></>}
                 <td className="px-2 py-3 font-bold text-gray-900 dark:text-slate-100">
-                  {nf(snap?.totals.finalBonus ?? 0)}
+                  {nf(snap ? bonusInitialFinal(snap).final : 0)}
+                  {snap && bonusInitialFinal(snap).rewardPaid > 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-violet-700 dark:text-violet-300">incl. monthly reward {sym}{nf(bonusInitialFinal(snap).rewardPaid)}</span>}
                   {row.payoutChange && <PayoutChangeNote change={row.payoutChange} sym={sym} />}
                 </td>
                 <td className="px-2 py-3">
@@ -262,14 +269,17 @@ export default function OwnerWeeklyApprovalPage({
               </tr>
             );
           })}
-          {expectedRows.length === 0 && <tr><td colSpan={11} className="px-2 py-8 text-center text-gray-500">{loading ? "Loading reports…" : "No sales rep had orders this week."}</td></tr>}
+          {expectedRows.length === 0 && <tr><td colSpan={13} className="px-2 py-8 text-center text-gray-500">{loading ? "Loading reports…" : "No sales rep had orders this week."}</td></tr>}
           <tr className="border-t border-gray-200 font-bold text-gray-900 dark:border-slate-700 dark:text-slate-50 [&>td]:[color:inherit]">
             <td className="px-2 py-3" colSpan={2}>Total</td><td className="px-2 py-3">-</td>
             <td className="px-2 py-3">{nf(totals.orders)}</td><td className="px-2 py-3">{nf(totals.delivered)}</td>
             <td className="px-2 py-3"><span className="flex items-center gap-2"><span className="w-11">{pctText(totals.deliveryRate)}</span><span className="w-14"><RateBar value={totals.deliveryRate} tone="green" /></span></span></td>
             <td className="px-2 py-3">{nf(totals.crossSellBonus)}</td><td className="px-2 py-3">{nf(totals.upsellBonus)}</td>
-            <td className="px-2 py-3">{nf(totals.baseBonus)}</td><td className="px-2 py-3">
-              {nf(totals.totalBonus)}
+            <td className="px-2 py-3">{nf(totals.baseBonus)}</td>
+            <td className="px-2 py-3">{nf(splitTotals.initial)}</td>
+            <td className="px-2 py-3 text-rose-600">{splitTotals.takenOff > 0 ? `-${nf(splitTotals.takenOff)}` : "0"}</td>
+            <td className="px-2 py-3">
+              {nf(splitTotals.final)}
               {(totals.payoutChanges ?? 0) !== 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-amber-700 dark:text-amber-300">incl. {(totals.payoutChanges ?? 0) < 0 ? "-" : "+"}{sym}{nf(Math.abs(totals.payoutChanges ?? 0))} payout changes</span>}
             </td><td />
           </tr>
