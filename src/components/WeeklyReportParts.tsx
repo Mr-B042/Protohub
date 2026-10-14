@@ -484,10 +484,15 @@ export function PayoutChangeNote({ change, sym }: { change: PayoutChangeView; sy
  * stays on record beside the change for the owner to compare.
  */
 /** The "Initial" and "Taken off" cells of a rep row (Bright, 14 Oct 2026). */
-export function BonusInitialCells({ info, sym }: { info: { initial: number; takenOff: number; items: Array<{ label: string; amount: number }> }; sym: string }) {
+export function BonusInitialCells({ info, sym }: { info: { initial: number; takenOff: number; items: Array<{ label: string; amount: number }>; extraInInitial?: number }; sym: string }) {
   return (
     <>
-      <td className="px-2 py-3 font-semibold text-gray-800 dark:text-slate-200">{nf(info.initial)}</td>
+      <td className="px-2 py-3 font-semibold text-gray-800 dark:text-slate-200">
+        {nf(info.initial)}
+        {/* Cross-sell + Upsell + Base = Initial, unless corrections, an amount the
+            manager added or the monthly reward come on top: then say so. */}
+        {(info.extraInInitial ?? 0) > 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-gray-500">incl. +{sym}{nf(info.extraInInitial ?? 0)} corrections / reward</span>}
+      </td>
       <td className="px-2 py-3 align-top">
         {info.takenOff > 0 ? (
           <>
