@@ -489,9 +489,9 @@ export function BonusInitialCells({ info, sym }: { info: { initial: number; take
     <>
       <td className="px-2 py-3 font-semibold text-gray-800 dark:text-slate-200">
         {nf(info.initial)}
-        {/* Cross-sell + Upsell + Base = Initial, unless corrections, an amount the
-            manager added or the monthly reward come on top: then say so. */}
-        {(info.extraInInitial ?? 0) > 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-gray-500">incl. +{sym}{nf(info.extraInInitial ?? 0)} corrections / reward</span>}
+        {/* Cross-sell + Upsell + Base = Initial, unless corrections or an amount
+            the manager added come on top: then say so. */}
+        {(info.extraInInitial ?? 0) > 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-gray-500">incl. +{sym}{nf(info.extraInInitial ?? 0)} corrections / added</span>}
       </td>
       <td className="px-2 py-3 align-top">
         {info.takenOff > 0 ? (

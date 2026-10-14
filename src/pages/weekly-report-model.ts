@@ -392,8 +392,9 @@ export function bonusComponentsFull(snap: WeeklyReportSnapshot) {
  * A rep's week as Initial -> Taken off -> Final (Bright, 14 Oct 2026), for the
  * Admin's and the Owner's rep tables. Initial is everything earned before any
  * cut; each item says what came off and why; Final is what is paid. They always
- * add up: Initial - items = Final. The month's challenge reward is included in
- * the week it is paid.
+ * add up: Initial - items = Final. The month's challenge reward is NOT in
+ * these columns (Bright, 14 Oct 2026: "remove it"): it has its own Monthly
+ * incentive section, and mixing it in made Final differ from the weekly bonus.
  */
 export function bonusInitialFinal(snap: WeeklyReportSnapshot) {
   const t = snap.totals;
@@ -401,11 +402,8 @@ export function bonusInitialFinal(snap: WeeklyReportSnapshot) {
   const before = full.base + full.upsell + full.crossSell;
   const adjustments = Math.max(0, t.adjustments ?? 0);
   const change = t.payoutChange ?? 0;
-  const lines = snap.monthlyIncentive?.lines ?? [];
-  const rewardEarned = Math.round(lines.reduce((sum, line) => sum + Math.max(0, line.earned), 0));
-  const rewardPaid = Math.round(lines.reduce((sum, line) => sum + Math.max(0, line.payable), 0));
-  const initial = Math.round(before + adjustments + Math.max(0, change) + rewardEarned);
-  const final = Math.round(t.finalBonus + rewardPaid);
+  const initial = Math.round(before + adjustments + Math.max(0, change));
+  const final = Math.round(t.finalBonus);
   const finesApplied = Math.max(0, (t.fines ?? 0) + (t.carriedFines ?? 0) - (t.unpaidFines ?? 0));
   // The delivery-rate cut, one line per part, each saying why.
   const rate = Math.round(t.deliveryRate);
@@ -415,10 +413,9 @@ export function bonusInitialFinal(snap: WeeklyReportSnapshot) {
     { label: `Upsell paid at half (${why})`, amount: Math.round(full.upsell - t.upsellBonus) },
     { label: `Cross-sell paid at half (${why})`, amount: Math.round(full.crossSell - t.crossSellBonus) },
     { label: (t.carriedFines ?? 0) > 0 ? "Fines (incl. carried from last week)" : "Fines", amount: Math.round(finesApplied) },
-    { label: "Taken off by the manager", amount: Math.round(Math.max(0, -change)) },
-    { label: "Monthly reward cut: low delivery rate for the month", amount: Math.max(0, rewardEarned - rewardPaid) }
+    { label: "Taken off by the manager", amount: Math.round(Math.max(0, -change)) }
   ].filter((item) => item.amount > 0);
-  return { initial, takenOff: Math.max(0, initial - final), final, items, rewardEarned, rewardPaid, full, extraInInitial: Math.round(adjustments + Math.max(0, change) + rewardEarned) };
+  return { initial, takenOff: Math.max(0, initial - final), final, items, full, extraInInitial: Math.round(adjustments + Math.max(0, change)) };
 }
 
 /** "+₦2,000" / "-₦2,000", for the line that says what was changed. */
