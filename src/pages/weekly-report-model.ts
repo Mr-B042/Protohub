@@ -337,22 +337,24 @@ export function withPayoutChange<T extends WeeklyReportSnapshot | null>(
 }
 
 // ── Weekly delivery-rate rule (Bright, 14 Oct 2026) ─────────────────────────
-// From the week of 11 Oct 2026 (not earlier weeks), judged on the week's rate
-// (orders the rep got that week that were delivered / all of them):
+// Judged on the week's rate (orders the rep got that week that were delivered
+// / all of them). A rep with fewer than 20 orders that week is paid in full.
 //   65% and above   base, upsell and cross-sell all paid in full
 //   60% to under 65 base in full; upsell and cross-sell paid at half
-//   under 60%       base, upsell and cross-sell all paid at half
-// A rep with fewer than 20 orders that week is paid in full: one or two
-// failed deliveries swing a small week too much. It replaces the older
-// per-product gates (upgrade at half, "base only") for those weeks.
-export const WEEKLY_RATE_RULE_FROM = "2026-10-11";
+//   under 60%       from the week of 11 Oct: base, upsell and cross-sell all
+//                   at half. The week of 4 Oct: same as 60-64% (Bright: the
+//                   base cut "will take effect from this week, not previous weeks")
+// From the week of 4 Oct 2026; earlier weeks keep the older per-product
+// gates (upgrade at half, "base only"), which this replaces.
+export const WEEKLY_RATE_RULE_FROM = "2026-10-04";
+export const WEEKLY_RATE_BASE_CUT_FROM = "2026-10-11";
 export const WEEKLY_RATE_RULE_MIN_ORDERS = 20;
 export type WeeklyRateRule = { level: "full" | "extras_half" | "all_half"; base: number; extras: number; label: string };
 export function weeklyRateRule(weekStart: string | null | undefined, rate: number, orders: number): WeeklyRateRule | null {
   if (!weekStart || weekStart < WEEKLY_RATE_RULE_FROM) return null;
   if (orders < WEEKLY_RATE_RULE_MIN_ORDERS) return { level: "full", base: 1, extras: 1, label: `Paid in full: fewer than ${WEEKLY_RATE_RULE_MIN_ORDERS} orders this week` };
   if (rate >= 65) return { level: "full", base: 1, extras: 1, label: "Paid in full: delivery rate 65% or more" };
-  if (rate >= 60) return { level: "extras_half", base: 1, extras: 0.5, label: `Delivery rate ${rate}% (60–64%): upsell and cross-sell paid at half, base in full` };
+  if (rate >= 60 || weekStart < WEEKLY_RATE_BASE_CUT_FROM) return { level: "extras_half", base: 1, extras: 0.5, label: `Delivery rate ${rate}% (under 65%): upsell and cross-sell paid at half, base in full` };
   return { level: "all_half", base: 0.5, extras: 0.5, label: `Delivery rate ${rate}% (under 60%): base, upsell and cross-sell all paid at half` };
 }
 
@@ -713,6 +715,7 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   owner_approved_locked: "Approved & locked by owner",
   owner_returned: "Returned to manager",
   owner_sent_back_rep: "Owner sent this rep back to correct the bonus",
+  figures_reworked: "Figures re-worked for the new delivery-rate rule",
   owner_reopened: "Week reopened by owner",
   payout_changed: "Payout changed by manager",
   payout_change_removed: "Payout change removed",

@@ -26173,6 +26173,45 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const weeklyPickWeek = (dateKey: string) => setWeeklyReportWeekStart(windowWeekStart(dateKey));
   const weeklyCanGoNext = windowShiftDay(weeklyReportWeekStart, 7) <= windowWeekStart(lagosDateKeyNow());
   const weeklyRefresh = () => setWeeklyReload((value) => value + 1);
+
+  // ── One-time: last week's sent reports under the new rate rule ───────────
+  // Bright (14 Oct 2026) brought the weekly delivery-rate rule back to the
+  // week of 4 Oct after reps had sent it, and chose to have those reports
+  // updated rather than resent. When leadership opens that week, each sent
+  // report not yet worked out under the rule is worked out again here, exactly
+  // as the rep's own Submit does, and the server keeps the old figures in the
+  // audit trail. Once per report: the server refuses a second time.
+  const weeklyReworkTriedRef = useRef(new Set<string>());
+  useEffect(() => {
+    const week = weeklyWeek && weeklyWeek.weekStart === weeklyReportWeekStart ? weeklyWeek : null;
+    if (!week || weeklyReportWeekStart !== "2026-10-04" || isPreviewing || !hasCompletedInitialDataLoad) return;
+    if (currentRole !== "Owner" && currentRole !== "Admin" && currentRole !== "Manager") return;
+    if (!weeklyBonusMaps || weeklyBonusMaps.weekStart !== weeklyReportWeekStart) return;
+    if (week.company && week.company.status !== "open" && week.company.status !== "returned_to_manager") return;
+    const pending = week.repReports.filter((report) =>
+      (report.status === "submitted" || report.status === "manager_approved")
+      && report.snapshot && (report.snapshot as WeeklyReportSnapshot).totals?.bonusBeforeRateCut == null
+      && !weeklyReworkTriedRef.current.has(report.id));
+    if (pending.length === 0) return;
+    void (async () => {
+      let changed = 0;
+      for (const report of pending) {
+        weeklyReworkTriedRef.current.add(report.id);
+        const name = users.find((user) => user.id === report.repId)?.name ?? "Sales rep";
+        const live = buildWeeklyRepSnapshot({ id: report.repId, name }, weeklyReportWeekStart, week.fines ?? [], week.previousFines ?? [], week.adjustments ?? [], week.previousAdjustments ?? [], week.logMisses ?? [], week.previousLogMisses ?? [], week.carriedFines?.[report.repId] ?? 0);
+        if (!live || live.totals.bonusBeforeRateCut == null) continue;
+        // Safety: the rule changes money, never the order counts. If the counts
+        // differ from what the rep sent (orders still loading, or edited since),
+        // leave the report for the manager instead of writing doubtful figures.
+        const sent = report.snapshot as WeeklyReportSnapshot;
+        if (live.totals.orders !== sent.totals.orders || live.totals.delivered !== sent.totals.delivered || live.totals.deliveredForBonus !== sent.totals.deliveredForBonus) continue;
+        try { await weeklyReportsApi.reworkFigures(report.repId, { weekStart: weeklyReportWeekStart, snapshot: live }); changed += 1; }
+        catch (err: any) { console.warn("[weekly] re-work skipped", report.repId, err?.message); }
+      }
+      if (changed > 0) { showToast(`${changed} sent report${changed === 1 ? "" : "s"} updated to the new delivery-rate rule.`); weeklyRefresh(); }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weeklyWeek, weeklyBonusMaps, weeklyReportWeekStart, currentRole, isPreviewing, hasCompletedInitialDataLoad]);
   const weeklyRun = async (action: () => Promise<unknown>, done: string) => {
     await action();
     showToast(done);

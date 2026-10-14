@@ -300,14 +300,17 @@ export const buildProductBonusConfigMap = (products: ProductRecord[]) => {
 
 // ── Weekly delivery-rate rule (Bright, 14 Oct 2026) ─────────────────────────
 // Same rule as the weekly report (src/pages/weekly-report-model.ts), for orders
-// delivered from the week of 11 Oct 2026. Earlier orders keep the old
+// delivered from the week of 4 Oct 2026. Earlier orders keep the old
 // per-product gates. Under 20 orders in the week: paid in full.
 //   65%+: full · 60-64%: upsell, cross-sell and gifts at half · under 60%: all at half
-export const WEEKLY_RATE_RULE_FROM = "2026-10-11";
+// From the week of 4 Oct 2026; halving the base under 60% only from 11 Oct.
+export const WEEKLY_RATE_RULE_FROM = "2026-10-04";
+export const WEEKLY_RATE_BASE_CUT_FROM = "2026-10-11";
 export function weeklyRateFactors(deliveredKey: string | null | undefined, rate: number, orders: number) {
-  if (!deliveredKey || sundayWeekStartForDateKey(deliveredKey.slice(0, 10)) < WEEKLY_RATE_RULE_FROM) return null;
+  const week = deliveredKey ? sundayWeekStartForDateKey(deliveredKey.slice(0, 10)) : "";
+  if (!week || week < WEEKLY_RATE_RULE_FROM) return null;
   if (orders < 20 || rate >= 65) return { base: 1, extras: 1 };
-  if (rate >= 60) return { base: 1, extras: 0.5 };
+  if (rate >= 60 || week < WEEKLY_RATE_BASE_CUT_FROM) return { base: 1, extras: 0.5 };
   return { base: 0.5, extras: 0.5 };
 }
 
