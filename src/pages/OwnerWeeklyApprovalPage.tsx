@@ -260,7 +260,6 @@ export default function OwnerWeeklyApprovalPage({
                 {snap ? <BonusInitialCells info={bonusInitialFinal(snap)} sym={sym} /> : <><td className="px-2 py-3">-</td><td className="px-2 py-3">-</td></>}
                 <td className="px-2 py-3 font-bold text-gray-900 dark:text-slate-100">
                   {nf(snap ? bonusInitialFinal(snap).final : 0)}
-                  {snap && bonusInitialFinal(snap).rewardPaid > 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-violet-700 dark:text-violet-300">incl. monthly reward {sym}{nf(bonusInitialFinal(snap).rewardPaid)}</span>}
                   {row.payoutChange && <PayoutChangeNote change={row.payoutChange} sym={sym} />}
                 </td>
                 <td className="px-2 py-3">

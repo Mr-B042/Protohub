@@ -630,7 +630,6 @@ export default function ManagerWeeklyReviewPage({
                                       className="!min-h-0 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-[#1F8FE0] dark:hover:bg-slate-800"><Pencil className="h-3 w-3" /></button>
                                   )}
                                 </span>
-                                {snap && bonusInitialFinal(snap).rewardPaid > 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-violet-700 dark:text-violet-300">incl. monthly reward {sym}{nf(bonusInitialFinal(snap).rewardPaid)}</span>}
                                 {row.payoutChange && <PayoutChangeNote change={row.payoutChange} sym={sym} />}
                               </td>
                               <td className={`px-2 py-3 ${pinnedCell}`}>
