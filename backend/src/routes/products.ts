@@ -243,7 +243,9 @@ router.patch("/:id",
                      "cross_sell_state_restrictions",
                      "free_gift_product_ids", "free_gift_state_restrictions",
                      "alternative_product_ids",
-                     "form_custom_text", "package_description"];
+                     "form_custom_text", "package_description",
+                     // How one of this product is counted ("set"/"sets"); see lib/item-count-label.ts
+                     "unit_singular", "unit_plural"];
     const updates: Record<string, unknown> = {};
     for (const key of allowed) {
       if (req.body[key] !== undefined) updates[key] = req.body[key];

@@ -17,6 +17,7 @@ import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
+import { itemCountLabel } from "../lib/item-count-label.js";
 import { notifyOrderEvent } from "../lib/order-notifications.js";
 import { assignOrderRep } from "../lib/order-assignment.js";
 import { buildPackageComponentSnapshot } from "../lib/order-inventory.js";
@@ -488,10 +489,8 @@ const componentsDescribeCombo = (snapshot: ResolvedComponentSnapshot | undefined
 const componentSummaryLine = (snapshot: ResolvedComponentSnapshot | undefined) =>
   visibleOrderComponents(snapshot)
     .map((line) => {
-      const qtyLabel = orderComponentQtyLabel(line.quantity);
-      return line.isFreeGift
-        ? `FREE ${qtyLabel} of ${line.productName}`
-        : `${qtyLabel} of ${line.productName}`;
+      const label = itemCountLabel(line.quantity, line.productName);
+      return line.isFreeGift ? `FREE ${label}` : label;
     })
     .join(" + ");
 

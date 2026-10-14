@@ -205,6 +205,8 @@ const sanitiseProduct = (p: DbProduct, companionSocialProofByProductId?: Record<
   name:                        p.name,
   description:                 p.description ?? "",
   packageDescription:          p.package_description ?? "",
+  unitSingular:                (p as any).unit_singular ?? null,
+  unitPlural:                  (p as any).unit_plural ?? null,
   active:                      p.active,
   catalogType:                 p.catalog_type ?? "standard",
   availableStates:             p.available_states ?? [],
@@ -382,7 +384,7 @@ const PUBLIC_PRODUCT_SELECT = `
   cross_sell_product_ids, cross_sell_state_restrictions, cross_sell_price_overrides,
   free_gift_product_ids, free_gift_state_restrictions,
   alternative_product_ids,
-  form_custom_text,
+  form_custom_text, unit_singular, unit_plural,
   pricings: product_pricings!product_pricings_product_id_fkey(currency, selling_price, is_primary),
   packages: product_packages!product_packages_product_id_fkey(id, name, package_set, description, quantity, price, currency, display_order, active, state_filter_mode, state_restrictions, requires_state_stock, featured_combo_card, image_url, image_urls, unit_singular, unit_plural, attribution_product_id, companion_products, package_components)
 `;
