@@ -4183,6 +4183,8 @@ export const weeklyReportsApi = {
     post<{ ok: true }>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/return`, body),
   flagRep: (repId: string, body: WeeklyReportCorrectionInput) =>
     post<{ ok: true }>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/flag`, body),
+  reworkFigures: (repId: string, body: { weekStart: string; snapshot: unknown }) =>
+    post<{ ok: true; already?: boolean }>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/rework-figures`, body),
   savePayoutChange: (repId: string, body: { weekStart: string; amount: number; reason: string }) =>
     put<{ ok: true }>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/payout-change`, body),
   removePayoutChange: (repId: string, weekStart: string) =>

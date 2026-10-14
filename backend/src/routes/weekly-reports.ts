@@ -918,6 +918,63 @@ router.get("/history", requireRole(...LEADERSHIP), async (req, res) => {
 
 const RepActionSchema = z.object({ weekStart: weekStartSchema, note: z.string().trim().max(1000).optional() });
 
+// ── Re-work sent figures for the new delivery-rate rule (Bright, 14 Oct 2026)
+// The weekly rate rule was brought back to the week of 4 Oct after reps had
+// sent that week. Bright chose to update those reports rather than make each
+// rep resend: the browser works the report out again under the new rule and
+// sends it here, once per report. Only for that week, only while the week is
+// still with the manager, and only for a report not yet worked out under the
+// rule (no bonusBeforeRateCut). The old figures stay in the audit trail.
+const RATE_RULE_REWORK_WEEKS = new Set(["2026-10-04"]);
+const ReworkSchema = z.object({ weekStart: weekStartSchema, snapshot: snapshotSchema });
+router.post("/rep/:repId/rework-figures", requireRole("Owner", ...REVIEWERS), async (req, res) => {
+  const parsed = ReworkSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+  const { weekStart, snapshot } = parsed.data;
+  try {
+    if (!RATE_RULE_REWORK_WEEKS.has(weekStart)) throw httpError(400, "Only the week of 4 Oct is re-worked for the new delivery-rate rule.");
+    const branchId = requireBranch(req);
+    const orgId = req.user!.orgId;
+    const repId = String(req.params.repId);
+    const [report, company] = await Promise.all([loadRepReport(orgId, branchId, repId, weekStart), loadCompanyReport(orgId, branchId, weekStart)]);
+    if (!report || (report.status !== "submitted" && report.status !== "manager_approved")) throw httpError(409, "This report is not waiting with the manager.");
+    if (company && company.status !== "open" && company.status !== "returned_to_manager") throw httpError(409, "This week is already with the owner.");
+    const oldTotals = ((report.snapshot as any)?.totals ?? {}) as Record<string, unknown>;
+    const newTotals = ((snapshot as any)?.totals ?? {}) as Record<string, unknown>;
+    if (oldTotals.bonusBeforeRateCut !== undefined && oldTotals.bonusBeforeRateCut !== null) { res.json({ ok: true, already: true }); return; }
+    if (newTotals.bonusBeforeRateCut === undefined || newTotals.bonusBeforeRateCut === null) throw httpError(400, "These figures were not worked out under the new rule.");
+    if ((snapshot as any)?.repId !== repId || (snapshot as any)?.weekStart !== weekStart) throw httpError(400, "These figures are for another rep or week.");
+
+    const now = new Date().toISOString();
+    const { data: updated, error } = await supabase.from("rep_weekly_reports")
+      .update({ snapshot, updated_at: now })
+      .eq("id", report.id).in("status", ["submitted", "manager_approved"]).select("id");
+    if (error) throw error;
+    if (!updated || updated.length === 0) throw httpError(409, "This report changed. Reload and try again.");
+    // A payout change was made on the old figures; like a resend, it does not carry over.
+    const { data: dropped, error: dropError } = await supabase.from("weekly_report_payout_changes")
+      .delete().eq("org_id", orgId).eq("rep_report_id", report.id).select("amount, system_amount, reason");
+    if (dropError) throw dropError;
+    for (const row of dropped ?? []) {
+      await audit(req, {
+        branchId, weekStart, action: "payout_change_removed", repReportId: report.id, repId,
+        detail: { systemAmount: Number(row.system_amount), amount: Number(row.amount), reason: row.reason, why: "The figures were re-worked for the new delivery-rate rule, so the change must be made again." }
+      });
+    }
+    await audit(req, {
+      branchId, weekStart, action: "figures_reworked", repReportId: report.id, repId,
+      detail: {
+        why: "New weekly delivery-rate rule brought back to this week (Bright, 14 Oct 2026)",
+        before: { baseBonus: oldTotals.baseBonus ?? null, upsellBonus: oldTotals.upsellBonus ?? null, crossSellBonus: oldTotals.crossSellBonus ?? null, finalBonus: oldTotals.finalBonus ?? null },
+        after: { baseBonus: newTotals.baseBonus ?? null, upsellBonus: newTotals.upsellBonus ?? null, crossSellBonus: newTotals.crossSellBonus ?? null, finalBonus: newTotals.finalBonus ?? null, rateCut: newTotals.rateCut ?? null }
+      }
+    });
+    res.json({ ok: true });
+  } catch (error: any) {
+    sendError(res, error, "Could not re-work these figures.");
+  }
+});
+
 router.post("/rep/:repId/approve", requireRole(...REVIEWERS), async (req, res) => {
   const parsed = RepActionSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
