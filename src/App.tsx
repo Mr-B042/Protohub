@@ -9420,6 +9420,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [packageDisplayOrder, setPackageDisplayOrder] = useState("1");
   const [packageActive, setPackageActive] = useState(false);
   const [packageComponents, setPackageComponents] = useState<PackageComponent[]>([]);
+  // The editor's "Advanced package options" fold. "Edit what's inside" opens it
+  // straight onto the stock items and free gifts, which live inside it.
+  const [packageAdvancedOpen, setPackageAdvancedOpen] = useState(false);
   const [packageCompanions, setPackageCompanions] = useState<PackageCompanion[]>([]);
   const [packageStateFilterMode, setPackageStateFilterMode] = useState<"all" | "allow" | "block">("all");
   const [packageStateRestrictions, setPackageStateRestrictions] = useState<string[]>([]);
@@ -38503,6 +38506,7 @@ ${waybillLineItems(w).length > 1
   };
 
   const openEditPackage = (item: ProductPackage, sourceProductId?: string) => {
+    setPackageAdvancedOpen(false);
     const productId = sourceProductId ?? selectedProduct?.id;
     if (productId) {
       setSelectedProductId(productId);
@@ -99720,7 +99724,18 @@ ${waybillLineItems(w).length > 1
                                   {inlineDraft ? <>
                                     <button className="!min-h-0 rounded-lg bg-blue-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50" disabled={inlinePackageSavingId === item.id} title="Save inline changes" onClick={() => saveInlinePackage(item)}>{inlinePackageSavingId === item.id ? "Saving…" : "Save"}</button>
                                     <button className="!min-h-0 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50" disabled={inlinePackageSavingId === item.id} title="Cancel inline edit" onClick={() => setInlinePackageDrafts((prev) => { const copy = { ...prev }; delete copy[item.id]; return copy; })}>Cancel</button>
-                                  </> : <button className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-900 transition-colors" title="Edit package inline" onClick={() => beginInlinePackageEdit(item)}><Pencil className="w-4 h-4" /></button>}
+                                  </> : <button className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-900 transition-colors" title="Quick edit: name, description, pieces, price" onClick={() => beginInlinePackageEdit(item)}><Pencil className="w-4 h-4" /></button>}
+                                  {/* What's inside a package - its stock items, free gifts and
+                                      combos - lives in the full editor, which this row had no
+                                      way to open (Bright, 14 Oct 2026): the only door was the
+                                      pencil beside a companion offer, so a package without one
+                                      could not be changed from here. */}
+                                  <button type="button" className="!min-h-0 inline-flex items-center gap-1 rounded-lg border border-blue-100 bg-white px-2 py-1.5 text-[11px] font-bold text-blue-700 hover:bg-blue-50 whitespace-nowrap" title="Edit what's inside: stock items, free gifts and combos" onClick={() => {
+                                    setInlinePackageDrafts((prev) => { const copy = { ...prev }; delete copy[item.id]; return copy; });
+                                    openEditPackage(item);
+                                    setPackageAdvancedOpen(true);
+                                    window.setTimeout(() => document.getElementById("package-stock-components")?.scrollIntoView({ behavior: "smooth", block: "start" }), 350);
+                                  }}><Boxes className="w-3.5 h-3.5" />Edit what's inside</button>
                                   <button className="p-1.5 rounded hover:bg-blue-50 text-gray-500 hover:text-[#1F8FE0] transition-colors" title="Duplicate package" onClick={() => duplicatePackage(item)}><Copy className="w-4 h-4" /></button>
                                   {(item.packageComponents?.length ?? 0) > 0 && (
                                     <>
@@ -105975,7 +105990,7 @@ ${waybillLineItems(w).length > 1
                   </label>
                   <p className="text-[11px] text-gray-500 sm:col-span-2 -mt-1">Used wherever the package's quantity is shown (e.g. "3 sets" instead of "3 pcs"). Leave blank to use the default.</p>
                 </div>
-	                <details className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+	                <details className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3" open={packageAdvancedOpen} onToggle={(event) => setPackageAdvancedOpen((event.currentTarget as HTMLDetailsElement).open)}>
 	                  <summary className="cursor-pointer select-none text-sm font-bold text-gray-800">
 	                    Advanced package options
 	                  </summary>
@@ -106281,7 +106296,7 @@ ${waybillLineItems(w).length > 1
                   )}
                 </section>
 
-                <section className="border border-gray-200 rounded-xl p-4 space-y-3">
+                <section id="package-stock-components" className="border border-gray-200 rounded-xl p-4 space-y-3">
                   <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div>
                       <h4 className="text-sm font-bold text-gray-900 m-0">Stock Components</h4>
