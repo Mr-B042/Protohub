@@ -14,7 +14,7 @@ import {
 import { LogMissDisputesPanel } from "../components/LogMissParts";
 import { HeadOfSalesBadge } from "../components/HeadOfSalesParts";
 import {
-  CORRECTION_SECTION_LABEL, bonusInitialFinal, buildCompanySnapshot, type ManagerBonusPreview, type MonthlyIncentiveReport, type SnapshotDifference, type WeeklyReportSnapshot
+  CORRECTION_SECTION_LABEL, bonusComponentsFull, bonusInitialFinal, buildCompanySnapshot, type ManagerBonusPreview, type MonthlyIncentiveReport, type SnapshotDifference, type WeeklyReportSnapshot
 } from "./weekly-report-model";
 import type {
   LogMissDispute, ManagerFundTotals, WeeklyBonusQuery, WeeklyPayoutChange, WeeklyCompanyReport, WeeklyRepReport, WeeklyReportAuditEntry, WeeklyReportCorrection, WeeklyReportResponseInput
@@ -208,8 +208,11 @@ export default function ManagerWeeklyReviewPage({
   const totals = companySnap.totals;
   // Initial / Taken off / Final for every rep shown in the total row.
   const splitTotals = shown.map(bonusInitialFinal).reduce(
-    (sum, item) => ({ initial: sum.initial + item.initial, takenOff: sum.takenOff + item.takenOff, final: sum.final + item.final }),
-    { initial: 0, takenOff: 0, final: 0 }
+    (sum, item) => ({
+      initial: sum.initial + item.initial, takenOff: sum.takenOff + item.takenOff, final: sum.final + item.final,
+      base: sum.base + item.full.base, upsell: sum.upsell + item.full.upsell, crossSell: sum.crossSell + item.full.crossSell
+    }),
+    { initial: 0, takenOff: 0, final: 0, base: 0, upsell: 0, crossSell: 0 }
   );
   // Orders placed in an earlier week, delivered and paid in this one, across
   // every rep shown (Bright, 3 Oct 2026). Older reports have no figure: 0.
@@ -615,9 +618,9 @@ export default function ManagerWeeklyReviewPage({
                                 {(snap?.totals.carryOverOrders ?? 0) > 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-blue-700 dark:text-blue-300">+{nf(snap?.totals.carryOverOrders ?? 0)} carried over · {sym}{nf(snap?.totals.carryOverBonus ?? 0)}</span>}
                               </td>
                               <td className="px-2 py-3"><span className="flex items-center gap-2 text-gray-800 dark:text-slate-200"><span className="w-11">{pctText(snap?.totals.deliveryRate ?? 0)}</span><span className="w-14"><RateBar value={snap?.totals.deliveryRate ?? 0} /></span></span></td>
-                              <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.crossSellBonus ?? 0)}</td>
-                              <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.upsellBonus ?? 0)}</td>
-                              <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.baseBonus ?? 0)}</td>
+                              <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap ? bonusComponentsFull(snap).crossSell : 0)}</td>
+                              <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap ? bonusComponentsFull(snap).upsell : 0)}</td>
+                              <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap ? bonusComponentsFull(snap).base : 0)}</td>
                               {snap ? <BonusInitialCells info={bonusInitialFinal(snap)} sym={sym} /> : <><td className="px-2 py-3">-</td><td className="px-2 py-3">-</td></>}
                               <td className="px-2 py-3 font-bold text-gray-900 dark:text-slate-100">
                                 <span className="flex items-center gap-1">
@@ -664,9 +667,9 @@ export default function ManagerWeeklyReviewPage({
                             {carryOver.orders > 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-blue-700 dark:text-blue-300">+{nf(carryOver.orders)} carried over · {sym}{nf(carryOver.bonus)}</span>}
                           </td>
                           <td className="px-2 py-3">{pctText(totals.deliveryRate)}</td>
-                          <td className="px-2 py-3">{nf(totals.crossSellBonus)}</td>
-                          <td className="px-2 py-3">{nf(totals.upsellBonus)}</td>
-                          <td className="px-2 py-3">{nf(totals.baseBonus)}</td>
+                          <td className="px-2 py-3">{nf(splitTotals.crossSell)}</td>
+                          <td className="px-2 py-3">{nf(splitTotals.upsell)}</td>
+                          <td className="px-2 py-3">{nf(splitTotals.base)}</td>
                           <td className="px-2 py-3">{nf(splitTotals.initial)}</td>
                           <td className="px-2 py-3 text-rose-600">{splitTotals.takenOff > 0 ? `-${nf(splitTotals.takenOff)}` : "0"}</td>
                           <td className="px-2 py-3">

@@ -244,6 +244,9 @@ export type WeeklyReportSnapshot = {
     /** From 11 Oct 2026: base + upsell + cross-sell BEFORE the delivery-rate
      *  cut, and how much the cut took off. Missing on older reports. */
     bonusBeforeRateCut?: number;
+    baseBeforeRateCut?: number;
+    upsellBeforeRateCut?: number;
+    crossSellBeforeRateCut?: number;
     rateCut?: number;
     rateCutLabel?: string;
     /** Only with a payout change: the system's own figure before the change. */
@@ -365,9 +368,37 @@ export function weeklyRateRule(weekStart: string | null | undefined, rate: numbe
  * up: Initial - items = Final. The month's challenge reward is included in the
  * week it is paid.
  */
+/**
+ * Base, upsell and cross-sell BEFORE the delivery-rate cut (Bright, 14 Oct
+ * 2026: the three columns must add up to Initial; Taken off says what came
+ * off). Reports worked out before the parts were stored keep only the cut
+ * total: the base is kept as it is (it is only halved from 11 Oct) and the rest
+ * is shared between upsell and cross-sell in proportion, so the three still
+ * add up exactly to the full figure.
+ */
+export function bonusComponentsFull(snap: WeeklyReportSnapshot) {
+  const t = snap.totals;
+  if (t.baseBeforeRateCut !== undefined && t.upsellBeforeRateCut !== undefined && t.crossSellBeforeRateCut !== undefined) {
+    return { base: t.baseBeforeRateCut, upsell: t.upsellBeforeRateCut, crossSell: t.crossSellBeforeRateCut };
+  }
+  if (t.bonusBeforeRateCut === undefined || !(t.rateCut ?? 0)) return { base: t.baseBonus, upsell: t.upsellBonus, crossSell: t.crossSellBonus };
+  const extras = Math.max(0, t.bonusBeforeRateCut - t.baseBonus);
+  const cutExtras = t.upsellBonus + t.crossSellBonus;
+  const upsell = cutExtras > 0 ? Math.round(extras * (t.upsellBonus / cutExtras)) : 0;
+  return { base: t.baseBonus, upsell, crossSell: extras - upsell };
+}
+
+/**
+ * A rep's week as Initial -> Taken off -> Final (Bright, 14 Oct 2026), for the
+ * Admin's and the Owner's rep tables. Initial is everything earned before any
+ * cut; each item says what came off and why; Final is what is paid. They always
+ * add up: Initial - items = Final. The month's challenge reward is included in
+ * the week it is paid.
+ */
 export function bonusInitialFinal(snap: WeeklyReportSnapshot) {
   const t = snap.totals;
-  const before = t.bonusBeforeRateCut ?? (t.baseBonus + t.upsellBonus + t.crossSellBonus);
+  const full = bonusComponentsFull(snap);
+  const before = full.base + full.upsell + full.crossSell;
   const adjustments = Math.max(0, t.adjustments ?? 0);
   const change = t.payoutChange ?? 0;
   const lines = snap.monthlyIncentive?.lines ?? [];
@@ -376,13 +407,18 @@ export function bonusInitialFinal(snap: WeeklyReportSnapshot) {
   const initial = Math.round(before + adjustments + Math.max(0, change) + rewardEarned);
   const final = Math.round(t.finalBonus + rewardPaid);
   const finesApplied = Math.max(0, (t.fines ?? 0) + (t.carriedFines ?? 0) - (t.unpaidFines ?? 0));
+  // The delivery-rate cut, one line per part, each saying why.
+  const rate = Math.round(t.deliveryRate);
+  const why = rate >= 60 || snap.weekStart < WEEKLY_RATE_BASE_CUT_FROM ? `delivery rate ${rate}%, under 65%` : `delivery rate ${rate}%, under 60%`;
   const items = [
-    { label: t.rateCutLabel ?? "Delivery-rate cut", amount: Math.round(t.rateCut ?? 0) },
+    { label: `Base paid at half (${why})`, amount: Math.round(full.base - t.baseBonus) },
+    { label: `Upsell paid at half (${why})`, amount: Math.round(full.upsell - t.upsellBonus) },
+    { label: `Cross-sell paid at half (${why})`, amount: Math.round(full.crossSell - t.crossSellBonus) },
     { label: (t.carriedFines ?? 0) > 0 ? "Fines (incl. carried from last week)" : "Fines", amount: Math.round(finesApplied) },
     { label: "Taken off by the manager", amount: Math.round(Math.max(0, -change)) },
-    { label: "Monthly reward: low delivery rate for the month", amount: Math.max(0, rewardEarned - rewardPaid) }
+    { label: "Monthly reward cut: low delivery rate for the month", amount: Math.max(0, rewardEarned - rewardPaid) }
   ].filter((item) => item.amount > 0);
-  return { initial, takenOff: Math.max(0, initial - final), final, items, rewardEarned, rewardPaid };
+  return { initial, takenOff: Math.max(0, initial - final), final, items, rewardEarned, rewardPaid, full, extraInInitial: Math.round(adjustments + Math.max(0, change) + rewardEarned) };
 }
 
 /** "+₦2,000" / "-₦2,000", for the line that says what was changed. */
@@ -596,6 +632,9 @@ export function buildRepWeeklySnapshot(input: {
       unpaidFines: Math.max(0, Math.round(fineTotal) + carriedFines - earned - adjustmentTotal),
       ...(bonusBeforeRateCut !== null ? {
         bonusBeforeRateCut,
+        baseBeforeRateCut: Math.round(beforeRateCut!.base),
+        upsellBeforeRateCut: Math.round(beforeRateCut!.upsell),
+        crossSellBeforeRateCut: Math.round(beforeRateCut!.crossSell),
         rateCut: Math.max(0, bonusBeforeRateCut - earned),
         ...(input.bonus.rateCutLabel ? { rateCutLabel: input.bonus.rateCutLabel } : {})
       } : {}),
