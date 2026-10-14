@@ -483,6 +483,27 @@ export function PayoutChangeNote({ change, sym }: { change: PayoutChangeView; sy
  * required, and the payout cannot go below nothing. The system's own figure
  * stays on record beside the change for the owner to compare.
  */
+/** The "Initial" and "Taken off" cells of a rep row (Bright, 14 Oct 2026). */
+export function BonusInitialCells({ info, sym }: { info: { initial: number; takenOff: number; items: Array<{ label: string; amount: number }> }; sym: string }) {
+  return (
+    <>
+      <td className="px-2 py-3 font-semibold text-gray-800 dark:text-slate-200">{nf(info.initial)}</td>
+      <td className="px-2 py-3 align-top">
+        {info.takenOff > 0 ? (
+          <>
+            <span className="font-bold text-rose-600">-{nf(info.takenOff)}</span>
+            {info.items.map((item) => (
+              <span key={item.label} className="mt-0.5 block max-w-[12rem] text-[10.5px] font-semibold leading-snug text-rose-700/80 dark:text-rose-300/80">
+                {item.label}: -{sym}{nf(item.amount)}
+              </span>
+            ))}
+          </>
+        ) : <span className="text-gray-400">0</span>}
+      </td>
+    </>
+  );
+}
+
 export function PayoutChangeForm({ repName, sym, systemAmount, existing, onCancel, onSave, onRemove }: {
   repName: string;
   sym: string;

@@ -266,7 +266,7 @@ import OwnerWeeklyApprovalPage, { type WeeklyFinancialSummary } from "./pages/Ow
 import { CompanyReportHistoryPage, MyReportsHistoryPage, WeeklyAuditLogPage } from "./pages/WeeklyReportHistoryPages";
 import {
   buildCompanySnapshot, buildRepWeeklySnapshot, compareSnapshots,
-  FIRST_REPORT_WEEK, monthlyIncentiveForWeek, reportDueDate, reportOpensOn, runBonusCheck, wasSubmittedLate, withPayoutChange, type ManagerBonusPreview, type NamedOrderLookup, type WeeklyReportSnapshot
+  FIRST_REPORT_WEEK, WEEKLY_RATE_RULE_FROM, weeklyRateRule, monthlyIncentiveForWeek, reportDueDate, reportOpensOn, runBonusCheck, wasSubmittedLate, withPayoutChange, type ManagerBonusPreview, type NamedOrderLookup, type WeeklyReportSnapshot
 } from "./pages/weekly-report-model";
 import type { CorrectionDraft } from "./components/WeeklyReportParts";
 import {
@@ -25268,7 +25268,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const rule = cfg.upgradeBonuses.find((r) => r.fromQty === order.upsellFromQty && r.toQty === order.upsellToQty);
       const full = rule?.amount ?? 0;
       if (full > 0) {
-        const meetsGate = repWeeklyDeliveryRate >= cfg.upgradeRequiresMinDeliveryRate;
+        // From 11 Oct 2026 the weekly rate rule decides cuts (weeklyRateRule),
+        // so the upgrade starts from its full amount.
+        const meetsGate = (orderDeliveredKey(order) ?? "") >= WEEKLY_RATE_RULE_FROM || repWeeklyDeliveryRate >= cfg.upgradeRequiresMinDeliveryRate;
         upgrade = meetsGate ? full : Math.round(full / 2);
         components.push({ label: meetsGate ? `Upgrade ${order.upsellFromQty}→${order.upsellToQty}` : `Upgrade ${order.upsellFromQty}→${order.upsellToQty} (½ rate)`, amount: upgrade });
       }
@@ -25296,8 +25298,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       components.push({ label: `Free gifts (${order.freeGiftLines.length})`, amount: freeGift });
     }
 
-    // Poor delivery rate gate - only base survives
-    if (repWeeklyOrderCount >= cfg.deliveryRateMinOrders && repWeeklyDeliveryRate < cfg.poorDeliveryRatePercent) {
+    // Poor delivery rate gate - only base survives. Weeks before 11 Oct 2026
+    // only: the weekly rate rule replaces it from then.
+    if ((orderDeliveredKey(order) ?? "") < WEEKLY_RATE_RULE_FROM && repWeeklyOrderCount >= cfg.deliveryRateMinOrders && repWeeklyDeliveryRate < cfg.poorDeliveryRatePercent) {
       const total = base;
       return { base, upgrade: 0, crossSell: 0, freeGift: 0, manual: 0, total, components: [{ label: `Base only (rate <${cfg.poorDeliveryRatePercent}%)`, amount: base }] };
     }
@@ -25505,7 +25508,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         tone: computed.freeGift > 0 ? "earned" : freeGiftCount > 0 ? "blocked" : "info"
       });
 
-      const poorRateGateApplies = repWeeklyOrderCount >= cfg.deliveryRateMinOrders && repWeeklyDeliveryRate < cfg.poorDeliveryRatePercent;
+      const poorRateGateApplies = (orderDeliveredKey(order) ?? "") < WEEKLY_RATE_RULE_FROM && repWeeklyOrderCount >= cfg.deliveryRateMinOrders && repWeeklyDeliveryRate < cfg.poorDeliveryRatePercent;
       componentLines.push({
         label: "Delivery-rate quality gate",
         amount: 0,
@@ -25636,6 +25639,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
       let base = 0, upsell = 0, crossSell = 0;
       let repCrossSellBonus = 0, customerAddOnBonus = 0;
+      // Before the weekly delivery-rate cut (Bright, 14 Oct 2026), so the
+      // weekly report can show the full bonus, what was taken off and why.
+      let baseFull = 0, upsellFull = 0, crossSellFull = 0;
+      let rateCutLabel: string | undefined;
       // Per-order combined (legacy + engine) split, kept alongside orderLines
       // so any UI drilling into individual orders sums to EXACTLY the same
       // rep-level totals above - a details view built from orderLines' legacy
@@ -25679,21 +25686,34 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         } else if (order.bonusManuallyAdjusted) {
           legacyCustomerAddOn = legacyCrossSellPayable;
         }
-        const orderRepCrossSell = Math.max(legacyRepCrossSell, engineCrossSell);
-        const orderCustomerAddOn = legacyCustomerAddOn;
-        const orderCrossSell = orderRepCrossSell + orderCustomerAddOn + line.freeGift;
-        base += orderBase;
-        upsell += orderUpsell;
+        const fullRepCrossSell = Math.max(legacyRepCrossSell, engineCrossSell);
+        const fullCustomerAddOn = legacyCustomerAddOn;
+        baseFull += orderBase;
+        upsellFull += orderUpsell;
+        crossSellFull += fullRepCrossSell + fullCustomerAddOn + line.freeGift;
+        // The weekly rate rule, judged on the week the order was delivered in.
+        // A manual bonus edit is the manager's own figure and is never cut.
+        const deliveredKey = orderDeliveredKey(order);
+        const rule = order.bonusManuallyAdjusted || !deliveredKey ? null : weeklyRateRule(sundayWeekStartClient(deliveredKey), repRate, repCount);
+        if (rule && rule.level !== "full") rateCutLabel = rule.label;
+        const cutBase = rule ? Math.round(orderBase * rule.base) : orderBase;
+        const cutUpsell = rule ? Math.round(orderUpsell * rule.extras) : orderUpsell;
+        const orderRepCrossSell = rule ? Math.round(fullRepCrossSell * rule.extras) : fullRepCrossSell;
+        const orderCustomerAddOn = rule ? Math.round(fullCustomerAddOn * rule.extras) : fullCustomerAddOn;
+        const orderFreeGift = rule ? Math.round(line.freeGift * rule.extras) : line.freeGift;
+        const orderCrossSell = orderRepCrossSell + orderCustomerAddOn + orderFreeGift;
+        base += cutBase;
+        upsell += cutUpsell;
         crossSell += orderCrossSell;
         repCrossSellBonus += orderRepCrossSell;
         customerAddOnBonus += orderCustomerAddOn;
         return {
           orderId: order.id,
-          base: orderBase,
-          upsell: orderUpsell,
+          base: cutBase,
+          upsell: cutUpsell,
           repCrossSell: orderRepCrossSell,
           customerAddOn: orderCustomerAddOn,
-          freeGift: line.freeGift,
+          freeGift: orderFreeGift,
           crossSell: orderCrossSell
         };
       });
@@ -25748,6 +25768,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         repCrossSellBonus,
         customerAddOnBonus,
         total,
+        baseFull,
+        upsellFull,
+        crossSellFull,
+        rateCutLabel,
         upsellCount,
         crossSellCount,
         repCrossSellLineCount: sourceCounts.rep,
@@ -25987,7 +26011,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         if (order.bonusManuallyAdjusted || !orderHasVerifiedUpsell(order)) return undefined;
         const cfg = productBonusConfig(products.find((product) => product.id === order.productId));
         const full = cfg.upgradeBonuses.find((rule) => rule.fromQty === order.upsellFromQty && rule.toQty === order.upsellToQty)?.amount ?? 0;
-        if (full <= 0 || weekRate >= cfg.upgradeRequiresMinDeliveryRate || perOrder[order.id]?.upsell !== Math.round(full / 2)) return undefined;
+        if (start >= WEEKLY_RATE_RULE_FROM || full <= 0 || weekRate >= cfg.upgradeRequiresMinDeliveryRate || perOrder[order.id]?.upsell !== Math.round(full / 2)) return undefined;
         return `Upgrade ${order.upsellFromQty}→${order.upsellToQty} is ${formatMoney(full)}; half paid because the week's delivery rate is ${weekRate}%, under ${cfg.upgradeRequiresMinDeliveryRate}%.`;
       };
       const seen = new Set<string>();
@@ -26018,7 +26042,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             .filter((line) => line.amount !== 0 || line.tone === "blocked")
             .map((line) => ({ label: line.label, amount: Math.round(line.amount), note: line.note.slice(0, 600), tone: line.tone }))
         })),
-        bonus: { base: row?.base ?? 0, upsell: row?.upsell ?? 0, crossSell: row?.crossSell ?? 0, total: row?.total ?? 0, perOrder },
+        bonus: {
+          base: row?.base ?? 0, upsell: row?.upsell ?? 0, crossSell: row?.crossSell ?? 0, total: row?.total ?? 0, perOrder,
+          // From 11 Oct 2026: the full figures before the weekly rate cut.
+          ...(start >= WEEKLY_RATE_RULE_FROM && row ? {
+            beforeRateCut: { base: row.baseFull, upsell: row.upsellFull, crossSell: row.crossSellFull },
+            ...(row.rateCutLabel ? { rateCutLabel: row.rateCutLabel } : {})
+          } : {})
+        },
         fines: weekFines.filter((fine) => fine.repId === rep.id).map((fine) => ({ id: fine.id, label: fine.label, amount: fine.amount, date: fine.date })),
         adjustments: weekAdjustments.filter((item) => item.repId === rep.id).map((item) => ({ id: item.id, label: item.label, amount: item.amount, date: start })),
         logMisses: weekMisses.filter((item) => item.repId === rep.id),
@@ -78455,7 +78486,7 @@ ${waybillLineItems(w).length > 1
 
                           {scheduleMarker && (
                             <section className="relative mt-4 rounded-[24px] border border-blue-100 bg-blue-50/80 px-4 py-3 shadow-[0_14px_32px_rgba(37,99,235,0.10)] dark:border-sky-400/20 dark:bg-sky-400/10">
-                              {renderScheduleResultBadge(scheduleMarker, { detailClassName: `text-sm leading-5 ${orderBodyTextClass}`, hidePill: orderShowsAsScheduled(order) })}
+                              {renderScheduleResultBadge(scheduleMarker, { detailClassName: `text-sm leading-5 ${orderBodyTextClass}`, hidePill: scheduleMarker.label === "Scheduled" })}
                             </section>
                           )}
 
@@ -78681,7 +78712,7 @@ ${waybillLineItems(w).length > 1
                                 );
                               })()}
                                 {scheduleMarker ? (
-                                  renderScheduleResultBadge(scheduleMarker, { className: "mt-1.5", hidePill: orderShowsAsScheduled(order) })
+                                  renderScheduleResultBadge(scheduleMarker, { className: "mt-1.5", hidePill: scheduleMarker.label === "Scheduled" })
                                 ) : null}
                                 {orderWorkspacePage === "Follow-up Queue" && latestAttempt && (
                                   <div className="mt-1 flex flex-wrap items-center gap-1">
