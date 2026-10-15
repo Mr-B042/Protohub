@@ -24407,6 +24407,32 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }, "Failed to save free-gift state restrictions");
   };
 
+  // ⚠️ Add-on items on a DELIVERED order (Bright, 15 Oct 2026). Cross-sell and
+  // free-gift items come off the agent's stock, so the server moves the stock
+  // for them like a product or quantity change, and needs a reason. Owner /
+  // Admin / Manager only. undefined = not delivered (no reason needed),
+  // null = stop, string = the reason to send.
+  const askDeliveredAddOnReason = (order: TrackedOrder, what: string): string | undefined | null => {
+    if ((order.status ?? "New") !== "Delivered") return undefined;
+    if (currentRole !== "Owner" && currentRole !== "Admin" && currentRole !== "Manager") {
+      showToast("This order is delivered. Only an Admin, Manager or the Owner can change its items.");
+      return null;
+    }
+    if (typeof window === "undefined") return null;
+    const answer = window.prompt(
+      `Order ${order.id} is already delivered, and you are ${what}.\n\n`
+      + "The order stays Delivered. The stock for the change is moved and goes to the inventory officer to verify. "
+      + "If the agent does not have the stock, the change is refused.\n\n"
+      + "Why is this order being corrected?"
+    );
+    if (answer === null) return null;
+    if (answer.trim().length < 5) {
+      showToast("Give a short reason for the correction, then try again.");
+      return null;
+    }
+    return answer.trim().slice(0, 500);
+  };
+
   const saveCrossSell = () => {
     const order = trackedOrders.find((o) => o.id === crossSellTargetOrderId);
     if (!order) return;
@@ -24417,6 +24443,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Pick a product");
       return;
     }
+    const crossSellReason = askDeliveredAddOnReason(order, `adding ${qty} × ${product.name} as a cross-sell`);
+    if (crossSellReason === null) return;
     const actorName = currentManagedUser?.name ?? authUser?.name ?? ownerName;
     const actorRole = currentRole;
     const line: CrossSellLine = {
@@ -24443,7 +24471,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     showToast(`Cross-sell ${product.name} added to ${order.id}`);
     ordersApi.update(order.id, {
       amount: nextAmount,
-      cross_sell_lines: nextCrossSellLines
+      cross_sell_lines: nextCrossSellLines,
+      ...(crossSellReason ? { correction_reason: crossSellReason } : {})
     }).catch((err: any) => {
       setTrackedOrders((prev) => prev.map((item) => item.id === order.id ? orderSnapshot : item));
       showToast(`Failed to save cross-sell on ${order.id}: ${err?.message ?? "please retry"}.`);
@@ -24456,6 +24485,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const lineMatches = (line: CrossSellLine, index: number) =>
       line.id ? line.id === lineKey : index === lineIndex && crossSellLineRenderKey(line, index) === lineKey;
     const removed = (orderSnapshot.crossSellLines ?? []).find((line, index) => lineMatches(line, index));
+    const removeReason = askDeliveredAddOnReason(orderSnapshot, `removing the cross-sell ${removed?.productName ?? ""}`.trim());
+    if (removeReason === null) return;
     const refund = removed?.amount ?? 0;
     const nextCrossSellLines = (orderSnapshot.crossSellLines ?? []).filter((line, index) => !lineMatches(line, index));
     const nextAmount = Math.max(0, orderSnapshot.amount - refund);
@@ -24470,7 +24501,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     showToast("Cross-sell removed");
     ordersApi.update(orderId, {
       amount: nextAmount,
-      cross_sell_lines: nextCrossSellLines
+      cross_sell_lines: nextCrossSellLines,
+      ...(removeReason ? { correction_reason: removeReason } : {})
     }).catch((err: any) => {
       setTrackedOrders((prev) => prev.map((order) => order.id === orderId ? orderSnapshot : order));
       showToast(`Failed to remove cross-sell: ${err?.message ?? "please retry"}.`);
@@ -24492,6 +24524,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       productName: product.name,
       quantity: qty
     };
+    const giftReason = askDeliveredAddOnReason(order, `adding ${qty} × ${product.name} as a free gift`);
+    if (giftReason === null) return;
     const orderSnapshot = order;
     const nextFreeGiftLines = [...(order.freeGiftLines ?? []), line];
     setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? {
@@ -24501,7 +24535,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     closeModal();
     showToast(`Free gift ${product.name} added`);
     ordersApi.update(order.id, {
-      free_gift_lines: nextFreeGiftLines
+      free_gift_lines: nextFreeGiftLines,
+      ...(giftReason ? { correction_reason: giftReason } : {})
     }).catch((err: any) => {
       setTrackedOrders((prev) => prev.map((item) => item.id === order.id ? orderSnapshot : item));
       showToast(`Failed to save free gift on ${order.id}: ${err?.message ?? "please retry"}.`);
@@ -24511,6 +24546,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const removeFreeGift = (orderId: string, lineId: string) => {
     const orderSnapshot = trackedOrders.find((order) => order.id === orderId);
     if (!orderSnapshot) return;
+    const removedGift = (orderSnapshot.freeGiftLines ?? []).find((line) => line.id === lineId);
+    const giftRemoveReason = askDeliveredAddOnReason(orderSnapshot, `removing the free gift ${removedGift?.productName ?? ""}`.trim());
+    if (giftRemoveReason === null) return;
     const nextFreeGiftLines = (orderSnapshot.freeGiftLines ?? []).filter((line) => line.id !== lineId);
     setTrackedOrders((prev) => prev.map((o) => o.id === orderId ? {
       ...o,
@@ -24518,7 +24556,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     } : o));
     showToast("Free gift removed");
     ordersApi.update(orderId, {
-      free_gift_lines: nextFreeGiftLines
+      free_gift_lines: nextFreeGiftLines,
+      ...(giftRemoveReason ? { correction_reason: giftRemoveReason } : {})
     }).catch((err: any) => {
       setTrackedOrders((prev) => prev.map((order) => order.id === orderId ? orderSnapshot : order));
       showToast(`Failed to remove free gift: ${err?.message ?? "please retry"}.`);
@@ -104615,6 +104654,44 @@ ${waybillLineItems(w).length > 1
                       </div>
                     )}
                   </div>
+	                {/* Upsell & cross-sell on a delivered order, in one place (Bright,
+	                    15 Oct 2026: "how do I edit upsell and cross-sell here - it seems
+	                    limited"). The upsell follows Quantity; add-ons open their own
+	                    small windows, which move the stock and ask the reason. */}
+	                {deliveredCorrection && canCorrectDeliveredOrders && (() => {
+	                  const lines = selectedOrder.crossSellLines ?? [];
+	                  const hasUpsell = Boolean(selectedOrder.upsellFromQty && selectedOrder.upsellToQty && selectedOrder.upsellToQty > selectedOrder.upsellFromQty);
+	                  return (
+	                    <div className="space-y-3 rounded-lg border border-violet-200 bg-violet-50/60 p-3 dark:border-violet-500/30 dark:bg-violet-500/10">
+	                      <div className="flex items-start justify-between gap-2">
+	                        <span className="block text-sm font-semibold text-gray-900 dark:text-slate-100">Upsell &amp; cross-sell</span>
+	                        <span className="text-[11px] font-semibold text-violet-700 dark:text-violet-300">Save other changes on this page first</span>
+	                      </div>
+	                      <div className="rounded-lg bg-white px-3 py-2 text-[12.5px] dark:bg-slate-900">
+	                        <strong className="text-gray-900 dark:text-slate-100">Upsell: </strong>
+	                        {hasUpsell ? `${selectedOrder.upsellFromQty} → ${selectedOrder.upsellToQty} pcs` : "none recorded"}
+	                        <span className="mt-0.5 block text-[11px] text-gray-500">To correct it, change Quantity above. You will be asked whether the change is an upsell or a correction.</span>
+	                      </div>
+	                      <div className="rounded-lg bg-white px-3 py-2 dark:bg-slate-900">
+	                        <strong className="block text-[12.5px] text-gray-900 dark:text-slate-100">Cross-sell{lines.length ? ` (${lines.length})` : ""}</strong>
+	                        {lines.length === 0 ? <span className="block text-[12px] text-gray-500">No cross-sell on this order.</span> : lines.map((line, index) => (
+	                          <div key={crossSellLineRenderKey(line, index)} className="mt-1 flex items-center justify-between gap-2 text-[12.5px]">
+	                            <span className="min-w-0 truncate text-gray-800 dark:text-slate-200">{line.quantity} × {line.productName ?? "Item"} · {formatProductMoney(Number(line.amount ?? 0), selectedOrder.currency)}</span>
+	                            <button type="button" onClick={() => removeCrossSell(selectedOrder.id, line.id ?? crossSellLineRenderKey(line, index), index)}
+	                              className="!min-h-0 shrink-0 rounded-md border border-rose-200 bg-white px-2 py-0.5 text-[11px] font-bold text-rose-600 hover:bg-rose-50">Remove</button>
+	                          </div>
+	                        ))}
+	                      </div>
+	                      <div className="flex flex-wrap gap-2">
+	                        <button type="button" onClick={() => openCrossSellModal(selectedOrder)}
+	                          className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-violet-300 bg-white px-3 py-1.5 text-[12px] font-bold text-violet-700 hover:bg-violet-50"><PackagePlus className="h-3.5 w-3.5" /> Add cross-sell</button>
+	                        <button type="button" onClick={() => openManualBonusModal(selectedOrder)}
+	                          className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-[12px] font-bold text-blue-700 hover:bg-blue-50">Adjust bonus</button>
+	                      </div>
+	                      <span className="block text-[11px] text-gray-500">Adding or removing a cross-sell moves its stock and asks why. Use Adjust bonus when only the bonus amount is wrong.</span>
+	                    </div>
+	                  );
+	                })()}
 	                {renderUpsellReversalWarning(selectedOrder, Math.max(1, Number(createOrderQuantity) || 1))}
 	                {renderUpsellRaiseQuestion(selectedOrder, Math.max(1, Number(createOrderQuantity) || 1))}
 	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Back</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveSelectedOrderEdit}>Save Order</button></div>

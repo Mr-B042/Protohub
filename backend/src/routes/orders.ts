@@ -2773,7 +2773,12 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Reco
   const STOCK_MOVING_FIELDS = new Set([
     "product_id", "productId", "quantity",
     "agent_id", "agentId", "agent_location_id", "agentLocationId",
-    "package_components_snapshot", "packageComponentsSnapshot"
+    "package_components_snapshot", "packageComponentsSnapshot",
+    // Cross-sell and free-gift items ship from the agent's stock too
+    // (orderInventoryLinesFromRow counts them). Changed on a delivered order
+    // by a plain update, the record moved and the stock did not (Bright,
+    // 15 Oct 2026); they go through the same correction now.
+    "cross_sell_lines", "crossSellLines", "free_gift_lines", "freeGiftLines"
   ]);
   // ⚠️ CORRECTED IN PLACE, NOT REFUSED (Bright, 12 Oct 2026). These fields
   // used to be refused once stock was closed, and the only way round was
@@ -2807,7 +2812,7 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Reco
       const reason = String(req.body.correction_reason ?? req.body.correctionReason ?? "").trim().slice(0, 500);
       if (reason.length < 5) {
         res.status(400).json({
-          error: "This order is already delivered. Say why its agent, product or quantity is being corrected.",
+          error: "This order is already delivered. Say why its agent, product, quantity or add-on items are being corrected.",
           code: "CORRECTION_REASON_REQUIRED"
         });
         return;
