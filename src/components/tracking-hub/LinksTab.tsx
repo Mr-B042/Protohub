@@ -322,6 +322,12 @@ function LinkForm({ link, meta, onToast, onSaved, onCancel, compact }: { link: H
   // Page pickers (Bright, 15 Oct 2026): only for WordPress sites.
   const websiteIsWordPress = (meta.websites.find((row) => row.id === form.websiteId)?.platform ?? "WordPress") === "WordPress";
   const [thankYouHint, setThankYouHint] = useState<string | null>(null);
+  // What the page pickers suggest from: the product, the link name, the Pixel.
+  const pageHintWords = [
+    meta.products.find((row) => row.id === form.productId)?.name ?? "",
+    form.label,
+    meta.dataSources.find((row) => row.id === form.dataSourceId)?.name ?? ""
+  ].filter(Boolean);
   const samePage = (a: string, b: string) => a.trim().replace(/[?#].*$/, "").replace(/\/+$/, "").toLowerCase() === b.trim().replace(/[?#].*$/, "").replace(/\/+$/, "").toLowerCase();
   // Picking a landing page another link already uses suggests that link's
   // thank-you page (only when none is chosen yet, so nothing is overwritten).
@@ -375,10 +381,11 @@ function LinkForm({ link, meta, onToast, onSaved, onCancel, compact }: { link: H
         </div>
         <div className={labelCls}>Landing page URL
           <WordPressPagePicker websiteId={form.websiteId} websiteIsWordPress={websiteIsWordPress} type="landing" value={form.landingPageUrl}
-            onChange={pickLandingPage} placeholder="https://brightpathhubs.com/shelf/" /></div>
+            onChange={pickLandingPage} placeholder="https://brightpathhubs.com/shelf/" hints={{ words: pageHintWords }} /></div>
         <div className={labelCls}>Thank-you page URL
           <WordPressPagePicker websiteId={form.websiteId} websiteIsWordPress={websiteIsWordPress} type="thank_you" value={form.redirectUrl}
-            onChange={(url) => { setForm((current) => ({ ...current, redirectUrl: url })); setThankYouHint(null); }} placeholder="https://brightpathhubs.com/order-success/" hint={thankYouHint} /></div>
+            onChange={(url) => { setForm((current) => ({ ...current, redirectUrl: url })); setThankYouHint(null); }} placeholder="https://brightpathhubs.com/order-success/" hint={thankYouHint}
+            hints={{ words: pageHintWords, strongWords: form.landingPageUrl ? [form.landingPageUrl.replace(/^https?:\/\/[^/]+/i, "")] : [] }} /></div>
         <label className={labelCls}>Package set<select value={form.packageSet} onChange={(e) => { const set = sets.find((row) => row.name === e.target.value); setForm({ ...form, packageSet: e.target.value, currency: set?.currency ?? form.currency }); }} className={input} disabled={!form.productId}>
           {sets.length === 0 ? <option value={form.packageSet}>{form.productId ? form.packageSet : "Choose the product first"}</option> : sets.map((row) => <option key={row.name} value={row.name}>{row.name} ({row.packages} package{row.packages === 1 ? "" : "s"}{row.currency ? ` · ${row.currency}` : ""})</option>)}
         </select><span className="mt-1 block text-[11px] font-normal text-gray-500">The packages this form shows. Your current forms use "Default".</span></label>

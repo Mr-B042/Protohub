@@ -771,7 +771,7 @@ router.get("/websites/:websiteId/pages", async (req, res) => {
     if (q) query = query.or(`title.ilike.%${q}%,slug.ilike.%${q}%`);
     const { data, error } = await query;
     if (error) throw error;
-    const pages = sortPages((data ?? []) as any[], type).slice(0, 100).map((row: any) => ({
+    const pages = sortPages((data ?? []) as any[], type).slice(0, 300).map((row: any) => ({
       id: row.id, wpPageId: Number(row.wp_page_id), title: row.title, slug: row.slug, url: row.url, modifiedAt: row.wp_modified_at, isThankYou: row.is_thank_you
     }));
     res.json({ pages, lastSyncedAt: syncedAt, syncError, platform: site.platform });

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, ClipboardPaste, FileText, ListFilter, Loader2, RefreshCw, Search, TriangleAlert } from "lucide-react";
+import { ChevronDown, ClipboardPaste, FileText, ListFilter, Loader2, RefreshCw, Search, Sparkles, TriangleAlert } from "lucide-react";
 import { trackingHubApi, type HubWebsitePage } from "../../lib/api";
 import { input } from "./HubParts";
 
@@ -11,7 +11,41 @@ import { input } from "./HubParts";
 
 const normalise = (url: string) => url.trim().replace(/[?#].*$/, "").replace(/\/+$/, "").toLowerCase();
 
-export default function WordPressPagePicker({ websiteId, websiteIsWordPress, type, value, onChange, placeholder, hint }: {
+// ── Suggested pages (Bright, 15 Oct 2026: "showing top suggestions instead of
+// scrolling endlessly") ── A page is suggested when its title or address
+// shares words with what the form already knows: the product, the link name,
+// the Pixel, and - for the thank-you field - the landing page picked. Words
+// match loosely ("spinracks" = "spinrack") so plurals and spellings still meet.
+const STOP_WORDS = new Set(["the", "and", "for", "you", "your", "our", "with", "page", "pages", "thank", "thanks", "order", "orders", "now", "new", "main", "form", "link", "www", "com", "https", "http"]);
+const wordsOf = (text: string) => Array.from(new Set(String(text ?? "").toLowerCase().split(/[^a-z0-9]+/)
+  .filter((word) => word.length >= 3 && !STOP_WORDS.has(word))
+  .map((word) => word.replace(/(es|s)$/, ""))));
+const sameWord = (a: string, b: string) => a === b || (a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a)));
+export type PageHints = { words: string[]; strongWords?: string[] };
+
+function suggest(pages: HubWebsitePage[], type: "landing" | "thank_you", hints: PageHints | undefined) {
+  if (!hints) return [];
+  const words = Array.from(new Set(hints.words.flatMap(wordsOf)));
+  const strong = Array.from(new Set((hints.strongWords ?? []).flatMap(wordsOf)));
+  if (words.length === 0 && strong.length === 0) return [];
+  return pages
+    // Landing suggestions are never thank-you pages, and the other way round.
+    .filter((page) => (type === "thank_you" ? page.isThankYou : !page.isThankYou))
+    .map((page) => {
+      const own = wordsOf(`${page.title} ${page.slug}`);
+      const matched = new Set<string>();
+      let points = 0;
+      for (const word of strong) if (own.some((item) => sameWord(item, word))) { points += 3; matched.add(word); }
+      for (const word of words) if (!matched.has(word) && own.some((item) => sameWord(item, word))) { points += 1; matched.add(word); }
+      // A short, exact page beats a long one that happens to share a word.
+      return { page, points: points - own.length * 0.05, matched: Array.from(matched) };
+    })
+    .filter((row) => row.matched.length > 0)
+    .sort((a, b) => b.points - a.points || a.page.title.localeCompare(b.page.title))
+    .slice(0, 5);
+}
+
+export default function WordPressPagePicker({ websiteId, websiteIsWordPress, type, value, onChange, placeholder, hint, hints }: {
   websiteId: string;
   websiteIsWordPress: boolean;
   type: "landing" | "thank_you";
@@ -20,6 +54,8 @@ export default function WordPressPagePicker({ websiteId, websiteIsWordPress, typ
   placeholder: string;
   /** A suggestion shown under the field (e.g. the thank-you page another link uses). */
   hint?: string | null;
+  /** What the form knows (product, link name, Pixel, landing page) - drives "Suggested". */
+  hints?: PageHints;
 }) {
   const canPick = Boolean(websiteId) && websiteIsWordPress;
   const [custom, setCustom] = useState(false);
@@ -103,6 +139,19 @@ export default function WordPressPagePicker({ websiteId, websiteIsWordPress, typ
 
   const current = pages.find((page) => normalise(page.url) === normalise(value)) ?? null;
   const pick = (url: string) => { onChange(url); setOpen(false); setQ(""); };
+  const suggested = q.trim() ? [] : suggest(pages, type, hints);
+  const suggestedIds = new Set(suggested.map((row) => row.page.id));
+  const rest = pages.filter((page) => !suggestedIds.has(page.id));
+  const pageRow = (page: HubWebsitePage, matched?: string[]) => (
+    <button key={page.id} type="button" onClick={() => pick(page.url)}
+      className={`!min-h-0 flex w-full items-start gap-2 rounded-lg px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-slate-800 ${current?.id === page.id ? "bg-blue-50 dark:bg-blue-950/40" : ""}`}>
+      <FileText className={`mt-0.5 h-4 w-4 shrink-0 ${page.isThankYou ? "text-emerald-600" : "text-gray-400"}`} />
+      <span className="min-w-0">
+        <span className="block truncate text-[13px] font-semibold text-gray-900 dark:text-slate-100">{page.title}</span>
+        <span className="block truncate text-[11px] text-gray-500">/{page.slug}/{matched?.length ? ` · matches ${matched.join(", ")}` : page.isThankYou ? " · looks like a thank-you page" : ""}</span>
+      </span>
+    </button>
+  );
   return (
     <div className="relative" ref={box}>
       <button type="button" onClick={() => setOpen((state) => !state)} className="!min-h-0 mt-1 flex h-auto min-h-10 w-full items-center justify-between gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-left dark:border-slate-700 dark:bg-slate-900">
@@ -138,16 +187,18 @@ export default function WordPressPagePicker({ websiteId, websiteIsWordPress, typ
               <p className="m-0 flex items-center justify-center gap-2 px-3 py-5 text-[13px] text-gray-500"><Loader2 className="h-4 w-4 animate-spin" /> {syncing ? "Reading the website's pages…" : "Loading pages…"}</p>
             ) : pages.length === 0 ? (
               <p className="m-0 px-3 py-5 text-center text-[13px] text-gray-500">{q ? `No page matches "${q}".` : "No pages found yet. Press refresh to read them."}</p>
-            ) : pages.map((page) => (
-              <button key={page.id} type="button" onClick={() => pick(page.url)}
-                className={`!min-h-0 flex w-full items-start gap-2 rounded-lg px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-slate-800 ${current?.id === page.id ? "bg-blue-50 dark:bg-blue-950/40" : ""}`}>
-                <FileText className={`mt-0.5 h-4 w-4 shrink-0 ${page.isThankYou ? "text-emerald-600" : "text-gray-400"}`} />
-                <span className="min-w-0">
-                  <span className="block truncate text-[13px] font-semibold text-gray-900 dark:text-slate-100">{page.title}</span>
-                  <span className="block truncate text-[11px] text-gray-500">/{page.slug}/{page.isThankYou ? " · looks like a thank-you page" : ""}</span>
-                </span>
-              </button>
-            ))}
+            ) : (
+              <>
+                {suggested.length > 0 ? (
+                  <>
+                    <p className="m-0 flex items-center gap-1 px-3 pb-1 pt-1 text-[11px] font-black uppercase tracking-wider text-emerald-700"><Sparkles className="h-3.5 w-3.5" /> Suggested</p>
+                    {suggested.map((row) => pageRow(row.page, row.matched))}
+                    <p className="m-0 px-3 pb-1 pt-3 text-[11px] font-black uppercase tracking-wider text-gray-500">All pages ({pages.length})</p>
+                  </>
+                ) : null}
+                {rest.map((page) => pageRow(page))}
+              </>
+            )}
           </div>
           <button type="button" onClick={() => { setCustom(true); setOpen(false); }} className="!min-h-0 mt-1 flex w-full items-center gap-2 rounded-lg border-t border-gray-100 px-3 py-2 text-left text-[12.5px] font-semibold text-blue-700 hover:bg-gray-50 dark:border-slate-800 dark:text-blue-300 dark:hover:bg-slate-800">
             <ClipboardPaste className="h-4 w-4" /> Paste custom URL
