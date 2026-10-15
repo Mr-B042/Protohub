@@ -1,4 +1,5 @@
 import PixelPicker from "./PixelPicker";
+import WordPressPagePicker from "./WordPressPagePicker";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { BookOpen, ChartColumn, CheckCircle2, Copy, Database, ExternalLink, Eye, Link2, Pencil, Percent, Plus, ShoppingCart, TriangleAlert } from "lucide-react";
@@ -318,6 +319,17 @@ function LinkForm({ link, meta, onToast, onSaved, onCancel, compact }: { link: H
   const [checklist, setChecklist] = useState({ thankYouPixelRemoved: Boolean(link?.checklist?.thankYouPixelRemoved), testEventSeen: Boolean(link?.checklist?.testEventSeen) });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // Page pickers (Bright, 15 Oct 2026): only for WordPress sites.
+  const websiteIsWordPress = (meta.websites.find((row) => row.id === form.websiteId)?.platform ?? "WordPress") === "WordPress";
+  const [thankYouHint, setThankYouHint] = useState<string | null>(null);
+  const samePage = (a: string, b: string) => a.trim().replace(/[?#].*$/, "").replace(/\/+$/, "").toLowerCase() === b.trim().replace(/[?#].*$/, "").replace(/\/+$/, "").toLowerCase();
+  // Picking a landing page another link already uses suggests that link's
+  // thank-you page (only when none is chosen yet, so nothing is overwritten).
+  const pickLandingPage = (url: string) => {
+    const previous = meta.links.find((row) => row.id !== link?.id && row.redirectUrl && row.landingPageUrl && samePage(row.landingPageUrl, url));
+    setForm((current) => ({ ...current, landingPageUrl: url, redirectUrl: current.redirectUrl || (previous?.redirectUrl ?? "") }));
+    setThankYouHint(previous && !form.redirectUrl ? `Suggested: the thank-you page "${previous.label}" uses with this landing page.` : null);
+  };
   const applyProfile = (profileId: string) => {
     const profile = meta.profiles.find((row) => row.id === profileId);
     setForm((current) => ({ ...current, profileId, dataSourceId: profile?.dataSourceId ?? current.dataSourceId, websiteId: profile?.defaultWebsiteId ?? current.websiteId, strategy: profile?.strategy ?? current.strategy }));
@@ -361,8 +373,12 @@ function LinkForm({ link, meta, onToast, onSaved, onCancel, compact }: { link: H
           </div>
           <span className="mt-1 block text-[11px] font-normal text-gray-500">Use this when ads from different businesses optimise on different Pixels for the same page. Each sale goes to <strong>one</strong> Pixel only: the Pixel of the ad the customer clicked, or the main Pixel if that is unknown. It is never sent to all of them, because Meta would count it once per Pixel.</span>
         </div>
-        <label className={labelCls}>Landing page URL<input value={form.landingPageUrl} onChange={(e) => setForm({ ...form, landingPageUrl: e.target.value })} placeholder="https://brightpathhubs.com/shelf/" className={input} /></label>
-        <label className={labelCls}>Thank-you page URL<input value={form.redirectUrl} onChange={(e) => setForm({ ...form, redirectUrl: e.target.value })} placeholder="https://brightpathhubs.com/order-success/" className={input} /></label>
+        <div className={labelCls}>Landing page URL
+          <WordPressPagePicker websiteId={form.websiteId} websiteIsWordPress={websiteIsWordPress} type="landing" value={form.landingPageUrl}
+            onChange={pickLandingPage} placeholder="https://brightpathhubs.com/shelf/" /></div>
+        <div className={labelCls}>Thank-you page URL
+          <WordPressPagePicker websiteId={form.websiteId} websiteIsWordPress={websiteIsWordPress} type="thank_you" value={form.redirectUrl}
+            onChange={(url) => { setForm((current) => ({ ...current, redirectUrl: url })); setThankYouHint(null); }} placeholder="https://brightpathhubs.com/order-success/" hint={thankYouHint} /></div>
         <label className={labelCls}>Package set<select value={form.packageSet} onChange={(e) => { const set = sets.find((row) => row.name === e.target.value); setForm({ ...form, packageSet: e.target.value, currency: set?.currency ?? form.currency }); }} className={input} disabled={!form.productId}>
           {sets.length === 0 ? <option value={form.packageSet}>{form.productId ? form.packageSet : "Choose the product first"}</option> : sets.map((row) => <option key={row.name} value={row.name}>{row.name} ({row.packages} package{row.packages === 1 ? "" : "s"}{row.currency ? ` · ${row.currency}` : ""})</option>)}
         </select><span className="mt-1 block text-[11px] font-normal text-gray-500">The packages this form shows. Your current forms use "Default".</span></label>

@@ -18,6 +18,7 @@ import { loadAdSpendInputs, loadSinceStart, loadTikTokConnections, suggestProduc
 import { RULES as SINCE_START_RULES, VERDICT_ORDER } from "../lib/ad-since-start.js";
 import { syncAdSpendExpenses } from "../lib/ad-spend-expenses.js";
 import { TIKTOK_URL_PARAMETERS, tiktokAdvertisers } from "../lib/tiktok-ads.js";
+import { lastSyncedAt, sortPages, syncIsStale, syncWebsitePages } from "../lib/wordpress-pages.js";
 
 // Tracking Hub (Bright, 2 Oct 2026; redesigned to his seven tab images the
 // same day). Owner only - it holds the Meta tokens. Numbers come from
@@ -700,6 +701,13 @@ async function saveWebsite(req: Request, id: string | null) {
     : await supabase.from("tracking_websites").insert({ ...row, created_by: req.user!.id }).select("id").single();
   if (result.error) throw result.error.code === "23505" ? httpError(409, "This website is already added.") : result.error;
   await hubAudit(orgId, branchId, actorOf(req), id ? "website_updated" : "website_added", { type: "website", id: result.data.id, label: domain });
+  // A new WordPress site: read its pages now, so the link form's page pickers
+  // are ready. In the background - a slow or blocked site must not hold up
+  // the save; the picker tries again and shows the reason.
+  if (!id && parsed.data.platform === "WordPress") {
+    void syncWebsitePages({ id: result.data.id, org_id: orgId, branch_id: branchId, domain })
+      .catch((error: any) => console.warn("[tracking-hub] page sync after add failed:", domain, error?.message ?? error));
+  }
   return result.data;
 }
 router.post("/websites", async (req, res) => { try { res.status(201).json(await saveWebsite(req, null)); } catch (error: any) { fail(res, error, "Could not save the website."); } });
@@ -722,6 +730,53 @@ const isPublicHttpUrl = (raw: string) => {
     return !/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|0\.|\[::1\]|169\.254\.)/i.test(url.hostname);
   } catch { return false; }
 };
+
+// ── WordPress page pickers (Bright, 15 Oct 2026) ─────────────────────────────
+// The link form picks its landing and thank-you pages from the site's own
+// published pages (lib/wordpress-pages.ts). Links still store plain URLs.
+async function ownWebsite(req: Request) {
+  const orgId = req.user!.orgId;
+  const branchId = branchOf(req);
+  const { data: site, error } = await supabase.from("tracking_websites").select("id, org_id, branch_id, domain, platform")
+    .eq("org_id", orgId).eq("branch_id", branchId).eq("id", String(req.params.websiteId)).maybeSingle();
+  if (error) throw error;
+  if (!site) throw httpError(404, "Website not found.");
+  return site as { id: string; org_id: string; branch_id: string; domain: string; platform: string };
+}
+
+router.post("/websites/:websiteId/pages/sync", async (req, res) => {
+  try {
+    const site = await ownWebsite(req);
+    const result = await syncWebsitePages(site);
+    res.json({ ok: true, ...result });
+  } catch (error: any) { fail(res, error, "Could not read the website's pages."); }
+});
+
+router.get("/websites/:websiteId/pages", async (req, res) => {
+  try {
+    const site = await ownWebsite(req);
+    const type = req.query.type === "thank_you" ? "thank_you" : "landing";
+    // Commas, brackets and wildcards would change the search itself.
+    const q = String(req.query.q ?? "").replace(/[,()%*\\]/g, " ").trim().slice(0, 80);
+    // Read the pages again when the list is older than 6 hours (or was never
+    // read). If that fails, the saved list is still shown, with the reason.
+    let syncError: string | null = null;
+    let syncedAt = await lastSyncedAt(site.id);
+    if (syncIsStale(syncedAt)) {
+      try { syncedAt = (await syncWebsitePages(site)).syncedAt; }
+      catch (error: any) { syncError = error?.message ?? "Could not read the website's pages."; }
+    }
+    let query = supabase.from("website_pages").select("id, wp_page_id, title, slug, url, wp_modified_at, is_thank_you")
+      .eq("org_id", site.org_id).eq("branch_id", site.branch_id).eq("website_id", site.id).limit(500);
+    if (q) query = query.or(`title.ilike.%${q}%,slug.ilike.%${q}%`);
+    const { data, error } = await query;
+    if (error) throw error;
+    const pages = sortPages((data ?? []) as any[], type).slice(0, 100).map((row: any) => ({
+      id: row.id, wpPageId: Number(row.wp_page_id), title: row.title, slug: row.slug, url: row.url, modifiedAt: row.wp_modified_at, isThankYou: row.is_thank_you
+    }));
+    res.json({ pages, lastSyncedAt: syncedAt, syncError, platform: site.platform });
+  } catch (error: any) { fail(res, error, "Could not load the website's pages."); }
+});
 
 /** Scan Website / Test Website: load the home page, each link's landing page and thank-you page. */
 router.post("/websites/:id/scan", async (req, res) => {
@@ -915,7 +970,7 @@ router.get("/links", async (req, res) => {
         const add = (url: string | null | undefined, ids: string[]) => { const path = pathOf(url); if (!path) return; pages[path] = Array.from(new Set([...(pages[path] ?? []), ...ids])); };
         for (const page of ((row.last_scan as any)?.pages ?? [])) add(page.url, page.pixels ?? []);
         for (const beacon of (pageBeacons ?? []).filter((item: any) => item.page_domain === row.domain)) add(beacon.page_url, beacon.pixels_on_page ?? []);
-        return { id: row.id, domain: row.domain, dataSourceId: row.data_source_id, pagePixels: pages };
+        return { id: row.id, domain: row.domain, platform: row.platform ?? "WordPress", dataSourceId: row.data_source_id, pagePixels: pages };
       }),
       profiles: basics.profiles.map(presentProfile),
       defaultStrategy: settings.defaultStrategy,

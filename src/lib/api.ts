@@ -4522,7 +4522,7 @@ export type HubLinksResponse = {
   kpis: { total: number; newThisMonth: number; orders: number; ordersChange: number; pageViews: number; pageViewsChange: number; conversionRate: number; conversionRateChange: number; healthy: number; healthyPct: number };
   links: HubLink[]; products: Array<{ id: string; name: string; packageSets: Array<{ name: string; currency: string | null; packages: number }> }>;
   dataSources: HubPixelOption[];
-  websites: Array<{ id: string; domain: string; dataSourceId: string | null; pagePixels: Record<string, string[]> }>; profiles: HubProfile[]; defaultStrategy: HubStrategy; urlParameters: string;
+  websites: Array<{ id: string; domain: string; platform?: string; dataSourceId: string | null; pagePixels: Record<string, string[]> }>; profiles: HubProfile[]; defaultStrategy: HubStrategy; urlParameters: string;
 };
 export type HubLinkDetail = {
   id: string; label: string; trackingKey: string; adUrl: string | null; landingPageUrl: string; productName: string | null; productImage: string | null; websiteDomain: string | null; dataSourceName: string | null;
@@ -4668,6 +4668,9 @@ const hubQuery = (query: HubQuery) => {
   return text ? `?${text}` : "";
 };
 const hubId = (id: string) => encodeURIComponent(id);
+/** One published WordPress page of a Tracking Hub website. */
+export type HubWebsitePage = { id: string; wpPageId: number; title: string; slug: string; url: string; modifiedAt: string | null; isThankYou: boolean };
+
 export const trackingHubApi = {
   overview: (query: HubQuery) => get<HubOverview>(`/api/tracking-hub/overview${hubQuery(query)}`),
   dataSources: () => get<{ kpis: { total: number; newThisMonth: number; healthy: number; healthyPct: number; needAttention: number; needAttentionPct: number; disconnected: number; disconnectedPct: number; off: number }; platformCounts: Record<HubPlatform, number>; dataSources: HubDataSource[]; connections: HubConnection[]; profiles: HubProfile[]; websites: Array<{ id: string; domain: string }>; issues: HubIssue[] }>("/api/tracking-hub/data-sources"),
@@ -4693,6 +4696,11 @@ export const trackingHubApi = {
   website: (id: string) => get<HubWebsiteDetail>(`/api/tracking-hub/websites/${hubId(id)}`),
   saveWebsite: (id: string | null, body: Record<string, unknown>) => id ? put<{ id: string }>(`/api/tracking-hub/websites/${hubId(id)}`, body) : post<{ id: string }>("/api/tracking-hub/websites", body),
   deleteWebsite: (id: string) => del<{ ok: true }>(`/api/tracking-hub/websites/${hubId(id)}`),
+  // WordPress page pickers (Bright, 15 Oct 2026): the site's published pages.
+  websitePages: (websiteId: string, query: { q?: string; type: "landing" | "thank_you" }) =>
+    get<{ pages: HubWebsitePage[]; lastSyncedAt: string | null; syncError: string | null; platform: string }>(
+      `/api/tracking-hub/websites/${hubId(websiteId)}/pages?${new URLSearchParams({ type: query.type, ...(query.q ? { q: query.q } : {}) }).toString()}`),
+  syncWebsitePages: (websiteId: string) => post<{ ok: true; pages: number; removed: number; syncedAt: string }>(`/api/tracking-hub/websites/${hubId(websiteId)}/pages/sync`, {}),
   scanWebsite: (id: string) => post<{ scan: { pages: HubScanPage[]; at: string }; summary: string[] }>(`/api/tracking-hub/websites/${hubId(id)}/scan`, {}),
   links: (query: HubQuery = {}) => get<HubLinksResponse>(`/api/tracking-hub/links${hubQuery(query)}`),
   link: (id: string, days = 7) => get<HubLinkDetail>(`/api/tracking-hub/links/${hubId(id)}?days=${days}`),
