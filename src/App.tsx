@@ -11594,6 +11594,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const cartFollowUpIsOwnWork = currentRole === "Sales Rep";
   const canMutate = currentRole !== "Viewer" && currentRole !== "Marketer";
   const canUseAdminOrderActions = currentRole !== "Sales Rep" && currentRole !== "Marketer";
+  // Owner / Admin / Manager may correct a DELIVERED order in place (agent,
+  // product, quantity) - the server moves the stock (PR #766). The list's Edit
+  // button and the edit window's locks did not follow, so the button vanished
+  // once an order was delivered (Bright, 15 Oct 2026). Reps still cannot.
+  const canCorrectDeliveredOrders = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager";
   const canContactCustomers = currentRole !== "Marketer";
 
   const syncPageRoute = (page: ActivePage, role: EditableUserRole = currentRole) => {
@@ -78596,7 +78601,7 @@ ${waybillLineItems(w).length > 1
                             >
                               <Eye className="w-4 h-4" /> {isMarketerOrderView ? "Summary" : "Details"}
                             </button>
-                            {!isTerminal && canUseAdminOrderActions && (
+                            {(!isTerminal || (status === "Delivered" && canCorrectDeliveredOrders)) && canUseAdminOrderActions && (
                               <button
                                 className={`!min-h-0 inline-flex items-center justify-center gap-2 rounded-[22px] px-3 py-3 text-sm font-black transition-all hover:-translate-y-0.5 ${orderSecondaryButtonClass}`}
                                 onClick={() => openAdminOrderEditRoute(order.id)}
@@ -78808,7 +78813,7 @@ ${waybillLineItems(w).length > 1
                                   >
                                     <Eye className="h-4 w-4" />
                                   </button>
-                                  {!isTerminal && canUseAdminOrderActions && (
+                                  {(!isTerminal || (status === "Delivered" && canCorrectDeliveredOrders)) && canUseAdminOrderActions && (
                                     <button
                                       className={`!min-h-0 w-8 h-8 inline-flex items-center justify-center rounded-md transition-colors ${orderGhostButtonClass}`}
                                       title="Edit"
@@ -104548,7 +104553,7 @@ ${waybillLineItems(w).length > 1
 	              // back again, which reversed the deduction and left a false
 	              // Failed in the trail - real damage to fix a spelling mistake.
 	              const deliveredCorrection = selectedOrder.status === "Delivered";
-	              const shipmentLocked = deliveredCorrection && selectedOrder.stockDeducted === true;
+	              const shipmentLocked = deliveredCorrection && selectedOrder.stockDeducted === true && !canCorrectDeliveredOrders;
 	              return (
 	              <div className="modal-form">
 	                {deliveredCorrection && (
@@ -104557,8 +104562,10 @@ ${waybillLineItems(w).length > 1
 	                    <span>
 	                      <span className="block font-black">Correcting a delivered order</span>
 	                      {shipmentLocked
-	                        ? "Customer details, address, amount and delivery date are all editable. The product, quantity and agent are locked because their stock has already been deducted — reverse the delivery to change what shipped."
-	                        : "No stock has been deducted for this delivery yet, so everything is editable."}
+	                        ? "Customer details, address, amount and delivery date are editable. Only an Admin, Manager or the Owner can change the product, quantity or agent of a delivered order."
+	                        : canCorrectDeliveredOrders
+	                          ? "Everything is editable and the order stays Delivered. If you change the product, quantity or agent, you will be asked why; stock already taken off is put back and the corrected stock goes to the inventory officer to verify. If the right agent does not have the stock, the change is refused."
+	                          : "No stock has been deducted for this delivery yet, so everything is editable."}
 	                    </span>
 	                  </p>
 	                )}
