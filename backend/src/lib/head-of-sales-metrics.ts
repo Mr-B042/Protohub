@@ -86,13 +86,10 @@ export type RepWeekMetrics = {
 /**
  * One rep's numbers for one Sunday-anchored week.
  *
- * deliveryRate mirrors manager-bonuses.ts's throughput definition (the same
- * one the Dashboard's "Fulfillment Rate" card uses), scoped to this rep:
- * delivered-by-delivery-date this week, over orders this rep was ASSIGNED
- * and CREATED this week (excluding review_hold) - a proxy for "keeping up
- * with the pipeline", not a strict same-cohort conversion rate. Deliberately
- * kept in sync so this scorecard and the Manager Dashboard's own bonus gate
- * never disagree about the same rep in the same week.
+ * From the week of 11 Oct 2026 (HOS_COHORT_FROM): of the orders this rep was
+ * ASSIGNED and CREATED in the period (excluding review_hold), how many are
+ * delivered - the Manager Dashboard team table's way. Earlier weeks: everything
+ * delivered by delivery date in the period over that same cohort.
  */
 /**
  * Same maths over an arbitrary date range rather than a Sunday week, so the
@@ -130,13 +127,26 @@ export function computeRepWeekMetrics(orders: HeadOfSalesOrder[], repId: string,
   return computeRepMetricsBetween(orders, repId, weekStart, weekEndFromStart(weekStart));
 }
 
+// ── Same figures as the Manager Dashboard (Bright, 16 Oct 2026) ─────────────
+// From the week of 11 Oct 2026 the delivered set is THIS PERIOD'S ORDERS that
+// are now delivered (the Manager Dashboard team table, the weekly report and
+// the weekly bonus rule all count it this way). Before, it was everything
+// delivered in the period, including orders placed earlier, over orders placed
+// in the period - so Delight read 55% here and 50% on the Manager Dashboard
+// for the same week. Delivery rate, AOV, upsell and cross-sell all follow, and
+// so does the Head of Sales bonus (Bright chose to judge it on the same
+// figure). Earlier weeks keep the old way, so paid weeks do not move.
+export const HOS_COHORT_FROM = "2026-10-11";
+
 function computeRepMetricsBetween(orders: HeadOfSalesOrder[], repId: string, weekStart: string, weekEnd: string): RepWeekMetrics {
   const cohort = orders.filter((order) => {
     if (order.assigned_rep_id !== repId || order.review_hold === true) return false;
     const key = createdDateKey(order);
     return key >= weekStart && key <= weekEnd;
   });
-  const delivered = orders.filter((order) => {
+  const delivered = weekStart >= HOS_COHORT_FROM
+    ? cohort.filter((order) => order.status === "Delivered")
+    : orders.filter((order) => {
     // review_hold is excluded here as well as in the cohort above. It was only
     // filtered on one side, so a held order that got delivered inflated
     // revenue, AOV and the upsell/cross-sell counts while being absent from the
