@@ -38558,6 +38558,51 @@ ${waybillLineItems(w).length > 1
     openInventoryAddPackageRoute(selectedProduct.id);
   };
 
+  // Upload gallery images (Upload button, and a picture pasted with Ctrl+V /
+  // Cmd+V - Bright, 16 Oct 2026).
+  const uploadPackageGalleryFiles = (files: File[]) => {
+    if (files.length === 0) return;
+    const oversized = files.find((file) => file.size > PACKAGE_IMAGE_MAX_BYTES);
+    if (oversized) {
+      showToast(`Each package image must be under ${PACKAGE_IMAGE_MAX_LABEL}.`);
+      return;
+    }
+    const uploadToken = packageImageUploadTokenRef.current;
+    setPackageImageUploading((count) => count + files.length);
+    files.forEach((file) => {
+      const reader = new FileReader();
+      const finishOne = () => {
+        if (packageImageUploadTokenRef.current === uploadToken) {
+          setPackageImageUploading((count) => Math.max(0, count - 1));
+        }
+      };
+      reader.onload = async (readerEvent) => {
+        if (packageImageUploadTokenRef.current !== uploadToken) { finishOne(); return; }
+        const dataUrl = String(readerEvent.target?.result ?? "");
+        if (!dataUrl) { finishOne(); return; }
+        try {
+          const { url } = await productsApi.uploadPackageImage(dataUrl, file.name);
+          if (packageImageUploadTokenRef.current !== uploadToken) return;
+          setPackageImageUrls((prev) => normalisePackageImageUrls([...prev, url]));
+        } catch (err: any) {
+          if (packageImageUploadTokenRef.current === uploadToken) {
+            showToast(`Could not upload ${file.name}: ${err?.message ?? "try again"}.`);
+          }
+        } finally {
+          finishOne();
+        }
+      };
+      reader.onerror = () => {
+        if (packageImageUploadTokenRef.current === uploadToken) {
+          showToast(`Could not load ${file.name}. Try another image.`);
+        }
+        finishOne();
+      };
+      reader.readAsDataURL(file);
+    });
+    showToast(`Uploading ${files.length} package image${files.length === 1 ? "" : "s"}...`);
+  };
+
   const openEditPackage = (item: ProductPackage, sourceProductId?: string) => {
     setPackageAdvancedOpen(false);
     const productId = sourceProductId ?? selectedProduct?.id;
@@ -106268,9 +106313,25 @@ ${waybillLineItems(w).length > 1
                       <input
                         type="url"
                         className="border border-amber-200 rounded-md px-2 py-1.5 text-sm bg-white"
-                        placeholder="Paste image URL..."
+                        placeholder="Paste an image, or an image URL..."
                         value={packageImageUrlDraft}
                         onChange={(event) => setPackageImageUrlDraft(event.target.value)}
+                        onPaste={(event) => {
+                          // A copied picture uploads at once; a pasted address is added at once.
+                          const imageFiles = Array.from(event.clipboardData?.items ?? [])
+                            .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+                            .map((item) => item.getAsFile()).filter((file): file is File => Boolean(file));
+                          if (imageFiles.length > 0) { event.preventDefault(); uploadPackageGalleryFiles(imageFiles); return; }
+                          const text = event.clipboardData?.getData("text")?.trim() ?? "";
+                          if (/^(https?:\/\/|data:image\/)/i.test(text)) {
+                            event.preventDefault();
+                            const next = normalisePackageImageUrls([...packageImageUrls, text]);
+                            if (next.length === packageImageUrls.length) { showToast("That image is already in the gallery."); return; }
+                            setPackageImageUrls(next);
+                            setPackageImageUrlDraft("");
+                            showToast("Image added.");
+                          }
+                        }}
                       />
                       <button
                         type="button"
@@ -106296,48 +106357,7 @@ ${waybillLineItems(w).length > 1
                           multiple
                           className="hidden"
                           onChange={(event) => {
-                            const files = Array.from(event.target.files ?? []);
-                            if (files.length === 0) return;
-                            const oversized = files.find((file) => file.size > PACKAGE_IMAGE_MAX_BYTES);
-                            if (oversized) {
-                              showToast(`Each package image must be under ${PACKAGE_IMAGE_MAX_LABEL}.`);
-                              event.target.value = "";
-                              return;
-                            }
-                            const uploadToken = packageImageUploadTokenRef.current;
-                            setPackageImageUploading((count) => count + files.length);
-                            files.forEach((file) => {
-                              const reader = new FileReader();
-                              const finishOne = () => {
-                                if (packageImageUploadTokenRef.current === uploadToken) {
-                                  setPackageImageUploading((count) => Math.max(0, count - 1));
-                                }
-                              };
-                              reader.onload = async (readerEvent) => {
-                                if (packageImageUploadTokenRef.current !== uploadToken) { finishOne(); return; }
-                                const dataUrl = String(readerEvent.target?.result ?? "");
-                                if (!dataUrl) { finishOne(); return; }
-                                try {
-                                  const { url } = await productsApi.uploadPackageImage(dataUrl, file.name);
-                                  if (packageImageUploadTokenRef.current !== uploadToken) return;
-                                  setPackageImageUrls((prev) => normalisePackageImageUrls([...prev, url]));
-                                } catch (err: any) {
-                                  if (packageImageUploadTokenRef.current === uploadToken) {
-                                    showToast(`Could not upload ${file.name}: ${err?.message ?? "try again"}.`);
-                                  }
-                                } finally {
-                                  finishOne();
-                                }
-                              };
-                              reader.onerror = () => {
-                                if (packageImageUploadTokenRef.current === uploadToken) {
-                                  showToast(`Could not load ${file.name}. Try another image.`);
-                                }
-                                finishOne();
-                              };
-                              reader.readAsDataURL(file);
-                            });
-                            showToast(`Uploading ${files.length} package image${files.length === 1 ? "" : "s"}...`);
+                            uploadPackageGalleryFiles(Array.from(event.target.files ?? []));
                             event.target.value = "";
                           }}
                         />
@@ -106615,8 +106635,8 @@ ${waybillLineItems(w).length > 1
                             delete next[companionGalleryKey];
                             return next;
                           });
-                        const addCompanionGalleryUrl = async () => {
-                          const imageUrl = companionGalleryDraft.trim();
+                        const addCompanionGalleryUrl = async (pasted?: string) => {
+                          const imageUrl = (pasted ?? companionGalleryDraft).trim();
                           if (!imageUrl) {
                             showToast("Paste an image URL first.");
                             return;
@@ -106921,12 +106941,21 @@ ${waybillLineItems(w).length > 1
                                         placeholder={targetPackage ? `Paste image URL for ${targetPackage.name}...` : "Paste offer image URL..."}
                                         value={companionGalleryDraft}
                                         onChange={(event) => setCompanionGalleryDraft(event.target.value)}
+                                        onPaste={(event) => {
+                                          // Same as the package gallery: a copied picture uploads, an address is added.
+                                          const imageFiles = Array.from(event.clipboardData?.items ?? [])
+                                            .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+                                            .map((item) => item.getAsFile()).filter((file): file is File => Boolean(file));
+                                          if (imageFiles.length > 0) { event.preventDefault(); void uploadCompanionGalleryFiles(imageFiles); return; }
+                                          const text = event.clipboardData?.getData("text")?.trim() ?? "";
+                                          if (/^(https?:\/\/|data:image\/)/i.test(text)) { event.preventDefault(); void addCompanionGalleryUrl(text); }
+                                        }}
                                       />
                                       <button
                                         type="button"
                                         className="!min-h-0 inline-flex items-center justify-center px-3 py-2 rounded-md border border-amber-200 text-xs font-bold text-amber-800 hover:bg-amber-50 disabled:opacity-50"
                                         disabled={companionGalleryUploading > 0}
-                                        onClick={addCompanionGalleryUrl}
+                                        onClick={() => void addCompanionGalleryUrl()}
                                       >
                                         Add image
                                       </button>
