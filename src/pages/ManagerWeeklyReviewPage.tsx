@@ -160,6 +160,12 @@ export default function ManagerWeeklyReviewPage({
   // "This Week" (Bright, 12 Oct 2026): one press back to the current week.
   const todayKey = new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 10);
   const onThisWeek = todayKey >= weekStart && todayKey <= weekEnd;
+  const thisWeekLabel = (() => {
+    const today = new Date(`${todayKey}T12:00:00Z`);
+    const start = new Date(today); start.setUTCDate(today.getUTCDate() - today.getUTCDay());
+    const end = new Date(start); end.setUTCDate(start.getUTCDate() + 6);
+    return `${shortDay(start.toISOString().slice(0, 10))} – ${shortDay(end.toISOString().slice(0, 10))}`;
+  })();
   // Filter the rep list by where each report stands (Bright, 12 Oct 2026).
   const repFilters: Array<{ key: RepFilter; label: string; test: (status: string) => boolean }> = [
     { key: "all", label: "All", test: () => true },
@@ -430,6 +436,10 @@ export default function ManagerWeeklyReviewPage({
               <div className="flex flex-wrap items-center gap-2.5">
                 <h1 className="m-0 text-2xl font-black tracking-tight text-gray-900 dark:text-slate-50">Manager Weekly Report</h1>
                 <span className="rounded-lg bg-blue-50 px-2.5 py-1 text-[12px] font-bold text-blue-700 dark:bg-blue-500/15 dark:text-blue-200">Week: {longDate(weekStart)} – {longDate(weekEnd)}</span>
+                {/* Say plainly whether this is the current week. */}
+                {onThisWeek
+                  ? <span className="rounded-lg bg-emerald-50 px-2.5 py-1 text-[12px] font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200">This week</span>
+                  : weekStart < todayKey ? <span className="rounded-lg bg-amber-100 px-2.5 py-1 text-[12px] font-bold text-amber-800 dark:bg-amber-500/15 dark:text-amber-200">Past week</span> : null}
                 <span className={`rounded-lg px-2.5 py-1 text-[12px] font-bold ${statusTone}`}>{statusLabel}</span>
               </div>
               <p className="m-0 mt-1 text-[13px] text-gray-500 dark:text-slate-400">Review all sections, verify data, manage expenses, and submit to owner for final approval.</p>
@@ -438,8 +448,20 @@ export default function ManagerWeeklyReviewPage({
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <button type="button" onClick={() => onShiftWeek(-1)} className="!min-h-0 inline-flex h-11 items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 text-[13px] font-semibold text-gray-800 shadow-sm hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"><ChevronLeft className="h-4 w-4" /> Previous Week</button>
-          <button type="button" disabled={onThisWeek} onClick={() => onPickWeek(todayKey)} title="Go to the current week"
-            className="!min-h-0 inline-flex h-11 items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 text-[13px] font-bold text-blue-700 shadow-sm hover:bg-blue-100 disabled:cursor-default disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200">This Week</button>
+          {/* "This Week" read as a selected tab: blue while a PAST week was open,
+              grey on the current one - a manager recorded in the wrong week
+              because of it (Bright, 16 Oct 2026). Now it reads as an action on
+              a past week, and as a plain confirmation on this week. */}
+          {onThisWeek ? (
+            <span className="inline-flex h-11 items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 text-[13px] font-bold text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200">
+              <Check className="h-4 w-4" /> This week
+            </span>
+          ) : (
+            <button type="button" onClick={() => onPickWeek(todayKey)} title="Go to the current week"
+              className="!min-h-0 inline-flex h-11 items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 text-[13px] font-semibold text-gray-800 shadow-sm hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+              Go to this week <span className="font-normal text-gray-500">({thisWeekLabel})</span>
+            </button>
+          )}
           <button type="button" disabled={!canGoNext} onClick={() => onShiftWeek(1)} className="!min-h-0 inline-flex h-11 items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 text-[13px] font-semibold text-gray-800 shadow-sm hover:bg-gray-50 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">Next Week <ChevronRight className="h-4 w-4" /></button>
           {onOpenHistory && (
             <button type="button" onClick={onOpenHistory} className="!min-h-0 inline-flex h-11 items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 text-[13px] font-semibold text-gray-800 shadow-sm hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
