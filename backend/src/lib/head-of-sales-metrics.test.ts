@@ -129,3 +129,22 @@ test("computeTrailingBaseline averages the 4 weeks strictly before weekStart, ex
   // weeks are empty. Averaged over all 4 weeks: (10,000 + 20,000) / 4.
   assert.equal(baseline.team.revenue, 7_500);
 });
+
+test("from the week of 11 Oct 2026 the rate counts this week's orders that are delivered (Manager Dashboard way)", () => {
+  const W = "2026-10-11";
+  const rows: HeadOfSalesOrder[] = [
+    order({ id: "a", created_at: `${W}T09:00:00Z`, status: "Delivered", delivered_date: "2026-10-12", amount: 30_000 }),
+    order({ id: "b", created_at: `${W}T09:00:00Z`, status: "Confirmed", delivered_date: null }),
+    // placed the week before, delivered this week: no longer counted this week
+    order({ id: "c", created_at: "2026-10-05T09:00:00Z", status: "Delivered", delivered_date: "2026-10-12", amount: 90_000 })
+  ];
+  const metrics = computeRepWeekMetrics(rows, "rep-1", W);
+  assert.equal(metrics.ordersAssigned, 2);
+  assert.equal(metrics.ordersDelivered, 1);
+  assert.equal(metrics.deliveryRate, 50);
+  assert.equal(metrics.aov, 30_000);
+  // an earlier week keeps the old way: delivered by delivery date in the week
+  const old = computeRepWeekMetrics(rows, "rep-1", "2026-10-04");
+  assert.equal(old.ordersAssigned, 1);
+  assert.equal(old.ordersDelivered, 0);
+});

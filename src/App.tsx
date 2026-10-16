@@ -67100,7 +67100,10 @@ ${waybillLineItems(w).length > 1
                   <thead>
                     <tr className="border-b border-gray-100 text-[11px] uppercase tracking-wider text-gray-400">
                       <th className="py-2 pr-3 font-semibold">Rep</th>
-                      <th className="py-2 pr-3 font-semibold text-right">Orders</th>
+                      {/* "Orders" showed orders DELIVERED (Bright, 16 Oct 2026). Placed
+                          and Delivered, the same columns as the Manager Dashboard. */}
+                      <th className="py-2 pr-3 font-semibold text-right">Placed</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Delivered</th>
                       <th className="py-2 pr-3 font-semibold text-right">AOV</th>
                       <th className="py-2 pr-3 font-semibold text-right">Delivery Rate</th>
                       <th className="py-2 pr-3 font-semibold text-right">Upsell Rate</th>
@@ -67115,6 +67118,7 @@ ${waybillLineItems(w).length > 1
                       return (
                         <tr key={rep.repId} className="border-b border-gray-50">
                           <td className="py-2.5 pr-3 font-bold text-gray-900">{rep.name}</td>
+                          <td className="py-2.5 pr-3 text-right text-gray-700">{rep.ordersAssigned}</td>
                           <td className="py-2.5 pr-3 text-right text-gray-700">{rep.ordersDelivered}</td>
                           <td className="py-2.5 pr-3 text-right text-gray-700">{money(rep.aov)}</td>
                           <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.deliveryRate)}</td>
