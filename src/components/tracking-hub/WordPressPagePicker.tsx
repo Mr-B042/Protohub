@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, ClipboardPaste, FileText, ListFilter, Loader2, RefreshCw, Search, Sparkles, TriangleAlert } from "lucide-react";
+import { Check, ChevronDown, ClipboardPaste, Copy, ExternalLink, FileText, ListFilter, Loader2, RefreshCw, Search, Sparkles, TriangleAlert } from "lucide-react";
 import { trackingHubApi, type HubWebsitePage } from "../../lib/api";
 import { input } from "./HubParts";
 
@@ -118,6 +118,34 @@ export default function WordPressPagePicker({ websiteId, websiteIsWordPress, typ
     }
   };
 
+  // Copy / open the chosen page's full address (Bright, 16 Oct 2026: "a place
+  // we can click to get the URL easily"). The field shows the page title, so
+  // the address itself was not at hand.
+  const [copied, setCopied] = useState(false);
+  const copyUrl = async () => {
+    try { await navigator.clipboard.writeText(value.trim()); }
+    catch {
+      const area = document.createElement("textarea");
+      area.value = value.trim(); document.body.appendChild(area); area.select();
+      try { document.execCommand("copy"); } finally { area.remove(); }
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  };
+  const isUrl = /^https?:\/\//i.test(value.trim());
+  const urlActions = value.trim() ? (
+    <span className="mt-1 flex flex-wrap items-center gap-3 text-[11.5px] font-semibold">
+      <button type="button" onClick={() => void copyUrl()} title={value.trim()}
+        className={`!min-h-0 inline-flex items-center gap-1 ${copied ? "text-emerald-700 dark:text-emerald-300" : "text-blue-700 hover:underline dark:text-blue-300"}`}>
+        {copied ? <><Check className="h-3.5 w-3.5" /> Copied</> : <><Copy className="h-3.5 w-3.5" /> Copy link</>}
+      </button>
+      {isUrl ? (
+        <a href={value.trim()} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-gray-600 hover:underline dark:text-slate-300">
+          <ExternalLink className="h-3.5 w-3.5" /> Open page
+        </a>
+      ) : null}
+    </span>
+  ) : null;
   const hintLine = hint ? <span className="mt-1 block text-[11px] font-normal text-emerald-700 dark:text-emerald-300">{hint}</span> : null;
 
   // No WordPress site chosen, or "Paste custom URL": a plain address box.
@@ -125,6 +153,7 @@ export default function WordPressPagePicker({ websiteId, websiteIsWordPress, typ
     return (
       <>
         <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className={input} />
+        {urlActions}
         {canPick ? (
           <button type="button" onClick={() => { setCustom(false); setOpen(true); }} className="!min-h-0 mt-1 inline-flex items-center gap-1 text-[11.5px] font-semibold text-blue-700 hover:underline dark:text-blue-300">
             <ListFilter className="h-3.5 w-3.5" /> Pick from the website's pages
@@ -205,6 +234,7 @@ export default function WordPressPagePicker({ websiteId, websiteIsWordPress, typ
           </button>
         </div>
       ) : null}
+      {urlActions}
       {hintLine}
     </div>
   );
