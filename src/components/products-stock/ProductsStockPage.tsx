@@ -30,6 +30,9 @@ type MediaFilter = "any" | "photos" | "videos" | "none" | "pending";
 type SortKey = "best" | "name" | "price" | "stock";
 
 const VIEW_KEY = "protohub.productsStock.view";
+const MANAGER_ROLES = ["Owner", "Admin", "Manager"];
+const NO_SEND_ROLES = ["Viewer", "Delivery Agent"];
+const MANAGER_TABS: TabKey[] = ["approvals", "settings"];
 const readView = (): "grid" | "list" | null => { try { const value = localStorage.getItem(VIEW_KEY); return value === "list" || value === "grid" ? value : null; } catch { return null; } };
 
 const HEADER: Record<TabKey, { tag?: string; text: string }> = {
@@ -45,6 +48,10 @@ const HEADER: Record<TabKey, { tag?: string; text: string }> = {
 export type ProductsStockPageProps<P extends CatalogProduct> = {
   products: P[];
   currentUserId: string;
+  // The role being shown: the real role, or the person/role in "Viewing as".
+  viewerRole: string;
+  // "Viewing as" while its Read-only switch is on: nothing on this page writes.
+  isPreview: boolean;
   canManageCatalog: boolean;
   stockOf: (product: P) => number;
   states: string[];
@@ -72,8 +79,19 @@ export type ProductsStockPageProps<P extends CatalogProduct> = {
 export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStockPageProps<P>) {
   const { products, currentUserId, canManageCatalog, stockOf, lowStockThreshold, showToast } = props;
   const data = useProductsStockData();
-  const { media, setMedia, categories, canApprove, canSend } = data;
+  const { setMedia, categories } = data;
   const settings: CatalogSettings | null = data.settings;
+  // ⚠️ Bright, 17 Oct 2026: Approval Queue, Settings and every stock-value
+  // figure are Owner / Admin / Manager only. The server answers for the REAL
+  // signed-in person, so in "Viewing as" these follow the role being viewed.
+  const viewerIsManager = MANAGER_ROLES.includes(props.viewerRole);
+  const canApprove = data.canApprove && viewerIsManager;
+  const canSend = data.canSend && (viewerIsManager || !NO_SEND_ROLES.includes(props.viewerRole)) && (viewerIsManager || data.repUploadsEnabled);
+  const showValue = viewerIsManager;
+  const writable = !props.isPreview;
+  const media = useMemo(() => viewerIsManager ? data.media : data.media.filter((item) => item.status === "approved" || item.uploadedBy === currentUserId),
+    [data.media, viewerIsManager, currentUserId]);
+  const readOnly = () => { showToast("Viewing as is read-only. Exit preview to make changes."); };
 
   const [tab, setTab] = useState<TabKey>("products");
   const [search, setSearch] = useState("");
@@ -116,6 +134,9 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
     const strip = button?.closest("nav");
     if (button && strip) strip.scrollTo({ left: button.offsetLeft - (strip.clientWidth - button.offsetWidth) / 2, behavior: "smooth" });
   }, [tab]);
+
+  // Switching "Viewing as" to a rep while on a manager-only tab: go back.
+  useEffect(() => { if (!viewerIsManager && MANAGER_TABS.includes(tab)) setTab("products"); }, [viewerIsManager, tab]);
 
   // The branch's default view applies until this person picks one.
   useEffect(() => { if (settings && !readView()) setView(settings.defaultView); }, [settings]);
@@ -239,6 +260,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
     setViewer({ productName: productName(item.productId), index: 0, items: [{ key: item.id, kind: item.kind, url: item.url, thumbUrl: item.thumbUrl, labelText: `${item.labelText} · ${item.status === "pending" ? "waiting for approval" : item.status}`, caption: item.caption, byline: item.uploadedByName, durationSeconds: item.durationSeconds, media: null }] });
   };
   const approve = async (item: ProductMedia) => {
+    if (!writable) { readOnly(); return; }
     try { const { media: done } = await productMediaApi.approve(item.id); replaceMedia(done); showToast("Approved. It is now in the gallery."); }
     catch (error: any) { showToast(error?.message ?? "Could not approve."); }
   };
@@ -248,6 +270,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
     return current.filter((item) => !deleted.has(item.id)).map((item) => updated.get(item.id) ?? item);
   });
   const approveMany = async (items: ProductMedia[]) => {
+    if (!writable) { readOnly(); return; }
     const ids = items.filter((item) => item.status === "pending").map((item) => item.id);
     if (!ids.length) return;
     try {
@@ -257,6 +280,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
     } catch (error: any) { showToast(error?.message ?? "Could not approve."); }
   };
   const decline = async (items: ProductMedia[], reason: string, mode: "reject" | "changes") => {
+    if (!writable) { readOnly(); return; }
     try {
       if (mode === "changes") { const { media: done } = await productMediaApi.requestChanges(items[0].id, reason); replaceMedia(done); showToast("Sent. The sender was told what to change."); return; }
       if (items.length === 1) { const { media: done } = await productMediaApi.reject(items[0].id, reason); replaceMedia(done); }
@@ -265,6 +289,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
     } catch (error: any) { showToast(error?.message ?? "Could not save."); throw error; }
   };
   const remove = async (item: ProductMedia) => {
+    if (!writable) { readOnly(); return; }
     if (!window.confirm(item.status === "approved" ? "Delete this file from the gallery for everyone?" : "Delete this file?")) return;
     try {
       await productMediaApi.remove(item.id);
@@ -278,6 +303,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
     } catch (error: any) { showToast(error?.message ?? "Could not delete."); }
   };
   const setCover = async (item: ProductMedia) => {
+    if (!writable) { readOnly(); return; }
     try {
       const { media: done } = await productMediaApi.update(item.id, { isCover: true });
       setMedia((current) => current.map((entry) => entry.productId === done.productId ? { ...entry, isCover: entry.id === done.id } : entry));
@@ -286,18 +312,22 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
     } catch (error: any) { showToast(error?.message ?? "Could not set the cover."); }
   };
   const updateMedia = async (item: ProductMedia, patch: { tags?: string[]; usage?: ProductMediaUsage[] }) => {
+    if (!writable) { readOnly(); return; }
     try { const { media: done } = await productMediaApi.update(item.id, patch); replaceMedia(done); }
     catch (error: any) { showToast(error?.message ?? "Could not save."); }
   };
   const rescan = async (item: ProductMedia) => {
+    if (!writable) { readOnly(); return; }
     try { const { media: done } = await productMediaApi.rescan(item.id); replaceMedia(done); showToast("Checked again: passed."); }
     catch (error: any) { showToast(error?.message ?? "Could not check the file."); void data.refresh(); }
   };
   const libraryBulk = async (ids: string[], action: "approve" | "delete" | "tag", extra?: { tag?: string }) => {
+    if (!writable) { readOnly(); return; }
     try { const result = await productMediaApi.bulk(ids, action, extra); applyBulk(result.done); showToast(`${result.done.length} file${result.done.length === 1 ? "" : "s"} updated${result.skipped.length ? `, ${result.skipped.length} skipped` : ""}.`); }
     catch (error: any) { showToast(error?.message ?? "Could not change the files."); }
   };
   const startUpload = (mode: UploadMode, productId?: string) => {
+    if (!writable) { readOnly(); return; }
     if (!canSend) { showToast(data.repUploadsEnabled ? "Your role cannot add photos or videos." : "Sending media is switched off for now."); return; }
     setUpload({ mode, productId });
   };
@@ -306,6 +336,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
   // ── Products tab actions ──────────────────────────────────
   const toggleSelect = (id: string) => setSelected((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const bulkAssign = async (categoryId: string | null) => {
+    if (!writable) { readOnly(); return; }
     const ids = Array.from(selected);
     try {
       await productMediaApi.assignCategory(ids, categoryId);
@@ -316,10 +347,12 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
     } catch (error: any) { showToast(error?.message ?? "Could not set the category."); }
   };
   const exports = {
-    products: () => csvDownload(`products-${new Date().toISOString().slice(0, 10)}.csv`, ["Product", "SKU", "Category", "Status", "Units in stock", "Price", "Stock value", "Photos", "Videos"],
+    products: () => csvDownload(`products-${new Date().toISOString().slice(0, 10)}.csv`,
+      ["Product", "SKU", "Category", "Status", "Units in stock", "Price", ...(showValue ? ["Stock value"] : []), "Photos", "Videos"],
       views.filter((row) => selected.size === 0 || selected.has(row.product.id) || tab !== "products").map(({ product, view: card }) => {
         const own = card.items.filter((item) => item.media);
-        return [product.name, product.sku, card.category?.name ?? "", product.active ? "Active" : "Inactive", card.stock, priceOf(product).amount, Math.max(0, card.stock) * priceOf(product).amount,
+        return [product.name, product.sku, card.category?.name ?? "", product.active ? "Active" : "Inactive", card.stock, priceOf(product).amount,
+          ...(showValue ? [Math.max(0, card.stock) * priceOf(product).amount] : []),
           own.filter((item) => item.kind === "image").length, own.filter((item) => item.kind === "video").length];
       })),
     media: () => csvDownload(`media-${new Date().toISOString().slice(0, 10)}.csv`, ["File", "Product", "Type", "Status", "What it shows", "Tags", "Size (KB)", "Sent by", "Sent on", "Link"],
@@ -379,6 +412,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
     { key: "bundles", label: "Bundles & Offers", icon: <Gift className="h-4 w-4" /> },
     { key: "settings", label: "Settings", icon: <Settings className="h-4 w-4" /> }
   ];
+  const visibleTabs = tabs.filter((item) => viewerIsManager || !MANAGER_TABS.includes(item.key));
   const activeFilterCount = Number(mediaFilter !== "any") + Number(sort !== "best");
   const header = HEADER[tab];
   const outlineButton = "!min-h-0 inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-[13.5px] font-bold text-gray-800 shadow-sm hover:bg-gray-50 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100";
@@ -396,10 +430,10 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
     </div>
   );
   const statsStock = (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+    <div className={`grid grid-cols-2 gap-3 md:grid-cols-3 ${showValue ? "xl:grid-cols-5" : "xl:grid-cols-4"}`}>
       <StatCard icon={<Package className="h-6 w-6" />} tone="bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15" value={activeProducts.length.toLocaleString()} label="Total Products" hint={addedThisMonth ? { text: `+${addedThisMonth} this month`, tone: "up" } : { text: "None added this month", tone: "muted" }} />
       <StatCard icon={<Database className="h-6 w-6" />} tone="bg-blue-50 text-[#1F8FE0] dark:bg-blue-500/15" value={totalUnits.toLocaleString()} label="Total Units in Stock" hint={unitsHint} />
-      <StatCard icon={<Wallet className="h-6 w-6" />} tone="bg-violet-50 text-violet-600 dark:bg-violet-500/15" value={formatValue(totalValue)} label="Total Stock Value" hint={{ text: "At selling price", tone: "muted" }} />
+      {showValue && <StatCard icon={<Wallet className="h-6 w-6" />} tone="bg-violet-50 text-violet-600 dark:bg-violet-500/15" value={formatValue(totalValue)} label="Total Stock Value" hint={{ text: "At selling price", tone: "muted" }} />}
       <StatCard icon={<AlertTriangle className="h-6 w-6" />} tone="bg-amber-50 text-amber-500 dark:bg-amber-500/15" value={lowCount.toLocaleString()} label="Low Stock Items" hint={{ text: `≤ ${lowStockThreshold} ${unitsWord}`, tone: "muted" }} />
       <StatCard icon={<CircleX className="h-6 w-6" />} tone="bg-rose-50 text-rose-500 dark:bg-rose-500/15" value={outCount.toLocaleString()} label="Out of Stock" hint={{ text: `Unavailable in ${props.sellingState}: ${outInState}`, tone: "muted" }} />
     </div>
@@ -454,10 +488,10 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
           {tab === "categories" && (
             <>
               <button type="button" onClick={() => setCategoryGuide((value) => value + 1)} className={outlineButton}><BookOpen className="h-4 w-4" />Category Guide</button>
-              {canApprove && <button type="button" onClick={() => setCategoryAdd((value) => value + 1)} className={primaryButton}><Plus className="h-4 w-4" />Add Category</button>}
+              {canApprove && writable && <button type="button" onClick={() => setCategoryAdd((value) => value + 1)} className={primaryButton}><Plus className="h-4 w-4" />Add Category</button>}
             </>
           )}
-          {tab === "bundles" && canManageCatalog && (
+          {tab === "bundles" && canManageCatalog && writable && (
             <>
               <button type="button" onClick={() => setOfferTemplates((value) => value + 1)} className={outlineButton}><LayoutTemplate className="h-4 w-4" />Offer Templates</button>
               <button type="button" onClick={(event) => setOfferBulk({ at: Date.now(), anchor: event.currentTarget })} className={outlineButton}>Bulk Actions<ChevronDown className="h-4 w-4" /></button>
@@ -467,7 +501,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
         </div>
       </header>
       <PopoverMenu anchor={tabMenuButton.current} open={tabMenuOpen} onClose={() => setTabMenuOpen(false)} width={210}>
-        {tabs.map((item) => <MenuItem key={item.key} icon={item.icon} onClick={() => { setTab(item.key); setTabMenuOpen(false); }}>{item.label}</MenuItem>)}
+        {visibleTabs.map((item) => <MenuItem key={item.key} icon={item.icon} onClick={() => { setTab(item.key); setTabMenuOpen(false); }}>{item.label}</MenuItem>)}
       </PopoverMenu>
       <PopoverMenu anchor={uploadChevron.current} open={uploadMenuOpen} onClose={() => setUploadMenuOpen(false)} width={210}>
         <MenuItem icon={<ImageIcon />} onClick={() => { setUploadMenuOpen(false); startUpload("files"); }}>Choose from gallery</MenuItem>
@@ -493,7 +527,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
         <div className="min-w-0 space-y-4">
           <nav className="-mx-4 overflow-x-auto px-4 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden" aria-label="Products & Stock sections">
             <div className="flex min-w-max gap-1 border-b border-gray-200 dark:border-slate-700">
-              {tabs.map((item) => {
+              {visibleTabs.map((item) => {
                 const on = tab === item.key;
                 return (
                   <button key={item.key} type="button" data-ps-tab={item.key} onClick={() => setTab(item.key)} aria-current={on ? "page" : undefined}
@@ -583,7 +617,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
             <div className="space-y-4">
               {statsStock}
               <StockOverviewTab rows={stockRows} categories={categories} states={props.states} defaultState={props.sellingState} range={range} formatValue={formatValue}
-                canManageCatalog={canManageCatalog} showStockNumbers={showStockNumbers} unitsWord={unitsWord}
+                canManageCatalog={canManageCatalog && writable} showStockNumbers={showStockNumbers} unitsWord={unitsWord} showValue={showValue}
                 onRowAction={(action, productId) => { if (action === "details") setDetails(productId); else if (action === "gallery") openViewerFor(productId, 0); else if (action === "stock") props.onManageStock(productId); else openCrossSell(productId); }} />
             </div>
           )}
@@ -598,12 +632,12 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
               onRequestChanges={(item) => setRejecting({ items: [item], mode: "changes" })} onDelete={remove} onRescan={rescan} onOpen={openMediaPreview} />
           )}
           {tab === "categories" && (
-            <CategoriesTab categories={categories} setCategories={data.setCategories} products={catalogue} statsFor={categoryStats} canManage={canApprove} formatValue={formatValue}
+            <CategoriesTab categories={categories} setCategories={data.setCategories} products={catalogue} statsFor={categoryStats} canManage={canApprove && writable} showValue={showValue} formatValue={formatValue}
               onViewProducts={(categoryId) => { setCategoryFilter(categoryId); setTab("products"); }} onAssigned={props.onCategoryAssigned} onToast={showToast}
               addRequest={categoryAdd} guideRequest={categoryGuide} />
           )}
           {tab === "bundles" && (
-            <BundlesTab products={catalogue as unknown as OfferProduct[]} canEdit={canManageCatalog}
+            <BundlesTab products={catalogue as unknown as OfferProduct[]} canEdit={canManageCatalog && writable} showValue={showValue}
               stockOf={(productId) => { const product = products.find((entry) => entry.id === productId); return product ? stockOf(product) : 0; }}
               stateQty={(productId, state) => { const product = products.find((entry) => entry.id === productId); return product ? props.stateQty(product, state) : 0; }}
               states={props.states} imageOf={(productId, packageImage) => packageImage || coverOf(productId)} formatMoney={formatPrice}
@@ -611,7 +645,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
               createRequest={offerCreate} templatesRequest={offerTemplates} bulkRequest={offerBulk} />
           )}
           {tab === "settings" && (
-            <SettingsTab settings={settings} onSaved={data.setSettings} canApprove={canApprove} canManageCatalog={canManageCatalog}
+            <SettingsTab settings={settings} onSaved={data.setSettings} canApprove={canApprove && writable} canManageCatalog={canManageCatalog && writable}
               lowStockThreshold={lowStockThreshold} onLowStockThreshold={props.onLowStockThreshold} currencies={props.currencies} offerCounts={offerCounts}
               categoryCount={categories.length} onGoCategories={() => setTab("categories")} onExport={(what) => exports[what]()} onToast={showToast} />
           )}
@@ -619,7 +653,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
 
         {tab === "products" && (
           <MediaRail recent={recent} canApprove={canApprove} canSend={canSend} repUploadsEnabled={data.repUploadsEnabled} productName={productName}
-            currentUserId={currentUserId} onUpload={(mode) => startUpload(mode)} onViewAll={() => setTab("approvals")} onOpenMedia={openMediaPreview}
+            currentUserId={currentUserId} onUpload={(mode) => startUpload(mode)} onViewAll={() => setTab(canApprove ? "approvals" : "library")} onOpenMedia={openMediaPreview}
             onApprove={approve} onReject={(item) => setRejecting({ items: [item], mode: "reject" })} onDelete={remove} onOpenGuide={() => setGuideOpen(true)} />
         )}
       </div>
