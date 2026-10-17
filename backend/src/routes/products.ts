@@ -8,6 +8,7 @@ import { logger } from "../lib/logger.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
 import { costChangeImpact, needsFreezing } from "../lib/order-cogs.js";
+import { frameBlockReason, landingPagesFromLinks } from "../lib/landing-pages.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -104,6 +105,55 @@ router.get("/", async (req, res) => {
         ? rows.map(productForInventoryOperations)
         : rows
   );
+});
+
+// ── GET /api/products/landing-pages ───────────────────────
+// Products & Stock "View landing page": every product's pages, read from its
+// Tracking Hub links. Open to everyone who can see the product list - only
+// the page address and the link's name leave, never Pixel ids or tokens.
+const loadLandingPages = async (orgId: string) => {
+  const { data, error } = await supabase
+    .from("meta_capi_configs")
+    .select("product_id, landing_page_url, label, active")
+    .eq("org_id", orgId)
+    .not("product_id", "is", null)
+    .not("landing_page_url", "is", null);
+  if (error) throw error;
+  return landingPagesFromLinks(data ?? []);
+};
+
+router.get("/landing-pages", async (req, res) => {
+  try {
+    res.json({ pages: await loadLandingPages(req.user!.orgId) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load landing pages." });
+  }
+});
+
+// ── GET /api/products/landing-pages/frame-check?url= ──────
+// Whether the site lets Protohub show the page inside its window. Only pages
+// on the list above are fetched, so this cannot be pointed anywhere else.
+router.get("/landing-pages/frame-check", async (req, res) => {
+  const wanted = String(req.query.url ?? "");
+  let pages;
+  try {
+    pages = await loadLandingPages(req.user!.orgId);
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load landing pages." }); return;
+  }
+  if (!pages.some((page) => page.url === wanted)) { res.status(404).json({ error: "That page is not on any product's tracking link." }); return; }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(wanted, { redirect: "follow", signal: controller.signal, headers: { "User-Agent": "Protohub landing page preview" } });
+    void response.body?.cancel().catch(() => undefined);
+    res.json({ blocked: frameBlockReason(response.headers, req.get("origin") ?? null) });
+  } catch {
+    // Could not reach it from here: let the browser try, it may still load.
+    res.json({ blocked: null });
+  } finally {
+    clearTimeout(timer);
+  }
 });
 
 // ── POST /api/products ────────────────────────────────────
