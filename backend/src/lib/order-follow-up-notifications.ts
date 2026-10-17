@@ -3,6 +3,7 @@ import { logger } from "./logger.js";
 import { getOrgPushBranding } from "./push-branding.js";
 import { sendPushToUser } from "./push.js";
 import { dueIsoMoment, sendAssignedRepFollowUpReminderSms, withinReminderWindow } from "./sms.js";
+import { followUpReminderKey, sameFollowUpReminder } from "./follow-up-reminder-key.js";
 
 type DueReminderOrder = {
   id: string;
@@ -165,20 +166,18 @@ async function reminderAlreadyNotified(
   recipientId: string,
   orderId: string,
   title: string,
-  message: string
+  reminderKey: string
 ) {
   const since = new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString();
   const { data, error } = await supabase
     .from("system_notifications")
-    .select("id")
+    .select("message")
     .eq("org_id", orgId)
     .eq("recipient_id", recipientId)
     .eq("order_id", orderId)
     .eq("type", ORDER_FOLLOW_UP_TYPE)
     .eq("title", title)
-    .eq("message", message)
-    .gte("created_at", since)
-    .limit(1);
+    .gte("created_at", since);
 
   if (error) {
     logger.warn("follow-up notification dedupe failed", {
@@ -190,7 +189,7 @@ async function reminderAlreadyNotified(
     return false;
   }
 
-  return (data?.length ?? 0) > 0;
+  return (data ?? []).some((row) => sameFollowUpReminder(String(row.message ?? ""), reminderKey));
 }
 
 async function notifyRecipients(
@@ -198,6 +197,7 @@ async function notifyRecipients(
   order: DueReminderOrder,
   title: string,
   message: string,
+  reminderKey: string,
   tag: string,
   fallbackScheduledLabel: string,
   fallbackNoteText?: string
@@ -219,7 +219,7 @@ async function notifyRecipients(
   const pushQueue: Array<{ recipientId: string; role: string }> = [];
 
   for (const [recipientId, role] of recipients.entries()) {
-    const exists = await reminderAlreadyNotified(orgId, recipientId, order.id, title, message);
+    const exists = await reminderAlreadyNotified(orgId, recipientId, order.id, title, reminderKey);
     if (exists) continue;
     rows.push({
       org_id: orgId,
@@ -286,29 +286,24 @@ async function notifyRecipients(
 
 async function notifyScheduledReminder(orgId: string, order: DueReminderOrder, scheduledLabel: string) {
   const title = `Follow-up Due #${order.id}`;
+  const fixedStart = [order.customer, orderDisplayName(order), `scheduled for ${scheduledLabel}`].filter(Boolean).join(" · ");
   const message = trimText(
     [
-      order.customer,
-      orderDisplayName(order),
-      `scheduled for ${scheduledLabel}`,
+      fixedStart,
       order.response?.trim() || null,
       formatNotificationMoney(order.amount, order.currency)
     ].filter(Boolean).join(" · ")
   );
-  await notifyRecipients(orgId, order, title, message, `follow-up-scheduled-${order.id}-${scheduledLabel}`, scheduledLabel, order.response ?? undefined);
+  await notifyRecipients(orgId, order, title, message, followUpReminderKey(message, fixedStart), `follow-up-scheduled-${order.id}-${scheduledLabel}`, scheduledLabel, order.response ?? undefined);
 }
 
 async function notifyTimelineReminder(orgId: string, order: DueReminderOrder, note: TimelineReminderNote, scheduledLabel: string) {
   const title = `Follow-up Due #${order.id}`;
-  const message = trimText(
-    [
-      order.customer,
-      orderDisplayName(order),
-      `follow-up at ${scheduledLabel}`,
-      note.text.trim() || null
-    ].filter(Boolean).join(" · ")
-  );
-  await notifyRecipients(orgId, order, title, message, `follow-up-note-${order.id}-${note.id}-${scheduledLabel}`, scheduledLabel, note.text.trim() || undefined);
+  // The note text stays in the key: two different notes due at the same time
+  // are two different reminders.
+  const fixedStart = [order.customer, orderDisplayName(order), `follow-up at ${scheduledLabel}`, note.text.trim() || null].filter(Boolean).join(" · ");
+  const message = trimText(fixedStart);
+  await notifyRecipients(orgId, order, title, message, followUpReminderKey(message, fixedStart), `follow-up-note-${order.id}-${note.id}-${scheduledLabel}`, scheduledLabel, note.text.trim() || undefined);
 }
 
 export async function syncDueOrderFollowUpNotifications(limitPerOrg = 300) {
