@@ -4934,5 +4934,6 @@ export const productMediaApi = {
   removeCategory: (id: string) => del<{ ok: boolean }>(`/api/product-media/categories/${id}`),
   assignCategory: (productIds: string[], categoryId: string | null) => post<{ updated: number }>("/api/product-media/categories/assign", { productIds, categoryId }),
   stockTrend: () => get<{ days: Array<{ day: string; totalUnits: number }> }>("/api/product-media/stock-trend"),
+  orderCounts: () => get<{ days: number; counts: Record<string, number> }>("/api/product-media/order-counts"),
   saveStockTotal: (totalUnits: number) => post<{ ok: boolean }>("/api/product-media/stock-trend", { totalUnits })
 };
