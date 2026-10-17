@@ -9,8 +9,8 @@ import { humanFieldErrors } from "../lib/validation-message.js";
 import { deliver } from "../lib/weekly-report-notifications.js";
 import {
   ACCEPTED_TYPES, IMAGE_TYPE_KEYS, MAX_PENDING_PER_PERSON, MEDIA_APPROVER_ROLES, MEDIA_LABELS, MEDIA_USAGE, SNIFF_BYTES, TYPE_KEYS,
-  UPLOADS_PER_HOUR, VIDEO_TYPE_KEYS, canApproveMedia, canSendMedia, cleanFileName, cleanImportUrl, extensionOf, isPrivateAddress, kindOf, nameFromUrl,
-  sniffMediaType, type RealMediaType
+  UPLOADS_PER_HOUR, VIDEO_TYPE_KEYS, canApproveMedia, canSendMedia, cleanFileName, cleanImportUrl, describeNotPicture, extensionOf, isPrivateAddress, kindOf, nameFromUrl,
+  sniffLinkPicture, sniffMediaType, type RealMediaType
 } from "../lib/media-safety.js";
 
 // ── Products & Stock: media gallery, approvals, categories, settings ────────
@@ -412,7 +412,7 @@ const IMPORT_TIMEOUT_MS = 20000;
 const IMPORT_MAX_REDIRECTS = 3;
 
 /** Fetch a public picture, refusing private networks at every redirect, capped in size. */
-async function fetchPublicPicture(start: URL, maxBytes: number): Promise<Buffer> {
+async function fetchPublicPicture(start: URL, maxBytes: number): Promise<{ data: Buffer; contentType: string | null }> {
   let url = start;
   for (let hop = 0; hop <= IMPORT_MAX_REDIRECTS; hop += 1) {
     const checked = cleanImportUrl(url.toString());
@@ -443,7 +443,7 @@ async function fetchPublicPicture(start: URL, maxBytes: number): Promise<Buffer>
       if (total > maxBytes) { await reader.cancel().catch(() => undefined); throw fail(413, `That picture is bigger than ${Math.round(maxBytes / 1048576)} MB.`); }
       chunks.push(value);
     }
-    return Buffer.concat(chunks);
+    return { data: Buffer.concat(chunks), contentType: response.headers.get("content-type") };
   }
   throw fail(422, "That link redirects too many times.");
 }
@@ -475,10 +475,14 @@ router.post("/import-url", async (req, res) => {
     if (!approver && (waiting ?? 0) >= MAX_PENDING_PER_PERSON) throw fail(429, `You already have ${MAX_PENDING_PER_PERSON} files waiting for approval. Wait for those to be reviewed first.`);
 
     const maxBytes = settings.maxImageMb * 1024 * 1024;
-    const original = await fetchPublicPicture(url, maxBytes);
-    const realType = sniffMediaType(new Uint8Array(original.subarray(0, SNIFF_BYTES)));
-    if (!realType || kindOf(realType) !== "image") throw fail(422, "That link is not a photo (JPG, PNG or WEBP), so it was refused.");
-    if (!settings.allowedImageTypes.includes(TYPE_KEYS[realType])) throw fail(415, `${TYPE_KEYS[realType].toUpperCase()} files are switched off in Settings.`);
+    const fetched = await fetchPublicPicture(url, maxBytes);
+    const original = fetched.data;
+    const head = new Uint8Array(original.subarray(0, SNIFF_BYTES));
+    // AVIF is accepted from links (shop image servers send it); it is
+    // redrawn as WebP like everything else. Settings types cover the rest.
+    const pictureType = sniffLinkPicture(head);
+    if (!pictureType) throw fail(422, describeNotPicture(head, fetched.contentType));
+    if (pictureType !== "avif" && !settings.allowedImageTypes.includes(pictureType)) throw fail(415, `${pictureType.toUpperCase()} files are switched off in Settings.`);
     const main = await cleanImage(original, IMAGE_MAX_EDGE, 82).catch(() => { throw fail(422, "This picture could not be opened, so it was refused."); });
     const thumb = await cleanImage(main.data, THUMB_EDGE, 72);
 
@@ -492,7 +496,8 @@ router.post("/import-url", async (req, res) => {
       id, org_id: orgId, branch_id: productBranch, product_id: product.id, kind: "image", status: "pending",
       label: body.label, caption: (body.caption ?? "").trim().slice(0, 300), tags: cleanTags(body.tags), batch_id: body.batchId ?? null,
       original_name: name, mime: "image/webp", size_bytes: main.data.length, width: main.width, height: main.height,
-      holding_path: mainPath, holding_thumb_path: thumbPath, scan: { ...scanRecord(realType, original.length, maxBytes, true), source: url.hostname },
+      holding_path: mainPath, holding_thumb_path: thumbPath,
+      scan: { ...scanRecord("image/webp", original.length, maxBytes, true), fileType: `Valid (${pictureType.toUpperCase()})`, source: url.hostname },
       uploaded_by: req.user!.id, uploaded_by_name: req.user!.name ?? "", uploaded_by_role: role
     }).select("*").single();
     if (insertError) { await removeFiles(HOLD, [mainPath, thumbPath]); throw insertError; }
