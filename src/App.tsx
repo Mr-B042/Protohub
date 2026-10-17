@@ -73640,6 +73640,20 @@ ${waybillLineItems(w).length > 1
             onPackagePatched={(productId, packageId, patch) => setProducts((prev) => prev.map((product) => product.id === productId
               ? { ...product, packages: product.packages.map((pkg) => pkg.id === packageId ? { ...pkg, ...(patch as Partial<ProductPackage>) } : pkg) }
               : product))}
+            hubs={inventoryStateHubRows.map((row) => {
+              const stockStates = stateStockStateOptions.length > 0 ? stateStockStateOptions : ["Lagos", "Abuja", "Rivers", "Edo", "Imo"];
+              const stockRows = stockRowsForStateHub(row.agent, row.location);
+              return {
+                key: `${row.agentId}:${row.location.id}`,
+                agentName: row.agentName,
+                place: row.location.name || row.location.city || row.location.state,
+                state: stockStates.find((state) => normalizeAgentState(state) === normalizeAgentState(row.location.state)) ?? row.location.state,
+                qtyOf: (productId: string) => {
+                  const stock = stockRows.find((item) => item.productId === productId);
+                  return Math.max(0, Number(stock?.quantity ?? 0) - Number(stock?.defective ?? 0) - Number(stock?.missing ?? 0));
+                }
+              };
+            })}
             onPackageDeleted={(productId, packageId) => setProducts((prev) => prev.map((product) => product.id === productId
               ? { ...product, packages: product.packages.filter((pkg) => pkg.id !== packageId) }
               : product))}
