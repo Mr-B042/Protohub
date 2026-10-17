@@ -871,6 +871,28 @@ router.post("/categories/assign", async (req, res) => {
 // ── Total Units trend ─────────────────────────────────────
 // No stock history existed before 17 Oct 2026, so the cards keep their own:
 // the total shown is saved once per day when a manager opens the page.
+// ── Orders per product (last 30 days) ─────────────────────
+// Bright, 17 Oct 2026: busiest products first on Products & Stock.
+// products.units_sold is never kept up to date (0 everywhere), so the
+// ranking counts real orders. Review-hold repeats are left out, as in
+// every other count.
+router.get("/order-counts", async (req, res) => {
+  try {
+    const since = new Date(Date.now() - 30 * 86400000).toISOString();
+    const counts: Record<string, number> = {};
+    const page = 1000;
+    for (let from = 0; from < 50000; from += page) {
+      const { data, error } = await supabase.from("orders").select("product_id")
+        .eq("org_id", orgOf(req)).eq("review_hold", false).gte("created_at", since)
+        .not("product_id", "is", null).order("id").range(from, from + page - 1);
+      if (error) throw error;
+      for (const row of data ?? []) counts[row.product_id] = (counts[row.product_id] ?? 0) + 1;
+      if ((data ?? []).length < page) break;
+    }
+    res.json({ days: 30, counts });
+  } catch (error) { sendError(res, error, "Could not count orders."); }
+});
+
 router.get("/stock-trend", async (req, res) => {
   try {
     const since = new Date(Date.now() - 45 * 86400000).toISOString().slice(0, 10);

@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from "react";
-import { CheckCircle2, ChevronLeft, ChevronRight, CircleAlert, Clock3, Eye, Globe, Images, MoreHorizontal, Package, PackageCheck, Tag, Upload, XCircle } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, CircleAlert, Clock3, Eye, Flame, Globe, Images, MoreHorizontal, Package, PackageCheck, Tag, Upload, XCircle } from "lucide-react";
 import type { GalleryItem } from "./MediaViewer";
 import { MenuItem, PopoverMenu, categoryTone } from "./shared";
 
@@ -19,6 +19,8 @@ export type ProductView = {
   // From Settings: the word for a unit, whether reps see numbers, the picture
   // shown when a product has no photos yet.
   unitsWord: string;
+  // Orders in the last 30 days (real orders, not the stale units_sold).
+  orders30d: number;
   showStockNumbers: boolean;
   fallbackImage: string | null;
 };
@@ -149,6 +151,11 @@ export function ProductCard({ view, actions }: { view: ProductView; actions: Car
           {view.category && <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${categoryTone(view.category.color)}`}>{view.category.name}</span>}
         </div>
         <p className="m-0 mt-1.5 line-clamp-1 text-[12.5px] text-gray-500 dark:text-slate-400">{view.description || "No description yet."}</p>
+        {view.orders30d > 0 && (
+          <p className="m-0 mt-1.5 inline-flex items-center gap-1 text-[12px] font-bold text-orange-600 dark:text-orange-400">
+            <Flame className="h-3.5 w-3.5" />{view.orders30d.toLocaleString()} order{view.orders30d === 1 ? "" : "s"} · last 30 days
+          </p>
+        )}
         <div className="mt-3 flex items-end justify-between gap-2">
           <span className={`inline-flex items-center gap-1.5 text-[13px] font-bold ${line.tone}`}>{line.icon}{line.text}</span>
           <strong className="shrink-0 text-[19px] font-black leading-none tracking-tight text-gray-900 dark:text-slate-100">{view.priceText}</strong>

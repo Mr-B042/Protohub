@@ -27,7 +27,7 @@ import { UploadSheet } from "./UploadSheet";
 type TabKey = "products" | "stock" | "library" | "approvals" | "categories" | "bundles" | "settings";
 type StockFilter = "all" | "in" | "low" | "out";
 type MediaFilter = "any" | "photos" | "videos" | "none" | "pending";
-type SortKey = "best" | "name" | "price" | "stock";
+type SortKey = "best" | "orders" | "name" | "price" | "stock";
 
 const VIEW_KEY = "protohub.productsStock.view";
 const MANAGER_ROLES = ["Owner", "Admin", "Manager"];
@@ -106,6 +106,9 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>("any");
   const [sort, setSort] = useState<SortKey>("best");
   const [view, setView] = useState<"grid" | "list">(() => readView() ?? "grid");
+  // Busiest first (Bright, 17 Oct 2026): real orders in the last 30 days.
+  const [orderCounts, setOrderCounts] = useState<Record<string, number>>({});
+  useEffect(() => { productMediaApi.orderCounts().then((result) => setOrderCounts(result?.counts ?? {})).catch(() => undefined); }, []);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -186,9 +189,9 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
       items: galleryItemsFor(own, packageImages),
       pendingCount: own.filter((item) => item.status === "pending" && (canApprove || item.uploadedBy === currentUserId)).length,
       landingPageCount: props.landingPageCount(product.id),
-      unitsWord, showStockNumbers, fallbackImage: settings?.defaultMainImageUrl ?? null
+      unitsWord, showStockNumbers, fallbackImage: settings?.defaultMainImageUrl ?? null, orders30d: orderCounts[product.id] ?? 0
     };
-  }, [stockOf, mediaByProduct, categoryById, priceOf, lowStockThreshold, settings, formatPrice, canApprove, currentUserId, props, unitsWord, showStockNumbers, showMoney]);
+  }, [stockOf, mediaByProduct, categoryById, priceOf, lowStockThreshold, settings, formatPrice, canApprove, currentUserId, props, unitsWord, showStockNumbers, showMoney, orderCounts]);
   const views = useMemo(() => catalogue.map((product) => ({ product, view: viewOf(product) })), [catalogue, viewOf]);
   const coverOf = useCallback((productId: string) => {
     const row = views.find((entry) => entry.product.id === productId);
@@ -213,7 +216,9 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
     }).sort((a, b) => sort === "name" ? a.product.name.localeCompare(b.product.name)
       : sort === "price" ? priceOf(a.product).amount - priceOf(b.product).amount
       : sort === "stock" ? b.view.stock - a.view.stock
-      : Number(b.product.active) - Number(a.product.active) || Number(b.view.stock > 0) - Number(a.view.stock > 0) || b.product.unitsSold - a.product.unitsSold || a.product.name.localeCompare(b.product.name));
+      : sort === "orders" ? b.view.orders30d - a.view.orders30d || a.product.name.localeCompare(b.product.name)
+      // Best match: active first, then the most orders in 30 days, then in stock.
+      : Number(b.product.active) - Number(a.product.active) || b.view.orders30d - a.view.orders30d || Number(b.view.stock > 0) - Number(a.view.stock > 0) || a.product.name.localeCompare(b.product.name));
   }, [views, search, categoryFilter, statusFilter, stockFilter, mediaFilter, sort, priceOf]);
 
   // ── Headline numbers ──────────────────────────────────────
@@ -592,7 +597,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
                   <MenuItem key={key} icon={mediaFilter === key ? <Check /> : <span className="block h-4 w-4" />} onClick={() => setMediaFilter(key)}>{text}</MenuItem>
                 ))}
                 <p className="m-0 mt-1 border-t border-gray-100 px-3.5 pb-1 pt-2 text-[11px] font-bold uppercase tracking-wide text-gray-400 dark:border-slate-800">Sort by</p>
-                {([["best", "Best match"], ["name", "Name A-Z"], ...(showMoney ? [["price", "Price"]] as const : []), ["stock", "Most stock"]] as const).map(([key, text]) => (
+                {([["best", "Best match"], ["orders", "Most orders (30 days)"], ["name", "Name A-Z"], ...(showMoney ? [["price", "Price"]] as const : []), ["stock", "Most stock"]] as const).map(([key, text]) => (
                   <MenuItem key={key} icon={sort === key ? <Check /> : <span className="block h-4 w-4" />} onClick={() => setSort(key)}>{text}</MenuItem>
                 ))}
               </PopoverMenu>
