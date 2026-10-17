@@ -527,13 +527,11 @@ router.get("/team-performance", async (req, res) => {
         aov: rep.aov,
         upsellRate: rep.upsellRate,
         crossSellRate: rep.crossSellRate,
-        // The real figures behind the two rates (Bright, 17 Oct 2026): how
-        // many delivered orders carried an upsell / cross-sell, and the naira
-        // each one added on top of the main order.
+        // The real figure behind the two rates (Bright, 17 Oct 2026): how
+        // many delivered orders carried an upsell / cross-sell. Count only -
+        // the naira amount is deliberately not shown.
         upsellCount: rep.upsellCount,
         crossSellCount: rep.crossSellCount,
-        incrementalRevenueUpsell: rep.incrementalRevenueUpsell,
-        incrementalRevenueCrossSell: rep.incrementalRevenueCrossSell,
         vsLastWeekAovPct,
         status: onTarget ? "On Target" : "Needs Attention"
       };
