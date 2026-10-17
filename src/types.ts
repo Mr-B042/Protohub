@@ -270,6 +270,8 @@ export type Product = {
   freeGiftProductIds?: string[];
   freeGiftStateRestrictions?: { [productId: string]: string[] };
   formCustomText?: string;
+  // Products & Stock category chip (migration 304); null = no category.
+  categoryId?: string | null;
 };
 
 export type CrossSellLine = {

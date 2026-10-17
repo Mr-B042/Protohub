@@ -132,6 +132,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { OrderSourceLogo } from "./components/OrderSourceLogo";
 import { LandingPagePreview, useProductLandingPages } from "./components/LandingPagePreview";
+import { ProductsStockPage } from "./components/products-stock/ProductsStockPage";
 import { periodBounds } from "./lib/period-bounds";
 import { WhatsAppIcon } from "./components/WhatsAppIcon";
 import {
@@ -1147,6 +1148,8 @@ type Product = {
   /** How one of this product is counted ("set"/"sets"). Empty = worked out from the name. */
   unitSingular?: string | null;
   unitPlural?: string | null;
+  /** Products & Stock category chip (migration 304); null = no category. */
+  categoryId?: string | null;
 };
 type CrossSellLine = {
   id: string;
@@ -73583,11 +73586,45 @@ ${waybillLineItems(w).length > 1
         ) : repConsoleTab === "Upsell & Cross-sell Log" ? (
           renderSalesExpansionTab()
         ) : repConsoleTab === "Products & Stock" ? (
+          <>
+          <ProductsStockPage
+            products={catalogProducts}
+            currentUserId={authUser?.id ?? ""}
+            canManageCatalog={canManageProductCatalog}
+            stockOf={totalProductStockLive}
+            states={stateStockStateOptions.length > 0 ? stateStockStateOptions : ["Lagos", "Abuja", "Rivers", "Edo", "Imo"]}
+            stateQty={(product, state) => inventoryStateHubRows
+              .filter((row) => normalizeAgentState(row.location.state) === normalizeAgentState(state))
+              .reduce((sum, row) => {
+                const stock = stockRowsForStateHub(row.agent, row.location).find((item) => item.productId === product.id);
+                return sum + Math.max(0, Number(stock?.quantity ?? 0) - Number(stock?.defective ?? 0) - Number(stock?.missing ?? 0));
+              }, 0)}
+            lowStockThreshold={smartStockLowStockThreshold}
+            onLowStockThreshold={(value) => setSmartStockRules((prev) => ({ ...prev, lowStockThreshold: value }))}
+            pricingFor={(product, code) => {
+              const pricing = product.pricings.find((entry) => entry.currency === code) ?? primaryPricing(product);
+              return { amount: pricing?.sellingPrice ?? 0, currency: pricing?.currency ?? "NGN" };
+            }}
+            formatMoney={(amount, currency) => formatProductMoney(amount, currency as ProductCurrencyCode)}
+            currencies={Array.from(new Set(catalogProducts.flatMap((product) => product.pricings.map((pricing) => pricing.currency))))}
+            sellingState={repProductState}
+            landingPageCount={(productId) => (productLandingPages ?? []).filter((page) => page.productId === productId).length}
+            onOpenLanding={setRepProductLandingId}
+            onAddProduct={openInventoryAddProductRoute}
+            onManageStock={(productId) => openInventoryUpdateStockRoute(productId)}
+            onEditProduct={openInventoryEditProductRoute}
+            onEditPackage={openInventoryEditPackageRoute}
+            onPackageCreated={(productId, saved) => setProducts((prev) => prev.map((product) => product.id === productId
+              ? { ...product, packages: [...product.packages, { companionProducts: [], packageComponents: [], imageUrls: [], description: "", ...saved } as ProductPackage] }
+              : product))}
+            onPackagePatched={(productId, packageId, patch) => setProducts((prev) => prev.map((product) => product.id === productId
+              ? { ...product, packages: product.packages.map((pkg) => pkg.id === packageId ? { ...pkg, ...patch } : pkg) }
+              : product))}
+            onCrossSell={(productId) => { setRepProductBuyingId(productId); setRepProductView("recommended"); }}
+            onCategoryAssigned={(productIds, categoryId) => setProducts((prev) => prev.map((product) => productIds.includes(product.id) ? { ...product, categoryId } : product))}
+            showToast={showToast}
+            renderCrossSellHelper={() => (
           <div className="space-y-6">
-          <header>
-            <h1 className="m-0 text-2xl font-black text-gray-900 dark:text-slate-100">Products &amp; Stock</h1>
-            <p className="mt-1 text-sm font-medium text-gray-500 dark:text-slate-400">Know what&apos;s available before you sell or cross-sell.</p>
-          </header>
           {(() => {
             const states = stateStockStateOptions.length > 0 ? stateStockStateOptions : ["Lagos", "Abuja", "Rivers", "Edo", "Imo"];
             const stockInState = (product: Product) => inventoryStateHubRows
@@ -73632,7 +73669,6 @@ ${waybillLineItems(w).length > 1
             }).filter((row) => row.quantity > 0).sort((a, b) => b.quantity - a.quantity);
             const guideProduct = active.find((product) => product.id === repProductGuideId) ?? null;
             const landingPagesFor = (productId: string) => (productLandingPages ?? []).filter((page) => page.productId === productId);
-            const landingProduct = active.find((product) => product.id === repProductLandingId) ?? null;
             const companyUnitsAvailable = active.reduce((sum, product) => sum + totalProductStockLive(product), 0);
             const repProductVisible = repProductShowAll ? filtered.length : 6;
             const shownIds = new Set(filtered.slice(0, repProductVisible).map((product) => product.id));
@@ -73648,36 +73684,9 @@ ${waybillLineItems(w).length > 1
               : repProductView === "unavailable" ? "Out of stock - offer an alternative"
               : repProductView === "all" ? "Everything in the catalogue" : "High availability and strong demand";
             return <>
-              {/* ── Headline counts ─────────────────────────────
-                  ⚠️ The tile's big number is what the rep can sell in the
-                  CHOSEN STATE; the sub-line carries the company figure. The
-                  mockup labelled this one "Total across all states", which
-                  would have put a company number under a state-scoped tile
-                  sitting beside three state-scoped ones. Both are shown
-                  instead, each said out loud, rather than one number that
-                  means whichever the reader assumes. */}
-              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                {[
-                  { label: "Active Products", value: active.length.toLocaleString(), hint: "Products you can sell",
-                    icon: <Package className="h-5 w-5" />, tone: "bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300" },
-                  { label: "Units Available", value: totalAvailable.toLocaleString(), hint: `${companyUnitsAvailable.toLocaleString()} across all states`,
-                    icon: <Boxes className="h-5 w-5" />, tone: "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300" },
-                  { label: "Low Stock", value: low.length.toLocaleString(), hint: "Need attention",
-                    icon: <AlertTriangle className="h-5 w-5" />, tone: "bg-amber-50 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300" },
-                  { label: "Out of Stock", value: unavailable.length.toLocaleString(), hint: `Unavailable in ${repProductState}`,
-                    icon: <CircleX className="h-5 w-5" />, tone: "bg-rose-50 text-rose-600 dark:bg-rose-500/15 dark:text-rose-300" }
-                ].map((stat) => (
-                  <article key={stat.label} className="flex items-center gap-3 rounded-2xl border border-gray-200/80 bg-white p-4 shadow-sm ring-1 ring-slate-900/[0.02] dark:border-slate-700 dark:bg-[#0c1722] dark:ring-0">
-                    <span className={`inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${stat.tone}`}>{stat.icon}</span>
-                    <span className="min-w-0">
-                      <strong className="block text-2xl font-black leading-none tracking-tight tabular-nums text-gray-900 dark:text-slate-100">{stat.value}</strong>
-                      <span className="mt-1 block truncate text-[12px] font-bold text-gray-700 dark:text-slate-300">{stat.label}</span>
-                      <span className="block truncate text-[11px] font-medium text-gray-400 dark:text-slate-500">{stat.hint}</span>
-                    </span>
-                  </article>
-                ))}
-              </div>
-
+              {/* The four headline tiles that used to sit here moved up into
+                  ProductsStockPage (company-wide). This tab's state-scoped
+                  counts stay on its own tabs below (Low Stock / Unavailable). */}
               {/* ⚠️ The rail is a COLUMN, not a footer. It answers "what else
                   can I sell this caller" while the rep is still looking at the
                   grid - underneath the products it was scrolled past during the
@@ -74015,10 +74024,6 @@ ${waybillLineItems(w).length > 1
                   </aside>
                 </div>
               </div>
-                {landingProduct && landingPagesFor(landingProduct.id).length > 0 && (
-                  <LandingPagePreview productName={landingProduct.name} pages={landingPagesFor(landingProduct.id)}
-                    onClose={() => setRepProductLandingId("")} onToast={showToast} />
-                )}
                 {guideProduct && <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/50 p-2 sm:items-center sm:p-6" onClick={() => setRepProductGuideId("")}><section className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}><div className="flex items-start justify-between gap-4"><div><span className="text-[10px] font-black uppercase tracking-widest text-blue-600">Selling guide</span><h2 className="mt-1 text-xl font-black text-gray-900 dark:text-slate-100">{guideProduct.name}</h2><p className="mt-1 text-sm text-gray-500 dark:text-slate-400">{guideProduct.description || "No product description has been added yet."}</p></div><button type="button" onClick={() => setRepProductGuideId("")} className="rounded-lg border border-gray-200 p-2 dark:border-slate-700"><X className="h-4 w-4" /></button></div><div className="mt-5 grid gap-4 sm:grid-cols-2"><article className="rounded-xl bg-gray-50 p-4 dark:bg-slate-950"><h3 className="text-xs font-black uppercase text-gray-400">Packages &amp; prices</h3><div className="mt-2 space-y-2">{guideProduct.packages.filter((pkg) => pkg.active).map((pkg) => <div key={pkg.id} className="flex justify-between gap-3 text-sm"><span className="font-bold text-gray-700 dark:text-slate-200">{pkg.name} · {pkg.quantity} pcs</span><strong className="text-blue-600">{formatProductMoney(pkg.price, pkg.currency)}</strong></div>)}{!guideProduct.packages.some((pkg) => pkg.active) && <p className="text-xs text-gray-500">No active packages configured.</p>}</div></article><article className="rounded-xl bg-gray-50 p-4 dark:bg-slate-950"><h3 className="text-xs font-black uppercase text-gray-400">Stock by state</h3><div className="mt-2 flex flex-wrap gap-2">{states.map((state) => { const quantity = inventoryStateHubRows.filter((row) => normalizeAgentState(row.location.state) === normalizeAgentState(state)).reduce((sum, row) => { const stock = stockRowsForStateHub(row.agent, row.location).find((item) => item.productId === guideProduct.id); return sum + Math.max(0, Number(stock?.quantity ?? 0) - Number(stock?.defective ?? 0) - Number(stock?.missing ?? 0)); }, 0); return <span key={state} className={`rounded-full px-2.5 py-1 text-xs font-black ${quantity > 0 ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-400"}`}>{state} {quantity}</span>; })}</div></article><article className="rounded-xl bg-blue-50 p-4 dark:bg-blue-500/10"><h3 className="text-xs font-black uppercase text-blue-600">Selling points</h3><ul className="mt-2 space-y-1 text-sm font-semibold text-gray-700 dark:text-slate-200"><li>• Confirm the customer&apos;s main need first.</li><li>• Quote the active package that best fits their budget.</li><li>• Confirm {repProductState} availability before promising delivery.</li></ul></article><article className="rounded-xl bg-violet-50 p-4 dark:bg-violet-500/10"><h3 className="text-xs font-black uppercase text-violet-600">Short sales script</h3><p className="mt-2 text-sm font-semibold leading-relaxed text-gray-700 dark:text-slate-200">“Based on what you need, {guideProduct.name} is a good fit. We currently have stock serving {repProductState}. Would you like the best-value package, and may I also show you an item customers commonly buy with it?”</p></article></div></section></div>}
               <footer className="flex flex-wrap items-center justify-center gap-3 pt-1 text-[11px] font-semibold text-gray-400">
                 <span className="inline-flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" />Stock refreshes from live inventory</span>
@@ -74073,6 +74078,16 @@ ${waybillLineItems(w).length > 1
             </div>
           </section>
           </div>
+            )}
+          />
+          {(() => {
+            const landingProduct = catalogProducts.find((product) => product.id === repProductLandingId) ?? null;
+            const pages = landingProduct ? (productLandingPages ?? []).filter((page) => page.productId === landingProduct.id) : [];
+            return landingProduct && pages.length > 0
+              ? <LandingPagePreview productName={landingProduct.name} pages={pages} onClose={() => setRepProductLandingId("")} onToast={showToast} />
+              : null;
+          })()}
+          </>
         ) : repConsoleTab === "Orders" ? (
           <div className="space-y-6">
           {renderRepWorkspaceFilters()}
