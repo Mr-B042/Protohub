@@ -5,7 +5,7 @@ import { timeAgo } from "../../lib/media-upload";
 import { CATEGORY_HEX, MenuItem, OTHERS_HEX, PopoverMenu, cardShell } from "./shared";
 
 // Stock Overview (Bright's design, 17 Oct 2026). Every figure is live:
-// stock from the agent/warehouse rows the app already loads, value at the
+// stock WITH AGENTS (never the warehouse) from the rows the app already loads, value at the
 // selling price (as the Inventory page counts it), movements from
 // stock_movements. Charts follow the dataviz rules: colour follows the
 // category, legend + direct labels, hover for exact values.

@@ -15844,6 +15844,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     return legacyRows.length > 0 ? [...directRows, ...legacyRows] : directRows;
   };
+  // ⚠️ Products & Stock counts stock WITH AGENTS only, never the warehouse
+  // (Bright, 17 Oct 2026): cards showed warehouse + agents (5-in-1 Corner Racks
+  // 101 + 214 = 315). Summed from the same state-hub rows as the per-state
+  // figures (good units only), so a card always equals the sum of its states.
+  const productsPageAgentStock = (() => {
+    const totals = new Map<string, number>();
+    for (const row of inventoryStateHubRows) {
+      for (const stock of stockRowsForStateHub(row.agent, row.location)) {
+        const good = Math.max(0, Number(stock.quantity ?? 0) - Number(stock.defective ?? 0) - Number(stock.missing ?? 0));
+        totals.set(stock.productId, (totals.get(stock.productId) ?? 0) + good);
+      }
+    }
+    return totals;
+  })();
   const agentLowStockAlerts = inventoryStateHubRows
     .flatMap(({ agent, location }) =>
       stockRowsForStateHub(agent, location).flatMap((stock) => {
@@ -73609,7 +73623,7 @@ ${waybillLineItems(w).length > 1
             viewerRole={currentRole}
             isPreview={isPreviewing && previewReadOnly}
             canManageCatalog={canManageProductCatalog}
-            stockOf={totalProductStockLive}
+            stockOf={(product) => productsPageAgentStock.get(product.id) ?? 0}
             states={stateStockStateOptions.length > 0 ? stateStockStateOptions : ["Lagos", "Abuja", "Rivers", "Edo", "Imo"]}
             stateQty={(product, state) => inventoryStateHubRows
               .filter((row) => normalizeAgentState(row.location.state) === normalizeAgentState(state))
