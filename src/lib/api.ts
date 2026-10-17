@@ -4935,5 +4935,7 @@ export const productMediaApi = {
   assignCategory: (productIds: string[], categoryId: string | null) => post<{ updated: number }>("/api/product-media/categories/assign", { productIds, categoryId }),
   stockTrend: () => get<{ days: Array<{ day: string; totalUnits: number }> }>("/api/product-media/stock-trend"),
   orderCounts: () => get<{ days: number; counts: Record<string, number> }>("/api/product-media/order-counts"),
+  offerPerformance: (packageId: string) => get<{ days: number; orders: number; delivered: number; deliveryRate: number | null; revenue: number | null;
+    previous: { orders: number; delivered: number; revenue: number | null } }>(`/api/product-media/offer-performance?packageId=${encodeURIComponent(packageId)}`),
   saveStockTotal: (totalUnits: number) => post<{ ok: boolean }>("/api/product-media/stock-trend", { totalUnits })
 };

@@ -6,6 +6,7 @@ import {
 import { productMediaApi, type CatalogSettings, type ProductMedia, type ProductMediaUsage } from "../../lib/api";
 import { ApprovalQueue } from "./ApprovalQueue";
 import { BundlesTab, type OfferProduct } from "./BundlesTab";
+import type { StockHub } from "./OfferDetailsSheet";
 import { CategoriesTab, type CategoryStats } from "./CategoriesTab";
 import { MediaLibrary } from "./MediaLibrary";
 import { MediaGuideSheet, MediaRail, RejectSheet, type UploadMode } from "./MediaRail";
@@ -75,6 +76,7 @@ export type ProductsStockPageProps<P extends CatalogProduct> = {
   onPackageCreated: (productId: string, saved: any) => void;
   onPackagePatched: (productId: string, packageId: string, patch: Record<string, unknown>) => void;
   onPackageDeleted: (productId: string, packageId: string) => void;
+  hubs: StockHub[];
   onCrossSell: (productId: string) => void;
   onCategoryAssigned: (productIds: string[], categoryId: string | null) => void;
   renderCrossSellHelper: () => ReactNode;
@@ -656,6 +658,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
               states={props.states} imageOf={(productId, packageImage) => packageImage || coverOf(productId)} formatMoney={formatPrice}
               galleryFor={(productId) => (views.find((row) => row.product.id === productId)?.view.items ?? []).filter((item) => item.kind === "image").map((item) => item.url)}
               onEditPackage={props.onEditPackage} onPackageCreated={props.onPackageCreated} onPackagePatched={props.onPackagePatched} onPackageDeleted={props.onPackageDeleted} onToast={showToast}
+              hubs={props.hubs} onViewProduct={(productId) => setDetails(productId)}
               createRequest={offerCreate} templatesRequest={offerTemplates} bulkRequest={offerBulk} />
           )}
           {tab === "settings" && (

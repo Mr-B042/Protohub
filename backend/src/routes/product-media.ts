@@ -893,6 +893,46 @@ router.get("/order-counts", async (req, res) => {
   } catch (error) { sendError(res, error, "Could not count orders."); }
 });
 
+// ── One offer's last 30 days (Offer Details > Performance) ─
+// Orders placed in the window and how many of THOSE were delivered (a
+// cohort, like the Orders page), against the 30 days before. Revenue =
+// delivered orders' amounts, Owner/Admin/Manager only. Review-hold repeats
+// are left out, as everywhere.
+router.get("/offer-performance", async (req, res) => {
+  try {
+    const packageId = String(req.query.packageId ?? "");
+    if (!UUID.test(packageId)) throw fail(400, "Choose an offer.");
+    const now = Date.now();
+    const windowStats = async (fromDaysAgo: number, toDaysAgo: number) => {
+      let orders = 0, delivered = 0, revenue = 0;
+      const page = 1000;
+      for (let from = 0; from < 50000; from += page) {
+        const { data, error } = await supabase.from("orders").select("status, amount")
+          .eq("org_id", orgOf(req)).eq("package_id", packageId).eq("review_hold", false)
+          .gte("created_at", new Date(now - fromDaysAgo * 86400000).toISOString())
+          .lt("created_at", new Date(now - toDaysAgo * 86400000).toISOString())
+          .order("id").range(from, from + page - 1);
+        if (error) throw error;
+        for (const row of data ?? []) {
+          orders += 1;
+          if (row.status === "Delivered") { delivered += 1; revenue += Number(row.amount ?? 0); }
+        }
+        if ((data ?? []).length < page) break;
+      }
+      return { orders, delivered, revenue };
+    };
+    const [current, previous] = await Promise.all([windowStats(30, 0), windowStats(60, 30)]);
+    const showMoney = canApproveMedia(roleOf(req));
+    res.json({
+      days: 30,
+      orders: current.orders, delivered: current.delivered,
+      deliveryRate: current.orders ? Math.round((current.delivered / current.orders) * 100) : null,
+      revenue: showMoney ? current.revenue : null,
+      previous: { orders: previous.orders, delivered: previous.delivered, revenue: showMoney ? previous.revenue : null }
+    });
+  } catch (error) { sendError(res, error, "Could not load this offer's performance."); }
+});
+
 router.get("/stock-trend", async (req, res) => {
   try {
     const since = new Date(Date.now() - 45 * 86400000).toISOString().slice(0, 10);

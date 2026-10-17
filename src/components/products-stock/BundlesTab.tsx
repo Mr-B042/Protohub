@@ -5,6 +5,7 @@ import {
 import { productsApi } from "../../lib/api";
 import { EditOfferSheet, offerStockFrom } from "./EditOfferSheet";
 import { MiniStat } from "./MediaLibrary";
+import { OfferDetailsSheet, type StockHub } from "./OfferDetailsSheet";
 import { MenuItem, PopoverMenu, Sheet, cardShell, type CatalogProduct } from "./shared";
 import { csvDownload } from "./StockOverviewTab";
 
@@ -30,7 +31,7 @@ const TYPE_TONE: Record<Offer["type"], string> = {
   bundle: "bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300", single: "bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-300", combo: "bg-teal-50 text-teal-700 dark:bg-teal-500/15 dark:text-teal-300"
 };
 
-export function BundlesTab({ products, canEdit, showValue, stockOf, stateQty, states, imageOf, galleryFor, formatMoney, onEditPackage, onPackageCreated, onPackagePatched, onPackageDeleted, onToast, createRequest, templatesRequest, bulkRequest }: {
+export function BundlesTab({ products, canEdit, showValue, stockOf, stateQty, states, hubs, imageOf, galleryFor, formatMoney, onEditPackage, onPackageCreated, onPackagePatched, onPackageDeleted, onViewProduct, onToast, createRequest, templatesRequest, bulkRequest }: {
   products: OfferProduct[];
   canEdit: boolean;
   // Owner / Admin / Manager only (Bright, 17 Oct 2026).
@@ -41,6 +42,9 @@ export function BundlesTab({ products, canEdit, showValue, stockOf, stateQty, st
   imageOf: (productId: string, packageImage?: string | null) => string | null;
   // Every approved photo of a product (plus its package pictures), for the offer's preview images.
   galleryFor: (productId: string) => string[];
+  // Every agent location holding stock, for the per-agent availability breakdown.
+  hubs: StockHub[];
+  onViewProduct: (productId: string) => void;
   formatMoney: (amount: number, currency: string) => string;
   onEditPackage: (productId: string, packageId: string) => void;
   onPackageCreated: (productId: string, saved: any) => void;
@@ -59,7 +63,7 @@ export function BundlesTab({ products, canEdit, showValue, stockOf, stateQty, st
   const [sort, setSort] = useState<"product" | "price" | "stock">("product");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [ticked, setTicked] = useState<Set<string>>(new Set());
-  const [details, setDetails] = useState<Offer | null>(null);
+  const [details, setDetails] = useState<{ productId: string; packageId: string } | null>(null);
   const [menuFor, setMenuFor] = useState<{ offer: Offer; el: HTMLElement } | null>(null);
   const [tableSearch, setTableSearch] = useState("");
   const [template, setTemplate] = useState<Template | null>(null);
@@ -201,7 +205,7 @@ export function BundlesTab({ products, canEdit, showValue, stockOf, stateQty, st
                   </div>
                   <div className="mt-3 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2">
                     {canEdit ? <button type="button" onClick={() => setEditing({ productId: offer.productId, packageId: offer.packageId })} className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 py-2 text-[13px] font-bold text-gray-800 hover:bg-gray-50 dark:border-slate-600 dark:text-slate-100"><Pencil className="h-3.5 w-3.5" />Edit Offer</button> : <span />}
-                    <button type="button" onClick={() => setDetails(offer)} className="!min-h-0 rounded-xl border border-gray-200 py-2 text-[13px] font-bold text-gray-800 hover:bg-gray-50 dark:border-slate-600 dark:text-slate-100">View Details</button>
+                    <button type="button" onClick={() => setDetails({ productId: offer.productId, packageId: offer.packageId })} className="!min-h-0 rounded-xl border border-gray-200 py-2 text-[13px] font-bold text-gray-800 hover:bg-gray-50 dark:border-slate-600 dark:text-slate-100">View Details</button>
                     <button type="button" aria-label="More" onClick={(event) => setMenuFor({ offer, el: event.currentTarget })} className="!min-h-0 rounded-xl border border-gray-200 px-2.5 text-gray-600 dark:border-slate-600 dark:text-slate-300"><MoreVertical className="h-4 w-4" /></button>
                   </div>
                 </article>
@@ -276,7 +280,7 @@ export function BundlesTab({ products, canEdit, showValue, stockOf, stateQty, st
       <PopoverMenu anchor={menuFor?.el ?? null} open={Boolean(menuFor)} onClose={() => setMenuFor(null)} width={210}>
         {menuFor && (
           <>
-            <MenuItem onClick={() => { setDetails(menuFor.offer); setMenuFor(null); }}>View details</MenuItem>
+            <MenuItem onClick={() => { setDetails({ productId: menuFor.offer.productId, packageId: menuFor.offer.packageId }); setMenuFor(null); }}>View details</MenuItem>
             {canEdit && <MenuItem icon={<Pencil />} onClick={() => { setEditing({ productId: menuFor.offer.productId, packageId: menuFor.offer.packageId }); setMenuFor(null); }}>Edit offer</MenuItem>}
             {canEdit && <MenuItem icon={<Pencil />} onClick={() => { onEditPackage(menuFor.offer.productId, menuFor.offer.packageId); setMenuFor(null); }}>More options in Inventory</MenuItem>}
             {canEdit && <MenuItem icon={<Power />} onClick={() => { void setActive([menuFor.offer], !menuFor.offer.active); setMenuFor(null); }}>{menuFor.offer.active ? "Hide from order form" : "Show on order form"}</MenuItem>}
@@ -284,24 +288,20 @@ export function BundlesTab({ products, canEdit, showValue, stockOf, stateQty, st
         )}
       </PopoverMenu>
 
-      {details && (
-        <Sheet title={details.name} subtitle={`${details.product.name} · ${TYPE_TEXT[details.type]}`} onClose={() => setDetails(null)}
-          footer={canEdit ? <button type="button" onClick={() => { setEditing({ productId: details.productId, packageId: details.packageId }); setDetails(null); }} className="!min-h-0 w-full rounded-xl bg-[#1F8FE0] py-3 text-sm font-black text-white">Edit Offer</button> : undefined}>
-          <div className="space-y-3 text-[13.5px]">
-            {details.image && <img src={details.image} alt="" className="aspect-video w-full rounded-xl object-cover" />}
-            <div className="flex items-center justify-between rounded-xl bg-gray-50 p-3 dark:bg-slate-950"><span className="font-semibold text-gray-600 dark:text-slate-300">{offerLine(details, nameOf)}</span><strong className="text-xl font-black">{formatMoney(details.price, details.currency)}</strong></div>
-            <dl className="m-0 grid grid-cols-2 gap-2">
-              <Fact label="Status" value={details.active ? "Active (on the order form)" : "Inactive (hidden)"} />
-              <Fact label="Offers in stock" value={details.inStock.toLocaleString()} />
-              <Fact label="Pieces of main product" value={String(details.quantity)} />
-              <Fact label="Price per piece" value={formatMoney(Math.round(details.price / Math.max(1, details.quantity)), details.currency)} />
-            </dl>
-            {details.gifts.length > 0 && <p className="m-0"><b>Free gifts:</b> {details.gifts.map((gift) => `${gift.quantity} × ${nameOf.get(gift.productId) ?? "item"}`).join(", ")}</p>}
-            {details.extras.length > 0 && <p className="m-0"><b>Also included:</b> {details.extras.map((item) => `${item.quantity} × ${nameOf.get(item.productId) ?? "item"}`).join(", ")}</p>}
-            <p className="m-0"><b>By state:</b> {details.stateSplit.filter((row) => row.qty > 0).map((row) => `${row.state} ${row.qty}`).join(" · ") || "No state stock"}</p>
-          </div>
-        </Sheet>
-      )}
+      {details && (() => {
+        const product = products.find((entry) => entry.id === details.productId);
+        const pkg = product?.packages.find((entry) => entry.id === details.packageId);
+        if (!product || !pkg) return null;
+        return (
+          <OfferDetailsSheet product={product} pkg={pkg} products={products} states={states} hubs={hubs}
+            stockOf={stockOf} stateQty={stateQty} imageOf={imageOf} formatMoney={formatMoney} showValue={showValue} canEdit={canEdit} onToast={onToast}
+            onClose={() => setDetails(null)}
+            onEdit={() => { setDetails(null); setEditing({ productId: product.id, packageId: pkg.id }); }}
+            onViewProduct={() => { setDetails(null); onViewProduct(product.id); }}
+            onChanged={(patch) => onPackagePatched(product.id, pkg.id, patch)}
+            onCreated={(saved) => onPackageCreated(product.id, saved)} />
+        );
+      })()}
       {editing && (() => {
         const product = products.find((entry) => entry.id === editing.productId);
         const pkg = product?.packages.find((entry) => entry.id === editing.packageId);
