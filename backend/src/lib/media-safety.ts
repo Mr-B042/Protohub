@@ -137,3 +137,29 @@ export function nameFromUrl(url: URL) {
   const last = decodeURIComponent(url.pathname.split("/").filter(Boolean).pop() ?? "") || url.hostname;
   return cleanFileName(last);
 }
+
+/**
+ * A picture fetched from a link. Same as an upload, plus AVIF: shops' image
+ * servers often send AVIF (Temu links ending "format/avif"). It is safe to
+ * take because every picture is redrawn as a fresh WebP copy anyway.
+ * iPhone HEIC stays out: the picture library cannot read it.
+ */
+export function sniffLinkPicture(bytes: Uint8Array): "jpg" | "png" | "webp" | "avif" | null {
+  const real = sniffMediaType(bytes);
+  if (real && kindOf(real) === "image") return TYPE_KEYS[real] as "jpg" | "png" | "webp";
+  if (bytes.length >= 12 && ascii(bytes, 4, 4) === "ftyp" && /^(avif|avis)$/.test(ascii(bytes, 8, 4))) return "avif";
+  return null;
+}
+
+/** What a link sent back when it was not a picture we can use, in plain words. */
+export function describeNotPicture(bytes: Uint8Array, contentType: string | null): string {
+  const type = String(contentType ?? "").toLowerCase();
+  const start = ascii(bytes, 0, Math.min(bytes.length, 64)).trimStart().toLowerCase();
+  if (bytes.length >= 12 && ascii(bytes, 4, 4) === "ftyp" && /^(heic|heix|hevc|hevx|mif1|msf1)$/.test(ascii(bytes, 8, 4))) return "That link sent an iPhone HEIC picture, which can't be read yet. Use a JPG, PNG or WEBP link.";
+  if (start.startsWith("<svg") || type.includes("svg")) return "That link sent an SVG drawing, which isn't allowed. Use a JPG, PNG or WEBP link.";
+  if (start.startsWith("gif8")) return "That link sent a GIF, which isn't allowed. Use a JPG, PNG or WEBP link.";
+  if (start.startsWith("<") || type.includes("html")) return "That link opened a web page, not a picture. Open the picture itself and copy its link.";
+  if (type.startsWith("video/") || (bytes.length >= 12 && ascii(bytes, 4, 4) === "ftyp")) return "That link is a video. Videos can't be added from links; upload them from your phone.";
+  if (type.startsWith("image/")) return `That link sent a ${type.replace("image/", "").toUpperCase()} picture, which isn't supported. Use a JPG, PNG, WEBP or AVIF link.`;
+  return "That link didn't send a picture, so it was refused.";
+}

@@ -82,3 +82,22 @@ test("file name comes from the link", () => {
   assert.equal(nameFromUrl(new URL("https://img.kwcdn.com/product/open/3c86de-goods.jpeg?x=1")), "3c86de-goods.jpeg");
   assert.equal(nameFromUrl(new URL("https://example.com/")), "example.com");
 });
+
+import { describeNotPicture, sniffLinkPicture } from "./media-safety.js";
+
+test("links accept AVIF on top of the upload types", () => {
+  assert.equal(sniffLinkPicture(ftyp("avif")), "avif");
+  assert.equal(sniffLinkPicture(bytes([0xff, 0xd8, 0xff, 0xe0])), "jpg");
+  assert.equal(sniffLinkPicture(ftyp("heic")), null, "HEIC still refused");
+  assert.equal(sniffLinkPicture(ftyp("isom")), null, "videos never come in through links");
+  assert.equal(sniffLinkPicture(bytes("<html>")), null);
+});
+
+test("refusals say what the link really sent", () => {
+  assert.match(describeNotPicture(bytes("<!DOCTYPE html><html>"), "text/html"), /web page/);
+  assert.match(describeNotPicture(ftyp("heic"), "image/heic"), /HEIC/);
+  assert.match(describeNotPicture(bytes("GIF89a"), "image/gif"), /GIF/);
+  assert.match(describeNotPicture(bytes("<svg xmlns"), "image/svg+xml"), /SVG/);
+  assert.match(describeNotPicture(ftyp("isom"), "video/mp4"), /video/);
+  assert.match(describeNotPicture(bytes("BM\x00\x00"), "image/bmp"), /BMP/);
+});
