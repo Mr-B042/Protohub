@@ -73,7 +73,8 @@ export type ProductsStockPageProps<P extends CatalogProduct> = {
   onEditProduct: (productId: string) => void;
   onEditPackage: (productId: string, packageId: string) => void;
   onPackageCreated: (productId: string, saved: any) => void;
-  onPackagePatched: (productId: string, packageId: string, patch: { active?: boolean }) => void;
+  onPackagePatched: (productId: string, packageId: string, patch: Record<string, unknown>) => void;
+  onPackageDeleted: (productId: string, packageId: string) => void;
   onCrossSell: (productId: string) => void;
   onCategoryAssigned: (productIds: string[], categoryId: string | null) => void;
   renderCrossSellHelper: () => ReactNode;
@@ -653,7 +654,8 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
               stockOf={(productId) => { const product = products.find((entry) => entry.id === productId); return product ? stockOf(product) : 0; }}
               stateQty={(productId, state) => { const product = products.find((entry) => entry.id === productId); return product ? props.stateQty(product, state) : 0; }}
               states={props.states} imageOf={(productId, packageImage) => packageImage || coverOf(productId)} formatMoney={formatPrice}
-              onEditPackage={props.onEditPackage} onPackageCreated={props.onPackageCreated} onPackagePatched={props.onPackagePatched} onToast={showToast}
+              galleryFor={(productId) => (views.find((row) => row.product.id === productId)?.view.items ?? []).filter((item) => item.kind === "image").map((item) => item.url)}
+              onEditPackage={props.onEditPackage} onPackageCreated={props.onPackageCreated} onPackagePatched={props.onPackagePatched} onPackageDeleted={props.onPackageDeleted} onToast={showToast}
               createRequest={offerCreate} templatesRequest={offerTemplates} bulkRequest={offerBulk} />
           )}
           {tab === "settings" && (

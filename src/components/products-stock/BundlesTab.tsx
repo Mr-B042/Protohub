@@ -3,6 +3,7 @@ import {
   BarChart3, Check, ChevronDown, Download, Filter, Gift, LayoutGrid, Layers, Loader2, MoreVertical, Package, Pencil, Plus, Power, Search, Star, Table2, X
 } from "lucide-react";
 import { productsApi } from "../../lib/api";
+import { EditOfferSheet, offerStockFrom } from "./EditOfferSheet";
 import { MiniStat } from "./MediaLibrary";
 import { MenuItem, PopoverMenu, Sheet, cardShell, type CatalogProduct } from "./shared";
 import { csvDownload } from "./StockOverviewTab";
@@ -29,7 +30,7 @@ const TYPE_TONE: Record<Offer["type"], string> = {
   bundle: "bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300", single: "bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-300", combo: "bg-teal-50 text-teal-700 dark:bg-teal-500/15 dark:text-teal-300"
 };
 
-export function BundlesTab({ products, canEdit, showValue, stockOf, stateQty, states, imageOf, formatMoney, onEditPackage, onPackageCreated, onPackagePatched, onToast, createRequest, templatesRequest, bulkRequest }: {
+export function BundlesTab({ products, canEdit, showValue, stockOf, stateQty, states, imageOf, galleryFor, formatMoney, onEditPackage, onPackageCreated, onPackagePatched, onPackageDeleted, onToast, createRequest, templatesRequest, bulkRequest }: {
   products: OfferProduct[];
   canEdit: boolean;
   // Owner / Admin / Manager only (Bright, 17 Oct 2026).
@@ -38,10 +39,13 @@ export function BundlesTab({ products, canEdit, showValue, stockOf, stateQty, st
   stateQty: (productId: string, state: string) => number;
   states: string[];
   imageOf: (productId: string, packageImage?: string | null) => string | null;
+  // Every approved photo of a product (plus its package pictures), for the offer's preview images.
+  galleryFor: (productId: string) => string[];
   formatMoney: (amount: number, currency: string) => string;
   onEditPackage: (productId: string, packageId: string) => void;
   onPackageCreated: (productId: string, saved: any) => void;
-  onPackagePatched: (productId: string, packageId: string, patch: { active?: boolean }) => void;
+  onPackagePatched: (productId: string, packageId: string, patch: Record<string, unknown>) => void;
+  onPackageDeleted: (productId: string, packageId: string) => void;
   onToast: (message: string) => void;
   createRequest: number;
   templatesRequest: number;
@@ -62,6 +66,7 @@ export function BundlesTab({ products, canEdit, showValue, stockOf, stateQty, st
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [formKey, setFormKey] = useState(0);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [editing, setEditing] = useState<{ productId: string; packageId: string } | null>(null);
   const filtersButton = useRef<HTMLButtonElement | null>(null);
   const formRef = useRef<HTMLDivElement | null>(null);
   // The page header's Create Offer / Offer Templates / Bulk Actions bump these.
@@ -81,11 +86,11 @@ export function BundlesTab({ products, canEdit, showValue, stockOf, stateQty, st
     const extras = components.filter((item) => !item.isFreeGift && item.productId !== product.id).map((item) => ({ productId: item.productId, quantity: item.quantity }));
     const offerType: Offer["type"] = product.catalogType === "combo_only" ? "combo" : gifts.length ? "bundle_gifts" : extras.length ? "bundle" : pkg.quantity > 1 ? "multi_pack" : "single";
     const perOffer = Math.max(1, pkg.quantity);
-    const split = states.map((state) => ({ state, qty: Math.floor(stateQty(product.id, state) / perOffer) })).sort((a, b) => b.qty - a.qty);
+    const split = states.map((state) => ({ state, qty: offerStockFrom(product.id, perOffer, [...extras, ...gifts], (id) => stateQty(id, state)) })).sort((a, b) => b.qty - a.qty);
     return {
       key: `${product.id}:${pkg.id}`, productId: product.id, packageId: pkg.id, name: pkg.name || product.name, product, quantity: pkg.quantity, price: pkg.price, currency: pkg.currency,
       active: pkg.active, featured: pkg.featuredComboCard === true, gifts, extras, type: offerType, image: imageOf(product.id, pkg.imageUrl ?? pkg.imageUrls?.[0] ?? null),
-      inStock: Math.floor(Math.max(0, stockOf(product.id)) / perOffer), stateSplit: split
+      inStock: offerStockFrom(product.id, perOffer, [...extras, ...gifts], stockOf), stateSplit: split
     };
   })), [products, states, stateQty, stockOf, imageOf]);
 
@@ -195,7 +200,7 @@ export function BundlesTab({ products, canEdit, showValue, stockOf, stateQty, st
                     <span className="text-gray-400">{offer.stateSplit.slice(0, 2).map((row) => `${row.state}: ${row.qty}`).join(" | ")}{offer.stateSplit.length > 2 ? ` | Others: ${offer.stateSplit.slice(2).reduce((sum, row) => sum + row.qty, 0)}` : ""}</span>
                   </div>
                   <div className="mt-3 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2">
-                    {canEdit ? <button type="button" onClick={() => onEditPackage(offer.productId, offer.packageId)} className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 py-2 text-[13px] font-bold text-gray-800 hover:bg-gray-50 dark:border-slate-600 dark:text-slate-100"><Pencil className="h-3.5 w-3.5" />Edit Offer</button> : <span />}
+                    {canEdit ? <button type="button" onClick={() => setEditing({ productId: offer.productId, packageId: offer.packageId })} className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 py-2 text-[13px] font-bold text-gray-800 hover:bg-gray-50 dark:border-slate-600 dark:text-slate-100"><Pencil className="h-3.5 w-3.5" />Edit Offer</button> : <span />}
                     <button type="button" onClick={() => setDetails(offer)} className="!min-h-0 rounded-xl border border-gray-200 py-2 text-[13px] font-bold text-gray-800 hover:bg-gray-50 dark:border-slate-600 dark:text-slate-100">View Details</button>
                     <button type="button" aria-label="More" onClick={(event) => setMenuFor({ offer, el: event.currentTarget })} className="!min-h-0 rounded-xl border border-gray-200 px-2.5 text-gray-600 dark:border-slate-600 dark:text-slate-300"><MoreVertical className="h-4 w-4" /></button>
                   </div>
@@ -272,7 +277,8 @@ export function BundlesTab({ products, canEdit, showValue, stockOf, stateQty, st
         {menuFor && (
           <>
             <MenuItem onClick={() => { setDetails(menuFor.offer); setMenuFor(null); }}>View details</MenuItem>
-            {canEdit && <MenuItem icon={<Pencil />} onClick={() => { onEditPackage(menuFor.offer.productId, menuFor.offer.packageId); setMenuFor(null); }}>Edit in Inventory</MenuItem>}
+            {canEdit && <MenuItem icon={<Pencil />} onClick={() => { setEditing({ productId: menuFor.offer.productId, packageId: menuFor.offer.packageId }); setMenuFor(null); }}>Edit offer</MenuItem>}
+            {canEdit && <MenuItem icon={<Pencil />} onClick={() => { onEditPackage(menuFor.offer.productId, menuFor.offer.packageId); setMenuFor(null); }}>More options in Inventory</MenuItem>}
             {canEdit && <MenuItem icon={<Power />} onClick={() => { void setActive([menuFor.offer], !menuFor.offer.active); setMenuFor(null); }}>{menuFor.offer.active ? "Hide from order form" : "Show on order form"}</MenuItem>}
           </>
         )}
@@ -280,7 +286,7 @@ export function BundlesTab({ products, canEdit, showValue, stockOf, stateQty, st
 
       {details && (
         <Sheet title={details.name} subtitle={`${details.product.name} · ${TYPE_TEXT[details.type]}`} onClose={() => setDetails(null)}
-          footer={canEdit ? <button type="button" onClick={() => onEditPackage(details.productId, details.packageId)} className="!min-h-0 w-full rounded-xl bg-[#1F8FE0] py-3 text-sm font-black text-white">Edit in Inventory</button> : undefined}>
+          footer={canEdit ? <button type="button" onClick={() => { setEditing({ productId: details.productId, packageId: details.packageId }); setDetails(null); }} className="!min-h-0 w-full rounded-xl bg-[#1F8FE0] py-3 text-sm font-black text-white">Edit Offer</button> : undefined}>
           <div className="space-y-3 text-[13.5px]">
             {details.image && <img src={details.image} alt="" className="aspect-video w-full rounded-xl object-cover" />}
             <div className="flex items-center justify-between rounded-xl bg-gray-50 p-3 dark:bg-slate-950"><span className="font-semibold text-gray-600 dark:text-slate-300">{offerLine(details, nameOf)}</span><strong className="text-xl font-black">{formatMoney(details.price, details.currency)}</strong></div>
@@ -296,6 +302,18 @@ export function BundlesTab({ products, canEdit, showValue, stockOf, stateQty, st
           </div>
         </Sheet>
       )}
+      {editing && (() => {
+        const product = products.find((entry) => entry.id === editing.productId);
+        const pkg = product?.packages.find((entry) => entry.id === editing.packageId);
+        if (!product || !pkg) return null;
+        return (
+          <EditOfferSheet product={product} pkg={pkg} products={products} states={states} gallery={galleryFor(product.id)}
+            stockOf={stockOf} stateQty={stateQty} imageOf={(id) => imageOf(id)} formatMoney={formatMoney} onToast={onToast}
+            onClose={() => setEditing(null)}
+            onSaved={(patch) => onPackagePatched(product.id, pkg.id, patch)}
+            onDeleted={() => onPackageDeleted(product.id, pkg.id)} />
+        );
+      })()}
       {templatesOpen && (
         <Sheet title="Offer templates" subtitle="Start from a common offer, then pick the product." onClose={() => setTemplatesOpen(false)}>
           <div className="space-y-2">
