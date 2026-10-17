@@ -67122,8 +67122,14 @@ ${waybillLineItems(w).length > 1
                           <td className="py-2.5 pr-3 text-right text-gray-700">{rep.ordersDelivered}</td>
                           <td className="py-2.5 pr-3 text-right text-gray-700">{money(rep.aov)}</td>
                           <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.deliveryRate)}</td>
-                          <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.upsellRate)}</td>
-                          <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.crossSellRate)}</td>
+                          <td className="py-2.5 pr-3 text-right text-gray-700">
+                            <span className="block">{pct(rep.upsellRate)}</span>
+                            <span className="block whitespace-nowrap text-[11px] text-gray-400">{rep.upsellCount ?? 0} {(rep.upsellCount ?? 0) === 1 ? "order" : "orders"} · {money(rep.incrementalRevenueUpsell ?? 0)}</span>
+                          </td>
+                          <td className="py-2.5 pr-3 text-right text-gray-700">
+                            <span className="block">{pct(rep.crossSellRate)}</span>
+                            <span className="block whitespace-nowrap text-[11px] text-gray-400">{rep.crossSellCount ?? 0} {(rep.crossSellCount ?? 0) === 1 ? "order" : "orders"} · {money(rep.incrementalRevenueCrossSell ?? 0)}</span>
+                          </td>
                           <td className="py-2.5 pr-3">
                             <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${onTarget ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
                               {onTarget ? "On Target" : "Needs Attention"}
@@ -67699,8 +67705,8 @@ ${waybillLineItems(w).length > 1
     const exportReport = () => triggerCsvDownload(
       "team-performance",
       [
-        ["Rep", "Orders", "Delivered", "Delivery Rate", "AOV", "Upsell Rate", "Cross-sell Rate", "Vs Last Week (AOV)", "Status"],
-        ...data.reps.map((rep: any) => [rep.name, rep.ordersAssigned, rep.ordersDelivered, `${rep.deliveryRate}%`, rep.aov, `${rep.upsellRate}%`, `${rep.crossSellRate}%`, `${rep.vsLastWeekAovPct}%`, rep.status])
+        ["Rep", "Orders", "Delivered", "Delivery Rate", "AOV", "Upsell Rate", "Upsell Orders", "Upsell Amount", "Cross-sell Rate", "Cross-sell Orders", "Cross-sell Amount", "Vs Last Week (AOV)", "Status"],
+        ...data.reps.map((rep: any) => [rep.name, rep.ordersAssigned, rep.ordersDelivered, `${rep.deliveryRate}%`, rep.aov, `${rep.upsellRate}%`, rep.upsellCount ?? 0, rep.incrementalRevenueUpsell ?? 0, `${rep.crossSellRate}%`, rep.crossSellCount ?? 0, rep.incrementalRevenueCrossSell ?? 0, `${rep.vsLastWeekAovPct}%`, rep.status])
       ],
       "Team performance report exported"
     );
@@ -67753,8 +67759,14 @@ ${waybillLineItems(w).length > 1
                       <td className="py-2.5 pr-3 text-right text-gray-700">{rep.ordersDelivered}</td>
                       <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.deliveryRate)}</td>
                       <td className="py-2.5 pr-3 text-right font-bold text-gray-900">{money(rep.aov)}</td>
-                      <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.upsellRate)}</td>
-                      <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.crossSellRate)}</td>
+                      <td className="py-2.5 pr-3 text-right text-gray-700">
+                        <span className="block">{pct(rep.upsellRate)}</span>
+                        <span className="block whitespace-nowrap text-[11px] text-gray-400">{rep.upsellCount ?? 0} {(rep.upsellCount ?? 0) === 1 ? "order" : "orders"} · {money(rep.incrementalRevenueUpsell ?? 0)}</span>
+                      </td>
+                      <td className="py-2.5 pr-3 text-right text-gray-700">
+                        <span className="block">{pct(rep.crossSellRate)}</span>
+                        <span className="block whitespace-nowrap text-[11px] text-gray-400">{rep.crossSellCount ?? 0} {(rep.crossSellCount ?? 0) === 1 ? "order" : "orders"} · {money(rep.incrementalRevenueCrossSell ?? 0)}</span>
+                      </td>
                       <td className={`py-2.5 pr-3 text-right font-bold ${rep.vsLastWeekAovPct >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
                         <span className="inline-flex items-center gap-1">
                           {rep.vsLastWeekAovPct >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingUp className="h-3 w-3 rotate-180" />}
