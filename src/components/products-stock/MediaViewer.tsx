@@ -20,21 +20,18 @@ export type GalleryItem = {
   media: ProductMedia | null; // null = a package picture from the product setup
 };
 
-export function galleryItemsFor(media: ProductMedia[], packageImages: string[]): GalleryItem[] {
-  const approved = media
+// ⚠️ A product's photos are its OWN approved gallery files only (Bright, 17 Oct
+// 2026). Package pictures used to fill in when the gallery was empty, and
+// Edge Brusher Max showed its Home Cleaning Combo packages' pictures as if
+// they were brush photos. Package pictures stay on their own offer.
+export function galleryItemsFor(media: ProductMedia[]): GalleryItem[] {
+  return media
     .filter((item) => item.status === "approved" && item.url)
-    .sort((a, b) => Number(b.isCover) - Number(a.isCover) || a.displayOrder - b.displayOrder || b.createdAt.localeCompare(a.createdAt));
-  const items: GalleryItem[] = approved.map((item) => ({
-    key: item.id, kind: item.kind, url: item.url!, thumbUrl: item.thumbUrl, labelText: item.labelText, caption: item.caption,
-    byline: `${item.uploadedByName || "Team"} · ${timeAgo(item.createdAt)}`, durationSeconds: item.durationSeconds, media: item
-  }));
-  const seen = new Set(items.map((item) => item.url));
-  for (const url of packageImages) {
-    if (!url || seen.has(url)) continue;
-    seen.add(url);
-    items.push({ key: `pkg-${url}`, kind: "image", url, thumbUrl: url, labelText: "Package photo", caption: "", byline: "From the product setup", durationSeconds: null, media: null });
-  }
-  return items;
+    .sort((a, b) => Number(b.isCover) - Number(a.isCover) || a.displayOrder - b.displayOrder || b.createdAt.localeCompare(a.createdAt))
+    .map((item) => ({
+      key: item.id, kind: item.kind, url: item.url!, thumbUrl: item.thumbUrl, labelText: item.labelText, caption: item.caption,
+      byline: `${item.uploadedByName || "Team"} · ${timeAgo(item.createdAt)}`, durationSeconds: item.durationSeconds, media: item
+    }));
 }
 
 export function MediaViewer({ productName, items, startIndex, onClose, canManage, onSetCover, onDelete, onToast }: {
