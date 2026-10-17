@@ -67,7 +67,7 @@ export function ProductDetailsSheet({ view, packages, stockByState, pairs, selli
             <p className={`m-0 inline-flex items-center gap-1.5 text-[14px] font-black ${line.tone}`}>{line.icon}{line.text}</p>
             <p className="m-0 mt-1 text-[12.5px] text-gray-500 dark:text-slate-400">{view.description || "No description has been added yet."}</p>
           </div>
-          <strong className="text-2xl font-black text-gray-900 dark:text-slate-100">{view.priceText}</strong>
+          {view.priceText && <strong className="text-2xl font-black text-gray-900 dark:text-slate-100">{view.priceText}</strong>}
         </section>
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -78,7 +78,7 @@ export function ProductDetailsSheet({ view, packages, stockByState, pairs, selli
               {packages.map((pkg) => (
                 <div key={pkg.id} className="flex justify-between gap-3 text-sm">
                   <span className="font-bold text-gray-700 dark:text-slate-200">{pkg.name} · {pkg.quantity} pcs</span>
-                  <strong className="shrink-0 text-[#1F8FE0]">{pkg.priceText}</strong>
+                  {pkg.priceText && <strong className="shrink-0 text-[#1F8FE0]">{pkg.priceText}</strong>}
                 </div>
               ))}
             </div>
