@@ -58,3 +58,27 @@ test("file names are shortened and stripped of markup", () => {
   assert.equal(cleanFileName(""), "file");
   assert.equal(cleanFileName("a".repeat(300)).length, 120);
 });
+
+import { cleanImportUrl, isPrivateAddress, nameFromUrl } from "./media-safety.js";
+
+test("links to private or internal networks are refused", () => {
+  for (const ip of ["127.0.0.1", "10.2.3.4", "172.16.0.9", "172.31.255.1", "192.168.1.10", "169.254.169.254", "100.64.0.1", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:127.0.0.1"]) {
+    assert.ok(isPrivateAddress(ip), ip);
+  }
+  for (const ip of ["8.8.8.8", "104.16.1.1", "172.32.0.1", "2606:4700::6810:84e5"]) assert.ok(!isPrivateAddress(ip), ip);
+});
+
+test("only plain public web links are accepted", () => {
+  assert.ok(cleanImportUrl("https://img.kwcdn.com/product/fancy/a32a18c6.jpg"));
+  assert.ok(cleanImportUrl("http://example.com/a.png"));
+  for (const bad of ["file:///etc/passwd", "ftp://example.com/a.jpg", "javascript:alert(1)", "http://localhost/a.jpg", "http://127.0.0.1/a.jpg",
+    "http://169.254.169.254/latest/meta-data", "http://192.168.0.1/a.jpg", "http://intranet/a.jpg", "https://user:pass@example.com/a.jpg",
+    "http://example.com:5432/a.jpg", "http://db.internal/a.jpg", "http://[::1]/a.jpg", "not a link", ""]) {
+    assert.equal(cleanImportUrl(bad), null, bad);
+  }
+});
+
+test("file name comes from the link", () => {
+  assert.equal(nameFromUrl(new URL("https://img.kwcdn.com/product/open/3c86de-goods.jpeg?x=1")), "3c86de-goods.jpeg");
+  assert.equal(nameFromUrl(new URL("https://example.com/")), "example.com");
+});

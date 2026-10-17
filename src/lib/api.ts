@@ -4912,6 +4912,8 @@ export const productMediaApi = {
   startUpload: (body: { productId: string; mime: string; size: number; name: string; label: ProductMediaLabel; caption: string; tags?: string[]; batchId?: string }) =>
     post<{ id: string; signedUrl: string }>("/api/product-media/uploads", body),
   complete: (id: string, body: { posterDataUrl?: string; durationSeconds?: number }) => post<{ media: ProductMedia }>(`/api/product-media/${id}/complete`, body),
+  importUrl: (body: { productId: string; url: string; label: ProductMediaLabel; caption: string; batchId?: string; notifyNow?: boolean }) =>
+    post<{ media: ProductMedia }>("/api/product-media/import-url", body),
   approve: (id: string) => post<{ media: ProductMedia }>(`/api/product-media/${id}/approve`, {}),
   reject: (id: string, reason: string) => post<{ media: ProductMedia }>(`/api/product-media/${id}/reject`, { reason }),
   requestChanges: (id: string, note: string) => post<{ media: ProductMedia }>(`/api/product-media/${id}/request-changes`, { note }),
