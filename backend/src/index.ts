@@ -67,6 +67,7 @@ import salesScriptRoutes from "./routes/sales-scripts.js";
 import salesScriptingRoutes from "./routes/sales-scripting.js";
 import bugReportRoutes, { runIssueResponseAlerts } from "./routes/bug-reports.js";
 import { runWeeklyReportReminders } from "./lib/weekly-report-data.js";
+import { runHeadOfSalesDeliveryAlerts } from "./lib/hos-delivery-alerts.js";
 import recoveryRepKpiRoutes from "./routes/recovery-rep-kpi.js";
 import recoveryTemplateRoutes from "./routes/recovery-templates.js";
 import personalDeliveryAgentRoutes from "./routes/personal-delivery-agents.js";
@@ -986,6 +987,18 @@ cron.schedule("0 7 * * 0", async () => {
     logger.error("cron: weekly report job crashed", { error: (e as Error).message });
   }
 });
+
+// ── Low delivery rate → Head of Sales (Bright, 17 Oct 2026) ──
+// 10:00 Lagos, Monday to Saturday: reps under 60% (urgent) and under 65%
+// this week, so she can push them. See lib/hos-delivery-alerts.ts.
+cron.schedule("0 10 * * 1-6", async () => {
+  try {
+    const result = await runHeadOfSalesDeliveryAlerts();
+    logger.info("cron: head of sales delivery alerts sent", result);
+  } catch (e) {
+    logger.error("cron: head of sales delivery alerts crashed", { error: (e as Error).message });
+  }
+}, { timezone: "Africa/Lagos" });
 
 // ── Weekly Report reminders (Bright, 1 Oct 2026) ─────────
 // Reports are due at the end of the Tuesday after the week. Tuesday 09:00
