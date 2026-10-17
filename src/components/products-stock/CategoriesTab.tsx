@@ -37,12 +37,14 @@ function MiniBars({ values, color }: { values: number[]; color: string }) {
   );
 }
 
-export function CategoriesTab({ categories, setCategories, products, statsFor, canManage, formatValue, onViewProducts, onAssigned, onToast, addRequest, guideRequest }: {
+export function CategoriesTab({ categories, setCategories, products, statsFor, canManage, showValue, formatValue, onViewProducts, onAssigned, onToast, addRequest, guideRequest }: {
   categories: ProductCategory[];
   setCategories: (next: ProductCategory[]) => void;
   products: CatalogProduct[];
   statsFor: (categoryId: string | null) => CategoryStats;
   canManage: boolean;
+  // Owner / Admin / Manager only (Bright, 17 Oct 2026).
+  showValue: boolean;
   formatValue: (amount: number) => string;
   onViewProducts: (categoryId: string) => void;
   onAssigned: (productIds: string[], categoryId: string | null) => void;
@@ -95,17 +97,17 @@ export function CategoriesTab({ categories, setCategories, products, statsFor, c
       onToast("Category deleted.");
     } catch (error: any) { onToast(error?.message ?? "Could not delete."); }
   };
-  const exportCsv = () => csvDownload(`categories-${new Date().toISOString().slice(0, 10)}.csv`, ["Category", "Description", "Products", "Units in stock", "Stock value", "Status", "Created"],
-    rows.map(({ category, stats }) => [category.name, category.description, stats.products, stats.units, Math.round(stats.value), category.active ? "Active" : "Inactive", category.createdAt?.slice(0, 10)]));
+  const exportCsv = () => csvDownload(`categories-${new Date().toISOString().slice(0, 10)}.csv`, ["Category", "Description", "Products", "Units in stock", ...(showValue ? ["Stock value"] : []), "Status", "Created"],
+    rows.map(({ category, stats }) => [category.name, category.description, stats.products, stats.units, ...(showValue ? [Math.round(stats.value)] : []), category.active ? "Active" : "Inactive", category.createdAt?.slice(0, 10)]));
   const bars = rows.map((row) => row.stats);
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <div className={`grid grid-cols-2 gap-3 ${showValue ? "xl:grid-cols-4" : "xl:grid-cols-3"}`}>
         <MiniStat icon={<LayoutGrid className="h-5 w-5" />} tone="bg-blue-50 text-[#1F8FE0] dark:bg-blue-500/15" value={totals.count} label="Total Categories" hint={totals.newThisMonth ? `+${totals.newThisMonth} this month` : undefined} chart={<MiniBars values={bars.map((row) => row.products)} color="#a855f7" />} />
         <MiniStat icon={<Box className="h-5 w-5" />} tone="bg-teal-50 text-teal-600 dark:bg-teal-500/15" value={totals.products} label="Total Products" sub={uncategorised.products ? `${uncategorised.products} without a category` : "Across all categories"} chart={<MiniBars values={bars.map((row) => row.products)} color="#3b82f6" />} />
         <MiniStat icon={<Package className="h-5 w-5" />} tone="bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15" value={totals.units.toLocaleString()} label="Total Units in Stock" chart={<MiniBars values={bars.map((row) => row.units)} color="#16a34a" />} />
-        <MiniStat icon={<Gift className="h-5 w-5" />} tone="bg-rose-50 text-rose-500 dark:bg-rose-500/15" value={formatValue(totals.value)} label="Total Stock Value" chart={<MiniBars values={bars.map((row) => row.value)} color="#ec4899" />} />
+        {showValue && <MiniStat icon={<Gift className="h-5 w-5" />} tone="bg-rose-50 text-rose-500 dark:bg-rose-500/15" value={formatValue(totals.value)} label="Total Stock Value" chart={<MiniBars values={bars.map((row) => row.value)} color="#ec4899" />} />}
       </div>
 
       <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
@@ -121,7 +123,7 @@ export function CategoriesTab({ categories, setCategories, products, statsFor, c
             ))}
           </div>
           <span className="shrink-0 text-[13px] text-gray-500">Sort by</span>
-          <Pick value={sort} onChange={(value) => setSort(value as typeof sort)} label="Sort"><option value="products">Product count</option><option value="name">Name</option><option value="units">Units in stock</option><option value="value">Stock value</option></Pick>
+          <Pick value={sort} onChange={(value) => setSort(value as typeof sort)} label="Sort"><option value="products">Product count</option><option value="name">Name</option><option value="units">Units in stock</option>{showValue && <option value="value">Stock value</option>}</Pick>
           <span className="shrink-0 text-[13px] text-gray-500">Status</span>
           <Pick value={status} onChange={(value) => setStatus(value as typeof status)} label="Status"><option value="all">All</option><option value="active">Active</option><option value="inactive">Inactive</option></Pick>
           <button ref={filtersButton} type="button" onClick={() => setFiltersOpen((value) => !value)} className="!min-h-0 inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3.5 text-[13px] font-bold text-gray-700 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-200"><Filter className="h-4 w-4" />Filters</button>
@@ -164,7 +166,7 @@ export function CategoriesTab({ categories, setCategories, products, statsFor, c
                 </div>
                 <div className="flex items-center justify-between gap-2 px-1.5 pt-3">
                   <span className={`text-[13px] font-bold ${stats.units > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600"}`}>{stats.units.toLocaleString()} units in stock</span>
-                  <strong className="text-[14px] font-black text-gray-900 dark:text-slate-100">{formatValue(stats.value)}</strong>
+                  {showValue && <strong className="text-[14px] font-black text-gray-900 dark:text-slate-100">{formatValue(stats.value)}</strong>}
                 </div>
                 <div className="mt-3 flex gap-2 px-1.5 pb-1.5">
                   <button type="button" onClick={() => onViewProducts(category.id)} className="!min-h-0 inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-gray-200 py-2 text-[13px] font-bold text-gray-800 hover:bg-gray-50 dark:border-slate-600 dark:text-slate-100">View Products <ArrowRight className="h-3.5 w-3.5" /></button>
@@ -193,7 +195,7 @@ export function CategoriesTab({ categories, setCategories, products, statsFor, c
               <CategoryIcon category={category} size="h-9 w-9" iconSize="h-4 w-4" />
               <button type="button" onClick={() => onViewProducts(category.id)} className="!min-h-0 min-w-0 flex-1 text-left">
                 <span className="block truncate text-[13.5px] font-bold text-gray-900 dark:text-slate-100">{category.name}</span>
-                <span className="block text-[11.5px] text-gray-500">{stats.products} products · {stats.units.toLocaleString()} units · {formatValue(stats.value)}</span>
+                <span className="block text-[11.5px] text-gray-500">{stats.products} products · {stats.units.toLocaleString()} units{showValue ? ` · ${formatValue(stats.value)}` : ""}</span>
               </button>
               <ActivePill active={category.active} />
               {canManage && <button type="button" aria-label="More" onClick={(event) => setMenuFor({ category, el: event.currentTarget })} className="!min-h-0 rounded-lg p-1.5 text-gray-500"><MoreVertical className="h-4 w-4" /></button>}
@@ -206,7 +208,7 @@ export function CategoriesTab({ categories, setCategories, products, statsFor, c
               <tr>
                 <th className="w-10 px-4 py-2.5"><input type="checkbox" aria-label="Select all" checked={tableRows.length > 0 && tableRows.every((row) => ticked.has(row.category.id))} onChange={(event) => setTicked(event.target.checked ? new Set(tableRows.map((row) => row.category.id)) : new Set())} className="accent-[#1F8FE0]" /></th>
                 <th className="w-8 py-2.5">#</th><th className="py-2.5">Category</th><th className="py-2.5">Description</th><th className="py-2.5 text-right">Products</th>
-                <th className="py-2.5 text-right">Units in Stock</th><th className="py-2.5 text-right">Stock Value</th><th className="py-2.5 pl-8">Status</th><th className="py-2.5">Created At</th><th className="px-4 py-2.5 text-center">Actions</th>
+                <th className="py-2.5 text-right">Units in Stock</th>{showValue && <th className="py-2.5 text-right">Stock Value</th>}<th className="py-2.5 pl-8">Status</th><th className="py-2.5">Created At</th><th className="px-4 py-2.5 text-center">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
@@ -218,7 +220,7 @@ export function CategoriesTab({ categories, setCategories, products, statsFor, c
                   <td className="max-w-[18rem] truncate py-2.5 text-gray-500 dark:text-slate-400">{category.description || "—"}</td>
                   <td className="py-2.5 text-right font-semibold tabular-nums">{stats.products}</td>
                   <td className="py-2.5 text-right tabular-nums">{stats.units.toLocaleString()}</td>
-                  <td className="py-2.5 text-right font-semibold tabular-nums">{formatValue(stats.value)}</td>
+                  {showValue && <td className="py-2.5 text-right font-semibold tabular-nums">{formatValue(stats.value)}</td>}
                   <td className="py-2.5 pl-8"><ActivePill active={category.active} /></td>
                   <td className="py-2.5 text-[12px] text-gray-500">{category.createdAt ? new Date(category.createdAt).toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—"}<span className="block text-gray-400">{category.createdAt ? new Date(category.createdAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : ""}</span></td>
                   <td className="px-4 py-2.5 text-center">{canManage ? <button type="button" aria-label={`Actions for ${category.name}`} onClick={(event) => setMenuFor({ category, el: event.currentTarget })} className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-600 dark:border-slate-600 dark:text-slate-300"><MoreVertical className="h-4 w-4" /></button> : null}</td>

@@ -73589,7 +73589,9 @@ ${waybillLineItems(w).length > 1
           <>
           <ProductsStockPage
             products={catalogProducts}
-            currentUserId={authUser?.id ?? ""}
+            currentUserId={(isSpying ? currentManagedUser?.id : authUser?.id) ?? authUser?.id ?? ""}
+            viewerRole={currentRole}
+            isPreview={isPreviewing && previewReadOnly}
             canManageCatalog={canManageProductCatalog}
             stockOf={totalProductStockLive}
             states={stateStockStateOptions.length > 0 ? stateStockStateOptions : ["Lagos", "Abuja", "Rivers", "Edo", "Imo"]}

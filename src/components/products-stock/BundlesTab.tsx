@@ -29,9 +29,11 @@ const TYPE_TONE: Record<Offer["type"], string> = {
   bundle: "bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300", single: "bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-300", combo: "bg-teal-50 text-teal-700 dark:bg-teal-500/15 dark:text-teal-300"
 };
 
-export function BundlesTab({ products, canEdit, stockOf, stateQty, states, imageOf, formatMoney, onEditPackage, onPackageCreated, onPackagePatched, onToast, createRequest, templatesRequest, bulkRequest }: {
+export function BundlesTab({ products, canEdit, showValue, stockOf, stateQty, states, imageOf, formatMoney, onEditPackage, onPackageCreated, onPackagePatched, onToast, createRequest, templatesRequest, bulkRequest }: {
   products: OfferProduct[];
   canEdit: boolean;
+  // Owner / Admin / Manager only (Bright, 17 Oct 2026).
+  showValue: boolean;
   stockOf: (productId: string) => number;
   stateQty: (productId: string, state: string) => number;
   states: string[];
@@ -203,7 +205,7 @@ export function BundlesTab({ products, canEdit, stockOf, stateQty, states, image
           ) : view === "analytics" ? (
             <section className={`${cardShell} overflow-x-auto`}>
               <table className="w-full [&_td]:align-middle min-w-[46rem] text-left text-[13px]">
-                <thead className="bg-gray-50 text-[11.5px] font-bold text-gray-500 dark:bg-slate-900 dark:text-slate-400"><tr><th className="px-4 py-2.5">Offer</th><th className="py-2.5 text-right">Price</th><th className="py-2.5 text-right">Per piece</th><th className="py-2.5 text-right">Saving vs single</th><th className="py-2.5 text-right">Offers in stock</th><th className="px-4 py-2.5 text-right">Value in stock</th></tr></thead>
+                <thead className="bg-gray-50 text-[11.5px] font-bold text-gray-500 dark:bg-slate-900 dark:text-slate-400"><tr><th className="px-4 py-2.5">Offer</th><th className="py-2.5 text-right">Price</th><th className="py-2.5 text-right">Per piece</th><th className="py-2.5 text-right">Saving vs single</th><th className="py-2.5 text-right">Offers in stock</th>{showValue && <th className="px-4 py-2.5 text-right">Value in stock</th>}</tr></thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
                   {filtered.map((offer) => {
                     const single = singlePrice(offer);
@@ -214,7 +216,7 @@ export function BundlesTab({ products, canEdit, stockOf, stateQty, states, image
                         <td className="py-2.5 text-right">{formatMoney(Math.round(offer.price / Math.max(1, offer.quantity)), offer.currency)}</td>
                         <td className={`py-2.5 text-right font-semibold ${saving && saving > 0 ? "text-emerald-600" : "text-gray-400"}`}>{saving === null ? "—" : formatMoney(saving, offer.currency)}</td>
                         <td className="py-2.5 text-right">{offer.inStock.toLocaleString()}</td>
-                        <td className="px-4 py-2.5 text-right font-semibold">{formatMoney(offer.inStock * offer.price, offer.currency)}</td></tr>
+                        {showValue && <td className="px-4 py-2.5 text-right font-semibold">{formatMoney(offer.inStock * offer.price, offer.currency)}</td>}</tr>
                     );
                   })}
                 </tbody>

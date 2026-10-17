@@ -174,7 +174,7 @@ const statusPill = (status: StockRow["status"]) => status === "out"
     ? <span className="rounded-md bg-amber-50 px-2 py-1 text-[11px] font-bold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">Low Stock</span>
     : <span className="rounded-md bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">In Stock</span>;
 
-export function StockOverviewTab({ rows, categories, states, defaultState, range, formatValue, onRowAction, canManageCatalog, showStockNumbers, unitsWord }: {
+export function StockOverviewTab({ rows, categories, states, defaultState, range, formatValue, onRowAction, canManageCatalog, showStockNumbers, unitsWord, showValue }: {
   rows: StockRow[];
   categories: ProductCategory[];
   states: string[];
@@ -185,6 +185,8 @@ export function StockOverviewTab({ rows, categories, states, defaultState, range
   canManageCatalog: boolean;
   showStockNumbers: boolean;
   unitsWord: string;
+  // Owner / Admin / Manager only (Bright, 17 Oct 2026).
+  showValue: boolean;
 }) {
   const [distMeasure, setDistMeasure] = useState<"units" | "value">("units");
   const [barMeasure, setBarMeasure] = useState<"value" | "units">("value");
@@ -209,6 +211,7 @@ export function StockOverviewTab({ rows, categories, states, defaultState, range
   }, [range.from, range.to]);
 
   const slices = useMemo(() => categorySlices(rows, categories), [rows, categories]);
+  const legendMeasure: "units" | "value" = showValue ? distMeasure : "units";
   const totalUnits = rows.reduce((sum, row) => sum + Math.max(0, row.stock), 0);
   const totalValue = rows.reduce((sum, row) => sum + Math.max(0, row.value), 0);
   const counts = { ok: rows.filter((row) => row.status === "ok").length, low: rows.filter((row) => row.status === "low").length, out: rows.filter((row) => row.status === "out").length };
@@ -229,20 +232,20 @@ export function StockOverviewTab({ rows, categories, states, defaultState, range
         <section className={`${cardShell} p-4`}>
           <div className="flex items-center justify-between gap-2">
             <h2 className="m-0 text-[15px] font-black text-gray-900 dark:text-slate-100">Stock Distribution by Category</h2>
-            <SelectChip value={distMeasure} onChange={(value) => setDistMeasure(value as "units" | "value")} label="Measure"><option value="units">Units</option><option value="value">Value (₦)</option></SelectChip>
+            {showValue && <SelectChip value={distMeasure} onChange={(value) => setDistMeasure(value as "units" | "value")} label="Measure"><option value="units">Units</option><option value="value">Value (₦)</option></SelectChip>}
           </div>
           {totalUnits === 0 && totalValue === 0 ? <p className="m-0 py-12 text-center text-[13px] text-gray-400">No stock to show yet.</p> : (
             <div className="mt-3 flex flex-col items-center gap-4 sm:flex-row sm:items-center">
-              <Donut slices={slices} measure={distMeasure} total={distMeasure === "units" ? totalUnits : totalValue}
-                centerText={distMeasure === "units" ? totalUnits.toLocaleString() : formatValue(totalValue)} centerLabel={distMeasure === "units" ? "Units" : "Value"} format={formatValue} />
+              <Donut slices={slices} measure={showValue ? distMeasure : "units"} total={showValue && distMeasure === "value" ? totalValue : totalUnits}
+                centerText={showValue && distMeasure === "value" ? formatValue(totalValue) : totalUnits.toLocaleString()} centerLabel={showValue && distMeasure === "value" ? "Value" : "Units"} format={formatValue} />
               <ul className="m-0 w-full min-w-0 flex-1 list-none space-y-2 p-0">
                 {slices.map((slice) => {
-                  const amount = slice[distMeasure];
-                  const share = (distMeasure === "units" ? totalUnits : totalValue) > 0 ? Math.round((amount / (distMeasure === "units" ? totalUnits : totalValue)) * 100) : 0;
+                  const amount = slice[legendMeasure];
+                  const share = (legendMeasure === "units" ? totalUnits : totalValue) > 0 ? Math.round((amount / (legendMeasure === "units" ? totalUnits : totalValue)) * 100) : 0;
                   return (
                     <li key={slice.key} className="grid grid-cols-[minmax(0,1fr)_auto_2.75rem] items-center gap-3 text-[13px]">
                       <span className="flex min-w-0 items-center gap-2"><span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: slice.color }} /><span className="truncate font-semibold text-gray-700 dark:text-slate-200">{slice.name}</span></span>
-                      <strong className="font-black tabular-nums text-gray-900 dark:text-slate-100">{distMeasure === "units" ? amount.toLocaleString() : formatValue(amount)}</strong>
+                      <strong className="font-black tabular-nums text-gray-900 dark:text-slate-100">{legendMeasure === "units" ? amount.toLocaleString() : formatValue(amount)}</strong>
                       <span className="text-right tabular-nums text-gray-400">{share}%</span>
                     </li>
                   );
@@ -253,10 +256,10 @@ export function StockOverviewTab({ rows, categories, states, defaultState, range
         </section>
         <section className={`${cardShell} p-4`}>
           <div className="flex items-center justify-between gap-2">
-            <h2 className="m-0 text-[15px] font-black text-gray-900 dark:text-slate-100">Stock {barMeasure === "value" ? "Value" : "Units"} by Category</h2>
-            <SelectChip value={barMeasure} onChange={(value) => setBarMeasure(value as "units" | "value")} label="Measure"><option value="value">Value (₦)</option><option value="units">Units</option></SelectChip>
+            <h2 className="m-0 text-[15px] font-black text-gray-900 dark:text-slate-100">Stock {barMeasure === "value" && showValue ? "Value" : "Units"} by Category</h2>
+            {showValue && <SelectChip value={barMeasure} onChange={(value) => setBarMeasure(value as "units" | "value")} label="Measure"><option value="value">Value (₦)</option><option value="units">Units</option></SelectChip>}
           </div>
-          <div className="mt-4">{slices.length === 0 ? <p className="m-0 py-12 text-center text-[13px] text-gray-400">No stock to show yet.</p> : <Bars slices={slices} measure={barMeasure} format={formatValue} />}</div>
+          <div className="mt-4">{slices.length === 0 ? <p className="m-0 py-12 text-center text-[13px] text-gray-400">No stock to show yet.</p> : <Bars slices={slices} measure={showValue ? barMeasure : "units"} format={formatValue} />}</div>
         </section>
       </div>
 
@@ -348,7 +351,7 @@ export function StockOverviewTab({ rows, categories, states, defaultState, range
         </div>
         <PopoverMenu anchor={filtersButton.current} open={filtersOpen} onClose={() => setFiltersOpen(false)} width={210}>
           <p className="m-0 px-3.5 pb-1 pt-1 text-[11px] font-bold uppercase tracking-wide text-gray-400">Sort by</p>
-          {([["stock", "Most stock"], ["value", "Highest value"], ["name", "Name A-Z"]] as const).map(([key, label]) => (
+          {([["stock", "Most stock"], ...(showValue ? [["value", "Highest value"]] as const : []), ["name", "Name A-Z"]] as const).map(([key, label]) => (
             <MenuItem key={key} icon={sort === key ? <Check /> : <span className="block h-4 w-4" />} onClick={() => { setSort(key); setFiltersOpen(false); }}>{label}</MenuItem>
           ))}
         </PopoverMenu>
@@ -376,7 +379,7 @@ export function StockOverviewTab({ rows, categories, states, defaultState, range
                 <th className="w-10 px-4 py-2.5"><input type="checkbox" aria-label="Select all" checked={shown.length > 0 && shown.every((row) => selected.has(row.id))} onChange={(event) => setSelected(event.target.checked ? new Set(shown.map((row) => row.id)) : new Set())} className="accent-[#1F8FE0]" /></th>
                 <th className="w-8 py-2.5">#</th><th className="py-2.5">Product</th><th className="py-2.5">Category</th><th className="py-2.5">SKU</th>
                 <th className="py-2.5 text-right">Total Stock</th><th className="py-2.5 text-right">Available in {state}</th><th className="py-2.5 text-right">Other States</th>
-                <th className="py-2.5 text-right">Stock Value</th><th className="py-2.5 pl-6">Status</th><th className="px-4 py-2.5 text-center">Actions</th>
+                {showValue && <th className="py-2.5 text-right">Stock Value</th>}<th className="py-2.5 pl-6">Status</th><th className="px-4 py-2.5 text-center">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
@@ -392,7 +395,7 @@ export function StockOverviewTab({ rows, categories, states, defaultState, range
                     <td className="py-2.5 text-right font-semibold tabular-nums text-gray-900 dark:text-slate-100">{units(row.stock)}</td>
                     <td className="py-2.5 text-right tabular-nums text-gray-700 dark:text-slate-300">{units(here)}</td>
                     <td className="py-2.5 text-right tabular-nums text-gray-700 dark:text-slate-300">{units(Math.max(0, row.stock - here))}</td>
-                    <td className="py-2.5 text-right font-semibold tabular-nums text-gray-900 dark:text-slate-100">{formatValue(row.value)}</td>
+                    {showValue && <td className="py-2.5 text-right font-semibold tabular-nums text-gray-900 dark:text-slate-100">{formatValue(row.value)}</td>}
                     <td className="py-2.5 pl-6">{statusPill(row.status)}</td>
                     <td className="px-4 py-2.5 text-center">
                       <button type="button" aria-label={`Actions for ${row.name}`} onClick={(event) => setMenuFor({ id: row.id, el: event.currentTarget })}
