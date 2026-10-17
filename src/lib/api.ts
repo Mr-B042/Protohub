@@ -618,6 +618,9 @@ export const productsApi = {
   // Every recorded unit-cost move, so a historical line can be costed at what
   // it cost THEN instead of what the product record says today.
   costChanges: () => get<{ changes: any[] }>("/api/products/cost-changes"),
+  // Products & Stock "View landing page": each product's pages, from its Tracking Hub links.
+  landingPages: () => get<{ pages: Array<{ productId: string; url: string; label: string }> }>("/api/products/landing-pages"),
+  landingPageFrameCheck: (url: string) => get<{ blocked: string | null }>(`/api/products/landing-pages/frame-check?url=${encodeURIComponent(url)}`),
   // Public storefront view of one product, with cross-sells + free-gifts inlined.
   // Raw fetch so embed forms never inherit stale auth headers or 401 refresh logic.
   public: async (id: string) => {

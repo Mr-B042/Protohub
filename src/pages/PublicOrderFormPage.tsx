@@ -3,6 +3,7 @@ import { cartsApi, embedSettingsApi, productsApi, publicOrdersApi } from "../lib
 import { browserSupabaseClient } from "../lib/realtime";
 import { makeCartId } from "../lib/cart-id";
 import { itemCountLabel } from "../lib/item-count-label";
+import { announceLandingPreviewLocked, insideLandingPreview } from "../lib/landing-preview";
 import type { ProductCurrencyCode } from "../types";
 
 type PublicPricing = {
@@ -1307,8 +1308,12 @@ export default function PublicOrderFormPage() {
   const publicMetaTrackingKey = (params?.get("meta_tracking_key") ?? params?.get("metaTrackingKey") ?? "").trim().slice(0, 120);
   const publicMetaTestEventCode = (params?.get("meta_test_event_code") ?? params?.get("metaTestEventCode") ?? params?.get("test_event_code") ?? params?.get("testEventCode") ?? "").trim().slice(0, 80);
   const publicMetaTestMode = parsePublicBoolean(params?.get("meta_test") ?? params?.get("metaTest") ?? params?.get("meta_test_mode") ?? params?.get("metaTestMode")) || Boolean(publicMetaTestEventCode);
-  const publicEmbedIsPreview = params?.get("preview") === "1";
-  const publicEmbedIsLocalTest = publicEmbedIsPreview && typeof window !== "undefined" && (
+  // Opened from Products & Stock "View landing page": the real page, but the
+  // form must not create an order, a cart, or a Pixel event. Read once.
+  const [publicEmbedIsStaffPreview] = useState(insideLandingPreview);
+  const publicEmbedIsPreview = params?.get("preview") === "1" || publicEmbedIsStaffPreview;
+  // A staff preview takes the live site's preview path on localhost too.
+  const publicEmbedIsLocalTest = publicEmbedIsPreview && !publicEmbedIsStaffPreview && typeof window !== "undefined" && (
     window.location.hostname === "localhost" ||
     window.location.hostname === "127.0.0.1" ||
     window.location.hostname === "::1"
@@ -2097,6 +2102,10 @@ export default function PublicOrderFormPage() {
     + autoCompanionLines.reduce((sum, line) => sum + line.total, 0);
 
   useEffect(() => {
+    if (publicEmbedIsStaffPreview) announceLandingPreviewLocked(publicProductId);
+  }, [publicEmbedIsStaffPreview, publicProductId]);
+
+  useEffect(() => {
     if (publicEmbedIsPreview) {
       setAbandonedDraftCartId("");
       abandonedDraftCartIdRef.current = "";
@@ -2126,7 +2135,8 @@ export default function PublicOrderFormPage() {
   }, [toast]);
 
   useEffect(() => {
-    if (publicUpsellOffer || publicOrderSubmittingRef.current) return;
+    // A preview never sends orders, including ones this browser queued offline.
+    if (publicEmbedIsPreview || publicUpsellOffer || publicOrderSubmittingRef.current) return;
     let cancelled = false;
     const flushQueue = async () => {
       const queued = readQueuedPublicOrders();
@@ -2161,7 +2171,7 @@ export default function PublicOrderFormPage() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [publicOrderSubmitted, publicUpsellOffer]);
+  }, [publicEmbedIsPreview, publicOrderSubmitted, publicUpsellOffer]);
 
   useEffect(() => {
     if (!loading || publicProduct) {
@@ -3075,7 +3085,10 @@ export default function PublicOrderFormPage() {
   }
 
   function redirectToPublicTarget() {
-    if (!publicRedirectUrl) return;
+    // ⚠️ Every path to the thank-you page passes here. A staff preview must
+    // never reach it: the page fires the Pixel's sale event, and the jump
+    // below moves window.top - which in a preview is Protohub itself.
+    if (!publicRedirectUrl || publicEmbedIsStaffPreview) return;
     const redirectUrl = (() => {
       if (publicMetaTrackingMode !== "hybrid" || !lastMetaPurchaseEventIdRef.current) return publicRedirectUrl;
       try {
@@ -3123,7 +3136,8 @@ export default function PublicOrderFormPage() {
   function finishPreviewJourney(customer: string) {
     setPublicUpsellOffer(null);
     exitTrackedRef.current = true;
-    if (publicRedirectUrl) {
+    // The thank-you page fires the Pixel's sale event: a staff preview stays put.
+    if (publicRedirectUrl && !publicEmbedIsStaffPreview) {
       redirectToPublicTarget();
       return;
     }

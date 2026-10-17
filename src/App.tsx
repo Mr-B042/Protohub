@@ -131,6 +131,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { OrderSourceLogo } from "./components/OrderSourceLogo";
+import { LandingPagePreview, useProductLandingPages } from "./components/LandingPagePreview";
 import { periodBounds } from "./lib/period-bounds";
 import { WhatsAppIcon } from "./components/WhatsAppIcon";
 import {
@@ -13715,6 +13716,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [callQueueNote, setCallQueueNote] = useState("");
   const [orderActionReturnTarget, setOrderActionReturnTarget] = useState<"list" | "details">("list");
   const [repConsoleTab, setRepConsoleTab] = useState<RepConsoleTab>("Dashboard");
+  const productLandingPages = useProductLandingPages(repConsoleTab === "Products & Stock");
   const [repConsoleRepId, setRepConsoleRepId] = useState("all");
   const [recoveryRepScopeId, setRecoveryRepScopeId] = useState("");
   const [recoveryRepKpiSummary, setRecoveryRepKpiSummary] = useState<any | null>(null);
@@ -14258,6 +14260,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [repProductView, setRepProductView] = useState<"recommended" | "all" | "low" | "unavailable">("recommended");
   const [repProductBuyingId, setRepProductBuyingId] = useState("");
   const [repProductGuideId, setRepProductGuideId] = useState("");
+  const [repProductLandingId, setRepProductLandingId] = useState("");
   // The grid previews six and expands on demand - the full catalogue pushed
   // the cross-sell rail off the bottom of a call-length screen.
   const [repProductShowAll, setRepProductShowAll] = useState(false);
@@ -73616,6 +73619,8 @@ ${waybillLineItems(w).length > 1
               return { state, quantity };
             }).filter((row) => row.quantity > 0).sort((a, b) => b.quantity - a.quantity);
             const guideProduct = active.find((product) => product.id === repProductGuideId) ?? null;
+            const landingPagesFor = (productId: string) => (productLandingPages ?? []).filter((page) => page.productId === productId);
+            const landingProduct = active.find((product) => product.id === repProductLandingId) ?? null;
             const companyUnitsAvailable = active.reduce((sum, product) => sum + totalProductStockLive(product), 0);
             const repProductVisible = repProductShowAll ? filtered.length : 6;
             const shownIds = new Set(filtered.slice(0, repProductVisible).map((product) => product.id));
@@ -73827,6 +73832,17 @@ ${waybillLineItems(w).length > 1
                               className={`!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-black text-white transition-opacity hover:opacity-90 ${stock <= 0 ? "bg-amber-500" : "bg-[#1F8FE0]"}`}>
                               {stock <= 0 ? "Check stock" : <>Cross-sell <ArrowRight className="h-3.5 w-3.5" /></>}
                             </button>
+                            {(() => {
+                              const pages = landingPagesFor(product.id);
+                              return (
+                                <button type="button" disabled={pages.length === 0} onClick={() => setRepProductLandingId(product.id)}
+                                  title={pages.length === 0 ? (productLandingPages ? "No Tracking Hub link has a landing page for this product yet." : "Loading landing pages...") : "Study the real page. Its order form is view only here."}
+                                  className="!min-h-0 col-span-2 inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-black text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-white dark:border-slate-600 dark:bg-slate-950 dark:text-slate-200">
+                                  <Globe className="h-3.5 w-3.5" />
+                                  {pages.length === 0 ? "No landing page yet" : pages.length === 1 ? "View landing page" : `View landing pages (${pages.length})`}
+                                </button>
+                              );
+                            })()}
                           </div>
                         </article>
                       );
@@ -73987,6 +74003,10 @@ ${waybillLineItems(w).length > 1
                   </aside>
                 </div>
               </div>
+                {landingProduct && landingPagesFor(landingProduct.id).length > 0 && (
+                  <LandingPagePreview productName={landingProduct.name} pages={landingPagesFor(landingProduct.id)}
+                    onClose={() => setRepProductLandingId("")} onToast={showToast} />
+                )}
                 {guideProduct && <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/50 p-2 sm:items-center sm:p-6" onClick={() => setRepProductGuideId("")}><section className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}><div className="flex items-start justify-between gap-4"><div><span className="text-[10px] font-black uppercase tracking-widest text-blue-600">Selling guide</span><h2 className="mt-1 text-xl font-black text-gray-900 dark:text-slate-100">{guideProduct.name}</h2><p className="mt-1 text-sm text-gray-500 dark:text-slate-400">{guideProduct.description || "No product description has been added yet."}</p></div><button type="button" onClick={() => setRepProductGuideId("")} className="rounded-lg border border-gray-200 p-2 dark:border-slate-700"><X className="h-4 w-4" /></button></div><div className="mt-5 grid gap-4 sm:grid-cols-2"><article className="rounded-xl bg-gray-50 p-4 dark:bg-slate-950"><h3 className="text-xs font-black uppercase text-gray-400">Packages &amp; prices</h3><div className="mt-2 space-y-2">{guideProduct.packages.filter((pkg) => pkg.active).map((pkg) => <div key={pkg.id} className="flex justify-between gap-3 text-sm"><span className="font-bold text-gray-700 dark:text-slate-200">{pkg.name} · {pkg.quantity} pcs</span><strong className="text-blue-600">{formatProductMoney(pkg.price, pkg.currency)}</strong></div>)}{!guideProduct.packages.some((pkg) => pkg.active) && <p className="text-xs text-gray-500">No active packages configured.</p>}</div></article><article className="rounded-xl bg-gray-50 p-4 dark:bg-slate-950"><h3 className="text-xs font-black uppercase text-gray-400">Stock by state</h3><div className="mt-2 flex flex-wrap gap-2">{states.map((state) => { const quantity = inventoryStateHubRows.filter((row) => normalizeAgentState(row.location.state) === normalizeAgentState(state)).reduce((sum, row) => { const stock = stockRowsForStateHub(row.agent, row.location).find((item) => item.productId === guideProduct.id); return sum + Math.max(0, Number(stock?.quantity ?? 0) - Number(stock?.defective ?? 0) - Number(stock?.missing ?? 0)); }, 0); return <span key={state} className={`rounded-full px-2.5 py-1 text-xs font-black ${quantity > 0 ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-400"}`}>{state} {quantity}</span>; })}</div></article><article className="rounded-xl bg-blue-50 p-4 dark:bg-blue-500/10"><h3 className="text-xs font-black uppercase text-blue-600">Selling points</h3><ul className="mt-2 space-y-1 text-sm font-semibold text-gray-700 dark:text-slate-200"><li>• Confirm the customer&apos;s main need first.</li><li>• Quote the active package that best fits their budget.</li><li>• Confirm {repProductState} availability before promising delivery.</li></ul></article><article className="rounded-xl bg-violet-50 p-4 dark:bg-violet-500/10"><h3 className="text-xs font-black uppercase text-violet-600">Short sales script</h3><p className="mt-2 text-sm font-semibold leading-relaxed text-gray-700 dark:text-slate-200">“Based on what you need, {guideProduct.name} is a good fit. We currently have stock serving {repProductState}. Would you like the best-value package, and may I also show you an item customers commonly buy with it?”</p></article></div></section></div>}
               <footer className="flex flex-wrap items-center justify-center gap-3 pt-1 text-[11px] font-semibold text-gray-400">
                 <span className="inline-flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" />Stock refreshes from live inventory</span>
