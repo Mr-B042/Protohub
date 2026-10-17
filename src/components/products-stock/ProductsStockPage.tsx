@@ -180,7 +180,6 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
   const viewOf = useCallback((product: P): ProductView => {
     const stock = stockOf(product);
     const own = mediaByProduct.get(product.id) ?? [];
-    const packageImages = product.packages.flatMap((pkg) => [pkg.imageUrl, ...(pkg.imageUrls ?? [])]).filter(Boolean) as string[];
     const category = product.categoryId ? categoryById.get(product.categoryId) : null;
     const price = priceOf(product);
     const low = stock > 0 && stock <= lowStockThreshold;
@@ -189,7 +188,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
       stock, stockState: stock <= 0 ? "out" : low && settings?.showLowStockWarning !== false ? "low" : "ok",
       priceText: showMoney ? formatPrice(price.amount, price.currency) : "",
       category: category ? { name: category.name, color: category.color } : null,
-      items: galleryItemsFor(own, packageImages),
+      items: galleryItemsFor(own),
       pendingCount: own.filter((item) => item.status === "pending" && (canApprove || item.uploadedBy === currentUserId)).length,
       landingPageCount: props.landingPageCount(product.id),
       unitsWord, showStockNumbers, fallbackImage: settings?.defaultMainImageUrl ?? null, orders30d: orderCounts[product.id] ?? 0
