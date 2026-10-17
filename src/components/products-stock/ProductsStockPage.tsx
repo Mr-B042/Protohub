@@ -53,6 +53,10 @@ export type ProductsStockPageProps<P extends CatalogProduct> = {
   // "Viewing as" while its Read-only switch is on: nothing on this page writes.
   isPreview: boolean;
   canManageCatalog: boolean;
+  // Manage Stock: Owner / Admin / Manager / Inventory roles (Bright, 17 Oct 2026).
+  canManageStock: boolean;
+  // False for the logistics role: it never sees prices or money (server strips them too).
+  showMoney: boolean;
   stockOf: (product: P) => number;
   states: string[];
   stateQty: (product: P, state: string) => number;
@@ -77,7 +81,7 @@ export type ProductsStockPageProps<P extends CatalogProduct> = {
 };
 
 export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStockPageProps<P>) {
-  const { products, currentUserId, canManageCatalog, stockOf, lowStockThreshold, showToast } = props;
+  const { products, currentUserId, canManageCatalog, stockOf, lowStockThreshold, showToast, showMoney } = props;
   const data = useProductsStockData();
   const { setMedia, categories } = data;
   const settings: CatalogSettings | null = data.settings;
@@ -89,6 +93,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
   const canSend = data.canSend && (viewerIsManager || !NO_SEND_ROLES.includes(props.viewerRole)) && (viewerIsManager || data.repUploadsEnabled);
   const showValue = viewerIsManager;
   const writable = !props.isPreview;
+  const canManageStock = props.canManageStock && writable;
   const media = useMemo(() => viewerIsManager ? data.media : data.media.filter((item) => item.status === "approved" || item.uploadedBy === currentUserId),
     [data.media, viewerIsManager, currentUserId]);
   const readOnly = () => { showToast("Viewing as is read-only. Exit preview to make changes."); };
@@ -136,13 +141,15 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
   }, [tab]);
 
   // Switching "Viewing as" to a rep while on a manager-only tab: go back.
-  useEffect(() => { if (!viewerIsManager && MANAGER_TABS.includes(tab)) setTab("products"); }, [viewerIsManager, tab]);
+  useEffect(() => {
+    if ((!viewerIsManager && MANAGER_TABS.includes(tab)) || (!showMoney && tab === "bundles")) setTab("products");
+  }, [viewerIsManager, showMoney, tab]);
 
   // The branch's default view applies until this person picks one.
   useEffect(() => { if (settings && !readView()) setView(settings.defaultView); }, [settings]);
 
   const unitsWord = settings?.unitsWord === "pcs" ? "pcs" : settings?.unitsWord === "pieces" ? "pieces" : "units";
-  const showStockNumbers = canApprove || canManageCatalog || settings?.showStockToReps !== false;
+  const showStockNumbers = canApprove || canManageCatalog || props.canManageStock || settings?.showStockToReps !== false;
   const currency = settings?.preferredCurrency ?? "NGN";
   const formatPrice = useCallback((amount: number, code: string) => {
     if (settings?.priceFormat !== "short" || Math.abs(amount) < 10000) return props.formatMoney(amount, code);
@@ -174,14 +181,14 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
     return {
       id: product.id, name: product.name, sku: settings?.showSku === false ? "" : product.sku, description: product.description, active: product.active,
       stock, stockState: stock <= 0 ? "out" : low && settings?.showLowStockWarning !== false ? "low" : "ok",
-      priceText: formatPrice(price.amount, price.currency),
+      priceText: showMoney ? formatPrice(price.amount, price.currency) : "",
       category: category ? { name: category.name, color: category.color } : null,
       items: galleryItemsFor(own, packageImages),
       pendingCount: own.filter((item) => item.status === "pending" && (canApprove || item.uploadedBy === currentUserId)).length,
       landingPageCount: props.landingPageCount(product.id),
       unitsWord, showStockNumbers, fallbackImage: settings?.defaultMainImageUrl ?? null
     };
-  }, [stockOf, mediaByProduct, categoryById, priceOf, lowStockThreshold, settings, formatPrice, canApprove, currentUserId, props, unitsWord, showStockNumbers]);
+  }, [stockOf, mediaByProduct, categoryById, priceOf, lowStockThreshold, settings, formatPrice, canApprove, currentUserId, props, unitsWord, showStockNumbers, showMoney]);
   const views = useMemo(() => catalogue.map((product) => ({ product, view: viewOf(product) })), [catalogue, viewOf]);
   const coverOf = useCallback((productId: string) => {
     const row = views.find((entry) => entry.product.id === productId);
@@ -348,10 +355,10 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
   };
   const exports = {
     products: () => csvDownload(`products-${new Date().toISOString().slice(0, 10)}.csv`,
-      ["Product", "SKU", "Category", "Status", "Units in stock", "Price", ...(showValue ? ["Stock value"] : []), "Photos", "Videos"],
+      ["Product", "SKU", "Category", "Status", "Units in stock", ...(showMoney ? ["Price"] : []), ...(showValue ? ["Stock value"] : []), "Photos", "Videos"],
       views.filter((row) => selected.size === 0 || selected.has(row.product.id) || tab !== "products").map(({ product, view: card }) => {
         const own = card.items.filter((item) => item.media);
-        return [product.name, product.sku, card.category?.name ?? "", product.active ? "Active" : "Inactive", card.stock, priceOf(product).amount,
+        return [product.name, product.sku, card.category?.name ?? "", product.active ? "Active" : "Inactive", card.stock, ...(showMoney ? [priceOf(product).amount] : []),
           ...(showValue ? [Math.max(0, card.stock) * priceOf(product).amount] : []),
           own.filter((item) => item.kind === "image").length, own.filter((item) => item.kind === "video").length];
       })),
@@ -369,13 +376,13 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
     ];
     if (canSend) menu.push({ key: "upload", label: canApprove ? "Add photos or videos" : "Send photos or videos", icon: menuIcons.upload, onClick: () => startUpload("files", product.id) });
     if (card.landingPageCount > 0) menu.push({ key: "landing", label: "View landing page", icon: menuIcons.landing, onClick: () => props.onOpenLanding(product.id) });
-    menu.push({ key: "crosssell", label: "Cross-sell helper", icon: <ArrowRight />, onClick: () => openCrossSell(product.id) });
-    if (canManageCatalog) menu.push({ key: "stock", label: "Manage stock", icon: menuIcons.stock, onClick: () => props.onManageStock(product.id) });
+    if (showMoney) menu.push({ key: "crosssell", label: "Cross-sell helper", icon: <ArrowRight />, onClick: () => openCrossSell(product.id) });
+    if (canManageStock) menu.push({ key: "stock", label: "Manage stock", icon: menuIcons.stock, onClick: () => props.onManageStock(product.id) });
     if (canApprove) menu.push({ key: "category", label: "Set category", icon: menuIcons.category, onClick: () => { setSelected(new Set([product.id])); setBulkCategoryOpen(true); } });
     return {
       canSelect: canApprove, selected: selected.has(product.id), onToggleSelect: () => toggleSelect(product.id),
       onOpenViewer: (index) => openViewerFor(product.id, index), onViewDetails: () => setDetails(product.id),
-      primary: canManageCatalog ? { label: "Manage Stock", onClick: () => props.onManageStock(product.id) }
+      primary: canManageStock ? { label: "Manage Stock", onClick: () => props.onManageStock(product.id) }
         : card.stock <= 0 ? { label: "Check stock", tone: "amber", onClick: () => openCrossSell(product.id) }
         : { label: <>Cross-sell <ArrowRight className="h-3.5 w-3.5" /></>, onClick: () => openCrossSell(product.id) },
       menu
@@ -412,7 +419,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
     { key: "bundles", label: "Bundles & Offers", icon: <Gift className="h-4 w-4" /> },
     { key: "settings", label: "Settings", icon: <Settings className="h-4 w-4" /> }
   ];
-  const visibleTabs = tabs.filter((item) => viewerIsManager || !MANAGER_TABS.includes(item.key));
+  const visibleTabs = tabs.filter((item) => (viewerIsManager || !MANAGER_TABS.includes(item.key)) && (showMoney || item.key !== "bundles"));
   const activeFilterCount = Number(mediaFilter !== "any") + Number(sort !== "best");
   const header = HEADER[tab];
   const outlineButton = "!min-h-0 inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-[13.5px] font-bold text-gray-800 shadow-sm hover:bg-gray-50 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100";
@@ -585,7 +592,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
                   <MenuItem key={key} icon={mediaFilter === key ? <Check /> : <span className="block h-4 w-4" />} onClick={() => setMediaFilter(key)}>{text}</MenuItem>
                 ))}
                 <p className="m-0 mt-1 border-t border-gray-100 px-3.5 pb-1 pt-2 text-[11px] font-bold uppercase tracking-wide text-gray-400 dark:border-slate-800">Sort by</p>
-                {([["best", "Best match"], ["name", "Name A-Z"], ["price", "Price"], ["stock", "Most stock"]] as const).map(([key, text]) => (
+                {([["best", "Best match"], ["name", "Name A-Z"], ...(showMoney ? [["price", "Price"]] as const : []), ["stock", "Most stock"]] as const).map(([key, text]) => (
                   <MenuItem key={key} icon={sort === key ? <Check /> : <span className="block h-4 w-4" />} onClick={() => setSort(key)}>{text}</MenuItem>
                 ))}
               </PopoverMenu>
@@ -617,7 +624,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
             <div className="space-y-4">
               {statsStock}
               <StockOverviewTab rows={stockRows} categories={categories} states={props.states} defaultState={props.sellingState} range={range} formatValue={formatValue}
-                canManageCatalog={canManageCatalog && writable} showStockNumbers={showStockNumbers} unitsWord={unitsWord} showValue={showValue}
+                canManageCatalog={canManageStock} showStockNumbers={showStockNumbers} unitsWord={unitsWord} showValue={showValue}
                 onRowAction={(action, productId) => { if (action === "details") setDetails(productId); else if (action === "gallery") openViewerFor(productId, 0); else if (action === "stock") props.onManageStock(productId); else openCrossSell(productId); }} />
             </div>
           )}
@@ -679,14 +686,14 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
       )}
       {detailsRow && (
         <ProductDetailsSheet view={detailsRow.view} sellingState={props.sellingState} canSend={canSend}
-          packages={detailsRow.product.packages.filter((pkg) => pkg.active).sort((a, b) => a.displayOrder - b.displayOrder).map((pkg) => ({ id: pkg.id, name: pkg.name, quantity: pkg.quantity, priceText: formatPrice(pkg.price, pkg.currency) }))}
+          packages={detailsRow.product.packages.filter((pkg) => pkg.active).sort((a, b) => a.displayOrder - b.displayOrder).map((pkg) => ({ id: pkg.id, name: pkg.name, quantity: pkg.quantity, priceText: showMoney ? formatPrice(pkg.price, pkg.currency) : "" }))}
           stockByState={props.states.map((state) => ({ state, quantity: props.stateQty(detailsRow.product, state) }))}
           pairs={(detailsRow.product.crossSellProductIds ?? []).map((id) => productName(id))}
           onClose={() => setDetails("")}
           onOpenViewer={(index) => setViewer({ productName: detailsRow.view.name, items: detailsRow.view.items, index })}
           onUpload={() => startUpload("files", detailsRow.product.id)}
           onOpenLanding={detailsRow.view.landingPageCount > 0 ? () => props.onOpenLanding(detailsRow.product.id) : null}
-          primary={canManageCatalog ? { label: "Manage Stock", onClick: () => props.onManageStock(detailsRow.product.id) }
+          primary={canManageStock ? { label: "Manage Stock", onClick: () => props.onManageStock(detailsRow.product.id) }
             : { label: <>Cross-sell <ArrowRight className="h-4 w-4" /></>, onClick: () => { setDetails(""); openCrossSell(detailsRow.product.id); } }}
           secondary={canManageCatalog ? { label: "Edit product", onClick: () => props.onEditProduct(detailsRow.product.id) } : null} />
       )}

@@ -88,8 +88,10 @@ const UpdateSchema = z.object({
   requestId: z.string().trim().min(8).max(160).optional()
 });
 
+// Managers too (Bright, 17 Oct 2026: "Manage Stock" on Products & Stock for
+// Owner / Admin / Manager / Inventory). Same movement ledger as everyone.
 router.post("/update",
-  requireRole("Owner", "Admin", "Inventory Manager"),
+  requireRole("Owner", "Admin", "Manager", "Inventory Manager"),
   async (req, res) => {
     const parsed = UpdateSchema.safeParse(req.body);
     if (!parsed.success) {

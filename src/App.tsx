@@ -2942,11 +2942,13 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   "Sales Rep": [
     "Sales Rep Workspace", "My Targets & Incentives", "Team Challenges", "Products & Stock", "Bonuses", "Weekly Reports", "Call Rep Console", "Weekend Stock Summary", "Personal Delivery Agents", "Notifications", "Settings", "WhatsApp"
   ],
+  // "Products & Stock" (Bright, 17 Oct 2026): inventory roles use its
+  // Manage Stock; they see no stock value and (logistics) no prices there.
   "Inventory Manager": [
-    "Inventory & Logistics Operations", "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Expenses", "Notifications", "Settings", "WhatsApp"
+    "Inventory & Logistics Operations", "Inventory", "Products & Stock", "Weekend Stock Summary", "Agents", "Waybill", "Expenses", "Notifications", "Settings", "WhatsApp"
   ],
   "Inventory Manager & Logistics Operations": [
-    "Inventory & Logistics Operations", "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Notifications"
+    "Inventory & Logistics Operations", "Inventory", "Products & Stock", "Weekend Stock Summary", "Agents", "Waybill", "Notifications"
   ],
   "Marketer": [
     "Orders", "Marketing", "Embed Form", "Notifications", "Settings", "WhatsApp"
@@ -20914,7 +20916,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // link to a forbidden page, etc.), bounce them to their default landing.
   useEffect(() => {
     if (!authUser) return;
-    if (!isPageAllowed(activePage)) {
+    // ⚠️ Products & Stock is a Sales Rep Workspace TAB. Roles allowed the
+    // page but not the workspace (inventory roles) must not bounce off it.
+    const productsTabAllowed = activePage === "Sales Rep Workspace" && repConsoleTab === "Products & Stock" && isPageAllowed("Products & Stock");
+    if (!isPageAllowed(activePage) && !productsTabAllowed) {
       const target = currentAllowedPages.includes(defaultLandingByRole[currentRole])
         ? defaultLandingByRole[currentRole]
         : currentAllowedPages[0];
@@ -20924,7 +20929,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, currentRole, currentAllowedPages.length]);
+  }, [activePage, currentRole, currentAllowedPages.length, repConsoleTab]);
   const callQueue = trackedOrders
     .filter((order) => {
       const status = order.status ?? "New";
@@ -46970,6 +46975,17 @@ ${waybillLineItems(w).length > 1
     setInventoryView("combos");
     openAddComboModal();
     syncHashRoute("#/dashboard/admin/inventory/combos/new");
+  };
+
+  // Products & Stock "Manage Stock": the same Update Stock window, opened on
+  // top of the page instead of moving to Inventory (Managers have no
+  // Inventory page). Closing it leaves the person where they were.
+  const openStockUpdateHere = (productId: string) => {
+    setStockProductId(catalogProducts.some((product) => product.id === productId) ? productId : catalogProducts[0]?.id ?? "");
+    setStockChange("0");
+    setStockAdjustmentNote("");
+    setStockAdjustmentMode("add");
+    setModal("updateStock");
   };
 
   const openInventoryUpdateStockRoute = (productId?: string) => {
@@ -73613,7 +73629,9 @@ ${waybillLineItems(w).length > 1
             landingPageCount={(productId) => (productLandingPages ?? []).filter((page) => page.productId === productId).length}
             onOpenLanding={setRepProductLandingId}
             onAddProduct={openInventoryAddProductRoute}
-            onManageStock={(productId) => openInventoryUpdateStockRoute(productId)}
+            onManageStock={openStockUpdateHere}
+            canManageStock={["Owner", "Admin", "Manager", "Inventory Manager", "Inventory Manager & Logistics Operations"].includes(currentRole)}
+            showMoney={canViewInventoryFinancials}
             onEditProduct={openInventoryEditProductRoute}
             onEditPackage={openInventoryEditPackageRoute}
             onPackageCreated={(productId, saved) => setProducts((prev) => prev.map((product) => product.id === productId
