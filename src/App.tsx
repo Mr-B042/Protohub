@@ -73638,7 +73638,10 @@ ${waybillLineItems(w).length > 1
               ? { ...product, packages: [...product.packages, { companionProducts: [], packageComponents: [], imageUrls: [], description: "", ...saved } as ProductPackage] }
               : product))}
             onPackagePatched={(productId, packageId, patch) => setProducts((prev) => prev.map((product) => product.id === productId
-              ? { ...product, packages: product.packages.map((pkg) => pkg.id === packageId ? { ...pkg, ...patch } : pkg) }
+              ? { ...product, packages: product.packages.map((pkg) => pkg.id === packageId ? { ...pkg, ...(patch as Partial<ProductPackage>) } : pkg) }
+              : product))}
+            onPackageDeleted={(productId, packageId) => setProducts((prev) => prev.map((product) => product.id === productId
+              ? { ...product, packages: product.packages.filter((pkg) => pkg.id !== packageId) }
               : product))}
             onCrossSell={(productId) => { setRepProductBuyingId(productId); setRepProductView("recommended"); }}
             onCategoryAssigned={(productIds, categoryId) => setProducts((prev) => prev.map((product) => productIds.includes(product.id) ? { ...product, categoryId } : product))}

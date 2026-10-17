@@ -11,7 +11,8 @@ export type CatalogProduct = {
   categoryId?: string | null; catalogType?: string;
   crossSellProductIds?: string[]; freeGiftProductIds?: string[];
   packages: Array<{ id: string; name: string; quantity: number; price: number; currency: string; active: boolean; displayOrder: number; imageUrl?: string; imageUrls?: string[]; featuredComboCard?: boolean;
-    packageComponents?: Array<{ productId: string; quantity: number; isFreeGift?: boolean }> }>;
+    packageComponents?: Array<{ productId: string; quantity: number; isFreeGift?: boolean }>;
+    packageSet?: string; stateFilterMode?: string; stateRestrictions?: string[] }>;
 };
 
 export const MEDIA_LABEL_OPTIONS: Array<{ value: ProductMediaLabel; text: string }> = [
