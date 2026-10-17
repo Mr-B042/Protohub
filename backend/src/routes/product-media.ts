@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { lookup } from "node:dns/promises";
 import { Router, type Request, type Response } from "express";
 import sharp from "sharp";
 import { z } from "zod";
@@ -8,7 +9,8 @@ import { humanFieldErrors } from "../lib/validation-message.js";
 import { deliver } from "../lib/weekly-report-notifications.js";
 import {
   ACCEPTED_TYPES, IMAGE_TYPE_KEYS, MAX_PENDING_PER_PERSON, MEDIA_APPROVER_ROLES, MEDIA_LABELS, MEDIA_USAGE, SNIFF_BYTES, TYPE_KEYS,
-  UPLOADS_PER_HOUR, VIDEO_TYPE_KEYS, canApproveMedia, canSendMedia, cleanFileName, extensionOf, kindOf, sniffMediaType, type RealMediaType
+  UPLOADS_PER_HOUR, VIDEO_TYPE_KEYS, canApproveMedia, canSendMedia, cleanFileName, cleanImportUrl, extensionOf, isPrivateAddress, kindOf, nameFromUrl,
+  sniffMediaType, type RealMediaType
 } from "../lib/media-safety.js";
 
 // ── Products & Stock: media gallery, approvals, categories, settings ────────
@@ -388,6 +390,126 @@ router.post("/:id/complete", async (req, res) => {
   } catch (error: any) {
     await discard(error?.message ?? "could not be checked");
     sendError(res, error, "Could not check the file. It was deleted; try sending it again.");
+  }
+});
+
+// ── POST /api/product-media/import-url ────────────────────
+// "Add from links": the server fetches one pasted picture link (the browser
+// sends them one at a time, so each shows its own progress) and puts it
+// through exactly the same checks as an upload. Pictures only: a 100 MB
+// video fetched through this server would cost memory and bandwidth.
+const ImportSchema = z.object({
+  productId: z.string().uuid(),
+  url: z.string().max(2048),
+  label: z.enum(MEDIA_LABELS).default("other"),
+  caption: z.string().max(300).optional(),
+  tags: z.array(z.string().max(40)).max(12).optional(),
+  batchId: z.string().uuid().optional(),
+  // The last link of a pasted list: one alert to approvers for the whole list.
+  notifyNow: z.boolean().optional()
+});
+const IMPORT_TIMEOUT_MS = 20000;
+const IMPORT_MAX_REDIRECTS = 3;
+
+/** Fetch a public picture, refusing private networks at every redirect, capped in size. */
+async function fetchPublicPicture(start: URL, maxBytes: number): Promise<Buffer> {
+  let url = start;
+  for (let hop = 0; hop <= IMPORT_MAX_REDIRECTS; hop += 1) {
+    const checked = cleanImportUrl(url.toString());
+    if (!checked) throw fail(422, "That link cannot be used. Paste a normal web link to a picture.");
+    const addresses = await lookup(checked.hostname, { all: true }).catch(() => []);
+    if (addresses.length === 0) throw fail(422, `Could not find ${checked.hostname}.`);
+    if (addresses.some((entry) => isPrivateAddress(entry.address))) throw fail(422, "That link points to a private network, so it was refused.");
+    const response = await fetch(checked, { redirect: "manual", signal: AbortSignal.timeout(IMPORT_TIMEOUT_MS), headers: { "User-Agent": "Protohub media import", Accept: "image/*" } })
+      .catch((error: any) => { throw fail(422, error?.name === "TimeoutError" ? "The picture took too long to load." : "Could not load that link."); });
+    if (response.status >= 300 && response.status < 400) {
+      const next = response.headers.get("location");
+      void response.body?.cancel().catch(() => undefined);
+      if (!next) throw fail(422, "Could not load that link.");
+      url = new URL(next, checked);
+      continue;
+    }
+    if (!response.ok) throw fail(422, `The website answered ${response.status} for that link.`);
+    const declared = Number(response.headers.get("content-length") ?? 0);
+    if (declared > maxBytes) { void response.body?.cancel().catch(() => undefined); throw fail(413, `That picture is bigger than ${Math.round(maxBytes / 1048576)} MB.`); }
+    const reader = response.body?.getReader();
+    if (!reader) throw fail(422, "Could not load that link.");
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) { await reader.cancel().catch(() => undefined); throw fail(413, `That picture is bigger than ${Math.round(maxBytes / 1048576)} MB.`); }
+      chunks.push(value);
+    }
+    return Buffer.concat(chunks);
+  }
+  throw fail(422, "That link redirects too many times.");
+}
+
+router.post("/import-url", async (req, res) => {
+  const parsed = ImportSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+  const body = parsed.data;
+  const orgId = orgOf(req);
+  const role = roleOf(req);
+  const url = cleanImportUrl(body.url);
+  let productBranch: string | null = branchOf(req);
+  try {
+    const approver = canApproveMedia(role);
+    const settings = await readSettings(orgId, branchOf(req));
+    if (!canSendMedia(role)) throw fail(403, "Your role cannot add photos or videos.");
+    if (!approver && !settings.repUploadsEnabled) throw fail(403, "Sending media is switched off for now. Ask an Owner, Admin or Manager.");
+    if (!url) throw fail(422, "That link cannot be used. Paste a normal web link to a picture.");
+    const { data: product, error: productError } = await supabase.from("products").select("id, branch_id").eq("org_id", orgId).eq("id", body.productId).maybeSingle();
+    if (productError) throw productError;
+    if (!product) throw fail(404, "That product was not found.");
+    productBranch = product.branch_id ?? productBranch;
+    const hourAgo = new Date(Date.now() - 3600000).toISOString();
+    const [{ count: lastHour }, { count: waiting }] = await Promise.all([
+      supabase.from("product_media").select("id", { count: "exact", head: true }).eq("uploaded_by", req.user!.id).gte("created_at", hourAgo),
+      supabase.from("product_media").select("id", { count: "exact", head: true }).eq("uploaded_by", req.user!.id).eq("status", "pending")
+    ]);
+    if ((lastHour ?? 0) >= UPLOADS_PER_HOUR) throw fail(429, `You can add up to ${UPLOADS_PER_HOUR} files an hour. Try again a little later.`);
+    if (!approver && (waiting ?? 0) >= MAX_PENDING_PER_PERSON) throw fail(429, `You already have ${MAX_PENDING_PER_PERSON} files waiting for approval. Wait for those to be reviewed first.`);
+
+    const maxBytes = settings.maxImageMb * 1024 * 1024;
+    const original = await fetchPublicPicture(url, maxBytes);
+    const realType = sniffMediaType(new Uint8Array(original.subarray(0, SNIFF_BYTES)));
+    if (!realType || kindOf(realType) !== "image") throw fail(422, "That link is not a photo (JPG, PNG or WEBP), so it was refused.");
+    if (!settings.allowedImageTypes.includes(TYPE_KEYS[realType])) throw fail(415, `${TYPE_KEYS[realType].toUpperCase()} files are switched off in Settings.`);
+    const main = await cleanImage(original, IMAGE_MAX_EDGE, 82).catch(() => { throw fail(422, "This picture could not be opened, so it was refused."); });
+    const thumb = await cleanImage(main.data, THUMB_EDGE, 72);
+
+    const id = randomUUID();
+    const mainPath = `${orgId}/${id}/main.webp`;
+    const thumbPath = `${orgId}/${id}/thumb.webp`;
+    await putHolding(mainPath, main.data, "image/webp");
+    await putHolding(thumbPath, thumb.data, "image/webp");
+    const name = nameFromUrl(url);
+    const { data: row, error: insertError } = await supabase.from("product_media").insert({
+      id, org_id: orgId, branch_id: productBranch, product_id: product.id, kind: "image", status: "pending",
+      label: body.label, caption: (body.caption ?? "").trim().slice(0, 300), tags: cleanTags(body.tags), batch_id: body.batchId ?? null,
+      original_name: name, mime: "image/webp", size_bytes: main.data.length, width: main.width, height: main.height,
+      holding_path: mainPath, holding_thumb_path: thumbPath, scan: { ...scanRecord(realType, original.length, maxBytes, true), source: url.hostname },
+      uploaded_by: req.user!.id, uploaded_by_name: req.user!.name ?? "", uploaded_by_role: role
+    }).select("*").single();
+    if (insertError) { await removeFiles(HOLD, [mainPath, thumbPath]); throw insertError; }
+    await logEvent(orgId, productBranch, req, { action: "uploaded", mediaId: id, productId: product.id, detail: `${name} (from ${url.hostname})` });
+    if (approver || !settings.requireApproval) {
+      const done = await approveRow(row, req);
+      res.status(201).json({ media: mapRow(done, new Map()) });
+      return;
+    }
+    if (settings.notifyApprovers && (!body.batchId || body.notifyNow)) {
+      await notify(orgId, productBranch, (await approverRecipients(orgId)).filter((user) => user.id !== req.user!.id),
+        "New photos to approve", `${req.user!.name ?? "A team member"} added photos from links.`, `media-${body.batchId ?? id}`);
+    }
+    res.status(201).json({ media: mapRow(row, await holdingPreviews([row])) });
+  } catch (error: any) {
+    if (Number(error?.status) < 500) await logEvent(orgId, productBranch, req, { action: "refused", productId: body.productId, detail: `${url?.hostname ?? "link"}: ${error.message}` });
+    sendError(res, error, "Could not add that picture.");
   }
 });
 

@@ -86,3 +86,54 @@ export const TYPE_KEYS: Record<string, string> = {
 export const IMAGE_TYPE_KEYS = ["jpg", "png", "webp"];
 export const VIDEO_TYPE_KEYS = ["mp4", "mov", "webm"];
 export const MEDIA_USAGE = ["product_page", "sales_workspace", "whatsapp", "ads"] as const;
+
+// ── "Add from links" (Bright, 17 Oct 2026) ──────────────────────────────────
+// The server fetches a pasted picture link, so the link must point at the
+// public internet: never at this server, the database or a home/office
+// network (that would let anyone use Protohub to reach inside them).
+
+/** An address on a private, local or reserved network. */
+export function isPrivateAddress(ip: string): boolean {
+  const address = ip.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  const mapped = address.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped) return isPrivateAddress(mapped[1]);
+  const v4 = address.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return a === 0 || a === 10 || a === 127 || a >= 224
+      || (a === 100 && b >= 64 && b <= 127)   // carrier-grade NAT
+      || (a === 169 && b === 254)             // link-local, cloud metadata
+      || (a === 172 && b >= 16 && b <= 31)
+      || (a === 192 && b === 168)
+      || (a === 192 && b === 0)
+      || (a === 198 && (b === 18 || b === 19));
+  }
+  if (address.includes(":")) {
+    return address === "::" || address === "::1" || /^f[cd]/.test(address) || /^fe[89ab]/.test(address) || address.startsWith("ff");
+  }
+  return true; // not an address we understand: refuse
+}
+
+/** A pasted link we are willing to fetch, or null. */
+export function cleanImportUrl(raw: unknown): URL | null {
+  try {
+    const url = new URL(String(raw ?? "").trim());
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    if (url.username || url.password) return null;
+    if (url.port && url.port !== "80" && url.port !== "443") return null;
+    const host = url.hostname.toLowerCase();
+    if (!host.includes(".") || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) return null;
+    if (/^[\d.]+$/.test(host) || host.startsWith("[")) {
+      if (isPrivateAddress(host)) return null;
+    }
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+/** A readable file name from a link: the last part of its path. */
+export function nameFromUrl(url: URL) {
+  const last = decodeURIComponent(url.pathname.split("/").filter(Boolean).pop() ?? "") || url.hostname;
+  return cleanFileName(last);
+}
