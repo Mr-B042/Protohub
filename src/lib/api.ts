@@ -4880,3 +4880,57 @@ export async function uploadToSignedUrl(signedUrl: string, file: Blob) {
   const res = await fetch(signedUrl, { method: "PUT", headers: { "Content-Type": file.type || "application/octet-stream", "x-upsert": "false" }, body: file });
   if (!res.ok) throw new Error(`Upload failed (${res.status}).`);
 }
+
+// ── Products & Stock media gallery (migration 304) ─────────
+export type ProductMediaStatus = "uploading" | "pending" | "approved" | "rejected" | "changes_requested";
+export type ProductMediaLabel = "product_in_use" | "customer_review" | "unboxing" | "size" | "packaging" | "other";
+export type ProductMediaUsage = "product_page" | "sales_workspace" | "whatsapp" | "ads";
+export type ProductMediaScan = { passed?: boolean; fileType?: string; fileSize?: string; contentCheck?: string; suspiciousCode?: string; checkedAt?: string };
+export type ProductMedia = {
+  id: string; productId: string; kind: "image" | "video"; status: ProductMediaStatus;
+  label: ProductMediaLabel; labelText: string; caption: string; tags: string[]; usage: ProductMediaUsage[];
+  batchId: string | null; scan: ProductMediaScan;
+  name: string; mime: string; sizeBytes: number;
+  width: number | null; height: number | null; durationSeconds: number | null;
+  url: string | null; thumbUrl: string | null; isCover: boolean; displayOrder: number;
+  uploadedBy: string | null; uploadedByName: string; uploadedByRole: string;
+  reviewedBy: string | null; reviewedByName: string | null; reviewedAt: string | null; rejectReason: string | null; createdAt: string;
+};
+export type ProductCategory = { id: string; name: string; color: string; icon: string; description: string; active: boolean; displayOrder: number; createdAt: string };
+export type CatalogSettings = {
+  repUploadsEnabled: boolean; requireApproval: boolean; maxImageMb: number; maxVideoMb: number;
+  allowedImageTypes: string[]; allowedVideoTypes: string[];
+  showSku: boolean; showStockToReps: boolean; showLowStockWarning: boolean; hideUnavailableFromReps: boolean;
+  defaultView: "grid" | "list"; priceFormat: "full" | "short"; unitsWord: "units" | "pcs" | "pieces"; preferredCurrency: string;
+  notifyApprovers: boolean; notifySenders: boolean;
+  defaultMainImageUrl: string | null; defaultVideoThumbUrl: string | null; defaultLifestyleImageUrl: string | null; updatedAt: string | null;
+};
+export type MediaEvent = { id: string; action: string; detail: string; actorName: string; productId: string | null; mediaId: string | null; createdAt: string };
+export type StockMovementRow = { id: string; productId: string; productName: string; type: string; qty: number; byName: string; note: string; from: string | null; to: string | null; createdAt: string };
+export const productMediaApi = {
+  list: () => get<{ media: ProductMedia[]; canApprove: boolean; canSend: boolean; repUploadsEnabled: boolean; settings: CatalogSettings }>("/api/product-media"),
+  startUpload: (body: { productId: string; mime: string; size: number; name: string; label: ProductMediaLabel; caption: string; tags?: string[]; batchId?: string }) =>
+    post<{ id: string; signedUrl: string }>("/api/product-media/uploads", body),
+  complete: (id: string, body: { posterDataUrl?: string; durationSeconds?: number }) => post<{ media: ProductMedia }>(`/api/product-media/${id}/complete`, body),
+  approve: (id: string) => post<{ media: ProductMedia }>(`/api/product-media/${id}/approve`, {}),
+  reject: (id: string, reason: string) => post<{ media: ProductMedia }>(`/api/product-media/${id}/reject`, { reason }),
+  requestChanges: (id: string, note: string) => post<{ media: ProductMedia }>(`/api/product-media/${id}/request-changes`, { note }),
+  rescan: (id: string) => post<{ media: ProductMedia }>(`/api/product-media/${id}/rescan`, {}),
+  bulk: (ids: string[], action: "approve" | "reject" | "delete" | "tag", extra: { reason?: string; tag?: string } = {}) =>
+    post<{ done: Array<ProductMedia | { id: string; deleted: true }>; skipped: string[] }>("/api/product-media/bulk", { ids, action, ...extra }),
+  update: (id: string, body: { label?: ProductMediaLabel; caption?: string; tags?: string[]; usage?: ProductMediaUsage[]; isCover?: boolean; displayOrder?: number }) =>
+    patch<{ media: ProductMedia }>(`/api/product-media/${id}`, body),
+  remove: (id: string) => del<{ ok: boolean }>(`/api/product-media/${id}`),
+  settings: () => get<CatalogSettings>("/api/product-media/settings"),
+  saveSettings: (body: Partial<CatalogSettings>) => put<CatalogSettings>("/api/product-media/settings", body),
+  saveDefaultImage: (slot: "main" | "video" | "lifestyle", dataUrl: string | null) => post<CatalogSettings>("/api/product-media/settings/default-image", { slot, dataUrl }),
+  events: (action?: string) => get<{ events: MediaEvent[] }>(`/api/product-media/events${action ? `?action=${encodeURIComponent(action)}` : ""}`),
+  stockMovements: (from: string, to: string, limit = 50) => get<{ movements: StockMovementRow[] }>(`/api/product-media/stock-movements?from=${from}&to=${to}&limit=${limit}`),
+  categories: () => get<{ categories: ProductCategory[] }>("/api/product-media/categories"),
+  addCategory: (body: { name: string; description?: string; icon?: string; color?: string; active?: boolean }) => post<{ category: ProductCategory }>("/api/product-media/categories", body),
+  updateCategory: (id: string, body: { name?: string; color?: string; icon?: string; description?: string; active?: boolean }) => patch<{ category: ProductCategory }>(`/api/product-media/categories/${id}`, body),
+  removeCategory: (id: string) => del<{ ok: boolean }>(`/api/product-media/categories/${id}`),
+  assignCategory: (productIds: string[], categoryId: string | null) => post<{ updated: number }>("/api/product-media/categories/assign", { productIds, categoryId }),
+  stockTrend: () => get<{ days: Array<{ day: string; totalUnits: number }> }>("/api/product-media/stock-trend"),
+  saveStockTotal: (totalUnits: number) => post<{ ok: boolean }>("/api/product-media/stock-trend", { totalUnits })
+};

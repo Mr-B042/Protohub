@@ -133,7 +133,10 @@ const BRANCH_TABLES = new Set([
   // the embed link rather than listing a catalogue, and public callers carry
   // no request scope, so this filter never touches them.
   "products", "product_packages", "product_pricings",
-  "product_cost_changes", "product_dedicated_handlers", "product_delivery_goals"
+  "product_cost_changes", "product_dedicated_handlers", "product_delivery_goals",
+  // Products & Stock gallery (migration 304): every row is written with its
+  // branch from the start, so listing them hides nothing.
+  "product_categories", "product_media", "product_catalog_settings", "product_stock_daily", "product_media_events"
 ]);
 
 /**
