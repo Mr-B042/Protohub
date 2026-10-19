@@ -27212,13 +27212,25 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const row = Array.isArray(rows) ? rows.find((r: any) => (r.userId ?? r.user_id) === userId) : null;
       return row?.lastAssignedAt ?? row?.last_assigned_at ?? null;
     };
+    // Mirrors pick_and_advance_dedicated_handler (migration 305): paused or
+    // inactive reps get no orders, and a rep switched back on today carries
+    // a credit so she rejoins level instead of catching up.
+    const creditOf = (userId: string) => {
+      const row = Array.isArray(rows) ? rows.find((r: any) => (r.userId ?? r.user_id) === userId) : null;
+      const day = row?.rejoinCreditDay ?? row?.rejoin_credit_day ?? null;
+      return day === lagosDateKeyNow() ? Number(row?.rejoinCredit ?? row?.rejoin_credit ?? 0) || 0 : 0;
+    };
     const today = todayKey();
     return weights
+      .filter(({ userId }) => {
+        const handler = users.find((u) => u.id === userId);
+        return Boolean(handler?.active) && handler?.roundRobinExcluded !== true;
+      })
       .map(({ userId, weight }) => {
         const todayCount = trackedOrders.filter((o) =>
           o.assignedRepId === userId && o.productId === p.id && orderCreatedKey(o) === today
         ).length;
-        return { userId, weight, todayCount, ratio: weight > 0 ? todayCount / weight : Infinity, lastAssignedAt: lastAssignedOf(userId) };
+        return { userId, weight, todayCount, ratio: weight > 0 ? (todayCount + creditOf(userId)) / weight : Infinity, lastAssignedAt: lastAssignedOf(userId) };
       })
       .sort((a, b) => {
         if (a.ratio !== b.ratio) return a.ratio - b.ratio;
@@ -46093,18 +46105,19 @@ ${waybillLineItems(w).length > 1
     const prevExcluded = user.roundRobinExcluded === true;
     const nextExcluded = !prevExcluded;
     const prevPosition = user.roundRobinPosition ?? 0;
-    const maxActivePos = users
-      .filter((u) => u.role === "Sales Rep" && u.active && !u.roundRobinExcluded && u.id !== user.id)
-      .reduce((m, u) => Math.max(m, u.roundRobinPosition ?? 0), 0);
-    const nextPosition = nextExcluded ? prevPosition : maxActivePos + 1;
+    // ⚠️ Paused = no automatic orders anywhere, Dedicated Products included,
+    // and switching back on returns her to the SAME turn (Bright, 19 Oct
+    // 2026). The server works out the place and renumbers the line, so no
+    // position is sent; the team is reloaded once it has saved.
     setUsers((value) => value.map((item) =>
-      item.id === user.id ? { ...item, roundRobinExcluded: nextExcluded, roundRobinPosition: nextPosition } : item));
+      item.id === user.id ? { ...item, roundRobinExcluded: nextExcluded } : item));
     showToast(nextExcluded
-      ? `${user.name} paused from rotation (still has account access).`
-      : `${user.name} is back in rotation - at the back of the line.`);
+      ? `${user.name} paused - no automatic orders until switched back on (still has account access).`
+      : `${user.name} is back in rotation at the same turn she had.`);
     const payload: Record<string, unknown> = { roundRobinExcluded: nextExcluded };
-    if (!nextExcluded) payload.roundRobinPosition = nextPosition;
-    teamApi.update(user.id, payload).catch((err: any) => {
+    teamApi.update(user.id, payload).then(() => teamApi.list()).then((res: any[]) => {
+      if (Array.isArray(res)) setUsers(res.map((u: any) => normalizeRealtimeUser(u)));
+    }).catch((err: any) => {
       setUsers((value) => value.map((item) =>
         item.id === user.id ? { ...item, roundRobinExcluded: prevExcluded, roundRobinPosition: prevPosition } : item));
       showToast(`Failed to update rotation: ${err.message}`);
@@ -94156,6 +94169,7 @@ ${waybillLineItems(w).length > 1
                               <span className="hidden sm:inline w-px self-stretch bg-gray-200 mx-0.5" />
                               {assignableHandlers.map((u) => {
                                 const on = selected.includes(u.id);
+                                const paused = u.roundRobinExcluded === true;
                                 const weight = weightOf(u.id);
                                 const pct = on && totalWeight > 0 && weight > 0 ? Math.round((weight / totalWeight) * 1000) / 10 : 0;
                                 const rank = on ? rankOf(u.id) : -1;
@@ -94173,6 +94187,9 @@ ${waybillLineItems(w).length > 1
                                         <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-white/25 text-[9px] font-bold">{rank + 1}</span>
                                       )}
                                       {u.name} · {u.role}
+                                      {on && paused && (
+                                        <span className="ml-0.5 rounded-full bg-amber-300 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-amber-950" title="Temporarily excluded - gets no orders until switched back on. Her setting here is kept.">Paused</span>
+                                      )}
                                     </button>
                                     {on && (
                                       <span className="flex items-center gap-1 pr-2.5">
@@ -94242,7 +94259,7 @@ ${waybillLineItems(w).length > 1
                 <div>
                   <h3 className="text-sm font-bold text-blue-900 mb-1">How Round-Robin Works</h3>
                   <p className="text-sm text-blue-700">Incoming orders are assigned to the representative at position #1. Once assigned, that rep moves to the end of the active sequence.</p>
-                  <p className="text-sm text-blue-700 mt-1">Excluded reps are skipped entirely until re-enabled.</p>
+                  <p className="text-sm text-blue-700 mt-1">Excluded reps get no automatic orders anywhere - main line, carts or Dedicated Products - until re-enabled. When switched back on they return to the same turn they had.</p>
                 </div>
               </div>
               </>)}
