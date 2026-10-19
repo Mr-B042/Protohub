@@ -19202,6 +19202,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const ordersForProductDay = (productId: string, day: string) =>
     trackedOrders.filter((o) => o.productId === productId && normalizeDateKey(o.createdAt ?? o.date) === day && !o.reviewHold && !["Cancelled", "Failed"].includes(o.status ?? "New")).length;
 
+  // TikTok's share of the Orders row (Bright, 19 Oct 2026: "so we know how
+  // many orders came in from TikTok"). Same rules as ordersForProductDay; an
+  // order is TikTok when it was saved with source TikTok (the server sets it
+  // from the TikTok click id), its link says utm_source=tiktok, or it
+  // carries the TikTok click id - the same test as tracking-hub otherAdPlatform.
+  const isTikTokOrder = (o: TrackedOrder) => (o.source ?? "") === "TikTok" || /tiktok/i.test(o.utmSource ?? "") || Boolean(o.formContext?.ttclid);
+  const tiktokOrdersForProductDay = (productId: string, day: string) =>
+    trackedOrders.filter((o) => o.productId === productId && normalizeDateKey(o.createdAt ?? o.date) === day && !o.reviewHold && !["Cancelled", "Failed"].includes(o.status ?? "New") && isTikTokOrder(o)).length;
+
   // Narrowest tier - only orders that have actually DELIVERED (as of now), not
   // just "still open/not dead" like ordersForProductDay. Same date basis as
   // every other row (day = creation date), just filtered to status=Delivered.
@@ -92896,6 +92905,7 @@ ${waybillLineItems(w).length > 1
                     const weeklySpend = adSpendWeekDays.reduce((sum, day) => sum + adSpendFor(product.id, day), 0);
                     const weeklyRevenue = adSpendWeekDays.reduce((sum, day) => sum + revenueForProductDay(product.id, day), 0);
                     const weeklyOrders = adSpendWeekDays.reduce((sum, day) => sum + ordersForProductDay(product.id, day), 0);
+                    const weeklyTikTokOrders = adSpendWeekDays.reduce((sum, day) => sum + tiktokOrdersForProductDay(product.id, day), 0);
                     const weeklyDelivered = adSpendWeekDays.reduce((sum, day) => sum + deliveredForProductDay(product.id, day), 0);
                     const weeklyRevenueDelivered = adSpendWeekDays.reduce((sum, day) => sum + revenueDeliveredForProductDay(product.id, day), 0);
                     const weeklyStillInPipeline = weeklyOrders - weeklyDelivered;
@@ -92904,7 +92914,7 @@ ${waybillLineItems(w).length > 1
                     const weeklyCancelledFailed = weeklyPlaced - weeklyOrders;
                     const weeklyRevenueCancelledFailed = weeklyRevenuePlaced - weeklyRevenue;
                     const weeklyRevenueStillInPipeline = weeklyRevenue - weeklyRevenueDelivered;
-                    return { product, weeklySpend, weeklyRevenue, weeklyOrders, weeklyDelivered, weeklyRevenueDelivered, weeklyStillInPipeline, weeklyRevenueStillInPipeline, weeklyPlaced, weeklyRevenuePlaced, weeklyCancelledFailed, weeklyRevenueCancelledFailed };
+                    return { product, weeklySpend, weeklyRevenue, weeklyOrders, weeklyTikTokOrders, weeklyDelivered, weeklyRevenueDelivered, weeklyStillInPipeline, weeklyRevenueStillInPipeline, weeklyPlaced, weeklyRevenuePlaced, weeklyCancelledFailed, weeklyRevenueCancelledFailed };
                   })
                   .sort((a, b) =>
                     b.weeklyOrders - a.weeklyOrders
@@ -92983,7 +92993,7 @@ ${waybillLineItems(w).length > 1
                     ) : (
                       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                         <div className="sm:hidden divide-y divide-gray-100">
-                          {activeProdRows.map(({ product, weeklySpend: rowSpend, weeklyRevenue: rowRevenue, weeklyOrders, weeklyDelivered, weeklyRevenueDelivered, weeklyStillInPipeline, weeklyRevenueStillInPipeline, weeklyPlaced, weeklyRevenuePlaced, weeklyCancelledFailed, weeklyRevenueCancelledFailed }) => {
+                          {activeProdRows.map(({ product, weeklySpend: rowSpend, weeklyRevenue: rowRevenue, weeklyOrders, weeklyTikTokOrders, weeklyDelivered, weeklyRevenueDelivered, weeklyStillInPipeline, weeklyRevenueStillInPipeline, weeklyPlaced, weeklyRevenuePlaced, weeklyCancelledFailed, weeklyRevenueCancelledFailed }) => {
                             const rowRoas = rowSpend === 0 ? null : rowRevenue / rowSpend;
                             const rowRoasDelivered = rowSpend === 0 ? null : weeklyRevenueDelivered / rowSpend;
                             return (
@@ -92992,6 +93002,7 @@ ${waybillLineItems(w).length > 1
                                   <div>
                                     <div className="text-sm font-semibold text-gray-800">{product.name}</div>
                                     <div className="text-xs text-gray-400">{adSpendShowBreakdown ? (weeklyOrders > 0 ? `${weeklyOrders} order${weeklyOrders === 1 ? "" : "s"} · ${weeklyPlaced} placed this week` : weeklyPlaced > 0 ? `${weeklyPlaced} placed this week` : "No orders this week yet") : (weeklyOrders > 0 ? `${weeklyOrders} order${weeklyOrders === 1 ? "" : "s"} this week` : "No orders this week yet")}</div>
+                                    {weeklyTikTokOrders > 0 && <div className="text-xs font-semibold text-gray-900 dark:text-gray-100">{weeklyTikTokOrders} from TikTok</div>}
                                   </div>
                                   <div className="flex flex-col items-end gap-1 shrink-0">
                                     {rowRoas !== null && (
@@ -93013,6 +93024,7 @@ ${waybillLineItems(w).length > 1
                                     const rev = revenueForProductDay(product.id, day);
                                     const roas = spend > 0 ? rev / spend : null;
                                     const orders = ordersForProductDay(product.id, day);
+                                    const tiktokOrders = tiktokOrdersForProductDay(product.id, day);
                                     const delivered = deliveredForProductDay(product.id, day);
                                     const stillInPipeline = stillInPipelineForProductDay(product.id, day);
                                     const revStillInPipeline = revenueStillInPipelineForProductDay(product.id, day);
@@ -93096,6 +93108,10 @@ ${waybillLineItems(w).length > 1
                                             <span className="text-[10px] uppercase tracking-wider text-gray-400">Orders</span>
                                             <div className="text-gray-500">{orders > 0 ? orders : "-"}</div>
                                           </div>
+                                          <div>
+                                            <span className="text-[10px] uppercase tracking-wider text-gray-400">From TikTok</span>
+                                            <div className="text-gray-500">{tiktokOrders > 0 ? tiktokOrders : "-"}</div>
+                                          </div>
                                           {adSpendShowBreakdown && (
                                           <>
                                           <div>
@@ -93158,6 +93174,10 @@ ${waybillLineItems(w).length > 1
                                     <span className="text-[10px] uppercase tracking-wider text-gray-400">Orders</span>
                                     <div className="font-semibold text-blue-700">{weeklyOrders > 0 ? weeklyOrders : "-"}</div>
                                   </div>
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">From TikTok</span>
+                                    <div className="font-semibold text-gray-800">{weeklyTikTokOrders > 0 ? weeklyTikTokOrders : "-"}</div>
+                                  </div>
                                   {adSpendShowBreakdown && (
                                   <>
                                   <div>
@@ -93195,7 +93215,7 @@ ${waybillLineItems(w).length > 1
                               </tr>
                             </thead>
                             <tbody>
-                              {activeProdRows.map(({ product, weeklySpend: rowSpend, weeklyRevenue: rowRevenue, weeklyOrders, weeklyDelivered, weeklyRevenueDelivered, weeklyStillInPipeline, weeklyRevenueStillInPipeline, weeklyPlaced, weeklyRevenuePlaced, weeklyCancelledFailed, weeklyRevenueCancelledFailed }, pi) => {
+                              {activeProdRows.map(({ product, weeklySpend: rowSpend, weeklyRevenue: rowRevenue, weeklyOrders, weeklyTikTokOrders, weeklyDelivered, weeklyRevenueDelivered, weeklyStillInPipeline, weeklyRevenueStillInPipeline, weeklyPlaced, weeklyRevenuePlaced, weeklyCancelledFailed, weeklyRevenueCancelledFailed }, pi) => {
                                 const rowRoas = rowSpend === 0 ? null : rowRevenue / rowSpend;
                                 // Each product reads as one block (Bright, 10 Oct 2026): it was hard
                                 // to tell which spend rows belonged to which product.
@@ -93211,6 +93231,7 @@ ${waybillLineItems(w).length > 1
                                         <div className="text-sm">{product.name}</div>
                                         <div className={`mt-1 text-[11px] font-bold ${rowSpend > 0 ? "text-red-600" : "text-gray-400"}`}>{rowSpend > 0 ? `Ad spend this week: ${formatMoney(rowSpend)}` : "No ad spend this week"}</div>
                                         <div className="mt-1 text-[10px] font-medium text-gray-400">{adSpendShowBreakdown ? (weeklyOrders > 0 ? `${weeklyOrders} order${weeklyOrders === 1 ? "" : "s"} · ${weeklyPlaced} placed this week` : weeklyPlaced > 0 ? `${weeklyPlaced} placed this week` : "No orders yet") : (weeklyOrders > 0 ? `${weeklyOrders} order${weeklyOrders === 1 ? "" : "s"} this week` : "No orders yet")}</div>
+                                        {weeklyTikTokOrders > 0 && <div className="text-[10px] font-semibold text-gray-700">{weeklyTikTokOrders} from TikTok</div>}
                                         {rowRoas !== null && (
                                           <span className={`mt-1 inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${rowRoas >= 2 ? "bg-green-100 text-green-700" : rowRoas >= 1 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-600"}`}>
                                             {rowRoas.toFixed(2)}x ROAS
@@ -93418,6 +93439,19 @@ ${waybillLineItems(w).length > 1
                                         );
                                       })}
                                       <td className="px-3 py-2 text-center text-xs font-semibold text-blue-700">{weeklyOrders > 0 ? weeklyOrders : "-"}</td>
+                                    </tr>
+                                    {/* TikTok orders - part of the Orders above, not extra to it. */}
+                                    <tr className={groupBg}>
+                                      <td className="px-3 py-2 text-[11px] font-semibold text-gray-900 text-center whitespace-nowrap">TikTok Orders<span className="block text-[9px] font-medium text-gray-400">part of Orders</span></td>
+                                      {adSpendWeekDays.map((day) => {
+                                        const tiktokOrders = tiktokOrdersForProductDay(product.id, day);
+                                        return (
+                                          <td key={day} className={`px-2 py-2 text-center text-xs font-medium ${tiktokOrders > 0 ? "text-gray-800" : "text-gray-300"} ${day === todayKey2 ? "bg-blue-50/40" : ""}`}>
+                                            {tiktokOrders > 0 ? tiktokOrders : "-"}
+                                          </td>
+                                        );
+                                      })}
+                                      <td className="px-3 py-2 text-center text-xs font-semibold text-gray-900">{weeklyTikTokOrders > 0 ? weeklyTikTokOrders : "-"}</td>
                                     </tr>
                                     {adSpendShowBreakdown && (
                                     <>
