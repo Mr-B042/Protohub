@@ -198,7 +198,7 @@ export function customerPaymentEffect(input: {
   role: string;
 }): { ok: true; nextRemitted: number; nextStatus: "Paid" | "Partial"; variance: number; needsReason: boolean } | { ok: false; error: string } {
   if (input.remittanceStatus === "Paid" && !input.editOpen && input.role !== "Owner") {
-    return { ok: false, error: "This order is already fully paid and locked. Ask the Owner to open it for correction." };
+    return { ok: false, error: "This order is already fully paid, so its income is already counted. If the cash is with you, choose \"Move the existing payment to my wallet\" instead." };
   }
   const failed = input.orderStatus === "Failed" || input.orderStatus === "Cancelled";
   const expected = failed ? 0 : Math.max(0, round(input.orderAmount - input.logisticsCost));
@@ -214,6 +214,19 @@ export function customerPaymentEffect(input: {
     };
   }
   return { ok: true, nextRemitted, nextStatus: nextRemitted >= expected ? "Paid" : "Partial", variance, needsReason: variance !== 0 };
+}
+
+/**
+ * An order's existing payments the manager can move into her wallet: rows
+ * filed under no account or a company account (not anyone's wallet), and not
+ * already moved by another live wallet entry. Moving them re-files the rows;
+ * the order and the income stay as they are, so nothing is counted twice.
+ */
+export type ClaimRow = { id: string; amount: number; accountId: string | null };
+export function claimableRemittances(rows: ClaimRow[], walletAccountIds: Set<string>, alreadyClaimed: Set<string>): { rows: ClaimRow[]; total: number } {
+  const free = rows.filter((row) => !alreadyClaimed.has(row.id) && !(row.accountId && walletAccountIds.has(row.accountId)));
+  const total = round(free.reduce((sum, row) => sum + row.amount, 0));
+  return total > 0 ? { rows: free, total } : { rows: [], total: 0 };
 }
 
 /**

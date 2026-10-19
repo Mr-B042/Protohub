@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  DEFAULT_FUND_SETTINGS, customerPaymentEffect, fundTotals, fundsEditable, fundsReadiness, logisticsSplit, missingProof, equalSplit, splitProblem, scaleSplits, type FundTxn
+  DEFAULT_FUND_SETTINGS, customerPaymentEffect, fundTotals, fundsEditable, fundsReadiness, logisticsSplit, missingProof, equalSplit, splitProblem, scaleSplits, claimableRemittances, type FundTxn
 } from "./manager-funds.js";
 
 const txn = (overrides: Partial<FundTxn>): FundTxn => ({
@@ -92,6 +92,23 @@ test("a customer payment follows the order screen's remittance rules", () => {
   assert.equal(customerPaymentEffect({ ...base, payment: 1, remittanceStatus: "Paid" }).ok, false);
   // Agent already deducted a fee: expected is amount - fee.
   assert.equal(customerPaymentEffect({ ...base, logisticsCost: 3500, payment: 31000 }).ok, true);
+});
+
+test("claimableRemittances: an already-paid order's payment can move into the wallet once", () => {
+  const wallets = new Set(["wallet-grace", "wallet-ada"]);
+  const rows = [
+    { id: "r1", amount: 39500, accountId: "company-bank" },
+    { id: "r2", amount: 0, accountId: null }
+  ];
+  assert.deepEqual(claimableRemittances(rows, wallets, new Set()).total, 39500);
+  // Already in someone's wallet: nothing to move.
+  assert.equal(claimableRemittances([{ id: "r1", amount: 39500, accountId: "wallet-ada" }], wallets, new Set()).total, 0);
+  // Already moved by another live wallet entry: not moved twice.
+  assert.equal(claimableRemittances(rows, wallets, new Set(["r1"])).total, 0);
+  // A payment and its reversal net to nothing.
+  assert.equal(claimableRemittances([
+    { id: "a", amount: 39500, accountId: null }, { id: "b", amount: -39500, accountId: null }
+  ], wallets, new Set()).rows.length, 0);
 });
 
 test("logisticsSplit: only the part above the orders' fees is a new cost", () => {

@@ -130,9 +130,11 @@ function WaybillWeekNote({ date, productId, amount, sym, nf }: { date: string; p
   );
 }
 
-function OrderMoneyCheck({ kind, category, amount, orderText, excludeTxnId, sym, nf, onUseAmount }: {
+function OrderMoneyCheck({ kind, category, amount, orderText, excludeTxnId, sym, nf, onUseAmount, claiming = false, onClaim }: {
   kind: string; category: string; amount: string; orderText: string; excludeTxnId?: string; sym: string;
   nf: (value: number) => string; onUseAmount: (value: number) => void;
+  /** Customer payment: the manager chose to move the order's existing payment into her wallet. */
+  claiming?: boolean; onClaim?: (amount: number | null) => void;
 }) {
   const ids = useMemo(() => Array.from(new Set(orderText.split(/[\s,]+/).map((id) => id.replace(/^#/, "").trim()).filter(Boolean))).slice(0, 20), [orderText]);
   const rider = kind === "expense" && category === "logistics";
@@ -145,7 +147,7 @@ function OrderMoneyCheck({ kind, category, amount, orderText, excludeTxnId, sym,
     if ((!rider && !income) || ids.length === 0) { setCheck(null); setError(""); return; }
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      managerFundsApi.orderCheck(ids, rider ? { amount: value, category: "logistics", excludeTxnId } : {})
+      managerFundsApi.orderCheck(ids, rider ? { amount: value, category: "logistics", excludeTxnId } : { claim: true })
         .then((result) => { if (!cancelled) { setCheck(result); setError(""); } })
         .catch((err: any) => { if (!cancelled) { setCheck(null); setError(err?.message ?? "Couldn't check those orders."); } });
     }, 400);
@@ -171,7 +173,29 @@ function OrderMoneyCheck({ kind, category, amount, orderText, excludeTxnId, sym,
         {order.left > 0 && Math.abs(order.left - value) >= 0.01 ? (
           <button type="button" onClick={() => onUseAmount(order.left)} className="!min-h-[36px] mt-2 rounded-lg bg-emerald-600 px-3 text-[12px] font-bold text-white">Use {sym}{nf(order.left)}</button>
         ) : null}
-        {order.left <= 0 ? <p className="m-0 mt-1 font-semibold text-amber-700">Nothing is left to receive on this order. Logging more is a double payment.</p> : null}
+        {order.left <= 0 && !(check.claim && check.claim.total > 0) ? <p className="m-0 mt-1 font-semibold text-amber-700">Nothing is left to receive on this order{check.claim ? ", and its payment is already in a wallet" : ""}. Logging more is a double payment.</p> : null}
+        {order.left <= 0 && check.claim && check.claim.total > 0 && onClaim ? (
+          <div className="mt-2 border-t border-emerald-200 pt-2 dark:border-emerald-500/30">
+            <p className="m-0 font-semibold text-gray-900 dark:text-slate-50">Already paid on the order screen, so its income is already counted.</p>
+            <ul className="m-0 mt-1 list-none space-y-0.5 p-0 text-[11.5px] text-gray-600 dark:text-slate-300">
+              {check.claim.rows.map((row) => (
+                <li key={row.id}>{sym}{nf(row.amount)}{row.receivedAt ? ` · ${new Date(row.receivedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""}{row.loggedBy ? ` · by ${row.loggedBy}` : ""} · filed under {row.accountName ?? "no account"}</li>
+              ))}
+            </ul>
+            {claiming ? (
+              <div className="mt-2 rounded-lg bg-white px-2.5 py-2 ring-1 ring-emerald-300 dark:bg-slate-900 dark:ring-emerald-500/40">
+                <p className="m-0 font-bold text-emerald-800 dark:text-emerald-300">Will move {sym}{nf(check.claim.total)} into your wallet.</p>
+                <p className="m-0 text-[11.5px]">No new income is added and the order is not changed. Removing this entry later puts the payment back.</p>
+                <button type="button" onClick={() => onClaim(null)} className="!min-h-[32px] mt-1 text-[12px] font-bold text-gray-600 underline dark:text-slate-300">Cancel</button>
+              </div>
+            ) : (
+              <>
+                <p className="m-0 mt-1 text-[11.5px]">If this cash is with you, move that payment into your wallet. Only do this if you are holding the money.</p>
+                <button type="button" onClick={() => onClaim(check.claim!.total)} className="!min-h-[36px] mt-2 rounded-lg bg-emerald-600 px-3 text-[12px] font-bold text-white">Move the existing payment to my wallet ({sym}{nf(check.claim.total)})</button>
+              </>
+            )}
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -230,6 +254,8 @@ type Draft = {
   splitEdited: boolean;
   /** Waybill only: ticked = its own cost, on top of the week's waybill total. */
   ownCost: boolean;
+  /** Customer payment: move the order's existing payment into the wallet (no new income). */
+  claimExisting: boolean;
   file: File | null;
 };
 
@@ -249,7 +275,7 @@ const withEqualShares = (draft: Draft): Draft => {
 
 const emptyDraft = (kind: FundKindKey): Draft => ({
   kind, category: kind === "expense" ? "logistics" : "", amount: "", occurredAt: nowLocalInput(), description: "", paidTo: "",
-  paymentMethod: "transfer", reference: "", orderId: "", relatedOrders: "", counterpartyAccountId: "", products: [{ productId: "", amount: "" }], splitEdited: false, ownCost: false, file: null
+  paymentMethod: "transfer", reference: "", orderId: "", relatedOrders: "", counterpartyAccountId: "", products: [{ productId: "", amount: "" }], splitEdited: false, ownCost: false, claimExisting: false, file: null
 });
 
 export default function ManagerFundsTab({
@@ -361,7 +387,7 @@ export default function ManagerFundsTab({
         ? txn.productSplits.map((split) => ({ productId: split.productId, amount: String(split.amount) }))
         : [{ productId: txn.productId ?? "", amount: "" }],
       splitEdited: !!(txn.productSplits && txn.productSplits.length > 1),
-      ownCost: txn.ownCost === true,
+      ownCost: txn.ownCost === true, claimExisting: false,
       occurredAt: new Date(new Date(txn.occurredAt).getTime() + 60 * 60 * 1000).toISOString().slice(0, 16),
       description: txn.description ?? "", paidTo: txn.paidTo ?? "", paymentMethod: txn.paymentMethod ?? "transfer",
       reference: txn.reference ?? "", orderId: txn.orderIds[0] ?? "", relatedOrders: txn.kind === "expense" ? txn.orderIds.join(", ") : "",
@@ -410,7 +436,7 @@ export default function ManagerFundsTab({
             : {}),
           relatedOrderIds: draft.relatedOrders.split(/[\s,]+/).map((id) => id.replace(/^#/, "").trim()).filter(Boolean)
         } : {}),
-        ...(draft.kind === "customer_payment" ? { orderId: draft.orderId.replace(/^#/, "").trim() } : {}),
+        ...(draft.kind === "customer_payment" ? { orderId: draft.orderId.replace(/^#/, "").trim(), ...(draft.claimExisting ? { claimExisting: true } : {}) } : {}),
         ...(["owner_funding", "company_transfer_in", "remittance_out"].includes(draft.kind) ? { counterpartyAccountId: draft.counterpartyAccountId } : {})
       };
       let id = editing?.id ?? "";
@@ -625,7 +651,7 @@ export default function ManagerFundsTab({
                   <tr key={txn.id} className={`border-t border-gray-100 text-gray-800 dark:border-slate-800 dark:text-slate-200 [&>td]:[color:inherit] ${txn.status === "voided" ? "opacity-50" : ""}`}>
                     <td className={td}>{inPage * PAGE + index + 1}</td>
                     <td className={td}>{dateTimeText(txn.occurredAt).replace(/ \d{4},/, "")}</td>
-                    <td className={td}>{txn.kindLabel}</td>
+                    <td className={td}>{txn.kindLabel}{txn.movedExistingPayment && <span className="ml-1 block text-[10.5px] font-semibold text-emerald-700 dark:text-emerald-300">Moved into wallet</span>}</td>
                     <td className={`${td} font-semibold`}>{txn.orderIds[0] ? `#${txn.orderIds[0]}` : txn.reference || "-"}</td>
                     <td className={`${td} font-semibold`}>{nf(txn.amount)}</td>
                     <td className={td}><MethodPill method={txn.paymentMethod} /></td>
@@ -952,12 +978,14 @@ export default function ManagerFundsTab({
                 })() : draft.occurredAt ? <p className="m-0 text-[11.5px] text-gray-500">Recorded in the week of {weekText(sundayOf(draft.occurredAt))}. Keep the date inside that week; to move it, remove it and log it again.</p> : null}
                 {draft.kind === "customer_payment" && (
                   <label className="block"><span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Order number</span>
-                    <input className={field} value={draft.orderId} disabled={!!editing} onChange={(event) => setDraft({ ...draft, orderId: event.target.value })} placeholder="e.g. 4358" />
+                    <input className={field} value={draft.orderId} disabled={!!editing} onChange={(event) => setDraft({ ...draft, orderId: event.target.value, claimExisting: false })} placeholder="e.g. 4358" />
                     <span className="mt-1 block text-[11px] text-gray-500">The order is marked paid. A part or extra payment must be recorded by an Admin or the Owner.</span></label>
                 )}
                 {draft.kind === "customer_payment" && !editing && (
                   <OrderMoneyCheck kind={draft.kind} category="" amount={draft.amount} orderText={draft.orderId} sym={sym} nf={nf}
-                    onUseAmount={(value) => setDraft({ ...draft, amount: String(value) })} />
+                    onUseAmount={(value) => setDraft({ ...draft, amount: String(value), claimExisting: false })}
+                    claiming={draft.claimExisting}
+                    onClaim={(value) => setDraft(value === null ? { ...draft, claimExisting: false } : { ...draft, amount: String(value), claimExisting: true })} />
                 )}
                 {["owner_funding", "company_transfer_in", "remittance_out"].includes(draft.kind) && (
                   <label className="block"><span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">{draft.kind === "remittance_out" ? "Sent to account" : "From account"}</span>
@@ -1024,7 +1052,7 @@ export default function ManagerFundsTab({
       )}
 
       {voiding && (
-        <Modal title={`Remove this ${voiding.kindLabel.toLowerCase()}?`} subtitle={`${sym}${nf(voiding.amount)}. It stays in the audit trail, marked removed.${voiding.kind === "customer_payment" ? " The payment is taken off the order too." : ""}`} onClose={() => setVoiding(null)}>
+        <Modal title={`Remove this ${voiding.kindLabel.toLowerCase()}?`} subtitle={`${sym}${nf(voiding.amount)}. It stays in the audit trail, marked removed.${voiding.movedExistingPayment ? " The order's payment goes back to the account it was filed under before." : voiding.kind === "customer_payment" ? " The payment is taken off the order too." : ""}`} onClose={() => setVoiding(null)}>
           <div className="space-y-3 px-6 py-5">
             <input className={field} value={textInput} onChange={(event) => setTextInput(event.target.value)} placeholder="Why? e.g. Entered twice" />
             {formError && <p className="m-0 rounded-lg bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700">{formError}</p>}

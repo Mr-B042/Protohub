@@ -4220,10 +4220,14 @@ export type ManagerFundTxn = {
   missingProof: string | null;
   /** Rider fees matched to the orders' own delivery fees: paid from the wallet, not a new cost. */
   countedOnOrders?: number;
+  /** Moved the order's existing payment into the wallet: no new income. */
+  movedExistingPayment?: boolean;
 };
 export type ManagerFundOrderCheck = {
   orders: Array<{ id: string; customer: string; status: string; amount: number; deliveryFee: number; received: number; expected: number; left: number; remittanceStatus: string | null }>;
   split: { counted: number; newCost: number } | null;
+  /** The order's existing payment that can be moved into the wallet (asked with claim). */
+  claim?: { total: number; rows: Array<{ id: string; amount: number; accountId: string | null; accountName: string | null; receivedAt: string | null; loggedBy: string | null }> } | null;
 };
 export type ManagerFundTotals = {
   opening: number; received: number; receivedBySource: Record<string, number>; spent: number; spentByCategory: Record<string, number>;
@@ -4255,6 +4259,8 @@ export type ManagerFundLogInput = {
   productSplits?: Array<{ productId: string; amount: number }>;
   /** Waybill only: an extra cost on top of the week's waybill total. */
   ownCost?: boolean;
+  /** Customer payment on an already-paid order: move its existing payment into the wallet. */
+  claimExisting?: boolean;
 };
 
 export const managerFundsApi = {
@@ -4271,8 +4277,9 @@ export const managerFundsApi = {
   saveWeek: (body: { weekStart: string; actualClosing?: number | null; varianceExplanation?: string | null; notes?: string | null }) =>
     request<{ ok: true }>("PUT", "/api/manager-funds/week", body),
   requestAdjustment: (body: { transactionId: string; requestedAmount: number; reason: string }) => post<{ id: string }>("/api/manager-funds/adjustments", body),
-  orderCheck: (ids: string[], options: { amount?: number; category?: string; excludeTxnId?: string } = {}) => {
+  orderCheck: (ids: string[], options: { amount?: number; category?: string; excludeTxnId?: string; claim?: boolean } = {}) => {
     const qs = new URLSearchParams({ ids: ids.join(",") });
+    if (options.claim) qs.set("claim", "1");
     if (options.amount !== undefined) qs.set("amount", String(options.amount));
     if (options.category) qs.set("category", options.category);
     if (options.excludeTxnId) qs.set("excludeTxnId", options.excludeTxnId);

@@ -1,0 +1,11 @@
+-- Move an order's existing payment into the manager's wallet (19 Oct 2026). Additive only.
+--
+-- An order already remitted on the order screen is locked, so the manager
+-- cannot log its cash as a customer payment (that would count the income
+-- twice). Instead the wallet entry re-files the order's existing payment
+-- rows (remittance_transactions.bank_account_id) under her wallet. No new
+-- income, no change to the order. This column keeps where each row was
+-- filed before, so removing the entry puts them back exactly.
+--
+--   [{ "id": "<remittance_transactions.id>", "previousAccountId": "<uuid>" | null }]
+alter table public.manager_fund_transactions add column if not exists claimed_remittances jsonb not null default '[]'::jsonb;
