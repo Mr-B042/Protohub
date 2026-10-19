@@ -769,6 +769,18 @@ router.patch("/team/:id", requireAuth, async (req, res) => {
   if (updates.marketing_attribution_tags !== undefined) {
     updates.marketing_attribution_tags = sanitizeMarketingAttributionTags(updates.marketing_attribution_tags);
   }
+  // ⚠️ Pause / re-enable keeps the rep's TURN (Bright, 19 Oct 2026). Pausing
+  // remembers how many active reps were ahead of her; switching her back on
+  // puts her at that same place (not the back of the line) and levels her
+  // Dedicated Products share for today so she gets no catch-up burst. The
+  // server owns the position here - any position sent with the toggle is ignored.
+  const rotationChange = updates.round_robin_excluded === undefined
+    ? null
+    : await rotationToggleFor(String(req.params.id), req.user!.orgId, updates.round_robin_excluded === true);
+  if (rotationChange) {
+    delete updates.round_robin_position;
+    if (rotationChange === "pause") updates.round_robin_paused_rank = await rotationRankOf(String(req.params.id), req.user!.orgId);
+  }
   let { data, error } = await supabase
     .from("users")
     .update(updates)
@@ -792,10 +804,76 @@ router.patch("/team/:id", requireAuth, async (req, res) => {
     if (error.code === "PGRST116") { res.status(404).json({ error: "User not found." }); return; }
     res.status(500).json({ error: error.message }); return;
   }
+  if (rotationChange === "resume") {
+    const restored = await restoreRotationTurn(String(req.params.id), req.user!.orgId, data?.round_robin_paused_rank ?? null);
+    if (restored) data = restored;
+  }
   // Same reason as the soft-delete: a role edit must not wait for the TTL.
   invalidateUserProfile(String(req.params.id));
   res.json(sanitizeTeamMemberPayload(data));
 });
+
+// The main line exactly as the auto-assign picker reads it
+// (lib/order-assignment.ts pickAndAdvance): position, then name.
+async function activeRotationIds(orgId: string, excludeId: string) {
+  const { data } = await supabase
+    .from("users")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("is_demo", false)
+    .eq("active", true)
+    .eq("round_robin_excluded", false)
+    .eq("role", "Sales Rep")
+    .neq("id", excludeId)
+    .order("round_robin_position", { ascending: true, nullsFirst: false })
+    .order("name", { ascending: true });
+  return (data ?? []).map((row) => String(row.id));
+}
+
+async function rotationToggleFor(userId: string, orgId: string, nextExcluded: boolean): Promise<"pause" | "resume" | null> {
+  const { data } = await supabase.from("users").select("round_robin_excluded").eq("id", userId).eq("org_id", orgId).maybeSingle();
+  if (!data) return null;
+  const wasExcluded = data.round_robin_excluded === true;
+  if (wasExcluded === nextExcluded) return null;
+  return nextExcluded ? "pause" : "resume";
+}
+
+// How many active reps are ahead of this one in the main line right now.
+async function rotationRankOf(userId: string, orgId: string) {
+  const { data: me } = await supabase.from("users").select("round_robin_position, name").eq("id", userId).eq("org_id", orgId).maybeSingle();
+  const { data: others } = await supabase
+    .from("users")
+    .select("round_robin_position, name")
+    .eq("org_id", orgId)
+    .eq("is_demo", false)
+    .eq("active", true)
+    .eq("round_robin_excluded", false)
+    .eq("role", "Sales Rep")
+    .neq("id", userId);
+  const myPos = Number(me?.round_robin_position ?? 0);
+  const myName = String(me?.name ?? "");
+  return (others ?? []).filter((row) => {
+    const pos = Number(row.round_robin_position ?? 0);
+    return pos < myPos || (pos === myPos && String(row.name ?? "") < myName);
+  }).length;
+}
+
+// Put a re-enabled rep back at the place she held when paused, renumbering
+// the line 0, 1, 2, … in the same order everyone else already had. A rep
+// paused before this existed has no saved place and goes to the back, as
+// before. Then level her Dedicated Products share for today.
+async function restoreRotationTurn(userId: string, orgId: string, pausedRank: number | null) {
+  const line = await activeRotationIds(orgId, userId);
+  const at = pausedRank === null ? line.length : Math.max(0, Math.min(pausedRank, line.length));
+  line.splice(at, 0, userId);
+  await Promise.all(line.map((id, idx) =>
+    supabase.from("users").update(id === userId ? { round_robin_position: idx, round_robin_paused_rank: null } : { round_robin_position: idx }).eq("id", id).eq("org_id", orgId)
+  ));
+  const { error: rejoinError } = await supabase.rpc("rejoin_dedicated_handler", { p_user_id: userId, p_org_id: orgId });
+  if (rejoinError) console.error("[round-robin] could not level dedicated share on re-enable:", rejoinError.message);
+  const { data } = await supabase.from("users").select().eq("id", userId).eq("org_id", orgId).maybeSingle();
+  return data;
+}
 
 const TeamAgentAssignmentsSchema = z.object({
   agentIds: z.array(z.string().uuid()).default([])
