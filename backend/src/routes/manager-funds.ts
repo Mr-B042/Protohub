@@ -7,7 +7,7 @@ import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { addDaysToDateKey, lagosDateKey, sundayWeekStartForDateKey, weekEndFromStart } from "../lib/sales-bonus-engine.js";
 import {
-  DEFAULT_FUND_SETTINGS, FUND_CATEGORIES, KIND_LABEL, customerPaymentEffect, fundTotals, fundsEditable, fundsReadiness,
+  DEFAULT_FUND_SETTINGS, FUND_CATEGORIES, KIND_LABEL, customerPaymentEffect, claimableRemittances, fundTotals, fundsEditable, fundsReadiness,
   logisticsSplit, missingProof, scaleSplits, splitProblem, type FundKind, type ProductSplit, type FundSettings, type FundTxn
 } from "../lib/manager-funds.js";
 import { notifyFunds } from "../lib/weekly-report-notifications.js";
@@ -129,7 +129,7 @@ async function ensureWeek(orgId: string, branchId: string, managerId: string, wa
   return (await resolveOpening(orgId, branchId, managerId, weekStart)).row;
 }
 
-const TXN_COLUMNS = "id, manager_id, wallet_account_id, week_start, kind, category, product_id, product_splits, waybill_own_cost, amount, occurred_at, description, paid_to, payment_method, reference, order_ids, counterparty_account_id, evidence, expense_id, transfer_id, remittance_transaction_ids, status, return_reason, void_reason, voided_at, adjusts_transaction_id, version, created_by, created_by_name, created_at, updated_at";
+const TXN_COLUMNS = "id, manager_id, wallet_account_id, week_start, kind, category, product_id, product_splits, waybill_own_cost, amount, occurred_at, description, paid_to, payment_method, reference, order_ids, counterparty_account_id, evidence, expense_id, transfer_id, remittance_transaction_ids, claimed_remittances, status, return_reason, void_reason, voided_at, adjusts_transaction_id, version, created_by, created_by_name, created_at, updated_at";
 
 const toFundTxn = (row: any): FundTxn => ({
   id: row.id, kind: row.kind, category: row.category ?? null, amount: Number(row.amount ?? 0), occurredAt: row.occurred_at,
@@ -168,7 +168,9 @@ const mapTxn = (row: any, settings: FundSettings, countedOnOrders = 0) => ({
   createdByName: row.created_by_name ?? null,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
-  missingProof: missingProof(toFundTxn(row), settings)
+  missingProof: missingProof(toFundTxn(row), settings),
+  /** A customer payment that moved the order's existing payment into the wallet (no new income). */
+  movedExistingPayment: Array.isArray(row.claimed_remittances) && row.claimed_remittances.length > 0
 });
 
 /** Who the request is about. A manager sees her own wallet; Owner/Admin can pick. */
@@ -353,6 +355,82 @@ async function assertCompanyAccount(orgId: string, branchId: string, accountId: 
 }
 
 const ORDER_COLUMNS = "id, amount, logistics_cost, amount_remitted, remittance_status, remittance_edit_open, status, created_at, delivered_date, product_id, product_name, package_name, customer, assigned_rep_id, agent_id";
+
+// ── Moving an already-paid order's payment into the wallet (19 Oct 2026) ────
+// The order was remitted on the order screen, so its income is counted and the
+// order is locked. The cash may still be with the manager. Re-filing the
+// order's existing payment rows under her wallet puts the cash where it is
+// without counting the income again or touching the order.
+
+type ClaimInfo = {
+  total: number;
+  rows: Array<{ id: string; amount: number; accountId: string | null; accountName: string | null; receivedAt: string | null; loggedBy: string | null }>;
+};
+
+async function orderClaimInfo(orgId: string, orderId: string, excludeTxnId: string | null = null): Promise<ClaimInfo> {
+  const [{ data: payments, error }, { data: wallets, error: walletError }, { data: entries, error: entryError }] = await Promise.all([
+    supabase.from("remittance_transactions").select("id, delta_amount, bank_account_id, received_at, logged_by_name")
+      .eq("org_id", orgId).eq("order_id", orderId).order("received_at", { ascending: true }),
+    supabase.from("bank_accounts").select("id").eq("org_id", orgId).not("holder_user_id", "is", null),
+    supabase.from("manager_fund_transactions").select("id, claimed_remittances")
+      .eq("org_id", orgId).eq("kind", "customer_payment").in("status", ["recorded", "returned"]).contains("order_ids", [orderId])
+  ]);
+  if (error) throw error;
+  if (walletError) throw walletError;
+  if (entryError) throw entryError;
+  const alreadyClaimed = new Set<string>();
+  for (const entry of entries ?? []) {
+    if (entry.id === excludeTxnId) continue;
+    for (const item of Array.isArray(entry.claimed_remittances) ? entry.claimed_remittances : []) alreadyClaimed.add(String(item.id));
+  }
+  const raw = (payments ?? []).map((row: any) => ({ id: String(row.id), amount: Number(row.delta_amount ?? 0), accountId: row.bank_account_id ?? null, receivedAt: row.received_at ?? null, loggedBy: row.logged_by_name ?? null }));
+  const free = claimableRemittances(raw, new Set((wallets ?? []).map((row: any) => String(row.id))), alreadyClaimed);
+  const accountIds = Array.from(new Set(free.rows.map((row) => row.accountId).filter(Boolean))) as string[];
+  const names = new Map<string, string>();
+  if (accountIds.length > 0) {
+    const { data, error: nameError } = await supabase.from("bank_accounts").select("id, name").eq("org_id", orgId).in("id", accountIds);
+    if (nameError) throw nameError;
+    for (const row of data ?? []) names.set(String(row.id), String(row.name));
+  }
+  const byId = new Map(raw.map((row) => [row.id, row]));
+  return {
+    total: free.total,
+    rows: free.rows.map((row) => ({ ...byId.get(row.id)!, accountName: row.accountId ? names.get(row.accountId) ?? null : null }))
+  };
+}
+
+/** Put each moved payment row back under the account it was filed under before. */
+async function restoreClaimed(orgId: string, walletId: string, claimed: Array<{ id: string; previousAccountId: string | null }>) {
+  for (const item of claimed) {
+    const { error } = await supabase.from("remittance_transactions").update({ bank_account_id: item.previousAccountId })
+      .eq("org_id", orgId).eq("id", item.id).eq("bank_account_id", walletId);
+    if (error) throw error;
+  }
+}
+
+/** Re-file the order's existing payment rows under her wallet. Returns what moved, for undo. */
+async function claimOrderPayment(orgId: string, orderId: string, amount: number, walletId: string) {
+  const info = await orderClaimInfo(orgId, orderId);
+  if (info.total <= 0) throw httpError(409, `Order #${orderId} has no payment left to move into your wallet. It may already be in a wallet.`);
+  if (Math.abs(info.total - amount) >= 0.01) {
+    throw httpError(400, `Order #${orderId}'s existing payment is ₦${info.total.toLocaleString("en-NG")}. Enter that amount to move it into your wallet.`);
+  }
+  const moved: Array<{ id: string; previousAccountId: string | null }> = [];
+  try {
+    for (const row of info.rows) {
+      let query = supabase.from("remittance_transactions").update({ bank_account_id: walletId }).eq("org_id", orgId).eq("id", row.id);
+      query = row.accountId ? query.eq("bank_account_id", row.accountId) : query.is("bank_account_id", null);
+      const { data, error } = await query.select("id");
+      if (error) throw error;
+      if (!data || data.length === 0) throw httpError(409, `Order #${orderId}'s payment changed while saving. Reload and try again.`);
+      moved.push({ id: row.id, previousAccountId: row.accountId });
+    }
+  } catch (error) {
+    await restoreClaimed(orgId, walletId, moved);
+    throw error;
+  }
+  return moved;
+}
 
 /**
  * A customer payment is a payment on the order, by the order screen's own
@@ -644,7 +722,10 @@ const LogSchema = z.object({
   // A waybill shared by several products, each with its share (Bright, 9 Oct 2026).
   productSplits: z.array(z.object({ productId: z.string().trim().min(1).max(60), amount: z.number().positive() })).max(6).optional(),
   // Waybill ticked "its own cost": added on top of the weekly total (Bright, 9 Oct 2026).
-  ownCost: z.boolean().optional()
+  ownCost: z.boolean().optional(),
+  // Customer payment on an order already paid on the order screen: move that
+  // payment into the wallet instead of adding a new one (19 Oct 2026).
+  claimExisting: z.boolean().optional()
 });
 
 router.post("/transactions", requireRole("Manager", "Admin"), async (req, res) => {
@@ -682,6 +763,7 @@ router.post("/transactions", requireRole("Manager", "Admin"), async (req, res) =
     if (error) throw error;
 
     // Mirror into the books. If that fails, remove the ledger row.
+    let claimed: Array<{ id: string; previousAccountId: string | null }> = [];
     try {
       const mirror: Record<string, unknown> = {};
       if (body.kind === "expense") {
@@ -706,6 +788,10 @@ router.post("/transactions", requireRole("Manager", "Admin"), async (req, res) =
         }).select("id").single();
         if (transferError) throw transferError;
         mirror.transfer_id = transfer.id;
+      } else if (body.kind === "customer_payment" && body.claimExisting) {
+        claimed = await claimOrderPayment(orgId, orderId!, body.amount, wallet.id);
+        mirror.remittance_transaction_ids = claimed.map((item) => item.id);
+        mirror.claimed_remittances = claimed;
       } else if (body.kind === "customer_payment") {
         const remittanceId = await applyOrderPayment(req, orderId!, body.amount, wallet.id, body.occurredAt,
           `Paid to ${me.name} (manager wallet)${body.reference ? ` · ref ${body.reference}` : ""}${body.varianceReason ? ` · ${body.varianceReason}` : ""}`);
@@ -716,12 +802,14 @@ router.post("/transactions", requireRole("Manager", "Admin"), async (req, res) =
         if (linkError) throw linkError;
       }
     } catch (mirrorError) {
+      if (claimed.length > 0) await restoreClaimed(orgId, wallet.id, claimed);
       await supabase.from("manager_fund_transactions").delete().eq("id", row.id);
       throw mirrorError;
     }
 
     await audit(req, branchId, weekStart, "fund_logged", {
-      managerId: me.id, transactionId: row.id, kind: body.kind, category: body.category ?? null, amount: body.amount, orderId: orderId ?? null
+      managerId: me.id, transactionId: row.id, kind: body.kind, category: body.category ?? null, amount: body.amount, orderId: orderId ?? null,
+      ...(claimed.length > 0 ? { movedExistingPayment: claimed } : {})
     });
     res.status(201).json({ id: row.id });
   } catch (error: any) {
@@ -848,7 +936,11 @@ router.post("/transactions/:id/void", requireRole("Manager", "Admin"), async (re
     const { branchId, row } = await loadOwnTxn(req, String(req.params.id));
     if (row.status === "voided") throw httpError(409, "Already removed.");
     await assertEditable(orgId, branchId, row.manager_id, row.week_start);
-    if (row.kind === "customer_payment" && row.order_ids?.[0]) {
+    const claimedRows = Array.isArray(row.claimed_remittances) ? row.claimed_remittances as Array<{ id: string; previousAccountId: string | null }> : [];
+    if (claimedRows.length > 0) {
+      // Moved, not paid: the payment goes back to its old account; the order is untouched.
+      await restoreClaimed(orgId, row.wallet_account_id, claimedRows);
+    } else if (row.kind === "customer_payment" && row.order_ids?.[0]) {
       await reverseOrderPayment(req, row.order_ids[0], Number(row.amount), row.wallet_account_id, `Removed by ${req.user!.name}: ${parsed.data.reason}`);
     }
     if (row.expense_id) {
@@ -915,7 +1007,8 @@ router.get("/order-check", requireRole(...LEADERSHIP), async (req, res) => {
     ids: z.string().trim().min(1).max(1500),
     amount: z.coerce.number().min(0).max(100_000_000).optional(),
     category: z.string().trim().max(40).optional(),
-    excludeTxnId: z.string().uuid().optional()
+    excludeTxnId: z.string().uuid().optional(),
+    claim: z.enum(["1"]).optional()
   }).safeParse(req.query);
   if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
@@ -925,7 +1018,9 @@ router.get("/order-check", requireRole(...LEADERSHIP), async (req, res) => {
     const split = parsed.data.category === "logistics" && parsed.data.amount !== undefined
       ? await expenseSplit(orgId, "logistics", parsed.data.amount, ids, parsed.data.excludeTxnId ?? null)
       : null;
-    res.json({ orders, split: split ? { counted: split.counted, newCost: split.newCost } : null });
+    // A customer payment on one order: what could be moved into the wallet instead.
+    const claim = parsed.data.claim && orders.length === 1 ? await orderClaimInfo(orgId, orders[0].id) : null;
+    res.json({ orders, split: split ? { counted: split.counted, newCost: split.newCost } : null, claim });
   } catch (error: any) {
     sendError(res, error, "Couldn't check those orders.");
   }
