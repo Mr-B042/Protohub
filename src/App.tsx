@@ -19210,6 +19210,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const isTikTokOrder = (o: TrackedOrder) => (o.source ?? "") === "TikTok" || /tiktok/i.test(o.utmSource ?? "") || Boolean(o.formContext?.ttclid);
   const tiktokOrdersForProductDay = (productId: string, day: string) =>
     trackedOrders.filter((o) => o.productId === productId && normalizeDateKey(o.createdAt ?? o.date) === day && !o.reviewHold && !["Cancelled", "Failed"].includes(o.status ?? "New") && isTikTokOrder(o)).length;
+  // TikTok money kept apart from Meta (Bright, 19 Oct 2026: "we don't want
+  // mix up"): TikTok ROAS = TikTok orders' revenue ÷ TikTok spend only.
+  const tiktokRevenueForProductDay = (productId: string, day: string) =>
+    trackedOrders
+      .filter((o) => o.productId === productId && normalizeDateKey(o.createdAt ?? o.date) === day && !o.reviewHold && !["Cancelled", "Failed"].includes(o.status ?? "New") && isTikTokOrder(o))
+      .reduce((sum, o) => sum + o.amount, 0);
 
   // Narrowest tier - only orders that have actually DELIVERED (as of now), not
   // just "still open/not dead" like ordersForProductDay. Same date basis as
@@ -19282,6 +19288,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   /** All spend for a product-day: typed + automatic Meta + automatic TikTok. */
   const adSpendFor = (productId: string, day: string) =>
     (parseFloat(adSpendDraft[`${productId}-${day}`] ?? "") || 0) + autoAdSpend(productId, day, "meta") + autoAdSpend(productId, day, "tiktok");
+  /** TikTok's spend only: automatic TikTok + the typed box (TikTok's from 4 Oct).
+   *  Before 4 Oct the typed figure was every platform together, so it has no TikTok part. */
+  const tiktokSpendFor = (productId: string, day: string) =>
+    day < AUTO_AD_SPEND_FROM ? 0 : (parseFloat(adSpendDraft[`${productId}-${day}`] ?? "") || 0) + autoAdSpend(productId, day, "tiktok");
 
   // Sync draft when tab opens, week changes, or expenses load from API
   useEffect(() => {
@@ -92906,6 +92916,8 @@ ${waybillLineItems(w).length > 1
                     const weeklyRevenue = adSpendWeekDays.reduce((sum, day) => sum + revenueForProductDay(product.id, day), 0);
                     const weeklyOrders = adSpendWeekDays.reduce((sum, day) => sum + ordersForProductDay(product.id, day), 0);
                     const weeklyTikTokOrders = adSpendWeekDays.reduce((sum, day) => sum + tiktokOrdersForProductDay(product.id, day), 0);
+                    const weeklyTikTokRevenue = adSpendWeekDays.reduce((sum, day) => sum + tiktokRevenueForProductDay(product.id, day), 0);
+                    const weeklyTikTokSpend = adSpendWeekDays.reduce((sum, day) => sum + tiktokSpendFor(product.id, day), 0);
                     const weeklyDelivered = adSpendWeekDays.reduce((sum, day) => sum + deliveredForProductDay(product.id, day), 0);
                     const weeklyRevenueDelivered = adSpendWeekDays.reduce((sum, day) => sum + revenueDeliveredForProductDay(product.id, day), 0);
                     const weeklyStillInPipeline = weeklyOrders - weeklyDelivered;
@@ -92914,7 +92926,7 @@ ${waybillLineItems(w).length > 1
                     const weeklyCancelledFailed = weeklyPlaced - weeklyOrders;
                     const weeklyRevenueCancelledFailed = weeklyRevenuePlaced - weeklyRevenue;
                     const weeklyRevenueStillInPipeline = weeklyRevenue - weeklyRevenueDelivered;
-                    return { product, weeklySpend, weeklyRevenue, weeklyOrders, weeklyTikTokOrders, weeklyDelivered, weeklyRevenueDelivered, weeklyStillInPipeline, weeklyRevenueStillInPipeline, weeklyPlaced, weeklyRevenuePlaced, weeklyCancelledFailed, weeklyRevenueCancelledFailed };
+                    return { product, weeklySpend, weeklyRevenue, weeklyOrders, weeklyTikTokOrders, weeklyTikTokRevenue, weeklyTikTokSpend, weeklyDelivered, weeklyRevenueDelivered, weeklyStillInPipeline, weeklyRevenueStillInPipeline, weeklyPlaced, weeklyRevenuePlaced, weeklyCancelledFailed, weeklyRevenueCancelledFailed };
                   })
                   .sort((a, b) =>
                     b.weeklyOrders - a.weeklyOrders
@@ -92993,7 +93005,7 @@ ${waybillLineItems(w).length > 1
                     ) : (
                       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                         <div className="sm:hidden divide-y divide-gray-100">
-                          {activeProdRows.map(({ product, weeklySpend: rowSpend, weeklyRevenue: rowRevenue, weeklyOrders, weeklyTikTokOrders, weeklyDelivered, weeklyRevenueDelivered, weeklyStillInPipeline, weeklyRevenueStillInPipeline, weeklyPlaced, weeklyRevenuePlaced, weeklyCancelledFailed, weeklyRevenueCancelledFailed }) => {
+                          {activeProdRows.map(({ product, weeklySpend: rowSpend, weeklyRevenue: rowRevenue, weeklyOrders, weeklyTikTokOrders, weeklyTikTokRevenue, weeklyTikTokSpend, weeklyDelivered, weeklyRevenueDelivered, weeklyStillInPipeline, weeklyRevenueStillInPipeline, weeklyPlaced, weeklyRevenuePlaced, weeklyCancelledFailed, weeklyRevenueCancelledFailed }) => {
                             const rowRoas = rowSpend === 0 ? null : rowRevenue / rowSpend;
                             const rowRoasDelivered = rowSpend === 0 ? null : weeklyRevenueDelivered / rowSpend;
                             return (
@@ -93002,7 +93014,7 @@ ${waybillLineItems(w).length > 1
                                   <div>
                                     <div className="text-sm font-semibold text-gray-800">{product.name}</div>
                                     <div className="text-xs text-gray-400">{adSpendShowBreakdown ? (weeklyOrders > 0 ? `${weeklyOrders} order${weeklyOrders === 1 ? "" : "s"} · ${weeklyPlaced} placed this week` : weeklyPlaced > 0 ? `${weeklyPlaced} placed this week` : "No orders this week yet") : (weeklyOrders > 0 ? `${weeklyOrders} order${weeklyOrders === 1 ? "" : "s"} this week` : "No orders this week yet")}</div>
-                                    {weeklyTikTokOrders > 0 && <div className="text-xs font-semibold text-gray-900 dark:text-gray-100">{weeklyTikTokOrders} from TikTok</div>}
+                                    {weeklyTikTokOrders > 0 && <div className="text-xs font-semibold text-gray-900 dark:text-gray-100">{weeklyTikTokOrders} from TikTok{weeklyTikTokSpend > 0 ? ` · ${(weeklyTikTokRevenue / weeklyTikTokSpend).toFixed(2)}x TikTok ROAS` : ""}</div>}
                                   </div>
                                   <div className="flex flex-col items-end gap-1 shrink-0">
                                     {rowRoas !== null && (
@@ -93025,6 +93037,9 @@ ${waybillLineItems(w).length > 1
                                     const roas = spend > 0 ? rev / spend : null;
                                     const orders = ordersForProductDay(product.id, day);
                                     const tiktokOrders = tiktokOrdersForProductDay(product.id, day);
+                                    const tiktokRev = tiktokRevenueForProductDay(product.id, day);
+                                    const tiktokSpend = tiktokSpendFor(product.id, day);
+                                    const tiktokRoas = tiktokSpend > 0 ? tiktokRev / tiktokSpend : null;
                                     const delivered = deliveredForProductDay(product.id, day);
                                     const stillInPipeline = stillInPipelineForProductDay(product.id, day);
                                     const revStillInPipeline = revenueStillInPipelineForProductDay(product.id, day);
@@ -93112,6 +93127,14 @@ ${waybillLineItems(w).length > 1
                                             <span className="text-[10px] uppercase tracking-wider text-gray-400">From TikTok</span>
                                             <div className="text-gray-500">{tiktokOrders > 0 ? tiktokOrders : "-"}</div>
                                           </div>
+                                          <div>
+                                            <span className="text-[10px] uppercase tracking-wider text-gray-400">TikTok Revenue</span>
+                                            <div className="text-gray-500">{tiktokRev > 0 ? formatMoney(tiktokRev) : "-"}</div>
+                                          </div>
+                                          <div>
+                                            <span className="text-[10px] uppercase tracking-wider text-gray-400">TikTok ROAS</span>
+                                            <div>{tiktokRoas !== null ? <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${tiktokRoas >= 2 ? "bg-green-100 text-green-700" : tiktokRoas >= 1 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-600"}`}>{tiktokRoas.toFixed(2)}x</span> : <span className="text-gray-300">-</span>}</div>
+                                          </div>
                                           {adSpendShowBreakdown && (
                                           <>
                                           <div>
@@ -93178,6 +93201,14 @@ ${waybillLineItems(w).length > 1
                                     <span className="text-[10px] uppercase tracking-wider text-gray-400">From TikTok</span>
                                     <div className="font-semibold text-gray-800">{weeklyTikTokOrders > 0 ? weeklyTikTokOrders : "-"}</div>
                                   </div>
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">TikTok Revenue</span>
+                                    <div className="font-semibold text-gray-800">{weeklyTikTokRevenue > 0 ? formatMoney(weeklyTikTokRevenue) : "-"}</div>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">TikTok ROAS</span>
+                                    <div className="font-semibold text-gray-800">{weeklyTikTokSpend > 0 ? `${(weeklyTikTokRevenue / weeklyTikTokSpend).toFixed(2)}x` : "-"}</div>
+                                  </div>
                                   {adSpendShowBreakdown && (
                                   <>
                                   <div>
@@ -93215,7 +93246,7 @@ ${waybillLineItems(w).length > 1
                               </tr>
                             </thead>
                             <tbody>
-                              {activeProdRows.map(({ product, weeklySpend: rowSpend, weeklyRevenue: rowRevenue, weeklyOrders, weeklyTikTokOrders, weeklyDelivered, weeklyRevenueDelivered, weeklyStillInPipeline, weeklyRevenueStillInPipeline, weeklyPlaced, weeklyRevenuePlaced, weeklyCancelledFailed, weeklyRevenueCancelledFailed }, pi) => {
+                              {activeProdRows.map(({ product, weeklySpend: rowSpend, weeklyRevenue: rowRevenue, weeklyOrders, weeklyTikTokOrders, weeklyTikTokRevenue, weeklyTikTokSpend, weeklyDelivered, weeklyRevenueDelivered, weeklyStillInPipeline, weeklyRevenueStillInPipeline, weeklyPlaced, weeklyRevenuePlaced, weeklyCancelledFailed, weeklyRevenueCancelledFailed }, pi) => {
                                 const rowRoas = rowSpend === 0 ? null : rowRevenue / rowSpend;
                                 // Each product reads as one block (Bright, 10 Oct 2026): it was hard
                                 // to tell which spend rows belonged to which product.
@@ -93231,7 +93262,7 @@ ${waybillLineItems(w).length > 1
                                         <div className="text-sm">{product.name}</div>
                                         <div className={`mt-1 text-[11px] font-bold ${rowSpend > 0 ? "text-red-600" : "text-gray-400"}`}>{rowSpend > 0 ? `Ad spend this week: ${formatMoney(rowSpend)}` : "No ad spend this week"}</div>
                                         <div className="mt-1 text-[10px] font-medium text-gray-400">{adSpendShowBreakdown ? (weeklyOrders > 0 ? `${weeklyOrders} order${weeklyOrders === 1 ? "" : "s"} · ${weeklyPlaced} placed this week` : weeklyPlaced > 0 ? `${weeklyPlaced} placed this week` : "No orders yet") : (weeklyOrders > 0 ? `${weeklyOrders} order${weeklyOrders === 1 ? "" : "s"} this week` : "No orders yet")}</div>
-                                        {weeklyTikTokOrders > 0 && <div className="text-[10px] font-semibold text-gray-700">{weeklyTikTokOrders} from TikTok</div>}
+                                        {weeklyTikTokOrders > 0 && <div className="text-[10px] font-semibold text-gray-700">{weeklyTikTokOrders} from TikTok{weeklyTikTokSpend > 0 ? ` · ${(weeklyTikTokRevenue / weeklyTikTokSpend).toFixed(2)}x TikTok ROAS` : ""}</div>}
                                         {rowRoas !== null && (
                                           <span className={`mt-1 inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${rowRoas >= 2 ? "bg-green-100 text-green-700" : rowRoas >= 1 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-600"}`}>
                                             {rowRoas.toFixed(2)}x ROAS
@@ -93452,6 +93483,35 @@ ${waybillLineItems(w).length > 1
                                         );
                                       })}
                                       <td className="px-3 py-2 text-center text-xs font-semibold text-gray-900">{weeklyTikTokOrders > 0 ? weeklyTikTokOrders : "-"}</td>
+                                    </tr>
+                                    {/* TikTok money on its own - TikTok orders' revenue, ÷ TikTok spend only. */}
+                                    <tr className={groupBg}>
+                                      <td className="px-3 py-2 text-[11px] font-semibold text-gray-900 text-center whitespace-nowrap">TikTok Revenue<span className="block text-[9px] font-medium text-gray-400">part of Revenue</span></td>
+                                      {adSpendWeekDays.map((day) => {
+                                        const tiktokRev = tiktokRevenueForProductDay(product.id, day);
+                                        const tiktokSpend = tiktokSpendFor(product.id, day);
+                                        return (
+                                          <td key={day} className={`px-2 py-2 text-center text-xs font-medium ${tiktokSpend > 0 && tiktokRev >= tiktokSpend ? "text-green-600" : tiktokSpend > 0 ? "text-red-500" : tiktokRev > 0 ? "text-gray-800" : "text-gray-300"} ${day === todayKey2 ? "bg-blue-50/40" : ""}`}>
+                                            {tiktokRev > 0 ? formatMoney(tiktokRev) : "-"}
+                                          </td>
+                                        );
+                                      })}
+                                      <td className="px-3 py-2 text-center text-xs font-semibold text-gray-900">{weeklyTikTokRevenue > 0 ? formatMoney(weeklyTikTokRevenue) : "-"}</td>
+                                    </tr>
+                                    <tr className={groupBg}>
+                                      <td className="px-3 py-2 text-[11px] font-semibold text-gray-900 text-center whitespace-nowrap">TikTok ROAS<span className="block text-[9px] font-medium text-gray-400">÷ TikTok spend</span></td>
+                                      {adSpendWeekDays.map((day) => {
+                                        const tiktokSpend = tiktokSpendFor(product.id, day);
+                                        const tiktokRoas = tiktokSpend > 0 ? tiktokRevenueForProductDay(product.id, day) / tiktokSpend : null;
+                                        return (
+                                          <td key={day} className={`px-2 py-2 text-center ${day === todayKey2 ? "bg-blue-50/40" : ""}`}>
+                                            {tiktokRoas !== null ? <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${tiktokRoas >= 2 ? "bg-green-100 text-green-700" : tiktokRoas >= 1 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-600"}`}>{tiktokRoas.toFixed(2)}x</span> : <span className="text-[10px] text-gray-300">-</span>}
+                                          </td>
+                                        );
+                                      })}
+                                      <td className="px-3 py-2 text-center text-xs text-gray-400">
+                                        {weeklyTikTokSpend > 0 ? (() => { const r = weeklyTikTokRevenue / weeklyTikTokSpend; return <span className={`font-bold ${r >= 2 ? "text-green-600" : r >= 1 ? "text-yellow-600" : "text-red-600"}`}>{r.toFixed(2)}x</span>; })() : "-"}
+                                      </td>
                                     </tr>
                                     {adSpendShowBreakdown && (
                                     <>
