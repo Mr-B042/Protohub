@@ -4961,7 +4961,9 @@ export type ReceiptPriceVerification = {
 export const orderReceiptsApi = {
   branding: () => get<ReceiptBranding>("/api/order-receipts/branding"),
   saveBranding: (body: { tagline: string; helpPhone: string }) => put<{ ok: boolean; tagline: string; helpPhone: string }>("/api/order-receipts/branding", body),
-  verification: (orderId: string) => get<ReceiptPriceVerification>(`/api/order-receipts/${encodeURIComponent(orderId)}/verification`)
+  verification: (orderId: string) => get<ReceiptPriceVerification>(`/api/order-receipts/${encodeURIComponent(orderId)}/verification`),
+  // Android app: the picture goes up and the customer gets a short link to it.
+  uploadImage: (orderId: string, png: string) => post<{ url: string; pageUrl: string; imageUrl: string }>(`/api/order-receipts/${encodeURIComponent(orderId)}/image`, { png })
 };
 
 // ── Alert routing (Settings, migration 309) ─────────────────────────────────

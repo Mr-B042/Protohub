@@ -105,6 +105,7 @@ import publicOrderRoutes   from "./routes/public-orders.js";
 import publicProductRoutes from "./routes/public-products.js";
 import publicSmsRoutes from "./routes/public-sms.js";
 import publicBrandingRoutes from "./routes/public-branding.js";
+import publicReceiptRoutes from "./routes/public-receipts.js";
 import publicPwaRoutes from "./routes/public-pwa.js";
 import embedSettingsRoutes       from "./routes/embed-settings.js";
 import publicEmbedSettingsRoutes from "./routes/public-embed-settings.js";
@@ -403,6 +404,7 @@ app.use("/api/public/tracking",        express.text({ type: "text/plain", limit:
 app.use("/api/public/products",        publicProductRoutes);
 app.use("/api/public/sms",             publicSmsRoutes);
 app.use("/api/public/branding",        publicBrandingRoutes);
+app.use("/api/public/receipts",        publicReceiptRoutes);
 app.use("/api/public/pwa",             publicPwaRoutes);
 app.use("/api/public/embed-settings",  publicEmbedSettingsRoutes);
 app.use("/api/embed-settings",         embedSettingsRoutes);

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ArrowLeft, CheckCircle2, ClipboardList, Copy, Download, Eye, Lock, Pencil, ShieldAlert, Truck, User, Wallet, X } from "lucide-react";
+import { isNativeShell } from "../../lib/native-shell";
 import { orderReceiptsApi, productMediaApi, type ProductMedia, type ReceiptBranding, type ReceiptPriceVerification } from "../../lib/api";
 import { buildReceipt, money, receiptDate, type ReceiptOrderInput } from "./receipt-model";
 import { OrderConfirmationReceipt, RECEIPT_WIDTH, ThankYouReceipt, WhatsAppGlyph, type ReceiptBrand } from "./ReceiptTemplates";
@@ -124,10 +125,75 @@ export default function OrderReceiptSheet({ order, onClose, onEdit, onOpenWhatsA
     link.remove();
     setTimeout(() => URL.revokeObjectURL(link.href), 4000);
   };
+  // ── Inside the Protohub Android app ──────────────────────────────────────
+  // The app is a WebView: no share sheet, and a download link does nothing
+  // (it said "saved" while nothing was saved - Bright, 20 Oct 2026). With the
+  // native Share + Filesystem plugins (next app build) the picture itself is
+  // shared; until then the picture is uploaded and WhatsApp opens with a short
+  // link to it, and Save opens that picture in the phone's browser.
+  const [appBusy, setAppBusy] = useState(false);
+  const linkCache = useRef<{ key: string; url: string; pageUrl: string } | null>(null);
+  const toDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read the picture."));
+    reader.readAsDataURL(file);
+  });
+  const receiptLink = async (file: File) => {
+    if (linkCache.current?.key === renderKey) return linkCache.current;
+    const result = await orderReceiptsApi.uploadImage(order.id, await toDataUrl(file));
+    linkCache.current = { key: renderKey, url: result.url, pageUrl: result.pageUrl };
+    return linkCache.current;
+  };
+  /** Shares the PNG through the app's own share sheet; false when this app build has no Share plugin. */
+  const appShareFile = async (file: File) => {
+    const { Capacitor } = await import("@capacitor/core");
+    if (!Capacitor.isPluginAvailable("Share") || !Capacitor.isPluginAvailable("Filesystem")) return false;
+    const [{ Share }, { Filesystem, Directory }] = await Promise.all([import("@capacitor/share"), import("@capacitor/filesystem")]);
+    const saved = await Filesystem.writeFile({ path: file.name, data: (await toDataUrl(file)).split(",")[1], directory: Directory.Cache });
+    await Share.share({ files: [saved.uri], dialogTitle: "Send the receipt" });
+    return true;
+  };
+  const openOutside = (url: string) => {
+    // The app hands other websites to the phone's browser (same as WhatsApp links).
+    const opened = window.open(url, "_blank", "noopener,noreferrer");
+    if (!opened) window.location.href = url;
+  };
+  const appFailed = (err: any, what: string) => {
+    if (err?.name === "AbortError" || /cancel/i.test(String(err?.message ?? ""))) return;
+    showToast(`Could not ${what}: ${err?.message ?? "please try again"}.`);
+  };
+  const sendFromApp = async (file: File, text: string) => {
+    setAppBusy(true);
+    try {
+      if (text) void navigator.clipboard?.writeText(text).catch(() => undefined);
+      if (await appShareFile(file)) {
+        setSuccess("Receipt shared");
+        if (text) showToast("Your note is copied. Paste it under the picture in WhatsApp.");
+        return;
+      }
+      const link = await receiptLink(file);
+      onOpenWhatsApp(phone, [text, `Your order receipt: ${link.url}`].filter(Boolean).join("\n\n"));
+      setSuccess("Receipt link ready");
+    } catch (err: any) { appFailed(err, "send the receipt"); }
+    finally { setAppBusy(false); }
+  };
+  const saveFromApp = async (file: File) => {
+    setAppBusy(true);
+    try {
+      if (await appShareFile(file)) return;
+      const link = await receiptLink(file);
+      openOutside(link.pageUrl);
+      showToast("The receipt opened in your browser. Tap \"Download receipt\" there to save it.");
+    } catch (err: any) { appFailed(err, "save the image"); }
+    finally { setAppBusy(false); }
+  };
+
   // No await before share()/click(): they must run inside the tap.
   const send = () => {
     if (!ready) return notReady();
     const text = note.trim();
+    if (isNativeShell) { void sendFromApp(ready, text); return; }
     if (canShareFile(ready)) {
       // Picture only: WhatsApp on iPhone drops the picture when text comes with it.
       // The note goes on the clipboard to paste under the picture.
@@ -144,6 +210,7 @@ export default function OrderReceiptSheet({ order, onClose, onEdit, onOpenWhatsA
   };
   const saveImage = () => {
     if (!ready) return notReady();
+    if (isNativeShell) { void saveFromApp(ready); return; }
     if (isApple && canShareFile(ready)) {
       navigator.share({ files: [ready] })
         .then(() => setSuccess("Receipt saved"))
@@ -153,7 +220,7 @@ export default function OrderReceiptSheet({ order, onClose, onEdit, onOpenWhatsA
     download(ready);
     setSuccess("Receipt saved");
   };
-  const busyLabel = !ready && !prepareError;
+  const busyLabel = (!ready && !prepareError) || appBusy;
 
   const Receipt = template === "confirmation" ? OrderConfirmationReceipt : ThankYouReceipt;
   const templateSwitch = (
