@@ -4,6 +4,9 @@ import { humanFieldErrors } from "../lib/validation-message.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { isFrontlineRepRole } from "../lib/roles.js";
+import { randomUUID } from "node:crypto";
+import { createShortLink } from "../lib/short-links.js";
+import { RECEIPT_BUCKET, receiptPageUrl } from "./public-receipts.js";
 
 // ── Order receipts (Bright's design, 20 Oct 2026) ───────────────────────────
 // The receipt image is drawn in the browser from the order record; this route
@@ -93,6 +96,36 @@ router.get("/:orderId/verification", async (req, res) => {
     });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not check the price." });
+  }
+});
+
+// ── Receipt picture as a link (for the Android app) ─────────────────────────
+// The Android app's WebView has no share sheet and cannot save files, so it
+// uploads the PNG here and sends the customer a short link to it instead.
+const ImageSchema = z.object({ png: z.string().startsWith("data:image/png;base64,").max(12_000_000) });
+
+router.post("/:orderId/image", async (req, res) => {
+  const parsed = ImageSchema.safeParse(req.body ?? {});
+  if (!parsed.success) { res.status(400).json({ error: "The receipt picture could not be read. Try again." }); return; }
+  try {
+    const orgId = req.user!.orgId;
+    const { data: order, error } = await supabase.from("orders").select("id, assigned_rep_id")
+      .eq("org_id", orgId).eq("id", String(req.params.orderId)).maybeSingle();
+    if (error) throw error;
+    if (!order) { res.status(404).json({ error: "Order not found." }); return; }
+    const viewer = scopeOf(req);
+    if (isFrontlineRepRole(viewer.role) && order.assigned_rep_id !== viewer.id) {
+      res.status(403).json({ error: "This order is not assigned to you." }); return;
+    }
+    const bytes = Buffer.from(parsed.data.png.slice("data:image/png;base64,".length), "base64");
+    if (bytes.length < 1000) { res.status(400).json({ error: "The receipt picture is empty. Try again." }); return; }
+    const id = randomUUID();
+    const { error: uploadError } = await supabase.storage.from(RECEIPT_BUCKET).upload(`${id}.png`, bytes, { contentType: "image/png", upsert: false });
+    if (uploadError) throw uploadError;
+    const pageUrl = receiptPageUrl(id);
+    res.json({ url: await createShortLink(orgId, pageUrl), pageUrl, imageUrl: `${pageUrl}/image.png` });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not upload the receipt picture." });
   }
 });
 

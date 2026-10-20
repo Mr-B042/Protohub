@@ -12,6 +12,7 @@ export type ReceiptOrderInput = {
   id: string;
   customer: string;
   phone: string;
+  whatsapp?: string;
   address?: string;
   city?: string;
   state?: string;
@@ -26,6 +27,10 @@ export type ReceiptOrderInput = {
   originalAmount?: number;
   currency?: string;
   status?: string;
+  /** Delivery day: the date set for it, the day it was delivered, or what the customer asked for. */
+  scheduledDate?: string;
+  deliveredDate?: string;
+  preferredDelivery?: string;
   createdAt?: string;
   originalCreatedAt?: string;
   crossSellLines?: ReceiptLineInput[];
@@ -39,7 +44,16 @@ export type ReceiptGift = { productId?: string; name: string; quantity: number }
 export type ReceiptModel = {
   reference: string;
   orderDate: string;
-  customer: { name: string; phone: string; location: string };
+  customer: {
+    name: string; phone: string;
+    /** Shown only when it differs from the phone number. */
+    whatsapp: string | null;
+    /** The full street address the rider goes to. */
+    address: string | null;
+    /** City, State. */
+    location: string;
+    delivery: { label: string; value: string } | null;
+  };
   lines: ReceiptLine[];
   gifts: ReceiptGift[];
   subtotal: number;
@@ -76,6 +90,24 @@ export function money(value: number, symbol = "₦") {
   return `${symbol}${Math.round(value).toLocaleString("en-NG")}`;
 }
 
+/** "Tue, 21 Oct 2026" from a plain YYYY-MM-DD (no time-zone shift). */
+export function receiptDay(value?: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value ?? "");
+  if (!match) return null;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return date.toLocaleDateString("en-GB", { timeZone: "UTC", weekday: "short", day: "2-digit", month: "short", year: "numeric" }).replace(/^(\w+) /, "$1, ");
+}
+
+function deliveryLine(order: ReceiptOrderInput): { label: string; value: string } | null {
+  const delivered = order.status === "Delivered" ? receiptDay(order.deliveredDate) : null;
+  if (delivered) return { label: "Delivered on", value: delivered };
+  const scheduled = receiptDay(order.scheduledDate);
+  if (scheduled) return { label: "Delivery date", value: scheduled };
+  const preferred = order.preferredDelivery?.trim();
+  if (preferred) return { label: "Preferred delivery", value: receiptDay(preferred) ?? preferred };
+  return null;
+}
+
 export function buildReceipt(order: ReceiptOrderInput): ReceiptModel {
   const addons = [...(order.crossSellLines ?? []), ...(order.additionalLines ?? [])].filter((line) => Number(line.amount) > 0 || line.productName);
   const addonTotal = addons.reduce((sum, line) => sum + (Number(line.amount) || 0), 0);
@@ -83,7 +115,10 @@ export function buildReceipt(order: ReceiptOrderInput): ReceiptModel {
   // that keeps the lines adding up to the total the customer pays.
   const main = Math.max(0, (Number(order.amount) || 0) - addonTotal);
   const placedAt = order.originalCreatedAt || order.createdAt;
-  const location = [order.city, order.state].filter(Boolean).join(", ") || order.location || order.address || "—";
+  const location = [order.city, order.state].filter(Boolean).join(", ") || order.location || "—";
+  const address = (order.address ?? "").trim() || null;
+  const digits = (value?: string) => (value ?? "").replace(/\D/g, "").replace(/^234/, "0").replace(/^(?!0)/, "0");
+  const whatsapp = order.whatsapp?.trim() && digits(order.whatsapp) !== digits(order.phone) ? order.whatsapp.trim() : null;
   const lines: ReceiptLine[] = [
     { productId: order.productId, name: order.productName, subtitle: order.productSubtitle && order.productSubtitle !== order.packageName ? order.productSubtitle : undefined, detail: order.packageName || "", quantity: 1, amount: main, kind: "main" },
     ...addons.map((line) => ({ productId: line.productId, name: line.productName, detail: line.packageName || "", quantity: Number(line.quantity) || 1, amount: Number(line.amount) || 0, kind: "addon" as const }))
@@ -95,7 +130,7 @@ export function buildReceipt(order: ReceiptOrderInput): ReceiptModel {
   return {
     reference: receiptReference(order.id, placedAt),
     orderDate: receiptDate(placedAt),
-    customer: { name: order.customer || "—", phone: order.phone || "—", location },
+    customer: { name: order.customer || "—", phone: order.phone || "—", whatsapp, address, location, delivery: deliveryLine(order) },
     lines,
     gifts,
     subtotal: total,

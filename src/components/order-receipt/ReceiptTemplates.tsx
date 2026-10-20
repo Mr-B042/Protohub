@@ -1,5 +1,5 @@
 import { forwardRef, type CSSProperties, type ReactNode } from "react";
-import { ClipboardList, MapPin, Package, Phone, ShieldCheck, Truck, User } from "lucide-react";
+import { CalendarDays, ClipboardList, Home, MapPin, MessageCircle, Package, Phone, ShieldCheck, Truck, User } from "lucide-react";
 import { money, type ReceiptModel } from "./receipt-model";
 
 // The two receipts from Bright's design (20 Oct 2026): "Order Confirmation"
@@ -12,6 +12,21 @@ export type ReceiptBrand = { name: string; tagline: string; logoUrl: string | nu
 export type ReceiptProps = { model: ReceiptModel; brand: ReceiptBrand; imageOf: (productId?: string) => string | null };
 
 export const RECEIPT_WIDTH = 720;
+
+/** Who and where, from the order record: name, phone, WhatsApp (when
+ *  different), the full address, city/state and the delivery day. */
+function customerRows(model: ReceiptModel, color: string) {
+  const c = model.customer;
+  const rows: Array<{ icon: ReactNode; label: string; value: string }> = [
+    { icon: <User size={18} color={color} />, label: "Name", value: c.name },
+    { icon: <Phone size={18} color={color} />, label: "Phone", value: c.phone },
+  ];
+  if (c.whatsapp) rows.push({ icon: <MessageCircle size={18} color={color} />, label: "WhatsApp", value: c.whatsapp });
+  if (c.address) rows.push({ icon: <Home size={18} color={color} />, label: "Delivery address", value: c.address });
+  rows.push({ icon: <MapPin size={18} color={color} />, label: "City / State", value: c.location });
+  if (c.delivery) rows.push({ icon: <CalendarDays size={18} color={color} />, label: c.delivery.label, value: c.delivery.value });
+  return rows;
+}
 const NAVY = "#0b1b3f";
 const BLUE = "#1d6fe8";
 const GREEN = "#16a34a";
@@ -154,10 +169,10 @@ export const OrderConfirmationReceipt = forwardRef<HTMLDivElement, ReceiptProps>
         </div>
 
         <div style={{ marginTop: 24 }}>
-          {sectionTitle(<User size={22} color={BLUE} fill={BLUE} />, "Customer Details")}
-          {[[<User key="u" size={18} color="#64748b" />, "Name:", model.customer.name], [<Phone key="p" size={18} color="#64748b" />, "Phone:", model.customer.phone], [<MapPin key="m" size={18} color="#64748b" />, "Delivery Location:", model.customer.location]].map(([icon, label, value]) => (
-            <div key={String(label)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 0", fontSize: 16 }}>
-              {icon}<span style={{ width: 150, color: "#475569", fontSize: 14 }}>{label}</span><span style={{ fontWeight: 500 }}>{value}</span>
+          {sectionTitle(<User size={22} color={BLUE} fill={BLUE} />, "Customer & Delivery Details")}
+          {customerRows(model, "#64748b").map(({ icon, label, value }) => (
+            <div key={label} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "5px 0", fontSize: 16 }}>
+              <span style={{ display: "flex", paddingTop: 1, flexShrink: 0 }}>{icon}</span><span style={{ width: 150, flexShrink: 0, color: "#475569", fontSize: 14, paddingTop: 1 }}>{label}:</span><span style={{ fontWeight: 500, minWidth: 0, overflowWrap: "anywhere" }}>{value}</span>
             </div>
           ))}
         </div>
@@ -231,8 +246,11 @@ export const ThankYouReceipt = forwardRef<HTMLDivElement, ReceiptProps>(function
           <div style={{ display: "flex", gap: 14, padding: "14px 20px 18px" }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 18, fontWeight: 800, color: NAVY, marginBottom: 8 }}>Customer Details</div>
-              {[[<User key="u" size={18} color={BLUE} fill={BLUE} />, model.customer.name], [<Phone key="p" size={18} color={BLUE} />, model.customer.phone], [<MapPin key="m" size={18} color={BLUE} />, model.customer.location]].map(([icon, value], i) => (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 0", fontSize: 16 }}>{icon}{value}</div>
+              {customerRows(model, BLUE).map(({ icon, label, value }) => (
+                <div key={label} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "4px 0", fontSize: 16 }}>
+                  <span style={{ display: "flex", paddingTop: 1, flexShrink: 0 }}>{icon}</span>
+                  <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{label === "Delivery date" || label === "Delivered on" || label === "Preferred delivery" ? <><span style={{ color: "#475569" }}>{label}: </span><b>{value}</b></> : value}</span>
+                </div>
               ))}
             </div>
             <div style={{ width: 210, borderRadius: 16, background: "#eef4fe", padding: "16px", display: "flex", alignItems: "center", gap: 10 }}>
