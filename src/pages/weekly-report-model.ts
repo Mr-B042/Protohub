@@ -253,6 +253,9 @@ export type WeeklyReportSnapshot = {
     systemFinalBonus?: number;
     /** Only with a payout change: what the manager added (+) or took off (-). */
     payoutChange?: number;
+    /** Leadership screens only (withMissingFees): ₦500 per delivered order
+     *  with no delivery fee, taken off finalBonus. Never on the rep's own report. */
+    missingFeeApplied?: number;
     upsellOrders: number;
     crossSellOrders: number;
     manuallyAdjustedOrders: number;
@@ -274,6 +277,8 @@ export type WeeklyReportSnapshot = {
   adjustments?: WeeklyReportFine[];
   /** The manager's change to the final payout, when there is one (see withPayoutChange). */
   payoutChangeDetail?: SnapshotPayoutChange;
+  /** Missing delivery fee charges, leadership screens only (see withMissingFees). */
+  missingFeeDetail?: MissingFeeDetail;
   /** Every missed-log charge of the week, any status. */
   logMisses?: WeeklyLogMiss[];
   orders: WeeklyReportOrderRow[];
@@ -336,6 +341,33 @@ export function withPayoutChange<T extends WeeklyReportSnapshot | null>(
       amount: changed - system, reason: change.reason,
       changedByName: change.changedByName, changedByRole: change.changedByRole, changedAt: change.changedAt
     }
+  };
+}
+
+// ── Missing delivery fee (Bright, 20 Oct 2026) ──────────────────────────────
+// ₦500 per delivered order with no delivery fee, charged by the server when
+// the rep sends the report (lib/missing-fee-penalty.ts). HIDDEN FROM THE REP:
+// it reaches Manager / Admin / Owner only, laid over the rep's figures here
+// like a payout change. What the payout cannot cover carries to next week.
+
+export type MissingFeeWeek = {
+  charges: Array<{ id: string; orderId: string; amount: number; reason: string; chargedAt: string }>;
+  total: number;
+  carried: number;
+};
+export type MissingFeeDetail = MissingFeeWeek & { applied: number; unpaid: number };
+
+/** Lay the week's missing-fee charges over a snapshot. Same rules as withPayoutChange: lay on AFTER comparing. */
+export function withMissingFees<T extends WeeklyReportSnapshot | null>(snapshot: T, fees: MissingFeeWeek | null | undefined): T {
+  if (!snapshot || !fees) return snapshot;
+  const due = Math.max(0, Math.round(fees.total + fees.carried));
+  if (due === 0) return snapshot;
+  const before = Math.max(0, Math.round(snapshot.totals.finalBonus));
+  const applied = Math.min(due, before);
+  return {
+    ...snapshot,
+    totals: { ...snapshot.totals, finalBonus: before - applied, missingFeeApplied: applied },
+    missingFeeDetail: { ...fees, applied, unpaid: due - applied }
   };
 }
 
@@ -413,7 +445,8 @@ export function bonusInitialFinal(snap: WeeklyReportSnapshot) {
     { label: `Upsell paid at half (${why})`, amount: Math.round(full.upsell - t.upsellBonus) },
     { label: `Cross-sell paid at half (${why})`, amount: Math.round(full.crossSell - t.crossSellBonus) },
     { label: (t.carriedFines ?? 0) > 0 ? "Fines (incl. carried from last week)" : "Fines", amount: Math.round(finesApplied) },
-    { label: "Taken off by the manager", amount: Math.round(Math.max(0, -change)) }
+    { label: "Taken off by the manager", amount: Math.round(Math.max(0, -change)) },
+    { label: "Missing delivery fee (not shown to the rep)", amount: Math.round(t.missingFeeApplied ?? 0) }
   ].filter((item) => item.amount > 0);
   return { initial, takenOff: Math.max(0, initial - final), final, items, full, extraInInitial: Math.round(adjustments + Math.max(0, change)) };
 }
@@ -808,6 +841,7 @@ export type CompanyWeeklySnapshot = {
     /** What the reps are paid in all, payout changes included. */
     totalBonus: number;
     /** The manager's payout changes added up (already inside totalBonus). */
+    missingFees?: number;
     payoutChanges?: number;
     reps: number;
   };
@@ -866,6 +900,8 @@ export function buildCompanySnapshot(
       totalBonus: sum((snap) => snap.totals.finalBonus),
       // Payout changes by the manager, already inside totalBonus.
       payoutChanges: sum((snap) => snap.totals.payoutChange ?? 0),
+      // Missing delivery fee charges, already taken off totalBonus.
+      missingFees: sum((snap) => snap.totals.missingFeeApplied ?? 0),
       reps: reps.length
     },
     previous: withPrevious.length > 0 ? {
