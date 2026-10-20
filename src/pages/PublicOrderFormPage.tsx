@@ -3427,7 +3427,15 @@ export default function PublicOrderFormPage() {
       metaTestMode: publicMetaTestMode,
       metaTestEventCode: publicMetaTestEventCode || null,
       metaLeadEventId: leadEventId,
-      metaPurchaseEventId: purchaseEventId
+      metaPurchaseEventId: purchaseEventId,
+      // ⚠️ The price this form SHOWED the customer for the chosen package,
+      // kept as proof for price disputes (Bright, 20 Oct 2026). The server
+      // still prices the order from the package itself; the order receipt's
+      // Price Verification compares the two (routes/order-receipts.ts).
+      offerShownPackage: chosenPackage.name,
+      offerShownPrice: Number(chosenPackage.price) || 0,
+      offerShownCurrency: chosenPackage.currency,
+      offerShownAt: new Date().toISOString()
     });
 
     if (publicEmbedIsPreview) {

@@ -281,6 +281,7 @@ import {
 } from "./lib/date-window";
 import RecoveryBonusCalendar from "./components/RecoveryBonusCalendar";
 import UpgradeBonusGrid, { withUpgradeAmount } from "./components/UpgradeBonusGrid";
+import OrderReceiptSheet from "./components/order-receipt/OrderReceiptSheet";
 import { STALE_TIER_STYLE, staleOrderVerdict, summariseStaleOrders } from "./lib/stale-orders";
 import { indexCostChanges, ProductCostChange, unitCostAsOf } from "./lib/product-cost-history";
 import { spaceNaira } from "./lib/naira-glyph";
@@ -13532,6 +13533,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [expandedOrderCaptureDataId, setExpandedOrderCaptureDataId] = useState<string | null>(null);
   const [expandedCartCaptureDataId, setExpandedCartCaptureDataId] = useState<string | null>(null);
   const [expandedTrackingMonitorId, setExpandedTrackingMonitorId] = useState<string | null>(null);
+  // Send Order Receipt sheet (Order Details): the order it is open for.
+  const [receiptSheetOrderId, setReceiptSheetOrderId] = useState<string | null>(null);
   const [whatsAppPicker, setWhatsAppPicker] = useState<null | {
     customerName: string;
     normalUrl: string;
@@ -103106,6 +103109,13 @@ ${waybillLineItems(w).length > 1
                             </button>
                             <button
                               type="button"
+                              className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#1F8FE0] text-white text-xs font-bold hover:opacity-90"
+                              onClick={() => setReceiptSheetOrderId(selectedOrder.id)}
+                            >
+                              <ReceiptText className="w-3.5 h-3.5" /> Send Order Receipt
+                            </button>
+                            <button
+                              type="button"
                               className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-blue-200 text-blue-700 text-xs font-bold transition-colors hover:bg-blue-50"
                               onClick={() => openWhatsAppDispatchForOrder(selectedOrder)}
                             >
@@ -103135,6 +103145,15 @@ ${waybillLineItems(w).length > 1
                               </button>
                             )}
                           </div>
+                          {receiptSheetOrderId === selectedOrder.id && (
+                            <OrderReceiptSheet
+                              order={selectedOrder}
+                              onClose={() => setReceiptSheetOrderId(null)}
+                              onEdit={() => { setReceiptSheetOrderId(null); openAdminOrderEditRoute(selectedOrder.id); }}
+                              onOpenWhatsApp={(phone, text) => openWhatsAppPicker({ phone, message: text, customerName: selectedOrder.customer || `order ${selectedOrder.id}`, linkedOrderId: selectedOrder.id })}
+                              showToast={showToast}
+                            />
+                          )}
                         </div>
                       )}
 	                  </div>
