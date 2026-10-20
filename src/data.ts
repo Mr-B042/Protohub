@@ -75,6 +75,7 @@ export const navItems = [
   { label: "Payroll", icon: Banknote },
   { label: "Expenses", icon: CreditCard },
   { label: "Finance & Accounting", icon: WalletCards },
+  { label: "Product Trend", icon: TrendingUp },
   // Tracking Hub (2 Oct 2026): Pixels, CAPI, websites, links, ledger.
   { label: "Tracking Hub", icon: Share2 },
   { label: "Marketing Performance", icon: TrendingUp },

@@ -236,6 +236,8 @@ import {
 import AgentAccessPage from "./pages/AgentAccessPage";
 import CashFlowPage, { type CashFlowPeriod, type CashFlowView, type OpeningBalanceRow } from "./pages/CashFlowPage";
 import MarketingPerformancePage from "./pages/MarketingPerformancePage";
+import ProductTrendPage from "./pages/product-trend/ProductTrendPage";
+import type { TrendOrder } from "./pages/product-trend/product-trend-model";
 import WeeklyOpeningCashWizard, { type WeeklyOpeningView } from "./pages/WeeklyOpeningCashWizard";
 import DraftTextarea from "./components/DraftTextarea";
 import ChargeRiskBanner from "./components/ChargeRiskBanner";
@@ -324,7 +326,7 @@ type CurrencyCode = "NGN" | "GHS" | "KES" | "ZMW" | "XOF" | "XAF" | "TZS" | "MWK
 // currency no product can be priced in.
 type ProductCurrencyCode = CurrencyCode;
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "addBranch" | "cartAssignmentRules" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addExtraItems" | "addFreeGift" | "salesBonusFullReport" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | "pdaPortalCredentials" | null;
-type ActivePage = "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Team Challenges" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Tracking Hub" | "Marketing" | "Marketing Performance" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers" | "Weekly Reports" | "Report a Bug" | "My Reports" | "Issue Management";
+type ActivePage = "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Team Challenges" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Product Trend" | "Ad Tracking" | "Tracking Hub" | "Marketing" | "Marketing Performance" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers" | "Weekly Reports" | "Report a Bug" | "My Reports" | "Issue Management";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type PendingSalesExpansionAction =
@@ -2922,18 +2924,18 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   "Owner": [
     "Dashboard", "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
-    "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
+    "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting", "Product Trend",
     "Tracking Hub", "Ad Tracking", "Marketing", "Marketing Performance", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp", "Weekly Reports"
   ],
   "Admin": [
     "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
-    "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
+    "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting", "Product Trend",
     "Ad Tracking", "Marketing", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
   ],
   "Manager": [
     "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
-    "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Weekend Stock Summary", "Customers", "Personal Delivery Agents", "Round-Robin", "Notifications", "Settings", "WhatsApp"
+    "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Weekend Stock Summary", "Customers", "Personal Delivery Agents", "Product Trend", "Round-Robin", "Notifications", "Settings", "WhatsApp"
   ],
   // "Head of Sales Rep" is NOT listed here - a Sales Rep only gets it at
   // runtime when currentManagedUser?.isHeadOfSalesRep is true (see
@@ -3044,6 +3046,7 @@ const dashboardHashByPage: Record<ActivePage, string> = {
   "Tracking Hub": "#/dashboard/admin/tracking-hub",
   Marketing: "#/dashboard/admin/marketing",
   "Marketing Performance": "#/dashboard/admin/marketing-performance",
+  "Product Trend": "#/dashboard/admin/product-trend",
   "Weekly Reports": "#/dashboard/admin/weekly-reports",
   "Report a Bug": "#/dashboard/admin/report-a-bug",
   "My Reports": "#/dashboard/admin/my-reports",
@@ -28438,6 +28441,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       "ad-tracking": "Ad Tracking",
       marketing: "Marketing",
       "marketing-performance": "Marketing Performance",
+      "product-trend": "Product Trend",
       "weekly-reports": "Weekly Reports",
       "report-a-bug": "Report a Bug",
       "my-reports": "My Reports",
@@ -37820,6 +37824,7 @@ ${waybillLineItems(w).length > 1
       "Tracking Hub": "#/dashboard/admin/tracking-hub",
       Marketing: "#/dashboard/admin/marketing",
   "Marketing Performance": "#/dashboard/admin/marketing-performance",
+  "Product Trend": "#/dashboard/admin/product-trend",
   "Weekly Reports": "#/dashboard/admin/weekly-reports",
   "Report a Bug": "#/dashboard/admin/report-a-bug",
   "My Reports": "#/dashboard/admin/my-reports",
@@ -37920,7 +37925,7 @@ ${waybillLineItems(w).length > 1
       return;
     }
 
-    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory & Logistics Operations" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Head of Sales Rep" || label === "Sales Closers" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Tracking Hub" || label === "Marketing" || label === "Marketing Performance" || label === "Weekly Reports" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp" || label === "Report a Bug" || label === "My Reports" || label === "Issue Management") {
+    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory & Logistics Operations" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Head of Sales Rep" || label === "Sales Closers" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Tracking Hub" || label === "Marketing" || label === "Marketing Performance" || label === "Product Trend" || label === "Weekly Reports" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp" || label === "Report a Bug" || label === "My Reports" || label === "Issue Management") {
       if (label === "Inventory & Logistics Operations") {
         setInventoryOperationsSection("dashboard");
       }
@@ -47083,6 +47088,35 @@ ${waybillLineItems(w).length > 1
     syncHashRoute("#/dashboard/admin/inventory-logistics-operations");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
+  // ── Product Trend (Bright, 20 Oct 2026) ─────────────────────────────────
+  // Orders come from the SAME server summary Finance reads, mapped with the
+  // same cost (costForOrder) and pieces rules as Finance › Product
+  // Profitability, so the two pages agree. The mapper is read through a ref:
+  // it changes every render, and the page reloads when loadOrders changes.
+  const productTrendOrderMapperRef = useRef<(order: TrackedOrder) => TrendOrder>(null as never);
+  productTrendOrderMapperRef.current = (order: TrackedOrder): TrendOrder => {
+    const product = catalogProducts.find((item) => item.id === order.productId) ?? products.find((item) => item.id === order.productId);
+    const packageRecord = product?.packages.find((item) => item.id === order.packageId);
+    return {
+      id: String(order.id),
+      productId: order.productId ?? "",
+      state: normalizeStateName(order.state || order.location || ""),
+      agentId: order.agentId ?? "",
+      status: order.status ?? "New",
+      amount: Number(order.amount) || 0,
+      units: Math.max(1, Number(order.quantity ?? packageRecord?.quantity ?? 1) || 1),
+      createdKey: orderCreatedKey(order),
+      logisticsCost: Number(order.logisticsCost ?? 0) || 0,
+      cogs: costForOrder(order),
+      deliveredKey: (order.status ?? "New") === "Delivered" ? orderDeliveredKey(order) || undefined : undefined
+    };
+  };
+  const loadProductTrendOrders = useCallback(async (from: string, to: string) => {
+    const result: any = await financeSummaryApi.summary({ dateFrom: from, dateTo: to });
+    const rows = Array.isArray(result?.cohortOrders) ? result.cohortOrders : Array.isArray(result?.cohort_orders) ? result.cohort_orders : [];
+    return rows.map((row: any) => normalizeTrackedOrder(row)).filter((order: TrackedOrder) => !order.reviewHold).map((order: TrackedOrder) => productTrendOrderMapperRef.current(order));
+  }, []);
+
   const handleInventoryOperationsAction = (action: InventoryOperationsAction) => {
     if (isInventoryOperationsRole && ["carriers", "expenses", "settings", "create-expense"].includes(action)) {
       showToast("That area is outside the Inventory & Logistics Operations role.");
@@ -76106,6 +76140,8 @@ ${waybillLineItems(w).length > 1
                   ? "Operations"
                   : targetPage === "Expenses"
                     ? "Finance"
+                    : targetPage === "Product Trend"
+                      ? "Analytics"
                     : targetPage === "Tracking Hub"
                       ? "Tracking & Marketing"
                     : targetPage === "Call Rep Console"
@@ -91283,6 +91319,36 @@ ${waybillLineItems(w).length > 1
             currentRole === "Owner"
               ? <TrackingHubPage onToast={showToast} renderMetaDefaults={renderMetaAdsSettings} onOpenOrder={(orderId) => { setSelectedOrderId(orderId); setModal("orderDetails"); }} />
               : <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center text-sm text-gray-500">The Tracking Hub is for the Owner.</section>
+          ) : activePage === "Product Trend" ? (
+            // Owner / Admin / Manager (Bright, 20 Oct 2026). Net profit is
+            // Owner / Admin only: Managers have no Finance page. Gated on
+            // currentRole so "view as" shows what that role would see.
+            ["Owner", "Admin", "Manager"].includes(currentRole) ? (
+              <ProductTrendPage
+                products={catalogProducts.map((product) => ({ id: product.id, name: product.name, sku: product.sku, active: product.active !== false, warehouseStock: Math.max(0, Number(product.warehouseStock ?? 0)) }))}
+                agents={agents.map((agent) => ({ id: agent.id, name: agent.name }))}
+                hubs={inventoryStateHubRows.map(({ agent, location }) => ({
+                  agentId: agent.id,
+                  agentName: agent.name,
+                  state: normalizeAgentState(location.state) || agentPrimaryBaseState(agent) || "",
+                  active: Boolean(agent.active),
+                  stocks: (stockRowsForStateHub(agent, location) ?? []).map((stock) => ({
+                    productId: stock.productId,
+                    quantity: Math.max(0, Number(stock.quantity ?? 0) - Number(stock.defective ?? 0) - Number(stock.missing ?? 0))
+                  }))
+                }))}
+                expenses={expenses.map((expense) => ({ amount: Number(expense.amount) || 0, dateKey: normalizeDateKey(expense.date), productId: expense.productId ?? null, type: expense.type }))}
+                loadOrders={loadProductTrendOrders}
+                canSeeProfit={currentRole === "Owner" || currentRole === "Admin"}
+                formatMoney={formatMoney}
+                canCreateTransfer={["Owner", "Admin", "Inventory Manager", "Inventory Manager & Logistics Operations"].includes(currentRole)}
+                onCreateTransfer={openCreateWaybillForReplenishment}
+                onOpenReplenishment={currentAllowedPages.includes("Inventory & Logistics Operations") ? () => handleInventoryOperationsAction("state-replenishment") : undefined}
+                onOpenProducts={() => handleNavClick("Products & Stock")}
+              />
+            ) : (
+              <div className="rounded-xl border border-gray-200 bg-white p-8 text-center text-sm text-gray-500">Product Trend is for the Owner, Admins and Managers.</div>
+            )
           ) : activePage === "Marketing Performance" ? (
             // ⚠️ OWNER ONLY WHILE THIS IS STILL BEING BUILT.
             // Bright's call: "Marketing Performance is a future module."
