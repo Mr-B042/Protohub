@@ -8,6 +8,7 @@ import { approvedPayoutChanges } from "../lib/weekly-payout-changes.js";
 import { notifyWeeklyReport } from "../lib/weekly-report-notifications.js";
 import { branchFundManagers, loadFundWeek } from "./manager-funds.js";
 import { disputesForWeek, logMissesForWeek } from "./log-misses.js";
+import { MISSING_FEE_TYPE, chargeMissingFees, missingFeesFor } from "../lib/missing-fee-penalty.js";
 import { addDaysToDateKey, sundayWeekStartForDateKey, lagosDateKey, weekEndFromStart } from "../lib/sales-bonus-engine.js";
 import { FIRST_REPORT_WEEK,
   CORRECTION_SECTIONS,
@@ -305,6 +306,9 @@ async function finesForWeek(orgId: string, repIds: string[] | null, weekStart: s
     // follow_up_misses), not the day the Owner approved them - so their
     // rep_penalties rows are left out here or they would count twice.
     .neq("type", "follow_up_miss")
+    // ⚠️ Missing delivery fee charges are HIDDEN from the rep (Bright, 20 Oct
+    // 2026): never in the rep's fines. Leadership gets them as missingFees.
+    .neq("type", MISSING_FEE_TYPE)
     .gte("created_at", lagosDayStartIso(weekStart))
     .lte("created_at", lagosDayEndIso(weekEndFromStart(weekStart)))
     .order("created_at", { ascending: true })
@@ -672,6 +676,14 @@ router.post("/mine/submit", requireRole("Sales Rep"), async (req, res) => {
         late: isResubmit ? false : late
       }
     });
+    // ₦500 per delivered order with no fee, seen now that the report is sent.
+    // A failure here must not lose the report: anything missed is picked up
+    // the next time this rep sends one.
+    try {
+      await chargeMissingFees({ orgId, branchId, repId: req.user!.id, repName: req.user!.name ?? "Sales rep", weekStart });
+    } catch (chargeError: any) {
+      console.error("[weekly-reports] missing delivery fee charge failed:", chargeError?.message ?? chargeError);
+    }
     void notifyWeeklyReport(orgId, branchId, weekStart, { kind: "rep_submitted", repId: req.user!.id, repName: req.user!.name ?? "A sales rep", resubmitted: isResubmit, late: !isResubmit && late });
     res.json({ ok: true });
   } catch (error: any) {
@@ -815,7 +827,7 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
     // the page took 7-8 seconds to answer. They do not depend on each other.
     const repReportsQuery = supabase.from("rep_weekly_reports").select(REP_COLUMNS).eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart);
     const [company, repReports, corrections, auditRows, expectedRepIds, fines, previousFines, adjustments, previousAdjustments, bonusQueries, payoutChanges, gate,
-      editedAfterSubmit, waitingWeeks, logMisses, previousLogMisses, logMissDisputes, carriedFines, funds] = await Promise.all([
+      editedAfterSubmit, waitingWeeks, logMisses, previousLogMisses, logMissDisputes, carriedFines, funds, missingFees] = await Promise.all([
       loadCompanyReport(orgId, branchId, weekStart),
       repReportsQuery,
       supabase.from("weekly_report_corrections").select(CORRECTION_COLUMNS).eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart).order("created_at", { ascending: true }),
@@ -840,7 +852,8 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
       logMissesForWeek(orgId, null, addDaysToDateKey(weekStart, -7)),
       disputesForWeek(orgId, branchId, null, weekStart),
       carriedFinesFor(orgId, branchId, null, weekStart),
-      fundsForWeek(orgId, branchId, weekStart)
+      fundsForWeek(orgId, branchId, weekStart),
+      missingFeesFor(orgId, branchId, null, weekStart)
     ]);
     if (repReports.error) throw repReports.error;
     if (bonusQueries.error) throw bonusQueries.error;
@@ -867,6 +880,8 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
       previousLogMisses,
       logMissDisputes,
       carriedFines,
+      // Leadership only - never sent on /mine (hidden from the rep).
+      missingFees,
       funds: funds.map(({ manager, fund }) => ({
         managerId: manager.id,
         managerName: manager.name,

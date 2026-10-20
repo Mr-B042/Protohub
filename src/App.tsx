@@ -269,7 +269,7 @@ import OwnerWeeklyApprovalPage, { type WeeklyFinancialSummary } from "./pages/Ow
 import { CompanyReportHistoryPage, MyReportsHistoryPage, WeeklyAuditLogPage } from "./pages/WeeklyReportHistoryPages";
 import {
   buildCompanySnapshot, buildRepWeeklySnapshot, compareSnapshots,
-  FIRST_REPORT_WEEK, WEEKLY_RATE_RULE_FROM, weeklyRateRule, monthlyIncentiveForWeek, reportDueDate, reportOpensOn, runBonusCheck, wasSubmittedLate, withPayoutChange, type ManagerBonusPreview, type NamedOrderLookup, type WeeklyReportSnapshot
+  FIRST_REPORT_WEEK, WEEKLY_RATE_RULE_FROM, weeklyRateRule, monthlyIncentiveForWeek, reportDueDate, reportOpensOn, runBonusCheck, wasSubmittedLate, withMissingFees, withPayoutChange, type ManagerBonusPreview, type NamedOrderLookup, type WeeklyReportSnapshot
 } from "./pages/weekly-report-model";
 import type { CorrectionDraft } from "./components/WeeklyReportParts";
 import {
@@ -32316,14 +32316,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       // after: the change is not a figure the system worked out, so it must
       // never show up as "a figure changed since the rep submitted".
       const payoutChange = frozen ? (week.payoutChanges ?? []).find((item) => item.repId === repId) ?? null : null;
+      // ₦500 per delivered order with no fee - leadership only, the rep never
+      // sees it. Laid on last, after the payout change (Bright, 20 Oct 2026).
+      const missingFees = frozen ? week.missingFees?.[repId] ?? null : null;
       return {
         repId,
         repName: repName(repId),
         isHeadOfSales: Boolean(users.find((user) => user.id === repId)?.isHeadOfSalesRep),
         expected: week.expectedRepIds.includes(repId),
         report,
-        live: withPayoutChange(live, payoutChange),
-        frozen: withPayoutChange(frozen, payoutChange),
+        live: withMissingFees(withPayoutChange(live, payoutChange), missingFees),
+        frozen: withMissingFees(withPayoutChange(frozen, payoutChange), missingFees),
         payoutChange,
         differences: frozen && report?.status !== "returned" ? compareSnapshots(frozen, live) : [],
         submittedLate: wasSubmittedLate(weeklyReportWeekStart, week.audit ?? [], repId),

@@ -7,7 +7,7 @@ import {
   Pencil, RotateCcw, Search, Send, ShoppingCart, Target, Undo2, Wallet, X, Crown, Flag, History, Users, BarChart3, ChevronLeft
 } from "lucide-react";
 import {
-  Avatar, AuditTable, BonusInitialCells, ChartLegend, CorrectionForm, CorrectionList, KpiCard, Modal, NoteBox, NumberedHeader, OrderStatusPill, PayoutChangeForm, PayoutChangeNote,
+  Avatar, AuditTable, BonusInitialCells, ChartLegend, CorrectionForm, CorrectionList, KpiCard, Modal, NoteBox, NumberedHeader, OrderStatusPill, PayoutChangeForm, PayoutChangeNote, MissingFeeNote,
   OrderTypePill, OrdersRateChart, Panel, ProductDonut, RateBar, RepStatusPill, StepBadge, WeekPicker, WorkflowSteps,
   dailyChartRows, deltaPct, downloadCsv, longDate, nf, pctText, shortDateTime, shortDay, type CorrectionDraft, type WorkflowStep
 } from "../components/WeeklyReportParts";
@@ -653,6 +653,7 @@ export default function ManagerWeeklyReviewPage({
                                   )}
                                 </span>
                                 {row.payoutChange && <PayoutChangeNote change={row.payoutChange} sym={sym} />}
+                                {snap?.missingFeeDetail && <MissingFeeNote detail={snap.missingFeeDetail} sym={sym} />}
                               </td>
                               <td className={`px-2 py-3 ${pinnedCell}`}>
                                 <span className="flex items-center gap-1">
@@ -854,7 +855,8 @@ export default function ManagerWeeklyReviewPage({
           { label: "Cross-sell bonus", value: t?.crossSellBonus ?? 0 },
           ...((t?.adjustments ?? 0) !== 0 ? [{ label: "Bonus corrections", value: Math.abs(t?.adjustments ?? 0), minus: (t?.adjustments ?? 0) < 0 }] : []),
           ...(takenOff > 0 ? [{ label: "Fines taken off", value: takenOff, minus: true }] : []),
-          ...(change !== 0 ? [{ label: change < 0 ? "Taken off by manager" : "Added by manager", value: Math.abs(change), minus: change < 0 }] : [])
+          ...(change !== 0 ? [{ label: change < 0 ? "Taken off by manager" : "Added by manager", value: Math.abs(change), minus: change < 0 }] : []),
+          ...((t?.missingFeeApplied ?? 0) > 0 ? [{ label: "Missing delivery fee (not shown to the rep)", value: t?.missingFeeApplied ?? 0, minus: true }] : [])
         ];
         const canAdjust = canChangePayout(approveRow);
         return (

@@ -191,8 +191,12 @@ export default function WeeklyRepReportModal(props: WeeklyRepReportModalProps) {
     { icon: <Tag />, tone: "bg-rose-50 text-rose-500", label: "Cross-sell", value: t.crossSellBonus, op: "+" },
     ...(adjustments > 0 ? [{ icon: <Check />, tone: "bg-emerald-50 text-emerald-600", label: "Corrections", value: adjustments, op: "+" }] : []),
     { icon: <Minus />, tone: "bg-rose-50 text-rose-500", label: "Fines", value: t.fines, op: "−" },
-    ...(carried > 0 ? [{ icon: <Minus />, tone: "bg-rose-50 text-rose-500", label: "Last week's fines", value: carried, op: "−" }] : [])
+    ...(carried > 0 ? [{ icon: <Minus />, tone: "bg-rose-50 text-rose-500", label: "Last week's fines", value: carried, op: "−" }] : []),
+    // The "=" box shows the system figure when the payout was changed, so the
+    // missing-fee tile only joins the sum when it was not.
+    ...((t.missingFeeApplied ?? 0) > 0 && t.systemFinalBonus === undefined ? [{ icon: <Minus />, tone: "bg-rose-50 text-rose-500", label: "Missing delivery fee", value: t.missingFeeApplied ?? 0, op: "−" }] : [])
   ] : [];
+  const missingFee = shown?.missingFeeDetail;
 
   const notes: string[] = [
     ...editedAfterSubmit.map((edit) => `Order #${edit.orderId}: ${edit.what} after submit (${whenShort(edit.editedAt)}${edit.by ? `, ${edit.by}` : ""})`),
@@ -331,6 +335,19 @@ export default function WeeklyRepReportModal(props: WeeklyRepReportModalProps) {
                       <strong>Payout changed{payoutBy ? ` by ${payoutBy}` : ""}:</strong> {money(t.systemFinalBonus)} → {money(t.finalBonus)} ({(t.payoutChange ?? 0) < 0 ? "-" : "+"}{money(Math.abs(t.payoutChange ?? 0))}).
                       {payoutReason ? <span className="block">Reason: {payoutReason}</span> : null}
                     </p>
+                  )}
+                  {missingFee && missingFee.applied + missingFee.unpaid > 0 && (
+                    <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12.5px] leading-snug text-rose-900 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-100">
+                      <strong>Missing delivery fee: -{money(missingFee.applied)}</strong>
+                      <span className="ml-1 text-[11px] font-semibold text-rose-700 dark:text-rose-300">· ₦500 per delivered order with no fee · not shown to the rep</span>
+                      {missingFee.charges.length > 0 && (
+                        <ul className="m-0 mt-1 list-none p-0">
+                          {missingFee.charges.map((charge) => <li key={charge.id}>{charge.reason || `Order #${charge.orderId}`} · {money(charge.amount)}</li>)}
+                        </ul>
+                      )}
+                      {missingFee.carried > 0 && <span className="block">Includes {money(missingFee.carried)} left over from earlier weeks.</span>}
+                      {missingFee.unpaid > 0 && <span className="block font-semibold">{money(missingFee.unpaid)} is more than this week's payout and carries to next week.</span>}
+                    </div>
                   )}
                 </div>
               ) : null}
