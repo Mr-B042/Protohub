@@ -40,7 +40,6 @@ export default function OrderReceiptSheet({ order, onClose, onEdit, onOpenWhatsA
   const [images, setImages] = useState<Record<string, string>>({});
   const [note, setNote] = useState("Thank you for your order! 🙏");
   const [previewOpen, setPreviewOpen] = useState(false);
-  const [busy, setBusy] = useState<"" | "send" | "download">("");
   const [brandOpen, setBrandOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
 
@@ -77,6 +76,15 @@ export default function OrderReceiptSheet({ order, onClose, onEdit, onOpenWhatsA
   const phone = order.whatsapp || order.phone;
   const fileName = `receipt-${model.reference}.png`;
 
+  // The PNG is made AHEAD of the tap. Phones only let a page open the share
+  // sheet or save a file straight after a tap; drawing the picture takes a
+  // few seconds, so doing it inside the tap made phones block Send and Save.
+  const renderKey = useMemo(() => JSON.stringify([template, brand, images, model]), [template, brand, images, model]);
+  const [prepared, setPrepared] = useState<{ key: string; file: File; url: string } | null>(null);
+  const [prepareError, setPrepareError] = useState("");
+  const [success, setSuccess] = useState("");
+  useEffect(() => { if (!success) return; const t = setTimeout(() => setSuccess(""), 1800); return () => clearTimeout(t); }, [success]);
+  const ready = prepared?.key === renderKey ? prepared.file : null;
   const renderPng = async () => {
     if (!exportRef.current) throw new Error("The receipt is not ready yet.");
     if (document.fonts?.ready) await document.fonts.ready;
@@ -85,36 +93,67 @@ export default function OrderReceiptSheet({ order, onClose, onEdit, onOpenWhatsA
     if (!blob) throw new Error("Could not make the image.");
     return new File([blob], fileName, { type: "image/png" });
   };
+  useEffect(() => {
+    if (!branding) return;
+    let cancelled = false;
+    setPrepareError("");
+    const timer = setTimeout(() => {
+      renderPng().then((file) => {
+        if (cancelled) return;
+        setPrepared((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { key: renderKey, file, url: URL.createObjectURL(file) }; });
+      }).catch((err: any) => { if (!cancelled) setPrepareError(err?.message ?? "Could not make the image."); });
+    }, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renderKey, branding]);
+  useEffect(() => () => { setPrepared((prev) => { if (prev) URL.revokeObjectURL(prev.url); return null; }); }, []);
+
+  const canShareFile = (file: File) => {
+    const nav = navigator as Navigator & { canShare?: (data: ShareData) => boolean };
+    return typeof nav.share === "function" && !!nav.canShare?.({ files: [file] });
+  };
+  // iPhone/iPad can't save a downloaded file from the app; their share sheet has "Save Image".
+  const isApple = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const notReady = () => showToast(prepareError ? `Could not make the receipt picture: ${prepareError}` : "The receipt picture is still being made. Try again in a second.");
   const download = (file: File) => {
     const link = document.createElement("a");
     link.href = URL.createObjectURL(file);
     link.download = file.name;
+    document.body.appendChild(link);
     link.click();
-    setTimeout(() => URL.revokeObjectURL(link.href), 2000);
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 4000);
   };
-  const send = async () => {
-    setBusy("send");
-    try {
-      const file = await renderPng();
-      const nav = navigator as Navigator & { canShare?: (data: ShareData) => boolean };
-      if (nav.canShare?.({ files: [file] })) {
-        // Phone: the share sheet opens with the image attached - pick WhatsApp.
-        await nav.share({ files: [file], text: note.trim() || undefined });
-      } else {
-        download(file);
-        onOpenWhatsApp(phone, note.trim());
-        showToast("Receipt saved. Attach it in the WhatsApp chat that just opened.");
-      }
-    } catch (err: any) {
-      if (err?.name !== "AbortError") showToast(`Could not send the receipt: ${err?.message ?? "please try again"}.`);
-    } finally { setBusy(""); }
+  // No await before share()/click(): they must run inside the tap.
+  const send = () => {
+    if (!ready) return notReady();
+    const text = note.trim();
+    if (canShareFile(ready)) {
+      // Picture only: WhatsApp on iPhone drops the picture when text comes with it.
+      // The note goes on the clipboard to paste under the picture.
+      if (text) void navigator.clipboard?.writeText(text).catch(() => undefined);
+      navigator.share({ files: [ready] })
+        .then(() => { setSuccess("Receipt shared"); if (text) showToast("Your note is copied. Paste it under the picture in WhatsApp."); })
+        .catch((err: any) => { if (err?.name !== "AbortError") showToast(`Could not send the receipt: ${err?.message ?? "please try again"}.`); });
+    } else {
+      download(ready);
+      setSuccess("Receipt saved");
+      onOpenWhatsApp(phone, text);
+      showToast("Receipt saved. Attach it in the WhatsApp chat that just opened.");
+    }
   };
-  const downloadOnly = async () => {
-    setBusy("download");
-    try { download(await renderPng()); showToast("Receipt image saved."); }
-    catch (err: any) { showToast(`Could not save the image: ${err?.message ?? "please try again"}.`); }
-    finally { setBusy(""); }
+  const saveImage = () => {
+    if (!ready) return notReady();
+    if (isApple && canShareFile(ready)) {
+      navigator.share({ files: [ready] })
+        .then(() => setSuccess("Receipt saved"))
+        .catch((err: any) => { if (err?.name !== "AbortError") showToast(`Could not save the image: ${err?.message ?? "please try again"}.`); });
+      return;
+    }
+    download(ready);
+    setSuccess("Receipt saved");
   };
+  const busyLabel = !ready && !prepareError;
 
   const Receipt = template === "confirmation" ? OrderConfirmationReceipt : ThankYouReceipt;
   const templateSwitch = (
@@ -128,9 +167,9 @@ export default function OrderReceiptSheet({ order, onClose, onEdit, onOpenWhatsA
   const actions = (
     <div className="grid grid-cols-[1fr_1.4fr] gap-2.5">
       <button type="button" onClick={() => setPreviewOpen(true)} className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-3 text-[14px] font-semibold text-[#1F8FE0] lg:hidden dark:border-slate-700 dark:bg-slate-900"><Eye className="h-5 w-5" /> Preview</button>
-      <button type="button" onClick={downloadOnly} disabled={busy !== "" || !branding} className="!min-h-0 hidden items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-3 text-[14px] font-semibold text-gray-700 disabled:opacity-50 lg:inline-flex dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"><Download className="h-5 w-5" /> {busy === "download" ? "Saving…" : "Download"}</button>
-      <button type="button" onClick={send} disabled={busy !== "" || !branding} className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-xl bg-[#16a34a] px-3 py-3 text-[14px] font-semibold text-white shadow-sm hover:bg-[#15803d] disabled:opacity-50">
-        <WhatsAppGlyph size={22} /> {busy === "send" ? "Preparing…" : "Send via WhatsApp"}
+      <button type="button" onClick={saveImage} disabled={busyLabel} className="!min-h-0 hidden items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-3 text-[14px] font-semibold text-gray-700 disabled:opacity-50 lg:inline-flex dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"><Download className="h-5 w-5" /> {busyLabel ? "Preparing…" : "Download"}</button>
+      <button type="button" onClick={send} disabled={busyLabel} className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-xl bg-[#16a34a] px-3 py-3 text-[14px] font-semibold text-white shadow-sm hover:bg-[#15803d] disabled:opacity-50">
+        <WhatsAppGlyph size={22} /> {busyLabel ? "Preparing…" : "Send via WhatsApp"}
       </button>
     </div>
   );
@@ -216,12 +255,32 @@ export default function OrderReceiptSheet({ order, onClose, onEdit, onOpenWhatsA
             <div className="min-w-0 flex-1">{templateSwitch}</div>
             <button type="button" onClick={() => setPreviewOpen(false)} aria-label="Close preview" className="!min-h-0 rounded-lg p-2 text-white"><X className="h-6 w-6" /></button>
           </div>
-          <div className="flex-1 overflow-y-auto px-3 pb-3"><ScaledReceipt maxWidth={560}><Receipt model={model} brand={brand} imageOf={imageOf} /></ScaledReceipt></div>
+          <div className="flex-1 overflow-y-auto px-3 pb-3">
+            {prepared?.key === renderKey
+              ? <img src={prepared.url} alt="Receipt picture" className="mx-auto block h-auto w-full max-w-[560px] rounded-lg" />
+              : <ScaledReceipt maxWidth={560}><Receipt model={model} brand={brand} imageOf={imageOf} /></ScaledReceipt>}
+            <p className="mt-2 text-center text-[12px] text-white/60">You can also press and hold the picture to save it.</p>
+          </div>
           <div className="px-3 pt-1" style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}>
-            <button type="button" onClick={send} disabled={busy !== "" || !branding} className="!min-h-0 flex w-full items-center justify-center gap-2 rounded-xl bg-[#16a34a] px-3 py-3.5 text-[15px] font-semibold text-white disabled:opacity-50">
-              <WhatsAppGlyph size={22} /> {busy === "send" ? "Preparing…" : "Send via WhatsApp"}
+            <button type="button" onClick={send} disabled={busyLabel} className="!min-h-0 flex w-full items-center justify-center gap-2 rounded-xl bg-[#16a34a] px-3 py-3.5 text-[15px] font-semibold text-white disabled:opacity-50">
+              <WhatsAppGlyph size={22} /> {busyLabel ? "Preparing…" : "Send via WhatsApp"}
             </button>
-            <button type="button" onClick={downloadOnly} disabled={busy !== ""} className="!min-h-0 mt-2 flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2 text-[13px] font-semibold text-white/80"><Download className="h-4 w-4" /> Save image</button>
+            <button type="button" onClick={saveImage} disabled={busyLabel} className="!min-h-0 mt-2 flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2 text-[13px] font-semibold text-white/80 disabled:opacity-50"><Download className="h-4 w-4" /> {busyLabel ? "Preparing…" : "Save image"}</button>
+          </div>
+        </div>
+      )}
+
+      {/* Saved / shared pop-up */}
+      {success && (
+        <div className="pointer-events-none fixed inset-0 z-[80] flex items-center justify-center" role="status" aria-live="polite">
+          <style>{`@keyframes receiptPop{0%{opacity:0;transform:scale(.6)}15%{opacity:1;transform:scale(1.05)}25%{transform:scale(1)}85%{opacity:1}100%{opacity:0;transform:scale(.95)}}@keyframes receiptTick{from{stroke-dashoffset:24}to{stroke-dashoffset:0}}`}</style>
+          <div className="flex flex-col items-center gap-3 rounded-2xl bg-white px-8 py-6 shadow-2xl dark:bg-slate-800" style={{ animation: "receiptPop 1.8s ease-out forwards" }}>
+            <span className="flex h-16 w-16 items-center justify-center rounded-full bg-[#16a34a]">
+              <svg viewBox="0 0 24 24" className="h-9 w-9" fill="none" stroke="white" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M5 12.5l4.5 4.5L19 7.5" style={{ strokeDasharray: 24, strokeDashoffset: 24, animation: "receiptTick .4s .2s ease-out forwards" }} />
+              </svg>
+            </span>
+            <span className="text-[16px] font-semibold text-gray-900 dark:text-slate-100">{success}</span>
           </div>
         </div>
       )}
