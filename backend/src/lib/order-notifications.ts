@@ -68,13 +68,14 @@ const orderPushSummary = (order: OrderContext) => [
   orderDisplayName(order)
 ].filter(Boolean).join(" · ");
 
+// Admins get every order alert the Owner gets (Bright, 20 Oct 2026).
 const STATUS_CONFIG: Record<string, { type: string; title: string; recipientRoles: string[]; includeRep: boolean }> = {
   New:          { type: "order_new",          title: "New Order",          recipientRoles: ["Owner", "Admin"], includeRep: true },
-  Confirmed:    { type: "order_confirmed",    title: "Order Confirmed",    recipientRoles: ["Owner"], includeRep: false },
-  Delivered:    { type: "order_delivered",    title: "Order Delivered",    recipientRoles: ["Owner"], includeRep: true },
-  Cancelled:    { type: "order_cancelled",    title: "Order Cancelled",    recipientRoles: ["Owner"], includeRep: false },
-  Failed:       { type: "order_failed",       title: "Order Failed",       recipientRoles: ["Owner"], includeRep: false },
-  Rescheduled:  { type: "order_rescheduled",  title: "Order Rescheduled",  recipientRoles: ["Owner"], includeRep: true },
+  Confirmed:    { type: "order_confirmed",    title: "Order Confirmed",    recipientRoles: ["Owner", "Admin"], includeRep: false },
+  Delivered:    { type: "order_delivered",    title: "Order Delivered",    recipientRoles: ["Owner", "Admin"], includeRep: true },
+  Cancelled:    { type: "order_cancelled",    title: "Order Cancelled",    recipientRoles: ["Owner", "Admin"], includeRep: false },
+  Failed:       { type: "order_failed",       title: "Order Failed",       recipientRoles: ["Owner", "Admin"], includeRep: false },
+  Rescheduled:  { type: "order_rescheduled",  title: "Order Rescheduled",  recipientRoles: ["Owner", "Admin"], includeRep: true },
   Assigned:     { type: "order_assigned",     title: "Order Assigned",     recipientRoles: [],        includeRep: true },
 };
 
