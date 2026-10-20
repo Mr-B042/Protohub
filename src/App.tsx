@@ -11547,6 +11547,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // isHeadOfSalesRep flag - the same layering extraPages already does on top
   // of the role's default page list.
   const isInventoryOperationsRole = currentRole === "Inventory Manager & Logistics Operations";
+  // These roles are sent no prices, so "no price" says nothing about a product
+  // for them (BUG-1001). The server's hasPricing flag says the same; this also
+  // covers a server that has not been redeployed yet.
+  const pricesWithheldForViewer = [realRole, currentRole].some((role) => role === "Inventory Manager & Logistics Operations" || role === "Marketer");
   // Physical stock and logistics is a hard security boundary. Extra-page
   // grants must not quietly restore sales, finance, messaging or settings.
   const currentAllowedPages = currentRole === "Sales Rep" && currentManagedUser?.isHeadOfSalesRep
@@ -15245,7 +15249,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (hasExplicitComboType) return false;
       const packageMixes = activeProductPackages(product).filter((pkg) => (pkg.packageComponents?.length ?? 0) > 0);
       if (packageMixes.length === 0) return true;
-      const hasPricing = productHasPricing(product);
+      const hasPricing = pricesWithheldForViewer || productHasPricing(product);
       const hasWarehouseStock = Number(product.warehouseStock ?? 0) > 0;
       const hasAgentStock = Number(product.agentStock ?? 0) > 0;
       return hasPricing || hasWarehouseStock || hasAgentStock;
@@ -15457,7 +15461,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (hasExplicitComboType) return false;
       const packageMixes = activeProductPackages(product).filter((pkg) => (pkg.packageComponents?.length ?? 0) > 0);
       if (packageMixes.length === 0) return true;
-      const hasPricing = productHasPricing(product);
+      const hasPricing = pricesWithheldForViewer || productHasPricing(product);
       const hasWarehouseStock = Number(product.warehouseStock ?? 0) > 0;
       const hasAgentStock = Number(product.agentStock ?? 0) > 0;
       return hasPricing || hasWarehouseStock || hasAgentStock;
@@ -15591,7 +15595,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (hasExplicitComboType) return false;
     const packageMixes = activeProductPackages(product).filter((pkg) => (pkg.packageComponents?.length ?? 0) > 0);
     if (packageMixes.length === 0) return false;
-    const hasPricing = productHasPricing(product);
+    const hasPricing = pricesWithheldForViewer || productHasPricing(product);
     const hasWarehouseStock = Number(product.warehouseStock ?? 0) > 0;
     const hasAgentStock = Number(product.agentStock ?? 0) > 0;
     return !hasPricing && !hasWarehouseStock && !hasAgentStock;
