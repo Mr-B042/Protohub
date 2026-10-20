@@ -4948,3 +4948,51 @@ export const productMediaApi = {
     previous: { orders: number; delivered: number; revenue: number | null } }>(`/api/product-media/offer-performance?packageId=${encodeURIComponent(packageId)}`),
   saveStockTotal: (totalUnits: number) => post<{ ok: boolean }>("/api/product-media/stock-trend", { totalUnits })
 };
+
+// ── Stock allocation decisions (Product Trend, migration 307) ───────────────
+export type StockAllocationLine = {
+  state: string; units: number; recommended?: number; need?: number; priority?: string; stock?: number; waiting?: number; forecast?: number; rate?: number;
+  agentId?: string | null; agentLocationId?: string | null;
+};
+export type StockAllocationEvent = { id: string; action: string; actor_name: string | null; actor_role: string | null; detail: Record<string, unknown>; created_at: string };
+export type StockAllocationDecision = {
+  id: string; product_id: string; status: "proposed" | "approved" | "rejected" | "cancelled" | "completed";
+  recommended: StockAllocationLine[]; final_lines: StockAllocationLine[]; warehouse_available: number; horizon_days: number; confidence: string | null;
+  period_from: string | null; period_to: string | null; expected: Record<string, number>; reason: string | null;
+  proposed_by: string | null; proposed_by_name: string | null; proposed_at: string; decided_by_name: string | null; decided_at: string | null; decision_note: string | null;
+  closed_at: string | null; events: StockAllocationEvent[];
+};
+export type StockAllocationWaybill = {
+  id: string; product_id: string | null; product_name: string | null; quantity: number | null; items: Array<{ productId?: string; product_id?: string; quantity?: number }> | null;
+  to_agent_id: string | null; to_agent_location_id: string | null; to_location: string | null; status: string | null; created_at: string; received_date: string | null;
+};
+// ⚠️ The client camelCases every key (snakeToCamel), so read both spellings
+// and hand the page one fixed shape.
+const pick = (row: any, snake: string) => row?.[snake] ?? row?.[snake.replace(/_([a-z])/g, (_m: string, c: string) => c.toUpperCase())];
+const normalizeDecision = (row: any): StockAllocationDecision => ({
+  id: row.id, product_id: pick(row, "product_id"), status: row.status,
+  recommended: Array.isArray(row.recommended) ? row.recommended : [], final_lines: pick(row, "final_lines") ?? [],
+  warehouse_available: Number(pick(row, "warehouse_available") ?? 0), horizon_days: Number(pick(row, "horizon_days") ?? 30), confidence: row.confidence ?? null,
+  period_from: pick(row, "period_from") ?? null, period_to: pick(row, "period_to") ?? null, expected: row.expected ?? {}, reason: row.reason ?? null,
+  proposed_by: pick(row, "proposed_by") ?? null, proposed_by_name: pick(row, "proposed_by_name") ?? null, proposed_at: pick(row, "proposed_at"),
+  decided_by_name: pick(row, "decided_by_name") ?? null, decided_at: pick(row, "decided_at") ?? null, decision_note: pick(row, "decision_note") ?? null,
+  closed_at: pick(row, "closed_at") ?? null,
+  events: (row.events ?? []).map((e: any) => ({ id: e.id, action: e.action, actor_name: pick(e, "actor_name") ?? null, actor_role: pick(e, "actor_role") ?? null, detail: e.detail ?? {}, created_at: pick(e, "created_at") }))
+});
+const normalizeWaybill = (row: any): StockAllocationWaybill => ({
+  id: row.id, product_id: pick(row, "product_id") ?? null, product_name: pick(row, "product_name") ?? null, quantity: row.quantity ?? null, items: row.items ?? null,
+  to_agent_id: pick(row, "to_agent_id") ?? null, to_agent_location_id: pick(row, "to_agent_location_id") ?? null, to_location: pick(row, "to_location") ?? null,
+  status: row.status ?? null, created_at: pick(row, "created_at"), received_date: pick(row, "received_date") ?? null
+});
+export const stockAllocationsApi = {
+  list: async () => {
+    const result = await get<any>("/api/stock-allocations");
+    return { decisions: (result?.decisions ?? []).map(normalizeDecision), waybills: (result?.waybills ?? []).map(normalizeWaybill), canApprove: Boolean(result?.canApprove) };
+  },
+  propose: (body: { productId: string; lines: StockAllocationLine[]; recommended: StockAllocationLine[]; horizonDays: number; confidence?: string; periodFrom?: string; periodTo?: string; expected: Record<string, number>; reason?: string; approveNow?: boolean }) =>
+    post<{ decision: StockAllocationDecision }>("/api/stock-allocations", body),
+  approve: (id: string, body: { note?: string; lines?: StockAllocationLine[] }) => post<{ decision: StockAllocationDecision }>(`/api/stock-allocations/${id}/approve`, body),
+  reject: (id: string, note: string) => post<{ decision: StockAllocationDecision }>(`/api/stock-allocations/${id}/reject`, { note }),
+  cancel: (id: string, note?: string) => post<{ decision: StockAllocationDecision }>(`/api/stock-allocations/${id}/cancel`, { note }),
+  complete: (id: string, body: { note?: string; transferredUnits?: number }) => post<{ decision: StockAllocationDecision }>(`/api/stock-allocations/${id}/complete`, body)
+};

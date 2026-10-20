@@ -13,6 +13,8 @@ export const runWithBranchScope = <T>(branchId: string, callback: () => T): T =>
 const BRANCH_TABLES = new Set([
   // The records a branch owns outright.
   "orders", "agents", "agent_stock", "stock_movements", "abandoned_carts",
+  // Product Trend stock decisions (migration 307).
+  "stock_allocation_decisions", "stock_allocation_events",
   "agent_locations", "agent_location_stock", "delivered_stock_reconciliation_lines",
 
   // An order's own history. Without these, Accra opens a Nigerian order's

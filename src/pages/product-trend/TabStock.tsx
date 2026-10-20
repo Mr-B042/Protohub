@@ -1,8 +1,10 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlertTriangle, ArrowLeftRight, ArrowRight, BarChart3, Boxes, CircleCheck, ClipboardCheck, Clock3, Info, PackageCheck, Pencil, ShieldAlert, TrendingUp, Users
 } from "lucide-react";
-import { ALL, buildStockPlan, figuresFor, growthPct, isDelivered, isOpen, stateLabel, type StockBand, type StockPlan } from "./product-trend-model";
+import { ALL, buildStockPlan, figuresFor, growthPct, isDelivered, isOpen, stateLabel, waybillUnitsByState, type StockBand, type StockPlan } from "./product-trend-model";
+import { stockAllocationsApi, type StockAllocationDecision, type StockAllocationLine, type StockAllocationWaybill } from "../../lib/api";
+import { DecisionHistory, DecisionActions } from "./StockDecisions";
 import { Donut, InsightCard, KpiTile, NigeriaMap, Panel, Pill, ProductThumb, SERIES_COLORS, SelectBox, downloadCsv, nf, type MapBin } from "./parts";
 import { td, th } from "./DetailPanels";
 import { mapKey, type TabCtx } from "./tab-context";
@@ -25,6 +27,9 @@ const unitLegend = (): MapBin[] => [
   { label: "0", color: "#f87171", test: (v) => v === 0 },
   { label: "No data", color: "#e5e7eb", test: (v) => v === null }
 ];
+export const HORIZONS = [7, 14, 30, 60, 90];
+const CONFIDENCE_TONE: Record<string, "green" | "blue" | "amber" | "gray"> = { High: "green", Moderate: "blue", Low: "amber", "Insufficient Data": "gray" };
+
 const daysPill = (days: number | null) => {
   if (days === null) return <span className="text-gray-400">—</span>;
   const tone = days < 10 ? "bg-rose-50 text-rose-700" : days < 15 ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700";
@@ -33,6 +38,16 @@ const daysPill = (days: number | null) => {
 
 export function StockRecommendationTab({ ctx, filters }: { ctx: TabCtx; filters?: ReactNode }) {
   const { model, products, hubs, days, money, canSeeProfit } = ctx;
+  const [horizon, setHorizon] = useState(30);
+  // Decisions (sent / approved plans) and the waybills sent since approvals.
+  const [decisions, setDecisions] = useState<StockAllocationDecision[]>([]);
+  const [waybills, setWaybills] = useState<StockAllocationWaybill[]>([]);
+  const [decisionError, setDecisionError] = useState("");
+  const reloadDecisions = useCallback(() => {
+    stockAllocationsApi.list().then((result) => { setDecisions(result.decisions ?? []); setWaybills(result.waybills ?? []); setDecisionError(""); })
+      .catch((err: any) => setDecisionError(err?.message ?? "Could not load stock decisions."));
+  }, []);
+  useEffect(() => { reloadDecisions(); }, [reloadDecisions]);
   const netPerUnit = (productId: string) => {
     const f = figuresFor(model.orders.filter((o) => o.productId === productId), model.costs);
     return f.unitsDelivered > 0 ? f.net / f.unitsDelivered : 0;
@@ -41,9 +56,9 @@ export function StockRecommendationTab({ ctx, filters }: { ctx: TabCtx; filters?
   const plans = useMemo(() => {
     const ids = new Set(model.orders.map((o) => o.productId));
     return products.filter((p) => ids.has(p.id)).map((p) => ({
-      product: p, plan: buildStockPlan({ orders: model.orders, productId: p.id, hubs, days, available: p.warehouseStock ?? 0, netPerUnit: netPerUnit(p.id) })
+      product: p, plan: buildStockPlan({ orders: model.orders, productId: p.id, hubs, days, available: p.warehouseStock ?? 0, netPerUnit: netPerUnit(p.id), horizonDays: horizon })
     }));
-  }, [model, products, hubs, days]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [model, products, hubs, days, horizon]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const needier = [...plans].sort((a, b) => b.plan.rows.reduce((s, r) => s + r.need, 0) - a.plan.rows.reduce((s, r) => s + r.need, 0));
   const [picked, setPicked] = useState<string>(ctx.productId !== ALL ? ctx.productId : "");
@@ -52,11 +67,13 @@ export function StockRecommendationTab({ ctx, filters }: { ctx: TabCtx; filters?
   const [mapMetric, setMapMetric] = useState<"recommended" | "stock" | "forecast">("recommended");
   const [manual, setManual] = useState(false);
   const [overrides, setOverrides] = useState<Record<string, number> | undefined>(undefined);
-  const [sent, setSent] = useState<string[]>([]);
 
   const plan: StockPlan | null = useMemo(() => product
-    ? buildStockPlan({ orders: model.orders, productId: product.id, hubs, days, available: product.warehouseStock ?? 0, netPerUnit: netPerUnit(product.id), overrides })
-    : null, [product, model, hubs, days, overrides]); // eslint-disable-line react-hooks/exhaustive-deps
+    ? buildStockPlan({ orders: model.orders, productId: product.id, hubs, days, available: product.warehouseStock ?? 0, netPerUnit: netPerUnit(product.id), overrides, horizonDays: horizon })
+    : null, [product, model, hubs, days, overrides, horizon]); // eslint-disable-line react-hooks/exhaustive-deps
+  // What the system recommends before anyone changes it (kept with a decision).
+  const basePlan = plans.find((x) => x.product.id === productId)?.plan ?? null;
+  const openDecision = decisions.find((d) => d.product_id === productId && (d.status === "proposed" || d.status === "approved")) ?? null;
   const shownRows = (plan?.rows ?? []).filter((r) => ctx.stockStatus === ALL || r.priority === ctx.stockStatus);
 
   // KPIs across every product.
@@ -66,31 +83,39 @@ export function StockRecommendationTab({ ctx, filters }: { ctx: TabCtx; filters?
   const waitingBefore = model.previous.filter(isOpen).reduce((s, o) => s + o.units, 0);
   const low = plans.reduce((s, x) => s + x.plan.forecastLow, 0);
   const high = plans.reduce((s, x) => s + x.plan.forecastHigh, 0);
-  const deliverable = plans.reduce((s, x) => s + x.plan.rows.reduce((t, r) => t + r.deliverable30, 0), 0);
-  const cover = deliverable > 0 ? totalWithAgents / (deliverable / 30) : null;
+  const deliverable = plans.reduce((s, x) => s + x.plan.rows.reduce((t, r) => t + r.deliverable, 0), 0);
+  const cover = deliverable > 0 ? totalWithAgents / (deliverable / horizon) : null;
   const needingStates = new Set(plans.flatMap((x) => x.plan.rows.filter((r) => r.priority === "Critical" || r.priority === "High").map((r) => r.state))).size;
   const realloc = plans.reduce((s, x) => s + Math.max(0, x.plan.reallocatable), 0);
 
   // Map.
   const mapData = Object.fromEntries((plan?.rows ?? []).map((r) => [mapKey(r.state), {
-    value: mapMetric === "recommended" ? r.recommended : mapMetric === "stock" ? r.stock : Math.round(r.forecast30),
-    tooltip: <div className="space-y-0.5 text-gray-600"><div>Stock with agents: <strong>{nf(r.stock)}</strong></div><div>Waiting units: <strong>{nf(r.waitingUnits)}</strong></div><div>30-day forecast: <strong>{nf(Math.round(r.forecast30))}</strong></div><div>Recommended: <strong>{nf(r.recommended)}</strong></div></div>
+    value: mapMetric === "recommended" ? r.recommended : mapMetric === "stock" ? r.stock : Math.round(r.forecast),
+    tooltip: <div className="space-y-0.5 text-gray-600"><div>Stock with agents: <strong>{nf(r.stock)}</strong></div><div>Waiting units: <strong>{nf(r.waitingUnits)}</strong></div><div>{horizon}-day forecast: <strong>{nf(Math.round(r.forecast))}</strong></div><div>Recommended: <strong>{nf(r.recommended)}</strong></div></div>
   }]));
 
-  // Transfer queue: one waybill per state, highest priority first.
-  const queue = (plan?.rows ?? []).filter((r) => r.recommended > 0 && !sent.includes(r.state));
-  const next = queue[0];
   const agentFor = (state: string) => {
     const candidates = hubs.filter((h) => h.state === state && h.active);
     const delivered = (agentId: string) => model.orders.filter((o) => o.agentId === agentId && o.productId === productId && o.state === state && isDelivered(o)).length;
     return [...candidates].sort((a, b) => delivered(b.agentId) - delivered(a.agentId))[0];
   };
-  const createTransfer = () => {
-    if (!next || !product || !ctx.onCreateTransfer) return;
-    const hub = agentFor(next.state);
-    ctx.onCreateTransfer({ productId: product.id, quantity: next.recommended, toState: next.state, toAgentId: hub?.agentId });
-    setSent((s) => [...s, next.state]);
+  const lineOf = (r: StockPlan["rows"][number], units: number): StockAllocationLine => {
+    const hub = agentFor(r.state);
+    return { state: r.state, units, recommended: basePlan?.rows.find((b) => b.state === r.state)?.recommended ?? 0, need: r.need, priority: r.priority,
+      stock: r.stock, waiting: r.waitingUnits, forecast: Math.round(r.forecast), rate: Math.round(r.rate * 10) / 10, agentId: hub?.agentId ?? null, agentLocationId: hub?.locationId ?? null };
   };
+  const proposalBody = () => plan && basePlan && product ? {
+    productId: product.id,
+    lines: plan.rows.filter((r) => r.recommended > 0).map((r) => lineOf(r, r.recommended)),
+    recommended: basePlan.rows.filter((r) => r.recommended > 0).map((r) => lineOf(r, r.recommended)),
+    horizonDays: horizon, confidence: plan.confidence.level, periodFrom: ctx.from, periodTo: ctx.to,
+    expected: { withoutDelivered: plan.withoutDelivered, withDelivered: plan.withDelivered, netPerUnit: Math.round(plan.netPerUnit), horizonDays: horizon }
+  } : null;
+  const sendTransfer = (line: StockAllocationLine) => {
+    if (!product || !ctx.onCreateTransfer) return;
+    ctx.onCreateTransfer({ productId: product.id, quantity: line.units, toState: line.state, toAgentId: line.agentId ?? undefined, toAgentLocationId: line.agentLocationId ?? undefined });
+  };
+  const sentByState = openDecision?.decided_at ? waybillUnitsByState(waybills, productId, openDecision.decided_at, hubs) : new Map();
 
   const slices = (plan?.rows ?? []).filter((r) => r.recommended > 0).map((r, i) => ({ label: stateLabel(r.state), value: r.recommended, color: SERIES_COLORS[i % 5] }));
   const lift = plan && plan.withoutDelivered > 0 ? growthPct(plan.withDelivered, plan.withoutDelivered) : null;
@@ -98,20 +123,20 @@ export function StockRecommendationTab({ ctx, filters }: { ctx: TabCtx; filters?
   // Insights from the selected product's plan and the whole picture.
   const rows = plan?.rows ?? [];
   const critical = rows.find((r) => r.priority === "Critical");
-  const strong = [...rows].sort((a, b) => b.forecast30 * b.rate - a.forecast30 * a.rate)[0];
-  const bestRate = [...rows].filter((r) => r.forecast30 > 0).sort((a, b) => b.rate - a.rate)[0];
+  const strong = [...rows].sort((a, b) => b.forecast * b.rate - a.forecast * a.rate)[0];
+  const bestRate = [...rows].filter((r) => r.forecast > 0).sort((a, b) => b.rate - a.rate)[0];
   const excess = [...rows].filter((r) => r.coverDays !== null && r.coverDays > 45).sort((a, b) => (b.coverDays ?? 0) - (a.coverDays ?? 0))[0];
   const insights = [
-    critical && { Icon: ShieldAlert, tone: "bg-rose-50 text-rose-600", title: `${stateLabel(critical.state)} needs immediate stock`, text: `${nf(Math.round(critical.forecast30))} units forecast in 30 days and ${nf(critical.waitingUnits)} waiting, with only ${nf(critical.stock)} with agents.${critical.coverDays !== null ? ` Runs out in about ${Math.round(critical.coverDays)} days.` : ""}` },
-    strong && strong.forecast30 > 0 && { Icon: Clock3, tone: "bg-amber-50 text-amber-600", title: `${stateLabel(strong.state)} has strong demand`, text: `${nf(Math.round(strong.forecast30))} units forecast with a ${strong.rate.toFixed(1)}% delivery rate. Recommended: ${nf(strong.recommended)} units.` },
+    critical && { Icon: ShieldAlert, tone: "bg-rose-50 text-rose-600", title: `${stateLabel(critical.state)} needs immediate stock`, text: `${nf(Math.round(critical.forecast))} units forecast in ${horizon} days and ${nf(critical.waitingUnits)} waiting, with only ${nf(critical.stock)} with agents.${critical.coverDays !== null ? ` Runs out in about ${Math.round(critical.coverDays)} days.` : ""}` },
+    strong && strong.forecast > 0 && { Icon: Clock3, tone: "bg-amber-50 text-amber-600", title: `${stateLabel(strong.state)} has strong demand`, text: `${nf(Math.round(strong.forecast))} units forecast with a ${strong.rate.toFixed(1)}% delivery rate. Recommended: ${nf(strong.recommended)} units.` },
     bestRate && bestRate.rate > 0 && bestRate !== critical && { Icon: PackageCheck, tone: "bg-emerald-50 text-emerald-600", title: `${stateLabel(bestRate.state)} delivers best`, text: `${bestRate.rate.toFixed(1)}% delivery rate and steady demand.` },
     excess && { Icon: BarChart3, tone: "bg-violet-50 text-violet-600", title: `${stateLabel(excess.state)} has excess stock`, text: `About ${Math.round(excess.coverDays ?? 0)} days of stock. Consider moving some to a busier state.` },
     lift !== null && lift > 0 && { Icon: Users, tone: "bg-blue-50 text-blue-600", title: "Overall stock opportunity", text: `Sending the ${nf(plan!.allocated)} recommended units could raise expected deliveries by ${lift.toFixed(0)}%.` }
   ].filter(Boolean) as Array<{ Icon: typeof BarChart3; tone: string; title: string; text: string }>;
 
   ctx.exportRef.current = () => downloadCsv(`stock-recommendation-${product?.name ?? "product"}.csv`, [
-    ["State", "Stock with agents", "Waiting units", "30-day forecast (units)", "Delivery rate %", "Days of cover", "Recommended units", "Priority"],
-    ...rows.map((r) => [stateLabel(r.state), r.stock, r.waitingUnits, Math.round(r.forecast30), r.rate.toFixed(1), r.coverDays === null ? "" : Math.round(r.coverDays), r.recommended, r.priority])
+    ["State", "Stock with agents", "Waiting units", `${horizon}-day forecast (units)`, "Delivery rate %", "Days of cover", "Recommended units", "Priority"],
+    ...rows.map((r) => [stateLabel(r.state), r.stock, r.waitingUnits, Math.round(r.forecast), r.rate.toFixed(1), r.coverDays === null ? "" : Math.round(r.coverDays), r.recommended, r.priority])
   ]);
 
   if (plans.length === 0) {
@@ -123,7 +148,10 @@ export function StockRecommendationTab({ ctx, filters }: { ctx: TabCtx; filters?
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <KpiTile Icon={Boxes} tone="bg-blue-50 text-blue-600" label="Total Available Stock" value={`${nf(totalWithAgents + warehouse)} units`} foot={<span>{nf(totalWithAgents)} with agents · {nf(warehouse)} in warehouse</span>} />
         <KpiTile Icon={ClipboardCheck} tone="bg-emerald-50 text-emerald-600" label="Total Confirmed Orders" value={`${nf(waiting)} units`} delta={growthPct(waiting, waitingBefore)} info="Units on orders not yet delivered (customers waiting)." />
-        <KpiTile Icon={TrendingUp} tone="bg-blue-50 text-blue-600" label="Estimated 30-Day Demand" value={low === high ? `${nf(low)} units` : `${nf(low)} – ${nf(high)} units`} info="Units likely to be ordered in the next 30 days, at the period's pace and at the last 7 days' pace." />
+        <KpiTile Icon={TrendingUp} tone="bg-blue-50 text-blue-600" label={`Estimated ${horizon}-Day Demand`}
+          value={plan?.confidence.level === "Insufficient Data" && low === 0 ? "Not enough data" : low === high ? `${nf(low)} units` : `${nf(low)} – ${nf(high)} units`}
+          info={`Units likely to be ordered in the next ${horizon} days: the period's pace and the last 7 days' pace, widened by how steady orders were.`}
+          foot={plan ? <span title={plan.confidence.why}><Pill tone={CONFIDENCE_TONE[plan.confidence.level]}>{plan.confidence.level === "Insufficient Data" ? "Insufficient data" : `${plan.confidence.level} confidence`}</Pill></span> : undefined} />
         <KpiTile Icon={Clock3} tone="bg-amber-50 text-amber-500" label="Stock Coverage" value={cover === null ? "—" : `${Math.round(cover)} days`} foot={<span className="inline-flex items-center gap-1"><Info className="h-3 w-3" />based on forecast</span>} />
         <KpiTile Icon={AlertTriangle} tone="bg-rose-50 text-rose-500" label="States Needing Stock" value={`${needingStates} states`} foot={<span>low stock or high demand</span>} />
         <KpiTile Icon={ArrowLeftRight} tone="bg-emerald-50 text-emerald-600" label="Reallocation Opportunity" value={`${nf(realloc)} units`} foot={<span>can be moved to better states</span>} />
@@ -133,30 +161,36 @@ export function StockRecommendationTab({ ctx, filters }: { ctx: TabCtx; filters?
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1.15fr_0.8fr]">
         <Panel title="Stock Demand Heatmap (Recommended Priority)">
           <div className="mb-3 grid grid-cols-2 gap-3">
-            <label className="text-[12px] text-gray-600">Select Product<SelectBox label="Product" className="mt-1" value={productId} onChange={(v) => { setPicked(v); setOverrides(undefined); setManual(false); setSent([]); }} options={plans.map((x) => ({ value: x.product.id, label: x.product.name }))} /></label>
-            <label className="text-[12px] text-gray-600">View Metric<SelectBox label="Metric" className="mt-1" value={mapMetric} onChange={setMapMetric} options={[{ value: "recommended", label: "Stock Recommendation" }, { value: "stock", label: "Current Stock" }, { value: "forecast", label: "30-Day Forecast" }]} /></label>
+            <label className="text-[12px] text-gray-600">Select Product<SelectBox label="Product" className="mt-1" value={productId} onChange={(v) => { setPicked(v); setOverrides(undefined); setManual(false); }} options={plans.map((x) => ({ value: x.product.id, label: x.product.name }))} /></label>
+            <label className="text-[12px] text-gray-600">View Metric<SelectBox label="Metric" className="mt-1" value={mapMetric} onChange={setMapMetric} options={[{ value: "recommended", label: "Stock Recommendation" }, { value: "stock", label: "Current Stock" }, { value: "forecast", label: `${horizon}-Day Forecast` }]} /></label>
           </div>
-          <NigeriaMap data={mapData} zoomable legend={{ title: mapMetric === "recommended" ? "Recommended Units" : mapMetric === "stock" ? "Current Stock" : "30-Day Forecast", bins: unitLegend() }} />
+          <div className="mb-3 flex items-center gap-2 text-[12px] text-gray-600">Forecast for the next
+            <SelectBox label="Forecast period" className="w-28" value={String(horizon)} onChange={(v) => { setHorizon(Number(v)); setOverrides(undefined); }} options={HORIZONS.map((h) => ({ value: String(h), label: `${h} days` }))} />
+          </div>
+          <NigeriaMap data={mapData} zoomable legend={{ title: mapMetric === "recommended" ? "Recommended Units" : mapMetric === "stock" ? "Current Stock" : `${horizon}-Day Forecast`, bins: unitLegend() }} />
         </Panel>
 
         <Panel title="Recommended Stock Allocation">
           {product && (
             <div className="mb-2 flex items-center justify-between gap-2">
               <span className="flex items-center gap-2 text-[14px] font-bold"><ProductThumb src={ctx.imageOf(product.id)} name={product.name} size={30} />{product.name}</span>
-              <SelectBox label="Change product" className="w-44" value={productId} onChange={(v) => { setPicked(v); setOverrides(undefined); setManual(false); setSent([]); }} options={plans.map((x) => ({ value: x.product.id, label: `Change: ${x.product.name}` }))} />
+              <SelectBox label="Change product" className="w-44" value={productId} onChange={(v) => { setPicked(v); setOverrides(undefined); setManual(false); }} options={plans.map((x) => ({ value: x.product.id, label: `Change: ${x.product.name}` }))} />
             </div>
           )}
           <div className="mb-3 flex items-start gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-[12px] text-blue-900 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-100">
             <Info className="mt-0.5 h-4 w-4 shrink-0" />
             <span><strong>We have {nf(plan?.available ?? 0)} units available for allocation</strong> (in the warehouse).<br />Based on demand, delivery performance and current stock levels, here is the recommended allocation.</span>
           </div>
+          {plan?.confidence.level === "Insufficient Data" && (
+            <p className="m-0 mb-3 rounded-lg bg-amber-50 px-3 py-2 text-[12px] text-amber-900 dark:bg-amber-500/10 dark:text-amber-100">Not enough history to forecast ({plan.confidence.why}). This plan only covers customers already waiting.</p>
+          )}
           <div className="overflow-auto">
             <table className="w-full !min-w-[520px] border-separate border-spacing-0">
-              <thead><tr><th className={th}>#</th><th className={th}>State</th><th className={th}>Current Stock</th><th className={th} title="Units on orders not yet delivered">Confirmed Orders</th><th className={th}>30-Day Forecast</th><th className={th}>Recommended Units</th><th className={th}>Priority</th></tr></thead>
+              <thead><tr><th className={th}>#</th><th className={th}>State</th><th className={th}>Current Stock</th><th className={th} title="Units on orders not yet delivered">Confirmed Orders</th><th className={th}>{horizon}-Day Forecast</th><th className={th}>Recommended Units</th><th className={th}>Priority</th></tr></thead>
               <tbody>
                 {shownRows.slice(0, 8).map((r, i) => (
                   <tr key={r.state} className="[&>td]:[color:inherit]">
-                    <td className={td}>{i + 1}</td><td className={`${td} font-semibold`}>{stateLabel(r.state)}</td><td className={td}>{nf(r.stock)}</td><td className={td}>{nf(r.waitingUnits)}</td><td className={td}>{nf(Math.round(r.forecast30))}</td>
+                    <td className={td}>{i + 1}</td><td className={`${td} font-semibold`}>{stateLabel(r.state)}</td><td className={td}>{nf(r.stock)}</td><td className={td}>{nf(r.waitingUnits)}</td><td className={td}>{nf(Math.round(r.forecast))}</td>
                     <td className={`${td} !bg-emerald-50 text-center font-bold text-emerald-800 dark:!bg-emerald-500/10`}>
                       {manual
                         ? <input type="number" min={0} aria-label={`Units for ${stateLabel(r.state)}`} value={overrides?.[r.state] ?? r.recommended}
@@ -172,7 +206,7 @@ export function StockRecommendationTab({ ctx, filters }: { ctx: TabCtx; filters?
                   <tr className="[&>td]:[color:inherit]">
                     <td className={`${td} font-bold`} colSpan={2}>Total</td>
                     <td className={`${td} font-bold`}>{nf(shownRows.reduce((s, r) => s + r.stock, 0))}</td><td className={`${td} font-bold`}>{nf(shownRows.reduce((s, r) => s + r.waitingUnits, 0))}</td>
-                    <td className={`${td} font-bold`}>{nf(Math.round(shownRows.reduce((s, r) => s + r.forecast30, 0)))}</td><td className={`${td} text-center font-bold`}>{nf(shownRows.reduce((s, r) => s + r.recommended, 0))}</td><td className={td} />
+                    <td className={`${td} font-bold`}>{nf(Math.round(shownRows.reduce((s, r) => s + r.forecast, 0)))}</td><td className={`${td} text-center font-bold`}>{nf(shownRows.reduce((s, r) => s + r.recommended, 0))}</td><td className={td} />
                   </tr>
                 )}
               </tbody>
@@ -190,13 +224,10 @@ export function StockRecommendationTab({ ctx, filters }: { ctx: TabCtx; filters?
             </ul>
           </div>
           <div className="mt-4 space-y-2">
-            {ctx.canCreateTransfer && ctx.onCreateTransfer ? (
-              <button type="button" disabled={!next} onClick={createTransfer}
-                className="!min-h-0 flex w-full items-center justify-center gap-2 rounded-lg bg-[#1F8FE0] px-4 py-2.5 text-[13px] font-semibold text-white shadow-sm hover:bg-[#1a7dc4] disabled:opacity-40">
-                <Pencil className="h-4 w-4" /> Approve &amp; Create Transfer <ArrowRight className="h-4 w-4" />
-              </button>
-            ) : <p className="m-0 rounded-lg bg-gray-50 px-3 py-2 text-[11.5px] text-gray-600">Transfers are created by the Owner, Admins or the inventory team.</p>}
-            {next && ctx.canCreateTransfer && <p className="m-0 text-center text-[11px] text-gray-500">Opens the waybill form for <strong>{stateLabel(next.state)} · {nf(next.recommended)} units</strong>. Nothing moves until it is confirmed there.{sent.length > 0 ? ` Done: ${sent.map(stateLabel).join(", ")}.` : ""}</p>}
+            {decisionError && <p className="m-0 rounded-lg bg-rose-50 px-3 py-2 text-[11.5px] text-rose-700">{decisionError}</p>}
+            <DecisionActions ctx={ctx} productName={product?.name ?? "this product"} decision={openDecision} proposal={proposalBody()} allocated={plan?.allocated ?? 0}
+              manualLines={manual && plan ? plan.rows.filter((r) => r.recommended > 0).map((r) => lineOf(r, r.recommended)) : undefined}
+              sentByState={sentByState} onTransfer={sendTransfer} onChanged={() => { reloadDecisions(); setManual(false); setOverrides(undefined); }} />
             <button type="button" onClick={() => { setManual((m) => !m); if (manual) setOverrides(undefined); }}
               className="!min-h-0 flex w-full items-center justify-center gap-2 rounded-lg border border-gray-200 px-4 py-2.5 text-[13px] font-semibold text-gray-700 hover:bg-gray-50 dark:border-slate-700 dark:text-slate-200">
               <Pencil className="h-4 w-4" /> {manual ? "Back to the recommendation" : "Adjust Allocation Manually"}
@@ -209,11 +240,11 @@ export function StockRecommendationTab({ ctx, filters }: { ctx: TabCtx; filters?
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <Panel title="Top Products Needing Stock">
           <div className="overflow-x-auto"><table className="w-full !min-w-0 border-separate border-spacing-0">
-            <thead><tr><th className={th}>#</th><th className={th}>Product</th><th className={th}>Current Stock</th><th className={th}>30-Day Forecast</th><th className={th}>Days Left</th><th className={th}>Recommended</th></tr></thead>
+            <thead><tr><th className={th}>#</th><th className={th}>Product</th><th className={th}>Current Stock</th><th className={th}>{horizon}-Day Forecast</th><th className={th}>Days Left</th><th className={th}>Recommended</th></tr></thead>
             <tbody>{needier.slice(0, 5).map(({ product: p, plan: pl }, i) => {
               const need = pl.rows.reduce((s, r) => s + r.need, 0);
               return (
-                <tr key={p.id} className="cursor-pointer hover:bg-gray-50 [&>td]:[color:inherit]" onClick={() => { setPicked(p.id); setOverrides(undefined); setSent([]); }}>
+                <tr key={p.id} className="cursor-pointer hover:bg-gray-50 [&>td]:[color:inherit]" onClick={() => { setPicked(p.id); setOverrides(undefined); }}>
                   <td className={td}>{i + 1}</td>
                   <td className={td}><span className="flex items-center gap-2"><ProductThumb src={ctx.imageOf(p.id)} name={p.name} size={28} /><span className="max-w-[140px] truncate">{p.name}</span></span></td>
                   <td className={td}>{nf(pl.totalStock)}</td><td className={td}>{nf(Math.round(pl.forecastHigh))}</td><td className={td}>{daysPill(pl.coverDays)}</td>
@@ -226,17 +257,17 @@ export function StockRecommendationTab({ ctx, filters }: { ctx: TabCtx; filters?
 
         <Panel title="State Stock Status for Selected Product">
           <div className="overflow-x-auto"><table className="w-full !min-w-0 border-separate border-spacing-0">
-            <thead><tr><th className={th}>#</th><th className={th}>State</th><th className={th}>Current Stock</th><th className={th}>Confirmed Orders</th><th className={th}>30-Day Forecast</th><th className={th}>Stock Cover</th><th className={th}>Status</th></tr></thead>
+            <thead><tr><th className={th}>#</th><th className={th}>State</th><th className={th}>Current Stock</th><th className={th}>Confirmed Orders</th><th className={th}>{horizon}-Day Forecast</th><th className={th}>Stock Cover</th><th className={th}>Status</th></tr></thead>
             <tbody>{shownRows.slice(0, 10).map((r, i) => (
               <tr key={r.state} className="[&>td]:[color:inherit]">
                 <td className={`${td} font-bold`} style={{ color: SERIES_COLORS[i % 5] }}>{i + 1}</td><td className={td}>{stateLabel(r.state)}</td><td className={td}>{nf(r.stock)}</td><td className={td}>{nf(r.waitingUnits)}</td>
-                <td className={td}>{nf(Math.round(r.forecast30))}</td><td className={td}>{daysPill(r.coverDays)}</td><td className={td}><Pill tone={STATUS_OF[r.priority].tone}>{STATUS_OF[r.priority].label}</Pill></td>
+                <td className={td}>{nf(Math.round(r.forecast))}</td><td className={td}>{daysPill(r.coverDays)}</td><td className={td}><Pill tone={STATUS_OF[r.priority].tone}>{STATUS_OF[r.priority].label}</Pill></td>
               </tr>
             ))}</tbody>
           </table></div>
         </Panel>
 
-        <Panel title="Allocation Impact Forecast" info="Next 30 days for the selected product: deliveries are capped by stock in each state.">
+        <Panel title="Allocation Impact Forecast" info={`Next ${horizon} days for the selected product: deliveries are capped by stock in each state.`}>
           <div className="relative grid grid-cols-2 gap-4">
             <div className="rounded-xl border border-gray-200 p-3 text-center dark:border-slate-700">
               <div className="text-[11px] font-semibold text-gray-500">Without Allocation</div>
@@ -264,6 +295,8 @@ export function StockRecommendationTab({ ctx, filters }: { ctx: TabCtx; filters?
           {insights.map((item) => <InsightCard key={item.title} Icon={item.Icon} tone={item.tone} title={item.title} text={item.text} />)}
         </div>
       </Panel>
+
+      <DecisionHistory ctx={ctx} decisions={decisions} waybills={waybills} onChanged={reloadDecisions} />
     </div>
   );
 }

@@ -38,6 +38,13 @@ export type TabCtx = {
   onCreateTransfer?: (request: TransferRequest) => void;
   onOpenReplenishment?: () => void;
   onOnlyAgent: (agentId: string) => void;
+  /** Who is looking (view-as aware), for the send / approve buttons. */
+  role: string;
+  userId: string | null;
+  /** Orders placed in [from, to] (for following a decision after approval). */
+  loadOrders: (from: string, to: string) => Promise<TrendOrder[]>;
+  /** Today in Lagos, YYYY-MM-DD. */
+  today: string;
 };
 
 /** One value per day (or week, for long periods) for a KPI's little line. */

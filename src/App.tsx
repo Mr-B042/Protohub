@@ -28856,7 +28856,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     if (section === "waybill" && parts[3] === "new") {
       setActivePage("Waybill");
-      openCreateWaybillModal();
+      // ⚠️ Only open a FRESH form when none is open. A form filled in by
+      // Who Needs Stock / Product Trend sets this route itself, and
+      // re-opening here wiped its product, quantity and receiving agent
+      // (20 Oct 2026).
+      if (modal !== "createWaybill") openCreateWaybillModal();
       return;
     }
 
@@ -91330,6 +91334,7 @@ ${waybillLineItems(w).length > 1
                 hubs={inventoryStateHubRows.map(({ agent, location }) => ({
                   agentId: agent.id,
                   agentName: agent.name,
+                  locationId: location.id,
                   state: normalizeAgentState(location.state) || agentPrimaryBaseState(agent) || "",
                   active: Boolean(agent.active),
                   stocks: (stockRowsForStateHub(agent, location) ?? []).map((stock) => ({
@@ -91345,6 +91350,8 @@ ${waybillLineItems(w).length > 1
                 onCreateTransfer={openCreateWaybillForReplenishment}
                 onOpenReplenishment={currentAllowedPages.includes("Inventory & Logistics Operations") ? () => handleInventoryOperationsAction("state-replenishment") : undefined}
                 onOpenProducts={() => handleNavClick("Products & Stock")}
+                role={currentRole}
+                userId={(isSpying ? currentManagedUser?.id : authUser?.id) ?? authUser?.id ?? null}
               />
             ) : (
               <div className="rounded-xl border border-gray-200 bg-white p-8 text-center text-sm text-gray-500">Product Trend is for the Owner, Admins and Managers.</div>

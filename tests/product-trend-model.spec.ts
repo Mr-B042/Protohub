@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import {
-  EMPTY_FILTERS, buildAgentRows, buildCostBook, buildStockPlan, buildProductRows, buildStateRows, figuresFor, filterOrders, previousPeriod, seriesOver,
+  EMPTY_FILTERS, buildAgentRows, buildCostBook, buildStockPlan, forecastConfidence, waybillUnitsByState, worstProducts, buildProductRows, buildStateRows, figuresFor, filterOrders, previousPeriod, seriesOver,
   type TrendOrder
 } from "../src/pages/product-trend/product-trend-model";
 
@@ -116,4 +116,54 @@ test("stock plan serves waiting customers first and never hands out more than th
 test("average delivery time counts order day to delivered day", () => {
   const orders = [order("1", "rack", "Lagos", "Delivered", 1, { createdKey: "2026-09-01", deliveredKey: "2026-09-04" } as any), order("2", "rack", "Lagos", "Delivered", 1, { createdKey: "2026-09-01", deliveredKey: "2026-09-02" } as any)];
   expect(figuresFor(orders, buildCostBook(orders, [], "2026-09-01", "2026-09-30")).avgDeliveryDays).toBe(2);
+});
+
+test("forecast confidence: no precise forecast without the data", () => {
+  const few = [order("1", "rack", "Lagos", "New", 1)];
+  expect(forecastConfidence(few, 30).level).toBe("Insufficient Data");
+  const plan = buildStockPlan({ orders: few, productId: "rack", hubs: [], days: 30, available: 10, netPerUnit: 0 });
+  expect(plan.rows[0].forecast).toBe(0);
+  expect(plan.forecastHigh).toBe(0);
+  const steady = Array.from({ length: 90 }, (_, i) => order(`s${i}`, "rack", "Lagos", "New", 1, { createdKey: `2026-09-${String((i % 30) + 1).padStart(2, "0")}` }));
+  expect(forecastConfidence(steady, 30).level).toBe("High");
+});
+
+test("the horizon scales the forecast", () => {
+  const orders = Array.from({ length: 30 }, (_, i) => order(`h${i}`, "rack", "Lagos", "New", 1, { createdKey: `2026-09-${String(i + 1).padStart(2, "0")}` }));
+  const week = buildStockPlan({ orders, productId: "rack", hubs: [], days: 30, available: 0, netPerUnit: 0, horizonDays: 7 });
+  const quarter = buildStockPlan({ orders, productId: "rack", hubs: [], days: 30, available: 0, netPerUnit: 0, horizonDays: 90 });
+  expect(week.rows[0].forecast).toBeCloseTo(7, 6);
+  expect(quarter.rows[0].forecast).toBeCloseTo(90, 6);
+});
+
+test("waybills sent after approval are counted per state, by location first", () => {
+  const hubs = [
+    { agentId: "a", agentName: "A", state: "Lagos", active: true, stocks: [], locationId: "loc-lagos" },
+    { agentId: "a", agentName: "A", state: "Oyo", active: true, stocks: [], locationId: "loc-oyo" }
+  ];
+  const waybills = [
+    { id: "w1", product_id: null, quantity: 5, items: [{ productId: "rack", quantity: 5 }], to_agent_id: "a", to_agent_location_id: "loc-oyo", status: "In Transit", created_at: "2026-10-02T10:00:00Z", received_date: null },
+    { id: "w2", product_id: "rack", quantity: 3, items: null, to_agent_id: "a", to_agent_location_id: "loc-lagos", status: "Received", created_at: "2026-10-03T10:00:00Z", received_date: "2026-10-04" },
+    { id: "w3", product_id: "rack", quantity: 9, items: null, to_agent_id: "a", to_agent_location_id: "loc-lagos", status: "Received", created_at: "2026-09-01T10:00:00Z", received_date: "2026-09-02" }
+  ];
+  const byState = waybillUnitsByState(waybills, "rack", "2026-10-01T00:00:00Z", hubs);
+  expect(byState.get("Oyo")).toEqual({ units: 5, waybills: ["w1"], received: 0 });
+  expect(byState.get("Lagos")).toEqual({ units: 3, waybills: ["w2"], received: 3 });
+});
+
+test("worst products: rate needs enough orders, drop needs a real fall", () => {
+  const mk = (id: string, delivered: number, total: number, before: number) => {
+    const now = Array.from({ length: total }, (_, i) => order(`${id}${i}`, id, "Lagos", i < delivered ? "Delivered" : "Failed", 1000));
+    const prev = Array.from({ length: before }, (_, i) => order(`${id}p${i}`, id, "Lagos", "Delivered", 1000));
+    return { now, prev };
+  };
+  const a = mk("a", 4, 20, 30), b = mk("b", 9, 10, 10), c = mk("c", 0, 3, 0);
+  const orders = [...a.now, ...b.now, ...c.now], previous = [...a.prev, ...b.prev];
+  const costs = buildCostBook(orders, [], "2026-09-01", "2026-09-30");
+  const rows = buildProductRows({ products: ["a", "b", "c"].map((id) => ({ id, name: id, active: true })), orders, previousOrders: previous, costs, previousCosts: costs, hubs: [], from: "2026-09-01", to: "2026-09-30", wholeProduct: true });
+  const rate = worstProducts(rows, "rate", 50);
+  expect(rate.map((w) => w.row.product.id)).toEqual(["a"]); // c has only 3 orders; b (90%) is above the 50% overall
+  const drop = worstProducts(rows, "drop", 50);
+  expect(drop.map((w) => w.row.product.id)).toEqual(["a"]); // b did not fall
+  expect(drop[0].value).toBeCloseTo(-33.33, 1);
 });
