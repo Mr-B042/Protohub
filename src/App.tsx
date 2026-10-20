@@ -281,6 +281,7 @@ import {
 } from "./lib/date-window";
 import RecoveryBonusCalendar from "./components/RecoveryBonusCalendar";
 import UpgradeBonusGrid, { withUpgradeAmount } from "./components/UpgradeBonusGrid";
+import AlertRoutingSettings from "./components/settings/AlertRoutingSettings";
 import OrderReceiptSheet from "./components/order-receipt/OrderReceiptSheet";
 import { STALE_TIER_STYLE, staleOrderVerdict, summariseStaleOrders } from "./lib/stale-orders";
 import { indexCostChanges, ProductCostChange, unitCostAsOf } from "./lib/product-cost-history";
@@ -98720,30 +98721,7 @@ ${waybillLineItems(w).length > 1
               </section>
               )}
               {settingsPanel === "workspace" && (currentRole === "Owner" || currentRole === "Admin") && (
-              <section className="space-y-3">
-                <h2 className="text-base font-bold text-gray-800">Abandoned cart notifications</h2>
-                <p className="text-sm text-gray-500">Choose who gets pinged when a new abandoned cart is captured.</p>
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col sm:flex-row items-start gap-4">
-                  <span className="w-9 h-9 rounded-full bg-blue-50 text-blue-500 flex items-center justify-center shrink-0"><Bell className="w-4 h-4" /></span>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-sm font-bold text-gray-900 mb-1">Notify admins on new abandoned carts</h3>
-                    <p className="text-sm text-gray-500">The assigned sales rep is always notified. Turn this on to also send a push and in-app notification to every admin in your org.</p>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={adminCartNotifications}
-                    data-testid="settings-cart-notifications"
-                    className={`relative w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${adminCartNotifications ? "bg-[#1F8FE0]" : "bg-gray-200"}`}
-                    onClick={() => {
-                      setAdminCartNotifications((v) => !v);
-                      showToast(`Admin abandoned cart notifications ${adminCartNotifications ? "disabled" : "enabled"}.`);
-                    }}
-                  >
-                    <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${adminCartNotifications ? "left-5" : "left-0.5"}`} />
-                  </button>
-                </div>
-              </section>
+                <AlertRoutingSettings showToast={showToast} />
               )}
 
               {settingsPanel === "workspace" && (

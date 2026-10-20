@@ -2,6 +2,7 @@ import { sendInternalAbandonedCartEmail } from "./mailer.js";
 import { getOrgPushBranding } from "./push-branding.js";
 import { sendPushToUsers } from "./push.js";
 import { supabase } from "./supabase.js";
+import { alertRecipients } from "./notification-routing.js";
 
 type AbandonedCartAlertContext = {
   id: string;
@@ -34,24 +35,10 @@ const formatCartMoney = (amount: number, currency: string) => {
 
 export async function notifyNewAbandonedCart(orgId: string, cart: AbandonedCartAlertContext) {
   try {
-    const { data: org, error: orgError } = await supabase
-      .from("organizations")
-      .select("admin_cart_notifications")
-      .eq("id", orgId)
-      .single();
-
-    if (orgError || !org?.admin_cart_notifications) return;
-
-    const { data: users, error: usersError } = await supabase
-      .from("users")
-      .select("id")
-      .eq("org_id", orgId)
-      .eq("active", true)
-      .in("role", ["Owner", "Admin"]);
-
-    if (usersError || !users?.length) return;
-
-    const recipientIds = [...new Set(users.map((user) => user.id).filter(Boolean))];
+    // Who gets it is the Owner's choice in Settings → Alert routing (the old
+    // "Notify admins on new abandoned carts" switch is its default).
+    const { recipients, push } = await alertRecipients(orgId, "cart_new");
+    const recipientIds = [...recipients.keys()];
     if (!recipientIds.length) return;
 
     const title = `New Abandoned Cart #${cart.id}`;
@@ -78,7 +65,7 @@ export async function notifyNewAbandonedCart(orgId: string, cart: AbandonedCartA
     }
 
     const branding = await getOrgPushBranding(orgId);
-    await sendPushToUsers(orgId, recipientIds, {
+    if (push) await sendPushToUsers(orgId, recipientIds, {
       title,
       body: message,
       kind: "abandoned_cart_new",
@@ -115,21 +102,7 @@ export async function notifyCartAssignedToRep(
   cart: AbandonedCartAlertContext & { assignedRepId: string; assignedRepName: string }
 ) {
   try {
-    const { data: users } = await supabase
-      .from("users")
-      .select("id, role")
-      .eq("org_id", orgId)
-      .eq("active", true)
-      .in("role", ["Owner", "Admin", "Manager"]);
-
-    const recipients = new Map<string, string>();
-    for (const user of users ?? []) recipients.set((user as any).id, (user as any).role);
-    if (!recipients.has(cart.assignedRepId)) {
-      const { data: rep } = await supabase
-        .from("users").select("id, role")
-        .eq("org_id", orgId).eq("active", true).eq("id", cart.assignedRepId).maybeSingle();
-      if ((rep as any)?.id) recipients.set((rep as any).id, (rep as any).role);
-    }
+    const { recipients, push } = await alertRecipients(orgId, "cart_assigned", cart.assignedRepId);
     if (recipients.size === 0) return;
 
     const title = `Cart assigned to ${cart.assignedRepName || "a sales rep"}`;
@@ -157,7 +130,7 @@ export async function notifyCartAssignedToRep(
     if (error) console.warn("[cart-notifications] assigned insert failed:", error.message);
 
     const branding = await getOrgPushBranding(orgId);
-    await Promise.all([...recipients.entries()].map(([recipientId, role]) =>
+    if (push) await Promise.all([...recipients.entries()].map(([recipientId, role]) =>
       sendPushToUsers(orgId, [recipientId], {
         title,
         body: message,

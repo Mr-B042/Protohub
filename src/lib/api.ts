@@ -4964,6 +4964,15 @@ export const orderReceiptsApi = {
   verification: (orderId: string) => get<ReceiptPriceVerification>(`/api/order-receipts/${encodeURIComponent(orderId)}/verification`)
 };
 
+// ── Alert routing (Settings, migration 309) ─────────────────────────────────
+export type AlertRoute = { roles: string[]; rep: boolean; push: boolean };
+export type AlertRoutingItem = { key: string; label: string; group: string; hint: string; repApplies: boolean; defaults: AlertRoute; route: AlertRoute };
+export type AlertRoutingSettings = { roles: string[]; canEdit: boolean; alerts: AlertRoutingItem[] };
+export const notificationRoutingApi = {
+  get: () => get<AlertRoutingSettings>("/api/notification-routing"),
+  save: (routes: Record<string, AlertRoute>) => put<AlertRoutingSettings>("/api/notification-routing", { routes })
+};
+
 // ── Stock allocation decisions (Product Trend, migration 307) ───────────────
 export type StockAllocationLine = {
   state: string; units: number; recommended?: number; need?: number; priority?: string; stock?: number; waiting?: number; forecast?: number; rate?: number;
