@@ -3151,6 +3151,11 @@ const makePackageId = () => `pkg-${Date.now().toString(36)}-${Math.random().toSt
 const makeCompanionId = () => `cmp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const isUuidValue = (value?: string | null) => Boolean(value && UUID_PATTERN.test(value));
+// Roles that are sent no prices (inventory, marketer) get a hasPricing flag
+// instead. Without it every un-stocked product with package mixes looked like
+// an old combo wrapper and vanished from their pickers (BUG-1001).
+const productHasPricing = (product: { pricings?: unknown[]; hasPricing?: boolean }) =>
+  (product.pricings?.length ?? 0) > 0 || product.hasPricing === true;
 const isTemporaryProductId = (id: string) => id.startsWith("prod-");
 const isTemporaryPackageId = (id: string) => id.startsWith("pkg-");
 const makeMovementId = () => `mov-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -15240,7 +15245,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (hasExplicitComboType) return false;
       const packageMixes = activeProductPackages(product).filter((pkg) => (pkg.packageComponents?.length ?? 0) > 0);
       if (packageMixes.length === 0) return true;
-      const hasPricing = (product.pricings?.length ?? 0) > 0;
+      const hasPricing = productHasPricing(product);
       const hasWarehouseStock = Number(product.warehouseStock ?? 0) > 0;
       const hasAgentStock = Number(product.agentStock ?? 0) > 0;
       return hasPricing || hasWarehouseStock || hasAgentStock;
@@ -15452,7 +15457,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (hasExplicitComboType) return false;
       const packageMixes = activeProductPackages(product).filter((pkg) => (pkg.packageComponents?.length ?? 0) > 0);
       if (packageMixes.length === 0) return true;
-      const hasPricing = (product.pricings?.length ?? 0) > 0;
+      const hasPricing = productHasPricing(product);
       const hasWarehouseStock = Number(product.warehouseStock ?? 0) > 0;
       const hasAgentStock = Number(product.agentStock ?? 0) > 0;
       return hasPricing || hasWarehouseStock || hasAgentStock;
@@ -15586,7 +15591,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (hasExplicitComboType) return false;
     const packageMixes = activeProductPackages(product).filter((pkg) => (pkg.packageComponents?.length ?? 0) > 0);
     if (packageMixes.length === 0) return false;
-    const hasPricing = (product.pricings?.length ?? 0) > 0;
+    const hasPricing = productHasPricing(product);
     const hasWarehouseStock = Number(product.warehouseStock ?? 0) > 0;
     const hasAgentStock = Number(product.agentStock ?? 0) > 0;
     return !hasPricing && !hasWarehouseStock && !hasAgentStock;
