@@ -4949,6 +4949,21 @@ export const productMediaApi = {
   saveStockTotal: (totalUnits: number) => post<{ ok: boolean }>("/api/product-media/stock-trend", { totalUnits })
 };
 
+// ── Order receipts (Bright's design, migration 308) ─────────────────────────
+export type ReceiptBranding = { name: string; logoUrl: string | null; tagline: string; helpPhone: string; canEdit: boolean };
+export type ReceiptPriceVerification = {
+  originalAmount: number; currentAmount: number; capturedAt: string;
+  source: "checkout" | "cart" | "staff"; sourceLabel: string;
+  status: "original" | "changed" | "no_record"; statusLabel: string;
+  shownAtCheckout: { packageName: string; price: number; compareAt: number | null } | null;
+  edits: Array<{ field: string; from: string; to: string; by: string; at: string }>;
+};
+export const orderReceiptsApi = {
+  branding: () => get<ReceiptBranding>("/api/order-receipts/branding"),
+  saveBranding: (body: { tagline: string; helpPhone: string }) => put<{ ok: boolean; tagline: string; helpPhone: string }>("/api/order-receipts/branding", body),
+  verification: (orderId: string) => get<ReceiptPriceVerification>(`/api/order-receipts/${encodeURIComponent(orderId)}/verification`)
+};
+
 // ── Stock allocation decisions (Product Trend, migration 307) ───────────────
 export type StockAllocationLine = {
   state: string; units: number; recommended?: number; need?: number; priority?: string; stock?: number; waiting?: number; forecast?: number; rate?: number;
