@@ -1,3 +1,4 @@
+import { alertRecipients } from "./notification-routing.js";
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { getOrgPushBranding } from "./push-branding.js";
@@ -122,43 +123,9 @@ function normalizeTimelineReminderNotes(order: DueReminderOrder): TimelineRemind
 // reminder cron so both paths use the same (short) reminder window and can't
 // drift apart.
 
+// Who gets it is the Owner's choice in Settings → Alert routing.
 async function buildRecipients(orgId: string, assignedRepId?: string | null) {
-  const recipients = new Map<string, string>();
-
-  const { data: roleUsers, error } = await supabase
-    .from("users")
-    .select("id, role")
-    .eq("org_id", orgId)
-    .eq("active", true)
-    .in("role", ["Owner", "Admin"]);
-
-  if (error) {
-    logger.warn("follow-up notification recipient query failed", { orgId, error: error.message });
-  }
-
-  if (roleUsers) {
-    for (const user of roleUsers) {
-      recipients.set(user.id, user.role);
-    }
-  }
-
-  if (assignedRepId && !recipients.has(assignedRepId)) {
-    const { data: repUser, error: repError } = await supabase
-      .from("users")
-      .select("id, role")
-      .eq("org_id", orgId)
-      .eq("active", true)
-      .eq("id", assignedRepId)
-      .maybeSingle();
-
-    if (repError) {
-      logger.warn("follow-up notification rep query failed", { orgId, assignedRepId, error: repError.message });
-    } else if (repUser?.id) {
-      recipients.set(repUser.id, repUser.role);
-    }
-  }
-
-  return recipients;
+  return alertRecipients(orgId, "order_follow_up", assignedRepId);
 }
 
 async function reminderAlreadyNotified(
@@ -202,7 +169,7 @@ async function notifyRecipients(
   fallbackScheduledLabel: string,
   fallbackNoteText?: string
 ) {
-  const recipients = await buildRecipients(orgId, order.assigned_rep_id);
+  const { recipients, push } = await buildRecipients(orgId, order.assigned_rep_id);
   if (recipients.size === 0) return;
 
   const branding = await getOrgPushBranding(orgId);
@@ -260,7 +227,7 @@ async function notifyRecipients(
     });
   }
 
-  await Promise.all(
+  if (push) await Promise.all(
     pushQueue.map(({ recipientId, role }) =>
       sendPushToUser(orgId, recipientId, {
         title,

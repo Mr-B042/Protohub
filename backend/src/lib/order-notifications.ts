@@ -1,4 +1,5 @@
 import { supabase } from "./supabase.js";
+import { alertRecipients, type AlertKey } from "./notification-routing.js";
 import { getOrgPushBranding } from "./push-branding.js";
 import { sendPushToUser } from "./push.js";
 
@@ -68,7 +69,9 @@ const orderPushSummary = (order: OrderContext) => [
   orderDisplayName(order)
 ].filter(Boolean).join(" · ");
 
-// Admins get every order alert the Owner gets (Bright, 20 Oct 2026).
+// Type + title per status. WHO gets each alert lives in notification-routing.ts
+// (defaults + the Owner's Settings → Alert routing); recipientRoles/includeRep
+// below are no longer read.
 const STATUS_CONFIG: Record<string, { type: string; title: string; recipientRoles: string[]; includeRep: boolean }> = {
   New:          { type: "order_new",          title: "New Order",          recipientRoles: ["Owner", "Admin"], includeRep: true },
   Confirmed:    { type: "order_confirmed",    title: "Order Confirmed",    recipientRoles: ["Owner", "Admin"], includeRep: false },
@@ -88,30 +91,8 @@ export async function notifyOrderEvent(orgId: string, order: OrderContext, toSta
   if (!config) return; // Postponed and other untracked statuses — no notification
 
   try {
-    // Fetch owners (and optionally the assigned rep) in one query
-    const recipients = new Map<string, string>();
-
-    const { data: roleUsers } = await supabase
-      .from("users")
-      .select("id, role")
-      .eq("org_id", orgId)
-      .eq("active", true)
-      .in("role", config.recipientRoles);
-
-    if (roleUsers) {
-      for (const u of roleUsers) recipients.set(u.id, u.role);
-    }
-
-    if (config.includeRep && order.assignedRepId && !recipients.has(order.assignedRepId)) {
-      const { data: repUser } = await supabase
-        .from("users")
-        .select("id, role")
-        .eq("org_id", orgId)
-        .eq("active", true)
-        .eq("id", order.assignedRepId)
-        .maybeSingle();
-      if (repUser?.id) recipients.set(repUser.id, repUser.role);
-    }
+    // Who gets it is the Owner's choice in Settings → Alert routing.
+    const { recipients, push } = await alertRecipients(orgId, config.type as AlertKey, order.assignedRepId);
 
     if (recipients.size === 0) return;
 
@@ -134,7 +115,7 @@ export async function notifyOrderEvent(orgId: string, order: OrderContext, toSta
     if (error) console.error(`[order-notifications] insert failed for ${order.id}:`, error.message);
 
     // Fire push notifications (fire-and-forget, don't block the response)
-    await Promise.all(
+    if (push) await Promise.all(
       [...recipients.entries()].map(([recipientId, role]) =>
         sendPushToUser(orgId, recipientId, {
           title,
@@ -161,26 +142,7 @@ export async function notifyOrderEvent(orgId: string, order: OrderContext, toSta
  */
 export async function notifyOutageRecoveredOrder(orgId: string, order: OrderContext) {
   try {
-    const recipients = new Map<string, string>();
-    const { data: roleUsers } = await supabase
-      .from("users")
-      .select("id, role")
-      .eq("org_id", orgId)
-      .eq("active", true)
-      .in("role", ["Owner", "Admin"]);
-    if (roleUsers) {
-      for (const u of roleUsers) recipients.set(u.id, u.role);
-    }
-    if (order.assignedRepId && !recipients.has(order.assignedRepId)) {
-      const { data: repUser } = await supabase
-        .from("users")
-        .select("id, role")
-        .eq("org_id", orgId)
-        .eq("active", true)
-        .eq("id", order.assignedRepId)
-        .maybeSingle();
-      if (repUser?.id) recipients.set(repUser.id, repUser.role);
-    }
+    const { recipients, push } = await alertRecipients(orgId, "order_recovered", order.assignedRepId);
     if (recipients.size === 0) return;
 
     const title = `⚡ Recovered Order #${order.id}`;
@@ -200,7 +162,7 @@ export async function notifyOutageRecoveredOrder(orgId: string, order: OrderCont
     const { error } = await supabase.from("system_notifications").insert(rows);
     if (error) console.error(`[order-notifications] outage-recovered insert failed for ${order.id}:`, error.message);
 
-    await Promise.all(
+    if (push) await Promise.all(
       [...recipients.entries()].map(([recipientId, role]) =>
         sendPushToUser(orgId, recipientId, {
           title,
