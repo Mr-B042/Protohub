@@ -32,6 +32,12 @@ const packageMediaImageSchema = z.union([
   z.literal("")
 ]).optional();
 
+// Roles that never see prices still need to know a product HAS one: the app
+// treats "no price, no stock, packages made of other products" as an old
+// combo wrapper and hides it, so a new priced product with no stock yet
+// vanished from the waybill list for the inventory role (BUG-1001).
+const hasPricing = (product: any) => Array.isArray(product.pricings) && product.pricings.length > 0;
+
 const productForMarketer = (product: any) => ({
   id: product.id,
   name: product.name,
@@ -48,6 +54,7 @@ const productForMarketer = (product: any) => ({
   form_custom_text: product.form_custom_text ?? "",
   created_at: product.created_at,
   pricings: [],
+  has_pricing: hasPricing(product),
   packages: (Array.isArray(product.packages) ? product.packages : [])
     .filter((pkg: any) => pkg?.active !== false)
     .map((pkg: any) => ({
@@ -76,6 +83,7 @@ const productForInventoryOperations = (product: any) => {
   const { pricings: _pricings, dedicated_handlers: _handlers, ...operational } = product;
   return {
     ...operational,
+    has_pricing: hasPricing(product),
     packages: (Array.isArray(product.packages) ? product.packages : []).map((pkg: any) => {
       const { price: _price, ...packageOperational } = pkg;
       return packageOperational;
