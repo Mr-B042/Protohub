@@ -39,7 +39,7 @@ export type TrendOrder = {
 
 export type TrendExpense = { amount: number; dateKey: string; productId: string | null; type: string };
 export type TrendProduct = { id: string; name: string; sku?: string; active: boolean; warehouseStock?: number };
-export type TrendHub = { agentId: string; agentName: string; state: string; active: boolean; stocks: Array<{ productId: string; quantity: number }> };
+export type TrendHub = { agentId: string; agentName: string; state: string; active: boolean; stocks: Array<{ productId: string; quantity: number }>; locationId?: string };
 export type TrendAgent = { id: string; name: string };
 
 export type TrendFilters = { productId: string; state: string; agentId: string; status: string };
@@ -444,10 +444,10 @@ export type StockStateRow = {
   stock: number;
   /** Units on orders not yet delivered (customers waiting). */
   waitingUnits: number;
-  /** Units likely to be ORDERED in the next 30 days at the period's pace. */
-  forecast30: number;
+  /** Units likely to be ORDERED over the horizon at the period's pace (0 when there is too little history). */
+  forecast: number;
   /** Of those, how many are likely to be delivered (state delivery rate). */
-  deliverable30: number;
+  deliverable: number;
   rate: number;
   coverDays: number | null;
   need: number;
@@ -469,6 +469,8 @@ export type StockPlan = {
   netPerUnit: number;
   withoutDelivered: number;
   withDelivered: number;
+  horizonDays: number;
+  confidence: ForecastConfidence;
 };
 
 /**
@@ -479,9 +481,15 @@ export type StockPlan = {
  */
 export function buildStockPlan(args: {
   orders: TrendOrder[]; productId: string; hubs: TrendHub[]; days: number; available: number; netPerUnit: number; overrides?: Record<string, number>;
+  horizonDays?: number; from?: string; to?: string;
 }): StockPlan {
   const { orders, productId, hubs, days, available, netPerUnit, overrides } = args;
+  const horizon = args.horizonDays ?? 30;
   const mine = orders.filter((order) => order.productId === productId);
+  // Too little history: no forecast at all (Bright's brief: no precise
+  // predictions without the data). The plan then covers waiting customers only.
+  const confidence = forecastConfidence(mine, days);
+  const useForecast = confidence.level !== "Insufficient Data";
   const overallRate = mine.length > 0 ? mine.filter(isDelivered).length / mine.length : 0;
   const states = new Set<string>();
   for (const order of mine) if (order.state) states.add(order.state);
@@ -492,12 +500,12 @@ export function buildStockPlan(args: {
     const here = mine.filter((order) => order.state === state);
     const stock = hubs.filter((hub) => hub.state === state).reduce((sum, hub) => sum + hub.stocks.filter((s) => s.productId === productId).reduce((t, s) => t + Math.max(0, s.quantity), 0), 0);
     const waitingUnits = here.filter(isOpen).reduce((sum, order) => sum + order.units, 0);
-    const forecast30 = (here.reduce((sum, order) => sum + order.units, 0) / Math.max(1, days)) * 30;
+    const forecast = useForecast ? (here.reduce((sum, order) => sum + order.units, 0) / Math.max(1, days)) * horizon : 0;
     const rate = here.length >= MIN_RATE_SAMPLE ? here.filter(isDelivered).length / here.length : overallRate;
-    const deliverable30 = forecast30 * rate;
-    const coverDays = deliverable30 > 0 ? stock / (deliverable30 / 30) : null;
-    const need = Math.max(0, Math.round(waitingUnits + deliverable30 - stock));
-    return { state, stock, waitingUnits, forecast30, deliverable30, rate: rate * 100, coverDays, need, priority: stockBand(stock, waitingUnits, coverDays), recommended: 0 };
+    const deliverable = forecast * rate;
+    const coverDays = deliverable > 0 ? stock / (deliverable / horizon) : null;
+    const need = Math.max(0, Math.round(waitingUnits + deliverable - stock));
+    return { state, stock, waitingUnits, forecast, deliverable, rate: rate * 100, coverDays, need, priority: stockBand(stock, waitingUnits, coverDays), recommended: 0 };
   });
   const order: Record<StockBand, number> = { Critical: 0, High: 1, Medium: 2, Low: 3 };
   rows.sort((a, b) => order[a.priority] - order[b.priority] || b.need * b.rate - a.need * a.rate || a.state.localeCompare(b.state));
@@ -507,31 +515,80 @@ export function buildStockPlan(args: {
     row.recommended = Math.min(give, left);
     left -= row.recommended;
   }
-  // Forecast range: the period's pace and the last 7 days' pace.
+  // Forecast range: the period's pace and the last 7 days' pace, widened by
+  // how steady the daily orders were (the confidence spread).
   const unitsAll = mine.reduce((sum, o) => sum + o.units, 0);
-  const paceAll = (unitsAll / Math.max(1, days)) * 30;
+  const paceAll = (unitsAll / Math.max(1, days)) * horizon;
   const recentUnits = recentStart ? mine.filter((o) => o.createdKey >= recentStart).reduce((sum, o) => sum + o.units, 0) : 0;
-  const paceRecent = days >= 14 ? (recentUnits / 7) * 30 : paceAll;
+  const paceRecent = days >= 14 ? (recentUnits / 7) * horizon : paceAll;
   const totalStock = rows.reduce((sum, row) => sum + row.stock, 0);
-  const deliverableAll = rows.reduce((sum, row) => sum + row.deliverable30, 0);
-  const withoutDelivered = rows.reduce((sum, row) => sum + Math.min(row.stock, row.deliverable30), 0);
-  const withDelivered = rows.reduce((sum, row) => sum + Math.min(row.stock + row.recommended, row.deliverable30), 0);
+  const deliverableAll = rows.reduce((sum, row) => sum + row.deliverable, 0);
+  const withoutDelivered = rows.reduce((sum, row) => sum + Math.min(row.stock, row.deliverable), 0);
+  const withDelivered = rows.reduce((sum, row) => sum + Math.min(row.stock + row.recommended, row.deliverable), 0);
   return {
     rows,
     available: Math.max(0, Math.floor(available)),
     allocated: rows.reduce((sum, row) => sum + row.recommended, 0),
     totalStock,
     waitingUnits: rows.reduce((sum, row) => sum + row.waitingUnits, 0),
-    forecastLow: Math.round(Math.min(paceAll, paceRecent)),
-    forecastHigh: Math.round(Math.max(paceAll, paceRecent)),
-    coverDays: deliverableAll > 0 ? totalStock / (deliverableAll / 30) : null,
+    forecastLow: useForecast ? Math.round(Math.min(paceAll, paceRecent) * (1 - confidence.spread)) : 0,
+    forecastHigh: useForecast ? Math.round(Math.max(paceAll, paceRecent) * (1 + confidence.spread)) : 0,
+    coverDays: deliverableAll > 0 ? totalStock / (deliverableAll / horizon) : null,
     statesNeeding: rows.filter((row) => row.priority === "Critical" || row.priority === "High").length,
     // Stock beyond 45 days of deliveries could serve a busier state.
-    reallocatable: Math.round(rows.reduce((sum, row) => sum + (row.coverDays !== null && row.coverDays > 45 ? row.stock - (row.deliverable30 / 30) * 45 : row.deliverable30 === 0 ? row.stock : 0), 0)),
+    reallocatable: Math.round(rows.reduce((sum, row) => sum + (row.coverDays !== null && row.coverDays > 45 ? row.stock - (row.deliverable / 30) * 45 : row.deliverable === 0 ? row.stock : 0), 0)),
     netPerUnit,
     withoutDelivered: Math.round(withoutDelivered),
-    withDelivered: Math.round(withDelivered)
+    withDelivered: Math.round(withDelivered),
+    horizonDays: horizon,
+    confidence
   };
+}
+
+// ── Forecast confidence (Bright's brief: High / Moderate / Low / Insufficient) ──
+export type ForecastConfidence = { level: "High" | "Moderate" | "Low" | "Insufficient Data"; spread: number; why: string };
+
+/**
+ * How far the period's pace can be trusted: enough days, enough orders and
+ * steady daily orders (coefficient of variation). The spread widens the
+ * forecast range the less we trust it.
+ */
+export function forecastConfidence(orders: TrendOrder[], days: number): ForecastConfidence {
+  const n = orders.length;
+  const counts = new Map<string, number>();
+  for (const order of orders) counts.set(order.createdKey, (counts.get(order.createdKey) ?? 0) + 1);
+  const mean = n / Math.max(1, days);
+  const values = [...counts.values()];
+  const zeros = Math.max(0, days - values.length);
+  const squares = values.reduce((sum, v) => sum + (v - mean) ** 2, 0) + zeros * mean ** 2;
+  const cv = mean > 0 ? Math.sqrt(squares / Math.max(1, days)) / mean : Infinity;
+  if (days >= 28 && n >= 60 && cv <= 0.8) return { level: "High", spread: 0.1, why: `${n} orders over ${days} days, steady day to day` };
+  if (days >= 14 && n >= 25) return { level: "Moderate", spread: 0.2, why: `${n} orders over ${days} days${cv > 0.8 ? ", uneven day to day" : ""}` };
+  if (n >= 8) return { level: "Low", spread: 0.35, why: `only ${n} orders over ${days} days` };
+  return { level: "Insufficient Data", spread: 0, why: n === 0 ? "no orders in the period" : `only ${n} order${n === 1 ? "" : "s"} in the period` };
+}
+
+// ── Following a decision (waybills sent since approval) ─────────────────────
+export type WaybillLike = { id: string; product_id: string | null; quantity: number | null; items: Array<{ productId?: string; product_id?: string; quantity?: number }> | null;
+  to_agent_id: string | null; to_agent_location_id: string | null; status: string | null; created_at: string; received_date: string | null };
+
+/** Units of a product each state received by waybill since `since`. */
+export function waybillUnitsByState(waybills: WaybillLike[], productId: string, since: string, hubs: Array<TrendHub & { locationId?: string }>) {
+  const out = new Map<string, { units: number; waybills: string[]; received: number }>();
+  for (const waybill of waybills) {
+    if (waybill.created_at < since) continue;
+    const item = (waybill.items ?? []).find((it) => (it.productId ?? it.product_id) === productId);
+    const units = item ? Number(item.quantity ?? 0) : waybill.product_id === productId ? Number(waybill.quantity ?? 0) : 0;
+    if (units <= 0) continue;
+    const hub = hubs.find((h) => h.locationId && h.locationId === waybill.to_agent_location_id) ?? hubs.find((h) => h.agentId === waybill.to_agent_id);
+    if (!hub?.state) continue;
+    const entry = out.get(hub.state) ?? { units: 0, waybills: [], received: 0 };
+    entry.units += units;
+    entry.waybills.push(waybill.id);
+    if (waybill.received_date || /received|delivered/i.test(waybill.status ?? "")) entry.received += units;
+    out.set(hub.state, entry);
+  }
+  return out;
 }
 
 /** Nice bins for a map legend, highest first (e.g. 300+, 200-299, ..., 1-9, 0). */
@@ -539,4 +596,53 @@ export function countBins(max: number): number[] {
   if (max >= 150) return [300, 200, 100, 50, 10, 1];
   if (max >= 30) return [50, 30, 20, 10, 5, 1];
   return [10, 7, 5, 3, 2, 1];
+}
+
+// ── Worst performing products (Bright, 21 Oct 2026) ─────────────────────────
+// The other end of the leaderboard. "Worst" has three meanings, so the page
+// lets you pick one. Only products with MIN_RATE_SAMPLE+ orders are ranked
+// (in the period, or the period before for a drop), so one bad order never
+// puts a product at the bottom. Each row says why it is there and what to check.
+export type WorstMode = "rate" | "net" | "drop";
+export type WorstRow = { row: ProductRow; value: number; why: string; check: string };
+
+export function worstProducts(rows: ProductRow[], mode: WorstMode, overallRate: number, limit = 5): WorstRow[] {
+  const pct = (v: number) => `${v.toFixed(1)}%`;
+  if (mode === "rate") {
+    // Below the overall rate only: with two products the better one is not "worst".
+    return rows.filter((r) => r.now.orders >= MIN_RATE_SAMPLE && r.now.rate < overallRate).sort((a, b) => a.now.rate - b.now.rate).slice(0, limit).map((row) => ({
+      row, value: row.now.rate,
+      why: `${pct(row.now.rate)} delivered of ${row.now.orders} orders (${row.now.failed} failed, ${row.now.cancelled} cancelled, ${row.now.open} still open) against ${pct(overallRate)} overall.`,
+      check: row.now.open > row.now.failed + row.now.cancelled
+        ? "Most orders are still open: chase confirmations and dispatch before judging this product."
+        : row.now.failed >= row.now.cancelled
+          ? "Most lost orders failed at delivery: check the agents and failure reasons in its weakest states."
+          : "Most lost orders were cancelled: check the calls, the offer and the price customers saw."
+    }));
+  }
+  if (mode === "net") {
+    // Losing money, or below the average product's profit.
+    const ranked = rows.filter((r) => r.now.orders >= MIN_RATE_SAMPLE || r.now.net < 0);
+    const average = ranked.length > 0 ? ranked.reduce((s, r) => s + r.now.net, 0) / ranked.length : 0;
+    return ranked.filter((r) => r.now.net < 0 || r.now.net < average).sort((a, b) => a.now.net - b.now.net).slice(0, limit).map((row) => {
+      const costs = row.now.cogs + row.now.logistics + row.now.runningCosts;
+      return {
+        row, value: row.now.net,
+        why: row.now.net < 0
+          ? `Losing money: delivered sales ${Math.round(row.now.revenue).toLocaleString("en-NG")} against costs of ${Math.round(costs).toLocaleString("en-NG")}.`
+          : `Lowest profit: ${row.now.delivered} delivered, ${Math.round(row.now.delivered > 0 ? row.now.net / row.now.delivered : 0).toLocaleString("en-NG")} profit per delivered order.`,
+        check: row.now.runningCosts > row.now.cogs
+          ? "Running costs (mostly ads) are bigger than the product cost: review its ad spend."
+          : "Product cost and delivery take most of the price: review the price or the package sizes."
+      };
+    });
+  }
+  return rows.filter((r) => r.before.orders >= MIN_RATE_SAMPLE)
+    .map((row) => ({ row, change: growthPct(row.now.orders, row.before.orders) ?? 0 }))
+    .filter((x) => x.change < 0).sort((a, b) => a.change - b.change).slice(0, limit)
+    .map(({ row, change }) => ({
+      row, value: change,
+      why: `Orders down ${Math.abs(change).toFixed(0)}%: ${row.now.orders} this period against ${row.before.orders} the period before.`,
+      check: "Check whether its ads were paused or cut, the stock ran out, or the landing page changed."
+    }));
 }

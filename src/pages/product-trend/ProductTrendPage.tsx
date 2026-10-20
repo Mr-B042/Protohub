@@ -15,6 +15,8 @@ import { ProductDetailPanel } from "./DetailPanels";
 import { HeatmapTab, StateBreakdownTab } from "./TabsStatesHeatmap";
 import { AgentPerformanceTab, TrendsOverTimeTab } from "./TabsAgentsTime";
 import { StockRecommendationTab } from "./TabStock";
+import { WorstProducts } from "./WorstProducts";
+import { exportExcel, exportPdf, type ReportInput } from "./reports";
 import type { TabCtx, TransferRequest, TrendModel } from "./tab-context";
 
 // ── Product Trend (Bright's designs, 20 Oct 2026) ───────────────────────────
@@ -40,6 +42,9 @@ export type ProductTrendPageProps = {
   onCreateTransfer?: (request: TransferRequest) => void;
   onOpenReplenishment?: () => void;
   onOpenProducts?: () => void;
+  /** The viewer's role (view-as aware) and id. */
+  role: string;
+  userId: string | null;
 };
 
 type TabKey = "trend" | "states" | "heatmap" | "agents" | "time" | "stock";
@@ -204,12 +209,25 @@ export default function ProductTrendPage(props: ProductTrendPageProps) {
   }, [ready]);
 
   const exportRef = useRef<() => void>(() => undefined);
+  const [exportOpen, setExportOpen] = useState(false);
+  const closeExport = useCallback(() => setExportOpen(false), []);
+  const exportMenuRef = useClickAway<HTMLDivElement>(exportOpen, closeExport);
   const days = daysBetween(applied.from, applied.to) + 1;
   const ctx: TabCtx | null = model ? {
     model, products, hubs, agents, canSeeProfit, money, from: applied.from, to: applied.to, prevFrom: prev.from, prevTo: prev.to, days, exportRef, imageOf,
     onViewProduct: setDetailProductId, productId: applied.productId, state: applied.state, metric: applied.metric, grain: applied.grain, stockStatus: applied.stockStatus,
     canCreateTransfer: props.canCreateTransfer, onCreateTransfer: props.onCreateTransfer, onOpenReplenishment: props.onOpenReplenishment,
-    onOnlyAgent: (agentId) => { const next = { ...applied, agentId }; setApplied(next); setDraft(next); }
+    onOnlyAgent: (agentId) => { const next = { ...applied, agentId }; setApplied(next); setDraft(next); },
+    role: props.role, userId: props.userId, loadOrders, today: lagosToday()
+  } : null;
+  const filtersText = [
+    applied.productId !== ALL ? `Product: ${products.find((p) => p.id === applied.productId)?.name ?? applied.productId}` : "",
+    applied.state !== ALL ? `State: ${stateLabel(applied.state)}` : "",
+    applied.agentId !== ALL ? `Agent: ${agents.find((a) => a.id === applied.agentId)?.name ?? applied.agentId}` : "",
+    applied.status !== ALL ? `Status: ${applied.status}` : ""
+  ].filter(Boolean).join(" · ");
+  const reportInput: ReportInput | null = model && ready ? {
+    model, products, hubs, agents, canSeeProfit, from: applied.from, to: applied.to, prevFrom: prev.from, prevTo: prev.to, days, filtersText, updatedAt: ready.at
   } : null;
   const onShowState = (state: string) => { const next = { ...applied, state }; setApplied(next); setDraft(next); };
 
@@ -269,10 +287,19 @@ export default function ProductTrendPage(props: ProductTrendPageProps) {
                 className="!min-h-0 rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"><X className="h-3.5 w-3.5" /></button>
             )}
           </span>
-          <button type="button" onClick={() => exportRef.current()} disabled={!model}
-            className="!min-h-0 inline-flex h-10 items-center gap-2 rounded-lg bg-[#1F8FE0] px-4 text-[13px] font-semibold text-white shadow-sm hover:bg-[#1a7dc4] disabled:opacity-40">
-            <Download className="h-4 w-4" /> Export
-          </button>
+          <div className="relative" ref={exportMenuRef}>
+            <button type="button" onClick={() => setExportOpen((o) => !o)} disabled={!model} aria-haspopup="menu" aria-expanded={exportOpen}
+              className="!min-h-0 inline-flex h-10 items-center gap-2 rounded-lg bg-[#1F8FE0] px-4 text-[13px] font-semibold text-white shadow-sm hover:bg-[#1a7dc4] disabled:opacity-40">
+              <Download className="h-4 w-4" /> Export
+            </button>
+            {exportOpen && reportInput && (
+              <div role="menu" className="absolute right-0 top-full z-40 mt-1 w-64 rounded-xl border border-gray-200 bg-white p-1 text-[12.5px] shadow-xl dark:border-slate-700 dark:bg-slate-900">
+                <ExportItem title="This table (CSV)" sub="What this tab shows, as a spreadsheet" onClick={() => { exportRef.current(); setExportOpen(false); }} />
+                <ExportItem title="Full report (Excel)" sub="Products, worst products, states, agents, stock plan" onClick={() => { exportExcel(reportInput); setExportOpen(false); }} />
+                <ExportItem title="Report (PDF)" sub="Opens the print window: choose Save as PDF" onClick={() => { exportPdf(reportInput); setExportOpen(false); }} />
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -370,6 +397,14 @@ function FilterRow({ fields, draft, setDraft, onApply, onReset, onSave, savedNot
       </div>
       {savedNote && <p className="m-0 mt-2 text-[11.5px] font-semibold text-emerald-700">{savedNote}</p>}
     </section>
+  );
+}
+
+function ExportItem({ title, sub, onClick }: { title: string; sub: string; onClick: () => void }) {
+  return (
+    <button type="button" role="menuitem" onClick={onClick} className="!min-h-0 block w-full rounded-lg px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-slate-800">
+      <span className="block font-semibold text-gray-900 dark:text-slate-100">{title}</span><span className="block text-[11px] text-gray-500">{sub}</span>
+    </button>
   );
 }
 
@@ -624,6 +659,9 @@ function TrendTab({ model, compare, canSeeProfit, money, imageOf, totalsOrders, 
           </table>
         </div>
       </section>
+
+      <WorstProducts rows={model.productRows} canSeeProfit={canSeeProfit} money={money} imageOf={imageOf} onView={onView}
+        overallRate={model.orders.length > 0 ? (model.orders.filter((o) => o.status === "Delivered").length / model.orders.length) * 100 : 0} />
 
       <BottomPanels model={model} products={products} totalsOrders={totalsOrders} from={from} to={to} money={money} onShowStates={onShowStates} />
     </div>
