@@ -6,10 +6,13 @@ import {
 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { productMediaApi, type ProductMedia } from "../lib/api";
-import { PRESET_LABEL, presetRange, shiftWindow, windowSize, type DateWindow, type PresetKey } from "../lib/date-window";
+import { PRESET_LABEL, presetRange, shiftDay, shiftWindow, weekStart, windowSize, type DateWindow, type PresetKey } from "../lib/date-window";
 import { money } from "../lib/money-privacy";
 import { Avatar, ProductThumb, SidePanel, downloadCsv, useClickAway } from "./product-trend/parts";
+import RepProductOverview, { type OverviewBucket, type OverviewProduct, type OverviewRep } from "./RepProductOverview";
+import { BestWorstChart, BestWorstTable, ComparisonTable, FunnelChart, FunnelTable, type BestWorstPick, type BestWorstRow, type FunnelRow } from "./RepProductPerformanceViews";
 import { downloadXlsx } from "./product-trend/exports";
+import { buildCostBook, type TrendOrder } from "./product-trend/product-trend-model";
 
 // ── Product Performance (Sales Rep) — Bright's design, 21 Oct 2026 ──────────
 // Opens from the Manager Dashboard tab "Rep Product Performance". Shows how
@@ -37,7 +40,14 @@ export type RepProductOrder = {
   source: string;
   customer: string;
   amount: number;
+  /** Product cost of the order (Finance's costForOrder) - for Net Profit. */
+  cogs: number;
+  /** The order's own delivery fee. */
+  logisticsCost: number;
 };
+
+/** Finance's expenses, for the running costs in Net Profit (Product Trend's rule). */
+export type RepProductExpense = { amount: number; dateKey: string; productId: string | null; type: string };
 
 export type RepProductPerformanceProps = {
   orders: RepProductOrder[];
@@ -47,6 +57,9 @@ export type RepProductPerformanceProps = {
   target: number;
   /** Rep bonus earned on these delivered orders - the Manager Dashboard's own sum. */
   bonusFor: (orderIds: string[]) => number;
+  expenses: RepProductExpense[];
+  /** Net Profit is Owner / Admin only, like Product Trend. */
+  canSeeProfit: boolean;
   onBack: () => void;
   onOpenOrder: (orderId: string) => void;
 };
@@ -60,17 +73,24 @@ const PERIODS: PresetKey[] = ["today", "yesterday", "thisWeek", "lastWeek", "las
 const SERIES = ["#3b82f6", "#8b5cf6", "#22c55e", "#f59e0b"];
 const OTHERS_COLOR = "#cbd5e1";
 const OTHERS = "__others";
+const ALL_REPS = "__all_reps";
+/** Best & Worst only ranks products with at least this many orders (1 of 1 delivered is not "best"). */
+const MIN_PICK_ORDERS = 3;
+/** Got past the rep's call (Product Trend's isConfirmed). */
+const CONFIRMED = new Set(["Confirmed", "In Process", "Dispatched", "Postponed", "Delivered", "Failed"]);
+/** Sent out to the customer. */
+const DISPATCHED = new Set(["Dispatched", "Delivered", "Failed"]);
 type BarMetric = "delivered" | "placed" | "revenue";
 
-type Stat = { placed: number; delivered: number; revenue: number; ids: string[]; deliveredIds: string[] };
+export type Stat = { placed: number; delivered: number; revenue: number; ids: string[]; deliveredIds: string[] };
 const emptyStat = (): Stat => ({ placed: 0, delivered: 0, revenue: 0, ids: [], deliveredIds: [] });
 const add = (stat: Stat, order: RepProductOrder) => {
   stat.placed += 1;
   stat.ids.push(order.id);
   if (order.status === "Delivered") { stat.delivered += 1; stat.revenue += Number(order.amount) || 0; stat.deliveredIds.push(order.id); }
 };
-const rateOf = (stat: Stat) => (stat.placed > 0 ? (stat.delivered / stat.placed) * 100 : null);
-const aovOf = (stat: Stat) => (stat.delivered > 0 ? stat.revenue / stat.delivered : null);
+export const rateOf = (stat: Stat) => (stat.placed > 0 ? (stat.delivered / stat.placed) * 100 : null);
+export const aovOf = (stat: Stat) => (stat.delivered > 0 ? stat.revenue / stat.delivered : null);
 const change = (now: number, before: number) => (before > 0 ? ((now - before) / before) * 100 : null);
 const nf = (value: number) => Math.round(value).toLocaleString("en-NG");
 const compareLabel = (preset: PresetKey | "custom") =>
@@ -80,7 +100,7 @@ const compareLabel = (preset: PresetKey | "custom") =>
   : preset === "thisYear" ? "vs last year" : "vs previous period";
 const longDate = (key: string) => new Date(`${key}T00:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" });
 
-export default function RepProductPerformancePage({ orders, reps, todayKey, target, bonusFor, onBack, onOpenOrder }: RepProductPerformanceProps) {
+export default function RepProductPerformancePage({ orders, reps, todayKey, target, bonusFor, expenses, canSeeProfit, onBack, onOpenOrder }: RepProductPerformanceProps) {
   const [topTab, setTopTab] = useState<TopTab>("Product Performance (Sales Rep)");
   const [lowerTab, setLowerTab] = useState<LowerTab>("Product Breakdown by Sales Rep");
   const [preset, setPreset] = useState<PresetKey | "custom">("thisWeek");
@@ -170,6 +190,30 @@ export default function RepProductPerformancePage({ orders, reps, todayKey, targ
     const rest = products.length > 5 ? products.slice(4) : [];
     return { total, prior, products, named, rest, repIds, byRep, byCell };
   }, [current, before]);
+
+  // Running costs, Finance's way: worked out over the WHOLE period's orders
+  // (never a filtered slice), then each delivered order carries its share.
+  const costBook = useMemo(() => {
+    const inPeriod: TrendOrder[] = orders.filter((order) => order.createdKey >= window.start && order.createdKey <= window.end)
+      .map((order) => ({ id: order.id, productId: order.productKey, state: order.state, agentId: "", status: order.status, amount: order.amount, units: 1, createdKey: order.createdKey, logisticsCost: order.logisticsCost, cogs: order.cogs }));
+    return buildCostBook(inPeriod, expenses, window.start, window.end);
+  }, [orders, expenses, window]);
+  const funnelOf = (list: RepProductOrder[]): Omit<FunnelRow, "key" | "name"> => {
+    const f = { placed: 0, confirmed: 0, pending: 0, cancelled: 0, dispatched: 0, delivered: 0, failed: 0, revenue: 0, net: 0 };
+    for (const order of list) {
+      f.placed += 1;
+      if (CONFIRMED.has(order.status)) f.confirmed += 1;
+      if (order.status === "New") f.pending += 1;
+      if (order.status === "Cancelled") f.cancelled += 1;
+      if (DISPATCHED.has(order.status)) f.dispatched += 1;
+      if (order.status === "Failed") f.failed += 1;
+      if (order.status === "Delivered") {
+        f.delivered += 1; f.revenue += order.amount;
+        f.net += order.amount - order.cogs - order.logisticsCost - (costBook.perOrder.get(order.id) ?? 0);
+      }
+    }
+    return f;
+  };
 
   const statOf = (productKeys: string[], repId?: string) => {
     const out = emptyStat();
@@ -295,7 +339,7 @@ export default function RepProductPerformancePage({ orders, reps, todayKey, targ
         </div>
       </div>
 
-      {topTab !== "Product Performance (Sales Rep)" ? placeholder(topTab) : (<>
+      {topTab !== "Product Performance (Sales Rep)" && topTab !== "Overview" ? placeholder(topTab) : (<>
         {/* ── Filters ──────────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
           <FilterSelect icon={<CalendarDays className="h-4 w-4 text-gray-500" />} label="Period" value={preset} onChange={(value) => {
@@ -322,7 +366,45 @@ export default function RepProductPerformancePage({ orders, reps, todayKey, targ
 
         {total.placed === 0 ? (
           <div className="rounded-2xl border border-gray-200 bg-white px-6 py-14 text-center text-[14px] text-gray-500 shadow-sm dark:border-slate-800 dark:bg-slate-900">No orders found for the selected filters.</div>
-        ) : (<>
+        ) : topTab === "Overview" ? (() => {
+          // Chart points: days up to a month, weeks up to four months, then months.
+          const days = windowSize(window);
+          const bucketOf = (key: string) => (days <= 31 ? key : days <= 120 ? weekStart(key) : `${key.slice(0, 7)}-01`);
+          const labelOf = (key: string) => days <= 120
+            ? new Date(`${key}T00:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric" })
+            : new Date(`${key}T00:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", year: "2-digit" });
+          const keys: string[] = [];
+          for (let key = window.start; key <= window.end; key = shiftDay(key, 1)) { const bucket = bucketOf(key); if (keys[keys.length - 1] !== bucket) keys.push(bucket); }
+          const buckets: OverviewBucket[] = keys.map((key) => {
+            const f = funnelOf(current.filter((order) => bucketOf(order.createdKey) === key));
+            return { label: labelOf(key), placed: f.placed, delivered: f.delivered, revenue: f.revenue, net: f.net };
+          });
+          const productFigures = (key: string, name: string, keysOf: string[], isOthers = false): OverviewProduct => {
+            const f = funnelOf(current.filter((order) => keysOf.includes(order.productKey)));
+            return { key, name, image: isOthers ? null : imageOf(key), isOthers, placed: f.placed, delivered: f.delivered, cancelled: f.cancelled, revenue: f.revenue, net: f.net };
+          };
+          const overviewProducts = [...model.named.map((p) => productFigures(p.key, p.name, [p.key])), ...(model.rest.length ? [productFigures(OTHERS, "Others", model.rest.map((p) => p.key), true)] : [])];
+          const everyProduct = model.products.map((p) => productFigures(p.key, p.name, [p.key]));
+          const overviewReps: OverviewRep[] = model.repIds.map((id) => {
+            const list = current.filter((order) => (order.repId ?? "") === id);
+            const f = funnelOf(list);
+            return { id, name: nameOfRep(id), placed: f.placed, delivered: f.delivered, revenue: f.revenue, net: f.net, bonus: bonusFor(list.filter((order) => order.status === "Delivered").map((order) => order.id)) };
+          });
+          const all = funnelOf(current);
+          return (
+            <RepProductOverview
+              title={preset === "custom" ? "Selected Dates" : PRESET_LABEL[preset]}
+              compare={compareLabel(preset)}
+              buckets={buckets}
+              products={overviewProducts}
+              allProducts={everyProduct}
+              reps={overviewReps}
+              total={{ placed: all.placed, delivered: all.delivered, revenue: all.revenue, net: all.net, bonus,
+                pending: current.filter((order) => order.status === "New").length, dispatched: current.filter((order) => order.status === "Dispatched").length }}
+              rate={rate} priorRate={priorRate} target={target} canSeeProfit={canSeeProfit}
+            />
+          );
+        })() : (<>
           {/* ── Three cards ────────────────────────────────────────────── */}
           <div className="grid gap-4 lg:grid-cols-3">
             <Card title="Top Performing Products (All Reps)" sub="Based on delivered orders this period"
@@ -378,7 +460,7 @@ export default function RepProductPerformancePage({ orders, reps, todayKey, targ
                   className={`!min-h-0 whitespace-nowrap rounded-xl px-4 py-2.5 text-[13.5px] font-semibold transition-colors ${lowerTab === tab ? "bg-indigo-600 text-white shadow-sm" : "border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}>{tab}</button>
               ))}
             </div></div>
-            {lowerTab === "Product Breakdown by Sales Rep" && (
+            {(
               <div className="flex flex-wrap items-center gap-2">
                 <label className="relative block w-full sm:w-[220px]">
                   <span className="sr-only">Search product</span>
@@ -395,30 +477,70 @@ export default function RepProductPerformancePage({ orders, reps, todayKey, targ
             )}
           </div>
 
-          {lowerTab !== "Product Breakdown by Sales Rep" ? placeholder(lowerTab) : view === "chart" ? (
+          {lowerTab === "Product Comparison" ? (
+            view === "chart"
+              ? <RateChart rows={tableRows.filter((row) => !row.child && !row.isOthers)} repIds={model.repIds} nameOfRep={nameOfRep} statOf={statOf} target={target} />
+              : <ComparisonTable
+                  columns={[...model.named.filter((p) => !needle || p.name.toLowerCase().includes(needle)).map((p) => ({ key: p.key, name: p.name, keys: [p.key], image: imageOf(p.key) })),
+                    ...(model.rest.length && !needle ? [{ key: OTHERS, name: "Others", keys: model.rest.map((p) => p.key), image: null, isOthers: true }] : []),
+                    ...(needle ? model.rest.filter((p) => p.name.toLowerCase().includes(needle)).map((p) => ({ key: p.key, name: p.name, keys: [p.key], image: imageOf(p.key) })) : [])]}
+                  repIds={model.repIds} nameOfRep={nameOfRep} statOf={statOf} target={target} allKeys={model.products.map((p) => p.key)}
+                  onOpenCell={(productKey, repId) => setCell({ productKey, repId })} />
+          ) : lowerTab === "Best & Worst Products" ? (() => {
+            const picksFor = (id: string, name: string, repId?: string): BestWorstRow => {
+              const candidates: BestWorstPick[] = model.products
+                .filter((product) => !needle || product.name.toLowerCase().includes(needle))
+                .map((product) => {
+                  const f = funnelOf(current.filter((order) => order.productKey === product.key && (repId === undefined || (order.repId ?? "") === repId)));
+                  return { key: product.key, name: product.name, image: imageOf(product.key), placed: f.placed, delivered: f.delivered, rate: f.placed > 0 ? (f.delivered / f.placed) * 100 : null, net: f.net, revenue: f.revenue };
+                })
+                .filter((pick) => pick.placed > 0);
+              const enough = candidates.filter((pick) => pick.placed >= MIN_PICK_ORDERS);
+              const pool = [...(enough.length >= 2 ? enough : candidates)].sort((a, b) => (b.rate ?? 0) - (a.rate ?? 0) || b.delivered - a.delivered || b.placed - a.placed);
+              return { id, name, best: pool[0] ?? null, worst: pool.length > 1 ? pool[pool.length - 1] : null, lowVolume: candidates.length > 0 && enough.length < 2 };
+            };
+            const bwRows = model.repIds.map((id) => picksFor(id, nameOfRep(id), id));
+            const team = picksFor("__team", "Team Total");
+            return view === "chart" ? <BestWorstChart rows={bwRows} /> : <BestWorstTable rows={bwRows} team={team} target={target} canSeeProfit={canSeeProfit} />;
+          })() : lowerTab === "Product Conversion Funnel" ? (() => {
+            const funnelRows: FunnelRow[] = tableRows.filter((row) => !row.child).map((row) => ({ key: row.key, name: row.isOthers ? "Others" : row.name, isOthers: row.isOthers, ...funnelOf(current.filter((order) => row.keys.includes(order.productKey))) }));
+            const totalRow: FunnelRow = { key: "__total", name: "Total", ...funnelOf(current) };
+            return view === "chart"
+              ? <FunnelChart rows={funnelRows} />
+              : <FunnelTable rows={funnelRows} total={totalRow} target={target} canSeeProfit={canSeeProfit} imageOf={imageOf}
+                  onViewOrders={(productKey) => setCell({ productKey, repId: ALL_REPS })}
+                  onOnlyProduct={(productKey) => { setProductFilter(productKey); setLowerTab("Product Breakdown by Sales Rep"); }} />;
+          })() : lowerTab !== "Product Breakdown by Sales Rep" ? placeholder(lowerTab) : view === "chart" ? (
             <RateChart rows={tableRows.filter((row) => !row.child)} repIds={model.repIds} nameOfRep={nameOfRep} statOf={statOf} target={target} />
           ) : (
             <BreakdownTable rows={tableRows} repIds={model.repIds} nameOfRep={nameOfRep} statOf={statOf} target={target} imageOf={imageOf}
               allKeys={model.products.map((product) => product.key)} othersOpen={othersOpen} onToggleOthers={() => setOthersOpen((open) => !open)}
               onOpenCell={(productKey, repId) => setCell({ productKey, repId })} />
           )}
-          <p className="m-0 text-[11.5px] text-gray-500 dark:text-slate-400">Orders placed {periodLabel}. Delivered = of those orders, how many are delivered now. DR = delivered ÷ placed (green at or above the {target}% target). AOV = delivered revenue ÷ delivered orders. Tap a rep's figures to see the orders.</p>
+          <p className="m-0 text-[11.5px] text-gray-500 dark:text-slate-400">
+            {lowerTab === "Best & Worst Products"
+              ? <>Orders placed {periodLabel}. Best and worst = each rep's highest and lowest delivery rate, among products with at least {MIN_PICK_ORDERS} orders ("Few orders" = picked from all their products). Gap = best minus worst. {canSeeProfit ? "Net profit uses Finance's rule, as on Product Trend." : "Net profit is shown to the Owner and Admins."}</>
+              : lowerTab === "Product Conversion Funnel"
+              ? <>Orders placed {periodLabel}. Confirmed = got past the rep's call (confirmed, in process, dispatched, postponed, delivered or failed). Pending = still new. Dispatched = sent out (dispatched, delivered or failed). Each rate = that count ÷ placed. {canSeeProfit ? "Net profit = delivered revenue − product cost − delivery fees − running costs (Finance's rule, as on Product Trend)." : "Net profit is shown to the Owner and Admins."}</>
+              : <>Orders placed {periodLabel}. Delivered = of those orders, how many are delivered now. DR = delivered ÷ placed (green at or above the {target}% target). AOV = delivered revenue ÷ delivered orders. Tap a rep's figures to see the orders.</>}
+          </p>
         </>)}
       </>)}
 
       {cell && (() => {
         const productName = model.products.find((product) => product.key === cell.productKey)?.name ?? "Product";
-        const list = current.filter((order) => order.productKey === cell.productKey && (order.repId ?? "") === cell.repId);
-        const stat = statOf([cell.productKey], cell.repId);
+        const everyone = cell.repId === ALL_REPS;
+        const list = current.filter((order) => order.productKey === cell.productKey && (everyone || (order.repId ?? "") === cell.repId));
+        const stat = everyone ? statOf([cell.productKey]) : statOf([cell.productKey], cell.repId);
         return (
-          <SidePanel title={`${nameOfRep(cell.repId)} · ${productName}`} subtitle={`${stat.placed} placed · ${stat.delivered} delivered · ${rateOf(stat) === null ? "—" : `${Math.round(rateOf(stat)!)}%`} · ${periodLabel}`} onClose={() => setCell(null)}>
+          <SidePanel title={`${everyone ? "All reps" : nameOfRep(cell.repId)} · ${productName}`} subtitle={`${stat.placed} placed · ${stat.delivered} delivered · ${rateOf(stat) === null ? "—" : `${Math.round(rateOf(stat)!)}%`} · ${periodLabel}`} onClose={() => setCell(null)}>
             <ul className="m-0 list-none divide-y divide-gray-100 p-0 dark:divide-slate-800">
               {list.map((order) => (
                 <li key={order.id}>
                   <button type="button" onClick={() => onOpenOrder(order.id)} className="!min-h-0 flex w-full items-center gap-3 py-3 text-left hover:bg-gray-50 dark:hover:bg-slate-900">
                     <div className="min-w-0 flex-1">
                       <div className="text-[13.5px] font-semibold text-gray-900 dark:text-slate-100">#{order.id} · {order.customer || "Customer"}</div>
-                      <div className="text-[12px] text-gray-500">{order.state || "No state"} · placed {longDate(order.createdKey)}</div>
+                      <div className="text-[12px] text-gray-500">{everyone ? `${nameOfRep(order.repId ?? "")} · ` : ""}{order.state || "No state"} · placed {longDate(order.createdKey)}</div>
                     </div>
                     <StatusChip status={order.status} />
                     <div className="w-24 shrink-0 text-right text-[13px] font-semibold text-gray-900 dark:text-slate-100">{money(order.amount)}</div>
@@ -586,7 +708,7 @@ function RepBars({ rows, metric }: { rows: Array<{ name: string; parts: Array<{ 
   );
 }
 
-function rateTone(rate: number | null, placed: number, target: number) {
+export function rateTone(rate: number | null, placed: number, target: number) {
   if (rate === null) return "text-gray-400 dark:text-slate-500";
   if (placed < 5) return "text-gray-500 dark:text-slate-400";
   return rate >= target ? "text-emerald-600" : rate >= target - 15 ? "text-amber-600" : "text-rose-600";
