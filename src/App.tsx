@@ -245,6 +245,7 @@ import CartLogOwedBanner from "./components/CartLogOwedBanner";
 import OrderHistoryModal from "./components/OrderHistoryModal";
 import DateWindowNav from "./components/DateWindowNav";
 import UpsellPerformancePage, { type UpsellPerfOrder } from "./pages/UpsellPerformancePage";
+import RepProductPerformancePage, { type RepProductOrder } from "./pages/RepProductPerformancePage";
 import RepWeeklyReportPage from "./pages/RepWeeklyReportPage";
 import type { ManagerFundTxn, WeeklyLogMissRow } from "./lib/api";
 import { HeadOfSalesReviewPanel, headOfSalesBonusStatus, useHeadOfSalesReview } from "./components/HeadOfSalesParts";
@@ -348,7 +349,7 @@ type AgentStatus = "All Status" | "Active" | "Order in Progress" | "Inactive";
 type PayrollTab = "Pay Rates" | "Run Payroll" | "History";
 type CustomerSource = "Source: All" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
 type FinanceTab = "Cash Flow" | "Financial Overview" | "Reports" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Delivery Fee Audit" | "Remittance" | "Profit & Loss" | "Product Profitability" | "Package Performance" | "State Performance" | "Profitability";
-type ManagerDashboardTab = "Overview" | "Targets" | "Bonus" | "Upsell Bonus" | "Upsell Performance" | "Team Challenges" | "Weekly Reports" | "Inventory" | "Needs Attention";
+type ManagerDashboardTab = "Overview" | "Targets" | "Bonus" | "Upsell Bonus" | "Upsell Performance" | "Rep Product Performance" | "Team Challenges" | "Weekly Reports" | "Inventory" | "Needs Attention";
 type RecoveryRepDashboardTab = "Overview" | "Work Queue" | "Activity Sheet" | "Customer Retention";
 // One screen of recovery cards. Big enough to be a real batch of calls,
 // small enough that a 618-order tier does not become an endless scroll.
@@ -9969,6 +9970,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const openUpsellPerformance = () => {
     setManagerDashboardReturnTab(managerDashboardTab === "Upsell Performance" ? "Overview" : managerDashboardTab);
     setManagerDashboardTab("Upsell Performance");
+  };
+  // Rep Product Performance (Bright's design, 21 Oct 2026) opens full-page too.
+  const openRepProductPerformance = () => {
+    if (managerDashboardTab !== "Rep Product Performance") setManagerDashboardReturnTab(managerDashboardTab === "Upsell Performance" || managerDashboardTab === "Weekly Reports" ? "Overview" : managerDashboardTab);
+    setManagerDashboardTab("Rep Product Performance");
   };
   // Weekly Reports opens full-page from its Manager Dashboard tab, the same
   // way Upsell Performance does (Bright, 1 Oct 2026: "use the tab").
@@ -32569,6 +32575,39 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         todayKey={formatDateKey(new Date())}
         refreshing={upsellPerfLogLoading || upsellPerfAttribution === null}
         onRefresh={() => setUpsellPerfReload((value) => value + 1)}
+        onBack={() => setManagerDashboardTab(managerDashboardReturnTab)}
+        onOpenOrder={(orderId) => { setSelectedOrderId(orderId); setModal("orderDetails"); }}
+      />
+    );
+  };
+
+  const renderRepProductPerformancePage = () => {
+    const rows: RepProductOrder[] = [];
+    const byId = new Map<string, TrackedOrder>();
+    for (const order of trackedOrders) {
+      // Held repeat orders are out of every conversion report.
+      if (order.reviewHold) continue;
+      byId.set(order.id, order);
+      rows.push({
+        id: order.id,
+        repId: order.assignedRepId ?? null,
+        status: order.status ?? "New",
+        createdKey: orderCreatedKey(order),
+        productKey: order.productId ?? `name:${(order.productName ?? "").trim().toLowerCase()}`,
+        productName: order.productName ?? "",
+        state: order.state ?? "",
+        source: order.source ?? "",
+        customer: order.customer ?? "",
+        amount: Number(order.amount) || 0
+      });
+    }
+    return (
+      <RepProductPerformancePage
+        orders={rows}
+        reps={users.map((user) => ({ id: user.id, name: user.name }))}
+        todayKey={formatDateKey(new Date())}
+        target={deliveryGoals?.companyDefault.primaryTarget ?? 65}
+        bonusFor={(ids) => recognizedBonusTotalForRows(ids.map((id) => byId.get(id)).filter((order): order is TrackedOrder => Boolean(order)))}
         onBack={() => setManagerDashboardTab(managerDashboardReturnTab)}
         onOpenOrder={(orderId) => { setSelectedOrderId(orderId); setModal("orderDetails"); }}
       />
@@ -79162,7 +79201,7 @@ ${waybillLineItems(w).length > 1
               )}
             </div>
           ) : activePage === "Manager Dashboard" && (currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager") ? (
-              managerDashboardTab === "Weekly Reports" ? renderWeeklyReportsArea("dashboard") : managerDashboardTab === "Upsell Performance" ? renderUpsellPerformancePage() : (
+              managerDashboardTab === "Weekly Reports" ? renderWeeklyReportsArea("dashboard") : managerDashboardTab === "Upsell Performance" ? renderUpsellPerformancePage() : managerDashboardTab === "Rep Product Performance" ? renderRepProductPerformancePage() : (
               <div className="manager-dashboard-shell space-y-6">
                 <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 px-5 py-4 bg-gradient-to-r from-indigo-50 to-transparent rounded-2xl border border-indigo-100">
                   <div className="flex flex-col gap-1">
@@ -79179,14 +79218,14 @@ ${waybillLineItems(w).length > 1
                 </header>
 
                 <div className="flex max-w-full items-center overflow-x-auto rounded-2xl bg-gray-100 p-1 sm:w-fit">
-                  {(["Overview", "Targets", "Bonus", "Upsell Bonus", "Upsell Performance", "Team Challenges", "Weekly Reports", "Inventory", "Needs Attention"] as ManagerDashboardTab[]).map((tab) => (
+                  {(["Overview", "Targets", "Bonus", "Upsell Bonus", "Upsell Performance", "Rep Product Performance", "Team Challenges", "Weekly Reports", "Inventory", "Needs Attention"] as ManagerDashboardTab[]).map((tab) => (
                     <button
                       key={tab}
                       className={`!min-h-0 shrink-0 whitespace-nowrap rounded-xl px-4 py-2 text-sm font-black transition-colors ${managerDashboardTab === tab ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
-                      onClick={() => (tab === "Upsell Performance" ? openUpsellPerformance() : tab === "Weekly Reports" ? openWeeklyReportsTab() : setManagerDashboardTab(tab))}
+                      onClick={() => (tab === "Upsell Performance" ? openUpsellPerformance() : tab === "Rep Product Performance" ? openRepProductPerformance() : tab === "Weekly Reports" ? openWeeklyReportsTab() : setManagerDashboardTab(tab))}
                     >
                       <span className="inline-flex items-center gap-1.5">
-                        {tab === "Targets" ? "Targets & Incentives" : tab === "Bonus" ? "Bonus & Performance" : tab === "Upsell Bonus" ? "Upsell & Cross-Sell Bonus" : tab === "Upsell Performance" ? "Upsell Performance" : tab === "Team Challenges" ? "Team Challenges" : tab === "Weekly Reports" ? "Weekly Reports" : tab === "Inventory" ? "Inventory" : tab === "Needs Attention" ? "Needs Attention" : "Overview"}
+                        {tab === "Targets" ? "Targets & Incentives" : tab === "Bonus" ? "Bonus & Performance" : tab === "Upsell Bonus" ? "Upsell & Cross-Sell Bonus" : tab === "Upsell Performance" ? "Upsell Performance" : tab === "Rep Product Performance" ? "Rep Product Performance" : tab === "Team Challenges" ? "Team Challenges" : tab === "Weekly Reports" ? "Weekly Reports" : tab === "Inventory" ? "Inventory" : tab === "Needs Attention" ? "Needs Attention" : "Overview"}
                         {tab === "Needs Attention" && needsAttentionBadgeCount > 0 && (
                           <span
                             className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-rose-600 px-1.5 text-[11px] font-black text-white shadow-[0_0_0_2px_rgba(225,29,72,0.25)] animate-bounce"
