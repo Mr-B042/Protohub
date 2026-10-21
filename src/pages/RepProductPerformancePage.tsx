@@ -10,6 +10,12 @@ import { PRESET_LABEL, presetRange, shiftDay, shiftWindow, weekStart, windowSize
 import { money } from "../lib/money-privacy";
 import { Avatar, ProductThumb, SidePanel, downloadCsv, useClickAway } from "./product-trend/parts";
 import RepProductOverview, { type OverviewBucket, type OverviewProduct, type OverviewRep } from "./RepProductOverview";
+import { Card, KpiCard, RankBadge, type AddOnMoney, type FunnelFigures, type RppCtx } from "./rpp-ui";
+import RppTeamTab from "./rpp-team-tab";
+import RppStateTab from "./rpp-state-tab";
+import RppUpsellTab from "./rpp-upsell-tab";
+import RppTrendsTab from "./rpp-trends-tab";
+import RppCustomersTab, { CUSTOMER_TYPES, type CustomerTypeFilter } from "./rpp-customers-tab";
 import { BestWorstChart, BestWorstTable, ComparisonTable, FunnelChart, FunnelTable, type BestWorstPick, type BestWorstRow, type FunnelRow } from "./RepProductPerformanceViews";
 import { downloadXlsx } from "./product-trend/exports";
 import { buildCostBook, type TrendOrder } from "./product-trend/product-trend-model";
@@ -36,10 +42,27 @@ export type RepProductOrder = {
   createdKey: string;
   productKey: string;
   productName: string;
+  packageName: string;
+  /** Canonical state name ("Rivers State" and "Rivers" are one state). */
   state: string;
+  city: string;
   source: string;
   customer: string;
+  phone: string;
+  /** Same identity as the Customers page (phone, WhatsApp, email, name). */
+  customerKey: string;
+  /** Day of the customer's first order ever, and how many they have placed ever. */
+  customerFirstKey: string;
+  customerOrdersEver: number;
   amount: number;
+  /** What the customer first ordered, before any upsell or cross-sell. */
+  originalValue: number;
+  hasUpsell: boolean;
+  upsellFromQty: number | null;
+  upsellToQty: number | null;
+  crossSells: Array<{ productKey: string; name: string; amount: number }>;
+  /** Extra products that are not cross-sell (no cross-sell bonus). */
+  extras: Array<{ productKey: string; name: string; amount: number }>;
   /** Product cost of the order (Finance's costForOrder) - for Net Profit. */
   cogs: number;
   /** The order's own delivery fee. */
@@ -57,6 +80,8 @@ export type RepProductPerformanceProps = {
   target: number;
   /** Rep bonus earned on these delivered orders - the Manager Dashboard's own sum. */
   bonusFor: (orderIds: string[]) => number;
+  /** Add-on revenue / profit / bonus of one delivered order (the Upsell Bonus tab's calculation). */
+  addOnFor: (orderId: string) => AddOnMoney | null;
   expenses: RepProductExpense[];
   /** Net Profit is Owner / Admin only, like Product Trend. */
   canSeeProfit: boolean;
@@ -100,7 +125,7 @@ const compareLabel = (preset: PresetKey | "custom") =>
   : preset === "thisYear" ? "vs last year" : "vs previous period";
 const longDate = (key: string) => new Date(`${key}T00:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" });
 
-export default function RepProductPerformancePage({ orders, reps, todayKey, target, bonusFor, expenses, canSeeProfit, onBack, onOpenOrder }: RepProductPerformanceProps) {
+export default function RepProductPerformancePage({ orders, reps, todayKey, target, bonusFor, addOnFor, expenses, canSeeProfit, onBack, onOpenOrder }: RepProductPerformanceProps) {
   const [topTab, setTopTab] = useState<TopTab>("Product Performance (Sales Rep)");
   const [lowerTab, setLowerTab] = useState<LowerTab>("Product Breakdown by Sales Rep");
   const [preset, setPreset] = useState<PresetKey | "custom">("thisWeek");
@@ -115,6 +140,8 @@ export default function RepProductPerformancePage({ orders, reps, todayKey, targ
   const [othersOpen, setOthersOpen] = useState(false);
   const [allTop, setAllTop] = useState(false);
   const [cell, setCell] = useState<{ productKey: string; repId: string } | null>(null);
+  const [listDrawer, setListDrawer] = useState<{ title: string; subtitle: string; list: RepProductOrder[] } | null>(null);
+  const [customerType, setCustomerType] = useState<CustomerTypeFilter>("all");
   const [helpOpen, setHelpOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const closeExport = useCallback(() => setExportOpen(false), []);
@@ -198,7 +225,7 @@ export default function RepProductPerformancePage({ orders, reps, todayKey, targ
       .map((order) => ({ id: order.id, productId: order.productKey, state: order.state, agentId: "", status: order.status, amount: order.amount, units: 1, createdKey: order.createdKey, logisticsCost: order.logisticsCost, cogs: order.cogs }));
     return buildCostBook(inPeriod, expenses, window.start, window.end);
   }, [orders, expenses, window]);
-  const funnelOf = (list: RepProductOrder[]): Omit<FunnelRow, "key" | "name"> => {
+  const funnelOf = (list: RepProductOrder[]): FunnelFigures => {
     const f = { placed: 0, confirmed: 0, pending: 0, cancelled: 0, dispatched: 0, delivered: 0, failed: 0, revenue: 0, net: 0 };
     for (const order of list) {
       f.placed += 1;
@@ -261,6 +288,18 @@ export default function RepProductPerformancePage({ orders, reps, todayKey, targ
   }, [model, needle, othersOpen]);
 
   const periodLabel = `${longDate(window.start)} – ${longDate(window.end)}`;
+  const productNames = useMemo(() => new Map(options.products), [options.products]);
+  const ctx: RppCtx = {
+    current, before, window, preset, todayKey,
+    periodName: preset === "custom" ? "Selected Dates" : PRESET_LABEL[preset],
+    compare: compareLabel(preset),
+    periodLabel,
+    repIds: model.repIds,
+    nameOfRep, imageOf,
+    productName: (key) => productNames.get(key) ?? "Product",
+    funnelOf, bonusFor, addOnFor, target, canSeeProfit,
+    openList: (title, subtitle, list) => setListDrawer({ title, subtitle, list })
+  };
   const exportCsv = () => {
     const header = ["Product", ...model.repIds.flatMap((id) => [`${nameOfRep(id)} placed`, `${nameOfRep(id)} delivered`, `${nameOfRep(id)} DR %`, `${nameOfRep(id)} AOV`]), "Team placed", "Team delivered", "Team DR %", "Team revenue"];
     const line = (name: string, keys: string[]) => {
@@ -301,10 +340,10 @@ export default function RepProductPerformancePage({ orders, reps, todayKey, targ
         <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="m-0 text-[22px] font-black tracking-tight text-gray-900 sm:text-[26px] dark:text-slate-50">Product Performance (Sales Rep)</h1>
+              <h1 className="m-0 text-[22px] font-black tracking-tight text-gray-900 sm:text-[26px] dark:text-slate-50">{topTab === "Customer Insights" ? "Customer Insights (by Sales Rep)" : "Product Performance (Sales Rep)"}</h1>
               <span className="inline-flex items-center gap-0.5 rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-bold text-violet-700 dark:bg-violet-500/15 dark:text-violet-300"><Plus className="h-3 w-3" />New</span>
             </div>
-            <p className="m-0 mt-1 text-[13.5px] text-gray-500 dark:text-slate-400">Detailed product performance for each sales rep. See which products each rep is doing best and worst on, with full metrics and insights.</p>
+            <p className="m-0 mt-1 text-[13.5px] text-gray-500 dark:text-slate-400">{topTab === "Customer Insights" ? "Understand each sales rep's customers — who they are, where they are, what they buy, how they behave, and opportunities to sell more." : "Detailed product performance for each sales rep. See which products each rep is doing best and worst on, with full metrics and insights."}</p>
           </div>
           <div className="flex shrink-0 gap-2">
             <div className="relative" ref={exportRef}>
@@ -333,13 +372,13 @@ export default function RepProductPerformancePage({ orders, reps, todayKey, targ
       <div className="-mx-1 overflow-x-auto border-b border-gray-200 dark:border-slate-800">
         <div className="flex min-w-max gap-1 px-1">
           {TOP_TABS.map((tab) => (
-            <button key={tab} type="button" onClick={() => setTopTab(tab)} aria-current={topTab === tab ? "page" : undefined}
+            <button key={tab} type="button" onClick={() => { setTopTab(tab); setSearch(""); if (tab === "Product Comparison") setLowerTab("Product Comparison"); if (tab === "Product Performance (Sales Rep)") setLowerTab("Product Breakdown by Sales Rep"); }} aria-current={topTab === tab ? "page" : undefined}
               className={`!min-h-0 whitespace-nowrap border-b-2 px-3.5 py-3 text-[14px] font-semibold transition-colors ${topTab === tab ? "border-indigo-600 text-indigo-700 dark:text-indigo-300" : "border-transparent text-gray-600 hover:text-gray-900 dark:text-slate-400"}`}>{tab}</button>
           ))}
         </div>
       </div>
 
-      {topTab !== "Product Performance (Sales Rep)" && topTab !== "Overview" ? placeholder(topTab) : (<>
+      {(<>
         {/* ── Filters ──────────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
           <FilterSelect icon={<CalendarDays className="h-4 w-4 text-gray-500" />} label="Period" value={preset} onChange={(value) => {
@@ -351,22 +390,28 @@ export default function RepProductPerformancePage({ orders, reps, todayKey, targ
           <FilterSelect label="Product" value={productFilter} onChange={setProductFilter} options={[{ value: ALL, label: "All Products" }, ...options.products.map(([id, name]) => ({ value: id, label: name }))]} className="sm:w-[170px]" />
           <FilterSelect label="Order source" value={sourceFilter} onChange={setSourceFilter} options={[{ value: ALL, label: "All Order Sources" }, ...options.sources.map((source) => ({ value: source, label: source }))]} className="sm:w-[170px]" />
           <FilterSelect label="State" value={stateFilter} onChange={setStateFilter} options={[{ value: ALL, label: "All States" }, ...options.states.map((state) => ({ value: state, label: state }))]} className="sm:w-[150px]" />
+          {topTab === "Customer Insights" && <FilterSelect label="Customer type" value={customerType} onChange={(value) => setCustomerType(value as CustomerTypeFilter)} options={CUSTOMER_TYPES} className="sm:w-[170px]" />}
           <button type="button" onClick={resetFilters} className="!min-h-0 col-span-2 justify-end sm:ml-auto inline-flex h-9 items-center gap-1.5 px-2 text-[13px] font-semibold text-indigo-700 hover:underline dark:text-indigo-300"><RotateCcw className="h-4 w-4" /> Reset Filters</button>
         </div>
 
-        {/* ── KPI cards ────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        {/* ── KPI cards (Upsell & Cross-Sell and Customer Insights have their own) ── */}
+        {topTab !== "Upsell & Cross-Sell" && topTab !== "Customer Insights" && <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
           <KpiCard icon={<ShoppingCart className="h-5 w-5" />} tone="bg-violet-100 text-violet-600" value={nf(total.placed)} label="Total Orders" compare={compareLabel(preset)} delta={change(total.placed, prior.placed)} />
           <KpiCard icon={<Truck className="h-5 w-5" />} tone="bg-emerald-100 text-emerald-600" value={nf(total.delivered)} label="Delivered Orders" compare={compareLabel(preset)} delta={change(total.delivered, prior.delivered)} />
           <KpiCard icon={<Percent className="h-5 w-5" />} tone="bg-rose-100 text-rose-600" value={rate === null ? "—" : `${Math.round(rate)}%`} label="Delivery Rate" compare={compareLabel(preset)} delta={rate === null || priorRate === null ? null : rate - priorRate} points />
           <KpiCard icon={<CirclePercent className="h-5 w-5" />} tone="bg-emerald-100 text-emerald-600" value={aov === null ? "—" : money(aov)} label="Delivered AOV" compare={compareLabel(preset)} delta={aov === null || priorAov === null ? null : change(aov, priorAov)} />
           <KpiCard icon={<BarChart3 className="h-5 w-5" />} tone="bg-blue-100 text-blue-600" value={money(total.revenue)} label="Revenue (Delivered)" compare={compareLabel(preset)} delta={change(total.revenue, prior.revenue)} />
           <KpiCard icon={<Trophy className="h-5 w-5" />} tone="bg-amber-100 text-amber-600" value={money(bonus)} label="Total Rep Bonus" />
-        </div>
+        </div>}
 
         {total.placed === 0 ? (
           <div className="rounded-2xl border border-gray-200 bg-white px-6 py-14 text-center text-[14px] text-gray-500 shadow-sm dark:border-slate-800 dark:bg-slate-900">No orders found for the selected filters.</div>
-        ) : topTab === "Overview" ? (() => {
+        ) : topTab === "Team Performance" ? <RppTeamTab ctx={ctx} />
+          : topTab === "State Breakdown" ? <RppStateTab ctx={ctx} />
+          : topTab === "Upsell & Cross-Sell" ? <RppUpsellTab ctx={ctx} />
+          : topTab === "Product Trends" ? <RppTrendsTab ctx={ctx} />
+          : topTab === "Customer Insights" ? <RppCustomersTab ctx={ctx} customerType={customerType} />
+          : topTab === "Overview" ? (() => {
           // Chart points: days up to a month, weeks up to four months, then months.
           const days = windowSize(window);
           const bucketOf = (key: string) => (days <= 31 ? key : days <= 120 ? weekStart(key) : `${key.slice(0, 7)}-01`);
@@ -374,7 +419,7 @@ export default function RepProductPerformancePage({ orders, reps, todayKey, targ
             ? new Date(`${key}T00:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric" })
             : new Date(`${key}T00:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", year: "2-digit" });
           const keys: string[] = [];
-          for (let key = window.start; key <= window.end; key = shiftDay(key, 1)) { const bucket = bucketOf(key); if (keys[keys.length - 1] !== bucket) keys.push(bucket); }
+          for (let key = window.start; key <= window.end && key <= todayKey; key = shiftDay(key, 1)) { const bucket = bucketOf(key); if (keys[keys.length - 1] !== bucket) keys.push(bucket); }
           const buckets: OverviewBucket[] = keys.map((key) => {
             const f = funnelOf(current.filter((order) => bucketOf(order.createdKey) === key));
             return { label: labelOf(key), placed: f.placed, delivered: f.delivered, revenue: f.revenue, net: f.net };
@@ -552,6 +597,27 @@ export default function RepProductPerformancePage({ orders, reps, todayKey, targ
         );
       })()}
 
+      {listDrawer && (
+        <SidePanel title={listDrawer.title} subtitle={listDrawer.subtitle} onClose={() => setListDrawer(null)}>
+          {listDrawer.list.length === 0 ? <p className="text-[13px] text-gray-500">No orders.</p> : (
+            <ul className="m-0 list-none divide-y divide-gray-100 p-0 dark:divide-slate-800">
+              {listDrawer.list.map((order) => (
+                <li key={order.id}>
+                  <button type="button" onClick={() => onOpenOrder(order.id)} className="!min-h-0 flex w-full items-center gap-3 py-3 text-left hover:bg-gray-50 dark:hover:bg-slate-900">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[13.5px] font-semibold text-gray-900 dark:text-slate-100">#{order.id} · {order.customer || "Customer"}</div>
+                      <div className="text-[12px] text-gray-500">{nameOfRep(order.repId ?? "")} · {order.productName} · {order.state || "No state"} · placed {longDate(order.createdKey)}</div>
+                    </div>
+                    <StatusChip status={order.status} />
+                    <div className="w-24 shrink-0 text-right text-[13px] font-semibold text-gray-900 dark:text-slate-100">{money(order.amount)}</div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SidePanel>
+      )}
+
       {helpOpen && createPortal(
         <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-900/40 p-4 sm:items-center" role="dialog" aria-modal="true" aria-labelledby="rpp-help">
           <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl dark:bg-slate-900">
@@ -610,45 +676,6 @@ function DateRange({ value, todayKey, onChange }: { value: DateWindow; todayKey:
       )}
     </div>
   );
-}
-
-function KpiCard({ icon, tone, value, label, delta, points = false, compare = "" }: { icon: ReactNode; tone: string; value: string; label: string; delta?: number | null; points?: boolean; compare?: string }) {
-  const size = value.length > 10 ? "text-[16px] sm:text-[17px]" : value.length > 7 ? "text-[18px] sm:text-[19px]" : "text-[20px] sm:text-[22px]";
-  const deltaText = delta === undefined ? null : delta === null ? <span className="text-[11px] text-gray-400">—</span> : (
-    <span className={`inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap text-[11.5px] font-bold ${delta >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-      {delta >= 0 ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}{Math.abs(Math.round(delta))}{points ? " pts" : "%"}
-    </span>
-  );
-  return (
-    <div className="flex items-center gap-3 rounded-2xl border border-gray-200 bg-white p-3 shadow-sm sm:p-3.5 dark:border-slate-800 dark:bg-slate-900">
-      <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full sm:h-11 sm:w-11 ${tone} dark:bg-white/5`}>{icon}</span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-start justify-between gap-1">
-          <div className={`whitespace-nowrap font-black tracking-tight text-gray-900 dark:text-slate-50 ${size}`}>{value}</div>
-          {deltaText && <div className="hidden shrink-0 text-right leading-tight 2xl:block">{deltaText}<div className="text-[10px] text-gray-400">{compare}</div></div>}
-        </div>
-        <div className="mt-0.5 truncate text-[12px] text-gray-500 dark:text-slate-400" title={label}>{label}</div>
-        {deltaText && <div className="mt-0.5 flex items-center gap-1 text-[10.5px] text-gray-400 2xl:hidden">{deltaText}<span className="truncate">{compare}</span></div>}
-      </div>
-    </div>
-  );
-}
-
-function Card({ title, sub, action, children }: { title: string; sub?: string; action?: ReactNode; children: ReactNode }) {
-  return (
-    <section className="min-w-0 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-      <div className="mb-4 flex items-start justify-between gap-3">
-        <div className="min-w-0"><h2 className="m-0 text-[15px] font-bold text-gray-900 dark:text-slate-100">{title}</h2>{sub && <p className="m-0 mt-0.5 text-[12px] text-gray-500">{sub}</p>}</div>
-        {action}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function RankBadge({ rank }: { rank: number }) {
-  const tone = rank === 1 ? "bg-amber-100 text-amber-700 ring-amber-300" : rank === 2 ? "bg-slate-100 text-slate-600 ring-slate-300" : rank === 3 ? "bg-orange-100 text-orange-700 ring-orange-300" : "bg-blue-50 text-blue-700 ring-blue-200";
-  return <span className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-black ring-2 ${tone}`}>{rank}</span>;
 }
 
 function DeliveredDonut({ total, slices }: { total: number; slices: Array<{ label: string; value: number; color: string }> }) {

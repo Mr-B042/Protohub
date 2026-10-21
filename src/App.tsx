@@ -32584,10 +32584,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const renderRepProductPerformancePage = () => {
     const rows: RepProductOrder[] = [];
     const byId = new Map<string, TrackedOrder>();
+    // Each customer's whole history (same identity as the Customers page), so
+    // "new" vs "returning" does not depend on the period picked.
+    const history = new Map<string, { first: string; count: number }>();
+    for (const order of trackedOrders) {
+      if (order.reviewHold) continue;
+      const key = customerIdentityKeyForOrder(order);
+      const createdKey = orderCreatedKey(order);
+      const seen = history.get(key);
+      if (!seen) history.set(key, { first: createdKey, count: 1 });
+      else { seen.count += 1; if (createdKey < seen.first) seen.first = createdKey; }
+    }
     for (const order of trackedOrders) {
       // Held repeat orders are out of every conversion report.
       if (order.reviewHold) continue;
       byId.set(order.id, order);
+      const customerKey = customerIdentityKeyForOrder(order);
+      const crossSellRevenue = (order.crossSellLines ?? []).reduce((total, line) => total + Number(line.amount ?? 0), 0);
       rows.push({
         id: order.id,
         repId: order.assignedRepId ?? null,
@@ -32595,15 +32608,44 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         createdKey: orderCreatedKey(order),
         productKey: order.productId ?? `name:${(order.productName ?? "").trim().toLowerCase()}`,
         productName: order.productName ?? "",
-        state: order.state ?? "",
+        packageName: order.packageName ?? "",
+        state: normalizeStateName(order.state || order.location || ""),
+        city: order.city ?? "",
         source: order.source ?? "",
         customer: order.customer ?? "",
+        phone: order.phone ?? "",
+        customerKey,
+        customerFirstKey: history.get(customerKey)?.first ?? orderCreatedKey(order),
+        customerOrdersEver: history.get(customerKey)?.count ?? 1,
         amount: Number(order.amount) || 0,
+        originalValue: typeof order.originalAmount === "number" ? order.originalAmount : Math.max(0, (Number(order.amount) || 0) - crossSellRevenue),
+        hasUpsell: orderHasVerifiedUpsell(order),
+        upsellFromQty: order.upsellFromQty ?? null,
+        upsellToQty: order.upsellToQty ?? null,
+        crossSells: (order.crossSellLines ?? []).map((line) => ({ productKey: line.productId ?? `name:${(line.productName ?? "").trim().toLowerCase()}`, name: crossSellLineDisplayName(line), amount: Number(line.amount ?? 0) })),
+        extras: (order.additionalLines ?? []).map((line) => ({ productKey: line.productId, name: line.productName, amount: Number(line.amount ?? 0) })),
         // Net profit uses Finance's own costs, the same way Product Trend does.
         cogs: (order.status ?? "New") === "Delivered" ? costForOrder(order) : 0,
         logisticsCost: Number(order.logisticsCost ?? 0) || 0
       });
     }
+    // Add-on money, the Upsell & Cross-Sell Bonus tab's own calculation (so
+    // the pages agree). Worked out only for the orders a view asks about.
+    const addOnFor = (orderId: string) => {
+      const order = byId.get(orderId);
+      if (!order || (order.status ?? "New") !== "Delivered") return null;
+      if (!orderHasVerifiedUpsell(order) && !(order.crossSellLines?.length)) return null;
+      const breakdown = expansionProfitBreakdownForOrder(order);
+      const sum = (kind: "Upsell" | "Cross-sell", field: "revenue" | "contributionProfit" | "commission") =>
+        breakdown.lines.filter((line) => line.kind === kind).reduce((total, line) => total + line[field], 0);
+      return {
+        revenue: breakdown.revenue,
+        profit: breakdown.contributionProfit,
+        bonus: breakdown.commission,
+        upsellRevenue: sum("Upsell", "revenue"),
+        crossSellRevenue: sum("Cross-sell", "revenue")
+      };
+    };
     return (
       <RepProductPerformancePage
         orders={rows}
@@ -32611,6 +32653,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         todayKey={formatDateKey(new Date())}
         target={deliveryGoals?.companyDefault.primaryTarget ?? 65}
         bonusFor={(ids) => recognizedBonusTotalForRows(ids.map((id) => byId.get(id)).filter((order): order is TrackedOrder => Boolean(order)))}
+        addOnFor={addOnFor}
         expenses={expenses.map((expense) => ({ amount: Number(expense.amount) || 0, dateKey: normalizeDateKey(expense.date), productId: expense.productId ?? null, type: expense.type }))}
         canSeeProfit={currentRole === "Owner" || currentRole === "Admin"}
         onBack={() => setManagerDashboardTab(managerDashboardReturnTab)}
