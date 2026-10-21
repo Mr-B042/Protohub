@@ -65,8 +65,8 @@ export function NativeAppUpdatePrompt() {
           </div>
         </div>
         {!!release.notes?.length && (
-          <ul style={{ margin: "16px 0 0", paddingLeft: 20, fontSize: 14, color: "#334155", lineHeight: 1.5 }}>
-            {release.notes.map((note) => <li key={note}>{note}</li>)}
+          <ul style={{ margin: "16px 0 0", paddingLeft: 20, fontSize: 14, color: "#334155", lineHeight: 1.5, listStyle: "disc" }}>
+            {release.notes.map((note) => <li key={note} style={{ display: "list-item" }}>{note}</li>)}
           </ul>
         )}
         <p style={{ margin: "14px 0 0", fontSize: 13, color: "#64748b" }}>
