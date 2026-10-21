@@ -5,6 +5,7 @@ import { auth } from "./lib/auth";
 import { ensureFreshAuthSession } from "./lib/api";
 import { ensureServiceWorkerRegistration } from "./lib/push-client";
 import { AppUpdateWatcher } from "./components/AppUpdateWatcher";
+import { NativeAppUpdatePrompt } from "./components/NativeAppUpdatePrompt";
 import PublicOrderFormPage from "./pages/PublicOrderFormPage";
 import "./styles.css";
 
@@ -320,6 +321,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     >
       <Suspense fallback={<RouteFallback message="Loading…" />}>
         <Root />
+        <NativeAppUpdatePrompt />
       </Suspense>
     </Sentry.ErrorBoundary>
   </React.StrictMode>
