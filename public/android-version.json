@@ -1,0 +1,11 @@
+{
+  "versionCode": 2,
+  "versionName": "1.1",
+  "minVersionCode": 1,
+  "releasedAt": "2026-10-21",
+  "url": "https://raw.githubusercontent.com/Mr-B042/Protohub/main/public/protohub.apk",
+  "notes": [
+    "Send a receipt picture straight to the customer's WhatsApp",
+    "Save receipt pictures on your phone without leaving the app"
+  ]
+}

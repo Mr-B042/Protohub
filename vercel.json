@@ -15,6 +15,15 @@
   ],
   "headers": [
     {
+      "source": "/android-version.json",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        }
+      ]
+    },
+    {
       "source": "/version.json",
       "headers": [
         {

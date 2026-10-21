@@ -74,7 +74,11 @@ npm ci && npm run build && npx cap sync android
 JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
   (cd android && ./gradlew assembleDebug)      # Capacitor 8 needs Java 21
 cp android/app/build/outputs/apk/debug/app-debug.apk public/protohub.apk
-# commit public/protohub.apk via a PR; staff re-download from Settings → Install app
+# ALSO bump public/android-version.json (versionCode, versionName, notes):
+#   every older app then shows "Update available" (NativeAppUpdatePrompt).
+#   Raise minVersionCode only when old apps must not be used any more
+#   ("Update required", no Later button).
+# commit both via a PR; staff re-download from Settings → Install app
 ```
 
 | Version | Date | What changed natively |
