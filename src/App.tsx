@@ -32598,7 +32598,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         state: order.state ?? "",
         source: order.source ?? "",
         customer: order.customer ?? "",
-        amount: Number(order.amount) || 0
+        amount: Number(order.amount) || 0,
+        // Net profit uses Finance's own costs, the same way Product Trend does.
+        cogs: (order.status ?? "New") === "Delivered" ? costForOrder(order) : 0,
+        logisticsCost: Number(order.logisticsCost ?? 0) || 0
       });
     }
     return (
@@ -32608,6 +32611,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         todayKey={formatDateKey(new Date())}
         target={deliveryGoals?.companyDefault.primaryTarget ?? 65}
         bonusFor={(ids) => recognizedBonusTotalForRows(ids.map((id) => byId.get(id)).filter((order): order is TrackedOrder => Boolean(order)))}
+        expenses={expenses.map((expense) => ({ amount: Number(expense.amount) || 0, dateKey: normalizeDateKey(expense.date), productId: expense.productId ?? null, type: expense.type }))}
+        canSeeProfit={currentRole === "Owner" || currentRole === "Admin"}
         onBack={() => setManagerDashboardTab(managerDashboardReturnTab)}
         onOpenOrder={(orderId) => { setSelectedOrderId(orderId); setModal("orderDetails"); }}
       />
