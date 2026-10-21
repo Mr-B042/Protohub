@@ -4,6 +4,7 @@ import * as Sentry from "@sentry/react";
 import { auth } from "./lib/auth";
 import { ensureFreshAuthSession } from "./lib/api";
 import { ensureServiceWorkerRegistration } from "./lib/push-client";
+import { AppUpdateWatcher } from "./components/AppUpdateWatcher";
 import PublicOrderFormPage from "./pages/PublicOrderFormPage";
 import "./styles.css";
 
@@ -281,6 +282,7 @@ function Root() {
 
   return (
     <Suspense fallback={<RouteFallback message="Loading workspace…" />}>
+      <AppUpdateWatcher />
       <AdminApp onLogout={handleLogout} />
     </Suspense>
   );

@@ -13,11 +13,23 @@ const excludeHostedDownloads = () => ({
   },
 });
 
+const APP_BUILD = process.env.VERCEL_GIT_COMMIT_SHA ? process.env.VERCEL_GIT_COMMIT_SHA.slice(0, 7) : "local";
+
+// /version.json names the build that is live. An open app compares it with its
+// own __APP_BUILD__ and reloads when they differ (src/components/AppUpdateWatcher).
+const emitVersionFile = () => ({
+  name: "emit-version-file",
+  apply: "build" as const,
+  generateBundle(this: { emitFile: (file: { type: "asset"; fileName: string; source: string }) => void }) {
+    this.emitFile({ type: "asset", fileName: "version.json", source: JSON.stringify({ build: APP_BUILD }) });
+  },
+});
+
 export default defineConfig({
-  plugins: [react(), excludeHostedDownloads()],
+  plugins: [react(), excludeHostedDownloads(), emitVersionFile()],
   // The build a bug report was sent from (Issue Management, 9 Oct 2026).
   define: {
-    __APP_BUILD__: JSON.stringify(process.env.VERCEL_GIT_COMMIT_SHA ? process.env.VERCEL_GIT_COMMIT_SHA.slice(0, 7) : "local")
+    __APP_BUILD__: JSON.stringify(APP_BUILD)
   },
   resolve: {
     alias: {
