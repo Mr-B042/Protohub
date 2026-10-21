@@ -258,8 +258,8 @@ export default function ManagerWeeklyReviewPage({
         ? `${total - approvedCount} of ${total} report${total === 1 ? "" : "s"} still need${total - approvedCount === 1 ? "s" : ""} your approval.`
         : fundsProblems.length > 0
           ? `Funds & Expenses: ${fundsProblems.map((item) => `${item.managerName}: ${item.readiness.join(" ")}`).join(" ")}`
-        : ownerReturns.length > 0 && !ownerReturns.every((row) => (ownerResponses[row.id] ?? "").trim())
-          ? "Answer the owner's comments first."
+        : ownerReturns.length > 0 && !ownerReturns.every((row) => (ownerResponses[row.id] ?? "").trim().length >= 2)
+          ? "Answer the owner's comments first: write what you changed in the box under \"Returned by the owner\"."
           : "";
 
   const steps: WorkflowStep[] = [
