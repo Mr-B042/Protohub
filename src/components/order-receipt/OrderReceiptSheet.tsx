@@ -166,21 +166,32 @@ export default function OrderReceiptSheet({ order, onClose, onEdit, onOpenWhatsA
   const sendFromApp = async (file: File, text: string) => {
     setAppBusy(true);
     try {
-      if (text) void navigator.clipboard?.writeText(text).catch(() => undefined);
       if (await appShareFile(file)) {
+        if (text) void navigator.clipboard?.writeText(text).catch(() => undefined);
         setSuccess("Receipt shared");
         if (text) showToast("Your note is copied. Paste it under the picture in WhatsApp.");
         return;
       }
       const link = await receiptLink(file);
+      // Close the full-screen preview first: the "WhatsApp or WhatsApp
+      // Business?" chooser opens under it and was never seen (21 Oct 2026).
+      setPreviewOpen(false);
       onOpenWhatsApp(phone, [text, `Your order receipt: ${link.url}`].filter(Boolean).join("\n\n"));
-      setSuccess("Receipt link ready");
     } catch (err: any) { appFailed(err, "send the receipt"); }
     finally { setAppBusy(false); }
+  };
+  /** Saves the PNG on the phone (Documents); false when this app build has no Filesystem plugin. */
+  const appSaveFile = async (file: File) => {
+    const { Capacitor } = await import("@capacitor/core");
+    if (!Capacitor.isPluginAvailable("Filesystem")) return false;
+    const { Filesystem, Directory } = await import("@capacitor/filesystem");
+    await Filesystem.writeFile({ path: `Protohub/${file.name}`, data: (await toDataUrl(file)).split(",")[1], directory: Directory.Documents, recursive: true });
+    return true;
   };
   const saveFromApp = async (file: File) => {
     setAppBusy(true);
     try {
+      if (await appSaveFile(file).catch(() => false)) { setSuccess("Receipt saved"); showToast("Saved in Documents › Protohub on this phone."); return; }
       if (await appShareFile(file)) return;
       const link = await receiptLink(file);
       openOutside(link.pageUrl);
@@ -204,6 +215,7 @@ export default function OrderReceiptSheet({ order, onClose, onEdit, onOpenWhatsA
     } else {
       download(ready);
       setSuccess("Receipt saved");
+      setPreviewOpen(false);
       onOpenWhatsApp(phone, text);
       showToast("Receipt saved. Attach it in the WhatsApp chat that just opened.");
     }
