@@ -59,7 +59,30 @@ sizing/padding live in `scripts/gen-android-icons.mjs`. `sharp` (used by the scr
 is resolved from `backend/node_modules`. If `android/app/build/` has stale resource
 artifacts, run `rm -rf app/build/intermediates` before rebuilding.
 
-## Cutting the release (in Android Studio)
+## How the app actually ships today (21 Oct 2026)
+
+Staff install the APK from **GitHub**, not the Play Store:
+`organizations.android_app_url` = `https://raw.githubusercontent.com/Mr-B042/Protohub/main/public/protohub.apk`.
+That APK is a **debug build signed with this Mac's `~/.android/debug.keystore`**
+(SHA-256 `9e:c9:e6:a2:…:87:8b`). An update MUST use the same key or Android refuses
+to install it over the old one. (`protohub-release.keystore` in the May backup is a
+DIFFERENT key - only for a future Play Store listing.)
+
+```bash
+npm ci && npm run build && npx cap sync android
+# bump versionCode / versionName in android/app/build.gradle
+JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
+  (cd android && ./gradlew assembleDebug)      # Capacitor 8 needs Java 21
+cp android/app/build/outputs/apk/debug/app-debug.apk public/protohub.apk
+# commit public/protohub.apk via a PR; staff re-download from Settings → Install app
+```
+
+| Version | Date | What changed natively |
+|---|---|---|
+| 1 (1.0) | 26 Jun 2026 | first live-mode shell (push, splash, status bar) |
+| 2 (1.1) | 21 Oct 2026 | + @capacitor/share 8.0.3, @capacitor/filesystem 8.1.4, WRITE_EXTERNAL_STORAGE (≤ Android 10): receipt picture shared straight to WhatsApp, Save writes Documents/Protohub |
+
+## Cutting a Play Store release (in Android Studio)
 
 1. Bump **versionCode** (integer, must increase) and **versionName** in
    `android/app/build.gradle`.
