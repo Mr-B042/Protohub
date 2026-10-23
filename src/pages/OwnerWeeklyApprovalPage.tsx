@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import {
   AuditTable, Avatar, BonusInitialCells, ChartLegend, CompanyStatusPill, CorrectionForm, CorrectionList, KpiCard, Modal, NoteBox, NumberedHeader,
-  OrdersRateChart, Panel, PayoutChangeNote, MissingFeeNote, ProductDonut, RateBar, RepStatusPill, StepBadge, WeekPicker, WorkflowSteps, dailyChartRows, deltaPct,
+  OrdersRateChart, Panel, PayoutChangeNote, MissingFeeNote, LateSendNote, ProductDonut, RateBar, RepStatusPill, StepBadge, WeekPicker, WorkflowSteps, dailyChartRows, deltaPct,
   downloadCsv, longDate, nf, pctText, shortDateTime, type CorrectionDraft, type WorkflowStep
 } from "../components/WeeklyReportParts";
 import { CompanyProductTable, OrdersTable, RepBonusTable, RepReviewModal, shownSnapshot, type ReviewRepRow } from "./ManagerWeeklyReviewPage";
@@ -262,6 +262,7 @@ export default function OwnerWeeklyApprovalPage({
                   {nf(snap ? bonusInitialFinal(snap).final : 0)}
                   {row.payoutChange && <PayoutChangeNote change={row.payoutChange} sym={sym} />}
                   {snap?.missingFeeDetail && <MissingFeeNote detail={snap.missingFeeDetail} sym={sym} />}
+                  <LateSendNote detail={row.lateSend} sym={sym} />
                 </td>
                 <td className="px-2 py-3">
                   <span className="flex items-center gap-1">

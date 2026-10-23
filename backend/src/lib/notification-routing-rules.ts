@@ -8,7 +8,7 @@ export const ROUTABLE_ROLES = [
 
 export type AlertKey =
   | "order_new" | "order_confirmed" | "order_delivered" | "order_cancelled" | "order_failed"
-  | "order_rescheduled" | "order_assigned" | "order_recovered" | "order_follow_up"
+  | "order_rescheduled" | "order_assigned" | "order_recovered" | "order_follow_up" | "order_late_send"
   | "cart_new" | "cart_assigned";
 
 export type AlertRoute = { roles: string[]; rep: boolean; push: boolean };
@@ -24,6 +24,7 @@ export const ALERTS: Record<AlertKey, AlertDef> = {
   order_rescheduled: { group: "Orders", label: "Order rescheduled", hint: "The delivery date was moved.", repApplies: true, defaults: { roles: ["Owner", "Admin"], rep: true, push: true } },
   order_assigned:    { group: "Orders", label: "Order assigned", hint: "An order was given to a rep.", repApplies: true, defaults: { roles: [], rep: true, push: true } },
   order_recovered:   { group: "Orders", label: "Recovered order", hint: "An order that came in while the system was down.", repApplies: true, defaults: { roles: ["Owner", "Admin"], rep: true, push: true } },
+  order_late_send:   { group: "Orders", label: "Order not sent out in 15 min", hint: "A rep left an order in New past 15 working minutes (from 10am, 11am on Mondays).", repApplies: true, defaults: { roles: ["Owner", "Admin", "Manager"], rep: false, push: true } },
   order_follow_up:   { group: "Follow-ups", label: "Follow-up due", hint: "A scheduled call or follow-up is due.", repApplies: true, defaults: { roles: ["Owner", "Admin"], rep: true, push: true } },
   cart_new:          { group: "Abandoned carts", label: "New abandoned cart", hint: "A customer left the order form without finishing.", repApplies: false, defaults: { roles: ["Owner", "Admin"], rep: false, push: true } },
   cart_assigned:     { group: "Abandoned carts", label: "Cart assigned", hint: "A cart was given to a rep to call.", repApplies: true, defaults: { roles: ["Owner", "Admin", "Manager"], rep: true, push: true } },

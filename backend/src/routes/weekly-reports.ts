@@ -9,6 +9,7 @@ import { notifyWeeklyReport } from "../lib/weekly-report-notifications.js";
 import { branchFundManagers, loadFundWeek } from "./manager-funds.js";
 import { disputesForWeek, logMissesForWeek } from "./log-misses.js";
 import { MISSING_FEE_TYPE, missingFeesFor } from "../lib/missing-fee-penalty.js";
+import { LATE_SEND_FINE_TYPE, lateSendsFor } from "../lib/late-send.js";
 import { addDaysToDateKey, sundayWeekStartForDateKey, lagosDateKey, weekEndFromStart } from "../lib/sales-bonus-engine.js";
 import { FIRST_REPORT_WEEK,
   CORRECTION_SECTIONS,
@@ -319,7 +320,7 @@ async function finesForWeek(orgId: string, repIds: string[] | null, weekStart: s
   return (data ?? []).map((row: any) => ({
     id: row.id,
     repId: row.rep_id,
-    label: [row.type, row.reason].filter(Boolean).join(" - ") + (row.remove_all_bonuses ? " (removes all bonuses at payroll)" : ""),
+    label: [row.type === LATE_SEND_FINE_TYPE ? "Late order send" : row.type, row.reason].filter(Boolean).join(" - ") + (row.remove_all_bonuses ? " (removes all bonuses at payroll)" : ""),
     amount: Number(row.amount ?? 0),
     date: String(row.created_at ?? "").slice(0, 10)
   }));
@@ -819,7 +820,7 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
     // the page took 7-8 seconds to answer. They do not depend on each other.
     const repReportsQuery = supabase.from("rep_weekly_reports").select(REP_COLUMNS).eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart);
     const [company, repReports, corrections, auditRows, expectedRepIds, fines, previousFines, adjustments, previousAdjustments, bonusQueries, payoutChanges, gate,
-      editedAfterSubmit, waitingWeeks, logMisses, previousLogMisses, logMissDisputes, carriedFines, funds, missingFees] = await Promise.all([
+      editedAfterSubmit, waitingWeeks, logMisses, previousLogMisses, logMissDisputes, carriedFines, funds, missingFees, lateSends] = await Promise.all([
       loadCompanyReport(orgId, branchId, weekStart),
       repReportsQuery,
       supabase.from("weekly_report_corrections").select(CORRECTION_COLUMNS).eq("org_id", orgId).eq("branch_id", branchId).eq("week_start", weekStart).order("created_at", { ascending: true }),
@@ -845,7 +846,8 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
       disputesForWeek(orgId, branchId, null, weekStart),
       carriedFinesFor(orgId, branchId, null, weekStart),
       fundsForWeek(orgId, branchId, weekStart),
-      missingFeesFor(orgId, weekStart)
+      missingFeesFor(orgId, weekStart),
+      lateSendsFor(orgId, weekStart)
     ]);
     if (repReports.error) throw repReports.error;
     if (bonusQueries.error) throw bonusQueries.error;
@@ -874,6 +876,8 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
       carriedFines,
       // Leadership only - never sent on /mine. A list to act on, not a charge.
       missingFees,
+      // Orders not sent out in 15 working minutes, and any fine already added for them.
+      lateSends,
       funds: funds.map(({ manager, fund }) => ({
         managerId: manager.id,
         managerName: manager.name,
@@ -1092,6 +1096,54 @@ const CompanySubmitSchema = z.object({
 });
 
 // ── Payout change: the manager corrects a rep's final payout ───────────────
+
+// ── Fine for orders not sent out in 15 minutes (Bright, 23 Oct 2026) ────────
+// The system lists the late orders (lib/late-send.ts) but never charges.
+// Admin / Manager / Owner type the amount here; it is saved as an ordinary
+// fine, so the rep sees it in their fines and payroll takes it off.
+const LateSendFineSchema = z.object({
+  weekStart: weekStartSchema,
+  amount: z.number().int("Use whole naira.").positive("Enter an amount above 0.").max(10_000_000, "That amount is too large."),
+  orderIds: z.array(z.string().trim().min(1)).max(500).default([]),
+  note: z.string().trim().max(400).optional()
+});
+
+router.post("/rep/:repId/late-send-fine", requireRole(...LEADERSHIP), async (req, res) => {
+  const parsed = LateSendFineSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+  const { weekStart, amount, orderIds, note } = parsed.data;
+  try {
+    const branchId = requireBranch(req);
+    const orgId = req.user!.orgId;
+    const repId = String(req.params.repId);
+    const { data: rep, error: repError } = await supabase.from("users").select("id, name").eq("id", repId).eq("org_id", orgId).maybeSingle();
+    if (repError) throw repError;
+    if (!rep) throw httpError(404, "That sales rep was not found.");
+    const list = orderIds.length ? `: ${orderIds.map((id) => `#${id}`).join(", ")}` : "";
+    const { error } = await supabase.from("rep_penalties").insert({
+      org_id: orgId, branch_id: branchId, rep_id: repId, rep_name: rep.name ?? "Sales rep",
+      type: LATE_SEND_FINE_TYPE, amount, remove_all_bonuses: false,
+      period: weekEndFromStart(weekStart).slice(0, 7), week_start: weekStart,
+      reason: `Order${orderIds.length === 1 ? "" : "s"} not sent out within 15 minutes${list}${note ? ` (${note})` : ""}`.slice(0, 1000),
+      by_name: req.user!.name ?? req.user!.role
+    });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (error: any) {
+    sendError(res, error, "Could not add this fine.");
+  }
+});
+
+router.delete("/late-send-fine/:id", requireRole(...LEADERSHIP), async (req, res) => {
+  try {
+    const { error } = await supabase.from("rep_penalties").delete()
+      .eq("id", String(req.params.id)).eq("org_id", req.user!.orgId).eq("type", LATE_SEND_FINE_TYPE);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (error: any) {
+    sendError(res, error, "Could not remove this fine.");
+  }
+});
 
 const PayoutChangeSchema = z.object({
   weekStart: weekStartSchema,

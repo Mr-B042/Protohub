@@ -10,6 +10,7 @@ import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import cron from "node-cron";
+import { runLateSendAlerts } from "./lib/late-send.js";
 import { logger } from "./lib/logger.js";
 import { runtimeDataProfile } from "./lib/local-safety.js";
 import { syncDueOrderFollowUpNotifications } from "./lib/order-follow-up-notifications.js";
@@ -493,6 +494,18 @@ cron.schedule("*/2 * * * *", async () => {
   try { await runCartAutoAssign(); }
   catch (e) { logger.error("cron: cart auto-assign crashed", { error: (e as Error).message }); }
 });
+}
+
+// ── Order not sent out in 15 working minutes — every minute, working hours ──
+// Tells Admin / Manager / Owner once per late order (Bright, 23 Oct 2026).
+// Rules in lib/late-send-rules.ts. Nothing is charged here.
+if (ENABLE_BACKGROUND_JOBS) {
+cron.schedule("* 10-17 * * 1-6", async () => {
+  try {
+    const { sent } = await runLateSendAlerts();
+    if (sent > 0) logger.info("cron: late order send alerts", { sent });
+  } catch (e) { logger.error("cron: late order send alerts crashed", { error: (e as Error).message }); }
+}, { timezone: "Africa/Lagos" });
 }
 
 // ── Follow-up KPI nightly close — 22:00 Africa/Lagos (21:00 UTC) ──

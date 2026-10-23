@@ -2,6 +2,7 @@
 // All requests go through `request()` which attaches the Bearer token
 // and auto-refreshes if the token has expired (401).
 
+import type { LateSendWeek } from "../components/WeeklyReportParts";
 import { recordFailedRequest } from "./error-recorder";
 import { auth, type AuthSessionSnapshot } from "./auth";
 import { fetchWithApiFailover } from "./backend-origin";
@@ -4177,6 +4178,8 @@ export const weeklyReportsApi = {
       payoutChanges?: WeeklyPayoutChange[]; gate?: WeeklySendGate;
       /** Per rep: ₦500 missing-delivery-fee charges (leadership only, hidden from reps). */
       missingFees?: Record<string, { orders: Array<{ orderId: string; deliveredDate: string }> }>;
+      /** Per rep: orders not sent out in 15 working minutes + fines added for them (leadership only). */
+      lateSends?: Record<string, LateSendWeek>;
       /** Weeks with reports sent in by reps that have not gone to the owner yet. */
       waitingWeeks?: Array<{ weekStart: string; toApprove: number; approved: number; returned: number }>;
       funds?: Array<{ managerId: string; managerName: string; totals: ManagerFundTotals; readiness: string[]; locked: boolean; varianceExplanation: string | null; notes: string | null; returned: number }>;
@@ -4192,6 +4195,9 @@ export const weeklyReportsApi = {
     post<{ ok: true; already?: boolean }>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/rework-figures`, body),
   savePayoutChange: (repId: string, body: { weekStart: string; amount: number; reason: string }) =>
     put<{ ok: true }>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/payout-change`, body),
+  addLateSendFine: (repId: string, body: { weekStart: string; amount: number; orderIds: string[]; note?: string }) =>
+    post<{ ok: true }>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/late-send-fine`, body),
+  removeLateSendFine: (id: string) => del<{ ok: true }>(`/api/weekly-reports/late-send-fine/${encodeURIComponent(id)}`),
   removePayoutChange: (repId: string, weekStart: string) =>
     del<{ ok: true }>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/payout-change?${new URLSearchParams({ weekStart }).toString()}`),
   approvedPayoutChanges: () => get<{ rows: ApprovedPayoutChange[] }>("/api/weekly-reports/payout-changes/approved"),

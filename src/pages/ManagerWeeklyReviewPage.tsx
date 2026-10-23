@@ -7,7 +7,7 @@ import {
   Pencil, RotateCcw, Search, Send, ShoppingCart, Target, Undo2, Wallet, X, Crown, Flag, History, Users, BarChart3, ChevronLeft
 } from "lucide-react";
 import {
-  Avatar, AuditTable, BonusInitialCells, ChartLegend, CorrectionForm, CorrectionList, KpiCard, Modal, NoteBox, NumberedHeader, OrderStatusPill, PayoutChangeForm, PayoutChangeNote, MissingFeeNote,
+  Avatar, AuditTable, BonusInitialCells, ChartLegend, CorrectionForm, CorrectionList, KpiCard, Modal, NoteBox, NumberedHeader, OrderStatusPill, PayoutChangeForm, PayoutChangeNote, MissingFeeNote, LateSendNote, LateSendFineModal, type LateSendWeek,
   OrderTypePill, OrdersRateChart, Panel, ProductDonut, RateBar, RepStatusPill, StepBadge, WeekPicker, WorkflowSteps,
   dailyChartRows, deltaPct, downloadCsv, longDate, nf, pctText, shortDateTime, shortDay, type CorrectionDraft, type WorkflowStep
 } from "../components/WeeklyReportParts";
@@ -46,6 +46,8 @@ export type ReviewRepRow = {
   isHeadOfSales?: boolean;
   /** The manager's change to this rep's final payout (already laid over live/frozen). */
   payoutChange?: WeeklyPayoutChange | null;
+  /** Orders not sent out in 15 working minutes, and fines added for them (leadership only). */
+  lateSend?: LateSendWeek | null;
 };
 
 /** The figures a row shows: what was submitted, or today's if not submitted yet. */
@@ -71,8 +73,11 @@ export default function ManagerWeeklyReviewPage({
   renderFunds, fundsPending, fundsSummary, onSaveDraftNote, initialTab, logMissDisputes = [], onDecideLogMiss,
   renderHeadOfSales, headOfSalesAttention = false,
   onApprove, onReturn, onFlag, onSubmitToOwner, onBack, onEditManagerBonus, monthlyIncentive = null,
-  onSavePayoutChange, onRemovePayoutChange, repsWaiting = false, waitingWeeks = []
+  onSavePayoutChange, onRemovePayoutChange, repsWaiting = false, waitingWeeks = [], onLateSendFine, onRemoveLateSendFine
 }: {
+  /** Fine a rep for orders not sent out in 15 minutes (amount typed by Admin / Manager / Owner). */
+  onLateSendFine?: (repId: string, amount: number, orderIds: string[], note: string) => Promise<void>;
+  onRemoveLateSendFine?: (id: string) => Promise<void>;
   /** Weeks with reports waiting on the manager (any week, not only the one on screen). */
   waitingWeeks?: Array<{ weekStart: string; toApprove: number; approved: number; returned: number }>;
   /** Add to or take off a rep's final payout (signed amount), with a reason. */
@@ -132,6 +137,7 @@ export default function ManagerWeeklyReviewPage({
   const [returning, setReturning] = useState<string | null>(null);
   const [flagging, setFlagging] = useState<string | null>(null);
   const [changingPayout, setChangingPayout] = useState<string | null>(null);
+  const [lateSendFor, setLateSendFor] = useState<string | null>(null);
   // The "is this the bonus to be paid?" window (Bright, 13 Oct 2026).
   const [approving, setApproving] = useState<string | null>(null);
   const [approveBusy, setApproveBusy] = useState(false);
@@ -654,6 +660,7 @@ export default function ManagerWeeklyReviewPage({
                                 </span>
                                 {row.payoutChange && <PayoutChangeNote change={row.payoutChange} sym={sym} />}
                                 {snap?.missingFeeDetail && <MissingFeeNote detail={snap.missingFeeDetail} sym={sym} />}
+                                <LateSendNote detail={row.lateSend} sym={sym} onOpen={() => setLateSendFor(row.repId)} />
                               </td>
                               <td className={`px-2 py-3 ${pinnedCell}`}>
                                 <span className="flex items-center gap-1">
@@ -828,6 +835,22 @@ export default function ManagerWeeklyReviewPage({
         </div>,
         document.body
       )}
+
+      {/* ── Orders not sent out in 15 minutes: list + fine ──────── */}
+      {(() => {
+        const lateRow = lateSendFor ? rows.find((row) => row.repId === lateSendFor) ?? null : null;
+        if (!lateRow?.lateSend) return null;
+        return (
+          <LateSendFineModal
+            repName={lateRow.repName}
+            sym={sym}
+            detail={lateRow.lateSend}
+            onClose={() => setLateSendFor(null)}
+            onFine={onLateSendFine ? (amount, orderIds, note) => onLateSendFine(lateRow.repId, amount, orderIds, note) : undefined}
+            onRemoveFine={onRemoveLateSendFine}
+          />
+        );
+      })()}
 
       {/* ── Change a rep's payout ───────────────────────────────── */}
       {payoutRow && onSavePayoutChange && (
