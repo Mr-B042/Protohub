@@ -1,4 +1,5 @@
-import { memo, useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
+import { flushSync } from "react-dom";
+import { memo, useCallback, useEffect, useRef, useState, type AllHTMLAttributes, type FocusEvent, type KeyboardEvent, type MutableRefObject } from "react";
 
 // A textarea that does not re-render the app on every keystroke.
 //
@@ -13,8 +14,14 @@ import { memo, useCallback, useEffect, useRef, useState, type MutableRefObject }
 // component. The parent is told on a short debounce and again on blur, so a
 // save that reads parent state can never miss the last few characters.
 
-type DraftTextareaProps = {
-  value: string;
+/** Every ordinary input/textarea attribute (type, min, max, step, disabled, onFocus, …) passes straight through. */
+type PassThrough = Omit<AllHTMLAttributes<HTMLElement>, "value" | "onChange" | "onBlur" | "defaultValue" | "as">;
+
+type DraftTextareaProps = PassThrough & {
+  /** Runs after the text has been handed up. Read the text from event.target.value, not from parent state. */
+  onBlur?: (event: FocusEvent<HTMLElement>) => void;
+  /** Numbers are fine too (type="number" boxes): shown as typed, committed as text. */
+  value: string | number | null | undefined;
   onCommit: (value: string) => void;
   /**
    * Kept in step with EVERY keystroke, undebounced.
@@ -47,8 +54,6 @@ type DraftTextareaProps = {
   /** So a <label htmlFor> can still point at the field. */
   id?: string;
   "aria-label"?: string;
-  /** For number-like inputs, so phones show the number keypad. */
-  inputMode?: "decimal" | "numeric" | "text";
 };
 
 /** Long enough to skip most keystrokes, short enough to feel instant. */
@@ -56,14 +61,16 @@ const COMMIT_DELAY_MS = 250;
 
 function DraftTextareaInner({
   value, onCommit, liveRef, placeholder, rows, maxLength, className, disabled, autoFocus,
-  as = "textarea", showCount, commitOnChange = true, ...rest
+  as = "textarea", showCount, commitOnChange = true, onKeyDown, onFocus, onBlur, ...rest
 }: DraftTextareaProps) {
-  const [draft, setDraft] = useState(value);
+  const [draft, setDraft] = useState(value ?? "");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Held in a ref so the flush on unmount sends the LATEST text rather than
   // whatever the closure captured when the effect was created.
-  const latest = useRef(value);
+  const latest = useRef(value as string);
   const commitRef = useRef(onCommit);
+  // What the parent last heard from us, so blur does not re-send unchanged text.
+  const sent = useRef<string | undefined>(undefined);
   commitRef.current = onCommit;
 
   // ⚠️ Only resync when the parent's value genuinely differs from what we last
@@ -71,21 +78,47 @@ function DraftTextareaInner({
   // and overwrites characters typed during the round trip.
   useEffect(() => {
     if (value !== latest.current) {
-      latest.current = value;
-      if (liveRef) liveRef.current = value;
-      setDraft(value);
+      latest.current = value as string;
+      if (liveRef) liveRef.current = String(value ?? "");
+      setDraft(value ?? "");
     }
   }, [value, liveRef]);
 
   // Seed the live ref so a save that never sees a keystroke still reads right.
   useEffect(() => {
-    if (liveRef) liveRef.current = latest.current;
+    if (liveRef) liveRef.current = String(latest.current ?? "");
   }, [liveRef]);
 
   const flush = useCallback(() => {
     if (timer.current) { clearTimeout(timer.current); timer.current = null; }
-    if (latest.current !== undefined) commitRef.current(latest.current);
+    // Nothing typed since the last commit: do not send it up again.
+    if (latest.current !== undefined && latest.current !== sent.current) {
+      sent.current = latest.current;
+      commitRef.current(latest.current);
+    }
   }, []);
+
+  // ⚠️ Tap-outside hand-over. Safari (iPhone, Mac) does not move focus to a
+  // tapped button, so the box never blurs and a quick "type, tap Save" would
+  // read the parent value from before the last letters. While the box has
+  // focus, any press elsewhere commits first - synchronously, so the click
+  // that follows already sees the full text.
+  const outsidePress = useRef<((event: Event) => void) | null>(null);
+  const stopWatching = useCallback(() => {
+    if (outsidePress.current) document.removeEventListener("pointerdown", outsidePress.current, true);
+    outsidePress.current = null;
+  }, []);
+  const startWatching = useCallback((self: EventTarget | null) => {
+    stopWatching();
+    const handler = (event: Event) => {
+      if (event.target === self) return;
+      const pending = timer.current !== null || latest.current !== sent.current;
+      if (pending) flushSync(() => flush());
+    };
+    outsidePress.current = handler;
+    document.addEventListener("pointerdown", handler, true);
+  }, [flush, stopWatching]);
+  useEffect(() => stopWatching, [stopWatching]);
 
   // A modal that closes while a debounce is pending must not lose the text.
   useEffect(() => () => {
@@ -104,6 +137,7 @@ function DraftTextareaInner({
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => {
         timer.current = null;
+        sent.current = latest.current;
         commitRef.current(latest.current);
       }, COMMIT_DELAY_MS);
     }
@@ -118,9 +152,16 @@ function DraftTextareaInner({
     disabled,
     autoFocus,
     onChange: (event: { target: { value: string } }) => handleChange(event.target.value),
+    // Enter can submit a form or run a search without the box losing focus:
+    // hand the text up first so that action sees every letter.
+    onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+      if (event.key === "Enter" && as === "input") flush();
+      onKeyDown?.(event);
+    },
     // Blur fires before a button's click, so pressing Save always sees the
     // final text even if the debounce has not run yet.
-    onBlur: flush
+    onBlur: (event: FocusEvent<HTMLElement>) => { stopWatching(); flush(); onBlur?.(event); },
+    onFocus: (event: FocusEvent<HTMLElement>) => { startWatching(event.currentTarget); onFocus?.(event as never); }
   };
 
   const field = as === "input"
@@ -132,7 +173,7 @@ function DraftTextareaInner({
     <span className="relative block">
       {field}
       <span className="pointer-events-none absolute bottom-2.5 right-3 text-[11px] text-gray-400">
-        {draft.length} / {maxLength}
+        {String(draft).length} / {maxLength}
       </span>
     </span>
   );

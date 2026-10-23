@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Plus } from "lucide-react";
+import DraftTextarea from "./DraftTextarea";
 
 export type UpgradeBonusRule = { id?: string; fromQty: number; toQty: number; amount: number };
 
@@ -98,12 +99,12 @@ export default function UpgradeBonusGrid({
         <label className="inline-flex shrink-0 items-center gap-2 self-start rounded-[8px] border border-gray-200 bg-white px-2.5 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-900">
           <span className="text-gray-600 dark:text-slate-300">Full bonus from a weekly delivery rate of</span>
           <span className="inline-flex items-center rounded-[6px] border border-gray-200 px-1.5 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100 dark:border-slate-700">
-            <input
+            <DraftTextarea as="input"
               aria-label="Weekly delivery rate needed for the full upgrade bonus"
               inputMode="numeric"
               className="!min-h-0 h-6 w-8 border-0 !bg-transparent p-0 text-right text-xs font-bold text-gray-900 focus-visible:!outline-none dark:!text-slate-100"
               value={minDeliveryRate}
-              onChange={(event) => onMinDeliveryRateChange(Number(event.target.value.replace(/[^\d]/g, "")) || 0)}
+              onCommit={(value) => onMinDeliveryRateChange(Number(value.replace(/[^\d]/g, "")) || 0)}
             />
             <span className="text-gray-400">%</span>
           </span>
