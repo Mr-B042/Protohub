@@ -32355,6 +32355,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         live: withMissingFees(withPayoutChange(live, payoutChange), missingFees),
         frozen: withMissingFees(withPayoutChange(frozen, payoutChange), missingFees),
         payoutChange,
+        lateSend: week.lateSends?.[repId] ?? null,
         differences: frozen && report?.status !== "returned" ? compareSnapshots(frozen, live) : [],
         submittedLate: wasSubmittedLate(weeklyReportWeekStart, week.audit ?? [], repId),
         // Not overdue while the rep is still waiting for last week to reach the owner.
@@ -32470,6 +32471,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         onFlag={(repId, draft) => weeklyRun(() => weeklyReportsApi.flagRep(repId, correctionBody(draft)), "Issue flagged for the owner.")}
         onSavePayoutChange={(repId, amount, reason) => weeklyRun(() => weeklyReportsApi.savePayoutChange(repId, { weekStart: weeklyReportWeekStart, amount, reason }), `${repName(repId)}'s payout changed. The owner will see the change.`)}
         onRemovePayoutChange={(repId) => weeklyRun(() => weeklyReportsApi.removePayoutChange(repId, weeklyReportWeekStart), `${repName(repId)}'s payout is back to the system figure.`)}
+        onLateSendFine={(repId, amount, orderIds, note) => weeklyRun(() => weeklyReportsApi.addLateSendFine(repId, { weekStart: weeklyReportWeekStart, amount, orderIds, ...(note ? { note } : {}) }), `${repName(repId)} fined for late order sends.`)}
+        onRemoveLateSendFine={(id) => weeklyRun(() => weeklyReportsApi.removeLateSendFine(id), "Fine removed.")}
         repsWaiting={Boolean(week?.gate?.blocked)}
         waitingWeeks={week?.waitingWeeks ?? []}
         onSubmitToOwner={async (note, responses) => {
