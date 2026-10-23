@@ -111086,10 +111086,11 @@ ${waybillLineItems(w).length > 1
                       <section className="space-y-3">
                         <label className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 focus-within:ring-2 focus-within:ring-[#1F8FE0] dark:border-slate-700 dark:bg-[#0f1822]">
                           <Search className="h-4 w-4 shrink-0 text-gray-400" />
-                          <input
+                          <DraftTextarea
+                            as="input"
                             className="!min-h-0 w-full border-0 bg-transparent p-0 text-sm outline-none focus:ring-0 dark:text-slate-100"
                             value={remittanceSingleSearch}
-                            onChange={(event) => setRemittanceSingleSearch(event.target.value)}
+                            onCommit={setRemittanceSingleSearch}
                             placeholder="Search this partner's orders by id, customer or phone..."
                           />
                         </label>
@@ -111154,10 +111155,15 @@ ${waybillLineItems(w).length > 1
                     <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_260px]">
                       <div className={`flex items-center gap-3 rounded-xl border-2 px-3 py-2.5 transition-colors ${entered ? "border-emerald-500 bg-white dark:bg-[#0f1822]" : "border-gray-200 bg-white dark:border-slate-700 dark:bg-[#0f1822]"}`}>
                         <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-xl font-bold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">{productCurrencies[cur]?.symbol ?? "₦"}</span>
-                        <input
+                        {/* ⚠️ DraftTextarea, not a plain input (23 Oct 2026): a plain
+                            onChange re-rendered the whole app per key and typing
+                            showed up ~20 seconds late. The Difference below
+                            updates a moment after typing stops, and on blur. */}
+                        <DraftTextarea
+                          as="input"
                           className="!min-h-0 w-full min-w-0 border-0 bg-transparent p-0 text-4xl font-bold tabular-nums text-gray-900 outline-none placeholder:text-gray-300 focus:ring-0 dark:text-slate-50"
                           value={remittanceBatchAmount}
-                          onChange={(event) => setRemittanceBatchAmount(event.target.value)}
+                          onCommit={setRemittanceBatchAmount}
                           inputMode="decimal"
                           placeholder="0"
                           aria-label="Total amount remitted by partner"
@@ -111247,10 +111253,11 @@ ${waybillLineItems(w).length > 1
                         </label>
                         <label className="!block">
                           <span className="!mb-1 block text-[11px] font-semibold text-gray-600 dark:text-slate-300">Reason Note {remittanceBatchVarianceReason === "correction" ? "*" : "(optional)"}</span>
-                          <input
+                          <DraftTextarea
+                            as="input"
                             className="!min-h-0 w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-[#0f1822] dark:text-slate-100"
                             value={remittanceBatchVarianceNote}
-                            onChange={(event) => setRemittanceBatchVarianceNote(event.target.value)}
+                            onCommit={setRemittanceBatchVarianceNote}
                             placeholder={short ? "e.g. waybill deducted, customer refund" : "e.g. partner sent extra, repaid an earlier shortage"}
                           />
                         </label>

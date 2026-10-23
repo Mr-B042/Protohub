@@ -47,6 +47,8 @@ type DraftTextareaProps = {
   /** So a <label htmlFor> can still point at the field. */
   id?: string;
   "aria-label"?: string;
+  /** For number-like inputs, so phones show the number keypad. */
+  inputMode?: "decimal" | "numeric" | "text";
 };
 
 /** Long enough to skip most keystrokes, short enough to feel instant. */
