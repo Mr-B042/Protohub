@@ -1754,6 +1754,20 @@ const CART_OUTCOME_STATUS: Record<string, string> = {
  */
 const CART_TERMINAL_STATUSES = new Set(["Not interested", "No response", "Converted"]);
 
+/**
+ * ⚠️ "Not interested" MUST name one of these reasons (Bright, 23 Oct 2026).
+ * Checked HERE, not only on the screen. "Other" was removed: in 30 days it
+ * was the reason on 152 of 373 closes, mostly "switched off", "unresponsive"
+ * or "wrong number" - customers nobody reached, closed as "not interested"
+ * to skip the 3-attempt rule on Unresponsive. Keep in step with
+ * CART_NOT_INTERESTED_REASONS in src/App.tsx.
+ */
+export const CART_NOT_INTERESTED_REASONS = [
+  "Price", "Not ready yet / no money now", "Was only checking / ordered by mistake",
+  "Does not remember ordering", "No longer needs it", "Already bought elsewhere",
+  "Not available in their area", "Delivery concern", "Product concern", "Hung up / refused to talk"
+] as const;
+
 const AttemptSchema = z.object({
   channel: z.enum(["Call", "WhatsApp", "SMS", "Email", "Other"]).default("Call"),
   outcomeCode: z.enum([
@@ -1768,6 +1782,10 @@ const AttemptSchema = z.object({
   // "Other" with no words is unreportable - it tells the next person nothing.
   if (value.outcomeCode === "Other" && !value.customOutcome?.trim()) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["customOutcome"], message: "Describe the outcome." });
+  }
+  if (value.outcomeCode === "Not interested"
+      && !(CART_NOT_INTERESTED_REASONS as readonly string[]).includes(value.customOutcome?.trim() ?? "")) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["customOutcome"], message: "Pick why the customer said no. If the app shows \"Other\", refresh the page." });
   }
 });
 
