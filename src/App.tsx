@@ -104559,7 +104559,11 @@ ${waybillLineItems(w).length > 1
                             )}
                           </div>
 	                  {callOutcomeDraft === "__custom__" && (
-                            <input className={`mt-3 w-full rounded-lg px-3 py-2 text-sm ${orderInputClass}`} placeholder="e.g. Customer asked for Tuesday callback, out of town, store closed…" value={callOutcomeCustom} onChange={(e) => setCallOutcomeCustom(e.target.value)} autoFocus />
+                            <>
+                              {/* Up to 1000 characters, same as the server (was a one-line box capped at 120 by the server). */}
+                              <textarea className={`mt-3 w-full resize-y rounded-lg px-3 py-2 text-sm ${orderInputClass}`} rows={3} maxLength={1000} placeholder="e.g. Customer asked for Tuesday callback, out of town, store closed…" value={callOutcomeCustom} onChange={(e) => setCallOutcomeCustom(e.target.value)} autoFocus />
+                              <span className="mt-1 block text-right text-[11px] text-gray-400">{callOutcomeCustom.length}/1000</span>
+                            </>
 	                  )}
                         </div>
                   {statusChangeDraft === "Delivered" && (

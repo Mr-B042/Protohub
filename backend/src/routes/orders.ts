@@ -1399,7 +1399,8 @@ router.post("/:id/whatsapp-dispatch", requireRole("Owner", "Admin", "Manager", "
 // ── PATCH /api/orders/:id/status ──────────────────────────
 const StatusSchema = z.object({
   status:      z.enum(["New","Confirmed","In Process","Dispatched","Delivered","Cancelled","Postponed","Failed"]),
-  callOutcome: z.string().trim().min(1).max(120).nullable().optional(),
+  // 1000, was 120: reps could not explain a failed delivery (Bright, 23 Oct 2026).
+  callOutcome: z.string().trim().min(1).max(1000, "Keep the outcome note under 1000 characters.").nullable().optional(),
   response:    z.string().optional(),
   deliveredDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   scheduledDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
