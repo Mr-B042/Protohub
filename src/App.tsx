@@ -2440,9 +2440,13 @@ const orderLocations: OrderLocation[] = ["All Locations", "Lagos", "Abuja", "Por
  * the rep say WHY turns a disposal into a statement somebody can check, and
  * gives the business the objection data it currently throws away.
  */
+// No "Other" (Bright, 23 Oct 2026): it had become the way to close customers
+// nobody reached. The server refuses anything not on this list - keep it in
+// step with CART_NOT_INTERESTED_REASONS in backend/src/routes/carts.ts.
 const CART_NOT_INTERESTED_REASONS = [
-  "Price", "Already bought elsewhere", "No longer needs it",
-  "Does not remember ordering", "Product concern", "Delivery concern", "Other"
+  "Price", "Not ready yet / no money now", "Was only checking / ordered by mistake",
+  "Does not remember ordering", "No longer needs it", "Already bought elsewhere",
+  "Not available in their area", "Delivery concern", "Product concern", "Hung up / refused to talk"
 ] as const;
 
 /**
@@ -45211,7 +45215,8 @@ ${waybillLineItems(w).length > 1
     }
     // ⚠️ Enforced on SAVE, not just in the form. The disabled option stops the
     // honest mistake; this stops the request.
-    if (cartAttemptDraft.outcomeCode === "Not interested" && !cartAttemptDraft.customOutcome.trim()) {
+    if (cartAttemptDraft.outcomeCode === "Not interested"
+        && !(CART_NOT_INTERESTED_REASONS as readonly string[]).includes(cartAttemptDraft.customOutcome.trim())) {
       showToast("Cannot close as Not interested without a reason. Pick why the customer said no.");
       return;
     }
@@ -108813,6 +108818,7 @@ ${waybillLineItems(w).length > 1
 	                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
 	                            <span className="text-[12px] font-bold text-gray-800">
 	                              {attempt.outcomeCode === "Other" ? attempt.customOutcome : attempt.outcomeCode}
+	                              {attempt.outcomeCode === "Not interested" && attempt.customOutcome ? <span className="font-semibold text-rose-700"> · {attempt.customOutcome}</span> : null}
 	                            </span>
 	                            <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-600">{attempt.channel}</span>
 	                            {attempt.customerReached && (
@@ -108844,7 +108850,7 @@ ${waybillLineItems(w).length > 1
 	                  <label className="flex flex-col gap-1">
 	                    <span className="text-xs font-bold text-gray-600">Outcome *</span>
 	                    <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={cartAttemptDraft.outcomeCode}
-	                      onChange={(e) => setCartAttemptDraft((v) => ({ ...v, outcomeCode: e.target.value }))}>
+	                      onChange={(e) => setCartAttemptDraft((v) => ({ ...v, outcomeCode: e.target.value, customOutcome: "" }))}>
 	                      {["Interested", "Wants to order now", "Asked to call back", "Price concern",
                         "Rescheduled", "Unresponsive", "Number not reachable", "Wrong number", "Not interested", "Other"].map((o) => {
                           const attemptsAfterSave = (cartAttemptCart?.attempts ?? 0) + 1;
@@ -108871,6 +108877,9 @@ ${waybillLineItems(w).length > 1
 	                      </select>
 	                      <span className="text-[11px] text-gray-500">
 	                        This closes the customer, so it has to say why. The reason is reported back to you as objection data.
+	                      </span>
+	                      <span className="text-[11px] font-semibold text-rose-700">
+	                        Did not pick up, phone off, or wrong number? That is not "Not interested". Use Unresponsive, Number not reachable or Wrong number.
 	                      </span>
 	                    </label>
 	                  )}
