@@ -1,5 +1,5 @@
 import { flushSync } from "react-dom";
-import { memo, useCallback, useEffect, useRef, useState, type AllHTMLAttributes, type FocusEvent, type KeyboardEvent, type MutableRefObject } from "react";
+import { memo, startTransition, useCallback, useEffect, useRef, useState, type AllHTMLAttributes, type FocusEvent, type KeyboardEvent, type MutableRefObject } from "react";
 
 // A textarea that does not re-render the app on every keystroke.
 //
@@ -41,7 +41,8 @@ type DraftTextareaProps = PassThrough & {
   autoFocus?: boolean;
   /** Single-line fields have the same problem; they just need an <input>. */
   as?: "textarea" | "input";
-  /** Keep high-latency parent forms out of the keystroke path. */
+  /** false = never commit while typing; only on blur, Enter, a tap elsewhere, or closing.
+   *  For heavy screens where even one commit per pause froze slow computers. */
   commitOnChange?: boolean;
   /**
    * Render the "n / max" counter here rather than in the parent.
@@ -56,6 +57,8 @@ type DraftTextareaProps = PassThrough & {
   "aria-label"?: string;
 };
 
+const asText = (value: unknown) => String(value ?? "");
+
 /** Long enough to skip most keystrokes, short enough to feel instant. */
 const COMMIT_DELAY_MS = 250;
 
@@ -65,36 +68,58 @@ function DraftTextareaInner({
 }: DraftTextareaProps) {
   const [draft, setDraft] = useState(value ?? "");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Held in a ref so the flush on unmount sends the LATEST text rather than
-  // whatever the closure captured when the effect was created.
-  const latest = useRef(value as string);
+  // The newest text in the box. A ref, so flushes always send the latest.
+  const latest = useRef<string>(asText(value));
+  // The last text we sent up, and the last value the parent showed us. While a
+  // background commit is still drawing, sent is ahead of seen.
+  const sent = useRef<string>(asText(value));
+  const seen = useRef<string>(asText(value));
+  // Every text sent up that the parent has not shown back yet. An older one can
+  // land after a newer one is typed; it is an echo, never a reason to resync.
+  const inFlight = useRef<string[]>([]);
+  const send = (text: string, background: boolean) => {
+    sent.current = text;
+    inFlight.current.push(text);
+    if (inFlight.current.length > 20) inFlight.current.shift();
+    if (background) startTransition(() => commitRef.current(text));
+    else commitRef.current(text);
+  };
+  const sendRef = useRef(send);
+  sendRef.current = send;
   const commitRef = useRef(onCommit);
-  // What the parent last heard from us, so blur does not re-send unchanged text.
-  const sent = useRef<string | undefined>(undefined);
   commitRef.current = onCommit;
 
-  // ⚠️ Only resync when the parent's value genuinely differs from what we last
-  // sent up. Without this guard our own debounced commit bounces straight back
-  // and overwrites characters typed during the round trip.
+  // The parent's value changed. Take it into the box ONLY when it is not just
+  // the parent catching up with something we sent: a background commit can land
+  // after the user typed more, and must never overwrite those letters.
   useEffect(() => {
-    if (value !== latest.current) {
-      latest.current = value as string;
-      if (liveRef) liveRef.current = String(value ?? "");
-      setDraft(value ?? "");
-    }
+    const next = asText(value);
+    if (next === seen.current) return;
+    seen.current = next;
+    const echo = inFlight.current.indexOf(next);
+    if (echo >= 0) { inFlight.current.splice(0, echo + 1); return; }
+    if (next === latest.current) return;
+    inFlight.current = [];
+    latest.current = next;
+    sent.current = next;
+    if (liveRef) liveRef.current = next;
+    setDraft(value ?? "");
   }, [value, liveRef]);
 
   // Seed the live ref so a save that never sees a keystroke still reads right.
   useEffect(() => {
-    if (liveRef) liveRef.current = String(latest.current ?? "");
+    if (liveRef) liveRef.current = latest.current;
   }, [liveRef]);
 
+  /** True while the parent has not yet drawn the newest text. */
+  const behind = () => timer.current !== null || latest.current !== seen.current;
+
+  // Urgent hand-over (blur, Enter, tap outside, closing): the parent gets the
+  // newest text at once, even if a background commit of older text is drawing.
   const flush = useCallback(() => {
     if (timer.current) { clearTimeout(timer.current); timer.current = null; }
-    // Nothing typed since the last commit: do not send it up again.
-    if (latest.current !== undefined && latest.current !== sent.current) {
-      sent.current = latest.current;
-      commitRef.current(latest.current);
+    if (latest.current !== seen.current || latest.current !== sent.current) {
+      sendRef.current(latest.current, false);
     }
   }, []);
 
@@ -112,19 +137,18 @@ function DraftTextareaInner({
     stopWatching();
     const handler = (event: Event) => {
       if (event.target === self) return;
-      const pending = timer.current !== null || latest.current !== sent.current;
-      if (pending) flushSync(() => flush());
+      if (behind()) flushSync(() => flush());
     };
     outsidePress.current = handler;
     document.addEventListener("pointerdown", handler, true);
   }, [flush, stopWatching]);
   useEffect(() => stopWatching, [stopWatching]);
 
-  // A modal that closes while a debounce is pending must not lose the text.
+  // A modal that closes while a commit is pending must not lose the text.
   useEffect(() => () => {
-    if (timer.current) {
-      clearTimeout(timer.current);
-      commitRef.current(latest.current);
+    if (behind()) {
+      if (timer.current) clearTimeout(timer.current);
+      sendRef.current(latest.current, false);
     }
   }, []);
 
@@ -137,8 +161,11 @@ function DraftTextareaInner({
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => {
         timer.current = null;
-        sent.current = latest.current;
-        commitRef.current(latest.current);
+        // ⚠️ IN THE BACKGROUND (23 Oct 2026). This commit re-renders the whole
+        // App, which takes seconds on a slow computer. As a transition React
+        // pauses that render for every new key, so typing never waits on it.
+        // Urgent hand-overs (blur, Enter, tap outside) stay synchronous.
+        sendRef.current(latest.current, true);
       }, COMMIT_DELAY_MS);
     }
   };

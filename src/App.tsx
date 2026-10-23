@@ -5881,6 +5881,53 @@ const cartClockLabel = (ms: number) => {
   return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
 };
 
+/**
+ * The cart countdown badge ("Call within 04:12"). It ticks on its own, once a
+ * second. ⚠️ It used to tick a clock held by App, which re-rendered the whole
+ * ~114k-line App every second while Abandoned Carts was open (23 Oct 2026) -
+ * on a slow computer that froze typing and clicks on that page.
+ */
+function CartClockBadge({ cart, attempts, autoSubmitMode, rules }: {
+  cart: AbandonedCartRecord;
+  attempts: number;
+  autoSubmitMode: "full" | "cart" | "off";
+  rules: CartHandOutRules;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const clock = cartClockFor(cart, attempts, now, autoSubmitMode, rules);
+  if (!clock || clock.kind === "contacted") return null;
+  if (clock.kind === "closed") {
+    return (
+      <span className="inline-flex w-fit items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-gray-600">
+        🌙 Waiting for the morning
+      </span>
+    );
+  }
+  if (clock.kind === "waiting") {
+    return (
+      <span className="inline-flex w-fit items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-amber-800">
+        🔥 Hot · a rep in {cartClockLabel(clock.msLeft)}
+      </span>
+    );
+  }
+  if (clock.kind === "due") {
+    return (
+      <span className="inline-flex w-fit items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-blue-800">
+        ⏱ Call within {cartClockLabel(clock.msLeft)}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex w-fit items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-rose-800">
+      🔴 Overdue · {cartClockLabel(clock.msOver)} with no call
+    </span>
+  );
+}
+
 const upsellReversedByEdit = (order: TrackedOrder, nextQuantity: number) =>
   orderHasVerifiedUpsell(order) && nextQuantity <= (order.upsellFromQty ?? 0);
 
@@ -14563,13 +14610,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     () => new Map(cartFollowUps.map((row) => [row.id, row.attempts ?? 0])),
     [cartFollowUps]
   );
-  const [cartClockNow, setCartClockNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (activePage !== "Abandoned Carts") return;
-    setCartClockNow(Date.now());
-    const timer = window.setInterval(() => setCartClockNow(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
-  }, [activePage]);
+  // The cart countdowns tick inside CartClockBadge, not here: a 1-second clock
+  // in App re-rendered the whole app every second on Abandoned Carts.
 
   const [presenceNow, setPresenceNow] = useState(() => Date.now());
   useEffect(() => {
@@ -23655,6 +23697,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               className="!min-h-0 w-full min-w-0 border-0 bg-transparent p-0 text-4xl font-bold tabular-nums text-gray-900 outline-none placeholder:text-gray-300 focus:ring-0 dark:text-slate-50"
               value={remittanceAmount}
               onCommit={(value) => setRemittanceAmount(value)}
+              commitOnChange={false}
               inputMode="decimal"
               placeholder="0"
               aria-label="Total cash received from the partner on this order"
@@ -23684,7 +23727,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       <section>
         <div className="flex items-center gap-2.5">
           {stepBadge(3)}
-          <h3 className="m-0 text-sm font-bold leading-tight text-gray-900 dark:text-slate-50">Difference <span className="font-normal text-gray-400 dark:text-slate-500">(calculated live)</span></h3>
+          <h3 className="m-0 text-sm font-bold leading-tight text-gray-900 dark:text-slate-50">Difference <span className="font-normal text-gray-400 dark:text-slate-500">(updates when you leave the amount box)</span></h3>
         </div>
         <div className="mt-3 grid grid-cols-1 gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 dark:border-slate-700/80 dark:bg-slate-700/80 sm:grid-cols-3">
           <div className="bg-gray-50/80 px-4 py-3.5 dark:bg-slate-800/40">
@@ -23756,6 +23799,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 className="!min-h-0 w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-[#0f1822] dark:text-slate-100"
                 value={remittanceVarianceNote}
                 onCommit={(value) => setRemittanceVarianceNote(value)}
+                commitOnChange={false}
                 placeholder={isShort ? "e.g. waybill deducted, customer paid less" : "e.g. customer overpaid, repaid an earlier shortage"}
               />
             </label>
@@ -81212,36 +81256,7 @@ ${waybillLineItems(w).length > 1
                                 {cart.status === "Converted" && !linkedOrder && cart.deletedOrder && (
                                   <DeletedCartOrderNote deleted={cart.deletedOrder} otherOrderId={otherOrderForDeletedCart(cart)} onOpenOrder={openOrderFromCartList} />
                                 )}
-                                {(() => {
-                                  const clock = cartClockFor(cart, cartAttemptsById.get(cart.id) ?? 0, cartClockNow, autoSubmitMode, cartHandOutRules);
-                                  if (!clock || clock.kind === "contacted") return null;
-                                  if (clock.kind === "closed") {
-                                    return (
-                                      <span className="inline-flex w-fit items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-gray-600">
-                                        🌙 Waiting for the morning
-                                      </span>
-                                    );
-                                  }
-                                  if (clock.kind === "waiting") {
-                                    return (
-                                      <span className="inline-flex w-fit items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-amber-800">
-                                        🔥 Hot · a rep in {cartClockLabel(clock.msLeft)}
-                                      </span>
-                                    );
-                                  }
-                                  if (clock.kind === "due") {
-                                    return (
-                                      <span className="inline-flex w-fit items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-blue-800">
-                                        ⏱ Call within {cartClockLabel(clock.msLeft)}
-                                      </span>
-                                    );
-                                  }
-                                  return (
-                                    <span className="inline-flex w-fit items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-rose-800">
-                                      🔴 Overdue · {cartClockLabel(clock.msOver)} with no call
-                                    </span>
-                                  );
-                                })()}
+                                <CartClockBadge cart={cart} attempts={cartAttemptsById.get(cart.id) ?? 0} autoSubmitMode={autoSubmitMode} rules={cartHandOutRules} />
                               </div>
                             </td>
                             <td className="px-4 py-3 text-sm text-gray-500">{formatMoment(cart.lastActivity || cart.createdAt)}</td>
@@ -111164,6 +111179,7 @@ ${waybillLineItems(w).length > 1
                           className="!min-h-0 w-full min-w-0 border-0 bg-transparent p-0 text-4xl font-bold tabular-nums text-gray-900 outline-none placeholder:text-gray-300 focus:ring-0 dark:text-slate-50"
                           value={remittanceBatchAmount}
                           onCommit={setRemittanceBatchAmount}
+                          commitOnChange={false}
                           inputMode="decimal"
                           placeholder="0"
                           aria-label="Total amount remitted by partner"
@@ -111188,7 +111204,7 @@ ${waybillLineItems(w).length > 1
                   <section>
                     <div className="flex items-center gap-2.5">
                       {stepBadge(2)}
-                      <h3 className="m-0 text-sm font-bold leading-tight text-gray-900 dark:text-slate-50">Difference <span className="font-normal text-gray-400 dark:text-slate-500">(calculated live)</span></h3>
+                      <h3 className="m-0 text-sm font-bold leading-tight text-gray-900 dark:text-slate-50">Difference <span className="font-normal text-gray-400 dark:text-slate-500">(updates when you leave the amount box)</span></h3>
                     </div>
                     <div className="mt-3 grid grid-cols-1 gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 dark:border-slate-700/80 dark:bg-slate-700/80 sm:grid-cols-3">
                       <div className="bg-gray-50/80 px-4 py-3.5 dark:bg-slate-800/40">
@@ -111258,6 +111274,7 @@ ${waybillLineItems(w).length > 1
                             className="!min-h-0 w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-[#0f1822] dark:text-slate-100"
                             value={remittanceBatchVarianceNote}
                             onCommit={setRemittanceBatchVarianceNote}
+                            commitOnChange={false}
                             placeholder={short ? "e.g. waybill deducted, customer refund" : "e.g. partner sent extra, repaid an earlier shortage"}
                           />
                         </label>
