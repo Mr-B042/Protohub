@@ -19786,7 +19786,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   ))}
                   <div className="relative">
                     <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-400">₦</span>
-                    <input type="number" min={0} value={profitTargetInput} onChange={(e) => setProfitTargetInput(e.target.value)} placeholder="custom" className="w-24 rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-[#101a24] pl-5 pr-2 py-1 text-[12px] text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                    <DraftTextarea as="input" type="number" min={0} value={profitTargetInput} onCommit={(value) => setProfitTargetInput(value)} placeholder="custom" className="w-24 rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-[#101a24] pl-5 pr-2 py-1 text-[12px] text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-200" />
                   </div>
                   {targetVal > 0 && <button type="button" onClick={() => setProfitTargetInput("")} className="!min-h-0 px-1.5 py-1 rounded-md text-[11px] font-semibold text-gray-400 hover:text-gray-700">Clear</button>}
                 </div>
@@ -19804,7 +19804,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <button key={p} type="button" onClick={() => setDeliveryBenchmarkInput(String(p))} className={`!min-h-0 px-1.5 py-0.5 rounded text-[11px] font-bold border transition-colors ${pl.benchPct === p ? "bg-emerald-500 text-white border-emerald-500" : "border-gray-200 text-gray-500 hover:bg-gray-50 dark:border-slate-700 dark:text-slate-300"}`}>{p}%</button>
                     ))}
                     <div className="relative">
-                      <input type="number" min={1} max={100} value={deliveryBenchmarkInput} onChange={(e) => setDeliveryBenchmarkInput(e.target.value)} className="w-14 rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-[#101a24] pl-2 pr-4 py-0.5 text-[12px] text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-200" />
+                      <DraftTextarea as="input" type="number" min={1} max={100} value={deliveryBenchmarkInput} onCommit={(value) => setDeliveryBenchmarkInput(value)} className="w-14 rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-[#101a24] pl-2 pr-4 py-0.5 text-[12px] text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-200" />
                       <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[11px] text-gray-400">%</span>
                     </div>
                   </div>
@@ -23620,10 +23620,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_260px]">
           <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-[#0f1822]">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-base font-bold text-gray-500 dark:bg-slate-800 dark:text-slate-300">{productCurrencies[cur]?.symbol ?? "₦"}</span>
-            <input
+            <DraftTextarea as="input"
               className="!min-h-0 w-full min-w-0 border-0 bg-transparent p-0 text-2xl font-bold tabular-nums text-gray-900 outline-none placeholder:text-gray-300 focus:ring-0 dark:text-slate-50"
               value={remittanceLogisticsCost}
-              onChange={(event) => setRemittanceLogisticsCost(event.target.value)}
+              onCommit={(value) => setRemittanceLogisticsCost(value)}
               inputMode="decimal"
               placeholder="0"
               aria-label="Logistics cost paid to the partner"
@@ -23651,10 +23651,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_260px]">
           <div className={`flex items-center gap-3 rounded-xl border-2 px-3 py-2.5 transition-colors ${enteredCash ? "border-emerald-500 bg-white dark:bg-[#0f1822]" : "border-gray-200 bg-white dark:border-slate-700 dark:bg-[#0f1822]"}`}>
             <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-xl font-bold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">{productCurrencies[cur]?.symbol ?? "₦"}</span>
-            <input
+            <DraftTextarea as="input"
               className="!min-h-0 w-full min-w-0 border-0 bg-transparent p-0 text-4xl font-bold tabular-nums text-gray-900 outline-none placeholder:text-gray-300 focus:ring-0 dark:text-slate-50"
               value={remittanceAmount}
-              onChange={(event) => setRemittanceAmount(event.target.value)}
+              onCommit={(value) => setRemittanceAmount(value)}
               inputMode="decimal"
               placeholder="0"
               aria-label="Total cash received from the partner on this order"
@@ -23752,10 +23752,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             </label>
             <label className="!block">
               <span className="!mb-1 block text-[11px] font-semibold text-gray-600 dark:text-slate-300">Reason Note {remittanceVarianceReason === "correction" ? "*" : "(optional)"}</span>
-              <input
+              <DraftTextarea as="input"
                 className="!min-h-0 w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-[#0f1822] dark:text-slate-100"
                 value={remittanceVarianceNote}
-                onChange={(event) => setRemittanceVarianceNote(event.target.value)}
+                onCommit={(value) => setRemittanceVarianceNote(value)}
                 placeholder={isShort ? "e.g. waybill deducted, customer paid less" : "e.g. customer overpaid, repaid an earlier shortage"}
               />
             </label>
@@ -31123,7 +31123,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <label className="space-y-1">
                 <span className="text-xs font-black uppercase tracking-[0.16em] text-gray-500">Title</span>
-                <input className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-[#1F8FE0]/30" value={settings.title} onChange={(event) => updateDraft({ title: event.target.value })} />
+                <DraftTextarea as="input" className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-[#1F8FE0]/30" value={settings.title} onCommit={(value) => updateDraft({ title: value })} />
               </label>
               <label className="space-y-1">
                 <span className="text-xs font-black uppercase tracking-[0.16em] text-gray-500">Currency</span>
@@ -31135,7 +31135,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </label>
               <label className="space-y-1 lg:col-span-2">
                 <span className="text-xs font-black uppercase tracking-[0.16em] text-gray-500">Description shown to managers</span>
-                <textarea className="min-h-[92px] w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-[#1F8FE0]/30" value={settings.description} onChange={(event) => updateDraft({ description: event.target.value })} />
+                <DraftTextarea className="min-h-[92px] w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-[#1F8FE0]/30" value={settings.description} onCommit={(value) => updateDraft({ description: value })} />
               </label>
               {[
                 ["Profit gate", "profitGateAmount"],
@@ -31144,7 +31144,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               ].map(([label, key]) => (
                 <label key={key} className="space-y-1">
                   <span className="text-xs font-black uppercase tracking-[0.16em] text-gray-500">{label}</span>
-                  <input className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-[#1F8FE0]/30" inputMode="numeric" value={String(settings[key as keyof ManagerBonusSettings] ?? 0)} onChange={(event) => updateDraft({ [key]: Number(event.target.value) || 0 } as Partial<ManagerBonusSettings>)} />
+                  <DraftTextarea as="input" className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-[#1F8FE0]/30" inputMode="numeric" value={String(settings[key as keyof ManagerBonusSettings] ?? 0)} onCommit={(value) => updateDraft({ [key]: Number(value) || 0 } as Partial<ManagerBonusSettings>)} />
                 </label>
               ))}
             </div>
@@ -31152,15 +31152,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <label className="space-y-1">
                 <span className="text-xs font-black uppercase tracking-[0.16em] text-gray-500">Below gate message</span>
-                <textarea className="min-h-[82px] w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-[#1F8FE0]/30" value={settings.gateMissMessage} onChange={(event) => updateDraft({ gateMissMessage: event.target.value })} />
+                <DraftTextarea className="min-h-[82px] w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-[#1F8FE0]/30" value={settings.gateMissMessage} onCommit={(value) => updateDraft({ gateMissMessage: value })} />
               </label>
               <label className="space-y-1">
                 <span className="text-xs font-black uppercase tracking-[0.16em] text-gray-500">Gate met message</span>
-                <textarea className="min-h-[82px] w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-[#1F8FE0]/30" value={settings.gateMetMessage} onChange={(event) => updateDraft({ gateMetMessage: event.target.value })} />
+                <DraftTextarea className="min-h-[82px] w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-[#1F8FE0]/30" value={settings.gateMetMessage} onCommit={(value) => updateDraft({ gateMetMessage: value })} />
               </label>
               <label className="space-y-1">
                 <span className="text-xs font-black uppercase tracking-[0.16em] text-gray-500">Below first tier message</span>
-                <textarea className="min-h-[82px] w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-[#1F8FE0]/30" value={settings.belowTierMessage} onChange={(event) => updateDraft({ belowTierMessage: event.target.value })} />
+                <DraftTextarea className="min-h-[82px] w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-[#1F8FE0]/30" value={settings.belowTierMessage} onCommit={(value) => updateDraft({ belowTierMessage: value })} />
               </label>
             </div>
 
@@ -31174,10 +31174,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <div className="space-y-2">
                 {settings.tiers.map((tier, index) => (
                   <div key={tier.id ?? index} className="grid grid-cols-1 gap-2 rounded-xl border border-gray-100 bg-gray-50 p-3 xl:grid-cols-[minmax(180px,1.2fr)_minmax(120px,0.7fr)_minmax(120px,0.7fr)_minmax(140px,0.9fr)_auto]">
-                    <input aria-label="Tier label" className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-bold" value={tier.label} onChange={(event) => updateTier(index, { label: event.target.value })} />
-                    <input aria-label="Minimum delivery rate" className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-bold" inputMode="decimal" value={String(tier.minRate)} onChange={(event) => updateTier(index, { minRate: Number(event.target.value) || 0 })} />
-                    <input aria-label="Maximum delivery rate" className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-bold" inputMode="decimal" value={tier.maxRate == null ? "" : String(tier.maxRate)} placeholder="No max" onChange={(event) => updateTier(index, { maxRate: event.target.value.trim() === "" ? null : Number(event.target.value) || 0 })} />
-                    <input aria-label="Tier amount" className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-bold" inputMode="numeric" value={String(tier.amount)} onChange={(event) => updateTier(index, { amount: Number(event.target.value) || 0 })} />
+                    <DraftTextarea as="input" aria-label="Tier label" className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-bold" value={tier.label} onCommit={(value) => updateTier(index, { label: value })} />
+                    <DraftTextarea as="input" aria-label="Minimum delivery rate" className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-bold" inputMode="decimal" value={String(tier.minRate)} onCommit={(value) => updateTier(index, { minRate: Number(value) || 0 })} />
+                    <DraftTextarea as="input" aria-label="Maximum delivery rate" className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-bold" inputMode="decimal" value={tier.maxRate == null ? "" : String(tier.maxRate)} placeholder="No max" onCommit={(value) => updateTier(index, { maxRate: value.trim() === "" ? null : Number(value) || 0 })} />
+                    <DraftTextarea as="input" aria-label="Tier amount" className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-bold" inputMode="numeric" value={String(tier.amount)} onCommit={(value) => updateTier(index, { amount: Number(value) || 0 })} />
                     <button className="!min-h-0 rounded-lg border border-rose-100 bg-white px-3 py-2 text-sm font-black text-rose-600 disabled:opacity-40" disabled={settings.tiers.length <= 1} onClick={() => removeTier(index)}>
                       Remove
                     </button>
@@ -31346,9 +31346,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <label className="block text-[10px] font-black uppercase tracking-[0.14em] text-gray-400">
                 Primary target (goal)
                 <span className="relative mt-1.5 block">
-                  <input type="number" min={0} max={100} value={draft.primaryTarget}
+                  <DraftTextarea as="input" type="number" min={0} max={100} value={draft.primaryTarget}
                     disabled={!draft.useCustomGoals}
-                    onChange={(event) => patch({ primaryTarget: Number(event.target.value) })}
+                    onCommit={(value) => patch({ primaryTarget: Number(value) })}
                     className="w-full rounded-xl border border-gray-200 px-3 py-2.5 pr-8 text-sm font-bold text-gray-900 disabled:bg-gray-50 disabled:text-gray-400" />
                   <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm font-bold text-gray-400">%</span>
                 </span>
@@ -31358,9 +31358,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <label className="mt-4 block text-[10px] font-black uppercase tracking-[0.14em] text-gray-400">
                 Stretch target (stretch goal)
                 <span className="relative mt-1.5 block">
-                  <input type="number" min={0} max={100} value={draft.stretchTarget}
+                  <DraftTextarea as="input" type="number" min={0} max={100} value={draft.stretchTarget}
                     disabled={!draft.useCustomGoals}
-                    onChange={(event) => patch({ stretchTarget: Number(event.target.value) })}
+                    onCommit={(value) => patch({ stretchTarget: Number(value) })}
                     className="w-full rounded-xl border border-gray-200 px-3 py-2.5 pr-8 text-sm font-bold text-gray-900 disabled:bg-gray-50 disabled:text-gray-400" />
                   <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm font-bold text-gray-400">%</span>
                 </span>
@@ -32098,21 +32098,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <div className="grid gap-4 sm:grid-cols-2">
                           <div>
                             <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">Meta Pixel ID</p>
-                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="e.g. 2171263370039172" value={metaDefaultDraft.pixelId} onChange={e=>setMetaDefaultDraft(d=>({...d,pixelId:e.target.value.trim()}))} />
+                            <DraftTextarea as="input" className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="e.g. 2171263370039172" value={metaDefaultDraft.pixelId} onCommit={(value) => setMetaDefaultDraft(d=>({...d,pixelId:value.trim()}))} />
                           </div>
                           <div>
                             <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">Thank-you page URL (redirect after order)</p>
-                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="https://yoursite.com/thank-you" value={metaDefaultDraft.thankYouUrl} onChange={e=>setMetaDefaultDraft(d=>({...d,thankYouUrl:e.target.value.trim()}))} />
+                            <DraftTextarea as="input" className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="https://yoursite.com/thank-you" value={metaDefaultDraft.thankYouUrl} onCommit={(value) => setMetaDefaultDraft(d=>({...d,thankYouUrl:value.trim()}))} />
                           </div>
                           <div className="sm:col-span-2">
                             <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">Conversions API access token</p>
-                            <input type="password" autoComplete="off" className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200"
+                            <DraftTextarea as="input" type="password" autoComplete="off" className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200"
                               placeholder={defConfig?.hasAccessToken ? "Token saved - paste new token to update" : "Paste from Meta Events Manager → your Pixel → Conversions API"}
-                              value={metaDefaultDraft.accessToken} onChange={e=>setMetaDefaultDraft(d=>({...d,accessToken:e.target.value}))} />
+                              value={metaDefaultDraft.accessToken} onCommit={(value) => setMetaDefaultDraft(d=>({...d,accessToken:value}))} />
                           </div>
                           <div>
                             <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">Test event code <span className="font-normal normal-case">(remove after testing)</span></p>
-                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="TEST12345" value={metaDefaultDraft.testEventCode} onChange={e=>setMetaDefaultDraft(d=>({...d,testEventCode:e.target.value.trim()}))} />
+                            <DraftTextarea as="input" className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="TEST12345" value={metaDefaultDraft.testEventCode} onCommit={(value) => setMetaDefaultDraft(d=>({...d,testEventCode:value.trim()}))} />
                           </div>
                           <div className="flex items-end">
                             <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 w-full">
@@ -32130,11 +32130,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           <div className="grid gap-3 sm:grid-cols-2">
                             <div>
                               <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">TikTok Pixel ID</p>
-                              <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-gray-300" placeholder="e.g. CABCDEF01ABC..." value={metaDefaultDraft.tiktokPixelId} onChange={e=>setMetaDefaultDraft(d=>({...d,tiktokPixelId:e.target.value.trim()}))} />
+                              <DraftTextarea as="input" className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-gray-300" placeholder="e.g. CABCDEF01ABC..." value={metaDefaultDraft.tiktokPixelId} onCommit={(value) => setMetaDefaultDraft(d=>({...d,tiktokPixelId:value.trim()}))} />
                             </div>
                             <div>
                               <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">TikTok Events API access token</p>
-                              <input type="password" autoComplete="off" className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-gray-300" placeholder={(metaCapiConfigs.find(c=>c.trackingKey==="__default__") as any)?.hasTiktokAccessToken?"Token saved - paste to replace":"Paste from TikTok Events Manager"} value={metaDefaultDraft.tiktokAccessToken} onChange={e=>setMetaDefaultDraft(d=>({...d,tiktokAccessToken:e.target.value}))} />
+                              <DraftTextarea as="input" type="password" autoComplete="off" className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-gray-300" placeholder={(metaCapiConfigs.find(c=>c.trackingKey==="__default__") as any)?.hasTiktokAccessToken?"Token saved - paste to replace":"Paste from TikTok Events Manager"} value={metaDefaultDraft.tiktokAccessToken} onCommit={(value) => setMetaDefaultDraft(d=>({...d,tiktokAccessToken:value}))} />
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
@@ -32199,8 +32199,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           {metaDefaultDraft.sendDeliveredEvent ? (
                             <label className="mt-3 block">
                               <span className="text-[11px] font-black uppercase tracking-wider text-gray-500">Event name in Meta</span>
-                              <input className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-200" value={metaDefaultDraft.deliveredEventName}
-                                onChange={e=>setMetaDefaultDraft(d=>({...d,deliveredEventName:e.target.value.replace(/[^A-Za-z0-9_]/g,"")}))} placeholder="OrderDelivered" />
+                              <DraftTextarea as="input" className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-200" value={metaDefaultDraft.deliveredEventName}
+                                onCommit={(value) => setMetaDefaultDraft(d=>({...d,deliveredEventName:value.replace(/[^A-Za-z0-9_]/g,"")}))} placeholder="OrderDelivered" />
                               <span className="mt-1 block text-[11px] text-gray-500">In Meta Events Manager, make a custom conversion from this event to optimise or report on it.</span>
                             </label>
                           ) : null}
@@ -33453,12 +33453,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <tr key={rep.id} className="border-b border-gray-50 last:border-0">
                     <td className="py-3 pr-3 font-bold text-gray-900">{rep.name}</td>
                     <td className="py-3 pr-3 text-right">
-                      <input
+                      <DraftTextarea as="input"
                         aria-label={`Weekly target for ${rep.name}`}
                         className="w-20 rounded-lg border border-gray-200 px-2 py-1 text-right text-sm font-bold"
                         inputMode="decimal"
                         value={String(targetPct)}
-                        onChange={(event) => setRepWeeklyTargetDrafts((prev) => ({ ...prev, [rep.id]: Math.max(0, Math.min(100, Number(event.target.value) || 0)) }))}
+                        onCommit={(value) => setRepWeeklyTargetDrafts((prev) => ({ ...prev, [rep.id]: Math.max(0, Math.min(100, Number(value) || 0)) }))}
                       />
                       <span className="ml-1 text-xs text-gray-400">%</span>
                     </td>
@@ -33491,7 +33491,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <label className="space-y-1">
                 <span className="text-xs font-black uppercase tracking-[0.16em] text-gray-500">Title</span>
-                <input className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/30" value={settings.title} onChange={(event) => updateDraft({ title: event.target.value })} />
+                <DraftTextarea as="input" className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/30" value={settings.title} onCommit={(value) => updateDraft({ title: value })} />
               </label>
               <label className="space-y-1">
                 <span className="text-xs font-black uppercase tracking-[0.16em] text-gray-500">Currency</span>
@@ -33503,38 +33503,38 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </label>
               <label className="space-y-1 lg:col-span-2">
                 <span className="text-xs font-black uppercase tracking-[0.16em] text-gray-500">Description shown to managers</span>
-                <textarea className="min-h-[92px] w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-emerald-500/30" value={settings.description} onChange={(event) => updateDraft({ description: event.target.value })} />
+                <DraftTextarea className="min-h-[92px] w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-emerald-500/30" value={settings.description} onCommit={(value) => updateDraft({ description: value })} />
               </label>
               <label className="space-y-1">
                 <span className="text-xs font-black uppercase tracking-[0.16em] text-gray-500">Profit gate (Net Profit Ops, weekly)</span>
-                <input className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/30" inputMode="numeric" value={String(settings.profitGateAmount)} onChange={(event) => updateDraft({ profitGateAmount: Number(event.target.value) || 0 })} />
+                <DraftTextarea as="input" className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/30" inputMode="numeric" value={String(settings.profitGateAmount)} onCommit={(value) => updateDraft({ profitGateAmount: Number(value) || 0 })} />
               </label>
               <label className="space-y-1">
                 <span className="text-xs font-black uppercase tracking-[0.16em] text-gray-500">Delivery rate gate (%)</span>
-                <input className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/30" inputMode="decimal" value={String(settings.deliveryRateGatePct)} onChange={(event) => updateDraft({ deliveryRateGatePct: Number(event.target.value) || 0 })} />
+                <DraftTextarea as="input" className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/30" inputMode="decimal" value={String(settings.deliveryRateGatePct)} onCommit={(value) => updateDraft({ deliveryRateGatePct: Number(value) || 0 })} />
               </label>
               <label className="space-y-1">
                 <span className="text-xs font-black uppercase tracking-[0.16em] text-gray-500">Contribution-profit cap (%)</span>
-                <input className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/30" inputMode="decimal" value={String(settings.contributionCapPct)} onChange={(event) => updateDraft({ contributionCapPct: Number(event.target.value) || 0 })} />
+                <DraftTextarea as="input" className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/30" inputMode="decimal" value={String(settings.contributionCapPct)} onCommit={(value) => updateDraft({ contributionCapPct: Number(value) || 0 })} />
               </label>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <label className="space-y-1">
                 <span className="text-xs font-black uppercase tracking-[0.16em] text-gray-500">Profit gate miss message</span>
-                <textarea className="min-h-[82px] w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-emerald-500/30" value={settings.profitGateMissMessage} onChange={(event) => updateDraft({ profitGateMissMessage: event.target.value })} />
+                <DraftTextarea className="min-h-[82px] w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-emerald-500/30" value={settings.profitGateMissMessage} onCommit={(value) => updateDraft({ profitGateMissMessage: value })} />
               </label>
               <label className="space-y-1">
                 <span className="text-xs font-black uppercase tracking-[0.16em] text-gray-500">Delivery gate miss message</span>
-                <textarea className="min-h-[82px] w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-emerald-500/30" value={settings.deliveryGateMissMessage} onChange={(event) => updateDraft({ deliveryGateMissMessage: event.target.value })} />
+                <DraftTextarea className="min-h-[82px] w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-emerald-500/30" value={settings.deliveryGateMissMessage} onCommit={(value) => updateDraft({ deliveryGateMissMessage: value })} />
               </label>
               <label className="space-y-1">
                 <span className="text-xs font-black uppercase tracking-[0.16em] text-gray-500">Both gates met message</span>
-                <textarea className="min-h-[82px] w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-emerald-500/30" value={settings.gatesMetMessage} onChange={(event) => updateDraft({ gatesMetMessage: event.target.value })} />
+                <DraftTextarea className="min-h-[82px] w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-emerald-500/30" value={settings.gatesMetMessage} onCommit={(value) => updateDraft({ gatesMetMessage: value })} />
               </label>
               <label className="space-y-1">
                 <span className="text-xs font-black uppercase tracking-[0.16em] text-gray-500">Below first tier message</span>
-                <textarea className="min-h-[82px] w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-emerald-500/30" value={settings.belowTierMessage} onChange={(event) => updateDraft({ belowTierMessage: event.target.value })} />
+                <DraftTextarea className="min-h-[82px] w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-emerald-500/30" value={settings.belowTierMessage} onCommit={(value) => updateDraft({ belowTierMessage: value })} />
               </label>
             </div>
 
@@ -33548,10 +33548,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <div className="space-y-2">
                 {settings.tiers.map((tier, index) => (
                   <div key={tier.id ?? index} className="grid grid-cols-1 gap-2 rounded-xl border border-gray-100 bg-gray-50 p-3 xl:grid-cols-[minmax(180px,1.2fr)_minmax(120px,0.7fr)_minmax(120px,0.7fr)_minmax(140px,0.9fr)_auto]">
-                    <input aria-label="Tier label" className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-bold" value={tier.label} onChange={(event) => updateTier(index, { label: event.target.value })} />
-                    <input aria-label="Minimum contribution profit" className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-bold" inputMode="numeric" value={String(tier.minProfit)} onChange={(event) => updateTier(index, { minProfit: Number(event.target.value) || 0 })} />
-                    <input aria-label="Maximum contribution profit" className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-bold" inputMode="numeric" value={tier.maxProfit == null ? "" : String(tier.maxProfit)} placeholder="No max" onChange={(event) => updateTier(index, { maxProfit: event.target.value.trim() === "" ? null : Number(event.target.value) || 0 })} />
-                    <input aria-label="Tier amount" className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-bold" inputMode="numeric" value={String(tier.amount)} onChange={(event) => updateTier(index, { amount: Number(event.target.value) || 0 })} />
+                    <DraftTextarea as="input" aria-label="Tier label" className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-bold" value={tier.label} onCommit={(value) => updateTier(index, { label: value })} />
+                    <DraftTextarea as="input" aria-label="Minimum contribution profit" className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-bold" inputMode="numeric" value={String(tier.minProfit)} onCommit={(value) => updateTier(index, { minProfit: Number(value) || 0 })} />
+                    <DraftTextarea as="input" aria-label="Maximum contribution profit" className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-bold" inputMode="numeric" value={tier.maxProfit == null ? "" : String(tier.maxProfit)} placeholder="No max" onCommit={(value) => updateTier(index, { maxProfit: value.trim() === "" ? null : Number(value) || 0 })} />
+                    <DraftTextarea as="input" aria-label="Tier amount" className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-bold" inputMode="numeric" value={String(tier.amount)} onCommit={(value) => updateTier(index, { amount: Number(value) || 0 })} />
                     <button className="!min-h-0 rounded-lg border border-rose-100 bg-white px-3 py-2 text-sm font-black text-rose-600 disabled:opacity-40" disabled={settings.tiers.length <= 1} onClick={() => removeTier(index)}>Remove</button>
                   </div>
                 ))}
@@ -33964,7 +33964,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               ] as const).map(([key, label, type]) => (
                 <label key={key} className="text-xs font-bold text-gray-600">
                   {label}
-                  <input
+                  <DraftTextarea as="input"
                     type={type}
                     min={type === "number" ? 0 : undefined}
                     max={key === "deliveryRateTarget" ? 100 : undefined}
@@ -33972,10 +33972,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     className="mt-1 w-full rounded-lg border border-gray-200 px-2.5 py-2 text-sm font-semibold text-gray-800 disabled:bg-gray-100"
                     disabled={Boolean(targetEditingId) && (key === "periodStart" || key === "periodEnd")}
                     value={targetDraft[key]}
-                    onChange={(e) => setTargetDraft((d) => (
+                    onCommit={(value) => setTargetDraft((d) => (
                       key === "orderTarget" || key === "deliveredTarget" || key === "deliveryRateTarget"
-                        ? linkedTargetDraft(d, key, e.target.value)
-                        : { ...d, [key]: e.target.value }
+                        ? linkedTargetDraft(d, key, value)
+                        : { ...d, [key]: value }
                     ))}
                   />
                 </label>
@@ -34461,11 +34461,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <div className="relative min-w-[160px] flex-1">
                     <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
-                    <input
+                    <DraftTextarea as="input"
                       className="w-full rounded-lg border border-gray-200 py-1.5 pl-8 pr-2.5 text-xs"
                       placeholder="Search state..."
                       value={managerInventoryStateSearch}
-                      onChange={(event) => setManagerInventoryStateSearch(event.target.value)}
+                      onCommit={(value) => setManagerInventoryStateSearch(value)}
                     />
                   </div>
                   <select
@@ -48508,22 +48508,22 @@ ${waybillLineItems(w).length > 1
         <div className="p-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
           <label className="flex flex-col gap-1">
             <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Upsell from (qty)</span>
-            <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm" inputMode="numeric" placeholder="e.g. 3" value={order.upsellFromQty ?? ""} onChange={(e) => {
-              const v = e.target.value === "" ? undefined : Number(e.target.value);
+            <DraftTextarea as="input" className="border border-gray-200 rounded-lg px-3 py-2 text-sm" inputMode="numeric" placeholder="e.g. 3" value={order.upsellFromQty ?? ""} onCommit={(value) => {
+              const v = value === "" ? undefined : Number(value);
               updateOrderUpsellFields(order, { upsellFromQty: v });
             }} />
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Upsell to (qty)</span>
-            <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm" inputMode="numeric" placeholder="e.g. 5" value={order.upsellToQty ?? ""} onChange={(e) => {
-              const v = e.target.value === "" ? undefined : Number(e.target.value);
+            <DraftTextarea as="input" className="border border-gray-200 rounded-lg px-3 py-2 text-sm" inputMode="numeric" placeholder="e.g. 5" value={order.upsellToQty ?? ""} onCommit={(value) => {
+              const v = value === "" ? undefined : Number(value);
               updateOrderUpsellFields(order, { upsellToQty: v });
             }} />
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Note</span>
-            <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="e.g. Yes/Upgraded" value={order.upsellNote ?? ""} onChange={(e) => {
-              updateOrderUpsellFields(order, { upsellNote: e.target.value });
+            <DraftTextarea as="input" className="border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="e.g. Yes/Upgraded" value={order.upsellNote ?? ""} onCommit={(value) => {
+              updateOrderUpsellFields(order, { upsellNote: value });
             }} />
           </label>
         </div>
@@ -48782,10 +48782,10 @@ ${waybillLineItems(w).length > 1
                   </div>
                 </div>
               )}
-              <textarea 
+              <DraftTextarea 
                 className="w-full p-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] resize-none h-20" 
                 value={orderNoteDraft} 
-                onChange={(event) => setOrderNoteDraft(event.target.value)} 
+                onCommit={(value) => setOrderNoteDraft(value)} 
                 placeholder="Call summary, objection, delivery instruction..." 
               />
               <button className="w-full py-2 bg-[#1F8FE0] text-white rounded-md text-sm font-semibold hover:bg-blue-700 transition-colors shadow-sm" onClick={addOrderNote}>Post Note</button>
@@ -48810,11 +48810,11 @@ ${waybillLineItems(w).length > 1
             </div>
             <div className="space-y-1">
               <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Delivery Fee ({productCurrencies[order.currency].symbol})</label>
-              <input
+              <DraftTextarea as="input"
                 type="text"
                 inputMode="decimal"
                 value={repDeliveryFee}
-                onChange={(e) => setRepDeliveryFee(e.target.value)}
+                onCommit={(value) => setRepDeliveryFee(value)}
                 placeholder="e.g. 4000"
                 className="w-full h-10 px-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
               />
@@ -49337,10 +49337,10 @@ ${waybillLineItems(w).length > 1
             <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 dark:border-slate-700 dark:bg-slate-950/50">
               <label className="block">
                 <span className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Owner decision reason</span>
-                <textarea
+                <DraftTextarea
                   className="mt-2 min-h-[76px] w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:ring-2 focus:ring-sky-500/30 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
                   value={waiverReason}
-                  onChange={(event) => setSalesBonusComplianceWaiverReasons((current) => ({ ...current, [waiverKey]: event.target.value }))}
+                  onCommit={(value) => setSalesBonusComplianceWaiverReasons((current) => ({ ...current, [waiverKey]: value }))}
                   placeholder={waiverActive ? "Why should the normal deduction be restored?" : "Why is this deduction being waived for this rep and week?"}
                 />
               </label>
@@ -49459,11 +49459,11 @@ ${waybillLineItems(w).length > 1
             <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
               <label className="flex-1 space-y-1">
                 <span className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">New program name</span>
-                <input className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 dark:border-slate-700 dark:bg-slate-950 dark:text-white" value={salesBonusDraftName} onChange={(event) => setSalesBonusDraftName(event.target.value)} />
+                <DraftTextarea as="input" className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 dark:border-slate-700 dark:bg-slate-950 dark:text-white" value={salesBonusDraftName} onCommit={(value) => setSalesBonusDraftName(value)} />
               </label>
               <label className="flex-[2] space-y-1">
                 <span className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Description</span>
-                <input className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 dark:border-slate-700 dark:bg-slate-950 dark:text-white" value={salesBonusDraftDescription} onChange={(event) => setSalesBonusDraftDescription(event.target.value)} />
+                <DraftTextarea as="input" className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 dark:border-slate-700 dark:bg-slate-950 dark:text-white" value={salesBonusDraftDescription} onCommit={(value) => setSalesBonusDraftDescription(value)} />
               </label>
               <button disabled={salesBonusSavingKey === "program:new"} className="!min-h-0 h-12 rounded-2xl bg-slate-950 px-5 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-60 dark:bg-white dark:text-slate-950" onClick={() => void createSalesBonusProgram()}>
                 {salesBonusSavingKey === "program:new" ? "Creating..." : "+ Create program"}
@@ -49810,10 +49810,10 @@ ${waybillLineItems(w).length > 1
         <label className="relative flex items-center">
           <Search className="absolute left-3 w-4 h-4 text-gray-400 dark:text-slate-500 pointer-events-none" />
           <span className="sr-only">Search call queue</span>
-          <input
+          <DraftTextarea as="input"
             className="w-full pl-9 pr-9 h-10 border border-gray-200 dark:border-slate-700 rounded-full text-sm bg-gray-50 dark:bg-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] focus:bg-white dark:focus:bg-slate-900 transition-colors"
             value={callQueueSearch}
-            onChange={(e) => { setCallQueueSearch(e.target.value); setCallQueueIndex(0); }}
+            onCommit={(value) => { setCallQueueSearch(value); setCallQueueIndex(0); }}
             placeholder="Order #, name, phone…"
           />
           {callQueueSearch && (
@@ -49967,12 +49967,12 @@ ${waybillLineItems(w).length > 1
               {/* Note field */}
               <div>
                 <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${orderMutedTextClass}`}>Note (optional)</label>
-                <textarea
+                <DraftTextarea
                   className={`w-full rounded-lg px-3 py-2 text-sm outline-none resize-none ${orderInputClass}`}
                   rows={2}
                   placeholder="Add a note about this call..."
                   value={callQueueNote}
-                  onChange={(e) => setCallQueueNote(e.target.value)}
+                  onCommit={(value) => setCallQueueNote(value)}
                 />
               </div>
 
@@ -50324,7 +50324,7 @@ ${waybillLineItems(w).length > 1
                       <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-sm font-black text-gray-950">{attempt.orderId} · {attempt.order?.customer ?? "Customer"}</p><p className="text-xs text-gray-500">{attempt.repName} · {attempt.order?.productName}</p></div><span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase ${attempt.auditStatus === "verified" ? "bg-emerald-100 text-emerald-700" : attempt.auditStatus === "flagged" ? "bg-rose-100 text-rose-700" : "bg-gray-100 text-gray-600"}`}>{attempt.auditStatus ?? "pending"}</span></div>
                       <div className="mt-3 flex flex-wrap gap-2">{attempt.eligibility === "exempt" ? <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-bold text-amber-800">Exempt: {attempt.exemptionReason?.replace(/_/g, " ")}</span> : offerLines.map((line: any) => <span key={line.id} className={`rounded-md px-2 py-1 text-xs font-bold ${line.response === "accepted" ? "bg-emerald-50 text-emerald-800" : "bg-gray-100 text-gray-700"}`}>{(line.offerType ?? line.offer_type).replace("_", "-")}: {line.response.replace(/_/g, " ")}</span>)}</div>
                       <p className="mt-2 text-xs text-gray-500">Final value: {formatProductMoney(attempt.finalOrderValue ?? 0, attempt.currency ?? "NGN")} · Order: {attempt.order?.status ?? "unknown"}</p>
-                      {managerView && <div className="mt-3 flex flex-col gap-2 sm:flex-row"><input className="h-9 min-w-0 flex-1 rounded-lg border border-gray-200 px-3 text-xs" placeholder="Audit or correction note" value={salesExpansionAuditNote[attempt.id] ?? ""} onChange={(event) => setSalesExpansionAuditNote((value) => ({ ...value, [attempt.id]: event.target.value }))} /><button type="button" className="!min-h-0 rounded-lg border border-emerald-200 px-3 py-2 text-xs font-black text-emerald-700" onClick={() => void auditAttempt(attempt, "verified")}>Verify</button><button type="button" className="!min-h-0 rounded-lg border border-rose-200 px-3 py-2 text-xs font-black text-rose-700" onClick={() => void auditAttempt(attempt, "flagged")}>Flag</button><button type="button" className="!min-h-0 rounded-lg border border-gray-300 px-3 py-2 text-xs font-black text-gray-700" onClick={() => void voidAttemptForCorrection(attempt)}>Void</button></div>}
+                      {managerView && <div className="mt-3 flex flex-col gap-2 sm:flex-row"><DraftTextarea as="input" className="h-9 min-w-0 flex-1 rounded-lg border border-gray-200 px-3 text-xs" placeholder="Audit or correction note" value={salesExpansionAuditNote[attempt.id] ?? ""} onCommit={(typed) => setSalesExpansionAuditNote((value) => ({ ...value, [attempt.id]: typed }))} /><button type="button" className="!min-h-0 rounded-lg border border-emerald-200 px-3 py-2 text-xs font-black text-emerald-700" onClick={() => void auditAttempt(attempt, "verified")}>Verify</button><button type="button" className="!min-h-0 rounded-lg border border-rose-200 px-3 py-2 text-xs font-black text-rose-700" onClick={() => void auditAttempt(attempt, "flagged")}>Flag</button><button type="button" className="!min-h-0 rounded-lg border border-gray-300 px-3 py-2 text-xs font-black text-gray-700" onClick={() => void voidAttemptForCorrection(attempt)}>Void</button></div>}
                     </article>;
                   })}
                 </div>
@@ -50383,17 +50383,17 @@ ${waybillLineItems(w).length > 1
                   <div className="mt-2 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
                     <label className="flex flex-col gap-1">
                       <span className={fieldLabel}>Attempt target %</span>
-                      <input type="number" min="0" max="100" className={controlClass} value={settings.attemptTargetPct ?? 85} onChange={(event) => patchSettings({ attemptTargetPct: Number(event.target.value) })} />
+                      <DraftTextarea as="input" type="number" min="0" max="100" className={controlClass} value={settings.attemptTargetPct ?? 85} onCommit={(value) => patchSettings({ attemptTargetPct: Number(value) })} />
                       <span className={fieldHelp}>Of a rep&apos;s eligible calls, the % where they should at least try an upsell or cross-sell.</span>
                     </label>
                     <label className="flex flex-col gap-1">
                       <span className={fieldLabel}>Logging target %</span>
-                      <input type="number" min="0" max="100" className={controlClass} value={settings.loggingTargetPct ?? 100} onChange={(event) => patchSettings({ loggingTargetPct: Number(event.target.value) })} />
+                      <DraftTextarea as="input" type="number" min="0" max="100" className={controlClass} value={settings.loggingTargetPct ?? 100} onCommit={(value) => patchSettings({ loggingTargetPct: Number(value) })} />
                       <span className={fieldHelp}>Of a rep&apos;s eligible calls, the % that must have a saved log — this is the number the &quot;Daily Log Compliance&quot; strip tracks.</span>
                     </label>
                     <label className="flex flex-col gap-1">
                       <span className={fieldLabel}>Cross-sell conversion target %</span>
-                      <input type="number" min="0" max="100" className={controlClass} value={settings.crossSellConversionTargetPct ?? 10} onChange={(event) => patchSettings({ crossSellConversionTargetPct: Number(event.target.value) })} />
+                      <DraftTextarea as="input" type="number" min="0" max="100" className={controlClass} value={settings.crossSellConversionTargetPct ?? 10} onCommit={(value) => patchSettings({ crossSellConversionTargetPct: Number(value) })} />
                       <span className={fieldHelp}>Of cross-sell offers actually made, the % of customers who should accept one.</span>
                     </label>
                   </div>
@@ -50411,32 +50411,32 @@ ${waybillLineItems(w).length > 1
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
                     <label className="flex flex-col gap-1">
                       <span className={fieldLabel}>Full bonus from %</span>
-                      <input type="number" min="0" max="100" className={controlClass} value={fullBonus} onChange={(event) => patchSettings({ fullBonusCompliancePct: Number(event.target.value) })} />
+                      <DraftTextarea as="input" type="number" min="0" max="100" className={controlClass} value={fullBonus} onCommit={(value) => patchSettings({ fullBonusCompliancePct: Number(value) })} />
                       <span className={fieldHelp}>Logging % at or above this earns the full bonus.</span>
                     </label>
                     <label className="flex flex-col gap-1">
                       <span className={fieldLabel}>First cut starts below %</span>
-                      <input type="number" min="0" max="100" className={controlClass} value={warningTier} onChange={(event) => patchSettings({ warningCompliancePct: Number(event.target.value) })} />
+                      <DraftTextarea as="input" type="number" min="0" max="100" className={controlClass} value={warningTier} onCommit={(value) => patchSettings({ warningCompliancePct: Number(value) })} />
                       <span className={fieldHelp}>Below the full-bonus % but at or above this, the first (smaller) cut applies.</span>
                     </label>
                     <label className="flex flex-col gap-1">
                       <span className={fieldLabel}>First cut amount %</span>
-                      <input type="number" min="0" max="100" className={controlClass} value={settings.warningReductionPct ?? 5} onChange={(event) => patchSettings({ warningReductionPct: Number(event.target.value) })} />
+                      <DraftTextarea as="input" type="number" min="0" max="100" className={controlClass} value={settings.warningReductionPct ?? 5} onCommit={(value) => patchSettings({ warningReductionPct: Number(value) })} />
                       <span className={fieldHelp}>How much bonus is lost in that band, e.g. 5 means the bonus is multiplied by 0.95.</span>
                     </label>
                     <label className="flex flex-col gap-1">
                       <span className={fieldLabel}>Second cut starts below %</span>
-                      <input type="number" min="0" max="100" className={controlClass} value={minimumTier} onChange={(event) => patchSettings({ minimumCompliancePct: Number(event.target.value) })} />
+                      <DraftTextarea as="input" type="number" min="0" max="100" className={controlClass} value={minimumTier} onCommit={(value) => patchSettings({ minimumCompliancePct: Number(value) })} />
                       <span className={fieldHelp}>Below the first-cut % but at or above this, the second (bigger) cut applies instead.</span>
                     </label>
                     <label className="flex flex-col gap-1">
                       <span className={fieldLabel}>Second cut amount %</span>
-                      <input type="number" min="0" max="100" className={controlClass} value={settings.minimumReductionPct ?? 10} onChange={(event) => patchSettings({ minimumReductionPct: Number(event.target.value) })} />
+                      <DraftTextarea as="input" type="number" min="0" max="100" className={controlClass} value={settings.minimumReductionPct ?? 10} onCommit={(value) => patchSettings({ minimumReductionPct: Number(value) })} />
                       <span className={fieldHelp}>How much bonus is lost in that band, e.g. 10 means the bonus is multiplied by 0.90.</span>
                     </label>
                     <label className="flex flex-col gap-1">
                       <span className={fieldLabel}>PIP after consecutive weeks</span>
-                      <input type="number" min="1" max="12" className={controlClass} value={settings.pipConsecutiveWeeks ?? 2} onChange={(event) => patchSettings({ pipConsecutiveWeeks: Number(event.target.value) })} />
+                      <DraftTextarea as="input" type="number" min="1" max="12" className={controlClass} value={settings.pipConsecutiveWeeks ?? 2} onCommit={(value) => patchSettings({ pipConsecutiveWeeks: Number(value) })} />
                       <span className={fieldHelp}>How many weeks in a row below the second-cut % before a Performance Improvement Plan review is triggered.</span>
                     </label>
                   </div>
@@ -50446,7 +50446,7 @@ ${waybillLineItems(w).length > 1
                   <legend className="px-1 text-xs font-black uppercase tracking-wide text-gray-400">Audit</legend>
                   <label className="flex max-w-xs flex-col gap-1">
                     <span className={fieldLabel}>Audit sample %</span>
-                    <input type="number" min="0" max="100" className={controlClass} value={settings.auditSamplePct ?? 10} onChange={(event) => patchSettings({ auditSamplePct: Number(event.target.value) })} />
+                    <DraftTextarea as="input" type="number" min="0" max="100" className={controlClass} value={settings.auditSamplePct ?? 10} onCommit={(value) => patchSettings({ auditSamplePct: Number(value) })} />
                     <span className={fieldHelp}>% of saved logs randomly picked each week for a manager to verify or flag as suspicious.</span>
                   </label>
                 </fieldset>
@@ -50455,7 +50455,7 @@ ${waybillLineItems(w).length > 1
                   <legend className="px-1 text-xs font-black uppercase tracking-wide text-gray-400">Rep guidance</legend>
                   <label className="flex flex-col gap-1">
                     <span className={fieldLabel}>Guidance shown to reps</span>
-                    <textarea className="min-h-[80px] w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" value={settings.guidance ?? ""} onChange={(event) => patchSettings({ guidance: event.target.value })} />
+                    <DraftTextarea className="min-h-[80px] w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" value={settings.guidance ?? ""} onCommit={(value) => patchSettings({ guidance: value })} />
                     <span className={fieldHelp}>Free-text tip shown inside the logging modal to help reps pitch upsells/cross-sells well.</span>
                   </label>
                 </fieldset>
@@ -54040,7 +54040,7 @@ ${waybillLineItems(w).length > 1
                   <span className="sr-only">Search pipeline</span>
                   <div className="relative">
                     <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-                    <input value={retentionSearch} onChange={(event) => setRetentionSearch(event.target.value)} placeholder="Customer, phone, order, product" className="!min-h-0 h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-xs focus:outline-none focus:ring-2 focus:ring-sky-500/20" />
+                    <DraftTextarea as="input" value={retentionSearch} onCommit={(value) => setRetentionSearch(value)} placeholder="Customer, phone, order, product" className="!min-h-0 h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-xs focus:outline-none focus:ring-2 focus:ring-sky-500/20" />
                   </div>
                 </label>
                 <select value={retentionPipelineStageFilter} onChange={(event) => setRetentionPipelineStageFilter(event.target.value)} className="!min-h-0 h-9 rounded-lg border border-gray-200 bg-white px-3 text-xs font-semibold text-gray-700">
@@ -54318,7 +54318,7 @@ ${waybillLineItems(w).length > 1
                 <div className="flex flex-col gap-2 border-b border-gray-200 p-4 sm:flex-row sm:flex-wrap sm:items-center">
                   <div className="relative min-w-0 flex-1 sm:min-w-[190px]">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                    <input value={retentionSearch} onChange={(e) => { setRetentionSearch(e.target.value); resetTaskPage(); }} placeholder="Search task or customer..." className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm" />
+                    <DraftTextarea as="input" value={retentionSearch} onCommit={(value) => { setRetentionSearch(value); resetTaskPage(); }} placeholder="Search task or customer..." className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm" />
                   </div>
                   <select value={retentionTaskTypeFilter} onChange={(e) => { setRetentionTaskTypeFilter(e.target.value as typeof retentionTaskTypeFilter); resetTaskPage(); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
                     <option value="all">All Task Types</option>
@@ -54800,7 +54800,7 @@ ${waybillLineItems(w).length > 1
                     <div className="flex flex-col gap-2 border-b border-gray-200 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center">
                       <div className="relative min-w-0 flex-1 sm:min-w-[190px]">
                         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                        <input value={retentionWinbackSearch} onChange={(e) => { setRetentionWinbackSearch(e.target.value); setRetentionWinbackPage(1); }} placeholder="Search customer or phone..." className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm" />
+                        <DraftTextarea as="input" value={retentionWinbackSearch} onCommit={(value) => { setRetentionWinbackSearch(value); setRetentionWinbackPage(1); }} placeholder="Search customer or phone..." className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm" />
                       </div>
                       <select value={retentionWinbackStatusFilter} onChange={(e) => { setRetentionWinbackStatusFilter(e.target.value); setRetentionWinbackPage(1); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
                         <option value="all">All Statuses</option>
@@ -55167,7 +55167,7 @@ ${waybillLineItems(w).length > 1
               <div className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center">
                 <label className="relative min-w-0 flex-1">
                   <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-                  <input type="search" value={retentionCustomerSearch} onChange={(event) => setRetentionCustomerSearch(event.target.value)} placeholder="Search customer, phone, order or product" className="!min-h-0 h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20" />
+                  <DraftTextarea as="input" type="search" value={retentionCustomerSearch} onCommit={(value) => setRetentionCustomerSearch(value)} placeholder="Search customer, phone, order or product" className="!min-h-0 h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20" />
                 </label>
                 <div className="flex flex-wrap items-center gap-2">
                   <button type="button" onClick={() => setRetentionCustomerFiltersOpen((open) => !open)} className={`!min-h-0 inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-black ${retentionCustomerFiltersOpen || customerFilterCount > 0 ? "border-emerald-300 bg-emerald-50 text-emerald-800" : "border-gray-200 text-gray-700"}`}><Filter className="h-4 w-4" /> Filters{customerFilterCount > 0 ? ` (${customerFilterCount})` : ""}</button>
@@ -55322,10 +55322,10 @@ ${waybillLineItems(w).length > 1
             </div>
             <label className="relative block w-full sm:w-64">
               <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-              <input
+              <DraftTextarea as="input"
                 type="search"
                 value={retentionActivitySearch}
-                onChange={(event) => setRetentionActivitySearch(event.target.value)}
+                onCommit={(value) => setRetentionActivitySearch(value)}
                 placeholder="Search activity"
                 className="!min-h-0 w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
               />
@@ -55621,7 +55621,7 @@ ${waybillLineItems(w).length > 1
                 <div className="border-b border-gray-200 px-4 py-3">
                   <label className="relative block w-full sm:max-w-xs">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                    <input value={retentionActivitySearch} onChange={(e) => { setRetentionActivitySearch(e.target.value); resetCallsPage(); }} placeholder="Search customer, phone, order..." className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm" />
+                    <DraftTextarea as="input" value={retentionActivitySearch} onCommit={(value) => { setRetentionActivitySearch(value); resetCallsPage(); }} placeholder="Search customer, phone, order..." className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm" />
                   </label>
                 </div>
 
@@ -56048,7 +56048,7 @@ ${waybillLineItems(w).length > 1
                 <div className="flex flex-col gap-2 border-b border-gray-200 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center">
                   <div className="relative min-w-0 flex-1 sm:min-w-[190px]">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                    <input value={retentionActivitySearch} onChange={(e) => { setRetentionActivitySearch(e.target.value); setRetentionReviewPage(1); }} placeholder="Search review or customer..." className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm" />
+                    <DraftTextarea as="input" value={retentionActivitySearch} onCommit={(value) => { setRetentionActivitySearch(value); setRetentionReviewPage(1); }} placeholder="Search review or customer..." className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm" />
                   </div>
                   <select value={retentionReviewRatingFilter} onChange={(e) => { setRetentionReviewRatingFilter(e.target.value); setRetentionReviewPage(1); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
                     <option value="all">All Ratings</option>
@@ -56453,7 +56453,7 @@ ${waybillLineItems(w).length > 1
                 <div className="flex flex-col gap-2 border-b border-gray-200 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center">
                   <div className="relative min-w-0 flex-1 sm:min-w-[190px]">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                    <input value={retentionReferralSearch} onChange={(e) => { setRetentionReferralSearch(e.target.value); setRetentionReferralPage(1); }} placeholder="Search referrer or referee..." className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm" />
+                    <DraftTextarea as="input" value={retentionReferralSearch} onCommit={(value) => { setRetentionReferralSearch(value); setRetentionReferralPage(1); }} placeholder="Search referrer or referee..." className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm" />
                   </div>
                   <select value={retentionReferralSourceFilter} onChange={(e) => { setRetentionReferralSourceFilter(e.target.value); setRetentionReferralPage(1); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
                     <option value="all">All Sources</option>
@@ -56853,7 +56853,7 @@ ${waybillLineItems(w).length > 1
                     <div className="flex flex-col gap-2 border-b border-gray-200 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center">
                       <div className="relative min-w-0 flex-1 sm:min-w-[190px]">
                         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                        <input value={retentionRepeatSearch} onChange={(e) => { setRetentionRepeatSearch(e.target.value); setRetentionRepeatPage(1); }} placeholder="Search customer, phone..." className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm" />
+                        <DraftTextarea as="input" value={retentionRepeatSearch} onCommit={(value) => { setRetentionRepeatSearch(value); setRetentionRepeatPage(1); }} placeholder="Search customer, phone..." className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm" />
                       </div>
                       <select value={retentionRepeatProductFilter} onChange={(e) => { setRetentionRepeatProductFilter(e.target.value); setRetentionRepeatPage(1); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
                         <option value="all">All Products</option>
@@ -57421,12 +57421,12 @@ ${waybillLineItems(w).length > 1
                 ] as const).map(([key, label]) => (
                   <label key={key} className="space-y-1">
                     <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">{label}</span>
-                    <input
+                    <DraftTextarea as="input"
                       type="number"
                       className="w-full h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
                       value={retentionSettingsDraft[key]}
-                      onChange={(event) => {
-                        const value = Number(event.target.value);
+                      onCommit={(typed) => {
+                        const value = Number(typed);
                         setRetentionSettingsDraft((draft) => draft ? { ...draft, [key]: Number.isFinite(value) ? value : 0 } : draft);
                       }}
                     />
@@ -57457,13 +57457,13 @@ ${waybillLineItems(w).length > 1
                     {retentionProductTimingList.map((product) => {
                       const draft = retentionProductTimingDrafts[product.id] ?? {};
                       const field = (key: keyof RetentionProductTiming, placeholder: number) => (
-                        <input
+                        <DraftTextarea as="input"
                           type="number"
                           placeholder={String(placeholder)}
                           className="w-20 h-8 px-2 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
                           value={draft[key] ?? ""}
-                          onChange={(event) => {
-                            const raw = event.target.value;
+                          onCommit={(typed) => {
+                            const raw = typed;
                             const value = raw === "" ? undefined : Number(raw);
                             setRetentionProductTimingDrafts((prev) => ({ ...prev, [product.id]: { ...prev[product.id], [key]: value } }));
                           }}
@@ -57621,9 +57621,9 @@ ${waybillLineItems(w).length > 1
                 </div>
                 <label className="mt-2 flex flex-wrap items-center gap-2">
                   <span className="text-xs font-bold text-gray-600">Call duration</span>
-                  <input
+                  <DraftTextarea as="input"
                     value={retentionOutcomeDuration}
-                    onChange={(e) => setRetentionOutcomeDuration(e.target.value)}
+                    onCommit={(value) => setRetentionOutcomeDuration(value)}
                     placeholder="3:12"
                     inputMode="numeric"
                     className="h-8 w-24 rounded-lg border border-gray-200 bg-white px-2 text-sm"
@@ -57712,7 +57712,7 @@ ${waybillLineItems(w).length > 1
                         <input type="checkbox" checked={retentionReviewCollected} onChange={(e) => setRetentionReviewCollected(e.target.checked)} /> Written review already collected
                       </label>
                       {retentionReviewCollected && (
-                        <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Review text" value={retentionReviewText} onChange={(e) => setRetentionReviewText(e.target.value)} />
+                        <DraftTextarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Review text" value={retentionReviewText} onCommit={(value) => setRetentionReviewText(value)} />
                       )}
                       <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
                         <input type="checkbox" checked={retentionReviewIsVideo} onChange={(e) => setRetentionReviewIsVideo(e.target.checked)} /> Video testimonial
@@ -57737,8 +57737,8 @@ ${waybillLineItems(w).length > 1
                       </label>
                       {retentionReferralCollected && (
                         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                          <input className="rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Referral name" value={retentionReferralName} onChange={(e) => setRetentionReferralName(e.target.value)} />
-                          <input className="rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Referral phone" value={retentionReferralPhone} onChange={(e) => setRetentionReferralPhone(e.target.value)} />
+                          <DraftTextarea as="input" className="rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Referral name" value={retentionReferralName} onCommit={(value) => setRetentionReferralName(value)} />
+                          <DraftTextarea as="input" className="rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Referral phone" value={retentionReferralPhone} onCommit={(value) => setRetentionReferralPhone(value)} />
                         </div>
                       )}
                       {retentionReviewIsVideo && (
@@ -57747,7 +57747,7 @@ ${waybillLineItems(w).length > 1
                         </label>
                       )}
                       {retentionDiscountOwed && (
-                        <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Discount note (e.g. 10% off next order)" value={retentionDiscountNote} onChange={(e) => setRetentionDiscountNote(e.target.value)} />
+                        <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Discount note (e.g. 10% off next order)" value={retentionDiscountNote} onCommit={(value) => setRetentionDiscountNote(value)} />
                       )}
                     </div>
                   )}
@@ -57757,11 +57757,11 @@ ${waybillLineItems(w).length > 1
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                         <label className="space-y-1">
                           <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Suggested product ID</span>
-                          <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" value={retentionOfferedProductId} onChange={(e) => setRetentionOfferedProductId(e.target.value)} placeholder="Product UUID" />
+                          <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" value={retentionOfferedProductId} onCommit={(value) => setRetentionOfferedProductId(value)} placeholder="Product UUID" />
                         </label>
                         <label className="space-y-1">
                           <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Package ID</span>
-                          <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" value={retentionOfferedPackageId} onChange={(e) => setRetentionOfferedPackageId(e.target.value)} placeholder="Package UUID (optional)" />
+                          <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" value={retentionOfferedPackageId} onCommit={(value) => setRetentionOfferedPackageId(value)} placeholder="Package UUID (optional)" />
                         </label>
                       </div>
                       <div className="flex flex-wrap gap-2">
@@ -57770,7 +57770,7 @@ ${waybillLineItems(w).length > 1
                         ))}
                       </div>
                       {retentionOutcome === "accepted" && (
-                        <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Resulting order ID" value={retentionResultingOrderId} onChange={(e) => setRetentionResultingOrderId(e.target.value)} />
+                        <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Resulting order ID" value={retentionResultingOrderId} onCommit={(value) => setRetentionResultingOrderId(value)} />
                       )}
                     </div>
                   )}
@@ -57847,7 +57847,7 @@ ${waybillLineItems(w).length > 1
 
               <label className="space-y-1 block">
                 <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Notes (optional)</span>
-                <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" value={retentionOutcomeNote} onChange={(e) => setRetentionOutcomeNote(e.target.value)} />
+                <DraftTextarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" value={retentionOutcomeNote} onCommit={(value) => setRetentionOutcomeNote(value)} />
               </label>
 
               <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end pt-2">
@@ -57873,16 +57873,16 @@ ${waybillLineItems(w).length > 1
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="block space-y-1">
                   <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Customer name *</span>
-                  <input value={retentionTaskForm.customerName} onChange={(e) => setRetentionTaskForm((f) => ({ ...f, customerName: e.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                  <DraftTextarea as="input" value={retentionTaskForm.customerName} onCommit={(value) => setRetentionTaskForm((f) => ({ ...f, customerName: value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
                 </label>
                 <label className="block space-y-1">
                   <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Phone *</span>
-                  <input value={retentionTaskForm.customerPhone} onChange={(e) => setRetentionTaskForm((f) => ({ ...f, customerPhone: e.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                  <DraftTextarea as="input" value={retentionTaskForm.customerPhone} onCommit={(value) => setRetentionTaskForm((f) => ({ ...f, customerPhone: value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
                 </label>
               </div>
               <label className="block space-y-1">
                 <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Task title *</span>
-                <input value={retentionTaskForm.title} onChange={(e) => setRetentionTaskForm((f) => ({ ...f, title: e.target.value }))} placeholder="e.g. Call back about the damaged lid" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                <DraftTextarea as="input" value={retentionTaskForm.title} onCommit={(value) => setRetentionTaskForm((f) => ({ ...f, title: value }))} placeholder="e.g. Call back about the damaged lid" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
               </label>
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="block space-y-1">
@@ -57915,11 +57915,11 @@ ${waybillLineItems(w).length > 1
               </div>
               <label className="block space-y-1">
                 <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Order ID (optional)</span>
-                <input value={retentionTaskForm.orderId ?? ""} onChange={(e) => setRetentionTaskForm((f) => ({ ...f, orderId: e.target.value || null }))} placeholder="Link this task to an order" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                <DraftTextarea as="input" value={retentionTaskForm.orderId ?? ""} onCommit={(value) => setRetentionTaskForm((f) => ({ ...f, orderId: value || null }))} placeholder="Link this task to an order" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
               </label>
               <label className="block space-y-1">
                 <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Note (optional)</span>
-                <textarea value={retentionTaskForm.note ?? ""} onChange={(e) => setRetentionTaskForm((f) => ({ ...f, note: e.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                <DraftTextarea value={retentionTaskForm.note ?? ""} onCommit={(value) => setRetentionTaskForm((f) => ({ ...f, note: value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
               </label>
               <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
                 <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700" onClick={() => setRetentionAddTaskOpen(false)}>Cancel</button>
@@ -57963,27 +57963,27 @@ ${waybillLineItems(w).length > 1
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="block space-y-1">
                   <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Referrer name *</span>
-                  <input value={retentionReferralForm.referrerName} onChange={(e) => setRetentionReferralForm((f) => ({ ...f, referrerName: e.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                  <DraftTextarea as="input" value={retentionReferralForm.referrerName} onCommit={(value) => setRetentionReferralForm((f) => ({ ...f, referrerName: value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
                 </label>
                 <label className="block space-y-1">
                   <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Referrer phone *</span>
-                  <input value={retentionReferralForm.referrerPhone} onChange={(e) => setRetentionReferralForm((f) => ({ ...f, referrerPhone: e.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                  <DraftTextarea as="input" value={retentionReferralForm.referrerPhone} onCommit={(value) => setRetentionReferralForm((f) => ({ ...f, referrerPhone: value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
                 </label>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="block space-y-1">
                   <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Referred person *</span>
-                  <input value={retentionReferralForm.refereeName} onChange={(e) => setRetentionReferralForm((f) => ({ ...f, refereeName: e.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                  <DraftTextarea as="input" value={retentionReferralForm.refereeName} onCommit={(value) => setRetentionReferralForm((f) => ({ ...f, refereeName: value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
                 </label>
                 <label className="block space-y-1">
                   <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Their phone *</span>
-                  <input value={retentionReferralForm.refereePhone} onChange={(e) => setRetentionReferralForm((f) => ({ ...f, refereePhone: e.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                  <DraftTextarea as="input" value={retentionReferralForm.refereePhone} onCommit={(value) => setRetentionReferralForm((f) => ({ ...f, refereePhone: value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
                 </label>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="block space-y-1">
                   <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Product interested in</span>
-                  <input value={retentionReferralForm.productInterested ?? ""} onChange={(e) => setRetentionReferralForm((f) => ({ ...f, productInterested: e.target.value }))} placeholder="e.g. Corner Shelf" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                  <DraftTextarea as="input" value={retentionReferralForm.productInterested ?? ""} onCommit={(value) => setRetentionReferralForm((f) => ({ ...f, productInterested: value }))} placeholder="e.g. Corner Shelf" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
                 </label>
                 <label className="block space-y-1">
                   <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Source</span>
@@ -57997,7 +57997,7 @@ ${waybillLineItems(w).length > 1
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="block space-y-1">
                   <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Referrer's order ID</span>
-                  <input value={retentionReferralForm.referrerOrderId ?? ""} onChange={(e) => setRetentionReferralForm((f) => ({ ...f, referrerOrderId: e.target.value || null }))} placeholder="Optional" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                  <DraftTextarea as="input" value={retentionReferralForm.referrerOrderId ?? ""} onCommit={(value) => setRetentionReferralForm((f) => ({ ...f, referrerOrderId: value || null }))} placeholder="Optional" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
                 </label>
                 <label className="block space-y-1">
                   <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Assign to</span>
@@ -58009,7 +58009,7 @@ ${waybillLineItems(w).length > 1
               </div>
               <label className="block space-y-1">
                 <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Notes</span>
-                <textarea value={retentionReferralForm.notes ?? ""} onChange={(e) => setRetentionReferralForm((f) => ({ ...f, notes: e.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                <DraftTextarea value={retentionReferralForm.notes ?? ""} onCommit={(value) => setRetentionReferralForm((f) => ({ ...f, notes: value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
               </label>
               <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
                 <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700" onClick={() => setRetentionAddReferralOpen(false)}>Cancel</button>
@@ -58053,7 +58053,7 @@ ${waybillLineItems(w).length > 1
                 <code className="mt-1 block break-all">name, phone, title, YYYY-MM-DD HH:MM, high|medium|low</code>
                 <p className="mt-2 text-gray-500">Example: <code>Ada Obi, 08031234567, Call about refund, 2026-08-01 10:30, high</code></p>
               </div>
-              <textarea value={retentionImportText} onChange={(e) => setRetentionImportText(e.target.value)} rows={8} className="w-full rounded-lg border border-gray-200 bg-white p-2 font-mono text-xs" placeholder="Ada Obi, 08031234567, Call about refund, 2026-08-01 10:30, high" />
+              <DraftTextarea value={retentionImportText} onCommit={(value) => setRetentionImportText(value)} rows={8} className="w-full rounded-lg border border-gray-200 bg-white p-2 font-mono text-xs" placeholder="Ada Obi, 08031234567, Call about refund, 2026-08-01 10:30, high" />
               <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
                 <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700" onClick={() => setRetentionImportOpen(false)}>Cancel</button>
                 <button
@@ -59033,9 +59033,9 @@ ${waybillLineItems(w).length > 1
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[240px] flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-            <input className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
+            <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
               placeholder="Search by incident ID, keyword, agent or order ID..." value={pdaIncSearch}
-              onChange={(e) => { setPdaIncSearch(e.target.value); setPdaIncPage(1); }} />
+              onCommit={(value) => { setPdaIncSearch(value); setPdaIncPage(1); }} />
           </div>
           <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
             value={pdaIncAgent} onChange={(e) => { setPdaIncAgent(e.target.value); setPdaIncPage(1); }}>
@@ -59364,9 +59364,9 @@ ${waybillLineItems(w).length > 1
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[240px] flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-            <input className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
+            <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
               placeholder="Search by report name or description..." value={pdaReportSearch}
-              onChange={(e) => { setPdaReportSearch(e.target.value); setPdaReportPage(1); }} />
+              onCommit={(value) => { setPdaReportSearch(value); setPdaReportPage(1); }} />
           </div>
           <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
             value={pdaReportCategory} onChange={(e) => { setPdaReportCategory(e.target.value); setPdaReportPage(1); }}>
@@ -59588,9 +59588,9 @@ ${waybillLineItems(w).length > 1
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[240px] flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-            <input className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
+            <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
               placeholder="Search settings..." value={pdaSettingsSearch}
-              onChange={(e) => setPdaSettingsSearch(e.target.value)} />
+              onCommit={(value) => setPdaSettingsSearch(value)} />
           </div>
         </div>
 
@@ -59746,9 +59746,9 @@ ${waybillLineItems(w).length > 1
     const field = (label: string, key: keyof PdaSettings, hint?: string) => (
       <label className="flex flex-col gap-1">
         <span className="text-xs font-bold text-gray-600">{label}</span>
-        <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm"
+        <DraftTextarea as="input" className="rounded-lg border border-gray-200 px-3 py-2 text-sm"
           value={String(draft[key] ?? "")}
-          onChange={(e) => setPdaSettingsDraft((v) => v ? { ...v, [key]: e.target.value } as any : v)} />
+          onCommit={(value) => setPdaSettingsDraft((v) => v ? { ...v, [key]: value } as any : v)} />
         {hint && <span className="text-[11px] text-gray-400">{hint}</span>}
       </label>
     );
@@ -60010,9 +60010,9 @@ ${waybillLineItems(w).length > 1
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[220px] flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-            <input className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
+            <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
               placeholder="Search by name, phone or ID..." value={pdaActiveSearch}
-              onChange={(e) => { setPdaActiveSearch(e.target.value); setPdaActivePage(1); }} />
+              onCommit={(value) => { setPdaActiveSearch(value); setPdaActivePage(1); }} />
           </div>
           <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
             value={pdaActiveAvailability} onChange={(e) => { setPdaActiveAvailability(e.target.value); setPdaActivePage(1); }}>
@@ -60251,9 +60251,9 @@ ${waybillLineItems(w).length > 1
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[220px] flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-            <input className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
+            <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
               placeholder="Search by order ID, customer name, phone..." value={pdaDispatchSearch}
-              onChange={(e) => { setPdaDispatchSearch(e.target.value); setPdaDispatchPage(1); }} />
+              onCommit={(value) => { setPdaDispatchSearch(value); setPdaDispatchPage(1); }} />
           </div>
           <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
             value={pdaDispatchFilter} onChange={(e) => { setPdaDispatchFilter(e.target.value); setPdaDispatchPage(1); }}>
@@ -60542,8 +60542,8 @@ ${waybillLineItems(w).length > 1
                 </p>
               </div>
               <div className="flex gap-2">
-                <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" placeholder="Order number"
-                  value={pdaCandidateOrderId} onChange={(e) => setPdaCandidateOrderId(e.target.value)} />
+                <DraftTextarea as="input" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" placeholder="Order number"
+                  value={pdaCandidateOrderId} onCommit={(value) => setPdaCandidateOrderId(value)} />
                 <button type="button" onClick={() => void openPdaCandidates(pdaCandidateOrderId.trim())}
                   className="!min-h-0 rounded-lg bg-[#1F8FE0] px-3 py-2 text-sm font-bold text-white hover:bg-[#1560a8]">
                   Find agents
@@ -60566,8 +60566,8 @@ ${waybillLineItems(w).length > 1
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <input className="rounded-lg border border-gray-200 px-3 py-2 text-xs" placeholder="Customer, order or agent"
-                value={pdaDispatchSearch} onChange={(e) => setPdaDispatchSearch(e.target.value)} />
+              <DraftTextarea as="input" className="rounded-lg border border-gray-200 px-3 py-2 text-xs" placeholder="Customer, order or agent"
+                value={pdaDispatchSearch} onCommit={(value) => setPdaDispatchSearch(value)} />
               <select className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold"
                 value={pdaDispatchFilter} onChange={(e) => setPdaDispatchFilter(e.target.value)}>
                 {["All", "Ready for Dispatch", "Dispatch Started", "Arrived at Customer Location", "Delivered", "Failed", "Rejected", "Rescheduled"].map((option) => (
@@ -60728,9 +60728,9 @@ ${waybillLineItems(w).length > 1
                 <h3 className="m-0 text-base font-bold text-gray-900">Orders Requiring Remittance ({orders.length})</h3>
                 <div className="relative min-w-[220px]">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                  <input className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm"
+                  <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm"
                     placeholder="Search by order ID, customer or phone..." value={pdaRemitSearch}
-                    onChange={(e) => { setPdaRemitSearch(e.target.value); setPdaRemitPage(1); }} />
+                    onCommit={(value) => { setPdaRemitSearch(value); setPdaRemitPage(1); }} />
                 </div>
               </div>
               <div className="overflow-x-auto">
@@ -61340,9 +61340,9 @@ ${waybillLineItems(w).length > 1
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[240px] flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-            <input className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
+            <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
               placeholder="Search by agent name, order ID, reference..." value={pdaCodSearch}
-              onChange={(e) => { setPdaCodSearch(e.target.value); setPdaCodPage(1); }} />
+              onCommit={(value) => { setPdaCodSearch(value); setPdaCodPage(1); }} />
           </div>
           <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
             value={pdaCodStatus} onChange={(e) => { setPdaCodStatus(e.target.value); setPdaCodPage(1); }}>
@@ -61918,13 +61918,13 @@ ${waybillLineItems(w).length > 1
           <div className="relative min-w-[240px] flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
             {pdaInvTab === "Agent Stock Overview" ? (
-              <input className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
+              <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
                 placeholder="Search by agent name, phone, or location..." value={pdaInvSearch}
-                onChange={(e) => { setPdaInvSearch(e.target.value); setPdaInvPage(1); }} />
+                onCommit={(value) => { setPdaInvSearch(value); setPdaInvPage(1); }} />
             ) : (
-              <input className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
+              <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
                 placeholder="Search by product, agent, order ID, transfer ID..." value={pdaLedgerSearch}
-                onChange={(e) => { setPdaLedgerSearch(e.target.value); setPdaLedgerPage(1); }} />
+                onCommit={(value) => { setPdaLedgerSearch(value); setPdaLedgerPage(1); }} />
             )}
           </div>
           {pdaInvTab === "Agent Stock Overview" ? (
@@ -62507,9 +62507,9 @@ ${waybillLineItems(w).length > 1
         <div className="space-y-2 px-4 pb-3">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-            <input className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm"
+            <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm"
               placeholder="Search by name, phone or ID..." value={pdaReviewSearch}
-              onChange={(e) => setPdaReviewSearch(e.target.value)} />
+              onCommit={(value) => setPdaReviewSearch(value)} />
           </div>
           <label className="flex items-center gap-2 text-xs text-gray-500">
             {sortLabel}
@@ -63145,9 +63145,9 @@ ${waybillLineItems(w).length > 1
             <div className="space-y-2 px-4 pb-3">
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                <input className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm"
+                <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm"
                   placeholder="Search by name, phone or ID..." value={pdaReviewSearch}
-                  onChange={(e) => setPdaReviewSearch(e.target.value)} />
+                  onCommit={(value) => setPdaReviewSearch(value)} />
               </div>
               <label className="flex items-center gap-2 text-xs text-gray-500">
                 Sort by:
@@ -63482,9 +63482,9 @@ ${waybillLineItems(w).length > 1
             <div className="px-4 pb-3">
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                <input className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm"
+                <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm"
                   placeholder="Search by name, phone or ID..." value={pdaGuarantorSearch}
-                  onChange={(e) => setPdaGuarantorSearch(e.target.value)} />
+                  onCommit={(value) => setPdaGuarantorSearch(value)} />
               </div>
               <div className="mt-2 grid grid-cols-2 gap-2">
                 <select className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs font-semibold text-gray-700"
@@ -64291,9 +64291,9 @@ ${waybillLineItems(w).length > 1
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[240px] flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-            <input className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
+            <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
               placeholder="Search by name, phone, or application ID..."
-              value={pdaAppSearch} onChange={(e) => { setPdaAppSearch(e.target.value); setPdaAppPage(1); }} />
+              value={pdaAppSearch} onCommit={(value) => { setPdaAppSearch(value); setPdaAppPage(1); }} />
           </div>
           <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
             value={pdaAppStatusFilter} onChange={(e) => { setPdaAppStatusFilter(e.target.value); setPdaAppPage(1); }}>
@@ -66562,9 +66562,9 @@ ${waybillLineItems(w).length > 1
             <div className="flex flex-wrap items-center gap-2">
               <div className="relative min-w-[220px] flex-1">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                <input className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
+                <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
                   placeholder="Search agent name, phone, ID..."
-                  value={pdaOverviewSearch} onChange={(e) => { setPdaOverviewSearch(e.target.value); setPdaOverviewPage(1); }} />
+                  value={pdaOverviewSearch} onCommit={(value) => { setPdaOverviewSearch(value); setPdaOverviewPage(1); }} />
               </div>
               <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
                 value={pdaOverviewStatus} onChange={(e) => { setPdaOverviewStatus(e.target.value); setPdaOverviewPage(1); }}>
@@ -67221,10 +67221,10 @@ ${waybillLineItems(w).length > 1
                     <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
                       <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-500">
                         Weight (%)
-                        <input type="number" min="0" max="100"
+                        <DraftTextarea as="input" type="number" min="0" max="100"
                           className="mt-1 w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
                           value={row.weight}
-                          onChange={(e) => updateHeadOfSalesScorecardDraft(row.key, "weight", Number(e.target.value))} />
+                          onCommit={(value) => updateHeadOfSalesScorecardDraft(row.key, "weight", Number(value))} />
                       </label>
                       <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-500">
                         Target
@@ -67238,11 +67238,11 @@ ${waybillLineItems(w).length > 1
                       </label>
                       <label className={`block text-[10px] font-bold uppercase tracking-wide ${row.targetMode === "manual" ? "text-gray-500" : "text-gray-300"}`}>
                         Goal value
-                        <input type="number" min="0" disabled={row.targetMode !== "manual"}
+                        <DraftTextarea as="input" type="number" min="0" disabled={row.targetMode !== "manual"}
                           className="mt-1 w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm disabled:bg-gray-50 disabled:text-gray-300"
                           value={row.targetValue ?? ""}
                           placeholder={row.targetMode === "manual" ? "e.g. 25000" : "follows the average"}
-                          onChange={(e) => updateHeadOfSalesScorecardDraft(row.key, "targetValue", Number(e.target.value))} />
+                          onCommit={(value) => updateHeadOfSalesScorecardDraft(row.key, "targetValue", Number(value))} />
                       </label>
                     </div>
                   </div>
@@ -68673,29 +68673,29 @@ ${waybillLineItems(w).length > 1
 
                 {headOfSalesCallReviewFormOpen && (
                   <div className="mt-3 space-y-2 rounded-xl border border-gray-200 bg-gray-50 p-3">
-                    <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Customer name"
+                    <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Customer name"
                       value={headOfSalesCallReviewForm.customerName}
-                      onChange={(e) => setHeadOfSalesCallReviewForm((f) => ({ ...f, customerName: e.target.value }))} />
+                      onCommit={(value) => setHeadOfSalesCallReviewForm((f) => ({ ...f, customerName: value }))} />
                     <div className="grid grid-cols-2 gap-2">
                       <input type="datetime-local" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm"
                         value={headOfSalesCallReviewForm.calledAt}
                         onChange={(e) => setHeadOfSalesCallReviewForm((f) => ({ ...f, calledAt: e.target.value }))} />
-                      <input type="number" min="0" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Duration (minutes)"
+                      <DraftTextarea as="input" type="number" min="0" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Duration (minutes)"
                         value={headOfSalesCallReviewForm.durationMinutes}
-                        onChange={(e) => setHeadOfSalesCallReviewForm((f) => ({ ...f, durationMinutes: e.target.value }))} />
+                        onCommit={(value) => setHeadOfSalesCallReviewForm((f) => ({ ...f, durationMinutes: value }))} />
                     </div>
-                    <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Outcome (e.g. Upsell accepted, No answer)"
+                    <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Outcome (e.g. Upsell accepted, No answer)"
                       value={headOfSalesCallReviewForm.outcome}
-                      onChange={(e) => setHeadOfSalesCallReviewForm((f) => ({ ...f, outcome: e.target.value }))} />
+                      onCommit={(value) => setHeadOfSalesCallReviewForm((f) => ({ ...f, outcome: value }))} />
                     <select className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm"
                       value={headOfSalesCallReviewForm.starScore}
                       onChange={(e) => setHeadOfSalesCallReviewForm((f) => ({ ...f, starScore: e.target.value }))}>
                       <option value="">Star rating (optional)</option>
                       {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n} star{n > 1 ? "s" : ""}</option>)}
                     </select>
-                    <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" rows={2} placeholder="Notes (optional)"
+                    <DraftTextarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" rows={2} placeholder="Notes (optional)"
                       value={headOfSalesCallReviewForm.reviewerNotes}
-                      onChange={(e) => setHeadOfSalesCallReviewForm((f) => ({ ...f, reviewerNotes: e.target.value }))} />
+                      onCommit={(value) => setHeadOfSalesCallReviewForm((f) => ({ ...f, reviewerNotes: value }))} />
                     {headOfSalesCallReviewError && <p className="m-0 text-xs font-bold text-rose-600">{headOfSalesCallReviewError}</p>}
                     <button type="button" disabled={headOfSalesCallReviewSaving}
                       className="!min-h-0 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4] disabled:opacity-50"
@@ -68745,14 +68745,14 @@ ${waybillLineItems(w).length > 1
 
               {headOfSalesActionItemFormOpen && (
                 <div className="mt-3 space-y-2 rounded-xl border border-gray-200 bg-gray-50 p-3">
-                  <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="What should they work on?"
+                  <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="What should they work on?"
                     value={headOfSalesActionItemForm.description}
-                    onChange={(e) => setHeadOfSalesActionItemForm((f) => ({ ...f, description: e.target.value }))} />
+                    onCommit={(value) => setHeadOfSalesActionItemForm((f) => ({ ...f, description: value }))} />
                   <div className="grid grid-cols-2 gap-2">
-                    <input type="number" min="0" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm"
+                    <DraftTextarea as="input" type="number" min="0" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm"
                       placeholder={headOfSalesActionItemForm.targetIsPercentage ? "Target % (e.g. 85)" : "Target count (optional)"}
                       value={headOfSalesActionItemForm.targetCount}
-                      onChange={(e) => setHeadOfSalesActionItemForm((f) => ({ ...f, targetCount: e.target.value }))} />
+                      onCommit={(value) => setHeadOfSalesActionItemForm((f) => ({ ...f, targetCount: value }))} />
                     <input type="date" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm"
                       value={headOfSalesActionItemForm.dueDate}
                       onChange={(e) => setHeadOfSalesActionItemForm((f) => ({ ...f, dueDate: e.target.value }))} />
@@ -69019,26 +69019,26 @@ ${waybillLineItems(w).length > 1
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <section className="rounded-2xl border border-gray-200 bg-white p-5">
             <h3 className="m-0 text-sm font-bold text-gray-900">3. What worked?</h3>
-            <textarea className="mt-3 w-full rounded-lg border border-gray-200 bg-white p-2 text-sm disabled:bg-gray-50 disabled:text-gray-500" rows={4}
+            <DraftTextarea className="mt-3 w-full rounded-lg border border-gray-200 bg-white p-2 text-sm disabled:bg-gray-50 disabled:text-gray-500" rows={4}
               placeholder="One point per line" disabled={isSubmitted}
               value={form.summaryWins}
-              onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, summaryWins: e.target.value }))} />
+              onCommit={(value) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, summaryWins: value }))} />
             {isSubmitted && <div className="mt-2">{bulletList(form.summaryWins, <span className="text-emerald-600">✓</span>, "Nothing logged.")}</div>}
           </section>
           <section className="rounded-2xl border border-gray-200 bg-white p-5">
             <h3 className="m-0 text-sm font-bold text-gray-900">4. What didn't work?</h3>
-            <textarea className="mt-3 w-full rounded-lg border border-gray-200 bg-white p-2 text-sm disabled:bg-gray-50 disabled:text-gray-500" rows={4}
+            <DraftTextarea className="mt-3 w-full rounded-lg border border-gray-200 bg-white p-2 text-sm disabled:bg-gray-50 disabled:text-gray-500" rows={4}
               placeholder="One point per line" disabled={isSubmitted}
               value={form.summaryChallenges}
-              onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, summaryChallenges: e.target.value }))} />
+              onCommit={(value) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, summaryChallenges: value }))} />
             {isSubmitted && <div className="mt-2">{bulletList(form.summaryChallenges, <span className="text-rose-500">✗</span>, "Nothing logged.")}</div>}
           </section>
           <section className="rounded-2xl border border-gray-200 bg-white p-5">
             <h3 className="m-0 text-sm font-bold text-gray-900">5. Key Learnings</h3>
-            <textarea className="mt-3 w-full rounded-lg border border-gray-200 bg-white p-2 text-sm disabled:bg-gray-50 disabled:text-gray-500" rows={4}
+            <DraftTextarea className="mt-3 w-full rounded-lg border border-gray-200 bg-white p-2 text-sm disabled:bg-gray-50 disabled:text-gray-500" rows={4}
               placeholder="One point per line" disabled={isSubmitted}
               value={form.keyLearnings}
-              onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, keyLearnings: e.target.value }))} />
+              onCommit={(value) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, keyLearnings: value }))} />
             {isSubmitted && <div className="mt-2">{bulletList(form.keyLearnings, <Info className="h-3.5 w-3.5 text-blue-500" />, "Nothing logged.")}</div>}
           </section>
         </div>
@@ -69046,10 +69046,10 @@ ${waybillLineItems(w).length > 1
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <section className="rounded-2xl border border-gray-200 bg-white p-5 lg:col-span-2">
             <h3 className="m-0 text-sm font-bold text-gray-900">6. What are we doing next week?</h3>
-            <textarea className="mt-3 w-full rounded-lg border border-gray-200 bg-white p-2 text-sm disabled:bg-gray-50 disabled:text-gray-500" rows={4}
+            <DraftTextarea className="mt-3 w-full rounded-lg border border-gray-200 bg-white p-2 text-sm disabled:bg-gray-50 disabled:text-gray-500" rows={4}
               placeholder="One action per line" disabled={isSubmitted}
               value={form.nextWeekPlan}
-              onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, nextWeekPlan: e.target.value }))} />
+              onCommit={(value) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, nextWeekPlan: value }))} />
             {isSubmitted && <div className="mt-2">{bulletList(form.nextWeekPlan, <span className="h-3 w-3 rounded-full border border-gray-300" />, "Nothing planned.")}</div>}
           </section>
 
@@ -69067,16 +69067,16 @@ ${waybillLineItems(w).length > 1
             ) : (
               <div className="mt-2 space-y-2">
                 <label className="block text-[11px] text-gray-500">Team AOV target ({currencySymbol()})
-                  <input type="number" min="0" className="mt-0.5 w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
-                    value={form.focusTargetAov} onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, focusTargetAov: e.target.value }))} />
+                  <DraftTextarea as="input" type="number" min="0" className="mt-0.5 w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
+                    value={form.focusTargetAov} onCommit={(value) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, focusTargetAov: value }))} />
                 </label>
                 <label className="block text-[11px] text-gray-500">Delivery rate target (%)
-                  <input type="number" min="0" max="100" className="mt-0.5 w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
-                    value={form.focusTargetDeliveryRate} onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, focusTargetDeliveryRate: e.target.value }))} />
+                  <DraftTextarea as="input" type="number" min="0" max="100" className="mt-0.5 w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
+                    value={form.focusTargetDeliveryRate} onCommit={(value) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, focusTargetDeliveryRate: value }))} />
                 </label>
                 <label className="block text-[11px] text-gray-500">Upsell rate target (%)
-                  <input type="number" min="0" max="100" className="mt-0.5 w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
-                    value={form.focusTargetUpsellRate} onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, focusTargetUpsellRate: e.target.value }))} />
+                  <DraftTextarea as="input" type="number" min="0" max="100" className="mt-0.5 w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
+                    value={form.focusTargetUpsellRate} onCommit={(value) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, focusTargetUpsellRate: value }))} />
                 </label>
               </div>
             )}
@@ -69085,10 +69085,10 @@ ${waybillLineItems(w).length > 1
 
         <section className="rounded-2xl border border-gray-200 bg-white p-5">
           <h3 className="m-0 text-sm font-bold text-gray-900">7. Additional Notes</h3>
-          <textarea className="mt-3 w-full rounded-lg border border-gray-200 bg-amber-50/40 p-3 text-sm disabled:bg-amber-50/40 disabled:text-gray-700" rows={3}
+          <DraftTextarea className="mt-3 w-full rounded-lg border border-gray-200 bg-amber-50/40 p-3 text-sm disabled:bg-amber-50/40 disabled:text-gray-700" rows={3}
             disabled={isSubmitted}
             value={form.additionalNotes}
-            onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, additionalNotes: e.target.value }))} />
+            onCommit={(value) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, additionalNotes: value }))} />
           {isSubmitted && headOfSalesViewingUser && (
             <p className="m-0 mt-2 text-[11px] text-gray-500">
               <strong className="text-gray-700">{headOfSalesViewingUser.name}</strong>, Head of Sales Rep · {formatDateTime(report?.submittedAt)}
@@ -69215,18 +69215,18 @@ ${waybillLineItems(w).length > 1
                   <div className="mt-2 grid grid-cols-3 gap-2">
                     <div>
                       <span className="mb-1 block text-[10px] text-gray-500">Amount (₦/week)</span>
-                      <input type="number" min="0" className="w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
-                        value={tier.amount} onChange={(e) => updateHeadOfSalesBonusTierDraft(tier.id, "amount", Number(e.target.value))} />
+                      <DraftTextarea as="input" type="number" min="0" className="w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
+                        value={tier.amount} onCommit={(value) => updateHeadOfSalesBonusTierDraft(tier.id, "amount", Number(value))} />
                     </div>
                     <div>
                       <span className="mb-1 block text-[10px] text-gray-500">Min Team AOV</span>
-                      <input type="number" min="0" className="w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
-                        value={tier.minTeamAov} onChange={(e) => updateHeadOfSalesBonusTierDraft(tier.id, "minTeamAov", Number(e.target.value))} />
+                      <DraftTextarea as="input" type="number" min="0" className="w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
+                        value={tier.minTeamAov} onCommit={(value) => updateHeadOfSalesBonusTierDraft(tier.id, "minTeamAov", Number(value))} />
                     </div>
                     <div>
                       <span className="mb-1 block text-[10px] text-gray-500">Min Delivery Rate %</span>
-                      <input type="number" min="0" max="100" className="w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
-                        value={tier.minDeliveryRate} onChange={(e) => updateHeadOfSalesBonusTierDraft(tier.id, "minDeliveryRate", Number(e.target.value))} />
+                      <DraftTextarea as="input" type="number" min="0" max="100" className="w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
+                        value={tier.minDeliveryRate} onCommit={(value) => updateHeadOfSalesBonusTierDraft(tier.id, "minDeliveryRate", Number(value))} />
                     </div>
                   </div>
                 </div>
@@ -69471,10 +69471,10 @@ ${waybillLineItems(w).length > 1
                 Successful initiative implementation confirmed
               </label>
             </div>
-            <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm disabled:bg-gray-50" rows={2}
+            <DraftTextarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm disabled:bg-gray-50" rows={2}
               placeholder="Notes (optional)" disabled={!canConfirm || record?.status === "Paid"}
               value={headOfSalesBonusForm.notes}
-              onChange={(e) => setHeadOfSalesBonusForm((f) => ({ ...f, notes: e.target.value }))} />
+              onCommit={(value) => setHeadOfSalesBonusForm((f) => ({ ...f, notes: value }))} />
 
             {canConfirm && record?.status !== "Paid" && (
               <div className="flex flex-wrap gap-2">
@@ -69733,11 +69733,11 @@ ${waybillLineItems(w).length > 1
           })}
         </div>
 
-        <input
+        <DraftTextarea as="input"
           className="!min-h-0 w-full sm:w-72 rounded-lg border border-gray-200 px-3 py-2 text-sm"
           placeholder="Search customer, phone, order, product..."
           value={recoveryWorklistSearch}
-          onChange={(event) => setRecoveryWorklistSearch(event.target.value)}
+          onCommit={(value) => setRecoveryWorklistSearch(value)}
         />
 
         {recoveryWorklistLoading && !view ? (
@@ -70006,11 +70006,11 @@ ${waybillLineItems(w).length > 1
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <input
+          <DraftTextarea as="input"
             className="!min-h-0 w-full sm:w-64 rounded-lg border border-gray-200 px-3 py-2 text-sm"
             placeholder="Search customer, phone, order, product..."
             value={activitySheetSearch}
-            onChange={(event) => setActivitySheetSearch(event.target.value)}
+            onCommit={(value) => setActivitySheetSearch(value)}
           />
           {recoveryRepIsOwnerLike && (
             <select
@@ -70506,10 +70506,10 @@ ${waybillLineItems(w).length > 1
               <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
                 <div className="relative w-full sm:max-w-sm">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <input
+                  <DraftTextarea as="input"
                     type="search"
                     value={search}
-                    onChange={(e) => setNextActionSearch((prev) => ({ ...prev, [group.key]: e.target.value }))}
+                    onCommit={(value) => setNextActionSearch((prev) => ({ ...prev, [group.key]: value }))}
                     placeholder="Search customers..."
                     className="!min-h-0 h-10 w-full rounded-full border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-700 placeholder:text-slate-400"
                   />
@@ -71114,12 +71114,12 @@ ${waybillLineItems(w).length > 1
               ] as const).map(([key, label]) => (
                 <label key={key} className="space-y-1">
                   <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">{label}</span>
-                  <input
+                  <DraftTextarea as="input"
                     type="number"
                     className="w-full h-9 px-3 border border-slate-200/80 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
                     value={recoveryRepSettingsDraft[key]}
-                    onChange={(event) => {
-                      const value = Number(event.target.value);
+                    onCommit={(typed) => {
+                      const value = Number(typed);
                       setRecoveryRepSettingsDraft((draft) => draft ? { ...draft, [key]: Number.isFinite(value) ? value : 0 } : draft);
                     }}
                   />
@@ -71765,9 +71765,9 @@ ${waybillLineItems(w).length > 1
             <div className="flex flex-wrap items-center gap-2">
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <input
+                <DraftTextarea as="input"
                   value={myOrdersSearch}
-                  onChange={(event) => setMyOrdersSearch(event.target.value)}
+                  onCommit={(value) => setMyOrdersSearch(value)}
                   placeholder="Search name or phone…"
                   className="h-9 w-full rounded-xl border border-slate-200/80 bg-white pl-9 pr-3 text-sm font-medium text-slate-700 shadow-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/20 sm:w-56"
                 />
@@ -72198,10 +72198,10 @@ ${waybillLineItems(w).length > 1
           <div className="flex flex-col gap-2.5 border-b border-slate-200/80 bg-slate-50/60 px-5 py-3 sm:flex-row sm:items-center">
             <div className="relative w-full sm:w-72">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
+              <DraftTextarea as="input"
                 type="text"
                 value={recoveryCandidateSearch}
-                onChange={(e) => setRecoveryCandidateSearch(e.target.value)}
+                onCommit={(value) => setRecoveryCandidateSearch(value)}
                 placeholder="Search name, phone or order ID…"
                 className="!min-h-0 w-full rounded-xl border border-slate-200/80 bg-white py-2 pl-9 pr-3 text-sm font-medium text-slate-700 shadow-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/20"
               />
@@ -72859,7 +72859,7 @@ ${waybillLineItems(w).length > 1
             <div className="space-y-3 p-5">
               <label className="block space-y-1">
                 <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Name *</span>
-                <input value={templateEditing.name ?? ""} onChange={(e) => setTemplateEditing((f) => ({ ...f, name: e.target.value }))} className="w-full rounded-lg border border-slate-200/80 bg-white p-2 text-sm" />
+                <DraftTextarea as="input" value={templateEditing.name ?? ""} onCommit={(value) => setTemplateEditing((f) => ({ ...f, name: value }))} className="w-full rounded-lg border border-slate-200/80 bg-white p-2 text-sm" />
               </label>
               {templateEditing.kind === "offer" && (
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -72876,14 +72876,14 @@ ${waybillLineItems(w).length > 1
                   {(templateEditing.offerType ?? "discount_pct") === "discount_pct" && (
                     <label className="block space-y-1">
                       <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Discount %</span>
-                      <input type="number" min={0} max={100} value={templateEditing.discountPct ?? ""} onChange={(e) => setTemplateEditing((f) => ({ ...f, discountPct: e.target.value === "" ? null : Number(e.target.value) }))} className="w-full rounded-lg border border-slate-200/80 bg-white p-2 text-sm" />
+                      <DraftTextarea as="input" type="number" min={0} max={100} value={templateEditing.discountPct ?? ""} onCommit={(value) => setTemplateEditing((f) => ({ ...f, discountPct: value === "" ? null : Number(value) }))} className="w-full rounded-lg border border-slate-200/80 bg-white p-2 text-sm" />
                     </label>
                   )}
                 </div>
               )}
               <label className="block space-y-1">
                 <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">{templateEditing.kind === "script" ? "Script" : "Message"} *</span>
-                <textarea rows={6} value={templateEditing.body ?? ""} onChange={(e) => setTemplateEditing((f) => ({ ...f, body: e.target.value }))} className="w-full rounded-lg border border-slate-200/80 bg-white p-2 text-sm" placeholder={templateEditing.kind === "script" ? "What the rep should say..." : "Hello {name}, ..."} />
+                <DraftTextarea rows={6} value={templateEditing.body ?? ""} onCommit={(value) => setTemplateEditing((f) => ({ ...f, body: value }))} className="w-full rounded-lg border border-slate-200/80 bg-white p-2 text-sm" placeholder={templateEditing.kind === "script" ? "What the rep should say..." : "Hello {name}, ..."} />
                 <span className="block text-[11px] text-gray-400">Type <code className="rounded bg-gray-100 px-1">{"{name}"}</code> to insert the customer&apos;s name when sending.</span>
               </label>
               <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
@@ -73943,8 +73943,8 @@ ${waybillLineItems(w).length > 1
                         <span className="mb-1 block text-xs font-black text-gray-700 dark:text-slate-200">Search products</span>
                         <span className="relative block">
                           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                          <input className="h-10 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100"
-                            value={repProductSearch} onChange={(e) => setRepProductSearch(e.target.value)} placeholder="Search by product name, SKU, category..." />
+                          <DraftTextarea as="input" className="h-10 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100"
+                            value={repProductSearch} onCommit={(value) => setRepProductSearch(value)} placeholder="Search by product name, SKU, category..." />
                         </span>
                       </label>
                       <label className="min-w-0">
@@ -74269,10 +74269,10 @@ ${waybillLineItems(w).length > 1
             <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 px-5 py-4 border-b border-gray-200">
               <label className="relative flex items-center w-full sm:flex-1 sm:min-w-[200px]">
                 <Search className="absolute left-3 w-4 h-4 text-gray-400 pointer-events-none" />
-                <input 
+                <DraftTextarea as="input" 
                   className="w-full pl-9 pr-4 h-9 border border-gray-200 rounded-md text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] focus:bg-white transition-colors"
                   value={repProductSearch} 
-                  onChange={(event) => setRepProductSearch(event.target.value)} 
+                  onCommit={(value) => setRepProductSearch(value)} 
                   placeholder="Search product, SKU, description..." 
                 />
               </label>
@@ -74464,10 +74464,10 @@ ${waybillLineItems(w).length > 1
             <div className="flex flex-col sm:flex-row sm:items-center gap-3 px-5 py-4 border-b border-gray-200">
               <label className="relative flex items-center w-full sm:flex-1 sm:max-w-md">
                 <Search className="absolute left-3 w-4 h-4 text-gray-400 pointer-events-none" />
-                <input
+                <DraftTextarea as="input"
                   className="w-full pl-9 pr-4 h-9 border border-gray-200 rounded-md text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] focus:bg-white transition-colors"
                   value={repCartSearch} 
-                  onChange={(event) => setRepCartSearch(event.target.value)} 
+                  onCommit={(value) => setRepCartSearch(value)} 
                   placeholder="Search customer, phone, city..." 
                 />
               </label>
@@ -75514,26 +75514,26 @@ ${waybillLineItems(w).length > 1
                     {/* Honeypot - hidden from real users, irresistible to bots.
                         autocomplete="off" + aria-hidden + tabIndex=-1 + visually
                         offscreen so a real human never sees or focuses it. */}
-                    <input
+                    <DraftTextarea as="input"
                       type="text"
                       name="company"
                       tabIndex={-1}
                       autoComplete="off"
                       aria-hidden="true"
                       value={publicHoneypot}
-                      onChange={(e) => setPublicHoneypot(e.target.value)}
+                      onCommit={(value) => setPublicHoneypot(value)}
                       style={{ position: "absolute", left: "-9999px", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
                     />
                     <label className="field-full">
-                      <input value={orderFormName} onChange={(event) => setOrderFormName(event.target.value)} onFocus={() => { currentHeartbeatActionRef.current = { action: "typing", field: "name" }; }} onBlur={() => { currentHeartbeatActionRef.current = { action: "active" }; }} placeholder="Your Name *" />
+                      <DraftTextarea as="input" value={orderFormName} onCommit={(value) => setOrderFormName(value)} onFocus={() => { currentHeartbeatActionRef.current = { action: "typing", field: "name" }; }} onBlur={() => { currentHeartbeatActionRef.current = { action: "active" }; }} placeholder="Your Name *" />
                     </label>
                     <label className="field-full">
                       <div className="phone-prefix-row" style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
                         <span aria-hidden="true" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 14px", background: "#f3f4f6", border: "1px solid #d1d5db", borderRadius: 8, fontWeight: 700, fontSize: 14, color: "#111827", minWidth: 70, whiteSpace: "nowrap" }}>+234</span>
-                        <input
+                        <DraftTextarea as="input"
                           style={{ flex: 1 }}
                           value={orderFormPhone}
-                          onChange={(event) => setOrderFormPhone(event.target.value.replace(/[^\d\s\-]/g, ""))} onFocus={() => { currentHeartbeatActionRef.current = { action: "typing", field: "phone" }; }} onBlur={() => { currentHeartbeatActionRef.current = { action: "active" }; }}
+                          onCommit={(value) => setOrderFormPhone(value.replace(/[^\d\s\-]/g, ""))} onFocus={() => { currentHeartbeatActionRef.current = { action: "typing", field: "phone" }; }} onBlur={() => { currentHeartbeatActionRef.current = { action: "active" }; }}
                           placeholder="Your Phone Number *"
                           inputMode="tel"
                           pattern="[0-9\s\-]{7,15}"
@@ -75549,10 +75549,10 @@ ${waybillLineItems(w).length > 1
                       <label className="field-full">
                         <div className="phone-prefix-row" style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
                           <span aria-hidden="true" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 14px", background: "#f3f4f6", border: "1px solid #d1d5db", borderRadius: 8, fontWeight: 700, fontSize: 14, color: "#111827", minWidth: 70, whiteSpace: "nowrap" }}>+234</span>
-                          <input
+                          <DraftTextarea as="input"
                             style={{ flex: 1 }}
                             value={orderFormWhatsapp}
-                            onChange={(event) => setOrderFormWhatsapp(sanitizePhoneDigitsInput(event.target.value))} onFocus={() => { currentHeartbeatActionRef.current = { action: "typing", field: "whatsapp" }; }} onBlur={() => { currentHeartbeatActionRef.current = { action: "active" }; }}
+                            onCommit={(value) => setOrderFormWhatsapp(sanitizePhoneDigitsInput(value))} onFocus={() => { currentHeartbeatActionRef.current = { action: "typing", field: "whatsapp" }; }} onBlur={() => { currentHeartbeatActionRef.current = { action: "active" }; }}
                             placeholder={`Your WhatsApp Number${requireWhatsapp ? " *" : ""}`}
                             inputMode="tel"
                             pattern="[0-9]{7,15}"
@@ -75564,14 +75564,14 @@ ${waybillLineItems(w).length > 1
                     )}
                     {showEmailField && (
                       <label className="field-full">
-                        <input value={orderFormEmail} onChange={(event) => setOrderFormEmail(event.target.value)} placeholder="Your Email" type="email" />
+                        <DraftTextarea as="input" value={orderFormEmail} onCommit={(value) => setOrderFormEmail(value)} placeholder="Your Email" type="email" />
                       </label>
                     )}
                     <label className="field-full">
-                      <input value={orderFormAddress} onChange={(event) => setOrderFormAddress(event.target.value)} onFocus={() => { currentHeartbeatActionRef.current = { action: "typing", field: "address" }; }} onBlur={() => { currentHeartbeatActionRef.current = { action: "active" }; }} placeholder={`Your Address${addressRequired ? " *" : ""}`} />
+                      <DraftTextarea as="input" value={orderFormAddress} onCommit={(value) => setOrderFormAddress(value)} onFocus={() => { currentHeartbeatActionRef.current = { action: "typing", field: "address" }; }} onBlur={() => { currentHeartbeatActionRef.current = { action: "active" }; }} placeholder={`Your Address${addressRequired ? " *" : ""}`} />
                     </label>
                     <label className="field-full">
-                      <input value={orderFormCity} onChange={(event) => setOrderFormCity(event.target.value)} onFocus={() => { currentHeartbeatActionRef.current = { action: "typing", field: "city" }; }} onBlur={() => { currentHeartbeatActionRef.current = { action: "active" }; }} placeholder={`Your City${cityRequired ? " *" : ""}`} />
+                      <DraftTextarea as="input" value={orderFormCity} onCommit={(value) => setOrderFormCity(value)} onFocus={() => { currentHeartbeatActionRef.current = { action: "typing", field: "city" }; }} onBlur={() => { currentHeartbeatActionRef.current = { action: "active" }; }} placeholder={`Your City${cityRequired ? " *" : ""}`} />
                     </label>
                     <label className="field-full">
                       {(() => {
@@ -77559,7 +77559,7 @@ ${waybillLineItems(w).length > 1
                   <div className="flex flex-wrap items-center gap-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
                     <div className="relative min-w-[240px] flex-1">
                       <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                      <input className="w-full rounded-lg border border-gray-200 bg-gray-50 py-2 pl-9 pr-3 text-sm" placeholder="Filter by order, name or phone..." value={dashboardTransactionSearch} onChange={(e) => { setDashboardTransactionSearch(e.target.value); setDashboardTransactionPage(1); }} />
+                      <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 bg-gray-50 py-2 pl-9 pr-3 text-sm" placeholder="Filter by order, name or phone..." value={dashboardTransactionSearch} onCommit={(value) => { setDashboardTransactionSearch(value); setDashboardTransactionPage(1); }} />
                     </div>
                     <div className="inline-flex items-center gap-1 rounded-lg bg-gray-100 p-1">
                       {(["All", "New", "Delivered", "Failed"] as const).map((status) => <button key={status} type="button" className={`!min-h-0 rounded-md px-3 py-2 text-xs font-semibold ${dashboardTransactionStatus === status ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"}`} onClick={() => { setDashboardTransactionStatus(status); setDashboardTransactionPage(1); }}>{status} <span className="ml-1 text-gray-400">{status === "All" ? dashboardOrders.length : dashboardOrders.filter((o) => (o.status ?? "New") === status).length}</span></button>)}
@@ -78012,9 +78012,9 @@ ${waybillLineItems(w).length > 1
                           {!grid.isCurrentWeek && <button onClick={goCurrentFollowUpWeek} className="!min-h-0 px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-[#1F8FE0] text-white hover:bg-blue-700">This week</button>}
                           <div className="relative min-w-[240px] flex-1 sm:max-w-md">
                             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400 dark:text-slate-500" />
-                            <input
+                            <DraftTextarea as="input"
                               value={followUpSearch}
-                              onChange={(e) => setFollowUpSearch(e.target.value)}
+                              onCommit={(value) => setFollowUpSearch(value)}
                               placeholder="Search customer, phone, order, product, rep…"
                               className="!min-h-0 h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-16 text-sm font-semibold text-gray-700 outline-none transition focus:border-[#1F8FE0] focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-blue-400/15"
                             />
@@ -78705,10 +78705,10 @@ ${waybillLineItems(w).length > 1
                   <label className="relative flex items-center w-full sm:flex-1 sm:min-w-[180px]">
                     <Search className="absolute left-3 w-4 h-4 text-gray-400 pointer-events-none" />
                     <span className="sr-only">Search orders</span>
-                    <input
+                    <DraftTextarea as="input"
                       className="w-full pl-9 pr-4 h-9 border border-gray-200 rounded-lg text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] focus:bg-white transition-colors"
                       value={orderSearch}
-                      onChange={(e) => setOrderSearch(e.target.value)}
+                      onCommit={(value) => setOrderSearch(value)}
                       placeholder={isMarketerOrderView ? "Order #, product, campaign, city…" : "Order #, name, phone, product, add-on…"}
                     />
                   </label>
@@ -80866,10 +80866,10 @@ ${waybillLineItems(w).length > 1
                     <label className="relative flex items-center w-full sm:min-w-[14rem] sm:flex-[1_1_18rem]">
                       <Search className="absolute left-3 w-4 h-4 text-gray-400 pointer-events-none" />
                       <span className="sr-only">Search abandoned carts</span>
-                      <input
+                      <DraftTextarea as="input"
                         className="pl-9 pr-4 h-9 border border-gray-200 rounded-md text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] focus:bg-white w-full transition-colors"
                         value={cartSearch}
-                        onChange={(event) => setCartSearch(event.target.value)}
+                        onCommit={(value) => setCartSearch(value)}
                         placeholder="Search customer, phone, form..."
                       />
                     </label>
@@ -81776,7 +81776,7 @@ ${waybillLineItems(w).length > 1
                   <label className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus-within:ring-2 focus-within:ring-[#1F8FE0] flex-1 max-w-xs min-w-0">
                     <Search className="w-4 h-4 text-gray-400 shrink-0" />
                     <span className="sr-only">Search deliveries</span>
-                    <input className="bg-transparent outline-none text-sm w-full min-w-0" value={deliverySearch} onChange={(event) => setDeliverySearch(event.target.value)} placeholder="Search customer or order #" />
+                    <DraftTextarea as="input" className="bg-transparent outline-none text-sm w-full min-w-0" value={deliverySearch} onCommit={(value) => setDeliverySearch(value)} placeholder="Search customer or order #" />
                   </label>
                   {deliverySearch && (
                     <button className="inline-flex items-center px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setDeliverySearch("")}>Clear</button>
@@ -82398,7 +82398,7 @@ ${waybillLineItems(w).length > 1
                 <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:flex-1 sm:max-w-xs min-w-0">
                   <Search className="w-4 h-4 text-gray-400 shrink-0" />
                   <span className="sr-only">Search sales representatives</span>
-                  <input className="bg-transparent outline-none text-sm w-full min-w-0" value={salesSearch} onChange={(event) => { setSalesSearch(event.target.value); setSalesRepPage(1); }} placeholder="Search by name, email, phone..." />
+                  <DraftTextarea as="input" className="bg-transparent outline-none text-sm w-full min-w-0" value={salesSearch} onCommit={(value) => { setSalesSearch(value); setSalesRepPage(1); }} placeholder="Search by name, email, phone..." />
                 </label>
                 <select className="h-9 w-full sm:w-auto px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Sales rep status" value={salesStatus} onChange={(event) => {
                   setSalesStatus(event.target.value as RepStatus);
@@ -83353,9 +83353,9 @@ ${waybillLineItems(w).length > 1
                     <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Search</span>
                     <div className="relative">
                       <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                      <input
+                      <DraftTextarea as="input"
                         value={agentBalanceSearch}
-                        onChange={(event) => setAgentBalanceSearch(event.target.value)}
+                        onCommit={(value) => setAgentBalanceSearch(value)}
                         placeholder="Agent, hub, state, product"
                         className="w-full h-11 pl-9 pr-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/20"
                       />
@@ -84970,9 +84970,9 @@ ${waybillLineItems(w).length > 1
                           </div>
                           <label className="relative flex items-center flex-1 min-w-[180px]">
                             <Search className="absolute left-2.5 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
-                            <input
+                            <DraftTextarea as="input"
                               value={ledgerSearch}
-                              onChange={(e) => setLedgerSearch(e.target.value)}
+                              onCommit={(value) => setLedgerSearch(value)}
                               placeholder="Search note, by, or type…"
                               className="w-full pl-8 pr-3 h-8 text-xs border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                             />
@@ -85688,7 +85688,7 @@ ${waybillLineItems(w).length > 1
                 <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:flex-1 sm:max-w-xs min-w-0">
                   <Search className="w-4 h-4 text-gray-400 shrink-0" />
                   <span className="sr-only">Search agents</span>
-                  <input className="bg-transparent outline-none text-sm w-full min-w-0" value={agentSearch} onChange={(event) => { setAgentSearch(event.target.value); setAgentsPage(1); }} placeholder="Search by name or phone..." />
+                  <DraftTextarea as="input" className="bg-transparent outline-none text-sm w-full min-w-0" value={agentSearch} onCommit={(value) => { setAgentSearch(value); setAgentsPage(1); }} placeholder="Search by name or phone..." />
                 </label>
                 <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Agent zone" value={agentZone} onChange={(event) => {
                   setAgentZone(event.target.value as AgentZone);
@@ -86486,7 +86486,7 @@ ${waybillLineItems(w).length > 1
                       <div className="space-y-3 pt-1">
                         <label className="flex flex-col gap-1">
                           <span className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Bonus Amount ({currencySymbol()})</span>
-                          <input className="w-48 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" inputMode="numeric" value={topPerformerBonusAmount} onChange={(e) => setTopPerformerBonusAmount(e.target.value)} placeholder="e.g. 10000" />
+                          <DraftTextarea as="input" className="w-48 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" inputMode="numeric" value={topPerformerBonusAmount} onCommit={(value) => setTopPerformerBonusAmount(value)} placeholder="e.g. 10000" />
                         </label>
                         <p className="text-[11px] text-gray-500 italic">Tie-breaker: when two or more reps tie on delivered orders, the bonus splits equally between them.</p>
                       </div>
@@ -86733,11 +86733,11 @@ ${waybillLineItems(w).length > 1
                   <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4">
                     <label className="flex flex-col gap-1">
                       <span className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Payroll Label</span>
-                      <input className="h-9 px-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" value={payrollLabel} onChange={(event) => setPayrollLabel(event.target.value)} />
+                      <DraftTextarea as="input" className="h-9 px-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" value={payrollLabel} onCommit={(value) => setPayrollLabel(value)} />
                     </label>
                     <label className="flex flex-col gap-1">
                       <span className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Notes (optional)</span>
-                      <textarea className="px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] resize-none" rows={3} value={payrollNotes} onChange={(event) => setPayrollNotes(event.target.value)} placeholder="Any notes for this payroll run..." />
+                      <DraftTextarea className="px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] resize-none" rows={3} value={payrollNotes} onCommit={(value) => setPayrollNotes(value)} placeholder="Any notes for this payroll run..." />
                     </label>
                     <button
                       className="!min-h-0 self-stretch sm:self-start inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
@@ -86924,7 +86924,7 @@ ${waybillLineItems(w).length > 1
                 <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:flex-1 sm:max-w-xs min-w-0">
                   <Search className="w-4 h-4 text-gray-400 shrink-0" />
                   <span className="sr-only">Search customers</span>
-                  <input className="bg-transparent outline-none text-sm w-full min-w-0" value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} placeholder={canViewCustomerContact ? "Search by name, email, or phone..." : "Search by customer name..."} />
+                  <DraftTextarea as="input" className="bg-transparent outline-none text-sm w-full min-w-0" value={customerSearch} onCommit={(value) => setCustomerSearch(value)} placeholder={canViewCustomerContact ? "Search by name, email, or phone..." : "Search by customer name..."} />
                 </label>
                 <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Customer source" value={customerSource} onChange={(event) => {
                   setCustomerSource(event.target.value as CustomerSource);
@@ -87355,7 +87355,7 @@ ${waybillLineItems(w).length > 1
                 <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:flex-1 sm:max-w-xs min-w-0">
                   <Search className="w-4 h-4 text-gray-400 shrink-0" />
                   <span className="sr-only">Search expenses</span>
-                  <input className="bg-transparent outline-none text-sm w-full min-w-0" value={expenseSearch} onChange={(event) => setExpenseSearch(event.target.value)} placeholder="Search descriptions or references..." />
+                  <DraftTextarea as="input" className="bg-transparent outline-none text-sm w-full min-w-0" value={expenseSearch} onCommit={(value) => setExpenseSearch(value)} placeholder="Search descriptions or references..." />
                 </label>
                 <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors w-full sm:w-auto" onClick={exportExpensesCsv}>
                   <Download className="w-4 h-4" /> Export
@@ -89162,7 +89162,7 @@ ${waybillLineItems(w).length > 1
                       </div>
                       <label className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:w-auto">
                         <Search className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                        <input className="bg-transparent outline-none text-xs w-full sm:w-32 min-w-0" value={financeRepSearch} onChange={(event) => setFinanceRepSearch(event.target.value)} placeholder="Search Rep..." />
+                        <DraftTextarea as="input" className="bg-transparent outline-none text-xs w-full sm:w-32 min-w-0" value={financeRepSearch} onCommit={(value) => setFinanceRepSearch(value)} placeholder="Search Rep..." />
                       </label>
                     </div>
                     <div className="sm:hidden divide-y divide-gray-100">
@@ -89408,7 +89408,7 @@ ${waybillLineItems(w).length > 1
                         </div>
                         <label className="flex min-w-0 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] sm:min-w-[240px]">
                           <Search className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-                          <input className="min-w-0 flex-1 bg-transparent text-xs outline-none" value={deliveryFeeAuditSearch} onChange={(event) => setDeliveryFeeAuditSearch(event.target.value)} placeholder="Search agent, area, order..." />
+                          <DraftTextarea as="input" className="min-w-0 flex-1 bg-transparent text-xs outline-none" value={deliveryFeeAuditSearch} onCommit={(value) => setDeliveryFeeAuditSearch(value)} placeholder="Search agent, area, order..." />
                         </label>
                       </div>
                     </div>
@@ -89535,19 +89535,19 @@ ${waybillLineItems(w).length > 1
                                                 <span className={`text-[10px] font-black ${orderGpsReady ? "text-emerald-700" : "text-amber-700"}`}>{coordinateLabel(fullOrder.latitude, fullOrder.longitude)}</span>
                                               </div>
                                               <div className="grid grid-cols-2 gap-1.5">
-                                                <input
+                                                <DraftTextarea as="input"
                                                   inputMode="decimal"
                                                   className="min-w-0 rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-[#1F8FE0]"
                                                   placeholder="Lat"
                                                   value={orderDraft.latitude}
-                                                  onChange={(event) => setDeliveryDistanceDraft(orderCoordKey, { latitude: event.target.value })}
+                                                  onCommit={(value) => setDeliveryDistanceDraft(orderCoordKey, { latitude: value })}
                                                 />
-                                                <input
+                                                <DraftTextarea as="input"
                                                   inputMode="decimal"
                                                   className="min-w-0 rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-[#1F8FE0]"
                                                   placeholder="Lng"
                                                   value={orderDraft.longitude}
-                                                  onChange={(event) => setDeliveryDistanceDraft(orderCoordKey, { longitude: event.target.value })}
+                                                  onCommit={(value) => setDeliveryDistanceDraft(orderCoordKey, { longitude: value })}
                                                 />
                                               </div>
                                               <button
@@ -89567,21 +89567,21 @@ ${waybillLineItems(w).length > 1
                                               </div>
                                               <p className="m-0 mb-1 truncate text-[11px] font-semibold text-gray-500">{hub ? agentLocationLabel(hub) : "Assign this order to an agent hub"}</p>
                                               <div className="grid grid-cols-2 gap-1.5">
-                                                <input
+                                                <DraftTextarea as="input"
                                                   inputMode="decimal"
                                                   className="min-w-0 rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-[#1F8FE0]"
                                                   placeholder="Lat"
                                                   value={hubDraft.latitude}
                                                   disabled={!hub}
-                                                  onChange={(event) => hubCoordKey && setDeliveryDistanceDraft(hubCoordKey, { latitude: event.target.value })}
+                                                  onCommit={(value) => hubCoordKey && setDeliveryDistanceDraft(hubCoordKey, { latitude: value })}
                                                 />
-                                                <input
+                                                <DraftTextarea as="input"
                                                   inputMode="decimal"
                                                   className="min-w-0 rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-[#1F8FE0]"
                                                   placeholder="Lng"
                                                   value={hubDraft.longitude}
                                                   disabled={!hub}
-                                                  onChange={(event) => hubCoordKey && setDeliveryDistanceDraft(hubCoordKey, { longitude: event.target.value })}
+                                                  onCommit={(value) => hubCoordKey && setDeliveryDistanceDraft(hubCoordKey, { longitude: value })}
                                                 />
                                               </div>
                                               <button
@@ -89787,7 +89787,7 @@ ${waybillLineItems(w).length > 1
                       <div className="flex flex-col gap-2 w-full sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
                         <label className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:w-auto">
                           <Search className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                          <input className="bg-transparent outline-none text-xs w-full sm:w-32 min-w-0" value={remittanceSearch} onChange={(e) => setRemittanceSearch(e.target.value)} placeholder="Search partner..." />
+                          <DraftTextarea as="input" className="bg-transparent outline-none text-xs w-full sm:w-32 min-w-0" value={remittanceSearch} onCommit={(value) => setRemittanceSearch(value)} placeholder="Search partner..." />
                         </label>
                         <select className="!min-h-0 h-10 sm:h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] w-full sm:w-auto" value={remittancePartnerFilter} onChange={(e) => setRemittancePartnerFilter(e.target.value)}>
                           {remittancePartnerOptions.map((p) => <option key={p}>{p}</option>)}
@@ -90187,10 +90187,10 @@ ${waybillLineItems(w).length > 1
                       <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
                         <label className="flex w-full items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] sm:w-auto">
                           <Search className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-                          <input
+                          <DraftTextarea as="input"
                             className="min-w-0 w-full bg-transparent text-xs outline-none sm:w-52"
                             value={remittanceOrderSearch}
-                            onChange={(event) => setRemittanceOrderSearch(event.target.value)}
+                            onCommit={(value) => setRemittanceOrderSearch(value)}
                             placeholder="Order ID, customer, product..."
                           />
                         </label>
@@ -90621,7 +90621,7 @@ ${waybillLineItems(w).length > 1
                     </label>
                     <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:flex-1 sm:max-w-xs min-w-0 self-end">
                       <Search className="w-4 h-4 text-gray-400 shrink-0" />
-                      <input className="bg-transparent outline-none text-sm w-full min-w-0" value={financeProductSearch} onChange={(event) => setFinanceProductSearch(event.target.value)} placeholder="Search by product name or SKU..." />
+                      <DraftTextarea as="input" className="bg-transparent outline-none text-sm w-full min-w-0" value={financeProductSearch} onCommit={(value) => setFinanceProductSearch(value)} placeholder="Search by product name or SKU..." />
                     </label>
                     <span className="self-end text-xs text-gray-400 sm:pb-2">{productProfitabilityRows.length} of {products.length} products</span>
                   </div>
@@ -90785,7 +90785,7 @@ ${waybillLineItems(w).length > 1
                     </label>
                     <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:flex-1 sm:max-w-xs min-w-0 self-end">
                       <Search className="w-4 h-4 text-gray-400 shrink-0" />
-                      <input className="bg-transparent outline-none text-sm w-full min-w-0" value={financeProductSearch} onChange={(event) => setFinanceProductSearch(event.target.value)} placeholder="Search by product, package, or pcs..." />
+                      <DraftTextarea as="input" className="bg-transparent outline-none text-sm w-full min-w-0" value={financeProductSearch} onCommit={(value) => setFinanceProductSearch(value)} placeholder="Search by product, package, or pcs..." />
                     </label>
                     <div className="self-end flex flex-wrap items-center gap-2 sm:pb-2">
                       <span className="text-xs text-gray-400">{packagePerformanceRows.length} package rows</span>
@@ -91083,9 +91083,9 @@ ${waybillLineItems(w).length > 1
                       <div className="flex items-end gap-2">
                         <label className="flex-1 sm:w-56">
                           <span className="block text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">New batch name</span>
-                          <input
+                          <DraftTextarea as="input"
                             value={newBatchLabel}
-                            onChange={(e) => setNewBatchLabel(e.target.value)}
+                            onCommit={(value) => setNewBatchLabel(value)}
                             placeholder="e.g. Edge Brusher - May push"
                             className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
                           />
@@ -91135,7 +91135,7 @@ ${waybillLineItems(w).length > 1
                               return (
                                 <tr key={t.tierKey} className="border-t border-gray-100">
                                   <td className="px-2 py-2">
-                                    <input value={t.label} onChange={(e) => upd({ label: e.target.value })} className="w-44 rounded border border-gray-200 px-2 py-1 text-sm" />
+                                    <DraftTextarea as="input" value={t.label} onCommit={(value) => upd({ label: value })} className="w-44 rounded border border-gray-200 px-2 py-1 text-sm" />
                                     <div className="text-[10px] text-gray-400 font-mono mt-0.5">{t.tierKey}</div>
                                   </td>
                                   {(["earnsRevenue", "chargeAd", "chargeProduct", "chargeDelivery"] as const).map((flag) => (
@@ -91335,10 +91335,10 @@ ${waybillLineItems(w).length > 1
                             <span className="block text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">{f.label}</span>
                             <div className="relative">
                               <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₦</span>
-                              <input
+                              <DraftTextarea as="input"
                                 type="number" min={0}
                                 value={batch[f.key]}
-                                onChange={(e) => setBatchEconomics((p: any) => p ? { ...p, batch: { ...p.batch, [f.key]: Number(e.target.value) || 0 } } : p)}
+                                onCommit={(value) => setBatchEconomics((p: any) => p ? { ...p, batch: { ...p.batch, [f.key]: Number(value) || 0 } } : p)}
                                 className="h-10 w-full rounded-lg border border-gray-200 bg-white pl-7 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
                               />
                             </div>
@@ -91574,9 +91574,9 @@ ${waybillLineItems(w).length > 1
                     </select>
                     <label className="relative w-full sm:min-w-[260px]">
                       <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                      <input
+                      <DraftTextarea as="input"
                         value={adTrackingSearch}
-                        onChange={(event) => setAdTrackingSearch(event.target.value)}
+                        onCommit={(value) => setAdTrackingSearch(value)}
                         placeholder="Search buyer, campaign, product..."
                         className="h-10 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                       />
@@ -91639,7 +91639,7 @@ ${waybillLineItems(w).length > 1
                     ) : marketingSpendOwnerType === "company" ? (
                       <label className="text-xs font-black uppercase tracking-wider text-gray-500">
                         Company account label
-                        <input value={marketingSpendTag} onChange={(event) => setMarketingSpendTag(event.target.value)} placeholder="company" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                        <DraftTextarea as="input" value={marketingSpendTag} onCommit={(value) => setMarketingSpendTag(value)} placeholder="company" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                       </label>
                     ) : (
                       <>
@@ -91663,7 +91663,7 @@ ${waybillLineItems(w).length > 1
                         </label>
                         <label className="text-xs font-black uppercase tracking-wider text-gray-500">
                           Buyer tracking tag
-                          <input value={marketingSpendTag} onChange={(event) => setMarketingSpendTag(event.target.value)} placeholder="media_buyer tag" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                          <DraftTextarea as="input" value={marketingSpendTag} onCommit={(value) => setMarketingSpendTag(value)} placeholder="media_buyer tag" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                         </label>
                       </>
                     )}
@@ -91679,11 +91679,11 @@ ${waybillLineItems(w).length > 1
                     </label>
                     <label className="text-xs font-black uppercase tracking-wider text-gray-500">
                       {marketingIsPersonalWorkspace ? "Amount received" : "Budget given"}
-                      <input inputMode="decimal" value={marketingSpendBudgetGiven} onChange={(event) => setMarketingSpendBudgetGiven(event.target.value)} placeholder="30000" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                      <DraftTextarea as="input" inputMode="decimal" value={marketingSpendBudgetGiven} onCommit={(value) => setMarketingSpendBudgetGiven(value)} placeholder="30000" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                     </label>
                     <label className="text-xs font-black uppercase tracking-wider text-gray-500">
                       {marketingIsPersonalWorkspace ? "Amount used" : "Actual spent"}
-                      <input inputMode="decimal" value={marketingSpendActualSpent} onChange={(event) => setMarketingSpendActualSpent(event.target.value)} placeholder="leave blank if unknown" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                      <DraftTextarea as="input" inputMode="decimal" value={marketingSpendActualSpent} onCommit={(value) => setMarketingSpendActualSpent(value)} placeholder="leave blank if unknown" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                     </label>
                     <label className="text-xs font-black uppercase tracking-wider text-gray-500">
                       Platform
@@ -91693,15 +91693,15 @@ ${waybillLineItems(w).length > 1
                     </label>
                     <label className="text-xs font-black uppercase tracking-wider text-gray-500">
                       Campaign
-                      <input value={marketingSpendCampaign} onChange={(event) => setMarketingSpendCampaign(event.target.value)} placeholder="campaign name if known" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                      <DraftTextarea as="input" value={marketingSpendCampaign} onCommit={(value) => setMarketingSpendCampaign(value)} placeholder="campaign name if known" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                     </label>
                     <label className="md:col-span-2 text-xs font-black uppercase tracking-wider text-gray-500">
                       Landing page URL
-                      <input value={marketingSpendLandingPage} onChange={(event) => setMarketingSpendLandingPage(event.target.value)} placeholder="https://landing-page.com/offer" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                      <DraftTextarea as="input" value={marketingSpendLandingPage} onCommit={(value) => setMarketingSpendLandingPage(value)} placeholder="https://landing-page.com/offer" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                     </label>
                     <label className="md:col-span-2 text-xs font-black uppercase tracking-wider text-gray-500">
                       Note
-                      <input value={marketingSpendNotes} onChange={(event) => setMarketingSpendNotes(event.target.value)} placeholder="Example: morning budget for Facebook buyer" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                      <DraftTextarea as="input" value={marketingSpendNotes} onCommit={(value) => setMarketingSpendNotes(value)} placeholder="Example: morning budget for Facebook buyer" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                     </label>
                   </div>
                   <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -92176,9 +92176,9 @@ ${waybillLineItems(w).length > 1
                   </select>
                   <label className="relative w-full sm:min-w-[260px] sm:flex-1 sm:max-w-md">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                    <input
+                    <DraftTextarea as="input"
                       value={adTrackingSearch}
-                      onChange={(event) => setAdTrackingSearch(event.target.value)}
+                      onCommit={(value) => setAdTrackingSearch(value)}
                       placeholder="Search campaign, creative, source, or label..."
                       className="h-10 sm:h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
                     />
@@ -92748,9 +92748,9 @@ ${waybillLineItems(w).length > 1
                         </select>
                         <label className="relative w-full sm:min-w-[260px] sm:flex-1 sm:max-w-md">
                           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                          <input
+                          <DraftTextarea as="input"
                             value={adTrackingSearch}
-                            onChange={(event) => setAdTrackingSearch(event.target.value)}
+                            onCommit={(value) => setAdTrackingSearch(value)}
                             placeholder="Search cart, campaign, creative, or label..."
                             className="h-10 sm:h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
                           />
@@ -93263,10 +93263,10 @@ ${waybillLineItems(w).length > 1
                                         )}
                                         <div>
                                           <span className="text-[10px] uppercase tracking-wider text-gray-400">{autoWeek ? "TikTok Ad Spend" : "Ad Spend"}</span>
-                                          <input
+                                          <DraftTextarea as="input"
                                             type="number" min="0" placeholder="0"
                                             value={adSpendDraft[key] ?? ""}
-                                            onChange={(e) => setAdSpendDraft((prev) => ({ ...prev, [key]: e.target.value }))}
+                                            onCommit={(value) => setAdSpendDraft((prev) => ({ ...prev, [key]: value }))}
                                             className="mt-1 w-full text-sm border border-gray-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#1F8FE0] focus:ring-1 focus:ring-[#1F8FE0] bg-white"
                                           />
                                         </div>
@@ -93474,10 +93474,10 @@ ${waybillLineItems(w).length > 1
                                             const key = `${product.id}-${day}`;
                                             return (
                                               <td key={day} className={`px-2 py-2 ${day === todayKey2 ? "bg-blue-50/40" : ""}`}>
-                                                <input
+                                                <DraftTextarea as="input"
                                                   type="number" min="0" placeholder="0"
                                                   value={adSpendDraft[key] ?? ""}
-                                                  onChange={(e) => setAdSpendDraft((prev) => ({ ...prev, [key]: e.target.value }))}
+                                                  onCommit={(value) => setAdSpendDraft((prev) => ({ ...prev, [key]: value }))}
                                                   className="w-full text-center text-xs border border-gray-200 rounded-md px-1 py-1.5 focus:outline-none focus:border-[#1F8FE0] focus:ring-1 focus:ring-[#1F8FE0] bg-white"
                                                 />
                                               </td>
@@ -93496,10 +93496,10 @@ ${waybillLineItems(w).length > 1
                                           return (
                                             <td key={day} className={`px-2 py-2 ${day === todayKey2 ? "bg-blue-50/40" : ""}`}>
                                               {tiktokAuto > 0 ? <span className="block text-center text-xs font-semibold text-gray-800" title="From TikTok Ads Manager via the Tracking Hub">{formatMoney(tiktokAuto)}</span> : (
-                                                <input
+                                                <DraftTextarea as="input"
                                                   type="number" min="0" placeholder="0"
                                                   value={adSpendDraft[key] ?? ""}
-                                                  onChange={(e) => setAdSpendDraft((prev) => ({ ...prev, [key]: e.target.value }))}
+                                                  onCommit={(value) => setAdSpendDraft((prev) => ({ ...prev, [key]: value }))}
                                                   className="w-full text-center text-xs border border-gray-200 rounded-md px-1 py-1.5 focus:outline-none focus:border-[#1F8FE0] focus:ring-1 focus:ring-[#1F8FE0] bg-white"
                                                 />
                                               )}
@@ -93928,7 +93928,7 @@ ${waybillLineItems(w).length > 1
                 <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:flex-1 sm:max-w-xs min-w-0">
                   <Search className="w-4 h-4 text-gray-400 shrink-0" />
                   <span className="sr-only">Search users</span>
-                  <input className="bg-transparent outline-none text-sm w-full min-w-0" value={userSearch} onChange={(event) => { setUserSearch(event.target.value); setUserPage(1); }} placeholder="Search users by name, email..." />
+                  <DraftTextarea as="input" className="bg-transparent outline-none text-sm w-full min-w-0" value={userSearch} onCommit={(value) => { setUserSearch(value); setUserPage(1); }} placeholder="Search users by name, email..." />
                 </label>
                 <select className="h-10 sm:h-9 w-full sm:w-auto px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="User role" value={userRole} onChange={(event) => { setUserRole(event.target.value as UserRole); setUserPage(1); showToast(`User role filter set to ${event.target.value}.`); }}>{userRoles.map((role) => <option key={role}>{role}</option>)}</select>
                 <select className="h-10 sm:h-9 w-full sm:w-auto px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="User status" value={userStatus} onChange={(event) => { setUserStatus(event.target.value as UserStatus); setUserPage(1); showToast(`User status filter set to ${event.target.value}.`); }}>{userStatuses.map((status) => <option key={status}>{status}</option>)}</select>
@@ -94339,7 +94339,7 @@ ${waybillLineItems(w).length > 1
                 <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:flex-1 sm:max-w-xs min-w-0">
                   <Search className="w-4 h-4 text-gray-400 shrink-0" />
                   <span className="sr-only">Search reps</span>
-                  <input className="bg-transparent outline-none text-sm w-full min-w-0" value={roundRobinSearch} onChange={(event) => setRoundRobinSearch(event.target.value)} placeholder={roundRobinTab === "Dedicated Products" ? "Search products..." : "Search reps..."} />
+                  <DraftTextarea as="input" className="bg-transparent outline-none text-sm w-full min-w-0" value={roundRobinSearch} onCommit={(value) => setRoundRobinSearch(value)} placeholder={roundRobinTab === "Dedicated Products" ? "Search products..." : "Search reps..."} />
                 </label>
               </div>
 
@@ -94696,7 +94696,7 @@ ${waybillLineItems(w).length > 1
                         <p className="admin-tone-title text-sm font-semibold text-gray-800 flex items-center gap-1.5"><Pencil className="w-4 h-4 text-blue-600" /> Marketing message on this product's form</p>
                         <p className="admin-tone-body text-xs text-gray-500 mt-0.5">Anything you write here shows above the package picker on the order form. Great for benefits, urgency, or guarantees.</p>
                       </div>
-                      <textarea className="admin-tone-textarea w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" rows={3} placeholder={`e.g. ✨ ${previewProduct.name} - sold out 3 times this month. Limited stock left.`} value={previewProduct.formCustomText ?? ""} onChange={(e) => setProducts((prev) => prev.map((p) => p.id === previewProduct.id ? { ...p, formCustomText: e.target.value } : p))} onBlur={(e) => { const val = e.target.value; const pid = previewProduct.id; if (isTemporaryProductId(pid)) { showToast("This product is still syncing. Try again in a moment."); return; } productsApi.update(pid, { form_custom_text: val }).catch((err: any) => showToast(`Failed to save marketing message: ${err.message}`)); }} />
+                      <DraftTextarea className="admin-tone-textarea w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" rows={3} placeholder={`e.g. ✨ ${previewProduct.name} - sold out 3 times this month. Limited stock left.`} value={previewProduct.formCustomText ?? ""} onCommit={(value) => setProducts((prev) => prev.map((p) => p.id === previewProduct.id ? { ...p, formCustomText: value } : p))} onBlur={(e) => { const val = (e.target as HTMLTextAreaElement).value; const pid = previewProduct.id; if (isTemporaryProductId(pid)) { showToast("This product is still syncing. Try again in a moment."); return; } productsApi.update(pid, { form_custom_text: val }).catch((err: any) => showToast(`Failed to save marketing message: ${err.message}`)); }} />
                     </div>
                   )}
 
@@ -94714,10 +94714,10 @@ ${waybillLineItems(w).length > 1
                       <div className="px-4 py-3 border-t border-emerald-100 bg-white/80 grid gap-3 sm:grid-cols-3">
                         <label className="block">
                           <span className="block text-xs font-bold uppercase tracking-wide text-gray-500 mb-1">Total slots</span>
-                          <input
+                          <DraftTextarea as="input"
                             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
                             value={freeDeliverySlotLimit}
-                            onChange={(event) => setFreeDeliverySlotLimit(event.target.value.replace(/[^\d]/g, ""))}
+                            onCommit={(value) => setFreeDeliverySlotLimit(value.replace(/[^\d]/g, ""))}
                             inputMode="numeric"
                             placeholder="15"
                           />
@@ -94725,10 +94725,10 @@ ${waybillLineItems(w).length > 1
                         </label>
                         <label className="block">
                           <span className="block text-xs font-bold uppercase tracking-wide text-gray-500 mb-1">Already claimed</span>
-                          <input
+                          <DraftTextarea as="input"
                             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
                             value={freeDeliverySlotManualClaimed}
-                            onChange={(event) => setFreeDeliverySlotManualClaimed(event.target.value.replace(/[^\d]/g, ""))}
+                            onCommit={(value) => setFreeDeliverySlotManualClaimed(value.replace(/[^\d]/g, ""))}
                             inputMode="numeric"
                             placeholder="3"
                           />
@@ -94827,10 +94827,10 @@ ${waybillLineItems(w).length > 1
                         <div className="px-4 py-3 border-t border-gray-100 bg-gray-50">
                           <label className="flex flex-col gap-1.5">
                             <span className="text-xs font-bold uppercase tracking-wider text-gray-500">Heading</span>
-                            <input
+                            <DraftTextarea as="input"
                               className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm bg-white"
                               value={formOrderSummaryTitle}
-                              onChange={(e) => setFormOrderSummaryTitle(e.target.value)}
+                              onCommit={(value) => setFormOrderSummaryTitle(value)}
                               placeholder="Your Order Summary"
                             />
                           </label>
@@ -94932,11 +94932,11 @@ ${waybillLineItems(w).length > 1
                             <div className="grid grid-cols-2 gap-3">
                               <label className="flex flex-col gap-1">
                                 <span className="text-xs font-bold text-gray-700">Earliest (days from today)</span>
-                                <input type="number" min={0} max={365} className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" value={deliveryRangeMinDays} onChange={(e) => setDeliveryRangeMinDays(Math.max(0, Number(e.target.value) || 0))} />
+                                <DraftTextarea as="input" type="number" min={0} max={365} className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" value={deliveryRangeMinDays} onCommit={(value) => setDeliveryRangeMinDays(Math.max(0, Number(value) || 0))} />
                               </label>
                               <label className="flex flex-col gap-1">
                                 <span className="text-xs font-bold text-gray-700">Latest (days from today)</span>
-                                <input type="number" min={0} max={365} className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" value={deliveryRangeMaxDays} onChange={(e) => setDeliveryRangeMaxDays(Math.max(0, Number(e.target.value) || 0))} />
+                                <DraftTextarea as="input" type="number" min={0} max={365} className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" value={deliveryRangeMaxDays} onCommit={(value) => setDeliveryRangeMaxDays(Math.max(0, Number(value) || 0))} />
                               </label>
                             </div>
                           )}
@@ -94961,7 +94961,7 @@ ${waybillLineItems(w).length > 1
                             <span className="text-xs font-bold text-gray-700">Checkbox text</span>
                             <button type="button" className="!min-h-0 inline-flex items-center gap-1 text-[11px] font-semibold text-gray-500 hover:text-[#1F8FE0]" onClick={() => setConfirmationText(DEFAULT_CONFIRMATION_TEXT)}><RefreshCw className="w-3 h-3" /> Reset to default</button>
                           </div>
-                          <textarea rows={2} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" value={confirmationText} onChange={(e) => setConfirmationText(e.target.value)} />
+                          <DraftTextarea rows={2} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" value={confirmationText} onCommit={(value) => setConfirmationText(value)} />
                         </div>
                       )}
                     </div>
@@ -94993,7 +94993,7 @@ ${waybillLineItems(w).length > 1
                               <span className="text-xs font-bold text-gray-700">Notice text</span>
                               <button type="button" className="!min-h-0 inline-flex items-center gap-1 text-[11px] font-semibold text-gray-500 hover:text-[#1F8FE0]" onClick={() => setCommitmentText(DEFAULT_COMMITMENT_TEXT)}><RefreshCw className="w-3 h-3" /> Reset to default</button>
                             </div>
-                            <textarea rows={2} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" value={commitmentText} onChange={(e) => setCommitmentText(e.target.value)} />
+                            <DraftTextarea rows={2} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" value={commitmentText} onCommit={(value) => setCommitmentText(value)} />
                           </div>
                         </>
                       )}
@@ -95308,7 +95308,7 @@ ${waybillLineItems(w).length > 1
                                     <>
                                       <label className="flex flex-col gap-1">
                                         <span className="text-sm font-semibold text-gray-700">Landing Page URL <span className="font-normal text-gray-400">(Optional)</span></span>
-                                        <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200" value={productMarketingDraft.landingPageUrl} onChange={(e) => setMarketingVariantDraft(product.id, { landingPageUrl: e.target.value })} placeholder="https://yourlandingpage.com/offer" />
+                                        <DraftTextarea as="input" className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200" value={productMarketingDraft.landingPageUrl} onCommit={(value) => setMarketingVariantDraft(product.id, { landingPageUrl: value })} placeholder="https://yourlandingpage.com/offer" />
                                         <span className="text-xs text-gray-400">Paste a landing page to save a separate tracked link. Leave empty to generate your main marketer link.</span>
                                       </label>
                                     </>
@@ -95331,7 +95331,7 @@ ${waybillLineItems(w).length > 1
                                   )}
                                   <label className="flex flex-col gap-1">
                                     <span className="text-sm font-semibold text-gray-700">Thank-you page URL <span className="font-normal text-gray-400">(Optional)</span></span>
-                                    <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200" value={redirectUrl} onChange={(e) => setEmbedRedirectUrls((v) => ({ ...v, [product.id]: e.target.value }))} placeholder="https://yourwebsite.com/thank-you" />
+                                    <DraftTextarea as="input" className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200" value={redirectUrl} onCommit={(value) => setEmbedRedirectUrls((v) => ({ ...v, [product.id]: value }))} placeholder="https://yourwebsite.com/thank-you" />
                                     <span className="text-xs text-gray-400">After a successful order, send the customer to this page. Leave empty to show the built-in success screen.</span>
                                   </label>
                                   {!isMarketerEmbedMode && (
@@ -95441,7 +95441,7 @@ ${waybillLineItems(w).length > 1
                                     )}
                                     <label className="flex min-w-[240px] flex-1 items-center gap-2 text-xs text-gray-500">
                                       <span className="shrink-0 font-semibold text-gray-600">Thank-you URL:</span>
-                                      <input className="min-w-0 flex-1 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-200" value={redirectUrl} onChange={(e) => setEmbedRedirectUrls((v) => ({ ...v, [product.id]: e.target.value }))} placeholder="https://yourwebsite.com/thank-you" />
+                                      <DraftTextarea as="input" className="min-w-0 flex-1 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-200" value={redirectUrl} onCommit={(value) => setEmbedRedirectUrls((v) => ({ ...v, [product.id]: value }))} placeholder="https://yourwebsite.com/thank-you" />
                                     </label>
                                     <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled={productSyncing} onClick={() => { void generateEmbedUrl(product); }}><RefreshCw className="w-3 h-3" /> {productSyncing ? "Verifying..." : "Refresh"}</button>
                                   </div>
@@ -95467,7 +95467,7 @@ ${waybillLineItems(w).length > 1
                                               {packageSetOptions.map((setLabel) => <option key={setLabel} value={setLabel}>Package set: {setLabel}</option>)}
                                             </select>
                                           )}
-                                          <input className="border border-blue-100 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200" value={productMarketingDraft.landingPageUrl} onChange={(e) => setMarketingVariantDraft(product.id, { landingPageUrl: e.target.value })} placeholder="https://yourlandingpage.com/offer" />
+                                          <DraftTextarea as="input" className="border border-blue-100 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200" value={productMarketingDraft.landingPageUrl} onCommit={(value) => setMarketingVariantDraft(product.id, { landingPageUrl: value })} placeholder="https://yourlandingpage.com/offer" />
                                           <span className="text-xs text-blue-800/70">Paste a landing page URL, then generate. Orders will still attach to your marketer account and this page.</span>
                                         </label>
                                         <button className="mt-2 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled={productMarketingVariantSaving || !productMarketingDraft.landingPageUrl.trim()} onClick={() => { void createMarketingVariant(product); }}>{productMarketingVariantSaving ? "Saving..." : "Generate landing-page link"}</button>
@@ -95869,15 +95869,15 @@ ${waybillLineItems(w).length > 1
                           <div className="grid gap-3 sm:grid-cols-2">
                             <div>
                               <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Phone Number ID</p>
-                              <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="1141770642361505" value={waCloudDraft.phoneNumberId} onChange={(e) => setWaCloudDraft((d) => ({ ...d, phoneNumberId: e.target.value.trim() }))} />
+                              <DraftTextarea as="input" className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="1141770642361505" value={waCloudDraft.phoneNumberId} onCommit={(value) => setWaCloudDraft((d) => ({ ...d, phoneNumberId: value.trim() }))} />
                             </div>
                             <div>
                               <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">WhatsApp Business Account ID</p>
-                              <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="3037548463243817" value={waCloudDraft.wabaId} onChange={(e) => setWaCloudDraft((d) => ({ ...d, wabaId: e.target.value.trim() }))} />
+                              <DraftTextarea as="input" className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="3037548463243817" value={waCloudDraft.wabaId} onCommit={(value) => setWaCloudDraft((d) => ({ ...d, wabaId: value.trim() }))} />
                             </div>
                             <div className="sm:col-span-2">
                               <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Access token {cloudHasToken && <span className="text-emerald-600 font-bold normal-case">· saved ✓</span>}</p>
-                              <input type="password" autoComplete="off" className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder={cloudHasToken ? "Token saved - paste a new one to replace" : "Paste your permanent access token"} value={waCloudDraft.accessToken} onChange={(e) => setWaCloudDraft((d) => ({ ...d, accessToken: e.target.value }))} />
+                              <DraftTextarea as="input" type="password" autoComplete="off" className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder={cloudHasToken ? "Token saved - paste a new one to replace" : "Paste your permanent access token"} value={waCloudDraft.accessToken} onCommit={(value) => setWaCloudDraft((d) => ({ ...d, accessToken: value }))} />
                               <p className="m-0 mt-1 text-[10px] text-gray-400">From Meta → WhatsApp → API Setup → Generate token. Use a permanent System User token for production.</p>
                             </div>
                           </div>
@@ -95887,7 +95887,7 @@ ${waybillLineItems(w).length > 1
                             </button>
                             {provider === "cloud_api" && cloudHasToken && (
                               <>
-                                <input className="!min-h-0 rounded-xl border border-gray-200 px-3 py-2 text-sm font-mono w-44 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="+234… test number" value={waTestPhone} onChange={(e) => setWaTestPhone(e.target.value)} />
+                                <DraftTextarea as="input" className="!min-h-0 rounded-xl border border-gray-200 px-3 py-2 text-sm font-mono w-44 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="+234… test number" value={waTestPhone} onCommit={(value) => setWaTestPhone(value)} />
                                 <button type="button" className="!min-h-0 rounded-xl border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50" disabled={waTestSending || !waTestPhone.trim()}
                                   onClick={async () => {
                                     setWaTestSending(true);
@@ -95940,12 +95940,12 @@ ${waybillLineItems(w).length > 1
                       <div className="mt-4 border-t border-gray-100 pt-4">
                         <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400 mb-2">Send test message</p>
                         <div className="flex gap-2">
-                          <input
+                          <DraftTextarea as="input"
                             type="tel"
                             className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#25D366]/30"
                             placeholder="e.g. 08137069653"
                             value={waTestPhone}
-                            onChange={e => setWaTestPhone(e.target.value)}
+                            onCommit={(value) => setWaTestPhone(value)}
                           />
                           <button
                             type="button"
@@ -95988,7 +95988,7 @@ ${waybillLineItems(w).length > 1
                           ))}
                         </div>
                         {waConnectMode === "pairing_code" && (
-                          <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30" placeholder="+234 800 000 0000" value={waPairingPhone} onChange={(event) => setWaPairingPhone(event.target.value)} />
+                          <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30" placeholder="+234 800 000 0000" value={waPairingPhone} onCommit={(value) => setWaPairingPhone(value)} />
                         )}
                         {whatsappQrCode(waSettings) && waConnectMode === "qr" && (
                           <div className="flex flex-col gap-4 rounded-xl border border-gray-100 bg-gray-50 p-4">
@@ -96344,15 +96344,15 @@ ${waybillLineItems(w).length > 1
                         <div className="grid gap-3 sm:grid-cols-2">
                           <div>
                             <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Name *</p>
-                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 bg-white" placeholder="e.g. 2pcs Whale Soap Holder" value={waUpsellDraft.name} onChange={e => setWaUpsellDraft(d=>({...d,name:e.target.value}))} />
+                            <DraftTextarea as="input" className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 bg-white" placeholder="e.g. 2pcs Whale Soap Holder" value={waUpsellDraft.name} onCommit={(value) => setWaUpsellDraft(d=>({...d,name:value}))} />
                           </div>
                           <div>
                             <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Price (NGN) *</p>
-                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 bg-white" type="number" min={0} placeholder="4900" value={waUpsellDraft.price} onChange={e => setWaUpsellDraft(d=>({...d,price:e.target.value}))} />
+                            <DraftTextarea as="input" className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 bg-white" type="number" min={0} placeholder="4900" value={waUpsellDraft.price} onCommit={(value) => setWaUpsellDraft(d=>({...d,price:value}))} />
                           </div>
                           <div>
                             <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Original price (strike-through)</p>
-                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 bg-white" type="number" min={0} placeholder="10000" value={waUpsellDraft.strikePrice} onChange={e => setWaUpsellDraft(d=>({...d,strikePrice:e.target.value}))} />
+                            <DraftTextarea as="input" className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 bg-white" type="number" min={0} placeholder="10000" value={waUpsellDraft.strikePrice} onCommit={(value) => setWaUpsellDraft(d=>({...d,strikePrice:value}))} />
                             {waUpsellDraft.strikePrice && waUpsellDraft.price && <p className="m-0 mt-1 text-[11px] text-gray-400"><s>NGN {Number(waUpsellDraft.strikePrice||0).toLocaleString("en-NG")}</s> → NGN {Number(waUpsellDraft.price||0).toLocaleString("en-NG")}</p>}
                           </div>
                           <div>
@@ -96362,7 +96362,7 @@ ${waybillLineItems(w).length > 1
                           <div className="sm:col-span-2">
                             <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Product image (paste URL or Ctrl+V to paste)</p>
                             <div className="flex gap-2">
-                              <input className="flex-1 rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 bg-white" placeholder="https://..." value={waUpsellDraft.imageUrl} onChange={e=>setWaUpsellDraft(d=>({...d,imageUrl:e.target.value}))}
+                              <DraftTextarea as="input" className="flex-1 rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 bg-white" placeholder="https://..." value={waUpsellDraft.imageUrl} onCommit={(value) => setWaUpsellDraft(d=>({...d,imageUrl:value}))}
                                 onPaste={async e=>{const img=Array.from(e.clipboardData?.items??[]).find(it=>it.type.startsWith("image/"));if(!img)return;e.preventDefault();const file=img.getAsFile();if(!file)return;const reader=new FileReader();reader.onload=async re=>{const d=String(re.target?.result??"");if(!d)return;showToast("Uploading…");const{url}=await productsApi.uploadPackageImage(d,`upsell-${Date.now()}.png`);setWaUpsellDraft(x=>({...x,imageUrl:url}));showToast("✓ Uploaded.")};reader.readAsDataURL(file);}} />
                               <label className="!min-h-0 inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-black text-rose-600 cursor-pointer hover:bg-rose-100 shrink-0"><Upload className="h-3.5 w-3.5"/>Upload<input type="file" accept="image/*" className="hidden" onChange={async e=>{const file=e.target.files?.[0];if(!file)return;const reader=new FileReader();reader.onload=async re=>{const d=String(re.target?.result??"");if(!d)return;const{url}=await productsApi.uploadPackageImage(d,file.name);setWaUpsellDraft(x=>({...x,imageUrl:url}))};reader.readAsDataURL(file)}}/></label>
                             </div>
@@ -96374,7 +96374,7 @@ ${waybillLineItems(w).length > 1
                               {waUpsellDraft.imageUrls.map((url, i) => (
                                 <div key={i} className="flex gap-2 items-center">
                                   {url && <img src={url} alt="" className="h-9 w-9 rounded-lg object-cover border border-gray-200 shrink-0" onError={e=>(e.currentTarget.style.display="none")} />}
-                                  <input className="flex-1 rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 bg-white" placeholder="https://..." value={url} onChange={e=>setWaUpsellDraft(d=>({...d,imageUrls:d.imageUrls.map((u,j)=>j===i?e.target.value:u)}))} />
+                                  <DraftTextarea as="input" className="flex-1 rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 bg-white" placeholder="https://..." value={url} onCommit={(value) => setWaUpsellDraft(d=>({...d,imageUrls:d.imageUrls.map((u,j)=>j===i?value:u)}))} />
                                   <button type="button" className="!min-h-0 px-2 py-1.5 text-xs font-bold text-gray-400 hover:text-rose-600 shrink-0" onClick={()=>setWaUpsellDraft(d=>({...d,imageUrls:d.imageUrls.filter((_,j)=>j!==i)}))}>Remove</button>
                                 </div>
                               ))}
@@ -96387,7 +96387,7 @@ ${waybillLineItems(w).length > 1
                           <div className="sm:col-span-2">
                             <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Usage video (optional · paste a YouTube/MP4 link or upload a short clip)</p>
                             <div className="flex gap-2">
-                              <input className="flex-1 rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 bg-white" placeholder="https://youtu.be/… or https://…/clip.mp4" value={waUpsellDraft.videoUrl} onChange={e=>setWaUpsellDraft(d=>({...d,videoUrl:e.target.value}))} />
+                              <DraftTextarea as="input" className="flex-1 rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 bg-white" placeholder="https://youtu.be/… or https://…/clip.mp4" value={waUpsellDraft.videoUrl} onCommit={(value) => setWaUpsellDraft(d=>({...d,videoUrl:value}))} />
                               <label className={`!min-h-0 inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-black text-rose-600 cursor-pointer hover:bg-rose-100 shrink-0 ${waUpsellVideoUploading ? "opacity-50 pointer-events-none" : ""}`}><Upload className="h-3.5 w-3.5"/>{waUpsellVideoUploading ? "Uploading…" : "Upload"}<input type="file" accept="video/mp4,video/webm,video/quicktime" className="hidden" disabled={waUpsellVideoUploading} onChange={async e=>{const file=e.target.files?.[0];if(!file)return;if(file.size>50*1024*1024){showToast("Video over 50 MB - trim it or paste a YouTube link.");e.target.value="";return;}setWaUpsellVideoUploading(true);try{const dataUrl=await new Promise<string>((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result??""));r.onerror=rej;r.readAsDataURL(file);});const{url}=await productsApi.uploadProductVideo(dataUrl,file.name);setWaUpsellDraft(x=>({...x,videoUrl:url}));showToast("✓ Video uploaded.");}catch(err:any){showToast(err?.message??"Video upload failed.");}finally{setWaUpsellVideoUploading(false);e.target.value="";}}}/></label>
                             </div>
                             {waUpsellDraft.videoUrl && <p className="m-0 mt-1 text-[11px] text-rose-600 font-bold truncate">🎬 Video set - sent right after the offer image.</p>}
@@ -96617,7 +96617,7 @@ ${waybillLineItems(w).length > 1
                             ))}
                           </div>
                           {waUserConnectMode === "pairing_code" && (
-                            <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30" placeholder="+234 800 000 0000" value={waUserPairingPhone} onChange={(event) => setWaUserPairingPhone(event.target.value)} />
+                            <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30" placeholder="+234 800 000 0000" value={waUserPairingPhone} onCommit={(value) => setWaUserPairingPhone(value)} />
                           )}
                           {whatsappQrCode(waUserAccount) && waUserConnectMode === "qr" && (
                             <div className="flex flex-col gap-4 rounded-xl border border-gray-100 bg-gray-50 p-4">
@@ -96835,14 +96835,14 @@ ${waybillLineItems(w).length > 1
                       <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                         <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Add destination</p>
                         <div className="mt-3 grid gap-3">
-                          <input className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-100" placeholder="Label, e.g. Lagos morning group" value={waDestinationDraft.label} onChange={(event) => setWaDestinationDraft((current) => ({ ...current, label: event.target.value }))} />
+                          <DraftTextarea as="input" className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-100" placeholder="Label, e.g. Lagos morning group" value={waDestinationDraft.label} onCommit={(value) => setWaDestinationDraft((current) => ({ ...current, label: value }))} />
                           <select className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-100" value={waDestinationDraft.destinationType} onChange={(event) => setWaDestinationDraft((current) => ({ ...current, destinationType: event.target.value as "group" | "phone" | "manual_group" }))}>
                             <option value="manual_group">Manual group - assisted send</option>
                             <option value="group">Imported group JID - direct capable</option>
                             <option value="phone">Phone number - direct capable</option>
                           </select>
-                          {waDestinationDraft.destinationType === "group" && <input className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-100" placeholder="Group JID from import" value={waDestinationDraft.groupJid} onChange={(event) => setWaDestinationDraft((current) => ({ ...current, groupJid: event.target.value }))} />}
-                          {waDestinationDraft.destinationType === "phone" && <input className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-100" placeholder="+234..." value={waDestinationDraft.phone} onChange={(event) => setWaDestinationDraft((current) => ({ ...current, phone: event.target.value }))} />}
+                          {waDestinationDraft.destinationType === "group" && <DraftTextarea as="input" className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-100" placeholder="Group JID from import" value={waDestinationDraft.groupJid} onCommit={(value) => setWaDestinationDraft((current) => ({ ...current, groupJid: value }))} />}
+                          {waDestinationDraft.destinationType === "phone" && <DraftTextarea as="input" className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-100" placeholder="+234..." value={waDestinationDraft.phone} onCommit={(value) => setWaDestinationDraft((current) => ({ ...current, phone: value }))} />}
                           <label className="flex items-center gap-2 text-sm font-bold text-gray-600">
                             <input type="checkbox" className="h-4 w-4 rounded border-gray-300 text-[#1F8FE0]" checked={waDestinationDraft.isDefault} onChange={(event) => setWaDestinationDraft((current) => ({ ...current, isDefault: event.target.checked }))} />
                             Use as my default destination
@@ -97272,30 +97272,30 @@ ${waybillLineItems(w).length > 1
                             </label>
                             <label className="flex flex-col gap-1.5">
                               <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Reply-to email</span>
-                              <input
+                              <DraftTextarea as="input"
                                 type="email"
                                 value={emailSettings.replyTo ?? ""}
-                                onChange={(e) => setEmailSettings((prev) => prev ? { ...prev, replyTo: e.target.value } : prev)}
+                                onCommit={(value) => setEmailSettings((prev) => prev ? { ...prev, replyTo: value } : prev)}
                                 placeholder="support@yourdomain.com"
                                 className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                               />
                             </label>
                             <label className="flex flex-col gap-1.5">
                               <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">From name</span>
-                              <input
+                              <DraftTextarea as="input"
                                 type="text"
                                 value={emailSettings.fromName}
-                                onChange={(e) => setEmailSettings((prev) => prev ? { ...prev, fromName: e.target.value } : prev)}
+                                onCommit={(value) => setEmailSettings((prev) => prev ? { ...prev, fromName: value } : prev)}
                                 placeholder="Protohub"
                                 className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                               />
                             </label>
                             <label className="flex flex-col gap-1.5">
                               <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">From email</span>
-                              <input
+                              <DraftTextarea as="input"
                                 type="email"
                                 value={emailSettings.fromEmail}
-                                onChange={(e) => setEmailSettings((prev) => prev ? { ...prev, fromEmail: e.target.value } : prev)}
+                                onCommit={(value) => setEmailSettings((prev) => prev ? { ...prev, fromEmail: value } : prev)}
                                 placeholder="hello@yourdomain.com"
                                 className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                               />
@@ -97314,10 +97314,10 @@ ${waybillLineItems(w).length > 1
                             </div>
                             <label className="flex flex-col gap-1.5">
                               <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Resend API key</span>
-                              <input
+                              <DraftTextarea as="input"
                                 type="password"
                                 value={emailSettings.resendApiKey}
-                                onChange={(e) => setEmailSettings((prev) => prev ? { ...prev, resendApiKey: e.target.value } : prev)}
+                                onCommit={(value) => setEmailSettings((prev) => prev ? { ...prev, resendApiKey: value } : prev)}
                                 placeholder="re_..."
                                 className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                               />
@@ -97337,19 +97337,19 @@ ${waybillLineItems(w).length > 1
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                               <label className="flex flex-col gap-1.5">
                                 <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Mailjet public key</span>
-                                <input
+                                <DraftTextarea as="input"
                                   type="text"
                                   value={emailSettings.apiKeyPublic}
-                                  onChange={(e) => setEmailSettings((prev) => prev ? { ...prev, apiKeyPublic: e.target.value } : prev)}
+                                  onCommit={(value) => setEmailSettings((prev) => prev ? { ...prev, apiKeyPublic: value } : prev)}
                                   className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                                 />
                               </label>
                               <label className="flex flex-col gap-1.5">
                                 <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Mailjet private key</span>
-                                <input
+                                <DraftTextarea as="input"
                                   type="password"
                                   value={emailSettings.apiKeyPrivate}
-                                  onChange={(e) => setEmailSettings((prev) => prev ? { ...prev, apiKeyPrivate: e.target.value } : prev)}
+                                  onCommit={(value) => setEmailSettings((prev) => prev ? { ...prev, apiKeyPrivate: value } : prev)}
                                   className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                                 />
                               </label>
@@ -97368,10 +97368,10 @@ ${waybillLineItems(w).length > 1
                             <p className="text-sm font-bold text-gray-900 m-0">Quick actions</p>
                             <label className="flex flex-col gap-1.5">
                               <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Test recipient</span>
-                              <input
+                              <DraftTextarea as="input"
                                 type="email"
                                 value={emailTestRecipient}
-                                onChange={(e) => setEmailTestRecipient(e.target.value)}
+                                onCommit={(value) => setEmailTestRecipient(value)}
                                 placeholder="you@example.com"
                                 className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                               />
@@ -97556,16 +97556,16 @@ ${waybillLineItems(w).length > 1
                           </div>
                           <label className="flex flex-col gap-1.5">
                             <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Subject</span>
-                            <input
+                            <DraftTextarea as="input"
                               type="text"
                               value={emailSettings.templates?.[emailTemplateKey]?.subject ?? ""}
-                              onChange={(e) => setEmailSettings((prev) => prev ? {
+                              onCommit={(value) => setEmailSettings((prev) => prev ? {
                                 ...prev,
                                 templates: {
                                   ...prev.templates,
                                   [emailTemplateKey]: {
                                     ...(prev.templates?.[emailTemplateKey] ?? { subject: "", body: "" }),
-                                    subject: e.target.value
+                                    subject: value
                                   }
                                 }
                               } : prev)}
@@ -97574,16 +97574,16 @@ ${waybillLineItems(w).length > 1
                           </label>
                           <label className="flex flex-col gap-1.5">
                             <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Body</span>
-                            <textarea
+                            <DraftTextarea
                               rows={10}
                               value={emailSettings.templates?.[emailTemplateKey]?.body ?? ""}
-                              onChange={(e) => setEmailSettings((prev) => prev ? {
+                              onCommit={(value) => setEmailSettings((prev) => prev ? {
                                 ...prev,
                                 templates: {
                                   ...prev.templates,
                                   [emailTemplateKey]: {
                                     ...(prev.templates?.[emailTemplateKey] ?? { subject: "", body: "" }),
-                                    body: e.target.value
+                                    body: value
                                   }
                                 }
                               } : prev)}
@@ -97700,11 +97700,11 @@ ${waybillLineItems(w).length > 1
                             </label>
                             <label className="flex flex-col gap-1.5">
                               <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Sender name</span>
-                              <input
+                              <DraftTextarea as="input"
                                 type="text"
                                 value={smsSettings.senderName}
                                 maxLength={11}
-                                onChange={(e) => setSmsSettings((prev) => prev ? { ...prev, senderName: e.target.value } : prev)}
+                                onCommit={(value) => setSmsSettings((prev) => prev ? { ...prev, senderName: value } : prev)}
                                 placeholder="Protohub"
                                 className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                               />
@@ -97723,10 +97723,10 @@ ${waybillLineItems(w).length > 1
                             </div>
                             <label className="flex flex-col gap-1.5">
                               <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">API key</span>
-                              <input
+                              <DraftTextarea as="input"
                                 type="password"
                                 value={smsSettings.apiKey}
-                                onChange={(e) => setSmsSettings((prev) => prev ? { ...prev, apiKey: e.target.value } : prev)}
+                                onCommit={(value) => setSmsSettings((prev) => prev ? { ...prev, apiKey: value } : prev)}
                                 placeholder="Paste your Multitexter API key"
                                 className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                               />
@@ -97797,23 +97797,23 @@ ${waybillLineItems(w).length > 1
                                 <div className="grid grid-cols-2 gap-3">
                                   <label className="flex flex-col gap-1.5">
                                     <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Attempts</span>
-                                    <input
+                                    <DraftTextarea as="input"
                                       type="number"
                                       min={0}
                                       max={10}
                                       value={smsSettings.maxRetryAttempts}
-                                      onChange={(e) => setSmsSettings((prev) => prev ? { ...prev, maxRetryAttempts: Math.max(0, Number(e.target.value) || 0) } : prev)}
+                                      onCommit={(value) => setSmsSettings((prev) => prev ? { ...prev, maxRetryAttempts: Math.max(0, Number(value) || 0) } : prev)}
                                       className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
                                     />
                                   </label>
                                   <label className="flex flex-col gap-1.5">
                                     <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Backoff (mins)</span>
-                                    <input
+                                    <DraftTextarea as="input"
                                       type="number"
                                       min={5}
                                       max={1440}
                                       value={smsSettings.retryBackoffMinutes}
-                                      onChange={(e) => setSmsSettings((prev) => prev ? { ...prev, retryBackoffMinutes: Math.max(5, Number(e.target.value) || 30) } : prev)}
+                                      onCommit={(value) => setSmsSettings((prev) => prev ? { ...prev, retryBackoffMinutes: Math.max(5, Number(value) || 30) } : prev)}
                                       className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
                                     />
                                   </label>
@@ -97823,11 +97823,11 @@ ${waybillLineItems(w).length > 1
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                               <label className="flex flex-col gap-1.5">
                                 <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Low-balance threshold</span>
-                                <input
+                                <DraftTextarea as="input"
                                   type="number"
                                   min={0}
                                   value={smsSettings.lowBalanceThreshold}
-                                  onChange={(e) => setSmsSettings((prev) => prev ? { ...prev, lowBalanceThreshold: Math.max(0, Number(e.target.value) || 0) } : prev)}
+                                  onCommit={(value) => setSmsSettings((prev) => prev ? { ...prev, lowBalanceThreshold: Math.max(0, Number(value) || 0) } : prev)}
                                   className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
                                 />
                                 <span className="text-[11px] text-gray-400">Protohub raises an internal alert when balance drops to this level or lower.</span>
@@ -97883,10 +97883,10 @@ ${waybillLineItems(w).length > 1
                             <p className="text-sm font-bold text-gray-900 m-0">Quick actions</p>
                             <label className="flex flex-col gap-1.5">
                               <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Test phone</span>
-                              <input
+                              <DraftTextarea as="input"
                                 type="tel"
                                 value={smsTestPhone}
-                                onChange={(e) => setSmsTestPhone(e.target.value)}
+                                onCommit={(value) => setSmsTestPhone(value)}
                                 placeholder="08012345678"
                                 className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                               />
@@ -97974,16 +97974,16 @@ ${waybillLineItems(w).length > 1
                           </div>
                           <label className="flex flex-col gap-1.5">
                             <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">SMS body</span>
-                            <textarea
+                            <DraftTextarea
                               rows={8}
                               value={smsSettings.templates?.[smsTemplateKey]?.body ?? ""}
-                              onChange={(e) => setSmsSettings((prev) => prev ? {
+                              onCommit={(value) => setSmsSettings((prev) => prev ? {
                                 ...prev,
                                 templates: {
                                   ...prev.templates,
                                   [smsTemplateKey]: {
                                     ...(prev.templates?.[smsTemplateKey] ?? { body: "" }),
-                                    body: e.target.value
+                                    body: value
                                   }
                                 }
                               } : prev)}
@@ -98011,17 +98011,17 @@ ${waybillLineItems(w).length > 1
                             </button>
                           </div>
                           <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-3">
-                            <input
+                            <DraftTextarea as="input"
                               type="tel"
                               value={smsOptOutPhone}
-                              onChange={(e) => setSmsOptOutPhone(e.target.value)}
+                              onCommit={(value) => setSmsOptOutPhone(value)}
                               placeholder="Phone number"
                               className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
                             />
-                            <input
+                            <DraftTextarea as="input"
                               type="text"
                               value={smsOptOutNote}
-                              onChange={(e) => setSmsOptOutNote(e.target.value)}
+                              onCommit={(value) => setSmsOptOutNote(value)}
                               placeholder="Optional note"
                               className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
                             />
@@ -98458,13 +98458,13 @@ ${waybillLineItems(w).length > 1
                     ] as const).map((field) => (
                       <label key={field.key} className="flex flex-col gap-1.5">
                         <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">{field.label}</span>
-                        <input
+                        <DraftTextarea as="input"
                           type="number"
                           min={field.min}
                           max={field.max}
                           value={smartStockRules[field.key]}
-                          onChange={(event) => {
-                            const value = Number(event.target.value);
+                          onCommit={(typed) => {
+                            const value = Number(typed);
                             setSmartStockRules((current) => sanitizeSmartStockRules({ ...current, [field.key]: value }));
                           }}
                           className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-[#1F8FE0]"
@@ -98572,11 +98572,11 @@ ${waybillLineItems(w).length > 1
                   {/* Company name */}
                   <div className="space-y-2 pt-3 border-t border-gray-100">
                     <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">Company name</label>
-                    <input
+                    <DraftTextarea as="input"
                       type="text"
                       value={companyName}
                       placeholder="Protohub"
-                      onChange={(e) => setCompanyName(e.target.value)}
+                      onCommit={(value) => setCompanyName(value)}
                       className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                     />
                     <p className="text-[11px] text-gray-400">Shown next to the logo in the sidebar.</p>
@@ -98584,11 +98584,11 @@ ${waybillLineItems(w).length > 1
                   {/* Native Android app link */}
                   <div className="space-y-2 pt-3 border-t border-gray-100">
                     <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">Android app download link</label>
-                    <input
+                    <DraftTextarea as="input"
                       type="url"
                       value={companyAndroidAppUrl}
                       placeholder="https://play.google.com/store/apps/details?id=…  or  link to your .apk"
-                      onChange={(e) => setCompanyAndroidAppUrl(e.target.value)}
+                      onCommit={(value) => setCompanyAndroidAppUrl(value)}
                       className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                     />
                     <p className="text-[11px] text-gray-400">Optional. Paste your Play Store URL or hosted APK link - a "Download Android app" button then appears under Get the app.</p>
@@ -99282,13 +99282,13 @@ ${waybillLineItems(w).length > 1
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
                     <label className="space-y-1">
                       <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Quantity check</span>
-                      <input
+                      <DraftTextarea as="input"
                         type="number"
                         min={0}
                         max={SMART_STOCK_LOW_STOCK_THRESHOLD_MAX}
                         value={smartStockLowStockThreshold}
-                        onChange={(event) => {
-                          const value = event.target.value === "" ? 0 : Number(event.target.value);
+                        onCommit={(typed) => {
+                          const value = typed === "" ? 0 : Number(typed);
                           setSmartStockRules((current) => sanitizeSmartStockRules({ ...current, lowStockThreshold: value }));
                         }}
                         className="w-full h-11 px-3 border border-gray-200 rounded-lg bg-white text-sm font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/20"
@@ -99329,9 +99329,9 @@ ${waybillLineItems(w).length > 1
                       <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Search</span>
                       <div className="relative">
                         <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                        <input
+                        <DraftTextarea as="input"
                           value={agentLowStockSearch}
-                          onChange={(event) => setAgentLowStockSearch(event.target.value)}
+                          onCommit={(value) => setAgentLowStockSearch(value)}
                           placeholder="Search agent, hub, product"
                           className="w-full h-11 pl-9 pr-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/20"
                         />
@@ -99516,9 +99516,9 @@ ${waybillLineItems(w).length > 1
                       <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Search</span>
                       <div className="relative">
                         <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                        <input
+                        <DraftTextarea as="input"
                           value={stateStockSearch}
-                          onChange={(event) => setStateStockSearch(event.target.value)}
+                          onCommit={(value) => setStateStockSearch(value)}
                           placeholder="Search product or state"
                           className="w-full h-11 pl-9 pr-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/20"
                         />
@@ -99768,7 +99768,7 @@ ${waybillLineItems(w).length > 1
 	                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-3">
 	                  <label className="flex flex-col gap-1.5">
 	                    <span className="text-sm font-semibold text-gray-700">General Package Description</span>
-	                    <textarea className="border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 resize-y min-h-[80px] focus:outline-none focus:ring-2 focus:ring-blue-200" value={packageDescriptionDraft} onChange={(event) => setPackageDescriptionDraft(event.target.value)} placeholder="Describe these package options for customers..." />
+	                    <DraftTextarea className="border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 resize-y min-h-[80px] focus:outline-none focus:ring-2 focus:ring-blue-200" value={packageDescriptionDraft} onCommit={(value) => setPackageDescriptionDraft(value)} placeholder="Describe these package options for customers..." />
                   </label>
                   <button className="self-start px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={savePackageDescription}>Save Description</button>
                 </div>
@@ -99947,7 +99947,7 @@ ${waybillLineItems(w).length > 1
                             <tr key={item.id} className="hover:bg-gray-50 transition-colors">
                               <td className="px-4 py-4 font-bold text-gray-900 min-w-[220px]">
                                 <div className="flex flex-col gap-2">
-                                  {inlineDraft ? <input className={`${inlineInput} w-full font-bold`} value={inlineDraft.name} onChange={(event) => setInlinePackageDrafts((prev) => ({ ...prev, [item.id]: { ...prev[item.id], name: event.target.value } }))} aria-label="Package name" /> : <span className="leading-tight">{item.name}</span>}
+                                  {inlineDraft ? <DraftTextarea as="input" className={`${inlineInput} w-full font-bold`} value={inlineDraft.name} onCommit={(value) => setInlinePackageDrafts((prev) => ({ ...prev, [item.id]: { ...prev[item.id], name: value } }))} aria-label="Package name" /> : <span className="leading-tight">{item.name}</span>}
 	                                  <span className={`inline-flex w-fit items-center rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.16em] ${isAddOnOnlyPackageSet(item.packageSet) ? "border-violet-100 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-200" : "border-blue-100 bg-blue-50 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200"}`} title="Only packages with the same set show together on package-set embed links">
 	                                    {isAddOnOnlyPackageSet(item.packageSet) ? "Add-on bundle" : `Set: ${packageSetLabelFor(item)}`}
 	                                  </span>
@@ -100162,10 +100162,10 @@ ${waybillLineItems(w).length > 1
                                 </div>
                               </td>
                               <td className="px-4 py-4 text-gray-600">
-                                {inlineDraft ? <input className={`${inlineInput} w-full min-w-[220px]`} value={inlineDraft.description} onChange={(event) => setInlinePackageDrafts((prev) => ({ ...prev, [item.id]: { ...prev[item.id], description: event.target.value } }))} aria-label="Package description" placeholder="Description" /> : (item.description || summarizePackageComponents(item.packageComponents, products) || "-")}
+                                {inlineDraft ? <DraftTextarea as="input" className={`${inlineInput} w-full min-w-[220px]`} value={inlineDraft.description} onCommit={(value) => setInlinePackageDrafts((prev) => ({ ...prev, [item.id]: { ...prev[item.id], description: value } }))} aria-label="Package description" placeholder="Description" /> : (item.description || summarizePackageComponents(item.packageComponents, products) || "-")}
                               </td>
-                              <td className="px-4 py-4 text-gray-700">{inlineDraft ? <input type="number" min={1} className={`${inlineInput} w-20`} value={inlineDraft.quantity} onChange={(event) => setInlinePackageDrafts((prev) => ({ ...prev, [item.id]: { ...prev[item.id], quantity: event.target.value } }))} aria-label="Package quantity" /> : item.quantity}</td>
-                              <td className="px-4 py-4 text-gray-700">{inlineDraft ? <input type="number" min={0} className={`${inlineInput} w-32`} value={inlineDraft.price} onChange={(event) => setInlinePackageDrafts((prev) => ({ ...prev, [item.id]: { ...prev[item.id], price: event.target.value } }))} aria-label="Package price" /> : formatProductMoney(item.price, item.currency)}</td>
+                              <td className="px-4 py-4 text-gray-700">{inlineDraft ? <DraftTextarea as="input" type="number" min={1} className={`${inlineInput} w-20`} value={inlineDraft.quantity} onCommit={(value) => setInlinePackageDrafts((prev) => ({ ...prev, [item.id]: { ...prev[item.id], quantity: value } }))} aria-label="Package quantity" /> : item.quantity}</td>
+                              <td className="px-4 py-4 text-gray-700">{inlineDraft ? <DraftTextarea as="input" type="number" min={0} className={`${inlineInput} w-32`} value={inlineDraft.price} onCommit={(value) => setInlinePackageDrafts((prev) => ({ ...prev, [item.id]: { ...prev[item.id], price: value } }))} aria-label="Package price" /> : formatProductMoney(item.price, item.currency)}</td>
                               <td className="px-4 py-4 text-gray-600">
                                 <div className="inline-flex items-center gap-0.5">
                                   <button
@@ -100387,7 +100387,7 @@ ${waybillLineItems(w).length > 1
                     <label className="flex items-center gap-2 flex-1 min-w-0 bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm focus-within:ring-2 focus-within:ring-blue-200">
                       <Search className="w-4 h-4 text-gray-400 shrink-0" />
                       <span className="sr-only">Search inventory</span>
-                      <input className="flex-1 min-w-0 bg-transparent text-sm text-gray-700 outline-none placeholder:text-gray-400" value={inventorySearch} onChange={(event) => setInventorySearch(event.target.value)} placeholder="Search SKU or Product..." />
+                      <DraftTextarea as="input" className="flex-1 min-w-0 bg-transparent text-sm text-gray-700 outline-none placeholder:text-gray-400" value={inventorySearch} onCommit={(value) => setInventorySearch(value)} placeholder="Search SKU or Product..." />
                     </label>
                     <div className="grid grid-cols-1 sm:flex sm:flex-wrap items-stretch sm:items-center gap-2 w-full sm:w-auto">
                       {canManageProductCatalog && <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors" onClick={openInventoryAddProductRoute}><Plus className="w-4 h-4" /> Add Product</button>}
@@ -100943,11 +100943,11 @@ ${waybillLineItems(w).length > 1
                   {managerQueueActionMeta(managerActionDialog.actionType).fieldLabel}
                   {managerQueueActionMeta(managerActionDialog.actionType).noteRequired ? " *" : " (optional)"}
                 </span>
-                <textarea
+                <DraftTextarea
                   rows={4}
                   className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none transition focus:border-[#1F8FE0] focus:ring-2 focus:ring-[#1F8FE0]/20 dark:border-slate-700 dark:bg-[#111c27] dark:text-slate-100 dark:placeholder:text-slate-500"
                   value={managerActionDialog.note}
-                  onChange={(event) => setManagerActionDialog((prev) => prev ? { ...prev, note: event.target.value } : prev)}
+                  onCommit={(value) => setManagerActionDialog((prev) => prev ? { ...prev, note: value } : prev)}
                   placeholder={managerQueueActionMeta(managerActionDialog.actionType).placeholder}
                   autoFocus
                 />
@@ -101070,11 +101070,11 @@ ${waybillLineItems(w).length > 1
 	                  <span className="mb-2 block text-xs font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
 	                    {isMatched ? "Optional note" : "Mismatch reason"}
 	                  </span>
-	                  <textarea
+	                  <DraftTextarea
 	                    rows={4}
 	                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#1F8FE0] focus:ring-4 focus:ring-[#1F8FE0]/10 dark:border-slate-700 dark:bg-[#111f2d] dark:text-slate-100 dark:placeholder:text-slate-500"
 	                    value={marketingSpendReviewDialog.note}
-	                    onChange={(event) => setMarketingSpendReviewDialog((prev) => prev ? { ...prev, note: event.target.value } : prev)}
+	                    onCommit={(value) => setMarketingSpendReviewDialog((prev) => prev ? { ...prev, note: value } : prev)}
 	                    placeholder={isMatched ? "e.g. Confirmed with company ad account record" : "e.g. Marketer submitted ₦50,000 but company record shows ₦45,000"}
 	                    autoFocus
 	                  />
@@ -101145,23 +101145,23 @@ ${waybillLineItems(w).length > 1
 	                <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
 	                  <label className="text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
 	                    Budget received
-	                    <input
+	                    <DraftTextarea as="input"
 	                      type="number"
 	                      min="0"
 	                      inputMode="decimal"
 	                      value={adjustMarketingSpendBudget}
-	                      onChange={(event) => setAdjustMarketingSpendBudget(event.target.value)}
+	                      onCommit={(value) => setAdjustMarketingSpendBudget(value)}
 	                      className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-base font-black text-slate-950 outline-none focus:border-[#1F8FE0] focus:ring-4 focus:ring-[#1F8FE0]/15 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
 	                    />
 	                  </label>
 	                  <label className="text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
 	                    Actual used
-	                    <input
+	                    <DraftTextarea as="input"
 	                      type="number"
 	                      min="0"
 	                      inputMode="decimal"
 	                      value={adjustMarketingSpendActual}
-	                      onChange={(event) => setAdjustMarketingSpendActual(event.target.value)}
+	                      onCommit={(value) => setAdjustMarketingSpendActual(value)}
 	                      placeholder="Leave blank to use budget"
 	                      className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-base font-black text-slate-950 outline-none focus:border-[#1F8FE0] focus:ring-4 focus:ring-[#1F8FE0]/15 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
 	                    />
@@ -101185,10 +101185,10 @@ ${waybillLineItems(w).length > 1
 	                </div>
 	                <label className="mt-5 block text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
 	                  Adjustment note
-	                  <textarea
+	                  <DraftTextarea
 	                    rows={3}
 	                    value={adjustMarketingSpendNote}
-	                    onChange={(event) => setAdjustMarketingSpendNote(event.target.value)}
+	                    onCommit={(value) => setAdjustMarketingSpendNote(value)}
 	                    placeholder="Example: Buyer reported ₦50,000 used; owner record matched."
 	                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none focus:border-[#1F8FE0] focus:ring-4 focus:ring-[#1F8FE0]/15 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
 	                  />
@@ -101432,7 +101432,7 @@ ${waybillLineItems(w).length > 1
                 <label className="block">
                   <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-gray-400">Actual total for selected orders</span>
                   <div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">₦</span>
-                    <input type="number" min={0} value={correctBatchTotal} onChange={(e) => setCorrectBatchTotal(e.target.value)} className="h-10 w-full rounded-lg border border-gray-200 bg-white pl-7 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                    <DraftTextarea as="input" type="number" min={0} value={correctBatchTotal} onCommit={(value) => setCorrectBatchTotal(value)} className="h-10 w-full rounded-lg border border-gray-200 bg-white pl-7 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                   </div>
                   {selectedCurrentTotal > 0 && (
                     <button type="button" onClick={() => setCorrectBatchTotal("0")} className="!min-h-0 mt-2 inline-flex rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-50 dark:border-rose-500/30 dark:text-rose-300 dark:hover:bg-rose-500/10">
@@ -101442,7 +101442,7 @@ ${waybillLineItems(w).length > 1
                 </label>
                 <label className="block">
                   <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-gray-400">Reason for the correction</span>
-                  <input value={correctBatchReason} onChange={(e) => setCorrectBatchReason(e.target.value)} placeholder="e.g. partner under-remitted; reconciled to bank statement" className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                  <DraftTextarea as="input" value={correctBatchReason} onCommit={(value) => setCorrectBatchReason(value)} placeholder="e.g. partner under-remitted; reconciled to bank statement" className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                 </label>
                 <div className="divide-y divide-gray-100 rounded-lg border border-gray-100 text-xs dark:divide-slate-700 dark:border-slate-700">
                   {alloc.map((a) => {
@@ -101528,10 +101528,10 @@ ${waybillLineItems(w).length > 1
                   <>
                     <label className="block">
                       <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">{action.mode === "rename" ? "Set name" : "New set name"}</span>
-                      <input
+                      <DraftTextarea as="input"
                         className={`mt-2 w-full rounded-2xl border px-4 py-3 text-base font-bold text-slate-900 outline-none transition focus:ring-4 dark:bg-[#111f2d] dark:text-white ${duplicateNameTaken || duplicateNameEmpty ? "border-red-300 bg-red-50/60 focus:ring-red-100 dark:border-red-500/50 dark:bg-red-950/20 dark:focus:ring-red-500/10" : "border-slate-200 bg-white focus:border-blue-400 focus:ring-blue-100 dark:border-slate-700 dark:focus:border-blue-400 dark:focus:ring-blue-500/10"}`}
                         value={action.nextLabel}
-                        onChange={(event) => setPackageSetAction((prev) => prev ? { ...prev, nextLabel: event.target.value } : prev)}
+                        onCommit={(value) => setPackageSetAction((prev) => prev ? { ...prev, nextLabel: value } : prev)}
                         autoFocus
                       />
                     </label>
@@ -101746,11 +101746,11 @@ ${waybillLineItems(w).length > 1
                           </span>
                           <div className="relative mb-2">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
-                            <input
+                            <DraftTextarea as="input"
                               className="w-full rounded-xl border border-gray-200 bg-gray-50 pl-8 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#25D366]/30"
                               placeholder="Search agent name or state…"
                               value={waDispatchSearch}
-                              onChange={e => setWaDispatchSearch(e.target.value)}
+                              onCommit={(value) => setWaDispatchSearch(value)}
                             />
                           </div>
                           {/* Currently selected agent stays pinned at top even when collapsed */}
@@ -102356,7 +102356,7 @@ ${waybillLineItems(w).length > 1
 
             {modal === "createTeam" && (
               <div className="modal-form">
-                <label><span>Team Name *</span><input value={newTeamName} onChange={(e) => setNewTeamName(e.target.value)} placeholder="e.g. Lagos Closers" /></label>
+                <label><span>Team Name *</span><DraftTextarea as="input" value={newTeamName} onCommit={(value) => setNewTeamName(value)} placeholder="e.g. Lagos Closers" /></label>
                 <label><span>Team Lead</span><select value={newTeamLeadId} onChange={(e) => setNewTeamLeadId(e.target.value)}><option value="">No lead assigned</option>{salesRepUsers.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></label>
                 <p className="text-xs text-gray-400">Product scope can be configured after the team is created.</p>
                 <div className="flex items-center justify-end gap-3 pt-2">
@@ -102372,7 +102372,7 @@ ${waybillLineItems(w).length > 1
               const dirty = editTeamName.trim() !== team.name || (editTeamLeadId || undefined) !== team.leadId;
               return (
                 <div className="modal-form">
-                  <label><span>Team Name *</span><input value={editTeamName} onChange={(e) => setEditTeamName(e.target.value)} placeholder="e.g. Lagos Closers" /></label>
+                  <label><span>Team Name *</span><DraftTextarea as="input" value={editTeamName} onCommit={(value) => setEditTeamName(value)} placeholder="e.g. Lagos Closers" /></label>
                   <label><span>Team Lead</span><select value={editTeamLeadId} onChange={(e) => setEditTeamLeadId(e.target.value)}><option value="">No lead assigned</option>{salesRepUsers.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></label>
                   <label><span>Members</span></label>
                   <div className="flex flex-wrap gap-2 mb-2">
@@ -102587,18 +102587,18 @@ ${waybillLineItems(w).length > 1
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <label className="flex flex-col gap-1.5">
                           <span className="text-xs font-semibold text-gray-700">Customer name <span className="text-red-500">*</span></span>
-                          <input
+                          <DraftTextarea as="input"
                             value={createOrderCustomer}
-                            onChange={(e) => setCreateOrderCustomer(e.target.value)}
+                            onCommit={(value) => setCreateOrderCustomer(value)}
                             className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                             placeholder="e.g. Adaobi Eze"
                           />
                         </label>
                         <label className="flex flex-col gap-1.5">
                           <span className="text-xs font-semibold text-gray-700">Phone <span className="text-red-500">*</span></span>
-                          <input
+                          <DraftTextarea as="input"
                             value={createOrderPhone}
-                            onChange={(e) => setCreateOrderPhone(e.target.value)}
+                            onCommit={(value) => setCreateOrderPhone(value)}
                             inputMode="tel"
                             className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                             placeholder="+234 80…"
@@ -102609,9 +102609,9 @@ ${waybillLineItems(w).length > 1
                         </label>
                         <label className="flex flex-col gap-1.5">
                           <span className="text-xs font-semibold text-gray-700">WhatsApp <span className="text-gray-400 font-normal">(optional)</span></span>
-                          <input
+                          <DraftTextarea as="input"
                             value={createOrderWhatsapp}
-                            onChange={(e) => setCreateOrderWhatsapp(e.target.value)}
+                            onCommit={(value) => setCreateOrderWhatsapp(value)}
                             inputMode="tel"
                             className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                             placeholder="If different from phone"
@@ -102619,10 +102619,10 @@ ${waybillLineItems(w).length > 1
                         </label>
                         <label className="flex flex-col gap-1.5">
                           <span className="text-xs font-semibold text-gray-700">Email <span className="text-gray-400 font-normal">(optional)</span></span>
-                          <input
+                          <DraftTextarea as="input"
                             type="email"
                             value={createOrderEmail}
-                            onChange={(e) => setCreateOrderEmail(e.target.value)}
+                            onCommit={(value) => setCreateOrderEmail(value)}
                             className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                             placeholder="customer@example.com"
                           />
@@ -102636,18 +102636,18 @@ ${waybillLineItems(w).length > 1
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <label className="flex flex-col gap-1.5">
                           <span className="text-xs font-semibold text-gray-700">City</span>
-                          <input
+                          <DraftTextarea as="input"
                             value={createOrderCity}
-                            onChange={(e) => setCreateOrderCity(e.target.value)}
+                            onCommit={(value) => setCreateOrderCity(value)}
                             className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                             placeholder="e.g. Lagos"
                           />
                         </label>
                         <label className="flex flex-col gap-1.5">
                           <span className="text-xs font-semibold text-gray-700">State</span>
-                          <input
+                          <DraftTextarea as="input"
                             value={createOrderState}
-                            onChange={(e) => setCreateOrderState(e.target.value)}
+                            onCommit={(value) => setCreateOrderState(value)}
                             className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                             placeholder="e.g. Lagos"
                           />
@@ -102655,9 +102655,9 @@ ${waybillLineItems(w).length > 1
                       </div>
                       <label className="flex flex-col gap-1.5">
                         <span className="text-xs font-semibold text-gray-700">Delivery address</span>
-                        <textarea
+                        <DraftTextarea
                           value={createOrderAddress}
-                          onChange={(e) => setCreateOrderAddress(e.target.value)}
+                          onCommit={(value) => setCreateOrderAddress(value)}
                           rows={2}
                           className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0] resize-none"
                           placeholder="House number, street, landmark…"
@@ -102709,9 +102709,9 @@ ${waybillLineItems(w).length > 1
                         </label>
                         <label className="flex flex-col gap-1.5">
                           <span className="text-xs font-semibold text-gray-700">Quantity</span>
-                          <input
+                          <DraftTextarea as="input"
                             value={createOrderQuantity}
-                            onChange={(e) => setCreateOrderQuantity(e.target.value)}
+                            onCommit={(value) => setCreateOrderQuantity(value)}
                             inputMode="numeric"
                             disabled={!!selectedPackage}
                             className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0] disabled:bg-gray-50 disabled:text-gray-500"
@@ -103283,10 +103283,10 @@ ${waybillLineItems(w).length > 1
                           </div>
                           <label className="grid gap-1">
                             <span className={`text-xs font-semibold ${orderFaintTextClass}`}>Reason</span>
-                            <textarea
+                            <DraftTextarea
                               rows={2}
                               value={dateEditReason}
-                              onChange={(event) => setDateEditReason(event.target.value)}
+                              onCommit={(value) => setDateEditReason(value)}
                               placeholder="Why should this order date be corrected?"
                               className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"
                             />
@@ -103589,22 +103589,22 @@ ${waybillLineItems(w).length > 1
 	                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
 	                    <label className="flex flex-col gap-1">
 	                      <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Upsell from</span>
-	                      <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm" inputMode="numeric" placeholder="e.g. 3" value={selectedOrder.upsellFromQty ?? ""} onChange={(e) => {
-	                        const v = e.target.value === "" ? undefined : Number(e.target.value);
+	                      <DraftTextarea as="input" className="border border-gray-200 rounded-lg px-3 py-2 text-sm" inputMode="numeric" placeholder="e.g. 3" value={selectedOrder.upsellFromQty ?? ""} onCommit={(value) => {
+	                        const v = value === "" ? undefined : Number(value);
 	                        updateOrderUpsellFields(selectedOrder, { upsellFromQty: v });
 	                      }} />
 	                    </label>
 	                    <label className="flex flex-col gap-1">
 	                      <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Upsell to</span>
-	                      <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm" inputMode="numeric" placeholder="e.g. 5" value={selectedOrder.upsellToQty ?? ""} onChange={(e) => {
-	                        const v = e.target.value === "" ? undefined : Number(e.target.value);
+	                      <DraftTextarea as="input" className="border border-gray-200 rounded-lg px-3 py-2 text-sm" inputMode="numeric" placeholder="e.g. 5" value={selectedOrder.upsellToQty ?? ""} onCommit={(value) => {
+	                        const v = value === "" ? undefined : Number(value);
 	                        updateOrderUpsellFields(selectedOrder, { upsellToQty: v });
 	                      }} />
 	                    </label>
 	                    <label className="flex flex-col gap-1">
 	                      <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Note</span>
-	                      <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="e.g. Yes/Upgraded" value={selectedOrder.upsellNote ?? ""} onChange={(e) => {
-	                        updateOrderUpsellFields(selectedOrder, { upsellNote: e.target.value });
+	                      <DraftTextarea as="input" className="border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="e.g. Yes/Upgraded" value={selectedOrder.upsellNote ?? ""} onCommit={(value) => {
+	                        updateOrderUpsellFields(selectedOrder, { upsellNote: value });
 	                      }} />
 	                    </label>
 	                  </div>
@@ -104561,7 +104561,7 @@ ${waybillLineItems(w).length > 1
 	                  {callOutcomeDraft === "__custom__" && (
                             <>
                               {/* Up to 1000 characters, same as the server (was a one-line box capped at 120 by the server). */}
-                              <textarea className={`mt-3 w-full resize-y rounded-lg px-3 py-2 text-sm ${orderInputClass}`} rows={3} maxLength={1000} placeholder="e.g. Customer asked for Tuesday callback, out of town, store closed…" value={callOutcomeCustom} onChange={(e) => setCallOutcomeCustom(e.target.value)} autoFocus />
+                              <DraftTextarea className={`mt-3 w-full resize-y rounded-lg px-3 py-2 text-sm ${orderInputClass}`} rows={3} maxLength={1000} placeholder="e.g. Customer asked for Tuesday callback, out of town, store closed…" value={callOutcomeCustom} onCommit={(value) => setCallOutcomeCustom(value)} autoFocus />
                               <span className="mt-1 block text-right text-[11px] text-gray-400">{callOutcomeCustom.length}/1000</span>
                             </>
 	                  )}
@@ -104674,7 +104674,7 @@ ${waybillLineItems(w).length > 1
                                 {selected && <div className="rounded-md bg-white/80 px-3 py-2 text-xs text-gray-700"><strong>{selected.productName}</strong><span className="ml-2">Available for {context.order.state || "customer state"}</span>{selected.packageComponentsSnapshot?.length > 0 && <p className="mt-1 text-gray-500">Stock: {selected.packageComponentsSnapshot.filter((item) => !item.hiddenFromCustomer).map((item) => `${item.quantity} ${item.productName}${item.isFreeGift ? " (free)" : ""}`).join(" + ")}</p>}</div>}
                                 <div><span className="mb-1.5 block text-xs font-bold text-gray-600">Customer response *</span><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{(["accepted", "declined", "consider_later", "not_appropriate"] as const).map((response) => <button key={response} type="button" className={`!min-h-0 rounded-md border px-2 py-2 text-[11px] font-black capitalize ${line.response === response ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-600"}`} onClick={() => updateLine(line.id, { response, refusalReason: response === "accepted" ? "" : line.refusalReason })}>{response.replace(/_/g, " ")}</button>)}</div></div>
                                 {line.response !== "accepted" && <label><span>Reason for refusal *</span><select value={line.refusalReason} onChange={(event) => updateLine(line.id, { refusalReason: event.target.value })}><option value="">Choose reason</option>{salesExpansionRefusalOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
-                                <label><span>Benefit reason used</span><textarea value={line.benefitReason} onChange={(event) => updateLine(line.id, { benefitReason: event.target.value })} /></label>
+                                <label><span>Benefit reason used</span><DraftTextarea value={line.benefitReason} onCommit={(value) => updateLine(line.id, { benefitReason: value })} /></label>
                               </div>}
                             </article>;
                           })}
@@ -105002,22 +105002,22 @@ ${waybillLineItems(w).length > 1
 	            {modal === "editOrderCustomer" && selectedOrder && (
 	              <div className="modal-form">
 	                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-	                  <label><span>Customer Name</span><input value={createOrderCustomer} onChange={(event) => setCreateOrderCustomer(event.target.value)} /></label>
-	                  <label><span>Phone Number</span><input value={createOrderPhone} onChange={(event) => setCreateOrderPhone(event.target.value)} inputMode="tel" /></label>
-	                  <label><span>WhatsApp Number</span><input value={createOrderWhatsapp} onChange={(event) => setCreateOrderWhatsapp(event.target.value)} inputMode="tel" /></label>
-	                  <label><span>Email (Optional)</span><input value={createOrderEmail} onChange={(event) => setCreateOrderEmail(event.target.value)} type="email" placeholder="customer@example.com" /></label>
-	                  <label><span>City</span><input value={createOrderCity} onChange={(event) => setCreateOrderCity(event.target.value)} /></label>
-	                  <label><span>State</span><input value={createOrderState} onChange={(event) => setCreateOrderState(event.target.value)} /></label>
+	                  <label><span>Customer Name</span><DraftTextarea as="input" value={createOrderCustomer} onCommit={(value) => setCreateOrderCustomer(value)} /></label>
+	                  <label><span>Phone Number</span><DraftTextarea as="input" value={createOrderPhone} onCommit={(value) => setCreateOrderPhone(value)} inputMode="tel" /></label>
+	                  <label><span>WhatsApp Number</span><DraftTextarea as="input" value={createOrderWhatsapp} onCommit={(value) => setCreateOrderWhatsapp(value)} inputMode="tel" /></label>
+	                  <label><span>Email (Optional)</span><DraftTextarea as="input" value={createOrderEmail} onCommit={(value) => setCreateOrderEmail(value)} type="email" placeholder="customer@example.com" /></label>
+	                  <label><span>City</span><DraftTextarea as="input" value={createOrderCity} onCommit={(value) => setCreateOrderCity(value)} /></label>
+	                  <label><span>State</span><DraftTextarea as="input" value={createOrderState} onCommit={(value) => setCreateOrderState(value)} /></label>
 	                  <label>
 	                    <span>Quantity{selectedOrder.originalQuantity != null && selectedOrder.originalQuantity !== (Number(createOrderQuantity) || selectedOrder.originalQuantity) && <span className="text-gray-400 font-normal text-[11px] ml-1">(original: {selectedOrder.originalQuantity})</span>}</span>
-	                    <input value={createOrderQuantity} onChange={(event) => { setCreateOrderQuantity(event.target.value); const prod = products.find((p) => p.id === selectedOrder.productId); const pri = prod ? primaryPricing(prod) : null; const qty = Math.max(1, Number(event.target.value) || 1); if (pri && pri.sellingPrice > 0) setCreateOrderAmount(String(qty * pri.sellingPrice)); }} inputMode="numeric" />
+	                    <DraftTextarea as="input" value={createOrderQuantity} onCommit={(value) => { setCreateOrderQuantity(value); const prod = products.find((p) => p.id === selectedOrder.productId); const pri = prod ? primaryPricing(prod) : null; const qty = Math.max(1, Number(value) || 1); if (pri && pri.sellingPrice > 0) setCreateOrderAmount(String(qty * pri.sellingPrice)); }} inputMode="numeric" />
 	                  </label>
 	                  <label>
 	                    <span>Order Amount{selectedOrder.originalAmount != null && selectedOrder.originalAmount !== Number(createOrderAmount) && <span className="text-gray-400 font-normal text-[11px] ml-1">(original: {formatProductMoney(selectedOrder.originalAmount, selectedOrder.currency)})</span>}</span>
-	                    <input value={createOrderAmount} onChange={(event) => setCreateOrderAmount(event.target.value)} inputMode="decimal" placeholder="Edit for discount / partial" />
+	                    <DraftTextarea as="input" value={createOrderAmount} onCommit={(value) => setCreateOrderAmount(value)} inputMode="decimal" placeholder="Edit for discount / partial" />
 	                  </label>
 	                </div>
-	                <label><span>Delivery Address</span><textarea value={createOrderAddress} onChange={(event) => setCreateOrderAddress(event.target.value)} /></label>
+	                <label><span>Delivery Address</span><DraftTextarea value={createOrderAddress} onCommit={(value) => setCreateOrderAddress(value)} /></label>
 	                {renderUpsellReversalWarning(selectedOrder, Math.max(1, Number(createOrderQuantity) || 1))}
 	                {renderUpsellRaiseQuestion(selectedOrder, Math.max(1, Number(createOrderQuantity) || 1))}
 	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveOrderCustomerEdit}>Save Changes</button></div>
@@ -105048,24 +105048,24 @@ ${waybillLineItems(w).length > 1
 	                  </p>
 	                )}
 	                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-	                  <label><span>Customer Name</span><input value={createOrderCustomer} onChange={(event) => setCreateOrderCustomer(event.target.value)} /></label>
-	                  <label><span>Phone</span><input value={createOrderPhone} onChange={(event) => setCreateOrderPhone(event.target.value)} inputMode="tel" /></label>
-	                  <label><span>WhatsApp</span><input value={createOrderWhatsapp} onChange={(event) => setCreateOrderWhatsapp(event.target.value)} inputMode="tel" /></label>
+	                  <label><span>Customer Name</span><DraftTextarea as="input" value={createOrderCustomer} onCommit={(value) => setCreateOrderCustomer(value)} /></label>
+	                  <label><span>Phone</span><DraftTextarea as="input" value={createOrderPhone} onCommit={(value) => setCreateOrderPhone(value)} inputMode="tel" /></label>
+	                  <label><span>WhatsApp</span><DraftTextarea as="input" value={createOrderWhatsapp} onCommit={(value) => setCreateOrderWhatsapp(value)} inputMode="tel" /></label>
 	                  <label><span>Source</span><select value={createOrderSource} onChange={(event) => setCreateOrderSource(event.target.value as Exclude<OrderSource, "All Sources">)}>{orderSources.filter((source) => source !== "All Sources").map((source) => <option key={source}>{source}</option>)}</select></label>
-	                  <label><span>City</span><input value={createOrderCity} onChange={(event) => setCreateOrderCity(event.target.value)} /></label>
-	                  <label><span>State</span><input value={createOrderState} onChange={(event) => setCreateOrderState(event.target.value)} /></label>
+	                  <label><span>City</span><DraftTextarea as="input" value={createOrderCity} onCommit={(value) => setCreateOrderCity(value)} /></label>
+	                  <label><span>State</span><DraftTextarea as="input" value={createOrderState} onCommit={(value) => setCreateOrderState(value)} /></label>
 	                </div>
-	                <label><span>Delivery Address</span><textarea value={createOrderAddress} onChange={(event) => setCreateOrderAddress(event.target.value)} /></label>
+	                <label><span>Delivery Address</span><DraftTextarea value={createOrderAddress} onCommit={(value) => setCreateOrderAddress(value)} /></label>
 	                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 	                  <label><span>Product{shipmentLocked && <span className="ml-1 text-[11px] font-normal text-gray-400">(locked — stock deducted)</span>}</span><select disabled={shipmentLocked} value={createOrderProductId} onChange={(event) => { const product = catalogProducts.find((item) => item.id === event.target.value); const offer = product ? activeProductPackages(product)[0] : undefined; setCreateOrderProductId(event.target.value); setCreateOrderPackageId(offer?.id ?? ""); setCreateOrderQuantity(String(offer?.quantity ?? 1)); }}><option value="">Choose product</option>{catalogProducts.filter((product) => product.active).map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></label>
 	                  <label><span>Package</span><select value={createOrderPackageId} onChange={(event) => { const product = products.find((item) => item.id === createOrderProductId); const offer = product?.packages.find((item) => item.id === event.target.value); setCreateOrderPackageId(event.target.value); if (offer) setCreateOrderQuantity(String(offer.quantity)); }}><option value="">Manual quantity</option>{products.find((item) => item.id === createOrderProductId)?.packages.map((item) => <option key={item.id} value={item.id}>{item.name} · {formatProductMoney(item.price, item.currency)}</option>)}</select></label>
 	                  <label>
 	                    <span>Quantity {selectedOrder.originalQuantity != null && selectedOrder.originalQuantity !== (Number(createOrderQuantity) || selectedOrder.originalQuantity) && <span className="text-gray-400 font-normal text-[11px] ml-1">(original: {selectedOrder.originalQuantity})</span>}</span>
-	                    <input disabled={shipmentLocked} value={createOrderQuantity} onChange={(event) => { setCreateOrderQuantity(event.target.value); const prod = products.find((item) => item.id === createOrderProductId); const pri = prod ? primaryPricing(prod) : null; const qty = Math.max(1, Number(event.target.value) || 1); if (pri && pri.sellingPrice > 0) setCreateOrderAmount(String(qty * pri.sellingPrice)); }} inputMode="numeric" />
+	                    <DraftTextarea as="input" disabled={shipmentLocked} value={createOrderQuantity} onCommit={(value) => { setCreateOrderQuantity(value); const prod = products.find((item) => item.id === createOrderProductId); const pri = prod ? primaryPricing(prod) : null; const qty = Math.max(1, Number(value) || 1); if (pri && pri.sellingPrice > 0) setCreateOrderAmount(String(qty * pri.sellingPrice)); }} inputMode="numeric" />
 	                  </label>
 	                  <label>
 	                    <span>Order Amount {selectedOrder.originalAmount != null && selectedOrder.originalAmount !== Number(createOrderAmount) && <span className="text-gray-400 font-normal text-[11px] ml-1">(original: {formatProductMoney(selectedOrder.originalAmount, selectedOrder.currency)})</span>}</span>
-	                    <input value={createOrderAmount} onChange={(event) => setCreateOrderAmount(event.target.value)} inputMode="decimal" placeholder="Edit for discount / partial delivery" />
+	                    <DraftTextarea as="input" value={createOrderAmount} onCommit={(value) => setCreateOrderAmount(value)} inputMode="decimal" placeholder="Edit for discount / partial delivery" />
 	                  </label>
 	                  <label><span>Assigned To</span><select value={createOrderRepId} onChange={(event) => setCreateOrderRepId(event.target.value)}><option value="auto">Keep current</option>{assignableUsers.map((user) => <option key={user.id} value={user.id}>{user.name}{user.role !== "Sales Rep" ? ` (${user.role})` : ""}</option>)}</select></label>
 	                  <label><span>Delivery Agent{shipmentLocked && <span className="ml-1 text-[11px] font-normal text-gray-400">(locked)</span>}</span><select disabled={shipmentLocked} value={createOrderAgentId} onChange={(event) => setCreateOrderAgentId(event.target.value)}><option value="">Unassigned</option>{(selectedOrder ? agentsForOrder(selectedOrder) : activeAgents).map((agent) => { const rec = createOrderProductId ? agentStock.find((s) => s.agentId === agent.id && s.productId === createOrderProductId) : undefined; const stockQty = rec?.quantity ?? 0; const needs = Math.max(1, Number(createOrderQuantity) || 1); const stockTag = !createOrderProductId ? "" : stockQty === 0 ? " - ⚠ no stock" : stockQty >= needs ? ` - ✓ ${stockQty} in stock` : ` - ⚠ only ${stockQty} (needs ${needs})`; return <option key={agent.id} value={agent.id}>{agentOptionLabel(agent, createOrderState, createOrderCity)}{stockTag}</option>; })}</select></label>
@@ -105177,22 +105177,22 @@ ${waybillLineItems(w).length > 1
 	                          </label>
 	                          <label className="m-0">
 	                            <span>Pcs</span>
-	                            <input inputMode="numeric" value={row.quantity}
-	                              onChange={(event) => {
-	                                const qty = Math.max(1, Number(event.target.value) || 1);
+	                            <DraftTextarea as="input" inputMode="numeric" value={row.quantity}
+	                              onCommit={(value) => {
+	                                const qty = Math.max(1, Number(value) || 1);
 	                                setExtraItemsDraft((prev) => prev.map((entry, i) => {
 	                                  if (i !== index) return entry;
 	                                  const picked = products.find((item) => item.id === entry.productId);
 	                                  const unit = picked ? (primaryPricing(picked)?.sellingPrice ?? 0) : 0;
-	                                  return { ...entry, quantity: event.target.value, amount: unit > 0 ? String(unit * qty) : entry.amount };
+	                                  return { ...entry, quantity: value, amount: unit > 0 ? String(unit * qty) : entry.amount };
 	                                }));
 	                              }} />
 	                          </label>
 	                          <label className="m-0">
 	                            <span>Line price</span>
-	                            <input inputMode="decimal" value={row.amount} placeholder="0"
-	                              onChange={(event) => setExtraItemsDraft((prev) => prev.map((entry, i) =>
-	                                i === index ? { ...entry, amount: event.target.value } : entry))} />
+	                            <DraftTextarea as="input" inputMode="decimal" value={row.amount} placeholder="0"
+	                              onCommit={(value) => setExtraItemsDraft((prev) => prev.map((entry, i) =>
+	                                i === index ? { ...entry, amount: value } : entry))} />
 	                          </label>
 	                        </div>
 	                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
@@ -106049,18 +106049,18 @@ ${waybillLineItems(w).length > 1
                     <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500">Basics</h4>
                     <label className="flex flex-col gap-1.5">
                       <span className="text-xs font-semibold text-gray-700">{isComboCreate ? "Combo name" : "Product name"} <span className="text-red-500">*</span></span>
-                      <input
+                      <DraftTextarea as="input"
                         value={productName}
-                        onChange={(e) => setProductName(e.target.value)}
+                        onCommit={(value) => setProductName(value)}
                         className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                         placeholder={isComboCreate ? "e.g. Smart Add-On Combo" : "e.g. Multiple Hanger"}
                       />
                     </label>
                     <label className="flex flex-col gap-1.5">
                       <span className="text-xs font-semibold text-gray-700">Description <span className="text-gray-400 font-normal">(optional)</span></span>
-                      <textarea
+                      <DraftTextarea
                         value={productDescription}
-                        onChange={(e) => setProductDescription(e.target.value)}
+                        onCommit={(value) => setProductDescription(value)}
                         rows={2}
                         className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0] resize-none"
                         placeholder={isComboCreate ? "Short marketing name for this combo library item…" : "Short description shown on the embed form…"}
@@ -106069,9 +106069,9 @@ ${waybillLineItems(w).length > 1
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <label className="flex flex-col gap-1.5">
                         <span className="text-xs font-semibold text-gray-700">SKU <span className="text-gray-400 font-normal">(auto if blank)</span></span>
-                        <input
+                        <DraftTextarea as="input"
                           value={productSku}
-                          onChange={(e) => { setSkuManuallyEdited(true); setProductSku(e.target.value); }}
+                          onCommit={(value) => { setSkuManuallyEdited(true); setProductSku(value); }}
                           className={`px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 ${skuClash ? "border-red-300 focus:ring-red-200 focus:border-red-400" : "border-gray-200 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"}`}
                           placeholder="HANGER-001"
                         />
@@ -106098,9 +106098,9 @@ ${waybillLineItems(w).length > 1
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <label className="flex flex-col gap-1.5">
                         <span className="text-xs font-semibold text-gray-700">Unit cost <span className="text-red-500">*</span></span>
-                        <input
+                        <DraftTextarea as="input"
                           value={unitCost}
-                          onChange={(e) => setUnitCost(e.target.value)}
+                          onCommit={(value) => setUnitCost(value)}
                           inputMode="decimal"
                           className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                           placeholder="0"
@@ -106109,9 +106109,9 @@ ${waybillLineItems(w).length > 1
                       </label>
                       <label className="flex flex-col gap-1.5">
                         <span className="text-xs font-semibold text-gray-700">Selling price <span className="text-red-500">*</span></span>
-                        <input
+                        <DraftTextarea as="input"
                           value={sellingPrice}
-                          onChange={(e) => setSellingPrice(e.target.value)}
+                          onCommit={(value) => setSellingPrice(value)}
                           inputMode="decimal"
                           className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                           placeholder="0"
@@ -106135,9 +106135,9 @@ ${waybillLineItems(w).length > 1
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <label className="flex flex-col gap-1.5">
                         <span className="text-xs font-semibold text-gray-700">Opening stock</span>
-                        <input
+                        <DraftTextarea as="input"
                           value={openingStock}
-                          onChange={(e) => setOpeningStock(e.target.value)}
+                          onCommit={(value) => setOpeningStock(value)}
                           inputMode="numeric"
                           className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                           placeholder="0"
@@ -106146,9 +106146,9 @@ ${waybillLineItems(w).length > 1
                       </label>
                       <label className="flex flex-col gap-1.5">
                         <span className="text-xs font-semibold text-gray-700">Reorder point</span>
-                        <input
+                        <DraftTextarea as="input"
                           value={reorderPoint}
-                          onChange={(e) => setReorderPoint(e.target.value)}
+                          onCommit={(value) => setReorderPoint(value)}
                           inputMode="numeric"
                           className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                           placeholder="10"
@@ -106242,9 +106242,9 @@ ${waybillLineItems(w).length > 1
                     <span className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold ${stockAdjustmentMode === "add" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>
                       {stockAdjustmentMode === "add" ? "+" : "−"}
                     </span>
-                    <input
+                    <DraftTextarea as="input"
                       value={stockChange}
-                      onChange={(event) => setStockChange(event.target.value.replace(/[^\d]/g, ""))}
+                      onCommit={(value) => setStockChange(value.replace(/[^\d]/g, ""))}
                       inputMode="numeric"
                       placeholder="0"
                       className="min-w-0 flex-1 border-0 bg-transparent p-0 text-lg font-semibold text-gray-900 focus:outline-none focus:ring-0"
@@ -106265,9 +106265,9 @@ ${waybillLineItems(w).length > 1
                 )}
                 <label>
                   <span>Reason for this adjustment *</span>
-                  <textarea
+                  <DraftTextarea
                     value={stockAdjustmentNote}
-                    onChange={(event) => setStockAdjustmentNote(event.target.value)}
+                    onCommit={(value) => setStockAdjustmentNote(value)}
                     rows={3}
                     placeholder="Example: damaged units removed after warehouse count"
                   />
@@ -106430,8 +106430,8 @@ ${waybillLineItems(w).length > 1
                 ) : (
                   <p>Currency: <strong>{selectedPricing ? productCurrencies[selectedPricing.currency].label : productCurrencies[selectedPricingCurrency].label}</strong></p>
                 )}
-                <label><span>Selling Price</span><input value={pricingSellingPrice} onChange={(event) => setPricingSellingPrice(event.target.value)} inputMode="decimal" /></label>
-                <label><span>Cost per Unit</span><input value={pricingCost} onChange={(event) => setPricingCost(event.target.value)} inputMode="decimal" /></label>
+                <label><span>Selling Price</span><DraftTextarea as="input" value={pricingSellingPrice} onCommit={(value) => setPricingSellingPrice(value)} inputMode="decimal" /></label>
+                <label><span>Cost per Unit</span><DraftTextarea as="input" value={pricingCost} onCommit={(value) => setPricingCost(value)} inputMode="decimal" /></label>
                 <p>Margin: <strong>{Number(pricingSellingPrice) > 0 ? Math.round(((Number(pricingSellingPrice) - Number(pricingCost)) / Number(pricingSellingPrice)) * 100) : 0}%</strong></p>
 
                 {/* ⚠️ Changing a cost used to silently restate every order ever
@@ -106503,22 +106503,22 @@ ${waybillLineItems(w).length > 1
 	                      : "Hidden from the public order form while you build, price, add images, or test it."}
 	                  </div>
 	                </label>
-	                <label><span>Package Name *</span><input value={packageName} onChange={(event) => setPackageName(event.target.value)} placeholder="Starter package" /></label>
-	                <label><span>Description</span><textarea value={packageDescription} onChange={(event) => setPackageDescription(event.target.value)} placeholder="Package description..." /></label>
+	                <label><span>Package Name *</span><DraftTextarea as="input" value={packageName} onCommit={(value) => setPackageName(value)} placeholder="Starter package" /></label>
+	                <label><span>Description</span><DraftTextarea value={packageDescription} onCommit={(value) => setPackageDescription(value)} placeholder="Package description..." /></label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <label><span>Main Product Quantity</span><input value={packageQuantity} onChange={(event) => setPackageQuantity(event.target.value)} inputMode="numeric" /></label>
-                  <label><span>Price</span><input value={packagePrice} onChange={(event) => setPackagePrice(event.target.value)} inputMode="decimal" /></label>
+                  <label><span>Main Product Quantity</span><DraftTextarea as="input" value={packageQuantity} onCommit={(value) => setPackageQuantity(value)} inputMode="numeric" /></label>
+                  <label><span>Price</span><DraftTextarea as="input" value={packagePrice} onCommit={(value) => setPackagePrice(value)} inputMode="decimal" /></label>
                   <label><span>Currency</span><select value={packageCurrency} onChange={(event) => setPackageCurrency(event.target.value as ProductCurrencyCode)}>{Object.entries(productCurrencies).map(([code, item]) => <option key={code} value={code}>{item.symbol} - {item.label}</option>)}</select></label>
-                  <label><span>Display Order</span><input value={packageDisplayOrder} onChange={(event) => setPackageDisplayOrder(event.target.value)} inputMode="numeric" /></label>
+                  <label><span>Display Order</span><DraftTextarea as="input" value={packageDisplayOrder} onCommit={(value) => setPackageDisplayOrder(value)} inputMode="numeric" /></label>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <label>
                     <span>Unit label - singular <span className="text-gray-400 font-normal">(optional)</span></span>
-                    <input value={packageUnitSingular} onChange={(event) => setPackageUnitSingular(event.target.value)} placeholder="pc" maxLength={20} />
+                    <DraftTextarea as="input" value={packageUnitSingular} onCommit={(value) => setPackageUnitSingular(value)} placeholder="pc" maxLength={20} />
                   </label>
                   <label>
                     <span>Unit label - plural <span className="text-gray-400 font-normal">(optional)</span></span>
-                    <input value={packageUnitPlural} onChange={(event) => setPackageUnitPlural(event.target.value)} placeholder="pcs" maxLength={20} />
+                    <DraftTextarea as="input" value={packageUnitPlural} onCommit={(value) => setPackageUnitPlural(value)} placeholder="pcs" maxLength={20} />
                   </label>
                   <p className="text-[11px] text-gray-500 sm:col-span-2 -mt-1">Used wherever the package's quantity is shown (e.g. "3 sets" instead of "3 pcs"). Leave blank to use the default.</p>
                 </div>
@@ -106704,12 +106704,12 @@ ${waybillLineItems(w).length > 1
                       </span>
                     </label>
                     <div className="grid grid-cols-1 sm:grid-cols-[1fr,auto,auto] gap-2">
-                      <input
+                      <DraftTextarea as="input"
                         type="url"
                         className="border border-amber-200 rounded-md px-2 py-1.5 text-sm bg-white"
                         placeholder="Paste an image, or an image URL..."
                         value={packageImageUrlDraft}
-                        onChange={(event) => setPackageImageUrlDraft(event.target.value)}
+                        onCommit={(value) => setPackageImageUrlDraft(value)}
                         onPaste={(event) => {
                           // A copied picture uploads at once; a pasted address is added at once.
                           const imageFiles = Array.from(event.clipboardData?.items ?? [])
@@ -106791,12 +106791,12 @@ ${waybillLineItems(w).length > 1
                     <h4 className="text-sm font-bold text-gray-900 m-0">WhatsApp product video</h4>
                   </div>
                   <p className="text-xs text-gray-500 m-0">Paste a hosted video URL (MP4). When a new order is confirmed, this video is sent to the customer alongside their receipt via WhatsApp automation.</p>
-                  <input
+                  <DraftTextarea as="input"
                     type="url"
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#25D366]/30"
                     placeholder="https://example.com/product-video.mp4"
                     value={packageVideoUrl}
-                    onChange={(e) => setPackageVideoUrl(e.target.value)}
+                    onCommit={(value) => setPackageVideoUrl(value)}
                   />
                   {packageVideoUrl.trim() && (
                     <p className="text-[11px] text-[#25D366] font-bold m-0">✓ Video URL set - will be sent on next new order</p>
@@ -106863,12 +106863,12 @@ ${waybillLineItems(w).length > 1
                               </label>
                               <label className="flex flex-col gap-1">
                                 <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Qty in this package</span>
-                                <input
+                                <DraftTextarea as="input"
                                   type="number"
                                   min={1}
                                   className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
                                   value={component.quantity}
-                                  onChange={(e) => update({ quantity: Math.max(1, Number(e.target.value) || 1) })}
+                                  onCommit={(value) => update({ quantity: Math.max(1, Number(value) || 1) })}
                                 />
                               </label>
                             </div>
@@ -106893,13 +106893,13 @@ ${waybillLineItems(w).length > 1
                               </div>
                               <label className="flex flex-col gap-1">
                                 <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Internal note</span>
-                                <input
+                                <DraftTextarea as="input"
                                   type="text"
                                   maxLength={160}
                                   className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
                                   placeholder="Optional: towel, gift sponge, mop head..."
                                   value={component.note ?? ""}
-                                  onChange={(e) => update({ note: e.target.value })}
+                                  onCommit={(value) => update({ note: value })}
                                 />
                               </label>
                               <button
@@ -107329,12 +107329,12 @@ ${waybillLineItems(w).length > 1
                                       )}
                                     </div>
                                     <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[1fr,auto,auto]">
-                                      <input
+                                      <DraftTextarea as="input"
                                         type="url"
                                         className="border border-amber-200 rounded-md px-2 py-1.5 text-sm bg-white"
                                         placeholder={targetPackage ? `Paste image URL for ${targetPackage.name}...` : "Paste offer image URL..."}
                                         value={companionGalleryDraft}
-                                        onChange={(event) => setCompanionGalleryDraft(event.target.value)}
+                                        onCommit={(value) => setCompanionGalleryDraft(value)}
                                         onPaste={(event) => {
                                           // Same as the package gallery: a copied picture uploads, an address is added.
                                           const imageFiles = Array.from(event.clipboardData?.items ?? [])
@@ -107484,10 +107484,10 @@ ${waybillLineItems(w).length > 1
                                 <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
                                   {inlineBundleEnabled ? "Tier multiplier" : c.packageId ? "Bundle count" : "Quantity"}
                                 </span>
-                                <input
+                                <DraftTextarea as="input"
                                   type="number" min={1} className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
                                   value={c.quantity}
-                                  onChange={(e) => update({ quantity: Math.max(1, Number(e.target.value) || 1) })}
+                                  onCommit={(value) => update({ quantity: Math.max(1, Number(value) || 1) })}
                                 />
                                 <span className="text-[10px] text-gray-400">
                                   {inlineBundleEnabled
@@ -107521,11 +107521,11 @@ ${waybillLineItems(w).length > 1
                               {c.pricingMode === "fixed" && (
                                 <label className="flex flex-col gap-1">
                                   <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Custom price</span>
-                                  <input
+                                  <DraftTextarea as="input"
                                     type="number" min={0}
                                     className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
                                     value={c.fixedPrice ?? 0}
-                                    onChange={(e) => update({ fixedPrice: Math.max(0, Number(e.target.value) || 0) })}
+                                    onCommit={(value) => update({ fixedPrice: Math.max(0, Number(value) || 0) })}
                                   />
 	                                </label>
 	                              )}
@@ -107588,12 +107588,12 @@ ${waybillLineItems(w).length > 1
 	                                            </label>
 	                                            <label className="flex flex-col gap-1">
 	                                              <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Qty</span>
-	                                              <input
+	                                              <DraftTextarea as="input"
 	                                                type="number"
 	                                                min={1}
 	                                                className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
 	                                                value={component.quantity}
-	                                                onChange={(event) => updateBundleComponent(componentIndex, { quantity: Math.max(1, Number(event.target.value) || 1) })}
+	                                                onCommit={(value) => updateBundleComponent(componentIndex, { quantity: Math.max(1, Number(value) || 1) })}
 	                                              />
 	                                            </label>
 	                                            <button
@@ -107767,11 +107767,11 @@ ${waybillLineItems(w).length > 1
                                 </label>
                                 <label className="flex flex-col gap-1">
                                   <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Priority</span>
-                                  <input
+                                  <DraftTextarea as="input"
                                     type="number"
                                     className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
                                     value={c.priority ?? 0}
-                                    onChange={(e) => update({ priority: Number(e.target.value) || 0 })}
+                                    onCommit={(value) => update({ priority: Number(value) || 0 })}
                                   />
 	                                  <span className="text-[10px] text-gray-400">Higher number shows first if multiple offers qualify.</span>
 	                                </label>
@@ -107782,13 +107782,13 @@ ${waybillLineItems(w).length > 1
 	                                    <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500 flex items-center justify-between">
 	                                      Offer title <span className="text-gray-400 font-normal normal-case">{(c.headline ?? "").length}/120</span>
 	                                    </span>
-	                                    <input
+	                                    <DraftTextarea as="input"
 	                                      type="text"
 	                                      maxLength={120}
 	                                      className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
 	                                      placeholder={inlineBundleEnabled ? "e.g. Starter combo pack" : targetProduct?.name ?? "Extra item title"}
 	                                      value={c.headline ?? ""}
-	                                      onChange={(e) => update({ headline: e.target.value })}
+	                                      onCommit={(value) => update({ headline: value })}
 	                                    />
 	                                    <span className="text-[10px] text-gray-400">
 	                                      Leave blank to use the selected product name. For tiered combo prices, name each row like Starter Pack, Home Pack, or Family Pack.
@@ -107799,13 +107799,13 @@ ${waybillLineItems(w).length > 1
 	                                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500 flex items-center justify-between">
 	                                        Customer bundle wording <span className="text-gray-400 font-normal normal-case">{(c.summaryOverride ?? "").length}/220</span>
 	                                      </span>
-	                                      <textarea
+	                                      <DraftTextarea
 	                                        maxLength={220}
 	                                        rows={2}
 	                                        className="border border-blue-100 rounded-md px-2 py-1.5 text-sm bg-blue-50/40"
 	                                        placeholder="e.g. 2pcs of 2-in-1 Window Groove Cleaning Tool + 1pcs Of Mini Mop + One Free Gift Of Absorbent Towel Combo"
 	                                        value={c.summaryOverride ?? ""}
-	                                        onChange={(e) => update({ summaryOverride: e.target.value })}
+	                                        onCommit={(value) => update({ summaryOverride: value })}
 	                                      />
 	                                      <span className="text-[10px] text-blue-600">
 	                                        Optional. Leave blank to auto-use the stock item names from the combo lines.
@@ -107817,13 +107817,13 @@ ${waybillLineItems(w).length > 1
 	                                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500 flex items-center justify-between">
 	                                        Badge text <span className="text-gray-400 font-normal normal-case">{(c.badgeText ?? "").length}/30</span>
 	                                      </span>
-                                      <input
+                                      <DraftTextarea as="input"
                                         type="text"
                                         maxLength={30}
                                         className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
                                         placeholder="Add this too"
                                         value={c.badgeText ?? ""}
-                                        onChange={(e) => update({ badgeText: e.target.value })}
+                                        onCommit={(value) => update({ badgeText: value })}
                                       />
                                     </label>
                                   ) : <div />}
@@ -107831,13 +107831,13 @@ ${waybillLineItems(w).length > 1
                                     <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500 flex items-center justify-between">
                                       Benefit line <span className="text-gray-400 font-normal normal-case">{(c.pitch ?? "").length}/80</span>
                                     </span>
-                                    <input
+                                    <DraftTextarea as="input"
                                       type="text"
                                       maxLength={80}
                                       className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
                                       placeholder="Quick one-line reason to add this"
                                       value={c.pitch ?? ""}
-                                      onChange={(e) => update({ pitch: e.target.value })}
+                                      onCommit={(value) => update({ pitch: value })}
                                     />
                                   </label>
                                 </div>
@@ -107847,48 +107847,48 @@ ${waybillLineItems(w).length > 1
                                     <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500 flex items-center justify-between">
                                       Headline <span className="text-gray-400 font-normal normal-case">{(c.headline ?? "").length}/120</span>
                                     </span>
-                                    <input
+                                    <DraftTextarea as="input"
                                       type="text"
                                       maxLength={120}
                                       className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
                                       placeholder="Before you finish, add this too"
                                       value={c.headline ?? ""}
-                                      onChange={(e) => update({ headline: e.target.value })}
+                                      onCommit={(value) => update({ headline: value })}
                                     />
                                   </label>
                                   <label className="flex flex-col gap-1 sm:col-span-2">
                                     <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500 flex items-center justify-between">
                                       Benefit line <span className="text-gray-400 font-normal normal-case">{(c.pitch ?? "").length}/80</span>
                                     </span>
-                                    <input
+                                    <DraftTextarea as="input"
                                       type="text"
                                       maxLength={80}
                                       className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
                                       placeholder="Short reason to take this offer"
                                       value={c.pitch ?? ""}
-                                      onChange={(e) => update({ pitch: e.target.value })}
+                                      onCommit={(value) => update({ pitch: value })}
                                     />
                                   </label>
                                   <label className="flex flex-col gap-1">
                                     <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Yes button text</span>
-                                    <input
+                                    <DraftTextarea as="input"
                                       type="text"
                                       maxLength={50}
                                       className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
                                       placeholder="Yes, add to my order"
                                       value={c.ctaText ?? ""}
-                                      onChange={(e) => update({ ctaText: e.target.value })}
+                                      onCommit={(value) => update({ ctaText: value })}
                                     />
                                   </label>
                                   <label className="flex flex-col gap-1">
                                     <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Skip text</span>
-                                    <input
+                                    <DraftTextarea as="input"
                                       type="text"
                                       maxLength={80}
                                       className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
                                       placeholder="No thanks, continue"
                                       value={c.declineText ?? ""}
-                                      onChange={(e) => update({ declineText: e.target.value })}
+                                      onCommit={(value) => update({ declineText: value })}
                                     />
                                   </label>
                                 </div>
@@ -107975,34 +107975,34 @@ ${waybillLineItems(w).length > 1
                                 </div>
                                 <label className="flex flex-col gap-1">
                                   <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Image URL</span>
-                                  <input
+                                  <DraftTextarea as="input"
                                     type="url"
                                     className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
                                     placeholder="https://..."
                                     value={c.imageUrl ?? ""}
-                                    onChange={(e) => update({ imageUrl: e.target.value })}
+                                    onCommit={(value) => update({ imageUrl: value })}
                                   />
                                 </label>
                                 <label className="flex flex-col gap-1">
                                   <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Video URL</span>
-                                  <input
+                                  <DraftTextarea as="input"
                                     type="url"
                                     className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
                                     placeholder="YouTube, Vimeo, or mp4 link"
                                     value={c.videoUrl ?? ""}
-                                    onChange={(e) => update({ videoUrl: e.target.value })}
+                                    onCommit={(value) => update({ videoUrl: value })}
                                   />
                                   <span className="text-[10px] text-gray-400">Optional. If both are filled, video shows first.</span>
                                 </label>
                               </div>
                               <label className="flex flex-col gap-1">
                                 <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Embed HTML</span>
-                                <textarea
+                                <DraftTextarea
                                   rows={4}
                                   className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white font-mono"
                                   placeholder="<script ...></script> ... custom video or image embed code"
                                   value={c.embedHtml ?? ""}
-                                  onChange={(e) => update({ embedHtml: e.target.value })}
+                                  onCommit={(value) => update({ embedHtml: value })}
                                 />
                                 <span className="text-[10px] text-gray-400">Optional. If this is filled, it overrides the image and video URLs on the customer-facing form.</span>
                               </label>
@@ -108118,19 +108118,19 @@ ${waybillLineItems(w).length > 1
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <label className="flex flex-col gap-1.5">
                         <span className="text-xs font-semibold text-gray-700">Full name <span className="text-red-500">*</span></span>
-                        <input
+                        <DraftTextarea as="input"
                           value={salesRepName}
-                          onChange={(e) => setSalesRepName(e.target.value)}
+                          onCommit={(value) => setSalesRepName(value)}
                           className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                           placeholder="e.g. Chioma Adekunle"
                         />
                       </label>
                       <label className="flex flex-col gap-1.5">
                         <span className="text-xs font-semibold text-gray-700">Email address <span className="text-red-500">*</span></span>
-                        <input
+                        <DraftTextarea as="input"
                           type="email"
                           value={salesRepEmail}
-                          onChange={(e) => setSalesRepEmail(e.target.value)}
+                          onCommit={(value) => setSalesRepEmail(value)}
                           className={`px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 ${(emailTaken || !emailFormatOk) ? "border-red-300 focus:ring-red-200 focus:border-red-400" : "border-gray-200 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"}`}
                           placeholder="rep@yourcompany.com"
                         />
@@ -108139,9 +108139,9 @@ ${waybillLineItems(w).length > 1
                       </label>
                       <label className="flex flex-col gap-1.5 sm:col-span-2">
                         <span className="text-xs font-semibold text-gray-700">Phone number <span className="text-red-500">*</span></span>
-                        <input
+                        <DraftTextarea as="input"
                           value={salesRepPhone}
-                          onChange={(e) => setSalesRepPhone(e.target.value)}
+                          onCommit={(value) => setSalesRepPhone(value)}
                           inputMode="tel"
                           className={`px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 ${(phoneShort || phoneTaken) ? "border-red-300 focus:ring-red-200 focus:border-red-400" : "border-gray-200 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"}`}
                           placeholder="+234 80..."
@@ -108181,9 +108181,9 @@ ${waybillLineItems(w).length > 1
                     <label className="flex flex-col gap-1.5">
                       <span className="text-xs font-semibold text-gray-700">Initial password <span className="text-red-500">*</span></span>
                       <div className="relative">
-                        <input
+                        <DraftTextarea as="input"
                           value={salesRepPassword}
-                          onChange={(e) => setSalesRepPassword(e.target.value)}
+                          onCommit={(value) => setSalesRepPassword(value)}
                           type={showPasswordFields["repPwd"] ? "text" : "password"}
                           placeholder="At least 6 characters"
                           className={`w-full pr-10 px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 ${pwdTooShort ? "border-red-300 focus:ring-red-200 focus:border-red-400" : "border-gray-200 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"}`}
@@ -108263,34 +108263,34 @@ ${waybillLineItems(w).length > 1
 	                {["state", "city", "zone"].includes(pdaFeeDraft.scope) && (
 	                  <label className="flex flex-col gap-1">
 	                    <span className="text-xs font-bold text-gray-600">Which {pdaFeeDraft.scope} *</span>
-	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaFeeDraft.matchValue}
-	                      onChange={(e) => setPdaFeeDraft((v) => ({ ...v, matchValue: e.target.value }))} placeholder="Rivers" />
+	                    <DraftTextarea as="input" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaFeeDraft.matchValue}
+	                      onCommit={(value) => setPdaFeeDraft((v) => ({ ...v, matchValue: value }))} placeholder="Rivers" />
 	                  </label>
 	                )}
 	                {pdaFeeDraft.scope === "distance" && (
 	                  <div className="grid grid-cols-2 gap-3">
 	                    <label className="flex flex-col gap-1">
 	                      <span className="text-xs font-bold text-gray-600">From (km)</span>
-	                      <input inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaFeeDraft.distanceMinKm}
-	                        onChange={(e) => setPdaFeeDraft((v) => ({ ...v, distanceMinKm: e.target.value }))} />
+	                      <DraftTextarea as="input" inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaFeeDraft.distanceMinKm}
+	                        onCommit={(value) => setPdaFeeDraft((v) => ({ ...v, distanceMinKm: value }))} />
 	                    </label>
 	                    <label className="flex flex-col gap-1">
 	                      <span className="text-xs font-bold text-gray-600">To (km)</span>
-	                      <input inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaFeeDraft.distanceMaxKm}
-	                        onChange={(e) => setPdaFeeDraft((v) => ({ ...v, distanceMaxKm: e.target.value }))} />
+	                      <DraftTextarea as="input" inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaFeeDraft.distanceMaxKm}
+	                        onCommit={(value) => setPdaFeeDraft((v) => ({ ...v, distanceMaxKm: value }))} />
 	                    </label>
 	                  </div>
 	                )}
 	                <div className="grid grid-cols-2 gap-3">
 	                  <label className="flex flex-col gap-1">
 	                    <span className="text-xs font-bold text-gray-600">Fee *</span>
-	                    <input inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaFeeDraft.fee}
-	                      onChange={(e) => setPdaFeeDraft((v) => ({ ...v, fee: e.target.value }))} />
+	                    <DraftTextarea as="input" inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaFeeDraft.fee}
+	                      onCommit={(value) => setPdaFeeDraft((v) => ({ ...v, fee: value }))} />
 	                  </label>
 	                  <label className="flex flex-col gap-1">
 	                    <span className="text-xs font-bold text-gray-600">Same-day surcharge</span>
-	                    <input inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaFeeDraft.sameDaySurcharge}
-	                      onChange={(e) => setPdaFeeDraft((v) => ({ ...v, sameDaySurcharge: e.target.value }))} />
+	                    <DraftTextarea as="input" inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaFeeDraft.sameDaySurcharge}
+	                      onCommit={(value) => setPdaFeeDraft((v) => ({ ...v, sameDaySurcharge: value }))} />
 	                  </label>
 	                </div>
 	                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
@@ -108309,8 +108309,8 @@ ${waybillLineItems(w).length > 1
 	                </p>
 	                <label className="flex flex-col gap-1">
 	                  <span className="text-xs font-bold text-gray-600">Report name *</span>
-	                  <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaReportDraft.name}
-	                    onChange={(e) => setPdaReportDraft((v) => ({ ...v, name: e.target.value }))}
+	                  <DraftTextarea as="input" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaReportDraft.name}
+	                    onCommit={(value) => setPdaReportDraft((v) => ({ ...v, name: value }))}
 	                    placeholder="Collections Summary Report" />
 	                </label>
 	                <label className="flex flex-col gap-1">
@@ -108324,8 +108324,8 @@ ${waybillLineItems(w).length > 1
 	                </label>
 	                <label className="flex flex-col gap-1">
 	                  <span className="text-xs font-bold text-gray-600">Description</span>
-	                  <textarea rows={2} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaReportDraft.description}
-	                    onChange={(e) => setPdaReportDraft((v) => ({ ...v, description: e.target.value }))} />
+	                  <DraftTextarea rows={2} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaReportDraft.description}
+	                    onCommit={(value) => setPdaReportDraft((v) => ({ ...v, description: value }))} />
 	                </label>
 	                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
 	                  <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700" onClick={closeModal}>Cancel</button>
@@ -108363,28 +108363,28 @@ ${waybillLineItems(w).length > 1
 	                  </label>
 	                  <label className="flex flex-col gap-1">
 	                    <span className="text-xs font-bold text-gray-600">Order</span>
-	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDiscDraft.orderId}
-	                      onChange={(e) => setPdaDiscDraft((v) => ({ ...v, orderId: e.target.value }))} />
+	                    <DraftTextarea as="input" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDiscDraft.orderId}
+	                      onCommit={(value) => setPdaDiscDraft((v) => ({ ...v, orderId: value }))} />
 	                  </label>
 	                  <label className="flex flex-col gap-1">
 	                    <span className="text-xs font-bold text-gray-600">Customer</span>
-	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDiscDraft.customerName}
-	                      onChange={(e) => setPdaDiscDraft((v) => ({ ...v, customerName: e.target.value }))} />
+	                    <DraftTextarea as="input" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDiscDraft.customerName}
+	                      onCommit={(value) => setPdaDiscDraft((v) => ({ ...v, customerName: value }))} />
 	                  </label>
 	                  <label className="flex flex-col gap-1">
 	                    <span className="text-xs font-bold text-gray-600">Expected *</span>
-	                    <input inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDiscDraft.expected}
-	                      onChange={(e) => setPdaDiscDraft((v) => ({ ...v, expected: e.target.value }))} />
+	                    <DraftTextarea as="input" inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDiscDraft.expected}
+	                      onCommit={(value) => setPdaDiscDraft((v) => ({ ...v, expected: value }))} />
 	                  </label>
 	                  <label className="flex flex-col gap-1">
 	                    <span className="text-xs font-bold text-gray-600">Actually received *</span>
-	                    <input inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDiscDraft.actual}
-	                      onChange={(e) => setPdaDiscDraft((v) => ({ ...v, actual: e.target.value }))} />
+	                    <DraftTextarea as="input" inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDiscDraft.actual}
+	                      onCommit={(value) => setPdaDiscDraft((v) => ({ ...v, actual: value }))} />
 	                  </label>
 	                  <label className="flex flex-col gap-1 sm:col-span-2">
 	                    <span className="text-xs font-bold text-gray-600">What happened?</span>
-	                    <textarea rows={2} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDiscDraft.note}
-	                      onChange={(e) => setPdaDiscDraft((v) => ({ ...v, note: e.target.value }))} />
+	                    <DraftTextarea rows={2} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDiscDraft.note}
+	                      onCommit={(value) => setPdaDiscDraft((v) => ({ ...v, note: value }))} />
 	                  </label>
 	                </div>
 	                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
@@ -108412,8 +108412,8 @@ ${waybillLineItems(w).length > 1
 	                  </label>
 	                  <label className="flex flex-col gap-1">
 	                    <span className="text-xs font-bold text-gray-600">Order (if any)</span>
-	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaIncidentDraft.orderId}
-	                      onChange={(e) => setPdaIncidentDraft((v) => ({ ...v, orderId: e.target.value }))} />
+	                    <DraftTextarea as="input" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaIncidentDraft.orderId}
+	                      onCommit={(value) => setPdaIncidentDraft((v) => ({ ...v, orderId: value }))} />
 	                  </label>
 	                  <label className="flex flex-col gap-1">
 	                    <span className="text-xs font-bold text-gray-600">What happened *</span>
@@ -108433,13 +108433,13 @@ ${waybillLineItems(w).length > 1
 	                  </label>
 	                  <label className="flex flex-col gap-1 sm:col-span-2">
 	                    <span className="text-xs font-bold text-gray-600">Money at risk</span>
-	                    <input inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaIncidentDraft.amountAtRisk}
-	                      onChange={(e) => setPdaIncidentDraft((v) => ({ ...v, amountAtRisk: e.target.value }))} />
+	                    <DraftTextarea as="input" inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaIncidentDraft.amountAtRisk}
+	                      onCommit={(value) => setPdaIncidentDraft((v) => ({ ...v, amountAtRisk: value }))} />
 	                  </label>
 	                  <label className="flex flex-col gap-1 sm:col-span-2">
 	                    <span className="text-xs font-bold text-gray-600">Describe it *</span>
-	                    <textarea rows={3} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaIncidentDraft.description}
-	                      onChange={(e) => setPdaIncidentDraft((v) => ({ ...v, description: e.target.value }))} />
+	                    <DraftTextarea rows={3} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaIncidentDraft.description}
+	                      onCommit={(value) => setPdaIncidentDraft((v) => ({ ...v, description: value }))} />
 	                  </label>
 	                </div>
 	                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
@@ -108463,8 +108463,8 @@ ${waybillLineItems(w).length > 1
 	                </div>
 	                <label className="flex flex-col gap-1">
 	                  <span className="text-xs font-bold text-gray-600">Delivery fee *</span>
-	                  <input inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaCandidateFee}
-	                    onChange={(e) => setPdaCandidateFee(e.target.value)} placeholder="4500" />
+	                  <DraftTextarea as="input" inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaCandidateFee}
+	                    onCommit={(value) => setPdaCandidateFee(value)} placeholder="4500" />
 	                  <span className="text-[11px] text-gray-500">Locked once assigned, so it cannot be renegotiated after the trip.</span>
 	                </label>
 	                <div className="space-y-2">
@@ -108501,8 +108501,8 @@ ${waybillLineItems(w).length > 1
 	                </p>
 	                <label className="flex flex-col gap-1">
 	                  <span className="text-xs font-bold text-gray-600">Amount received *</span>
-	                  <input inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaRemittanceDraft.amount}
-	                    onChange={(e) => setPdaRemittanceDraft((v) => ({ ...v, amount: e.target.value }))} />
+	                  <DraftTextarea as="input" inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaRemittanceDraft.amount}
+	                    onCommit={(value) => setPdaRemittanceDraft((v) => ({ ...v, amount: value }))} />
 	                </label>
 	                <label className="flex flex-col gap-1">
 	                  <span className="text-xs font-bold text-gray-600">How</span>
@@ -108513,8 +108513,8 @@ ${waybillLineItems(w).length > 1
 	                </label>
 	                <label className="flex flex-col gap-1">
 	                  <span className="text-xs font-bold text-gray-600">Reference</span>
-	                  <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaRemittanceDraft.reference}
-	                    onChange={(e) => setPdaRemittanceDraft((v) => ({ ...v, reference: e.target.value }))}
+	                  <DraftTextarea as="input" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaRemittanceDraft.reference}
+	                    onCommit={(value) => setPdaRemittanceDraft((v) => ({ ...v, reference: value }))}
 	                    placeholder="Transfer reference, teller number…" />
 	                </label>
 	                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
@@ -108541,13 +108541,13 @@ ${waybillLineItems(w).length > 1
 	                </label>
 	                <label className="flex flex-col gap-1">
 	                  <span className="text-xs font-bold text-gray-600">Quantity *</span>
-	                  <input inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaSendStockDraft.quantity}
-	                    onChange={(e) => setPdaSendStockDraft((v) => ({ ...v, quantity: e.target.value }))} />
+	                  <DraftTextarea as="input" inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaSendStockDraft.quantity}
+	                    onCommit={(value) => setPdaSendStockDraft((v) => ({ ...v, quantity: value }))} />
 	                </label>
 	                <label className="flex flex-col gap-1">
 	                  <span className="text-xs font-bold text-gray-600">Waybill reference</span>
-	                  <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaSendStockDraft.waybillReference}
-	                    onChange={(e) => setPdaSendStockDraft((v) => ({ ...v, waybillReference: e.target.value }))} />
+	                  <DraftTextarea as="input" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaSendStockDraft.waybillReference}
+	                    onCommit={(value) => setPdaSendStockDraft((v) => ({ ...v, waybillReference: value }))} />
 	                </label>
 	                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
 	                  <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700" onClick={closeModal}>Cancel</button>
@@ -108587,8 +108587,8 @@ ${waybillLineItems(w).length > 1
 	                </p>
 	                <label className="flex flex-col gap-1">
 	                  <span className="text-xs font-bold text-gray-600">How much did you collect? *</span>
-	                  <input inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDeliveredDraft.amountCollected}
-	                    onChange={(e) => setPdaDeliveredDraft((v) => ({ ...v, amountCollected: e.target.value }))} />
+	                  <DraftTextarea as="input" inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDeliveredDraft.amountCollected}
+	                    onCommit={(value) => setPdaDeliveredDraft((v) => ({ ...v, amountCollected: value }))} />
 	                </label>
 	                <label className="flex flex-col gap-1">
 	                  <span className="text-xs font-bold text-gray-600">Payment method</span>
@@ -108606,8 +108606,8 @@ ${waybillLineItems(w).length > 1
 	                </label>
 	                <label className="flex flex-col gap-1">
 	                  <span className="text-xs font-bold text-gray-600">Proof details *</span>
-	                  <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDeliveredDraft.proofReference}
-	                    onChange={(e) => setPdaDeliveredDraft((v) => ({ ...v, proofReference: e.target.value }))}
+	                  <DraftTextarea as="input" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDeliveredDraft.proofReference}
+	                    onCommit={(value) => setPdaDeliveredDraft((v) => ({ ...v, proofReference: value }))}
 	                    placeholder="OTP code, or who confirmed it" />
 	                </label>
 	                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
@@ -108641,8 +108641,8 @@ ${waybillLineItems(w).length > 1
 	                </label>
 	                <label className="flex flex-col gap-1">
 	                  <span className="text-xs font-bold text-gray-600">Anything else? {pdaFailedDraft.failureReason === "Other" && <span className="text-red-600">Required</span>}</span>
-	                  <textarea rows={3} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaFailedDraft.failureNote}
-	                    onChange={(e) => setPdaFailedDraft((v) => ({ ...v, failureNote: e.target.value }))} />
+	                  <DraftTextarea rows={3} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaFailedDraft.failureNote}
+	                    onCommit={(value) => setPdaFailedDraft((v) => ({ ...v, failureNote: value }))} />
 	                </label>
 	                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
 	                  <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-3 text-sm font-bold text-gray-700" onClick={closeModal}>Cancel</button>
@@ -108673,8 +108673,8 @@ ${waybillLineItems(w).length > 1
 	                </label>
 	                <label className="flex flex-col gap-1">
 	                  <span className="text-xs font-bold text-gray-600">What did the customer say?</span>
-	                  <textarea rows={2} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaRescheduleDraft.reason}
-	                    onChange={(e) => setPdaRescheduleDraft((v) => ({ ...v, reason: e.target.value }))} />
+	                  <DraftTextarea rows={2} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaRescheduleDraft.reason}
+	                    onCommit={(value) => setPdaRescheduleDraft((v) => ({ ...v, reason: value }))} />
 	                </label>
 	                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
 	                  <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-3 text-sm font-bold text-gray-700" onClick={closeModal}>Cancel</button>
@@ -108701,33 +108701,33 @@ ${waybillLineItems(w).length > 1
 	                  </label>
 	                  <label className="flex flex-col gap-1">
 	                    <span className="text-xs font-bold text-gray-600">Full name *</span>
-	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaGuarantorDraft.fullName}
-	                      onChange={(e) => setPdaGuarantorDraft((v) => v ? { ...v, fullName: e.target.value } : v)} />
+	                    <DraftTextarea as="input" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaGuarantorDraft.fullName}
+	                      onCommit={(value) => setPdaGuarantorDraft((v) => v ? { ...v, fullName: value } : v)} />
 	                  </label>
 	                  <label className="flex flex-col gap-1">
 	                    <span className="text-xs font-bold text-gray-600">Relationship to applicant</span>
-	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaGuarantorDraft.relationship}
-	                      onChange={(e) => setPdaGuarantorDraft((v) => v ? { ...v, relationship: e.target.value } : v)} placeholder="Elder brother, landlord…" />
+	                    <DraftTextarea as="input" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaGuarantorDraft.relationship}
+	                      onCommit={(value) => setPdaGuarantorDraft((v) => v ? { ...v, relationship: value } : v)} placeholder="Elder brother, landlord…" />
 	                  </label>
 	                  <label className="flex flex-col gap-1">
 	                    <span className="text-xs font-bold text-gray-600">Occupation</span>
-	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaGuarantorDraft.occupation}
-	                      onChange={(e) => setPdaGuarantorDraft((v) => v ? { ...v, occupation: e.target.value } : v)} />
+	                    <DraftTextarea as="input" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaGuarantorDraft.occupation}
+	                      onCommit={(value) => setPdaGuarantorDraft((v) => v ? { ...v, occupation: value } : v)} />
 	                  </label>
 	                  <label className="flex flex-col gap-1">
 	                    <span className="text-xs font-bold text-gray-600">Phone *</span>
-	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaGuarantorDraft.phone}
-	                      onChange={(e) => setPdaGuarantorDraft((v) => v ? { ...v, phone: e.target.value } : v)} />
+	                    <DraftTextarea as="input" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaGuarantorDraft.phone}
+	                      onCommit={(value) => setPdaGuarantorDraft((v) => v ? { ...v, phone: value } : v)} />
 	                  </label>
 	                  <label className="flex flex-col gap-1">
 	                    <span className="text-xs font-bold text-gray-600">WhatsApp</span>
-	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaGuarantorDraft.whatsappPhone}
-	                      onChange={(e) => setPdaGuarantorDraft((v) => v ? { ...v, whatsappPhone: e.target.value } : v)} />
+	                    <DraftTextarea as="input" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaGuarantorDraft.whatsappPhone}
+	                      onCommit={(value) => setPdaGuarantorDraft((v) => v ? { ...v, whatsappPhone: value } : v)} />
 	                  </label>
 	                  <label className="flex flex-col gap-1 sm:col-span-2">
 	                    <span className="text-xs font-bold text-gray-600">Address</span>
-	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaGuarantorDraft.address}
-	                      onChange={(e) => setPdaGuarantorDraft((v) => v ? { ...v, address: e.target.value } : v)} />
+	                    <DraftTextarea as="input" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaGuarantorDraft.address}
+	                      onCommit={(value) => setPdaGuarantorDraft((v) => v ? { ...v, address: value } : v)} />
 	                  </label>
 	                </div>
 	                {/* A name and a number can be anybody's. A face and an ID are
@@ -108901,8 +108901,8 @@ ${waybillLineItems(w).length > 1
 	                  {cartAttemptDraft.outcomeCode === "Other" && (
 	                    <label className="flex flex-col gap-1 sm:col-span-2">
 	                      <span className="text-xs font-bold text-gray-600">Describe the outcome *</span>
-	                      <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={cartAttemptDraft.customOutcome}
-	                        onChange={(e) => setCartAttemptDraft((v) => ({ ...v, customOutcome: e.target.value }))}
+	                      <DraftTextarea as="input" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={cartAttemptDraft.customOutcome}
+	                        onCommit={(value) => setCartAttemptDraft((v) => ({ ...v, customOutcome: value }))}
 	                        placeholder="In your own words" />
 	                    </label>
 	                  )}
@@ -109051,10 +109051,10 @@ ${waybillLineItems(w).length > 1
 	                </p>
 	                <label className="flex flex-col gap-1.5">
 	                  <span className="text-xs font-bold text-gray-600">Reason *</span>
-	                  <textarea rows={3} className="rounded-lg border border-gray-200 px-3 py-2 text-sm"
+	                  <DraftTextarea rows={3} className="rounded-lg border border-gray-200 px-3 py-2 text-sm"
 	                    value={pdaRejectDraft.reason}
 	                    placeholder="e.g. The ID photo does not match the selfie."
-	                    onChange={(e) => setPdaRejectDraft((v) => v && ({ ...v, reason: e.target.value }))} />
+	                    onCommit={(value) => setPdaRejectDraft((v) => v && ({ ...v, reason: value }))} />
 	                </label>
 
 	                {/* A shared link cannot be un-shared. Revoking the one link they
@@ -109123,16 +109123,16 @@ ${waybillLineItems(w).length > 1
 	                    {sectionHead("Personal Information", Users, "bg-blue-50 text-blue-600")}
 	                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 	                      {field("Full legal name", true,
-	                        <input className={input} value={d.fullName} onChange={(e) => set({ fullName: e.target.value })}
+	                        <DraftTextarea as="input" className={input} value={d.fullName} onCommit={(value) => set({ fullName: value })}
 	                          placeholder="As written on their ID" />)}
 	                      {field("Phone number", true,
-	                        <input className={input} value={d.phone} onChange={(e) => set({ phone: e.target.value })}
+	                        <DraftTextarea as="input" className={input} value={d.phone} onCommit={(value) => set({ phone: value })}
 	                          placeholder="+234 801 234 5678" inputMode="tel" />)}
 	                      {field("WhatsApp number", false,
-	                        <input className={input} value={d.whatsappPhone} onChange={(e) => set({ whatsappPhone: e.target.value })}
+	                        <DraftTextarea as="input" className={input} value={d.whatsappPhone} onCommit={(value) => set({ whatsappPhone: value })}
 	                          placeholder="+234 801 234 5678" inputMode="tel" />)}
 	                      {field("Email address", false,
-	                        <input className={input} value={d.email} onChange={(e) => set({ email: e.target.value })}
+	                        <DraftTextarea as="input" className={input} value={d.email} onCommit={(value) => set({ email: value })}
 	                          placeholder="example@gmail.com" inputMode="email" />)}
 	                      {field("Transport method", false,
 	                        <select className={input} value={d.transportMethod} onChange={(e) => set({ transportMethod: e.target.value })}>
@@ -109144,10 +109144,10 @@ ${waybillLineItems(w).length > 1
 	                        </select>)}
 	                      <div className="hidden lg:block" />
 	                      {field("State", false,
-	                        <input className={input} value={d.state} onChange={(e) => set({ state: e.target.value })}
+	                        <DraftTextarea as="input" className={input} value={d.state} onCommit={(value) => set({ state: value })}
 	                          placeholder="Select state" list="pda-state-options" />)}
 	                      {field("City", false,
-	                        <input className={input} value={d.city} onChange={(e) => set({ city: e.target.value })}
+	                        <DraftTextarea as="input" className={input} value={d.city} onCommit={(value) => set({ city: value })}
 	                          placeholder="Select city" />)}
 	                    </div>
 	                    <datalist id="pda-state-options">
@@ -109227,18 +109227,18 @@ ${waybillLineItems(w).length > 1
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <label className="flex flex-col gap-1.5">
                           <span className="text-xs font-semibold text-gray-700">Full name <span className="text-red-500">*</span></span>
-                          <input
+                          <DraftTextarea as="input"
                             value={agentName}
-                            onChange={(e) => setAgentName(e.target.value)}
+                            onCommit={(value) => setAgentName(value)}
                             className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                             placeholder="e.g. Yusuf Bello"
                           />
                         </label>
                         <label className="flex flex-col gap-1.5">
                           <span className="text-xs font-semibold text-gray-700">Phone number <span className="text-red-500">*</span></span>
-                          <input
+                          <DraftTextarea as="input"
                             value={agentPhone}
-                            onChange={(e) => setAgentPhone(e.target.value)}
+                            onCommit={(value) => setAgentPhone(value)}
                             inputMode="tel"
                             className={`px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 ${(phoneShort || phoneDup) ? "border-red-300 focus:ring-red-200 focus:border-red-400" : "border-gray-200 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"}`}
                             placeholder="+234 80…"
@@ -109248,9 +109248,9 @@ ${waybillLineItems(w).length > 1
                         </label>
                         <label className="flex flex-col gap-1.5">
                           <span className="text-xs font-semibold text-gray-700">WhatsApp phone <span className="text-gray-400 font-normal">(optional)</span></span>
-                          <input
+                          <DraftTextarea as="input"
                             value={agentWhatsappPhone}
-                            onChange={(e) => setAgentWhatsappPhone(e.target.value)}
+                            onCommit={(value) => setAgentWhatsappPhone(value)}
                             inputMode="tel"
                             className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                             placeholder="Defaults to primary phone if blank"
@@ -109264,9 +109264,9 @@ ${waybillLineItems(w).length > 1
                       <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500">Coverage</h4>
                       <label className="flex flex-col gap-1.5">
                         <span className="text-xs font-semibold text-gray-700">Primary base state <span className="text-red-500">*</span></span>
-                        <input
+                        <DraftTextarea as="input"
                           value={agentZoneInput}
-                          onChange={(e) => setAgentZoneInput(e.target.value)}
+                          onCommit={(value) => setAgentZoneInput(value)}
                           className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                           placeholder="e.g. Lagos"
                         />
@@ -109303,9 +109303,9 @@ ${waybillLineItems(w).length > 1
                       </div>
                       <label className="flex flex-col gap-1.5">
                         <span className="text-xs font-semibold text-gray-700">Address <span className="text-gray-400 font-normal">(optional)</span></span>
-                        <textarea
+                        <DraftTextarea
                           value={agentAddress}
-                          onChange={(e) => setAgentAddress(e.target.value)}
+                          onCommit={(value) => setAgentAddress(value)}
                           rows={2}
                           className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0] resize-none"
                           placeholder="Office / pickup point address…"
@@ -109516,19 +109516,19 @@ ${waybillLineItems(w).length > 1
                                   <span className={`text-[10px] font-black ${hubGpsReady ? "text-emerald-700" : "text-amber-700"}`}>{coordinateLabel(location.latitude, location.longitude)}</span>
                                 </div>
                                 <div className="grid grid-cols-[1fr_1fr_auto] gap-1.5">
-                                  <input
+                                  <DraftTextarea as="input"
                                     inputMode="decimal"
                                     className="min-w-0 rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-[#1F8FE0]"
                                     placeholder="Latitude"
                                     value={hubDraft.latitude}
-                                    onChange={(event) => setDeliveryDistanceDraft(hubCoordKey, { latitude: event.target.value })}
+                                    onCommit={(value) => setDeliveryDistanceDraft(hubCoordKey, { latitude: value })}
                                   />
-                                  <input
+                                  <DraftTextarea as="input"
                                     inputMode="decimal"
                                     className="min-w-0 rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-[#1F8FE0]"
                                     placeholder="Longitude"
                                     value={hubDraft.longitude}
-                                    onChange={(event) => setDeliveryDistanceDraft(hubCoordKey, { longitude: event.target.value })}
+                                    onCommit={(value) => setDeliveryDistanceDraft(hubCoordKey, { longitude: value })}
                                   />
                                   <button
                                     type="button"
@@ -109581,7 +109581,7 @@ ${waybillLineItems(w).length > 1
                   {selectedLocation && assignStockProductId && (
                     <p className="text-xs text-gray-500 -mt-1">{agentLocationLabel(selectedLocation)} currently holds {locationStockQty} unit{locationStockQty === 1 ? "" : "s"} of this product.</p>
                   )}
-	                <label><span>Quantity</span><input value={assignStockQty} onChange={(event) => setAssignStockQty(event.target.value)} inputMode="numeric" /></label>
+	                <label><span>Quantity</span><DraftTextarea as="input" value={assignStockQty} onCommit={(value) => setAssignStockQty(value)} inputMode="numeric" /></label>
 	                {wouldExceed && <p className="text-xs text-red-600 font-medium">This would exceed capacity by {curTotal + qtyNum - cap} units.</p>}
 	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={assignStockToSelectedAgent}>Assign Stock</button></div>
 	              </div>
@@ -109676,24 +109676,24 @@ ${waybillLineItems(w).length > 1
 	                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
 	                    <div className="rounded-lg border border-green-200 bg-green-50 p-3">
 	                      <label className="block text-xs font-bold text-green-800 mb-1.5 uppercase tracking-wide">Returned</label>
-	                      <input type="number" min={0} className="w-full rounded-md border border-green-200 bg-white px-2.5 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-green-300" value={reconcileReturned} onChange={(event) => setReconcileReturned(event.target.value)} />
+	                      <DraftTextarea as="input" type="number" min={0} className="w-full rounded-md border border-green-200 bg-white px-2.5 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-green-300" value={reconcileReturned} onCommit={(value) => setReconcileReturned(value)} />
 	                      <p className="text-xs text-green-700 mt-1.5">Good stock back to warehouse</p>
 	                    </div>
 	                    <div className="rounded-lg border border-orange-200 bg-orange-50 p-3">
 	                      <label className="block text-xs font-bold text-orange-800 mb-1.5 uppercase tracking-wide">Defective</label>
-	                      <input type="number" min={0} className="w-full rounded-md border border-orange-200 bg-white px-2.5 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-300" value={reconcileDefective} onChange={(event) => setReconcileDefective(event.target.value)} />
+	                      <DraftTextarea as="input" type="number" min={0} className="w-full rounded-md border border-orange-200 bg-white px-2.5 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-300" value={reconcileDefective} onCommit={(value) => setReconcileDefective(value)} />
 	                      <p className="text-xs text-orange-700 mt-1.5">Damaged / written off</p>
 	                    </div>
 	                    <div className="rounded-lg border border-red-200 bg-red-50 p-3">
 	                      <label className="block text-xs font-bold text-red-800 mb-1.5 uppercase tracking-wide">Missing</label>
-	                      <input type="number" min={0} className="w-full rounded-md border border-red-200 bg-white px-2.5 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-300" value={reconcileMissing} onChange={(event) => setReconcileMissing(event.target.value)} />
+	                      <DraftTextarea as="input" type="number" min={0} className="w-full rounded-md border border-red-200 bg-white px-2.5 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-300" value={reconcileMissing} onCommit={(value) => setReconcileMissing(value)} />
 	                      <p className="text-xs text-red-700 mt-1.5">Lost / unaccounted</p>
 	                    </div>
 	                  </div>
 
 	                  <div>
 	                    <label className="block text-sm font-bold text-gray-900 mb-1.5">Notes <span className="font-normal text-gray-400">(optional)</span></label>
-	                    <textarea rows={2} className={`${inputClass} resize-none`} placeholder="Reason, context, or extra details\u2026" value={reconcileNotes} onChange={(event) => setReconcileNotes(event.target.value)} />
+	                    <DraftTextarea rows={2} className={`${inputClass} resize-none`} placeholder="Reason, context, or extra details\u2026" value={reconcileNotes} onCommit={(value) => setReconcileNotes(value)} />
 	                  </div>
 
 	                  {overReconciled && (
@@ -109737,7 +109737,7 @@ ${waybillLineItems(w).length > 1
 
 	            {modal === "editAgent" && selectedAgent && (
 	              <div className="modal-form">
-	                <label><span>Full Name</span><input value={agentName} onChange={(event) => setAgentName(event.target.value)} /></label><label><span>Phone Number</span><input value={agentPhone} onChange={(event) => setAgentPhone(event.target.value)} /></label><label><span>WhatsApp Phone</span><input value={agentWhatsappPhone} onChange={(event) => setAgentWhatsappPhone(event.target.value)} /></label><label><span>Primary Base State</span><input value={agentZoneInput} onChange={(event) => setAgentZoneInput(event.target.value)} /></label><label><span>Address</span><textarea value={agentAddress} onChange={(event) => setAgentAddress(event.target.value)} /></label><label><span>Stock Capacity (max units this agent can hold)</span><input type="number" min={1} value={agentStockCapacity} onChange={(event) => setAgentStockCapacity(event.target.value === "" ? "" : Number(event.target.value))} /></label>
+	                <label><span>Full Name</span><DraftTextarea as="input" value={agentName} onCommit={(value) => setAgentName(value)} /></label><label><span>Phone Number</span><DraftTextarea as="input" value={agentPhone} onCommit={(value) => setAgentPhone(value)} /></label><label><span>WhatsApp Phone</span><DraftTextarea as="input" value={agentWhatsappPhone} onCommit={(value) => setAgentWhatsappPhone(value)} /></label><label><span>Primary Base State</span><DraftTextarea as="input" value={agentZoneInput} onCommit={(value) => setAgentZoneInput(value)} /></label><label><span>Address</span><DraftTextarea value={agentAddress} onCommit={(value) => setAgentAddress(value)} /></label><label><span>Stock Capacity (max units this agent can hold)</span><DraftTextarea as="input" type="number" min={1} value={agentStockCapacity} onCommit={(value) => setAgentStockCapacity(value === "" ? "" : Number(value))} /></label>
                   <div className="flex flex-col gap-2">
                     <span>Served States</span>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-40 overflow-y-auto rounded-lg border border-gray-200 p-3">
@@ -109952,19 +109952,19 @@ ${waybillLineItems(w).length > 1
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <label className="flex flex-col gap-1.5">
                           <span className="text-xs font-semibold text-gray-700">Full name</span>
-                          <input
+                          <DraftTextarea as="input"
                             value={salesRepName}
-                            onChange={(e) => setSalesRepName(e.target.value)}
+                            onCommit={(value) => setSalesRepName(value)}
                             className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                             placeholder="John Doe"
                           />
                         </label>
                         <label className="flex flex-col gap-1.5">
                           <span className="text-xs font-semibold text-gray-700">Email address</span>
-                          <input
+                          <DraftTextarea as="input"
                             type="email"
                             value={salesRepEmail}
-                            onChange={(e) => setSalesRepEmail(e.target.value)}
+                            onCommit={(value) => setSalesRepEmail(value)}
                             className={`px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 ${emailTaken ? "border-red-300 focus:ring-red-200 focus:border-red-400" : "border-gray-200 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"}`}
                             placeholder="rep@example.com"
                           />
@@ -109972,9 +109972,9 @@ ${waybillLineItems(w).length > 1
                         </label>
                         <label className="flex flex-col gap-1.5 sm:col-span-2">
                           <span className="text-xs font-semibold text-gray-700">Phone number</span>
-                          <input
+                          <DraftTextarea as="input"
                             value={salesRepPhone}
-                            onChange={(e) => setSalesRepPhone(e.target.value)}
+                            onCommit={(value) => setSalesRepPhone(value)}
                             inputMode="tel"
                             className={`px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 ${(phoneTaken || phoneShort) ? "border-red-300 focus:ring-red-200 focus:border-red-400" : "border-gray-200 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"}`}
                             placeholder="+234 80..."
@@ -110114,10 +110114,10 @@ ${waybillLineItems(w).length > 1
                   ))}
                 </div>
                 {payStructureType !== "Per Delivered Order" && (
-                  <label><span>Fixed Salary ({currencySymbol()})</span><input value={fixedSalary} onChange={(event) => setFixedSalary(event.target.value)} inputMode="decimal" placeholder="e.g. 50000" /></label>
+                  <label><span>Fixed Salary ({currencySymbol()})</span><DraftTextarea as="input" value={fixedSalary} onCommit={(value) => setFixedSalary(value)} inputMode="decimal" placeholder="e.g. 50000" /></label>
                 )}
                 {(payStructureType === "Per Delivered Order" || payStructureType === "Hybrid") && (
-                  <label><span>Rate per delivered order ({currencySymbol()})</span><input value={commissionRate} onChange={(event) => setCommissionRate(event.target.value)} inputMode="decimal" placeholder="e.g. 2000" /></label>
+                  <label><span>Rate per delivered order ({currencySymbol()})</span><DraftTextarea as="input" value={commissionRate} onCommit={(value) => setCommissionRate(value)} inputMode="decimal" placeholder="e.g. 2000" /></label>
                 )}
                 {payStructureType === "Performance Bonus" && (
                   <div className="space-y-3">
@@ -110130,11 +110130,11 @@ ${waybillLineItems(w).length > 1
                       <div key={idx} className="flex flex-col gap-2 sm:flex-row sm:items-end">
                         <div className="flex-1">
                           <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">≥ Orders</label>
-                          <input className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm" inputMode="numeric" value={tier.threshold || ""} placeholder="e.g. 50" onChange={(e) => setBonusTiers((prev) => prev.map((t, i) => i === idx ? { ...t, threshold: Number(e.target.value) || 0 } : t))} />
+                          <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm" inputMode="numeric" value={tier.threshold || ""} placeholder="e.g. 50" onCommit={(value) => setBonusTiers((prev) => prev.map((t, i) => i === idx ? { ...t, threshold: Number(value) || 0 } : t))} />
                         </div>
                         <div className="flex-1">
                           <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Bonus ({currencySymbol()})</label>
-                          <input className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm" inputMode="numeric" value={tier.amount || ""} placeholder="e.g. 5000" onChange={(e) => setBonusTiers((prev) => prev.map((t, i) => i === idx ? { ...t, amount: Number(e.target.value) || 0 } : t))} />
+                          <DraftTextarea as="input" className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm" inputMode="numeric" value={tier.amount || ""} placeholder="e.g. 5000" onCommit={(value) => setBonusTiers((prev) => prev.map((t, i) => i === idx ? { ...t, amount: Number(value) || 0 } : t))} />
                         </div>
                         <button type="button" className="!min-h-0 w-full sm:w-auto p-1.5 text-red-400 hover:text-red-600 transition-colors" onClick={() => setBonusTiers((prev) => prev.filter((_, i) => i !== idx))}>✕</button>
                       </div>
@@ -110152,12 +110152,12 @@ ${waybillLineItems(w).length > 1
               <div className="modal-form">
                 <label><span>Expense Type</span><select value={expenseType} onChange={(event) => setExpenseType(event.target.value as ExpenseType)}>{expenseTypes.map((type) => <option key={type}>{type}</option>)}</select></label>
                 {expenseType === "Waybill" && <WaybillWalletNote date={parseExpenseDateKey(expenseDate)} productId={products.some((item) => item.id === expenseProduct) ? expenseProduct : null} amount={Number(expenseAmount) || 0} />}
-                <label><span>Amount ({currencies[expenseCurrency]?.currency ?? expenseCurrency})</span><input value={expenseAmount} onChange={(event) => setExpenseAmount(event.target.value)} inputMode="decimal" /></label>
+                <label><span>Amount ({currencies[expenseCurrency]?.currency ?? expenseCurrency})</span><DraftTextarea as="input" value={expenseAmount} onCommit={(value) => setExpenseAmount(value)} inputMode="decimal" /></label>
                 <label><span>Currency</span><select value={expenseCurrency} onChange={(event) => setExpenseCurrency(event.target.value as CurrencyCode)}>{Object.entries(productCurrencies).map(([code, item]) => <option key={code} value={code}>{item.symbol} - {item.label}</option>)}</select></label>
                 <label><span>Date</span><input type="date" className="h-9 px-3 border border-gray-200 rounded-lg text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} /></label>
                 <label><span>Product (Optional)</span><select value={expenseProduct} onChange={(event) => setExpenseProduct(event.target.value)}><option>General Expense</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></label>
                 <p>Link this expense to a specific product</p>
-                <label><span>Description (Optional)</span><textarea value={expenseDescription} onChange={(event) => setExpenseDescription(event.target.value)} placeholder="Enter expense details..." /></label>
+                <label><span>Description (Optional)</span><DraftTextarea value={expenseDescription} onCommit={(value) => setExpenseDescription(value)} placeholder="Enter expense details..." /></label>
                 <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={createExpense}>Create Expense</button>
@@ -110225,19 +110225,19 @@ ${waybillLineItems(w).length > 1
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <label className="flex flex-col gap-1.5">
                         <span className="text-xs font-semibold text-gray-700">Full name <span className="text-red-500">*</span></span>
-                        <input
+                        <DraftTextarea as="input"
                           value={userFullName}
-                          onChange={(e) => setUserFullName(e.target.value)}
+                          onCommit={(value) => setUserFullName(value)}
                           className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                           placeholder="Full name"
                         />
                       </label>
                       <label className="flex flex-col gap-1.5">
                         <span className="text-xs font-semibold text-gray-700">Email <span className="text-red-500">*</span></span>
-                        <input
+                        <DraftTextarea as="input"
                           type="email"
                           value={userEmail}
-                          onChange={(e) => setUserEmail(e.target.value)}
+                          onCommit={(value) => setUserEmail(value)}
                           className={`px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 ${(emailTaken || !emailFormatOk) ? "border-red-300 focus:ring-red-200 focus:border-red-400" : "border-gray-200 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"}`}
                           placeholder="user@yourcompany.com"
                         />
@@ -110248,9 +110248,9 @@ ${waybillLineItems(w).length > 1
                         <span className="text-xs font-semibold text-gray-700">
                           Phone number {phoneRequired && <span className="text-red-500">*</span>}
                         </span>
-                        <input
+                        <DraftTextarea as="input"
                           value={userPhone}
-                          onChange={(e) => setUserPhone(e.target.value)}
+                          onCommit={(value) => setUserPhone(value)}
                           inputMode="tel"
                           className={`px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 ${(phoneTaken || phoneShort || (phoneRequired && !phoneDigits.length)) ? "border-red-300 focus:ring-red-200 focus:border-red-400" : "border-gray-200 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"}`}
                           placeholder="+234 80..."
@@ -110282,9 +110282,9 @@ ${waybillLineItems(w).length > 1
                       <h4 className="text-xs font-bold uppercase tracking-wider text-cyan-800">Marketing attribution tags</h4>
                       <label className="flex flex-col gap-1.5">
                         <span className="text-xs font-semibold text-gray-700">Buyer tags <span className="text-red-500">*</span></span>
-                        <textarea
+                        <DraftTextarea
                           value={userMarketingTagDraft}
-                          onChange={(e) => setUserMarketingTagDraft(e.target.value)}
+                          onCommit={(value) => setUserMarketingTagDraft(value)}
                           className={`min-h-[88px] rounded-lg border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 ${marketingTags.length === 0 ? "border-red-200 focus:ring-red-100" : "border-cyan-200 focus:ring-cyan-100"}`}
                           placeholder="chelsea, chelsea_ads, june_combo"
                         />
@@ -110299,9 +110299,9 @@ ${waybillLineItems(w).length > 1
                     <label className="flex flex-col gap-1.5">
                       <span className="text-xs font-semibold text-gray-700">Initial password <span className="text-red-500">*</span></span>
                       <div className="relative">
-                        <input
+                        <DraftTextarea as="input"
                           value={userPassword}
-                          onChange={(e) => setUserPassword(e.target.value)}
+                          onCommit={(value) => setUserPassword(value)}
                           type={showPasswordFields["addUserPwd"] ? "text" : "password"}
                           placeholder="At least 6 characters"
                           className={`w-full pr-10 px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 ${pwdTooShort ? "border-red-300 focus:ring-red-200 focus:border-red-400" : "border-gray-200 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"}`}
@@ -110386,10 +110386,10 @@ ${waybillLineItems(w).length > 1
                   <label className="flex flex-col gap-1.5">
                     <span className="text-xs font-semibold text-gray-700">Wait this long before handing it over</span>
                     <div className="flex items-center gap-2">
-                      <input
+                      <DraftTextarea as="input"
                         type="number" min={1} max={240}
                         value={cartRulesDraft.assignmentDelayMinutes}
-                        onChange={(event) => setCartRulesDraft((d) => ({ ...d, assignmentDelayMinutes: Number(event.target.value) || 1 }))}
+                        onCommit={(value) => setCartRulesDraft((d) => ({ ...d, assignmentDelayMinutes: Number(value) || 1 }))}
                         className="w-24 px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                       />
                       <span className="text-xs text-gray-500">minutes quiet</span>
@@ -110402,10 +110402,10 @@ ${waybillLineItems(w).length > 1
                   <label className="flex flex-col gap-1.5">
                     <span className="text-xs font-semibold text-gray-700">The rep should call within</span>
                     <div className="flex items-center gap-2">
-                      <input
+                      <DraftTextarea as="input"
                         type="number" min={1} max={240}
                         value={cartRulesDraft.contactSlaMinutes}
-                        onChange={(event) => setCartRulesDraft((d) => ({ ...d, contactSlaMinutes: Number(event.target.value) || 1 }))}
+                        onCommit={(value) => setCartRulesDraft((d) => ({ ...d, contactSlaMinutes: Number(value) || 1 }))}
                         className="w-24 px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                       />
                       <span className="text-xs text-gray-500">minutes</span>
@@ -110516,9 +110516,9 @@ ${waybillLineItems(w).length > 1
 
                   <label className="flex flex-col gap-1.5">
                     <span className="text-xs font-semibold text-gray-700">Branch name</span>
-                    <input
+                    <DraftTextarea as="input"
                       value={newBranchName}
-                      onChange={(event) => setNewBranchName(event.target.value)}
+                      onCommit={(value) => setNewBranchName(value)}
                       placeholder={country ? `e.g. ${country.name === "Nigeria" ? "Owerri" : country.name} Branch` : "e.g. Lusaka Branch"}
                       className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                     />
@@ -110526,9 +110526,9 @@ ${waybillLineItems(w).length > 1
 
                   <label className="flex flex-col gap-1.5">
                     <span className="text-xs font-semibold text-gray-700">City <span className="font-normal text-gray-400">(optional)</span></span>
-                    <input
+                    <DraftTextarea as="input"
                       value={newBranchCity}
-                      onChange={(event) => setNewBranchCity(event.target.value)}
+                      onCommit={(value) => setNewBranchCity(value)}
                       placeholder="e.g. Lusaka"
                       className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                     />
@@ -110643,19 +110643,19 @@ ${waybillLineItems(w).length > 1
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <label className="flex flex-col gap-1.5">
                         <span className="text-xs font-semibold text-gray-700">Full name</span>
-                        <input
+                        <DraftTextarea as="input"
                           value={userFullName}
-                          onChange={(e) => setUserFullName(e.target.value)}
+                          onCommit={(value) => setUserFullName(value)}
                           className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                           placeholder="Full name"
                         />
                       </label>
                       <label className="flex flex-col gap-1.5">
                         <span className="text-xs font-semibold text-gray-700">Email address</span>
-                        <input
+                        <DraftTextarea as="input"
                           type="email"
                           value={userEmail}
-                          onChange={(e) => setUserEmail(e.target.value)}
+                          onCommit={(value) => setUserEmail(value)}
                           className={`px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 ${(emailTaken || !emailFormatOk) ? "border-red-300 focus:ring-red-200 focus:border-red-400" : "border-gray-200 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"}`}
                           placeholder="user@example.com"
                         />
@@ -110666,9 +110666,9 @@ ${waybillLineItems(w).length > 1
                         <span className="text-xs font-semibold text-gray-700">
                           Phone number {phoneRequired && <span className="text-red-500">*</span>}
                         </span>
-                        <input
+                        <DraftTextarea as="input"
                           value={userPhone}
-                          onChange={(e) => setUserPhone(e.target.value)}
+                          onCommit={(value) => setUserPhone(value)}
                           inputMode="tel"
                           className={`px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 ${(phoneTaken || phoneShort || (phoneRequired && !phoneDigits.length)) ? "border-red-300 focus:ring-red-200 focus:border-red-400" : "border-gray-200 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"}`}
                           placeholder="+234 80..."
@@ -110778,9 +110778,9 @@ ${waybillLineItems(w).length > 1
                       <h4 className="text-xs font-bold uppercase tracking-wider text-cyan-800">Marketing attribution tags</h4>
                       <label className="flex flex-col gap-1.5">
                         <span className="text-xs font-semibold text-gray-700">Buyer tags <span className="text-red-500">*</span></span>
-                        <textarea
+                        <DraftTextarea
                           value={userMarketingTagDraft}
-                          onChange={(e) => setUserMarketingTagDraft(e.target.value)}
+                          onCommit={(value) => setUserMarketingTagDraft(value)}
                           className={`min-h-[88px] rounded-lg border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 ${marketingTags.length === 0 ? "border-red-200 focus:ring-red-100" : "border-cyan-200 focus:ring-cyan-100"}`}
                           placeholder="chelsea, chelsea_ads, june_combo"
                         />
@@ -110795,9 +110795,9 @@ ${waybillLineItems(w).length > 1
                     <label className="flex flex-col gap-1.5">
                       <span className="text-xs font-semibold text-gray-700">New password (optional)</span>
                       <div className="relative">
-                        <input
+                        <DraftTextarea as="input"
                           value={userPassword}
-                          onChange={(e) => setUserPassword(e.target.value)}
+                          onCommit={(value) => setUserPassword(value)}
                           type={showPasswordFields["editUserPwd"] ? "text" : "password"}
                           placeholder="Leave blank to keep current"
                           className={`w-full pr-10 px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 ${pwdTooShort ? "border-red-300 focus:ring-red-200 focus:border-red-400" : "border-gray-200 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"}`}
@@ -110890,7 +110890,7 @@ ${waybillLineItems(w).length > 1
                 <label>
                   <span>New Password</span>
                   <div className="password-shell">
-                    <input value={userPassword} onChange={(event) => setUserPassword(event.target.value)} placeholder="Minimum 6 characters" type={showPasswordFields["resetPwd"] ? "text" : "password"} />
+                    <DraftTextarea as="input" value={userPassword} onCommit={(value) => setUserPassword(value)} placeholder="Minimum 6 characters" type={showPasswordFields["resetPwd"] ? "text" : "password"} />
                     <button type="button" className="!min-h-0 p-0" aria-label="Toggle password visibility" onClick={() => toggleShowPassword("resetPwd")}><Eye className="w-4 h-4" /></button>
                   </div>
                 </label>
@@ -112314,9 +112314,9 @@ ${waybillLineItems(w).length > 1
                       {cfg.baseDelivered.map((rule) => (
                         <div key={rule.id} className="flex flex-col gap-2 bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs sm:flex-row sm:items-center">
                           <span className="text-gray-500">Qty</span>
-                          <input className="w-16 border border-gray-200 rounded px-2 py-1" inputMode="numeric" value={rule.quantity} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, baseDelivered: c.baseDelivered.map((r) => r.id === rule.id ? { ...r, quantity: Number(e.target.value) || 0 } : r) }))} />
+                          <DraftTextarea as="input" className="w-16 border border-gray-200 rounded px-2 py-1" inputMode="numeric" value={rule.quantity} onCommit={(value) => updateProductBonusConfig(product.id, (c) => ({ ...c, baseDelivered: c.baseDelivered.map((r) => r.id === rule.id ? { ...r, quantity: Number(value) || 0 } : r) }))} />
                           <span className="text-gray-500">→ ₦</span>
-                          <input className="w-24 border border-gray-200 rounded px-2 py-1" inputMode="decimal" value={rule.amount} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, baseDelivered: c.baseDelivered.map((r) => r.id === rule.id ? { ...r, amount: Number(e.target.value) || 0 } : r) }))} />
+                          <DraftTextarea as="input" className="w-24 border border-gray-200 rounded px-2 py-1" inputMode="decimal" value={rule.amount} onCommit={(value) => updateProductBonusConfig(product.id, (c) => ({ ...c, baseDelivered: c.baseDelivered.map((r) => r.id === rule.id ? { ...r, amount: Number(value) || 0 } : r) }))} />
                           <button className="!min-h-0 sm:ml-auto text-left sm:text-right text-red-500 hover:text-red-700 text-xs" onClick={() => updateProductBonusConfig(product.id, (c) => ({ ...c, baseDelivered: c.baseDelivered.filter((r) => r.id !== rule.id) }))}>Delete</button>
                         </div>
                       ))}
@@ -112379,8 +112379,8 @@ ${waybillLineItems(w).length > 1
                                   {on && (
                                     <div className="flex items-center gap-1.5 text-[11px]">
                                       <span className="text-gray-600 font-semibold">Bundle price</span>
-                                      <input className="w-24 border border-amber-300 rounded px-2 py-1 text-xs" inputMode="decimal" value={typeof override === "number" ? override : ""} placeholder={String(standardPrice)} onChange={(e) => {
-                                        const val = e.target.value.trim();
+                                      <DraftTextarea as="input" className="w-24 border border-amber-300 rounded px-2 py-1 text-xs" inputMode="decimal" value={typeof override === "number" ? override : ""} placeholder={String(standardPrice)} onCommit={(value) => {
+                                        const val = value.trim();
                                         setProductCrossSellPriceOverride(product.id, cp.id, val === "" ? undefined : Number(val) || 0);
                                       }} />
                                       {discounted && <span className="text-emerald-700 font-semibold">−{Math.round(((standardPrice - effectivePrice) / standardPrice) * 100)}%</span>}
@@ -112541,15 +112541,15 @@ ${waybillLineItems(w).length > 1
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       <label className="text-xs flex flex-col gap-1">
                         <span className="text-gray-600 font-semibold">Rep-added cross-sell %</span>
-                        <input className="border border-gray-200 rounded-lg px-2 py-1.5" inputMode="decimal" value={cfg.crossSellPercent} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, crossSellPercent: Number(e.target.value) || 0 }))} />
+                        <DraftTextarea as="input" className="border border-gray-200 rounded-lg px-2 py-1.5" inputMode="decimal" value={cfg.crossSellPercent} onCommit={(value) => updateProductBonusConfig(product.id, (c) => ({ ...c, crossSellPercent: Number(value) || 0 }))} />
                       </label>
                       <label className="text-xs flex flex-col gap-1">
                         <span className="text-gray-600 font-semibold">Rep-added cross-sell fixed ₦ per line</span>
-                        <input className="border border-gray-200 rounded-lg px-2 py-1.5" inputMode="decimal" value={cfg.crossSellFixed} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, crossSellFixed: Number(e.target.value) || 0 }))} />
+                        <DraftTextarea as="input" className="border border-gray-200 rounded-lg px-2 py-1.5" inputMode="decimal" value={cfg.crossSellFixed} onCommit={(value) => updateProductBonusConfig(product.id, (c) => ({ ...c, crossSellFixed: Number(value) || 0 }))} />
                       </label>
                       <label className="text-xs flex flex-col gap-1">
                         <span className="text-gray-600 font-semibold">Free-gift ₦ per gift</span>
-                        <input className="border border-gray-200 rounded-lg px-2 py-1.5" inputMode="decimal" value={cfg.freeGiftBonus} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, freeGiftBonus: Number(e.target.value) || 0 }))} />
+                        <DraftTextarea as="input" className="border border-gray-200 rounded-lg px-2 py-1.5" inputMode="decimal" value={cfg.freeGiftBonus} onCommit={(value) => updateProductBonusConfig(product.id, (c) => ({ ...c, freeGiftBonus: Number(value) || 0 }))} />
                       </label>
                     </div>
                   </section>
@@ -112564,15 +112564,15 @@ ${waybillLineItems(w).length > 1
                     </div>
                     <label className="text-xs flex items-center gap-2">
                       <span className="text-gray-600">Min weekly delivery rate to qualify (%)</span>
-                      <input className="w-16 border border-gray-200 rounded px-2 py-1" inputMode="numeric" value={cfg.aovRequiresMinDeliveryRate} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, aovRequiresMinDeliveryRate: Number(e.target.value) || 0 }))} />
+                      <DraftTextarea as="input" className="w-16 border border-gray-200 rounded px-2 py-1" inputMode="numeric" value={cfg.aovRequiresMinDeliveryRate} onCommit={(value) => updateProductBonusConfig(product.id, (c) => ({ ...c, aovRequiresMinDeliveryRate: Number(value) || 0 }))} />
                     </label>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       {cfg.aovBonuses.map((rule) => (
                         <div key={rule.id} className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs">
                           <span className="text-gray-500">AOV ≥ ₦</span>
-                          <input className="w-24 border border-gray-200 rounded px-2 py-1" inputMode="decimal" value={rule.threshold} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, aovBonuses: c.aovBonuses.map((r) => r.id === rule.id ? { ...r, threshold: Number(e.target.value) || 0 } : r) }))} />
+                          <DraftTextarea as="input" className="w-24 border border-gray-200 rounded px-2 py-1" inputMode="decimal" value={rule.threshold} onCommit={(value) => updateProductBonusConfig(product.id, (c) => ({ ...c, aovBonuses: c.aovBonuses.map((r) => r.id === rule.id ? { ...r, threshold: Number(value) || 0 } : r) }))} />
                           <span className="text-gray-500">→ ₦</span>
-                          <input className="w-24 border border-gray-200 rounded px-2 py-1" inputMode="decimal" value={rule.amount} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, aovBonuses: c.aovBonuses.map((r) => r.id === rule.id ? { ...r, amount: Number(e.target.value) || 0 } : r) }))} />
+                          <DraftTextarea as="input" className="w-24 border border-gray-200 rounded px-2 py-1" inputMode="decimal" value={rule.amount} onCommit={(value) => updateProductBonusConfig(product.id, (c) => ({ ...c, aovBonuses: c.aovBonuses.map((r) => r.id === rule.id ? { ...r, amount: Number(value) || 0 } : r) }))} />
                           <button className="!min-h-0 ml-auto text-red-500 hover:text-red-700 text-xs" onClick={() => updateProductBonusConfig(product.id, (c) => ({ ...c, aovBonuses: c.aovBonuses.filter((r) => r.id !== rule.id) }))}>Delete</button>
                         </div>
                       ))}
@@ -112589,22 +112589,22 @@ ${waybillLineItems(w).length > 1
                     </div>
                     <label className="text-xs flex items-center gap-2">
                       <span className="text-gray-600">Minimum orders to unlock</span>
-                      <input className="w-16 border border-gray-200 rounded px-2 py-1" inputMode="numeric" value={cfg.deliveryRateMinOrders} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, deliveryRateMinOrders: Number(e.target.value) || 0 }))} />
+                      <DraftTextarea as="input" className="w-16 border border-gray-200 rounded px-2 py-1" inputMode="numeric" value={cfg.deliveryRateMinOrders} onCommit={(value) => updateProductBonusConfig(product.id, (c) => ({ ...c, deliveryRateMinOrders: Number(value) || 0 }))} />
                     </label>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       {cfg.deliveryRateBonuses.map((rule) => (
                         <div key={rule.id} className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs">
                           <span className="text-gray-500">≥</span>
-                          <input className="w-16 border border-gray-200 rounded px-2 py-1" inputMode="decimal" value={rule.ratePercent} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, deliveryRateBonuses: c.deliveryRateBonuses.map((r) => r.id === rule.id ? { ...r, ratePercent: Number(e.target.value) || 0 } : r) }))} />
+                          <DraftTextarea as="input" className="w-16 border border-gray-200 rounded px-2 py-1" inputMode="decimal" value={rule.ratePercent} onCommit={(value) => updateProductBonusConfig(product.id, (c) => ({ ...c, deliveryRateBonuses: c.deliveryRateBonuses.map((r) => r.id === rule.id ? { ...r, ratePercent: Number(value) || 0 } : r) }))} />
                           <span className="text-gray-500">% → ₦</span>
-                          <input className="w-24 border border-gray-200 rounded px-2 py-1" inputMode="decimal" value={rule.amount} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, deliveryRateBonuses: c.deliveryRateBonuses.map((r) => r.id === rule.id ? { ...r, amount: Number(e.target.value) || 0 } : r) }))} />
+                          <DraftTextarea as="input" className="w-24 border border-gray-200 rounded px-2 py-1" inputMode="decimal" value={rule.amount} onCommit={(value) => updateProductBonusConfig(product.id, (c) => ({ ...c, deliveryRateBonuses: c.deliveryRateBonuses.map((r) => r.id === rule.id ? { ...r, amount: Number(value) || 0 } : r) }))} />
                           <button className="!min-h-0 ml-auto text-red-500 hover:text-red-700 text-xs" onClick={() => updateProductBonusConfig(product.id, (c) => ({ ...c, deliveryRateBonuses: c.deliveryRateBonuses.filter((r) => r.id !== rule.id) }))}>Delete</button>
                         </div>
                       ))}
                     </div>
                     <label className="text-xs flex items-center gap-2 pt-1">
                       <span className="text-gray-600">Base-only protection gate (%) - only base bonus paid below this</span>
-                      <input className="w-16 border border-gray-200 rounded px-2 py-1" inputMode="numeric" value={cfg.poorDeliveryRatePercent} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, poorDeliveryRatePercent: Number(e.target.value) || 0 }))} />
+                      <DraftTextarea as="input" className="w-16 border border-gray-200 rounded px-2 py-1" inputMode="numeric" value={cfg.poorDeliveryRatePercent} onCommit={(value) => updateProductBonusConfig(product.id, (c) => ({ ...c, poorDeliveryRatePercent: Number(value) || 0 }))} />
                     </label>
                   </section>
 
@@ -112620,9 +112620,9 @@ ${waybillLineItems(w).length > 1
                       {cfg.manualOrderBonuses.map((rule) => (
                         <div key={rule.id} className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs">
                           <span className="text-gray-500">Qty</span>
-                          <input className="w-16 border border-gray-200 rounded px-2 py-1" inputMode="numeric" value={rule.quantity} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, manualOrderBonuses: c.manualOrderBonuses.map((r) => r.id === rule.id ? { ...r, quantity: Number(e.target.value) || 0 } : r) }))} />
+                          <DraftTextarea as="input" className="w-16 border border-gray-200 rounded px-2 py-1" inputMode="numeric" value={rule.quantity} onCommit={(value) => updateProductBonusConfig(product.id, (c) => ({ ...c, manualOrderBonuses: c.manualOrderBonuses.map((r) => r.id === rule.id ? { ...r, quantity: Number(value) || 0 } : r) }))} />
                           <span className="text-gray-500">→ ₦</span>
-                          <input className="w-24 border border-gray-200 rounded px-2 py-1" inputMode="decimal" value={rule.amount} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, manualOrderBonuses: c.manualOrderBonuses.map((r) => r.id === rule.id ? { ...r, amount: Number(e.target.value) || 0 } : r) }))} />
+                          <DraftTextarea as="input" className="w-24 border border-gray-200 rounded px-2 py-1" inputMode="decimal" value={rule.amount} onCommit={(value) => updateProductBonusConfig(product.id, (c) => ({ ...c, manualOrderBonuses: c.manualOrderBonuses.map((r) => r.id === rule.id ? { ...r, amount: Number(value) || 0 } : r) }))} />
                           <button className="!min-h-0 ml-auto text-red-500 hover:text-red-700 text-xs" onClick={() => updateProductBonusConfig(product.id, (c) => ({ ...c, manualOrderBonuses: c.manualOrderBonuses.filter((r) => r.id !== rule.id) }))}>Delete</button>
                         </div>
                       ))}
@@ -112698,8 +112698,8 @@ ${waybillLineItems(w).length > 1
                     </select>
                   </label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <label><span>Quantity</span><input value={crossSellQuantity} onChange={(e) => setCrossSellQuantity(e.target.value)} inputMode="numeric" /></label>
-                    <label><span>Amount (defaults to {chosen ? formatProductMoney(suggested, primaryPricing(chosen)?.currency ?? "NGN") : "auto"})</span><input value={crossSellAmount} onChange={(e) => setCrossSellAmount(e.target.value)} inputMode="decimal" placeholder={String(suggested)} /></label>
+                    <label><span>Quantity</span><DraftTextarea as="input" value={crossSellQuantity} onCommit={(value) => setCrossSellQuantity(value)} inputMode="numeric" /></label>
+                    <label><span>Amount (defaults to {chosen ? formatProductMoney(suggested, primaryPricing(chosen)?.currency ?? "NGN") : "auto"})</span><DraftTextarea as="input" value={crossSellAmount} onCommit={(value) => setCrossSellAmount(value)} inputMode="decimal" placeholder={String(suggested)} /></label>
                   </div>
                   <p className="text-[11px] text-gray-500">This adds the item to the order total and marks it for inventory deduction. Because it was added by staff, bonus uses this product&apos;s rep cross-sell % and fixed-per-line settings.</p>
                   <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
@@ -112722,7 +112722,7 @@ ${waybillLineItems(w).length > 1
                       {products.map((p) => <option key={p.id} value={p.id}>{p.name} {p.role && p.role !== "Main" ? `(${p.role})` : ""}</option>)}
                     </select>
                   </label>
-                  <label><span>Quantity</span><input value={freeGiftQuantity} onChange={(e) => setFreeGiftQuantity(e.target.value)} inputMode="numeric" /></label>
+                  <label><span>Quantity</span><DraftTextarea as="input" value={freeGiftQuantity} onCommit={(value) => setFreeGiftQuantity(value)} inputMode="numeric" /></label>
                   <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
                     <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50" onClick={closeModal}>Cancel</button>
                     <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8]" onClick={saveFreeGift}>Add Free Gift</button>
@@ -112757,9 +112757,9 @@ ${waybillLineItems(w).length > 1
                             </button>
                           )}
                         </span>
-                        <input
+                        <DraftTextarea as="input"
                           value={manualBonusParts[f.key]}
-                          onChange={(e) => setManualBonusParts((p) => ({ ...p, [f.key]: e.target.value }))}
+                          onCommit={(value) => setManualBonusParts((p) => ({ ...p, [f.key]: value }))}
                           inputMode="decimal"
                           placeholder="0"
                         />
@@ -112784,11 +112784,11 @@ ${waybillLineItems(w).length > 1
 
             {modal === "editProduct" && selectedProduct && (
               <div className="modal-form">
-                <label><span>Product Name *</span><input value={productName} onChange={(e) => setProductName(e.target.value)} placeholder="Edge Brusher Max" /></label>
-                <label><span>Description</span><textarea value={productDescription} onChange={(e) => setProductDescription(e.target.value)} placeholder="Short product description..." /></label>
+                <label><span>Product Name *</span><DraftTextarea as="input" value={productName} onCommit={(value) => setProductName(value)} placeholder="Edge Brusher Max" /></label>
+                <label><span>Description</span><DraftTextarea value={productDescription} onCommit={(value) => setProductDescription(value)} placeholder="Short product description..." /></label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <label><span>SKU</span><input value={productSku} onChange={(e) => setProductSku(e.target.value)} placeholder="EDGE-BRUSHER-001" /></label>
-                  <label><span>Reorder Point</span><input value={reorderPoint} onChange={(e) => setReorderPoint(e.target.value)} inputMode="numeric" /></label>
+                  <label><span>SKU</span><DraftTextarea as="input" value={productSku} onCommit={(value) => setProductSku(value)} placeholder="EDGE-BRUSHER-001" /></label>
+                  <label><span>Reorder Point</span><DraftTextarea as="input" value={reorderPoint} onCommit={(value) => setReorderPoint(value)} inputMode="numeric" /></label>
                 </div>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between py-1">
                   <div>
@@ -112820,8 +112820,8 @@ ${waybillLineItems(w).length > 1
                 {/* How one of this product is counted when it is a free gift or an
                     item inside a package (Bright, 14 Oct 2026). */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <label><span>Unit word - one (optional)</span><input value={productUnitSingular} onChange={(e) => setProductUnitSingular(e.target.value)} placeholder="set" maxLength={20} /></label>
-                  <label><span>Unit word - more than one (optional)</span><input value={productUnitPlural} onChange={(e) => setProductUnitPlural(e.target.value)} placeholder="sets" maxLength={20} /></label>
+                  <label><span>Unit word - one (optional)</span><DraftTextarea as="input" value={productUnitSingular} onCommit={(value) => setProductUnitSingular(value)} placeholder="set" maxLength={20} /></label>
+                  <label><span>Unit word - more than one (optional)</span><DraftTextarea as="input" value={productUnitPlural} onCommit={(value) => setProductUnitPlural(value)} placeholder="sets" maxLength={20} /></label>
                 </div>
                 <p className="text-[11px] text-gray-500 -mt-1">
                   How this product is counted when it is a free gift or inside a package, e.g. "1 set of {productName.trim() || "Kitchen Knives"}". Leave empty and it is worked out from the name: "{itemCountLabel(1, productName.trim() || "8pc Kitchen Knife Set", { unitSingular: productUnitSingular, unitPlural: productUnitPlural })}".
@@ -112944,12 +112944,12 @@ ${waybillLineItems(w).length > 1
                     {(["Fake Upgrade", "Wrong Data Entry", "Missed Recovery", "Poor Delivery Rate", "Order Source Manipulation", "Unprofessional Conduct", "Negligence", "Other"] as RepPenaltyType[]).map((t) => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </label>
-                <label><span>Deduction Amount ({currencySymbol()})</span><input value={penaltyAmount} onChange={(e) => setPenaltyAmount(e.target.value)} inputMode="decimal" /></label>
+                <label><span>Deduction Amount ({currencySymbol()})</span><DraftTextarea as="input" value={penaltyAmount} onCommit={(value) => setPenaltyAmount(value)} inputMode="decimal" /></label>
                 <label className="flex items-center gap-2 text-xs">
                   <input type="checkbox" checked={penaltyRemoveAllBonuses} onChange={(e) => setPenaltyRemoveAllBonuses(e.target.checked)} />
                   <span>Also remove all bonuses for the related order/week</span>
                 </label>
-                <label><span>Order ID (optional)</span><input value={penaltyOrderId} onChange={(e) => setPenaltyOrderId(e.target.value)} placeholder="e.g. 1746891234567001" /></label>
+                <label><span>Order ID (optional)</span><DraftTextarea as="input" value={penaltyOrderId} onCommit={(value) => setPenaltyOrderId(value)} placeholder="e.g. 1746891234567001" /></label>
                 <label><span>Reason / Notes</span><DraftTextarea value={penaltyReason} onCommit={setPenaltyReason} rows={3} placeholder="What happened?" /></label>
                 <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50" onClick={closeModal}>Cancel</button>
@@ -112989,12 +112989,12 @@ ${waybillLineItems(w).length > 1
                   ) : (
                   <label>
                     <span>Actual quantity received *</span>
-                    <input
+                    <DraftTextarea as="input"
                       type="number"
                       min={0}
                       max={dispatched}
                       value={receiveActualQty}
-                      onChange={(e) => setReceiveActualQty(e.target.value)}
+                      onCommit={(value) => setReceiveActualQty(value)}
                     />
                     <small className="text-xs text-gray-500">If everything arrived, leave at <strong>{dispatched}</strong>. If less, set the actual count.</small>
                   </label>
@@ -113013,11 +113013,11 @@ ${waybillLineItems(w).length > 1
                       </label>
                       <label>
                         <span>Note <span className="text-gray-400 font-normal">(optional but recommended)</span></span>
-                        <input
+                        <DraftTextarea as="input"
                           type="text"
                           placeholder={receiveVarianceMode === "return" ? "e.g. mis-counted at dispatch - only 4 packed" : "e.g. parcel damaged at hub, 1 unit unrecoverable"}
                           value={receiveVarianceReason}
-                          onChange={(e) => setReceiveVarianceReason(e.target.value)}
+                          onCommit={(value) => setReceiveVarianceReason(value)}
                         />
                       </label>
                     </>
@@ -113304,11 +113304,11 @@ ${waybillLineItems(w).length > 1
                                       common case, and the floor of 1 is enforced
                                       here rather than by trusting min={1}, which
                                       a keyboard can walk straight past. */}
-                                  <input
+                                  <DraftTextarea as="input"
                                     type="number" min={1}
                                     className="w-12 border-0 bg-transparent px-0 py-2.5 text-center text-sm text-gray-900 focus:outline-none focus:ring-0"
                                     value={row.quantity}
-                                    onChange={(ev) => { updateWaybillItemRow(idx, { quantity: ev.target.value }); setWaybillErrors((prev) => ({ ...prev, qty: "" })); }}
+                                    onCommit={(value) => { updateWaybillItemRow(idx, { quantity: value }); setWaybillErrors((prev) => ({ ...prev, qty: "" })); }}
                                     aria-label="Quantity"
                                   />
                                   <button type="button" aria-label="Increase quantity"
@@ -113336,13 +113336,13 @@ ${waybillLineItems(w).length > 1
                     </div>
                     {canSeeWaybillFees && <div>
                       <label className="block text-sm font-bold text-gray-900 mb-1.5">Waybill Fee ({currencySymbol()})</label>
-                      <input type="number" min={0} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" value={waybillFee} onChange={(e) => setWaybillFee(e.target.value)} />
+                      <DraftTextarea as="input" type="number" min={0} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" value={waybillFee} onCommit={(value) => setWaybillFee(value)} />
                       <p className="mt-1.5 text-xs text-gray-500">One fee for the whole waybill</p>
                     </div>}
                     {canSeeWaybillFees && <div className="waybill-fee-note self-end flex items-start gap-3 rounded-xl bg-indigo-50 px-4 py-3 text-sm text-indigo-900"><span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-indigo-600"><ShieldCheck className="h-4 w-4" /></span><span><strong>One fee covers the entire waybill</strong><span className="mt-1 block">This fee will be charged once for all items.</span></span></div>}
                     <div className="sm:col-span-2">
                       <label className="mb-1.5 flex items-center text-sm font-bold text-gray-900"><StepIcon icon={<Truck className="h-4 w-4" />} tone="bg-sky-100 text-sky-600" />2. Logistics Partner / Carrier<Req /></label>
-                      <input type="text" className={fieldCls("partner")} placeholder="e.g. RNR Log., Korrect, MR B/BSTAR" value={waybillPartner} onChange={(ev) => { setWaybillPartner(ev.target.value); setWaybillErrors((prev) => ({ ...prev, partner: "" })); }} />
+                      <DraftTextarea as="input" type="text" className={fieldCls("partner")} placeholder="e.g. RNR Log., Korrect, MR B/BSTAR" value={waybillPartner} onCommit={(value) => { setWaybillPartner(value); setWaybillErrors((prev) => ({ ...prev, partner: "" })); }} />
                       <ErrMsg k="partner" />
                     </div>
                     <div className="sm:col-span-2">
@@ -113462,7 +113462,7 @@ ${waybillLineItems(w).length > 1
                       ) : (
                         <>
                           <label className="block text-xs font-bold text-gray-600 mb-1 mt-1">Receiving State<Req /></label>
-                          <input type="text" className={fieldCls("toState")} placeholder="e.g. Bayelsa" value={waybillToState} onChange={(ev) => { setWaybillToState(ev.target.value); setWaybillErrors((prev) => ({ ...prev, toState: "" })); }} />
+                          <DraftTextarea as="input" type="text" className={fieldCls("toState")} placeholder="e.g. Bayelsa" value={waybillToState} onCommit={(value) => { setWaybillToState(value); setWaybillErrors((prev) => ({ ...prev, toState: "" })); }} />
                         </>
                       )}
                       <ErrMsg k="toState" />
@@ -113474,7 +113474,7 @@ ${waybillLineItems(w).length > 1
                     </div>
                     <div>
                       <label className="mb-1.5 flex items-center text-sm font-bold text-gray-900"><StepIcon icon={<StickyNote className="h-4 w-4" />} tone="bg-slate-100 text-slate-500" />6. Note <span className="ml-1 font-normal text-gray-400">(optional)</span></label>
-                      <input type="text" className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="e.g. Restock, Urgent transfer" value={waybillNote} onChange={(e) => setWaybillNote(e.target.value)} />
+                      <DraftTextarea as="input" type="text" className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="e.g. Restock, Urgent transfer" value={waybillNote} onCommit={(value) => setWaybillNote(value)} />
                     </div>
                   </div>
                   <div className="waybill-summary flex items-start gap-3 rounded-xl border border-emerald-100 bg-emerald-50/70 px-4 py-3">
@@ -113551,7 +113551,7 @@ ${waybillLineItems(w).length > 1
                                     <option value="">Select product</option>
                                     {catalogProducts.filter((item) => item.active && (item.id === row.productId || !chosenElsewhere.has(item.id))).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
                                   </select>
-                                  <input type="number" min={1} aria-label="Quantity" className={`w-20 shrink-0 rounded-lg border px-3 py-2.5 text-center text-sm text-gray-900 focus:outline-none focus:ring-2 ${ee.qty ? "border-red-400 bg-red-50" : "border-gray-200 bg-white"}`} value={row.quantity} onChange={(ev) => { updateWaybillEditItemRow(idx, { quantity: ev.target.value }); setWaybillErrors((prev) => ({ ...prev, qty: "" })); }} />
+                                  <DraftTextarea as="input" type="number" min={1} aria-label="Quantity" className={`w-20 shrink-0 rounded-lg border px-3 py-2.5 text-center text-sm text-gray-900 focus:outline-none focus:ring-2 ${ee.qty ? "border-red-400 bg-red-50" : "border-gray-200 bg-white"}`} value={row.quantity} onCommit={(value) => { updateWaybillEditItemRow(idx, { quantity: value }); setWaybillErrors((prev) => ({ ...prev, qty: "" })); }} />
                                   {waybillEditItems.length > 1 && <button type="button" className="!min-h-0 shrink-0 rounded-lg border border-gray-200 bg-white px-2.5 py-2.5 text-gray-400 hover:text-red-600 hover:border-red-200" onClick={() => removeWaybillEditItemRow(idx)} aria-label="Remove item">✕</button>}
                                 </div>
                                 {row.productId && <p className="mt-1.5 text-xs font-medium text-gray-500">Available at source now: <strong>{available}</strong> · enter the new total sent</p>}
@@ -113565,7 +113565,7 @@ ${waybillLineItems(w).length > 1
                     </div>
                     {canSeeWaybillFees && <div>
                       <label className="block text-sm font-bold text-gray-900 mb-1.5">Waybill Fee ({currencySymbol()}) <span className="font-normal text-gray-400">(one fee · whole waybill)</span></label>
-                      <input type="number" min={0} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" value={waybillFee} onChange={(e) => setWaybillFee(e.target.value)} />
+                      <DraftTextarea as="input" type="number" min={0} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" value={waybillFee} onCommit={(value) => setWaybillFee(value)} />
                     </div>}
                     <div>
                       <label className="block text-sm font-bold text-gray-900 mb-1.5">Date Sent<EReq /></label>
@@ -113574,7 +113574,7 @@ ${waybillLineItems(w).length > 1
                     </div>
                     <div className="sm:col-span-2">
                       <label className="block text-sm font-bold text-gray-900 mb-1.5">Logistics Partner / Carrier<EReq /></label>
-                      <input type="text" className={efieldCls("partner")} value={waybillPartner} onChange={(ev) => { setWaybillPartner(ev.target.value); setWaybillErrors((prev) => ({ ...prev, partner: "" })); }} />
+                      <DraftTextarea as="input" type="text" className={efieldCls("partner")} value={waybillPartner} onCommit={(value) => { setWaybillPartner(value); setWaybillErrors((prev) => ({ ...prev, partner: "" })); }} />
                       <EErr k="partner" />
                     </div>
                     <div className="sm:col-span-2">
@@ -113638,14 +113638,14 @@ ${waybillLineItems(w).length > 1
                       {!waybillToAgentId && (
                         <>
                           <label className="block text-xs font-bold text-gray-600 mb-1 mt-1">Receiving State<EReq /></label>
-                          <input type="text" className={efieldCls("toState")} placeholder="e.g. Bayelsa" value={waybillToState} onChange={(ev) => { setWaybillToState(ev.target.value); setWaybillErrors((prev) => ({ ...prev, toState: "" })); }} />
+                          <DraftTextarea as="input" type="text" className={efieldCls("toState")} placeholder="e.g. Bayelsa" value={waybillToState} onCommit={(value) => { setWaybillToState(value); setWaybillErrors((prev) => ({ ...prev, toState: "" })); }} />
                         </>
                       )}
                       <EErr k="toState" />
                     </div>
                     <div className="sm:col-span-2">
                       <label className="block text-sm font-bold text-gray-900 mb-1.5">Note <span className="font-normal text-gray-400">(optional)</span></label>
-                      <input type="text" className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="e.g. Restock, Urgent transfer" value={waybillNote} onChange={(e) => setWaybillNote(e.target.value)} />
+                      <DraftTextarea as="input" type="text" className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="e.g. Restock, Urgent transfer" value={waybillNote} onCommit={(value) => setWaybillNote(value)} />
                     </div>
                   </div>
                   <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
@@ -113670,7 +113670,7 @@ ${waybillLineItems(w).length > 1
                 <p className="text-sm text-gray-600">This creates a snapshot of current agent stock quantities. You'll then enter what each agent physically reports to reconcile.</p>
                 <label>
                   <span>Session Title</span>
-                  <input type="text" value={stockCountTitleDraft} onChange={(e) => setStockCountTitleDraft(e.target.value)} placeholder="e.g., End of Month Count - May 2026" />
+                  <DraftTextarea as="input" type="text" value={stockCountTitleDraft} onCommit={(value) => setStockCountTitleDraft(value)} placeholder="e.g., End of Month Count - May 2026" />
                 </label>
                 <div className="flex flex-col gap-2">
                   <span className="text-sm font-semibold text-gray-700">Include Agents</span>
@@ -113729,15 +113729,15 @@ ${waybillLineItems(w).length > 1
                   </div>
                   <label>
                     <span>Agent Reported Count <span className="text-gray-400 font-normal text-xs">(what agent told you physically)</span></span>
-                    <input type="number" min="0" value={agentCountDraft} onChange={(e) => setAgentCountDraft(e.target.value)} placeholder="e.g. 10" />
+                    <DraftTextarea as="input" type="number" min="0" value={agentCountDraft} onCommit={(value) => setAgentCountDraft(value)} placeholder="e.g. 10" />
                   </label>
                   <label>
                     <span>Admin Confirmed Count <span className="text-gray-400 font-normal text-xs">(your own verification / system agreement)</span></span>
-                    <input type="number" min="0" value={adminCountDraft} onChange={(e) => setAdminCountDraft(e.target.value)} placeholder="e.g. 10" />
+                    <DraftTextarea as="input" type="number" min="0" value={adminCountDraft} onCommit={(value) => setAdminCountDraft(value)} placeholder="e.g. 10" />
                   </label>
                   <label>
                     <span>Notes <span className="text-gray-400 font-normal">(optional)</span></span>
-                    <input type="text" value={stockCountNotesDraft} onChange={(e) => setStockCountNotesDraft(e.target.value)} placeholder="e.g., 2 units found damaged and set aside" />
+                    <DraftTextarea as="input" type="text" value={stockCountNotesDraft} onCommit={(value) => setStockCountNotesDraft(value)} placeholder="e.g., 2 units found damaged and set aside" />
                   </label>
                   <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
                     <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
@@ -113774,7 +113774,7 @@ ${waybillLineItems(w).length > 1
                   {writeOffReason === "Other" && (
                     <label>
                       <span>Describe the reason <span className="text-red-500">*</span></span>
-                      <input type="text" value={writeOffCustomReason} onChange={(e) => setWriteOffCustomReason(e.target.value)} placeholder="e.g., Expired product, Water damage, Given as samples..." autoFocus />
+                      <DraftTextarea as="input" type="text" value={writeOffCustomReason} onCommit={(value) => setWriteOffCustomReason(value)} placeholder="e.g., Expired product, Water damage, Given as samples..." autoFocus />
                     </label>
                   )}
                   <p className="text-xs text-gray-500">This reason will appear in the Stock History as a Correction movement. It cannot be changed after saving.</p>
