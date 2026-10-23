@@ -32343,9 +32343,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       // after: the change is not a figure the system worked out, so it must
       // never show up as "a figure changed since the rep submitted".
       const payoutChange = frozen ? (week.payoutChanges ?? []).find((item) => item.repId === repId) ?? null : null;
-      // ₦500 per delivered order with no fee - leadership only, the rep never
-      // sees it. Laid on last, after the payout change (Bright, 20 Oct 2026).
-      const missingFees = frozen ? week.missingFees?.[repId] ?? null : null;
+      // Delivered orders with no fee - a reminder for leadership, the rep never
+      // sees it, and it changes no figure (Bright, 23 Oct 2026).
+      const missingFees = week.missingFees?.[repId] ?? null;
       return {
         repId,
         repName: repName(repId),

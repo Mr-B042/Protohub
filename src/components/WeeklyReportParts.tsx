@@ -478,15 +478,15 @@ export function PayoutChangeNote({ change, sym }: { change: PayoutChangeView; sy
   );
 }
 
-/** Under the payout figure: the ₦500-per-order missing delivery fee taken off (leadership only). */
-export function MissingFeeNote({ detail, sym }: { detail: { applied: number; unpaid: number; charges: Array<{ orderId: string }>; carried: number } | undefined; sym: string }) {
-  if (!detail || detail.applied + detail.unpaid <= 0) return null;
-  const orders = detail.charges.length;
+/** Under the payout figure: delivered orders with no delivery fee. A reminder only - nothing is taken off (leadership only). */
+export function MissingFeeNote({ detail }: { detail: { orders: Array<{ orderId: string }> } | undefined; sym?: string }) {
+  if (!detail || detail.orders.length === 0) return null;
+  const count = detail.orders.length;
   return (
-    <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-rose-700 dark:text-rose-300"
-      title={`Missing delivery fee: ${detail.charges.map((c) => `#${c.orderId}`).join(", ") || "carried from last week"}. Not shown to the rep.`}>
-      <span className="mr-1 rounded bg-rose-50 px-1 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-rose-700 dark:bg-rose-500/15 dark:text-rose-200">No fee</span>
-      -{sym}{nf(detail.applied)}{orders > 0 ? ` · ${orders} order${orders === 1 ? "" : "s"}` : ""}{detail.unpaid > 0 ? ` · ${sym}${nf(detail.unpaid)} to next week` : ""}
+    <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-amber-700 dark:text-amber-300"
+      title={`Delivered with no delivery fee: ${detail.orders.map((o) => `#${o.orderId}`).join(", ")}. Not charged - charge by hand if needed. Not shown to the rep.`}>
+      <span className="mr-1 rounded bg-amber-50 px-1 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-200">No fee</span>
+      {count} order{count === 1 ? "" : "s"} · not charged
     </span>
   );
 }

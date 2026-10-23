@@ -855,8 +855,7 @@ export default function ManagerWeeklyReviewPage({
           { label: "Cross-sell bonus", value: t?.crossSellBonus ?? 0 },
           ...((t?.adjustments ?? 0) !== 0 ? [{ label: "Bonus corrections", value: Math.abs(t?.adjustments ?? 0), minus: (t?.adjustments ?? 0) < 0 }] : []),
           ...(takenOff > 0 ? [{ label: "Fines taken off", value: takenOff, minus: true }] : []),
-          ...(change !== 0 ? [{ label: change < 0 ? "Taken off by manager" : "Added by manager", value: Math.abs(change), minus: change < 0 }] : []),
-          ...((t?.missingFeeApplied ?? 0) > 0 ? [{ label: "Missing delivery fee (not shown to the rep)", value: t?.missingFeeApplied ?? 0, minus: true }] : [])
+          ...(change !== 0 ? [{ label: change < 0 ? "Taken off by manager" : "Added by manager", value: Math.abs(change), minus: change < 0 }] : [])
         ];
         const canAdjust = canChangePayout(approveRow);
         return (

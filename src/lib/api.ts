@@ -4176,7 +4176,7 @@ export const weeklyReportsApi = {
       logMisses: WeeklyLogMissRow[]; previousLogMisses: WeeklyLogMissRow[]; logMissDisputes: LogMissDispute[]; carriedFines: Record<string, number>;
       payoutChanges?: WeeklyPayoutChange[]; gate?: WeeklySendGate;
       /** Per rep: ₦500 missing-delivery-fee charges (leadership only, hidden from reps). */
-      missingFees?: Record<string, { charges: Array<{ id: string; orderId: string; amount: number; reason: string; chargedAt: string }>; total: number; carried: number }>;
+      missingFees?: Record<string, { orders: Array<{ orderId: string; deliveredDate: string }> }>;
       /** Weeks with reports sent in by reps that have not gone to the owner yet. */
       waitingWeeks?: Array<{ weekStart: string; toApprove: number; approved: number; returned: number }>;
       funds?: Array<{ managerId: string; managerName: string; totals: ManagerFundTotals; readiness: string[]; locked: boolean; varianceExplanation: string | null; notes: string | null; returned: number }>;
