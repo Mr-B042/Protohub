@@ -198,12 +198,30 @@ function openOutside(url: string) {
   if (!opened) window.location.href = url;
 }
 
+type FilesystemModule = typeof import("@capacitor/filesystem");
+
+/**
+ * Make the folder a download goes into. The Android plugin's downloadFile
+ * ignores `recursive`, so on a phone where the folder does not exist yet the
+ * download fails with "open failed: ENOENT".
+ */
+async function ensureFolder(fs: FilesystemModule, path: string, directory: FilesystemModule["Directory"][keyof FilesystemModule["Directory"]]) {
+  try {
+    await fs.Filesystem.mkdir({ path, directory, recursive: true });
+  } catch (error) {
+    // Already there is fine; anything else surfaces at the download itself.
+    if (!/exist/i.test(String((error as { message?: string } | null)?.message ?? ""))) console.warn("mkdir", path, error);
+  }
+}
+
 /** In the Android app: download the file to the phone, then hand it to the share sheet. */
 async function shareFromApp(url: string, fileName: string): Promise<MediaShareResult> {
   const plugins = await capacitorPlugins();
   if (!plugins.share || !plugins.files) { openOutside(url); return "opened"; }
-  const [{ Share }, { Filesystem, Directory }] = await Promise.all([import("@capacitor/share"), import("@capacitor/filesystem")]);
+  const [{ Share }, fs] = await Promise.all([import("@capacitor/share"), import("@capacitor/filesystem")]);
+  const { Filesystem, Directory } = fs;
   const path = `share/${fileName}`;
+  await ensureFolder(fs, "share", Directory.Cache);
   await Filesystem.downloadFile({ url, path, directory: Directory.Cache, recursive: true });
   const { uri } = await Filesystem.getUri({ path, directory: Directory.Cache });
   try {
@@ -249,7 +267,9 @@ export async function saveMediaFile(url: string, fileName: string): Promise<"sav
   if (isNativeApp()) {
     const plugins = await capacitorPlugins();
     if (!plugins.files) { openOutside(url); return "opened"; }
-    const { Filesystem, Directory } = await import("@capacitor/filesystem");
+    const fs = await import("@capacitor/filesystem");
+    const { Filesystem, Directory } = fs;
+    await ensureFolder(fs, "Protohub", Directory.Documents);
     await Filesystem.downloadFile({ url, path: `Protohub/${fileName}`, directory: Directory.Documents, recursive: true });
     return "saved-in-app";
   }
