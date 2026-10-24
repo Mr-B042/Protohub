@@ -638,7 +638,8 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
           {tab === "library" && (
             <MediaLibrary media={media} products={libraryProducts} canApprove={canApprove} currentUserId={currentUserId} canSend={canSend} onUpload={() => startUpload("files")}
               onOpenViewer={openMediaPreview} onApprove={approve} onReject={(item) => setRejecting({ items: [item], mode: "reject" })} onDelete={remove}
-              onBulk={libraryBulk} onUpdate={updateMedia} onSetCover={setCover} onToast={showToast} />
+              onBulk={libraryBulk} onUpdate={updateMedia} onSetCover={setCover} onToast={showToast}
+              onThumbnail={async (item, dataUrl) => { const { media: done } = await productMediaApi.setThumbnail(item.id, dataUrl); replaceMedia(done); showToast("Thumbnail changed."); }} />
           )}
           {tab === "approvals" && (
             <ApprovalQueue media={media} products={libraryProducts} canApprove={canApprove} currentUserId={currentUserId}

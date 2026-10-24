@@ -675,6 +675,49 @@ router.patch("/:id", async (req, res) => {
   } catch (error) { sendError(res, error, "Could not save the change."); }
 });
 
+// ── POST /api/product-media/:id/thumbnail ─────────────────
+// A video's thumbnail is a frame the phone grabbed at upload, about 1 second
+// in - black when the clip fades in (Bright, 24 Oct 2026). The picture sent
+// here (a frame the person chose, or a photo they uploaded) replaces it.
+// ⚠️ Saved under a NEW name each time: phones and the CDN cache the old
+// address, so overwriting in place kept showing the black one.
+const ThumbnailSchema = z.object({ imageDataUrl: z.string().max(8_000_000) });
+
+router.post("/:id/thumbnail", async (req, res) => {
+  try {
+    const parsed = ThumbnailSchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: "The picture is too big. Pick a smaller one." }); return; }
+    const row = await loadRow(req);
+    if (row.kind !== "video") throw fail(400, "Only videos have a thumbnail to change.");
+    const approver = canApproveMedia(roleOf(req));
+    const ownWaiting = row.uploaded_by === req.user!.id && row.status === "pending";
+    if (!approver && !ownWaiting) throw fail(403, "Only an Owner, Admin or Manager can change gallery files.");
+    if (row.status !== "approved" && row.status !== "pending") throw fail(409, "This video is not in the gallery.");
+    const picture = parsed.data.imageDataUrl.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/);
+    if (!picture) throw fail(400, "That is not a photo. Use a JPG, PNG or WebP picture.");
+    const thumb = await cleanImage(Buffer.from(picture[2], "base64"), THUMB_EDGE, 72).catch(() => { throw fail(422, "That picture could not be opened. Try another one."); });
+    const stamp = Date.now();
+    const patch: Record<string, unknown> = { width: thumb.width, height: thumb.height };
+    if (row.status === "approved") {
+      const path = `${row.org_id}/${row.product_id}/${row.id}-thumb-${stamp}.webp`;
+      const { error } = await supabase.storage.from(PUBLIC).upload(path, thumb.data, { contentType: "image/webp", upsert: true });
+      if (error) throw error;
+      Object.assign(patch, { public_thumb_path: path, thumb_url: supabase.storage.from(PUBLIC).getPublicUrl(path).data.publicUrl });
+    } else {
+      const path = `${row.org_id}/${row.id}/thumb-${stamp}.webp`;
+      await putHolding(path, thumb.data, "image/webp");
+      patch.holding_thumb_path = path;
+    }
+    const { data: done, error } = await supabase.from("product_media").update(patch).eq("id", row.id).select("*").single();
+    if (error) throw error;
+    // The old picture goes only once the new one is saved.
+    if (row.status === "approved") await removeFiles(PUBLIC, [row.public_thumb_path]);
+    else await removeFiles(HOLD, [row.holding_thumb_path]);
+    await logEvent(orgOf(req), row.branch_id, req, { action: "updated", mediaId: row.id, productId: row.product_id, detail: `${row.original_name}: thumbnail changed` });
+    res.json({ media: mapRow(done, await holdingPreviews([done])) });
+  } catch (error) { sendError(res, error, "Could not change the thumbnail."); }
+});
+
 // ── DELETE /api/product-media/:id ─────────────────────────
 router.delete("/:id", async (req, res) => {
   try {

@@ -73,13 +73,20 @@ export function videoCover(file: Blob): Promise<{ posterDataUrl?: string; durati
       video.load();
       resolve(result);
     };
-    const timer = window.setTimeout(() => finish({ durationSeconds: Number.isFinite(video.duration) ? video.duration : undefined }), 8000);
+    const timer = window.setTimeout(() => finish({ posterDataUrl: best?.dataUrl, durationSeconds: Number.isFinite(video.duration) ? video.duration : undefined }), 8000);
     video.muted = true;
     video.playsInline = true;
     video.preload = "auto";
+    // ⚠️ Not just the frame at 1 second (24 Oct 2026): clips that fade in from
+    // black got a black thumbnail. Try a few points and keep the first frame
+    // that is not dark, or the brightest one if all are.
+    let tries: number[] = [];
+    let best: { dataUrl: string; light: number } | null = null;
+    const lengthOf = () => (Number.isFinite(video.duration) ? video.duration : undefined);
     video.onloadedmetadata = () => {
       const duration = Number.isFinite(video.duration) ? video.duration : 0;
-      video.currentTime = Math.min(1, duration / 3 || 0.1);
+      tries = [Math.min(1, duration / 3 || 0.1), duration * 0.25, duration * 0.5, duration * 0.75].filter((t, i) => i === 0 || t > 1.2);
+      video.currentTime = tries.shift() ?? 0.1;
     };
     video.onseeked = () => {
       try {
@@ -88,12 +95,22 @@ export function videoCover(file: Blob): Promise<{ posterDataUrl?: string; durati
         const canvas = document.createElement("canvas");
         canvas.width = Math.max(1, Math.round((video.videoWidth || edge) * scale));
         canvas.height = Math.max(1, Math.round((video.videoHeight || 360) * scale));
-        canvas.getContext("2d")!.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const ctx = canvas.getContext("2d")!;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const sample = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        let total = 0;
+        const step = 4 * 37;
+        for (let i = 0; i < sample.length; i += step) total += sample[i] + sample[i + 1] + sample[i + 2];
+        const light = total / (sample.length / step) / 3;
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+        if (!best || light > best.light) best = { dataUrl, light };
+        const next = tries.shift();
+        if (light < 25 && next !== undefined) { video.currentTime = next; return; }
         window.clearTimeout(timer);
-        finish({ posterDataUrl: canvas.toDataURL("image/jpeg", 0.8), durationSeconds: Number.isFinite(video.duration) ? video.duration : undefined });
+        finish({ posterDataUrl: best.dataUrl, durationSeconds: lengthOf() });
       } catch {
         window.clearTimeout(timer);
-        finish({ durationSeconds: Number.isFinite(video.duration) ? video.duration : undefined });
+        finish({ posterDataUrl: best?.dataUrl, durationSeconds: lengthOf() });
       }
     };
     video.onerror = () => { window.clearTimeout(timer); finish({}); };

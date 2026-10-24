@@ -4938,6 +4938,8 @@ export const productMediaApi = {
   update: (id: string, body: { label?: ProductMediaLabel; caption?: string; tags?: string[]; usage?: ProductMediaUsage[]; isCover?: boolean; displayOrder?: number }) =>
     patch<{ media: ProductMedia }>(`/api/product-media/${id}`, body),
   remove: (id: string) => del<{ ok: boolean }>(`/api/product-media/${id}`),
+  /** Replace a video's thumbnail with a chosen frame or an uploaded picture. */
+  setThumbnail: (id: string, imageDataUrl: string) => post<{ media: ProductMedia }>(`/api/product-media/${id}/thumbnail`, { imageDataUrl }),
   settings: () => get<CatalogSettings>("/api/product-media/settings"),
   saveSettings: (body: Partial<CatalogSettings>) => put<CatalogSettings>("/api/product-media/settings", body),
   saveDefaultImage: (slot: "main" | "video" | "lifestyle", dataUrl: string | null) => post<CatalogSettings>("/api/product-media/settings/default-image", { slot, dataUrl }),
