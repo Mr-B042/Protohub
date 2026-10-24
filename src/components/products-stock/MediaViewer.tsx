@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Download, Share2, Star, Trash2, X, ZoomIn } from "lucide-react";
 import type { ProductMedia } from "../../lib/api";
-import { fileNameFor, formatDuration, saveMediaFile, shareMediaFile, timeAgo } from "../../lib/media-upload";
+import { fileNameFor, formatDuration, mediaResultMessage, prefetchMediaFile, saveMediaFile, shareMediaFile, timeAgo } from "../../lib/media-upload";
 
 // Full-screen gallery: swipe between photos and videos (native scroll-snap, so
 // it feels like the phone's own gallery), double-tap a photo to zoom, Share
@@ -98,19 +98,24 @@ export function MediaViewer({ productName, items, startIndex, onClose, canManage
   };
 
   const fileName = current ? fileNameFor(productName, current.kind, current.media?.mime ?? "image/jpeg", index) : "file";
+  // Fetch the file on view so Share opens the share sheet inside the tap.
+  useEffect(() => {
+    // Photos only: a video is streamed to play already, and fetching it twice costs mobile data.
+    if (current?.url && current.kind === "image") void prefetchMediaFile(current.url, fileName).catch(() => undefined);
+  }, [current?.url, current?.kind, fileName]);
   const share = async () => {
     if (!current) return;
     setBusy(true);
     try {
-      const result = await shareMediaFile(current.url, fileName, `${productName}${current.caption ? ` - ${current.caption}` : ""}`);
-      if (result === "saved") onToast("Saved to your phone. Send it from WhatsApp.");
+      const message = mediaResultMessage(await shareMediaFile(current.url, fileName));
+      if (message) onToast(message);
     } catch (error: any) { onToast(error?.message ?? "Could not share this file."); }
     finally { setBusy(false); }
   };
   const save = async () => {
     if (!current) return;
     setBusy(true);
-    try { await saveMediaFile(current.url, fileName); onToast("Saved."); }
+    try { const result = await saveMediaFile(current.url, fileName); onToast(result === "saved" ? "Saved." : mediaResultMessage(result)); }
     catch (error: any) { onToast(error?.message ?? "Could not save this file."); }
     finally { setBusy(false); }
   };
