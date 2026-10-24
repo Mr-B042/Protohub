@@ -6,6 +6,7 @@ import {
 import type { ProductMedia, ProductMediaUsage } from "../../lib/api";
 import { fileNameFor, formatBytes, formatDuration, mediaResultMessage, prefetchMediaFile, saveMediaFile, shareMediaFile } from "../../lib/media-upload";
 import { Avatar, MenuItem, PopoverMenu, Sheet, StatusPill, cardShell } from "./shared";
+import { ThumbnailPicker } from "./ThumbnailPicker";
 
 // Media Library (Bright's design, 17 Oct 2026): products down the left, every
 // file in the middle, the chosen file's details on the right. On a phone the
@@ -20,7 +21,9 @@ const USAGE_OPTIONS: Array<{ value: ProductMediaUsage; text: string }> = [
 
 export type LibraryProduct = { id: string; name: string; sku: string; thumbUrl: string | null };
 
-export function MediaLibrary({ media, products, canApprove, currentUserId, canSend, onUpload, onOpenViewer, onApprove, onReject, onDelete, onBulk, onUpdate, onSetCover, onToast }: {
+export function MediaLibrary({ media, products, canApprove, currentUserId, canSend, onUpload, onOpenViewer, onApprove, onReject, onDelete, onBulk, onUpdate, onSetCover, onToast, onThumbnail }: {
+  /** Replace a video's thumbnail (chosen frame or uploaded picture). */
+  onThumbnail?: (item: ProductMedia, imageDataUrl: string) => Promise<void>;
   media: ProductMedia[];
   products: LibraryProduct[];
   canApprove: boolean;
@@ -209,7 +212,7 @@ export function MediaLibrary({ media, products, canApprove, currentUserId, canSe
           {active ? (
             <MediaDetails item={active} list={shown.filter((entry) => entry.productId === active.productId)} product={nameOf.get(active.productId) ?? null} canApprove={canApprove}
               mine={active.uploadedBy === currentUserId} onSelect={(item) => setActiveId(item.id)} onOpenViewer={onOpenViewer} onApprove={onApprove} onReject={onReject}
-              onDelete={onDelete} onUpdate={onUpdate} onSetCover={onSetCover} onToast={onToast} />
+              onDelete={onDelete} onUpdate={onUpdate} onSetCover={onSetCover} onToast={onToast} onThumbnail={onThumbnail} />
           ) : <div className={`${cardShell} p-6 text-center text-[13px] text-gray-400`}>Pick a file to see its details.</div>}
         </aside>
       </div>
@@ -218,7 +221,7 @@ export function MediaLibrary({ media, products, canApprove, currentUserId, canSe
         <Sheet title={active.name} subtitle={nameOf.get(active.productId)?.name} onClose={() => setSheetOpen(false)}>
           <MediaDetails embedded item={active} list={shown.filter((entry) => entry.productId === active.productId)} product={nameOf.get(active.productId) ?? null} canApprove={canApprove}
             mine={active.uploadedBy === currentUserId} onSelect={(item) => setActiveId(item.id)} onOpenViewer={onOpenViewer} onApprove={onApprove} onReject={onReject}
-            onDelete={(item) => { setSheetOpen(false); onDelete(item); }} onUpdate={onUpdate} onSetCover={onSetCover} onToast={onToast} />
+            onDelete={(item) => { setSheetOpen(false); onDelete(item); }} onUpdate={onUpdate} onSetCover={onSetCover} onToast={onToast} onThumbnail={onThumbnail} />
         </Sheet>
       )}
     </div>
@@ -308,7 +311,8 @@ function TileMenu({ item, canApprove, mine, onOpen, onApprove, onReject, onDelet
   );
 }
 
-function MediaDetails({ item, list, product, canApprove, mine, embedded, onSelect, onOpenViewer, onApprove, onReject, onDelete, onUpdate, onSetCover, onToast }: {
+function MediaDetails({ item, list, product, canApprove, mine, embedded, onSelect, onOpenViewer, onApprove, onReject, onDelete, onUpdate, onSetCover, onToast, onThumbnail }: {
+  onThumbnail?: (item: ProductMedia, imageDataUrl: string) => Promise<void>;
   item: ProductMedia; list: ProductMedia[]; product: LibraryProduct | null; canApprove: boolean; mine: boolean; embedded?: boolean;
   onSelect: (item: ProductMedia) => void; onOpenViewer: (item: ProductMedia) => void; onApprove: (item: ProductMedia) => Promise<void>; onReject: (item: ProductMedia) => void;
   onDelete: (item: ProductMedia) => void; onUpdate: (item: ProductMedia, patch: { tags?: string[]; usage?: ProductMediaUsage[] }) => Promise<void>;
@@ -316,6 +320,7 @@ function MediaDetails({ item, list, product, canApprove, mine, embedded, onSelec
 }) {
   const [tagDraft, setTagDraft] = useState<string | null>(null);
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [pickingThumb, setPickingThumb] = useState(false);
   const actionsButton = useRef<HTMLButtonElement | null>(null);
   const index = Math.max(0, list.findIndex((entry) => entry.id === item.id));
   const canEditTags = canApprove || (mine && item.status === "pending");
@@ -417,9 +422,11 @@ function MediaDetails({ item, list, product, canApprove, mine, embedded, onSelec
         <MenuItem icon={<Share2 />} disabled={!item.url} onClick={() => { setActionsOpen(false); void share(); }}>Share (WhatsApp)</MenuItem>
         <MenuItem icon={<Maximize2 />} disabled={!item.url} onClick={() => { setActionsOpen(false); onOpenViewer(item); }}>Open full screen</MenuItem>
         {canApprove && item.status === "approved" && !item.isCover && <MenuItem icon={<Star />} onClick={() => { setActionsOpen(false); onSetCover(item); }}>Make cover</MenuItem>}
+        {canEditTags && item.kind === "video" && onThumbnail && <MenuItem icon={<ImageIcon />} onClick={() => { setActionsOpen(false); setPickingThumb(true); }}>Change thumbnail</MenuItem>}
         {canEditTags && <MenuItem icon={<Tag />} onClick={() => { setActionsOpen(false); setTagDraft(""); }}>Add tag</MenuItem>}
         {(canApprove || (mine && item.status !== "approved")) && <MenuItem icon={<Trash2 />} tone="danger" onClick={() => { setActionsOpen(false); onDelete(item); }}>Delete</MenuItem>}
       </PopoverMenu>
+      {pickingThumb && onThumbnail && <ThumbnailPicker item={item} onClose={() => setPickingThumb(false)} onSave={(dataUrl) => onThumbnail(item, dataUrl)} />}
     </div>
   );
 }
