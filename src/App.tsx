@@ -93146,23 +93146,34 @@ ${waybillLineItems(w).length > 1
 
                 return (
                   <div className="space-y-4">
-                    {/* Week navigator + save */}
+                    {/* Week navigator + save. Arrows sit either side of the dates on
+                        every screen, as square buttons that visibly press. */}
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                        <button className="!min-h-0 p-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
-                          onClick={() => { const d = new Date(`${adSpendWeekStart}T00:00:00`); d.setDate(d.getDate() - 7); setAdSpendWeekStart(formatDateKey(d)); }}>
-                          <ChevronLeft className="w-4 h-4" />
-                        </button>
-                        <span className="text-sm font-semibold text-gray-800 text-center sm:min-w-[220px]">{weekLabel}</span>
-                        <button className="!min-h-0 p-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
-                          onClick={() => { const d = new Date(`${adSpendWeekStart}T00:00:00`); d.setDate(d.getDate() + 7); setAdSpendWeekStart(formatDateKey(d)); }}>
-                          <ChevronRight className="w-4 h-4" />
-                        </button>
-                        <button className="!min-h-0 px-3 py-1.5 text-xs font-semibold border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition-colors"
-                          onClick={() => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); setAdSpendWeekStart(formatDateKey(d)); }}>
-                          This Week
-                        </button>
-                      </div>
+                      {(() => {
+                        const shiftWeek = (days: number) => { const d = new Date(`${adSpendWeekStart}T00:00:00`); d.setDate(d.getDate() + days); setAdSpendWeekStart(formatDateKey(d)); };
+                        const today = new Date(); today.setDate(today.getDate() - today.getDay());
+                        const thisWeekStart = formatDateKey(today);
+                        const onThisWeek = adSpendWeekStart >= thisWeekStart;
+                        const arrow = "!min-h-0 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-700 shadow-sm transition hover:bg-gray-50 active:scale-90 active:bg-blue-50 active:border-[#1F8FE0] active:text-[#1F8FE0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1F8FE0]/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200";
+                        return (
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                            <div className="flex items-center gap-2">
+                              <button type="button" aria-label="Previous week" title="Previous week" className={arrow} onClick={() => shiftWeek(-7)}>
+                                <ChevronLeft className="h-5 w-5" />
+                              </button>
+                              <span className="min-w-0 flex-1 text-center text-sm font-semibold text-gray-800 dark:text-slate-100 sm:min-w-[220px]">{weekLabel}</span>
+                              <button type="button" aria-label="Next week" title={onThisWeek ? "This is the current week" : "Next week"} className={arrow} disabled={onThisWeek} onClick={() => shiftWeek(7)}>
+                                <ChevronRight className="h-5 w-5" />
+                              </button>
+                            </div>
+                            <button type="button" disabled={onThisWeek}
+                              className="!min-h-0 h-10 rounded-xl border border-gray-200 px-3 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 active:scale-95 active:bg-blue-50 active:text-[#1F8FE0] disabled:border-[#1F8FE0]/30 disabled:bg-blue-50 disabled:text-[#1F8FE0] disabled:active:scale-100 dark:border-slate-700 dark:text-slate-300 dark:disabled:bg-blue-500/10"
+                              onClick={() => setAdSpendWeekStart(thisWeekStart)}>
+                              This Week
+                            </button>
+                          </div>
+                        );
+                      })()}
                       <button onClick={saveAdSpend} disabled={adSpendSaving}
                         className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] transition-colors disabled:opacity-60">
                         {adSpendSaving ? "Saving…" : "Save Changes"}
