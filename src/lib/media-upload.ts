@@ -117,32 +117,140 @@ export function uploadWithProgress(signedUrl: string, body: Blob, contentType: s
   });
 }
 
-/**
- * Hand the file itself to WhatsApp (or any app) through the phone's share
- * sheet; where that is not possible, save it to the phone instead.
- */
-export async function shareMediaFile(url: string, fileName: string, text: string): Promise<"shared" | "saved" | "cancelled"> {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error("Could not load the file. Check your connection.");
-  const blob = await response.blob();
-  const file = new File([blob], fileName, { type: blob.type || "application/octet-stream" });
-  const nav = navigator as Navigator & { canShare?: (data: ShareData) => boolean };
-  if (nav.share && nav.canShare?.({ files: [file] })) {
-    try {
-      await nav.share({ files: [file], text });
-      return "shared";
-    } catch (error: any) {
-      if (error?.name === "AbortError") return "cancelled";
-    }
+// ── Sharing and saving gallery files (fixed 24 Oct 2026) ─────────────────────
+// "Share (WhatsApp)" did nothing in three places:
+//   - Protohub Android app: a WebView has no navigator.share and ignores
+//     download links. It now uses the app's own Share + Filesystem plugins
+//     (in the app since 1.1), downloading the file straight to the phone.
+//   - Phone browsers: share() is only allowed straight after a tap, but the
+//     whole file was downloaded first (seconds for a video), so the phone
+//     refused. Files are now fetched AHEAD (prefetchMediaFile, when the menu
+//     or viewer opens) and share() runs inside the tap. If the file is not
+//     ready yet, the person is told to tap again once it is.
+//   - Computers: it said "Saved to your phone". It now says what happened.
+// No text goes with the file: WhatsApp on iPhone drops the picture when text
+// comes with it (learned on the order receipt).
+
+export type MediaShareResult = "shared" | "saved" | "cancelled" | "retry" | "opened";
+
+const readyFiles = new Map<string, File>();
+const loadingFiles = new Map<string, Promise<File>>();
+
+/** Start fetching a file so a later tap can share it at once. Safe to call often. */
+export function prefetchMediaFile(url: string, fileName: string): Promise<File> {
+  const ready = readyFiles.get(url);
+  if (ready) return Promise.resolve(ready);
+  const loading = loadingFiles.get(url);
+  if (loading) return loading;
+  const promise = fetch(url)
+    .then((response) => {
+      if (!response.ok) throw new Error("Could not load the file. Check your connection.");
+      return response.blob();
+    })
+    .then((blob) => {
+      const file = new File([blob], fileName, { type: blob.type || "application/octet-stream" });
+      readyFiles.set(url, file);
+      // Keep the cache small: a few photos or one or two videos.
+      if (readyFiles.size > 6) readyFiles.delete(readyFiles.keys().next().value as string);
+      return file;
+    })
+    .finally(() => loadingFiles.delete(url));
+  loadingFiles.set(url, promise);
+  promise.catch(() => undefined);
+  return promise;
+}
+
+async function capacitorPlugins() {
+  const { Capacitor } = await import("@capacitor/core");
+  return {
+    native: Capacitor.isNativePlatform(),
+    share: Capacitor.isPluginAvailable("Share"),
+    files: Capacitor.isPluginAvailable("Filesystem")
+  };
+}
+
+const isNativeApp = () => Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+const cancelled = (error: unknown) => {
+  const e = error as { name?: string; message?: string } | null;
+  return e?.name === "AbortError" || /cancel/i.test(String(e?.message ?? ""));
+};
+
+/** Open a link in the phone's browser (the app hands other websites out). */
+function openOutside(url: string) {
+  const opened = window.open(url, "_blank", "noopener,noreferrer");
+  if (!opened) window.location.href = url;
+}
+
+/** In the Android app: download the file to the phone, then hand it to the share sheet. */
+async function shareFromApp(url: string, fileName: string): Promise<MediaShareResult> {
+  const plugins = await capacitorPlugins();
+  if (!plugins.share || !plugins.files) { openOutside(url); return "opened"; }
+  const [{ Share }, { Filesystem, Directory }] = await Promise.all([import("@capacitor/share"), import("@capacitor/filesystem")]);
+  const path = `share/${fileName}`;
+  await Filesystem.downloadFile({ url, path, directory: Directory.Cache, recursive: true });
+  const { uri } = await Filesystem.getUri({ path, directory: Directory.Cache });
+  try {
+    await Share.share({ files: [uri], dialogTitle: "Send on WhatsApp" });
+    return "shared";
+  } catch (error) {
+    if (cancelled(error)) return "cancelled";
+    throw error;
   }
-  saveBlob(blob, fileName);
+}
+
+/**
+ * Hand the file itself to WhatsApp (or any app) through the share sheet;
+ * where there is none (most computers) the file is downloaded instead.
+ * ⚠️ Call straight from the tap: on the web, nothing may be awaited before share().
+ */
+export async function shareMediaFile(url: string, fileName: string): Promise<MediaShareResult> {
+  if (isNativeApp()) return shareFromApp(url, fileName);
+  const nav = navigator as Navigator & { canShare?: (data: ShareData) => boolean };
+  const ready = readyFiles.get(url);
+  if (ready) {
+    // Synchronous up to here, so the tap still counts.
+    if (typeof nav.share === "function" && nav.canShare?.({ files: [ready] })) {
+      try { await nav.share({ files: [ready] }); return "shared"; }
+      catch (error) {
+        if (cancelled(error)) return "cancelled";
+        // Refused for another reason: fall through and download it.
+      }
+    }
+    saveBlob(ready, fileName);
+    return "saved";
+  }
+  // Not fetched yet: fetch now. The tap has expired by the time it arrives,
+  // so where a share sheet exists the person taps once more.
+  const file = await prefetchMediaFile(url, fileName);
+  if (typeof nav.share === "function" && nav.canShare?.({ files: [file] })) return "retry";
+  saveBlob(file, fileName);
   return "saved";
 }
 
-export async function saveMediaFile(url: string, fileName: string) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error("Could not load the file. Check your connection.");
-  saveBlob(await response.blob(), fileName);
+/** Download the file: into Documents › Protohub in the app, the normal download elsewhere. */
+export async function saveMediaFile(url: string, fileName: string): Promise<"saved" | "saved-in-app" | "opened"> {
+  if (isNativeApp()) {
+    const plugins = await capacitorPlugins();
+    if (!plugins.files) { openOutside(url); return "opened"; }
+    const { Filesystem, Directory } = await import("@capacitor/filesystem");
+    await Filesystem.downloadFile({ url, path: `Protohub/${fileName}`, directory: Directory.Documents, recursive: true });
+    return "saved-in-app";
+  }
+  const file = readyFiles.get(url) ?? await prefetchMediaFile(url, fileName);
+  saveBlob(file, fileName);
+  return "saved";
+}
+
+/** What to tell the person after a share or save. Empty = say nothing. */
+export function mediaResultMessage(result: MediaShareResult | "saved-in-app"): string {
+  const onComputer = typeof window !== "undefined" && !window.matchMedia?.("(pointer: coarse)").matches;
+  switch (result) {
+    case "saved": return onComputer ? "Downloaded to this computer. Drag it into WhatsApp to send it." : "Saved to your phone. Send it from WhatsApp.";
+    case "saved-in-app": return "Saved in Documents › Protohub on this phone.";
+    case "retry": return "The file is ready. Tap Share again.";
+    case "opened": return "The file opened in your browser. Update the Protohub app to share straight from here.";
+    default: return "";
+  }
 }
 
 function saveBlob(blob: Blob, fileName: string) {

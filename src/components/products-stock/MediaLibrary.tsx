@@ -4,7 +4,7 @@ import {
   Maximize2, MoreHorizontal, Plus, Search, Share2, Star, Tag, Trash2, Video, X, XCircle
 } from "lucide-react";
 import type { ProductMedia, ProductMediaUsage } from "../../lib/api";
-import { fileNameFor, formatBytes, formatDuration, saveMediaFile, shareMediaFile } from "../../lib/media-upload";
+import { fileNameFor, formatBytes, formatDuration, mediaResultMessage, prefetchMediaFile, saveMediaFile, shareMediaFile } from "../../lib/media-upload";
 import { Avatar, MenuItem, PopoverMenu, Sheet, StatusPill, cardShell } from "./shared";
 
 // Media Library (Bright's design, 17 Oct 2026): products down the left, every
@@ -328,12 +328,13 @@ function MediaDetails({ item, list, product, canApprove, mine, embedded, onSelec
   };
   const share = async () => {
     if (!item.url) return;
-    try { const result = await shareMediaFile(item.url, fileName, product?.name ?? ""); if (result === "saved") onToast("Saved to your phone. Send it from WhatsApp."); }
+    try { const message = mediaResultMessage(await shareMediaFile(item.url, fileName)); if (message) onToast(message); }
     catch (error: any) { onToast(error?.message ?? "Could not share."); }
   };
   const download = async () => {
     if (!item.url) return;
-    try { await saveMediaFile(item.url, fileName); } catch (error: any) { onToast(error?.message ?? "Could not download."); }
+    try { const message = mediaResultMessage(await saveMediaFile(item.url, fileName)); if (message && message !== mediaResultMessage("saved")) onToast(message); }
+    catch (error: any) { onToast(error?.message ?? "Could not download."); }
   };
   return (
     <div className={embedded ? "space-y-4" : `${cardShell} space-y-4 p-3.5`}>
@@ -406,7 +407,11 @@ function MediaDetails({ item, list, product, canApprove, mine, embedded, onSelec
       )}
       <div className="grid grid-cols-2 gap-2">
         <button type="button" onClick={download} disabled={!item.url} className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 py-2.5 text-[13px] font-bold text-gray-800 disabled:opacity-50 dark:border-slate-600 dark:text-slate-100"><Download className="h-4 w-4" />Download</button>
-        <button ref={actionsButton} type="button" onClick={() => setActionsOpen((value) => !value)} className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 py-2.5 text-[13px] font-bold text-gray-800 dark:border-slate-600 dark:text-slate-100">Actions <ChevronDown className="h-4 w-4" /></button>
+        <button ref={actionsButton} type="button" onClick={() => {
+          // Fetch the file now, so "Share" can open the share sheet inside the tap.
+          if (!actionsOpen && item.url) void prefetchMediaFile(item.url, fileName).catch(() => undefined);
+          setActionsOpen((value) => !value);
+        }} className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 py-2.5 text-[13px] font-bold text-gray-800 dark:border-slate-600 dark:text-slate-100">Actions <ChevronDown className="h-4 w-4" /></button>
       </div>
       <PopoverMenu anchor={actionsButton.current} open={actionsOpen} onClose={() => setActionsOpen(false)} width={200}>
         <MenuItem icon={<Share2 />} disabled={!item.url} onClick={() => { setActionsOpen(false); void share(); }}>Share (WhatsApp)</MenuItem>
