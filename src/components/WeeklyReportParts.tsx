@@ -482,7 +482,7 @@ export function PayoutChangeNote({ change, sym }: { change: PayoutChangeView; sy
 function decisionStatus(orders: Array<{ decision?: OrderDecisionView | null }>, sym: string, extraCharged = 0) {
   const open = orders.filter((order) => !order.decision).length;
   const charged = orders.reduce((sum, order) => sum + (order.decision?.decision === "charged" && !order.decision.earlier ? order.decision.amount : 0), 0) + extraCharged;
-  if (open > 0) return { text: open === orders.length ? `${open} to decide` : `${open} of ${orders.length} to decide`, urgent: true };
+  if (open > 0) return { text: open === orders.length ? `${open} waiting` : `${open} of ${orders.length} waiting`, urgent: true };
   if (charged > 0) return { text: `Charged ${sym}${nf(charged)}`, urgent: false };
   return { text: orders.length ? "Skipped" : "Nothing to decide", urgent: false };
 }
@@ -494,7 +494,7 @@ function decisionStatus(orders: Array<{ decision?: OrderDecisionView | null }>, 
  * decided (the decisions stay in the window and the report). Clicking it
  * opens the window with the orders.
  */
-function FlaggedChip({ kind, count, status, onOpen }: { kind: "No fee" | "Late send"; count: number; status: { text: string; urgent: boolean }; onOpen?: () => void }) {
+function FlaggedChip({ kind, count, status, onOpen }: { kind: "Fee missing" | "Sent late"; count: number; status: { text: string; urgent: boolean }; onOpen?: () => void }) {
   const cls = status.urgent
     ? "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:border-rose-500/40 dark:bg-rose-500/15 dark:text-rose-200"
     : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300";
@@ -506,7 +506,7 @@ function FlaggedChip({ kind, count, status, onOpen }: { kind: "No fee" | "Late s
           <span className="relative inline-flex h-2 w-2 rounded-full bg-rose-600" />
         </span>
       )}
-      <span className={`rounded px-1 text-[9.5px] font-black uppercase tracking-wide ${kind === "No fee" ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200" : "bg-orange-100 text-orange-800 dark:bg-orange-500/20 dark:text-orange-200"}`}>{kind}</span>
+      <span className={`rounded px-1 text-[9.5px] font-black uppercase tracking-wide ${kind === "Fee missing" ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200" : "bg-orange-100 text-orange-800 dark:bg-orange-500/20 dark:text-orange-200"}`}>{kind}</span>
       <span>{status.urgent ? status.text : `${count} · ${status.text}`}</span>
       {onOpen && <span aria-hidden className="ml-0.5 font-black">›</span>}
     </>
@@ -515,7 +515,7 @@ function FlaggedChip({ kind, count, status, onOpen }: { kind: "No fee" | "Late s
   // A soft blinking ring round the chip while something waits.
   const halo = status.urgent ? <span aria-hidden className="pointer-events-none absolute -inset-0.5 rounded-[10px] ring-2 ring-rose-400/70 motion-safe:animate-pulse" /> : null;
   return onOpen
-    ? <button type="button" onClick={onOpen} className={`!min-h-0 ${base}`} title="Open the orders to charge or skip each one">{halo}{body}</button>
+    ? <button type="button" onClick={onOpen} className={`!min-h-0 ${base}`} title="Open these orders and decide: charge or don't charge">{halo}{body}</button>
     : <span className={base}>{halo}{body}</span>;
 }
 
@@ -525,7 +525,7 @@ export function MissingFeeNote({ detail, sym = "₦", onOpen }: { detail: Missin
   const status = decisionStatus(detail.orders, sym);
   // Only while something waits (Bright, 28 Oct 2026): decided chips go away.
   if (!status.urgent) return null;
-  return <span className="block"><FlaggedChip kind="No fee" count={detail.orders.length} status={status} onOpen={onOpen} /></span>;
+  return <span className="block"><FlaggedChip kind="Fee missing" count={detail.orders.length} status={status} onOpen={onOpen} /></span>;
 }
 
 /**
@@ -954,5 +954,5 @@ export function LateSendNote({ detail, sym, onOpen }: { detail: LateSendWeek | n
   const status = decisionStatus(detail.orders, sym, lump);
   // Only while something waits (Bright, 28 Oct 2026): decided chips go away.
   if (!status.urgent) return null;
-  return <span className="block"><FlaggedChip kind="Late send" count={detail.orders.length} status={status} onOpen={onOpen} /></span>;
+  return <span className="block"><FlaggedChip kind="Sent late" count={detail.orders.length} status={status} onOpen={onOpen} /></span>;
 }

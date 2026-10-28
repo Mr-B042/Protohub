@@ -206,7 +206,7 @@ export default function WeeklyRepReportModal(props: WeeklyRepReportModalProps) {
   const flagged = [
     ...(lateSend?.orders ?? []).map((order) => ({
       kind: "late_send" as const, orderId: order.orderId, decision: order.decision ?? null,
-      detail: order.sentAt ? `${lateText(order.workingMinutesLate ?? order.minutesLate)} late` : "still New"
+      detail: order.sentAt ? `${lateText(order.workingMinutesLate ?? order.minutesLate)} too late` : "not sent out yet"
     })),
     ...(shown?.missingFeeDetail?.orders ?? []).map((order) => ({
       kind: "missing_fee" as const, orderId: order.orderId, decision: order.decision ?? null,
@@ -357,28 +357,28 @@ export default function WeeklyRepReportModal(props: WeeklyRepReportModalProps) {
                     <div className={`mt-3 rounded-xl border px-3 py-2.5 text-[12.5px] leading-snug ${toDecide > 0 ? "border-rose-200 bg-rose-50 text-rose-900 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-100" : "border-gray-200 bg-gray-50 text-gray-800 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100"}`}>
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <strong className="text-[13px]">
-                          {toDecide > 0 ? `${toDecide} order${toDecide === 1 ? "" : "s"} to charge or skip` : "Flagged orders: all decided"}
+                          {toDecide > 0 ? `${toDecide} order${toDecide === 1 ? " needs" : "s need"} your decision` : "Orders checked: all decided"}
                         </strong>
                         {onOpenDecisions && (
                           <button type="button" onClick={() => onOpenDecisions(toDecide > 0 && flagged.find((item) => !item.decision)?.kind === "missing_fee" ? "missing_fee" : flagged.find((item) => !item.decision)?.kind ?? flagged[0].kind)}
                             className={`!min-h-0 rounded-lg px-3 py-1.5 text-[12px] font-bold ${toDecide > 0 && !ownerView ? "bg-rose-600 text-white ring-2 ring-rose-300 hover:bg-rose-700 motion-safe:animate-pulse" : "border border-gray-200 bg-white text-gray-800 hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"}`}>
-                            {ownerView ? "See details" : toDecide > 0 ? "Charge or skip" : "See decisions"}
+                            {ownerView ? "See details" : toDecide > 0 ? "Decide now" : "See decisions"}
                           </button>
                         )}
                       </div>
                       <ul className="m-0 mt-1.5 list-none space-y-1 p-0">
                         {flagged.map((item) => (
                           <li key={`${item.kind}-${item.orderId}`} className="flex flex-wrap items-center gap-x-1.5">
-                            <span className={`rounded px-1 py-0.5 text-[9.5px] font-bold uppercase tracking-wide ${item.kind === "missing_fee" ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200" : "bg-orange-100 text-orange-800 dark:bg-orange-500/20 dark:text-orange-200"}`}>{item.kind === "missing_fee" ? "No fee" : "Late send"}</span>
+                            <span className={`rounded px-1 py-0.5 text-[9.5px] font-bold uppercase tracking-wide ${item.kind === "missing_fee" ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200" : "bg-orange-100 text-orange-800 dark:bg-orange-500/20 dark:text-orange-200"}`}>{item.kind === "missing_fee" ? "Fee missing" : "Sent late"}</span>
                             <span>Order #{item.orderId} · {item.detail}</span>
                             <span>·</span>
                             {item.decision
-                              ? <strong className={item.decision.decision === "charged" ? "text-rose-700 dark:text-rose-300" : ""}>{item.decision.decision === "charged" ? `charged ${money(item.decision.amount)}` : `skipped: ${item.decision.reason}`}</strong>
-                              : <strong className="text-rose-700 dark:text-rose-300">not decided yet</strong>}
+                              ? <strong className={item.decision.decision === "charged" ? "text-rose-700 dark:text-rose-300" : ""}>{item.decision.decision === "charged" ? `charged ${money(item.decision.amount)}` : `not charged: ${item.decision.reason}`}</strong>
+                              : <strong className="text-rose-700 dark:text-rose-300">waiting</strong>}
                           </li>
                         ))}
                       </ul>
-                      {toDecide > 0 && !ownerView && <span className="mt-1.5 block text-[11.5px] opacity-80">The report cannot be approved until each one is charged or skipped. The rep sees charges only.</span>}
+                      {toDecide > 0 && !ownerView && <span className="mt-1.5 block text-[11.5px] opacity-80">Charge or don't charge each one, then you can approve this report. {repName} sees charges only.</span>}
                     </div>
                   )}
                 </div>

@@ -1009,7 +1009,7 @@ router.post("/rep/:repId/approve", requireRole(...REVIEWERS), async (req, res) =
     const ready = await attachDecisions(orgId, missingFees, lateSends);
     const undecided = ready ? undecidedFor(repId, missingFees, lateSends) : [];
     if (undecided.length > 0) {
-      throw httpError(409, `Decide on ${undecided.length} order${undecided.length === 1 ? "" : "s"} first (charge or skip): ${undecided.map((item) => `#${item.orderId}`).join(", ")}.`);
+      throw httpError(409, `${undecided.length} order${undecided.length === 1 ? " needs" : "s need"} your decision first (charge or don't charge): ${undecided.map((item) => `#${item.orderId}`).join(", ")}.`);
     }
 
     const now = new Date().toISOString();
@@ -1125,7 +1125,7 @@ const OrderDecisionSchema = z.object({
   reason: z.string().trim().max(600).optional()
 }).superRefine((body, ctx) => {
   if (body.decision === "charged" && !body.amount) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["amount"], message: "Enter the amount to charge." });
-  if (body.decision === "skipped" && (body.reason ?? "").length < 3) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["reason"], message: "Say why this order is skipped." });
+  if (body.decision === "skipped" && (body.reason ?? "").length < 3) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["reason"], message: "Say why you are not charging for this order." });
 });
 
 router.post("/rep/:repId/order-decision", requireRole(...LEADERSHIP), async (req, res) => {
