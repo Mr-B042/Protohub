@@ -490,8 +490,9 @@ function decisionStatus(orders: Array<{ decision?: OrderDecisionView | null }>, 
 /**
  * The "No fee" / "Late send" chip under a rep's payout. A real button (Bright,
  * 28 Oct 2026: the small text tags were missed): red, with a blinking ring and
- * dot, while any order waits for a charge or skip; grey once all are decided.
- * Clicking it opens the window with the orders.
+ * dot, while any order waits for a charge or skip. Hidden once all are
+ * decided (the decisions stay in the window and the report). Clicking it
+ * opens the window with the orders.
  */
 function FlaggedChip({ kind, count, status, onOpen }: { kind: "No fee" | "Late send"; count: number; status: { text: string; urgent: boolean }; onOpen?: () => void }) {
   const cls = status.urgent
@@ -521,7 +522,10 @@ function FlaggedChip({ kind, count, status, onOpen }: { kind: "No fee" | "Late s
 /** Under the payout figure: delivered orders with no delivery fee. Each must be charged or skipped (leadership only). */
 export function MissingFeeNote({ detail, sym = "₦", onOpen }: { detail: MissingFeeDetail | undefined; sym?: string; onOpen?: () => void }) {
   if (!detail || detail.orders.length === 0) return null;
-  return <span className="block"><FlaggedChip kind="No fee" count={detail.orders.length} status={decisionStatus(detail.orders, sym)} onOpen={onOpen} /></span>;
+  const status = decisionStatus(detail.orders, sym);
+  // Only while something waits (Bright, 28 Oct 2026): decided chips go away.
+  if (!status.urgent) return null;
+  return <span className="block"><FlaggedChip kind="No fee" count={detail.orders.length} status={status} onOpen={onOpen} /></span>;
 }
 
 /**
@@ -947,5 +951,8 @@ export function LateSendNote({ detail, sym, onOpen }: { detail: LateSendWeek | n
   if (!detail || (detail.orders.length === 0 && detail.fines.length === 0)) return null;
   // Lump fines from before order-by-order decisions still count as charged.
   const lump = detail.fines.reduce((sum, fine) => sum + fine.amount, 0);
-  return <span className="block"><FlaggedChip kind="Late send" count={detail.orders.length} status={decisionStatus(detail.orders, sym, lump)} onOpen={onOpen} /></span>;
+  const status = decisionStatus(detail.orders, sym, lump);
+  // Only while something waits (Bright, 28 Oct 2026): decided chips go away.
+  if (!status.urgent) return null;
+  return <span className="block"><FlaggedChip kind="Late send" count={detail.orders.length} status={status} onOpen={onOpen} /></span>;
 }
