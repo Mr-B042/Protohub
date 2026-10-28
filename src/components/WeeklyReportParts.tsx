@@ -482,26 +482,46 @@ export function PayoutChangeNote({ change, sym }: { change: PayoutChangeView; sy
 function decisionStatus(orders: Array<{ decision?: OrderDecisionView | null }>, sym: string, extraCharged = 0) {
   const open = orders.filter((order) => !order.decision).length;
   const charged = orders.reduce((sum, order) => sum + (order.decision?.decision === "charged" && !order.decision.earlier ? order.decision.amount : 0), 0) + extraCharged;
-  if (open > 0) return { text: `${open} to decide`, urgent: true };
-  if (charged > 0) return { text: `charged ${sym}${nf(charged)}`, urgent: false };
-  return { text: orders.length ? "skipped" : "", urgent: false };
+  if (open > 0) return { text: open === orders.length ? `${open} to decide` : `${open} of ${orders.length} to decide`, urgent: true };
+  if (charged > 0) return { text: `Charged ${sym}${nf(charged)}`, urgent: false };
+  return { text: orders.length ? "Skipped" : "Nothing to decide", urgent: false };
+}
+
+/**
+ * The "No fee" / "Late send" chip under a rep's payout. A real button (Bright,
+ * 28 Oct 2026: the small text tags were missed): red, with a blinking ring and
+ * dot, while any order waits for a charge or skip; grey once all are decided.
+ * Clicking it opens the window with the orders.
+ */
+function FlaggedChip({ kind, count, status, onOpen }: { kind: "No fee" | "Late send"; count: number; status: { text: string; urgent: boolean }; onOpen?: () => void }) {
+  const cls = status.urgent
+    ? "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:border-rose-500/40 dark:bg-rose-500/15 dark:text-rose-200"
+    : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300";
+  const body = (
+    <>
+      {status.urgent && (
+        <span aria-hidden className="relative flex h-2 w-2">
+          <span className="absolute inline-flex h-full w-full rounded-full bg-rose-500 opacity-75 motion-safe:animate-ping" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-rose-600" />
+        </span>
+      )}
+      <span className={`rounded px-1 text-[9.5px] font-black uppercase tracking-wide ${kind === "No fee" ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200" : "bg-orange-100 text-orange-800 dark:bg-orange-500/20 dark:text-orange-200"}`}>{kind}</span>
+      <span>{status.urgent ? status.text : `${count} · ${status.text}`}</span>
+      {onOpen && <span aria-hidden className="ml-0.5 font-black">›</span>}
+    </>
+  );
+  const base = `relative mt-1 inline-flex items-center gap-1 whitespace-nowrap rounded-lg border px-1.5 py-1 text-[11px] font-bold ${cls}`;
+  // A soft blinking ring round the chip while something waits.
+  const halo = status.urgent ? <span aria-hidden className="pointer-events-none absolute -inset-0.5 rounded-[10px] ring-2 ring-rose-400/70 motion-safe:animate-pulse" /> : null;
+  return onOpen
+    ? <button type="button" onClick={onOpen} className={`!min-h-0 ${base}`} title="Open the orders to charge or skip each one">{halo}{body}</button>
+    : <span className={base}>{halo}{body}</span>;
 }
 
 /** Under the payout figure: delivered orders with no delivery fee. Each must be charged or skipped (leadership only). */
 export function MissingFeeNote({ detail, sym = "₦", onOpen }: { detail: MissingFeeDetail | undefined; sym?: string; onOpen?: () => void }) {
   if (!detail || detail.orders.length === 0) return null;
-  const count = detail.orders.length;
-  const status = decisionStatus(detail.orders, sym);
-  const label = (
-    <>
-      <span className="mr-1 rounded bg-amber-50 px-1 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-200">No fee</span>
-      {count} order{count === 1 ? "" : "s"} · <span className={status.urgent ? "text-rose-600 dark:text-rose-300" : ""}>{status.text}</span>
-    </>
-  );
-  const cls = "mt-0.5 block whitespace-nowrap text-left text-[10.5px] font-semibold text-amber-700 dark:text-amber-300";
-  return onOpen
-    ? <button type="button" onClick={onOpen} className={`!min-h-0 ${cls} hover:underline`} title="See the orders and charge or skip each one">{label}</button>
-    : <span className={cls}>{label}</span>;
+  return <span className="block"><FlaggedChip kind="No fee" count={detail.orders.length} status={decisionStatus(detail.orders, sym)} onOpen={onOpen} /></span>;
 }
 
 /**
@@ -925,18 +945,7 @@ export type LateSendWeek = {
 /** Under the payout figure: how many orders were sent out late. Opens the decisions window. */
 export function LateSendNote({ detail, sym, onOpen }: { detail: LateSendWeek | null | undefined; sym: string; onOpen?: () => void }) {
   if (!detail || (detail.orders.length === 0 && detail.fines.length === 0)) return null;
-  const count = detail.orders.length;
   // Lump fines from before order-by-order decisions still count as charged.
   const lump = detail.fines.reduce((sum, fine) => sum + fine.amount, 0);
-  const status = decisionStatus(detail.orders, sym, lump);
-  const label = (
-    <>
-      <span className="mr-1 rounded bg-orange-50 px-1 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-orange-700 dark:bg-orange-500/15 dark:text-orange-200">Late send</span>
-      {count} order{count === 1 ? "" : "s"} · <span className={status.urgent ? "text-rose-600 dark:text-rose-300" : ""}>{status.text || "not fined"}</span>
-    </>
-  );
-  const cls = "mt-0.5 block whitespace-nowrap text-left text-[10.5px] font-semibold text-orange-700 dark:text-orange-300";
-  return onOpen
-    ? <button type="button" onClick={onOpen} className={`!min-h-0 ${cls} hover:underline`} title="See the orders and charge or skip each one">{label}</button>
-    : <span className={cls}>{label}</span>;
+  return <span className="block"><FlaggedChip kind="Late send" count={detail.orders.length} status={decisionStatus(detail.orders, sym, lump)} onOpen={onOpen} /></span>;
 }

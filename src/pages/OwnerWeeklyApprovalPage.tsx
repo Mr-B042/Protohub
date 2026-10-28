@@ -610,7 +610,8 @@ export default function OwnerWeeklyApprovalPage({
       })()}
       {viewingRow && (
         <RepReviewModal row={viewingRow} weekStart={weekStart} weekEnd={weekEnd} sym={sym} canAct={false} canFlag={false} ownerView
-          corrections={corrections.filter((item) => viewingRow.report && item.repReportId === viewingRow.report.id)} onClose={() => setViewing(null)} />
+          corrections={corrections.filter((item) => viewingRow.report && item.repReportId === viewingRow.report.id)} onClose={() => setViewing(null)}
+          onOpenDecisions={(kind) => setDecisionsFor({ repId: viewingRow.repId, kind })} escapePaused={!!decisionsFor} />
       )}
       {returning && (
         <CorrectionForm title="Return to Manager" subtitle="Say exactly what needs fixing. The manager must answer before resubmitting." submitLabel="Return to Manager" tone="rose"

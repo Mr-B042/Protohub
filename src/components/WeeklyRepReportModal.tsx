@@ -5,6 +5,7 @@ import {
   MessageSquare, Minus, Package, Percent, Printer, Search, Send, ShoppingCart, Tag, Truck, Wallet, X
 } from "lucide-react";
 import type { WeeklyRepReport, WeeklyReportCorrection } from "../lib/api";
+import type { LateSendWeek } from "./WeeklyReportParts";
 import type { SnapshotDifference, WeeklyReportSnapshot } from "../pages/weekly-report-model";
 import { CORRECTION_SECTION_LABEL } from "../pages/weekly-report-model";
 
@@ -20,6 +21,12 @@ export type WeeklyRepReportModalProps = {
   editedAfterSubmit: Array<{ orderId: string; editedAt: string; what: string; by: string | null }>;
   weekStart: string; weekEnd: string; sym: string; canAct: boolean; canFlag: boolean; corrections: WeeklyReportCorrection[];
   onClose: () => void; onApprove?: () => Promise<void>; onReturn?: () => void; onFlag?: () => void; ownerView?: boolean;
+  /** Orders not sent out in 15 working minutes (leadership only). */
+  lateSend?: LateSendWeek | null;
+  /** Opens the charge / skip window on top of this one. */
+  onOpenDecisions?: (kind: "missing_fee" | "late_send") => void;
+  /** Another window is open on top: Escape closes that one, not this. */
+  escapePaused?: boolean;
 };
 
 const nf = (value: number) => Math.round(value).toLocaleString("en-NG");
@@ -36,6 +43,7 @@ const lagosParts = (iso: string) => {
 const when = (iso: string | null | undefined) => { if (!iso) return ""; const p = lagosParts(iso); return `${day(p.key)}, ${p.time}`; };
 const whenShort = (iso: string | null | undefined) => { if (!iso) return ""; const p = lagosParts(iso); return `${dayShort(p.key)}, ${p.time}`; };
 const pct = (value: number) => `${Math.round(value)}%`;
+const lateText = (minutes: number) => minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes} min`;
 
 type CheckKey = "orders" | "delivered" | "rate" | "products" | "cross" | "upsell" | "base" | "fines" | "final";
 const CHECK_ICON: Record<CheckKey, ReactNode> = {
@@ -43,7 +51,7 @@ const CHECK_ICON: Record<CheckKey, ReactNode> = {
 };
 
 export default function WeeklyRepReportModal(props: WeeklyRepReportModalProps) {
-  const { repName, report, frozen, live, differences, editedAfterSubmit, weekStart, weekEnd, sym, canAct, canFlag, corrections, onClose, onApprove, onReturn, onFlag, ownerView } = props;
+  const { repName, report, frozen, live, differences, editedAfterSubmit, weekStart, weekEnd, sym, canAct, canFlag, corrections, onClose, onApprove, onReturn, onFlag, ownerView, lateSend, onOpenDecisions, escapePaused } = props;
   const [approving, setApproving] = useState(false);
   const [error, setError] = useState("");
   const [openCheck, setOpenCheck] = useState<Set<CheckKey>>(new Set());
@@ -55,10 +63,11 @@ export default function WeeklyRepReportModal(props: WeeklyRepReportModalProps) {
   const [exportOpen, setExportOpen] = useState(false);
   const checkRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
+    if (escapePaused) return;
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, escapePaused]);
   useEffect(() => { setPage(1); }, [tile, search, pageSize]);
 
   const status = report?.status ?? "draft";
@@ -193,7 +202,18 @@ export default function WeeklyRepReportModal(props: WeeklyRepReportModalProps) {
     { icon: <Minus />, tone: "bg-rose-50 text-rose-500", label: "Fines", value: t.fines, op: "−" },
     ...(carried > 0 ? [{ icon: <Minus />, tone: "bg-rose-50 text-rose-500", label: "Last week's fines", value: carried, op: "−" }] : [])
   ] : [];
-  const missingFee = shown?.missingFeeDetail;
+  // "No fee" and "Late send" orders: each needs a charge or skip (Bright, 28 Oct 2026).
+  const flagged = [
+    ...(lateSend?.orders ?? []).map((order) => ({
+      kind: "late_send" as const, orderId: order.orderId, decision: order.decision ?? null,
+      detail: order.sentAt ? `${lateText(order.workingMinutesLate ?? order.minutesLate)} late` : "still New"
+    })),
+    ...(shown?.missingFeeDetail?.orders ?? []).map((order) => ({
+      kind: "missing_fee" as const, orderId: order.orderId, decision: order.decision ?? null,
+      detail: `delivered ${order.deliveredDate}${order.agentName ? ` · ${order.agentName}` : ""}`
+    }))
+  ];
+  const toDecide = flagged.filter((item) => !item.decision).length;
 
   const notes: string[] = [
     ...editedAfterSubmit.map((edit) => `Order #${edit.orderId}: ${edit.what} after submit (${whenShort(edit.editedAt)}${edit.by ? `, ${edit.by}` : ""})`),
@@ -333,22 +353,32 @@ export default function WeeklyRepReportModal(props: WeeklyRepReportModalProps) {
                       {payoutReason ? <span className="block">Reason: {payoutReason}</span> : null}
                     </p>
                   )}
-                  {missingFee && missingFee.orders.length > 0 && (
-                    <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] leading-snug text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
-                      <strong>Delivered with no delivery fee: {missingFee.orders.length} order{missingFee.orders.length === 1 ? "" : "s"}</strong>
-                      <ul className="m-0 mt-1 list-none p-0">
-                        {missingFee.orders.map((order) => (
-                          <li key={order.orderId}>
-                            Order #{order.orderId} · delivered {order.deliveredDate}
-                            {order.agentName ? ` · ${order.agentName}` : ""}
-                            {" · "}
-                            {order.decision
-                              ? <strong className={order.decision.decision === "charged" ? "text-rose-700 dark:text-rose-300" : ""}>{order.decision.decision === "charged" ? `charged ${money(order.decision.amount)}` : `skipped: ${order.decision.reason}`}</strong>
+                  {flagged.length > 0 && (
+                    <div className={`mt-3 rounded-xl border px-3 py-2.5 text-[12.5px] leading-snug ${toDecide > 0 ? "border-rose-200 bg-rose-50 text-rose-900 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-100" : "border-gray-200 bg-gray-50 text-gray-800 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100"}`}>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <strong className="text-[13px]">
+                          {toDecide > 0 ? `${toDecide} order${toDecide === 1 ? "" : "s"} to charge or skip` : "Flagged orders: all decided"}
+                        </strong>
+                        {onOpenDecisions && (
+                          <button type="button" onClick={() => onOpenDecisions(toDecide > 0 && flagged.find((item) => !item.decision)?.kind === "missing_fee" ? "missing_fee" : flagged.find((item) => !item.decision)?.kind ?? flagged[0].kind)}
+                            className={`!min-h-0 rounded-lg px-3 py-1.5 text-[12px] font-bold ${toDecide > 0 && !ownerView ? "bg-rose-600 text-white ring-2 ring-rose-300 hover:bg-rose-700 motion-safe:animate-pulse" : "border border-gray-200 bg-white text-gray-800 hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"}`}>
+                            {ownerView ? "See details" : toDecide > 0 ? "Charge or skip" : "See decisions"}
+                          </button>
+                        )}
+                      </div>
+                      <ul className="m-0 mt-1.5 list-none space-y-1 p-0">
+                        {flagged.map((item) => (
+                          <li key={`${item.kind}-${item.orderId}`} className="flex flex-wrap items-center gap-x-1.5">
+                            <span className={`rounded px-1 py-0.5 text-[9.5px] font-bold uppercase tracking-wide ${item.kind === "missing_fee" ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200" : "bg-orange-100 text-orange-800 dark:bg-orange-500/20 dark:text-orange-200"}`}>{item.kind === "missing_fee" ? "No fee" : "Late send"}</span>
+                            <span>Order #{item.orderId} · {item.detail}</span>
+                            <span>·</span>
+                            {item.decision
+                              ? <strong className={item.decision.decision === "charged" ? "text-rose-700 dark:text-rose-300" : ""}>{item.decision.decision === "charged" ? `charged ${money(item.decision.amount)}` : `skipped: ${item.decision.reason}`}</strong>
                               : <strong className="text-rose-700 dark:text-rose-300">not decided yet</strong>}
                           </li>
                         ))}
                       </ul>
-                      <span className="block">Charge or skip each one from the "No fee" tag under the rep's payout. The rep sees charges only.</span>
+                      {toDecide > 0 && !ownerView && <span className="mt-1.5 block text-[11.5px] opacity-80">The report cannot be approved until each one is charged or skipped. The rep sees charges only.</span>}
                     </div>
                   )}
                 </div>
