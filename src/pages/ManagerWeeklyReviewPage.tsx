@@ -980,6 +980,9 @@ export default function ManagerWeeklyReviewPage({
           onApprove={async () => { const row = reviewRow; setReviewing(null); approveFromList(row); }}
           onReturn={() => { setReturning(reviewRow.repId); setReviewing(null); }}
           onFlag={() => { setFlagging(reviewRow.repId); setReviewing(null); }}
+          // Charge / skip opens on top of the report, which stays open behind it.
+          onOpenDecisions={(kind) => setDecisionsFor({ repId: reviewRow.repId, kind })}
+          escapePaused={!!decisionsFor}
         />
       )}
 
@@ -1156,7 +1159,7 @@ export function OrdersTable({ rows, sym }: { rows: Array<WeeklyReportSnapshot["o
  * The side-by-side check Bright described: each figure the rep submitted next
  * to what the system shows now, with a tick when they agree.
  */
-export function RepReviewModal({ row, weekStart, weekEnd, sym, canAct, canFlag, corrections, onClose, onApprove, onReturn, onFlag, ownerView }: {
+export function RepReviewModal({ row, weekStart, weekEnd, sym, canAct, canFlag, corrections, onClose, onApprove, onReturn, onFlag, ownerView, onOpenDecisions, escapePaused }: {
   row: ReviewRepRow;
   weekStart: string;
   weekEnd: string;
@@ -1169,12 +1172,15 @@ export function RepReviewModal({ row, weekStart, weekEnd, sym, canAct, canFlag, 
   onReturn?: () => void;
   onFlag?: () => void;
   ownerView?: boolean;
+  onOpenDecisions?: (kind: DecisionKind) => void;
+  escapePaused?: boolean;
 }) {
   // Bright's report-window design (8 Oct 2026), in components/WeeklyRepReportModal.tsx.
   return (
     <WeeklyRepReportModal repName={row.repName} report={row.report} frozen={row.frozen} live={row.live} differences={row.differences}
       editedAfterSubmit={row.editedAfterSubmit} weekStart={weekStart} weekEnd={weekEnd} sym={sym} canAct={canAct} canFlag={canFlag}
-      corrections={corrections} onClose={onClose} onApprove={onApprove} onReturn={onReturn} onFlag={onFlag} ownerView={ownerView} />
+      corrections={corrections} onClose={onClose} onApprove={onApprove} onReturn={onReturn} onFlag={onFlag} ownerView={ownerView}
+      lateSend={row.lateSend} onOpenDecisions={onOpenDecisions} escapePaused={escapePaused} />
   );
 }
 
