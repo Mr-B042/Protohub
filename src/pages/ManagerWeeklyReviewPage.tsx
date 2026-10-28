@@ -935,7 +935,7 @@ export default function ManagerWeeklyReviewPage({
                 <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-[12.5px] text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
                   <span className="flex items-start gap-2">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                    <span><strong>{toDecide} flagged order{toDecide === 1 ? "" : "s"} still need{toDecide === 1 ? "s" : ""} a decision.</strong> Charge or skip each one before approving.</span>
+                    <span><strong>{toDecide} order{toDecide === 1 ? " needs" : "s need"} your decision first.</strong> Sent late or delivery fee missing: charge or don't charge, then approve.</span>
                   </span>
                   <button type="button" onClick={() => { const repId = approveRow.repId; setApproving(null); setDecisionsFor({ repId, kind: undecidedCount(approveRow.lateSend, null) > 0 ? "late_send" : "missing_fee" }); }}
                     className="!min-h-0 rounded-lg bg-rose-600 px-3 py-1.5 text-[12px] font-bold text-white hover:bg-rose-700">Decide now</button>

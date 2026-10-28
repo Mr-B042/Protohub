@@ -18,8 +18,8 @@ type LateOrder = LateSendWeek["orders"][number];
 type FeeOrder = MissingFeeDetail["orders"][number];
 
 const SKIP_REASONS: Record<DecisionKind, string[]> = {
-  late_send: ["Moved out of New by someone else", "System or network problem", "Customer asked to be called later", "First time - warned instead"],
-  missing_fee: ["Agent has not sent the fee yet", "Free delivery for this order", "Fee was paid by the company", "First time - warned instead"]
+  late_send: ["Someone else sent it out", "System or network problem", "Customer asked to be called later", "First time - warned instead"],
+  missing_fee: ["Agent has not given us the fee yet", "Free delivery on this order", "Company paid the fee", "First time - warned instead"]
 };
 
 const lagos = (iso: string | null | undefined, withDay = true) => iso
@@ -31,7 +31,7 @@ const span = (minutes: number) => minutes >= 60 ? `${Math.floor(minutes / 60)}h 
 /** How bad a late order is, from working minutes past the 15. */
 function lateLevel(order: LateOrder) {
   const late = order.workingMinutesLate ?? order.minutesLate;
-  if (!order.sentAt) return { label: "Still New", cls: "bg-rose-600 text-white" };
+  if (!order.sentAt) return { label: "Not sent out yet", cls: "bg-rose-600 text-white" };
   if (late > 60) return { label: "Very late", cls: "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-200" };
   if (late > 15) return { label: "Late", cls: "bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-200" };
   return { label: "A little late", cls: "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200" };
@@ -68,17 +68,17 @@ export function OrderDecisionsModal({ repName, weekLabel, sym, lateSend, missing
 
   const tabs: Array<{ key: DecisionKind; label: string; count: number; open: number }> = [
     { key: "late_send", label: "Sent out late", count: late.length, open: pending(late) },
-    { key: "missing_fee", label: "No delivery fee", count: fees.length, open: pending(fees) }
+    { key: "missing_fee", label: "Delivery fee missing", count: fees.length, open: pending(fees) }
   ];
 
   return (
-    <Modal wide title={`${repName}: orders to decide`} subtitle={`${weekLabel} · Charge or skip each order before the report can be approved.`} onClose={onClose}>
+    <Modal wide title={`${repName}: orders that need your decision`} subtitle={`${weekLabel} · For each order, charge ${repName} or don't charge. You can approve the report when every order is done.`} onClose={onClose}>
       <div className="space-y-4 px-6 py-5">
         {/* Where things stand */}
         <div className="grid grid-cols-3 gap-2">
-          <Tile tone={left > 0 ? "rose" : "emerald"} label="To decide" value={left > 0 ? String(left) : "None"} hint={left > 0 ? "Approve is held" : "Ready to approve"} />
+          <Tile tone={left > 0 ? "rose" : "emerald"} label="Waiting" value={left > 0 ? String(left) : "None"} hint={left > 0 ? "Report can't be approved yet" : "Report can be approved"} />
           <Tile tone="gray" label="Charged" value={`${sym}${nf(charged.reduce((sum, order) => sum + (order.decision?.amount ?? 0), 0))}`} hint={`${charged.length} order${charged.length === 1 ? "" : "s"}`} />
-          <Tile tone="gray" label="Skipped" value={String(skipped)} hint="Rep does not see these" />
+          <Tile tone="gray" label="Not charged" value={String(skipped)} hint={`${repName} won't see these`} />
         </div>
 
         <div className="flex gap-1 rounded-xl bg-gray-100 p-1 dark:bg-slate-800" role="tablist">
@@ -95,11 +95,11 @@ export function OrderDecisionsModal({ repName, weekLabel, sym, lateSend, missing
         {tab === "late_send" && (
           <>
             {late.length > 0 && <LateSummary orders={late} />}
-            {late.length === 0 && <Empty text="No orders were sent out late this week." />}
+            {late.length === 0 && <Empty text={`${repName} sent out every order on time this week.`} />}
             {late.map((order) => (
-              <OrderCard key={order.orderId} kind="late_send" orderId={order.orderId} sym={sym} decision={order.decision ?? null}
+              <OrderCard key={order.orderId} repName={repName} kind="late_send" orderId={order.orderId} sym={sym} decision={order.decision ?? null}
                 onDecide={onDecide} onUndo={onUndo} title={<LateTitle order={order} sym={sym} />}>
-                <LateFacts order={order} />
+                <LateFacts order={order} repName={repName} />
               </OrderCard>
             ))}
             {oldFines.length > 0 && (
@@ -118,9 +118,9 @@ export function OrderDecisionsModal({ repName, weekLabel, sym, lateSend, missing
 
         {tab === "missing_fee" && (
           <>
-            {fees.length === 0 && <Empty text="Every delivered order this week has a delivery fee." />}
+            {fees.length === 0 && <Empty text="Every delivered order this week has its delivery fee." />}
             {fees.map((order) => (
-              <OrderCard key={order.orderId} kind="missing_fee" orderId={order.orderId} sym={sym} decision={order.decision ?? null}
+              <OrderCard key={order.orderId} repName={repName} kind="missing_fee" orderId={order.orderId} sym={sym} decision={order.decision ?? null}
                 onDecide={onDecide} onUndo={onUndo} title={<FeeTitle order={order} sym={sym} />}>
                 <FeeFacts order={order} sym={sym} />
               </OrderCard>
@@ -131,7 +131,7 @@ export function OrderDecisionsModal({ repName, weekLabel, sym, lateSend, missing
         <div className={`flex flex-wrap items-center justify-between gap-2 rounded-xl px-4 py-3 text-[12.5px] ${left > 0 ? "bg-rose-50 text-rose-800 dark:bg-rose-500/10 dark:text-rose-200" : "bg-emerald-50 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-200"}`}>
           <span className="flex items-center gap-2 font-semibold">
             {left > 0 ? <AlertTriangle className="h-4 w-4" /> : <Check className="h-4 w-4" />}
-            {left > 0 ? `${left} order${left === 1 ? "" : "s"} still need${left === 1 ? "s" : ""} a decision. The report cannot be approved until then.` : "Every order has a decision."}
+            {left > 0 ? `${left} order${left === 1 ? " is" : "s are"} still waiting. Charge or don't charge ${left === 1 ? "it" : "each one"}, then you can approve ${repName}'s report.` : `All done. You can approve ${repName}'s report.`}
           </span>
           <button type="button" onClick={onClose} className="!min-h-0 rounded-xl border border-gray-200 bg-white px-4 py-2 text-[13px] font-semibold text-gray-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">Close</button>
         </div>
@@ -165,9 +165,9 @@ function LateSummary({ orders }: { orders: LateOrder[] }) {
   const average = Math.round(lates.reduce((sum, value) => sum + value, 0) / lates.length);
   return (
     <p className="m-0 text-[12.5px] text-gray-600 dark:text-slate-300">
-      <strong className="text-gray-900 dark:text-slate-100">{orders.length} late</strong> · worst {span(worst)} past the 15 minutes · average {span(average)}
-      {still > 0 && <span className="font-semibold text-rose-600"> · {still} still New</span>}
-      <span className="block text-[11.5px] text-gray-500">Times count working hours only: 10am-5:30pm (11am on Monday), no Sunday.</span>
+      <strong className="text-gray-900 dark:text-slate-100">{orders.length} order{orders.length === 1 ? "" : "s"} sent out late</strong> · worst: {span(worst)} too late · average: {span(average)} too late
+      {still > 0 && <span className="font-semibold text-rose-600"> · {still} not sent out yet</span>}
+      <span className="block text-[11.5px] text-gray-500">Every order must be sent out within 15 minutes. Only work hours count: 10am to 5:30pm (11am on Monday), not Sunday.</span>
     </p>
   );
 }
@@ -189,18 +189,18 @@ function LateTitle({ order, sym }: { order: LateOrder; sym: string }) {
 }
 
 /** Came in → clock started → sent out, plus how long it took against the 15 minutes. */
-function LateFacts({ order }: { order: LateOrder }) {
+function LateFacts({ order, repName }: { order: LateOrder; repName: string }) {
   const taken = order.workingMinutesTaken ?? (15 + order.minutesLate);
   const lateBy = order.workingMinutesLate ?? order.minutesLate;
   const okPart = Math.max(4, Math.min(100, (15 / Math.max(taken, 15)) * 100));
   const steps: Array<{ label: string; value: string; note?: string; tone?: "bad" }> = [
-    { label: "Customer placed it", value: lagos(order.placedAt ?? order.arrivedAt), note: !order.assignedAt && Date.parse(order.clockStart) === Date.parse(order.arrivedAt) ? "15-min clock started here" : undefined },
-    ...(order.assignedAt ? [{ label: "Given to the rep", value: lagos(order.assignedAt) }] : []),
+    { label: "Order came in", value: lagos(order.placedAt ?? order.arrivedAt), note: !order.assignedAt && Date.parse(order.clockStart) === Date.parse(order.arrivedAt) ? "the 15 minutes started here" : undefined },
+    ...(order.assignedAt ? [{ label: `Given to ${repName}`, value: lagos(order.assignedAt) }] : []),
     // Only when it differs from when the order reached the rep (night / Sunday orders).
-    ...(Date.parse(order.clockStart) !== Date.parse(order.arrivedAt) ? [{ label: "15-min clock started", value: lagos(order.clockStart), note: "came in after hours" }] : []),
+    ...(Date.parse(order.clockStart) !== Date.parse(order.arrivedAt) ? [{ label: "15 minutes started", value: lagos(order.clockStart), note: "came in after work hours" }] : []),
     order.sentAt
-      ? { label: "Sent out", value: lagos(order.sentAt), note: `as ${order.sentStatus ?? "-"}${order.sentByName ? ` by ${order.sentByName}` : ""}`, tone: "bad" as const }
-      : { label: "Sent out", value: "Not yet", note: "still New", tone: "bad" as const }
+      ? { label: "Sent out", value: lagos(order.sentAt), note: `moved to ${order.sentStatus ?? "-"}${order.sentByName ? ` by ${order.sentByName}` : ""}`, tone: "bad" as const }
+      : { label: "Sent out", value: "Not yet", note: "still waiting in New", tone: "bad" as const }
   ];
   return (
     <div className="space-y-3">
@@ -219,9 +219,9 @@ function LateFacts({ order }: { order: LateOrder }) {
       <div>
         <div className="flex flex-wrap items-baseline justify-between gap-2 text-[12.5px]">
           <span className="text-gray-700 dark:text-slate-200">
-            {order.sentAt ? "Took" : "Waiting"} <strong className="text-[15px] text-gray-900 dark:text-slate-50">{span(taken)}</strong> of working time · limit 15 min
+            {order.sentAt ? "Took" : "Waiting for"} <strong className="text-[15px] text-gray-900 dark:text-slate-50">{span(taken)}</strong> · allowed: 15 min
           </span>
-          <strong className="text-rose-600">{span(lateBy)} past the limit</strong>
+          <strong className="text-rose-600">{span(lateBy)} too late</strong>
         </div>
         <div className="mt-1.5 flex h-2 overflow-hidden rounded-full bg-rose-100 dark:bg-rose-500/20" aria-hidden>
           <span className="h-full bg-emerald-500" style={{ width: `${okPart}%` }} />
@@ -230,7 +230,7 @@ function LateFacts({ order }: { order: LateOrder }) {
       </div>
       {order.sentByRep === false && order.sentByName && (
         <p className="m-0 flex items-center gap-1.5 rounded-lg bg-blue-50 px-3 py-2 text-[12px] text-blue-800 dark:bg-blue-500/10 dark:text-blue-200">
-          <User className="h-3.5 w-3.5" /> {order.sentByName} moved this order out of New, not the rep.
+          <User className="h-3.5 w-3.5" /> {order.sentByName} sent this order out, not {repName}.
         </p>
       )}
     </div>
@@ -242,7 +242,7 @@ function FeeTitle({ order, sym }: { order: FeeOrder; sym: string }) {
     <>
       <span className="flex flex-wrap items-center gap-2">
         <strong className="text-[14px] text-gray-900 dark:text-slate-50">#{order.orderId}</strong>
-        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10.5px] font-black uppercase tracking-wide text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">No fee</span>
+        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10.5px] font-black uppercase tracking-wide text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">Delivery fee missing</span>
       </span>
       <span className="mt-0.5 block text-[12px] text-gray-600 dark:text-slate-300">
         {[order.customer, order.phone, order.product ? `${order.product}${order.quantity ? ` × ${order.quantity}` : ""}` : null].filter(Boolean).join(" · ")}
@@ -254,13 +254,13 @@ function FeeTitle({ order, sym }: { order: FeeOrder; sym: string }) {
 
 function FeeFacts({ order, sym }: { order: FeeOrder; sym: string }) {
   const facts: Array<{ label: string; value: string; note?: string }> = [
-    { label: "Delivered", value: dayOnly(order.deliveredDate), note: order.deliveredBy ? `marked by ${order.deliveredBy}${order.deliveredAt ? `, ${lagos(order.deliveredAt, false)}` : ""}` : undefined },
-    { label: "Where", value: [order.city, order.state].filter(Boolean).join(", ") || "-" },
+    { label: "Delivered on", value: dayOnly(order.deliveredDate), note: order.deliveredBy ? `marked delivered by ${order.deliveredBy}${order.deliveredAt ? `, ${lagos(order.deliveredAt, false)}` : ""}` : undefined },
+    { label: "Delivered to", value: [order.city, order.state].filter(Boolean).join(", ") || "-" },
     { label: "Delivery agent", value: order.agentName || "Not recorded" },
     {
-      label: "Agent's usual fee here",
+      label: "Agent usually charges",
       value: order.usualFee ? `${sym}${nf(order.usualFee)}` : "Not known",
-      note: order.usualFee ? `from their last ${order.usualFeeFrom} order${order.usualFeeFrom === 1 ? "" : "s"} in ${order.state || "this state"}` : "no fee recorded for this agent here"
+      note: order.usualFee ? `for ${order.state || "this state"}, from their last ${order.usualFeeFrom} order${order.usualFeeFrom === 1 ? "" : "s"}` : "no past fee for this agent here"
     }
   ];
   return (
@@ -274,14 +274,14 @@ function FeeFacts({ order, sym }: { order: FeeOrder; sym: string }) {
           </div>
         ))}
       </dl>
-      <p className="m-0 text-[11.5px] text-gray-500">With no fee, the order's profit shows higher than it really is until someone enters it.</p>
+      <p className="m-0 text-[11.5px] text-gray-500">No delivery fee was entered for this order. Until it is, the order looks more profitable than it really is.</p>
     </div>
   );
 }
 
 /** One order: its facts, then either its decision or the charge / skip controls. */
-function OrderCard({ kind, orderId, sym, decision, title, children, onDecide, onUndo }: {
-  kind: DecisionKind; orderId: string; sym: string; decision: OrderDecisionView | null;
+function OrderCard({ kind, orderId, sym, repName, decision, title, children, onDecide, onUndo }: {
+  kind: DecisionKind; orderId: string; sym: string; repName: string; decision: OrderDecisionView | null;
   title: ReactNode; children: ReactNode;
   onDecide?: (kind: DecisionKind, orderId: string, decision: "charged" | "skipped", amount: number | undefined, reason: string) => Promise<void>;
   onUndo?: (decisionId: string) => Promise<void>;
@@ -312,10 +312,10 @@ function OrderCard({ kind, orderId, sym, decision, title, children, onDecide, on
         {decision ? (
           <div className={`flex flex-wrap items-start justify-between gap-2 rounded-xl px-3 py-2.5 text-[12.5px] ${decision.decision === "charged" ? "bg-rose-50 text-rose-900 dark:bg-rose-500/10 dark:text-rose-100" : "bg-gray-50 text-gray-800 dark:bg-slate-800/60 dark:text-slate-200"}`}>
             <span>
-              <strong>{decision.decision === "charged" ? `Charged ${sym}${nf(decision.amount)}` : "Skipped"}</strong>
+              <strong>{decision.decision === "charged" ? `Charged ${sym}${nf(decision.amount)}` : "Not charged"}</strong>
               <span className="text-[11.5px] opacity-80"> · by {decision.byName || "-"}{decision.byRole ? ` (${decision.byRole})` : ""} · {lagos(decision.at)}</span>
-              {decision.reason && <span className="block text-[12px]">{decision.decision === "charged" ? "Note" : "Reason"}: {decision.reason}</span>}
-              {decision.decision === "charged" && !decision.earlier && <span className="block text-[11px] opacity-70">The rep sees this in their fines.</span>}
+              {decision.reason && <span className="block text-[12px]">{decision.decision === "charged" ? "Note" : "Why"}: {decision.reason}</span>}
+              {decision.decision === "charged" && !decision.earlier && <span className="block text-[11px] opacity-70">{repName} sees this in their fines.</span>}
             </span>
             {onUndo && decision.id && !decision.earlier && (
               <button type="button" disabled={saving} onClick={() => run(() => onUndo(decision.id!))}
@@ -325,14 +325,14 @@ function OrderCard({ kind, orderId, sym, decision, title, children, onDecide, on
             )}
           </div>
         ) : !onDecide ? (
-          <p className="m-0 rounded-xl bg-amber-50 px-3 py-2 text-[12.5px] font-semibold text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">Not decided yet.</p>
+          <p className="m-0 rounded-xl bg-amber-50 px-3 py-2 text-[12.5px] font-semibold text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">Waiting for a decision.</p>
         ) : (
           <div className="space-y-2.5">
             <div className="flex gap-1 rounded-lg bg-gray-100 p-0.5 text-[12px] font-bold dark:bg-slate-800" role="radiogroup" aria-label={`Decision for order ${orderId}`}>
               {(["charge", "skip"] as const).map((item) => (
                 <button key={item} type="button" role="radio" aria-checked={mode === item} onClick={() => { setMode(item); setError(""); }}
                   className={`!min-h-0 flex-1 rounded-md px-3 py-1.5 ${mode === item ? (item === "charge" ? "bg-rose-600 text-white" : "bg-white text-gray-900 shadow-sm dark:bg-slate-900 dark:text-slate-50") : "text-gray-500"}`}>
-                  {item === "charge" ? "Charge the rep" : "Skip, no charge"}
+                  {item === "charge" ? `Charge ${repName}` : "Don't charge"}
                 </button>
               ))}
             </div>
@@ -342,10 +342,10 @@ function OrderCard({ kind, orderId, sym, decision, title, children, onDecide, on
                   <span className="sr-only">Amount ({sym})</span>
                   <span className="relative block">
                     <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[13px] font-bold text-gray-400">{sym}</span>
-                    <input className={`${field} pl-7`} inputMode="numeric" value={amountText} onChange={(event) => setAmountText(event.target.value)} placeholder="Amount" aria-label={`Amount to charge for order ${orderId}`} />
+                    <input className={`${field} pl-7`} inputMode="numeric" value={amountText} onChange={(event) => setAmountText(event.target.value)} placeholder="How much?" aria-label={`Amount to charge for order ${orderId}`} />
                   </span>
                 </label>
-                <input className={field} maxLength={400} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Note for the rep (optional)" aria-label="Note for the rep" />
+                <input className={field} maxLength={400} value={reason} onChange={(event) => setReason(event.target.value)} placeholder={`Note ${repName} will see (optional)`} aria-label="Note" />
                 <button type="button" disabled={!amountOk || saving} onClick={() => run(() => onDecide(kind, orderId, "charged", amount, reason.trim()))}
                   className="!min-h-0 rounded-xl bg-rose-600 px-4 py-2.5 text-[13px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">{saving ? "Saving…" : "Charge"}</button>
                 {amountText.trim() && !amountOk && <span className="text-[11px] font-semibold text-rose-600 sm:col-span-3">Enter a whole amount above 0.</span>}
@@ -359,11 +359,11 @@ function OrderCard({ kind, orderId, sym, decision, title, children, onDecide, on
                   ))}
                 </div>
                 <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-                  <input className={field} maxLength={600} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Why is this order skipped? (required)" aria-label="Reason for skipping" />
+                  <input className={field} maxLength={600} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Why not charge? (required)" aria-label="Why not charge" />
                   <button type="button" disabled={!reasonOk || saving} onClick={() => run(() => onDecide(kind, orderId, "skipped", undefined, reason.trim()))}
-                    className="!min-h-0 rounded-xl bg-gray-900 px-4 py-2.5 text-[13px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40 dark:bg-slate-100 dark:text-slate-900">{saving ? "Saving…" : "Skip"}</button>
+                    className="!min-h-0 rounded-xl bg-gray-900 px-4 py-2.5 text-[13px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40 dark:bg-slate-100 dark:text-slate-900">{saving ? "Saving…" : "Don't charge"}</button>
                 </div>
-                <span className="block text-[11px] text-gray-500">Only leadership sees skips and their reasons.</span>
+                <span className="block text-[11px] text-gray-500">{repName} won't see this. Only managers and the owner will.</span>
               </div>
             )}
           </div>
