@@ -74,8 +74,10 @@ export default function ManagerWeeklyReviewPage({
   renderFunds, fundsPending, fundsSummary, onSaveDraftNote, initialTab, logMissDisputes = [], onDecideLogMiss,
   renderHeadOfSales, headOfSalesAttention = false,
   onApprove, onReturn, onFlag, onSubmitToOwner, onBack, onEditManagerBonus, monthlyIncentive = null,
-  onSavePayoutChange, onRemovePayoutChange, repsWaiting = false, waitingWeeks = [], onDecideOrder, onUndoOrderDecision, onRemoveLateSendFine
+  onSavePayoutChange, onRemovePayoutChange, repsWaiting = false, waitingWeeks = [], onDecideOrder, onUndoOrderDecision, onRemoveLateSendFine, orderDecisionsReady = true
 }: {
+  /** false until the decisions table exists on the database: Approve is not held. */
+  orderDecisionsReady?: boolean;
   /** Charge or skip one "No fee" / "Late send" order (Admin / Manager / Owner). Every one needs a decision before Approve. */
   onDecideOrder?: (repId: string, kind: DecisionKind, orderId: string, decision: "charged" | "skipped", amount: number | undefined, reason: string) => Promise<void>;
   onUndoOrderDecision?: (id: string) => Promise<void>;
@@ -890,7 +892,7 @@ export default function ManagerWeeklyReviewPage({
         ];
         const canAdjust = canChangePayout(approveRow);
         // Every "No fee" / "Late send" order needs a charge or skip first (Bright, 28 Oct 2026).
-        const toDecide = undecidedCount(approveRow.lateSend, snap?.missingFeeDetail);
+        const toDecide = orderDecisionsReady ? undecidedCount(approveRow.lateSend, snap?.missingFeeDetail) : 0;
         return (
           <Modal title="Approve report" subtitle={`${approveRow.repName} · ${longDate(weekStart)} to ${longDate(weekEnd)}`} onClose={() => { if (!approveBusy) setApproving(null); }}>
             <div className="space-y-4 px-6 py-5">

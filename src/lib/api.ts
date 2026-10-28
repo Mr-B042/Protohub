@@ -4181,6 +4181,8 @@ export const weeklyReportsApi = {
       missingFees?: Record<string, MissingFeeDetail>;
       /** Per rep: orders not sent out in 15 working minutes + fines added for them (leadership only). */
       lateSends?: Record<string, LateSendWeek>;
+      /** false until migration 311 is applied: decisions are not saved and Approve is not held. */
+      orderDecisionsReady?: boolean;
       /** Weeks with reports sent in by reps that have not gone to the owner yet. */
       waitingWeeks?: Array<{ weekStart: string; toApprove: number; approved: number; returned: number }>;
       funds?: Array<{ managerId: string; managerName: string; totals: ManagerFundTotals; readiness: string[]; locked: boolean; varianceExplanation: string | null; notes: string | null; returned: number }>;

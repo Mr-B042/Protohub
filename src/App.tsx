@@ -32524,6 +32524,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           decision === "charged" ? `Order #${orderId} charged to ${repName(repId)}.` : `Order #${orderId} skipped.`
         )}
         onUndoOrderDecision={(id) => weeklyRun(() => weeklyReportsApi.undoOrderDecision(id), "Decision undone.")}
+        orderDecisionsReady={week?.orderDecisionsReady !== false}
         onRemoveLateSendFine={(id) => weeklyRun(() => weeklyReportsApi.removeLateSendFine(id), "Fine removed.")}
         repsWaiting={Boolean(week?.gate?.blocked)}
         waitingWeeks={week?.waitingWeeks ?? []}

@@ -855,7 +855,7 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
     if (corrections.error) throw corrections.error;
     if (auditRows.error) throw auditRows.error;
     // Each listed order's charge / skip (or null = still to decide).
-    await attachDecisions(orgId, missingFees, lateSends);
+    const orderDecisionsReady = await attachDecisions(orgId, missingFees, lateSends);
     res.json({
       weekStart,
       weekEnd: weekEndFromStart(weekStart),
@@ -881,6 +881,7 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
       missingFees,
       // Orders not sent out in 15 working minutes, and any fine already added for them.
       lateSends,
+      orderDecisionsReady,
       funds: funds.map(({ manager, fund }) => ({
         managerId: manager.id,
         managerName: manager.name,
@@ -1005,8 +1006,8 @@ router.post("/rep/:repId/approve", requireRole(...REVIEWERS), async (req, res) =
     if (!verdict.ok || !report) throw httpError(409, verdict.ok ? "The rep has not submitted this report yet." : verdict.error);
     // Every "No fee" and "Late send" order must be charged or skipped first (Bright, 28 Oct 2026).
     const [missingFees, lateSends] = await Promise.all([missingFeesFor(orgId, weekStart), lateSendsFor(orgId, weekStart)]);
-    await attachDecisions(orgId, missingFees, lateSends);
-    const undecided = undecidedFor(repId, missingFees, lateSends);
+    const ready = await attachDecisions(orgId, missingFees, lateSends);
+    const undecided = ready ? undecidedFor(repId, missingFees, lateSends) : [];
     if (undecided.length > 0) {
       throw httpError(409, `Decide on ${undecided.length} order${undecided.length === 1 ? "" : "s"} first (charge or skip): ${undecided.map((item) => `#${item.orderId}`).join(", ")}.`);
     }

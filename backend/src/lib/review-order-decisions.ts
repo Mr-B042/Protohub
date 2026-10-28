@@ -38,8 +38,15 @@ function mapDecision(row: any): OrderDecision {
   };
 }
 
-/** Puts each order's decision (or null) on the two lists, in place. */
-export async function attachDecisions(orgId: string, missingFees: MissingFeeMap, lateSends: LateSendMap) {
+/** The table is not there yet (code shipped before migration 311 reached the database). */
+const tableMissing = (error: any) => error?.code === "42P01" || error?.code === "PGRST205" || /weekly_review_order_decisions/.test(String(error?.message ?? ""));
+
+/**
+ * Puts each order's decision (or null) on the two lists, in place. Returns
+ * false when migration 311 is not applied yet: then nothing is held back
+ * (Approve works as before) and deciding is refused with a clear message.
+ */
+export async function attachDecisions(orgId: string, missingFees: MissingFeeMap, lateSends: LateSendMap): Promise<boolean> {
   const feeIds = Object.values(missingFees).flatMap((week) => week.orders.map((order) => order.orderId));
   const lateIds = Object.values(lateSends).flatMap((week) => week.orders.map((order) => order.orderId));
   const allIds = [...new Set([...feeIds, ...lateIds])];
@@ -53,7 +60,7 @@ export async function attachDecisions(orgId: string, missingFees: MissingFeeMap,
       // The ₦500 charges the old automatic rule made (week of 11 Oct).
       supabase.from("rep_penalties").select("order_id, amount, by_name, created_at").eq("org_id", orgId).eq("type", MISSING_FEE_TYPE).in("order_id", chunk)
     ]);
-    if (rows.error) throw rows.error;
+    if (rows.error) { if (tableMissing(rows.error)) return false; throw rows.error; }
     if (old.error) throw old.error;
     for (const row of rows.data ?? []) decided.set(`${row.kind}:${row.order_id}`, mapDecision(row));
     for (const row of old.data ?? []) oldCharges.set(String(row.order_id), {
@@ -74,6 +81,7 @@ export async function attachDecisions(orgId: string, missingFees: MissingFeeMap,
     }
     for (const order of week.orders) order.decision = decided.get(`late_send:${order.orderId}`) ?? lump.get(order.orderId) ?? null;
   }
+  return true;
 }
 
 /** Orders on this rep's week with no decision yet. */
@@ -122,6 +130,7 @@ export async function saveDecision(args: {
   if (error) {
     // Do not leave a fine with no decision behind it.
     if (penaltyId) await supabase.from("rep_penalties").delete().eq("id", penaltyId);
+    if (tableMissing(error)) throw Object.assign(new Error("Charging or skipping orders is not switched on yet. Ask the owner to finish the setup."), { status: 503 });
     throw error;
   }
 }
