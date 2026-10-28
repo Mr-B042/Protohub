@@ -11,6 +11,7 @@ import {
 } from "../components/WeeklyReportParts";
 import { CompanyProductTable, OrdersTable, RepBonusTable, RepReviewModal, shownSnapshot, type ReviewRepRow } from "./ManagerWeeklyReviewPage";
 import { LogMissDisputesPanel } from "../components/LogMissParts";
+import { OrderDecisionsModal, type DecisionKind } from "../components/OrderDecisionsModal";
 import { HeadOfSalesBadge, headOfSalesBonusStatus } from "../components/HeadOfSalesParts";
 import { bonusComponentsFull, bonusInitialFinal, buildCompanySnapshot, type CompanyWeeklySnapshot, type ManagerBonusPreview, type MonthlyIncentiveReport, type WeeklyReportSnapshot } from "./weekly-report-model";
 import type { HeadOfSalesReview, LogMissDispute, WeeklyLogMissRow, ManagerFundTotals, WeeklyBonusQuery, WeeklyCompanyReport, WeeklyReportAuditEntry, WeeklyReportCorrection } from "../lib/api";
@@ -87,6 +88,8 @@ export default function OwnerWeeklyApprovalPage({
   const sym = currencySymbol();
   const [tab, setTab] = useState<"overview" | "reps" | "manager" | "headOfSales" | "bonus" | "funds" | "products" | "audit">("overview");
   const [viewing, setViewing] = useState<string | null>(null);
+  // Read-only: the charge / skip on each "No fee" / "Late send" order.
+  const [decisionsFor, setDecisionsFor] = useState<{ repId: string; kind: DecisionKind } | null>(null);
   const [requestChanges, setRequestChanges] = useState("");
   const [returning, setReturning] = useState(false);
   const [reopening, setReopening] = useState(false);
@@ -261,8 +264,8 @@ export default function OwnerWeeklyApprovalPage({
                 <td className="px-2 py-3 font-bold text-gray-900 dark:text-slate-100">
                   {nf(snap ? bonusInitialFinal(snap).final : 0)}
                   {row.payoutChange && <PayoutChangeNote change={row.payoutChange} sym={sym} />}
-                  {snap?.missingFeeDetail && <MissingFeeNote detail={snap.missingFeeDetail} sym={sym} />}
-                  <LateSendNote detail={row.lateSend} sym={sym} />
+                  {snap?.missingFeeDetail && <MissingFeeNote detail={snap.missingFeeDetail} sym={sym} onOpen={() => setDecisionsFor({ repId: row.repId, kind: "missing_fee" })} />}
+                  <LateSendNote detail={row.lateSend} sym={sym} onOpen={() => setDecisionsFor({ repId: row.repId, kind: "late_send" })} />
                 </td>
                 <td className="px-2 py-3">
                   <span className="flex items-center gap-1">
@@ -597,6 +600,14 @@ export default function OwnerWeeklyApprovalPage({
         </div>
       </div>
 
+      {(() => {
+        const decisionRow = decisionsFor ? rows.find((row) => row.repId === decisionsFor.repId) ?? null : null;
+        return decisionRow ? (
+          <OrderDecisionsModal repName={decisionRow.repName} weekLabel={`${longDate(weekStart)} to ${longDate(weekEnd)}`} sym={sym}
+            lateSend={decisionRow.lateSend} missingFee={shownSnapshot(decisionRow)?.missingFeeDetail} startOn={decisionsFor?.kind}
+            onClose={() => setDecisionsFor(null)} />
+        ) : null;
+      })()}
       {viewingRow && (
         <RepReviewModal row={viewingRow} weekStart={weekStart} weekEnd={weekEnd} sym={sym} canAct={false} canFlag={false} ownerView
           corrections={corrections.filter((item) => viewingRow.report && item.repReportId === viewingRow.report.id)} onClose={() => setViewing(null)} />

@@ -342,12 +342,34 @@ export function withPayoutChange<T extends WeeklyReportSnapshot | null>(
 }
 
 // ── Delivered orders with no delivery fee (Bright, 23 Oct 2026) ─────────────
-// A REMINDER, not a fine. The system used to take ₦500 per order off the
-// payout; now it only lists the orders for Manager / Admin / Owner, who charge
-// by hand if they want to (Change payout, or Penalties). Never on the rep's
-// own report, and it never changes any figure.
+// The system never charges by itself. It lists the orders for Manager / Admin
+// / Owner, who must charge or skip EACH one before approving the rep's report
+// (Bright, 28 Oct 2026, see OrderDecisionsModal). Listed on leadership screens
+// only, and it never changes a figure on the snapshot: a charge is a fine.
 
-export type MissingFeeDetail = { orders: Array<{ orderId: string; deliveredDate: string }> };
+/** Leadership's decision on one flagged order. null = still to decide. */
+export type OrderDecisionView = {
+  id: string | null;
+  decision: "charged" | "skipped";
+  amount: number;
+  reason: string;
+  byName: string;
+  byRole: string | null;
+  at: string;
+  /** Charged before per-order decisions existed; cannot be undone from the review. */
+  earlier?: boolean;
+};
+
+export type MissingFeeDetail = {
+  orders: Array<{
+    orderId: string; deliveredDate: string;
+    customer?: string; phone?: string; state?: string; city?: string;
+    product?: string; quantity?: number; amount?: number;
+    agentName?: string | null; deliveredBy?: string | null; deliveredAt?: string | null;
+    usualFee?: number | null; usualFeeFrom?: number;
+    decision?: OrderDecisionView | null;
+  }>;
+};
 
 /** Attach the week's no-fee orders to a snapshot. Figures are left alone. */
 export function withMissingFees<T extends WeeklyReportSnapshot | null>(snapshot: T, fees: MissingFeeDetail | null | undefined): T {
@@ -771,6 +793,9 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   owner_reopened: "Week reopened by owner",
   payout_changed: "Payout changed by manager",
   payout_change_removed: "Payout change removed",
+  order_charged: "Flagged order charged",
+  order_skipped: "Flagged order skipped",
+  order_decision_undone: "Decision on a flagged order undone",
   bonus_check_accurate: "Checked bonus: accurate",
   bonus_query_opened: "Bonus query sent to manager",
   bonus_query_resolved: "Bonus query answered",

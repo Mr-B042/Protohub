@@ -3,6 +3,7 @@
 // and auto-refreshes if the token has expired (401).
 
 import type { LateSendWeek } from "../components/WeeklyReportParts";
+import type { MissingFeeDetail } from "../pages/weekly-report-model";
 import { recordFailedRequest } from "./error-recorder";
 import { auth, type AuthSessionSnapshot } from "./auth";
 import { fetchWithApiFailover } from "./backend-origin";
@@ -4176,8 +4177,8 @@ export const weeklyReportsApi = {
       adjustments: WeeklyReportAdjustmentRow[]; previousAdjustments: WeeklyReportAdjustmentRow[]; bonusQueries: WeeklyBonusQuery[];
       logMisses: WeeklyLogMissRow[]; previousLogMisses: WeeklyLogMissRow[]; logMissDisputes: LogMissDispute[]; carriedFines: Record<string, number>;
       payoutChanges?: WeeklyPayoutChange[]; gate?: WeeklySendGate;
-      /** Per rep: ₦500 missing-delivery-fee charges (leadership only, hidden from reps). */
-      missingFees?: Record<string, { orders: Array<{ orderId: string; deliveredDate: string }> }>;
+      /** Per rep: delivered orders with no delivery fee, each with its charge / skip (leadership only). */
+      missingFees?: Record<string, MissingFeeDetail>;
       /** Per rep: orders not sent out in 15 working minutes + fines added for them (leadership only). */
       lateSends?: Record<string, LateSendWeek>;
       /** Weeks with reports sent in by reps that have not gone to the owner yet. */
@@ -4195,8 +4196,10 @@ export const weeklyReportsApi = {
     post<{ ok: true; already?: boolean }>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/rework-figures`, body),
   savePayoutChange: (repId: string, body: { weekStart: string; amount: number; reason: string }) =>
     put<{ ok: true }>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/payout-change`, body),
-  addLateSendFine: (repId: string, body: { weekStart: string; amount: number; orderIds: string[]; note?: string }) =>
-    post<{ ok: true }>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/late-send-fine`, body),
+  /** Charge or skip one flagged order ("No fee" / "Late send"). */
+  decideOrder: (repId: string, body: { weekStart: string; kind: "missing_fee" | "late_send"; orderId: string; decision: "charged" | "skipped"; amount?: number; reason?: string }) =>
+    post<{ ok: true }>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/order-decision`, body),
+  undoOrderDecision: (id: string) => del<{ ok: true }>(`/api/weekly-reports/order-decision/${encodeURIComponent(id)}`),
   removeLateSendFine: (id: string) => del<{ ok: true }>(`/api/weekly-reports/late-send-fine/${encodeURIComponent(id)}`),
   removePayoutChange: (repId: string, weekStart: string) =>
     del<{ ok: true }>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/payout-change?${new URLSearchParams({ weekStart }).toString()}`),

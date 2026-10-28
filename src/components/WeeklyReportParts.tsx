@@ -7,7 +7,7 @@ import { ArrowDown, ArrowUp, Calendar, Check, ChevronLeft, ChevronRight, X } fro
 import { money } from "../lib/money-privacy";
 import {
   CORRECTION_PROBLEMS, CORRECTION_SECTION_LABEL, REP_STATUS_LABEL, COMPANY_STATUS_LABEL, AUDIT_ACTION_LABEL,
-  type WeeklyReportDayRow, type WeeklyReportProductRow
+  type MissingFeeDetail, type OrderDecisionView, type WeeklyReportDayRow, type WeeklyReportProductRow
 } from "../pages/weekly-report-model";
 import type { WeeklyReportAuditEntry, WeeklyReportCorrection } from "../lib/api";
 
@@ -478,17 +478,30 @@ export function PayoutChangeNote({ change, sym }: { change: PayoutChangeView; sy
   );
 }
 
-/** Under the payout figure: delivered orders with no delivery fee. A reminder only - nothing is taken off (leadership only). */
-export function MissingFeeNote({ detail }: { detail: { orders: Array<{ orderId: string }> } | undefined; sym?: string }) {
+/** "1 order · 1 to decide" / "charged ₦1,000" / "skipped" for a list of flagged orders. */
+function decisionStatus(orders: Array<{ decision?: OrderDecisionView | null }>, sym: string, extraCharged = 0) {
+  const open = orders.filter((order) => !order.decision).length;
+  const charged = orders.reduce((sum, order) => sum + (order.decision?.decision === "charged" && !order.decision.earlier ? order.decision.amount : 0), 0) + extraCharged;
+  if (open > 0) return { text: `${open} to decide`, urgent: true };
+  if (charged > 0) return { text: `charged ${sym}${nf(charged)}`, urgent: false };
+  return { text: orders.length ? "skipped" : "", urgent: false };
+}
+
+/** Under the payout figure: delivered orders with no delivery fee. Each must be charged or skipped (leadership only). */
+export function MissingFeeNote({ detail, sym = "₦", onOpen }: { detail: MissingFeeDetail | undefined; sym?: string; onOpen?: () => void }) {
   if (!detail || detail.orders.length === 0) return null;
   const count = detail.orders.length;
-  return (
-    <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-amber-700 dark:text-amber-300"
-      title={`Delivered with no delivery fee: ${detail.orders.map((o) => `#${o.orderId}`).join(", ")}. Not charged - charge by hand if needed. Not shown to the rep.`}>
+  const status = decisionStatus(detail.orders, sym);
+  const label = (
+    <>
       <span className="mr-1 rounded bg-amber-50 px-1 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-200">No fee</span>
-      {count} order{count === 1 ? "" : "s"} · not charged
-    </span>
+      {count} order{count === 1 ? "" : "s"} · <span className={status.urgent ? "text-rose-600 dark:text-rose-300" : ""}>{status.text}</span>
+    </>
   );
+  const cls = "mt-0.5 block whitespace-nowrap text-left text-[10.5px] font-semibold text-amber-700 dark:text-amber-300";
+  return onOpen
+    ? <button type="button" onClick={onOpen} className={`!min-h-0 ${cls} hover:underline`} title="See the orders and charge or skip each one">{label}</button>
+    : <span className={cls}>{label}</span>;
 }
 
 /**
@@ -895,110 +908,35 @@ export function downloadCsv(filename: string, header: string[], rows: Array<Arra
 }
 
 // ── Orders not sent out in 15 working minutes (Bright, 23 Oct 2026) ─────────
-// The system only lists them. Admin / Manager / Owner type the fine amount;
-// it is saved as an ordinary fine the rep sees.
+// The system only lists them. Admin / Manager / Owner charge or skip each one
+// in OrderDecisionsModal (28 Oct 2026); a charge is an ordinary fine the rep sees.
 
 export type LateSendWeek = {
-  orders: Array<{ orderId: string; customer: string; arrivedAt: string; clockStart: string; deadline: string; sentAt: string | null; sentStatus: string | null; minutesLate: number }>;
+  orders: Array<{
+    orderId: string; customer: string; arrivedAt: string; clockStart: string; deadline: string; sentAt: string | null; sentStatus: string | null; minutesLate: number;
+    product?: string; quantity?: number; amount?: number; state?: string;
+    placedAt?: string; assignedAt?: string | null; sentByName?: string | null; sentByRep?: boolean;
+    workingMinutesTaken?: number; workingMinutesLate?: number;
+    decision?: OrderDecisionView | null;
+  }>;
   fines: Array<{ id: string; amount: number; reason: string; byName: string; createdAt: string }>;
 };
 
-const lagosTime = (iso: string) => new Date(iso).toLocaleString("en-NG", { timeZone: "Africa/Lagos", weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
-
-/** Under the payout figure: how many orders were sent out late. Opens the fine window. */
+/** Under the payout figure: how many orders were sent out late. Opens the decisions window. */
 export function LateSendNote({ detail, sym, onOpen }: { detail: LateSendWeek | null | undefined; sym: string; onOpen?: () => void }) {
   if (!detail || (detail.orders.length === 0 && detail.fines.length === 0)) return null;
-  const fined = detail.fines.reduce((sum, fine) => sum + fine.amount, 0);
   const count = detail.orders.length;
+  // Lump fines from before order-by-order decisions still count as charged.
+  const lump = detail.fines.reduce((sum, fine) => sum + fine.amount, 0);
+  const status = decisionStatus(detail.orders, sym, lump);
   const label = (
     <>
       <span className="mr-1 rounded bg-orange-50 px-1 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-orange-700 dark:bg-orange-500/15 dark:text-orange-200">Late send</span>
-      {count} order{count === 1 ? "" : "s"} · {fined > 0 ? `fined ${sym}${nf(fined)}` : "not fined"}
+      {count} order{count === 1 ? "" : "s"} · <span className={status.urgent ? "text-rose-600 dark:text-rose-300" : ""}>{status.text || "not fined"}</span>
     </>
   );
   const cls = "mt-0.5 block whitespace-nowrap text-left text-[10.5px] font-semibold text-orange-700 dark:text-orange-300";
   return onOpen
-    ? <button type="button" onClick={onOpen} className={`!min-h-0 ${cls} hover:underline`} title="See the orders and add a fine">{label}</button>
+    ? <button type="button" onClick={onOpen} className={`!min-h-0 ${cls} hover:underline`} title="See the orders and charge or skip each one">{label}</button>
     : <span className={cls}>{label}</span>;
-}
-
-export function LateSendFineModal({ repName, sym, detail, onClose, onFine, onRemoveFine }: {
-  repName: string;
-  sym: string;
-  detail: LateSendWeek;
-  onClose: () => void;
-  onFine?: (amount: number, orderIds: string[], note: string) => Promise<void>;
-  onRemoveFine?: (id: string) => Promise<void>;
-}) {
-  const [amountText, setAmountText] = useState("");
-  const [note, setNote] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const cleaned = amountText.replace(/[₦,\s]/g, "");
-  const amount = /^\d+$/.test(cleaned) ? Number(cleaned) : Number.NaN;
-  const ready = Number.isFinite(amount) && amount > 0;
-  const run = async (action: () => Promise<void>) => {
-    setSaving(true);
-    setError("");
-    try { await action(); } catch (err: any) { setError(err?.message ?? "Could not save."); } finally { setSaving(false); }
-  };
-  const field = "w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-[13px] text-gray-800 outline-none focus:border-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
-  return (
-    <Modal title={`${repName}: orders not sent out in 15 minutes`} subtitle="Clock starts 10am (11am on Monday), 5:30pm close, no Sunday. Nothing is charged until you add a fine." onClose={onClose}>
-      <div className="space-y-4 px-6 py-5">
-        {detail.orders.length === 0
-          ? <p className="m-0 text-[12.5px] text-gray-600 dark:text-slate-300">No late orders this week.</p>
-          : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-[12px]">
-                <thead className="text-[11px] text-gray-500"><tr><th className="py-1.5 pr-2">Order</th><th className="py-1.5 pr-2">Clock started</th><th className="py-1.5 pr-2">Sent out</th><th className="py-1.5">Late by</th></tr></thead>
-                <tbody>
-                  {detail.orders.map((order) => (
-                    <tr key={order.orderId} className="border-t border-gray-100 dark:border-slate-800">
-                      <td className="py-1.5 pr-2 font-semibold text-gray-900 dark:text-slate-100">#{order.orderId}<span className="block text-[11px] font-normal text-gray-500">{order.customer}</span></td>
-                      <td className="py-1.5 pr-2 text-gray-700 dark:text-slate-300">{lagosTime(order.clockStart)}</td>
-                      <td className="py-1.5 pr-2 text-gray-700 dark:text-slate-300">{order.sentAt ? <>{lagosTime(order.sentAt)}<span className="block text-[11px] text-gray-500">{order.sentStatus}</span></> : <span className="font-semibold text-rose-600">Still New</span>}</td>
-                      <td className="py-1.5 font-bold text-orange-700 dark:text-orange-300">{order.minutesLate >= 60 ? `${Math.floor(order.minutesLate / 60)}h ${order.minutesLate % 60}m` : `${order.minutesLate} min`}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        {detail.fines.length > 0 && (
-          <div className="rounded-xl bg-gray-50 px-3 py-2 text-[12px] dark:bg-slate-800/60">
-            <strong className="block text-gray-800 dark:text-slate-100">Fines already added</strong>
-            {detail.fines.map((fine) => (
-              <span key={fine.id} className="mt-1 flex items-center justify-between gap-2 text-gray-700 dark:text-slate-300">
-                <span>{sym}{nf(fine.amount)} by {fine.byName || "—"}</span>
-                {onRemoveFine && <button type="button" disabled={saving} onClick={() => run(() => onRemoveFine(fine.id))} className="!min-h-0 rounded px-2 py-1 text-[11px] font-bold text-rose-700 hover:bg-rose-50 disabled:opacity-40">Remove</button>}
-              </span>
-            ))}
-          </div>
-        )}
-        {onFine && detail.orders.length > 0 && (
-          <>
-            <label className="block">
-              <span className="mb-1.5 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Fine amount ({sym})</span>
-              <input className={field} inputMode="numeric" value={amountText} onChange={(event) => setAmountText(event.target.value)} placeholder="e.g. 1,000" />
-              {amountText.trim() && !ready && <span className="mt-1 block text-[11px] font-semibold text-rose-600">Enter a whole amount above 0.</span>}
-            </label>
-            <label className="block">
-              <span className="mb-1.5 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Note (optional)</span>
-              <input className={field} maxLength={400} value={note} onChange={(event) => setNote(event.target.value)} placeholder="e.g. 3 orders over 1 hour late" />
-            </label>
-            <p className="m-0 text-[11.5px] text-gray-500">The rep sees this fine in their weekly report and it comes off their pay like any other fine.</p>
-          </>
-        )}
-        {error && <p className="m-0 rounded-lg bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700">{error}</p>}
-        <div className="flex justify-end gap-2 pt-1">
-          <button type="button" onClick={onClose} className="!min-h-0 rounded-xl border border-gray-200 px-4 py-2.5 text-[13px] font-semibold text-gray-700 dark:border-slate-700 dark:text-slate-200">Close</button>
-          {onFine && detail.orders.length > 0 && (
-            <button type="button" disabled={!ready || saving} onClick={() => run(async () => { await onFine(amount, detail.orders.map((order) => order.orderId), note.trim()); setAmountText(""); setNote(""); })}
-              className="!min-h-0 rounded-xl bg-rose-600 px-4 py-2.5 text-[13px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">{saving ? "Saving…" : "Fine"}</button>
-          )}
-        </div>
-      </div>
-    </Modal>
-  );
 }

@@ -336,11 +336,19 @@ export default function WeeklyRepReportModal(props: WeeklyRepReportModalProps) {
                   {missingFee && missingFee.orders.length > 0 && (
                     <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] leading-snug text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
                       <strong>Delivered with no delivery fee: {missingFee.orders.length} order{missingFee.orders.length === 1 ? "" : "s"}</strong>
-                      <span className="ml-1 text-[11px] font-semibold text-amber-700 dark:text-amber-300">· not charged · not shown to the rep</span>
                       <ul className="m-0 mt-1 list-none p-0">
-                        {missingFee.orders.map((order) => <li key={order.orderId}>Order #{order.orderId} · delivered {order.deliveredDate}</li>)}
+                        {missingFee.orders.map((order) => (
+                          <li key={order.orderId}>
+                            Order #{order.orderId} · delivered {order.deliveredDate}
+                            {order.agentName ? ` · ${order.agentName}` : ""}
+                            {" · "}
+                            {order.decision
+                              ? <strong className={order.decision.decision === "charged" ? "text-rose-700 dark:text-rose-300" : ""}>{order.decision.decision === "charged" ? `charged ${money(order.decision.amount)}` : `skipped: ${order.decision.reason}`}</strong>
+                              : <strong className="text-rose-700 dark:text-rose-300">not decided yet</strong>}
+                          </li>
+                        ))}
                       </ul>
-                      <span className="block">Nothing is taken off. To charge the rep, use Change payout or add a fine on Penalties.</span>
+                      <span className="block">Charge or skip each one from the "No fee" tag under the rep's payout. The rep sees charges only.</span>
                     </div>
                   )}
                 </div>
