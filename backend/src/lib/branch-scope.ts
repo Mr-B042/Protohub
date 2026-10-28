@@ -87,6 +87,8 @@ const BRANCH_TABLES = new Set([
   "weekly_report_corrections", "weekly_report_audit", "weekly_bonus_queries",
   // The manager's change to a rep's payout (migration 299), branch_id NOT NULL from the first row.
   "weekly_report_payout_changes",
+  // A charge or skip on each flagged order of the weekly review (migration 311), branch_id NOT NULL from the first row.
+  "weekly_review_order_decisions",
   // Manager Funds & Expenses (migration 271), branch_id NOT NULL from the first row.
   "manager_fund_settings", "manager_fund_transactions", "manager_fund_weeks", "manager_fund_adjustment_requests",
   // Missed-log disputes (migration 272), branch_id NOT NULL from the first row.

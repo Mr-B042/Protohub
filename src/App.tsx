@@ -32391,8 +32391,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       // after: the change is not a figure the system worked out, so it must
       // never show up as "a figure changed since the rep submitted".
       const payoutChange = frozen ? (week.payoutChanges ?? []).find((item) => item.repId === repId) ?? null : null;
-      // Delivered orders with no fee - a reminder for leadership, the rep never
-      // sees it, and it changes no figure (Bright, 23 Oct 2026).
+      // Delivered orders with no fee - leadership charges or skips each one
+      // (a charge is a fine); the list itself changes no figure (Bright, 28 Oct 2026).
       const missingFees = week.missingFees?.[repId] ?? null;
       return {
         repId,
@@ -32519,7 +32519,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         onFlag={(repId, draft) => weeklyRun(() => weeklyReportsApi.flagRep(repId, correctionBody(draft)), "Issue flagged for the owner.")}
         onSavePayoutChange={(repId, amount, reason) => weeklyRun(() => weeklyReportsApi.savePayoutChange(repId, { weekStart: weeklyReportWeekStart, amount, reason }), `${repName(repId)}'s payout changed. The owner will see the change.`)}
         onRemovePayoutChange={(repId) => weeklyRun(() => weeklyReportsApi.removePayoutChange(repId, weeklyReportWeekStart), `${repName(repId)}'s payout is back to the system figure.`)}
-        onLateSendFine={(repId, amount, orderIds, note) => weeklyRun(() => weeklyReportsApi.addLateSendFine(repId, { weekStart: weeklyReportWeekStart, amount, orderIds, ...(note ? { note } : {}) }), `${repName(repId)} fined for late order sends.`)}
+        onDecideOrder={(repId, kind, orderId, decision, amount, reason) => weeklyRun(
+          () => weeklyReportsApi.decideOrder(repId, { weekStart: weeklyReportWeekStart, kind, orderId, decision, ...(amount ? { amount } : {}), ...(reason ? { reason } : {}) }),
+          decision === "charged" ? `Order #${orderId} charged to ${repName(repId)}.` : `Order #${orderId} skipped.`
+        )}
+        onUndoOrderDecision={(id) => weeklyRun(() => weeklyReportsApi.undoOrderDecision(id), "Decision undone.")}
+        orderDecisionsReady={week?.orderDecisionsReady !== false}
         onRemoveLateSendFine={(id) => weeklyRun(() => weeklyReportsApi.removeLateSendFine(id), "Fine removed.")}
         repsWaiting={Boolean(week?.gate?.blocked)}
         waitingWeeks={week?.waitingWeeks ?? []}

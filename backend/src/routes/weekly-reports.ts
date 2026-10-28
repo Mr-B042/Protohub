@@ -10,6 +10,7 @@ import { branchFundManagers, loadFundWeek } from "./manager-funds.js";
 import { disputesForWeek, logMissesForWeek } from "./log-misses.js";
 import { MISSING_FEE_TYPE, missingFeesFor } from "../lib/missing-fee-penalty.js";
 import { LATE_SEND_FINE_TYPE, lateSendsFor } from "../lib/late-send.js";
+import { NO_FEE_CHARGE_TYPE, attachDecisions, chargeReason, removeDecision, saveDecision, undecidedFor } from "../lib/review-order-decisions.js";
 import { addDaysToDateKey, sundayWeekStartForDateKey, lagosDateKey, weekEndFromStart } from "../lib/sales-bonus-engine.js";
 import { FIRST_REPORT_WEEK,
   CORRECTION_SECTIONS,
@@ -320,7 +321,7 @@ async function finesForWeek(orgId: string, repIds: string[] | null, weekStart: s
   return (data ?? []).map((row: any) => ({
     id: row.id,
     repId: row.rep_id,
-    label: [row.type === LATE_SEND_FINE_TYPE ? "Late order send" : row.type, row.reason].filter(Boolean).join(" - ") + (row.remove_all_bonuses ? " (removes all bonuses at payroll)" : ""),
+    label: [row.type === LATE_SEND_FINE_TYPE ? "Late order send" : row.type === NO_FEE_CHARGE_TYPE ? "No delivery fee" : row.type, row.reason].filter(Boolean).join(" - ") + (row.remove_all_bonuses ? " (removes all bonuses at payroll)" : ""),
     amount: Number(row.amount ?? 0),
     date: String(row.created_at ?? "").slice(0, 10)
   }));
@@ -853,6 +854,8 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
     if (bonusQueries.error) throw bonusQueries.error;
     if (corrections.error) throw corrections.error;
     if (auditRows.error) throw auditRows.error;
+    // Each listed order's charge / skip (or null = still to decide).
+    const orderDecisionsReady = await attachDecisions(orgId, missingFees, lateSends);
     res.json({
       weekStart,
       weekEnd: weekEndFromStart(weekStart),
@@ -878,6 +881,7 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
       missingFees,
       // Orders not sent out in 15 working minutes, and any fine already added for them.
       lateSends,
+      orderDecisionsReady,
       funds: funds.map(({ manager, fund }) => ({
         managerId: manager.id,
         managerName: manager.name,
@@ -1000,6 +1004,13 @@ router.post("/rep/:repId/approve", requireRole(...REVIEWERS), async (req, res) =
     ]);
     const verdict = canManagerAct("approve", report?.status ?? null, company?.status ?? null);
     if (!verdict.ok || !report) throw httpError(409, verdict.ok ? "The rep has not submitted this report yet." : verdict.error);
+    // Every "No fee" and "Late send" order must be charged or skipped first (Bright, 28 Oct 2026).
+    const [missingFees, lateSends] = await Promise.all([missingFeesFor(orgId, weekStart), lateSendsFor(orgId, weekStart)]);
+    const ready = await attachDecisions(orgId, missingFees, lateSends);
+    const undecided = ready ? undecidedFor(repId, missingFees, lateSends) : [];
+    if (undecided.length > 0) {
+      throw httpError(409, `Decide on ${undecided.length} order${undecided.length === 1 ? "" : "s"} first (charge or skip): ${undecided.map((item) => `#${item.orderId}`).join(", ")}.`);
+    }
 
     const now = new Date().toISOString();
     const { data: updated, error } = await supabase.from("rep_weekly_reports")
@@ -1097,40 +1108,85 @@ const CompanySubmitSchema = z.object({
 
 // ── Payout change: the manager corrects a rep's final payout ───────────────
 
-// ── Fine for orders not sent out in 15 minutes (Bright, 23 Oct 2026) ────────
-// The system lists the late orders (lib/late-send.ts) but never charges.
-// Admin / Manager / Owner type the amount here; it is saved as an ordinary
-// fine, so the rep sees it in their fines and payroll takes it off.
-const LateSendFineSchema = z.object({
+// ── Lump fines for late orders (Bright, 23 Oct 2026) ───────────────────────
+// Replaced on 28 Oct 2026 by a charge or skip on EACH order (below). Fines
+// added the old way can still be removed.
+
+// ── Charge or skip each flagged order (Bright, 28 Oct 2026) ─────────────────
+// "No fee" and "Late send" orders need a decision each before the rep's report
+// can be approved: charge (an amount typed by leadership, saved as a fine the
+// rep sees) or skip (a reason, seen by leadership only).
+const OrderDecisionSchema = z.object({
   weekStart: weekStartSchema,
-  amount: z.number().int("Use whole naira.").positive("Enter an amount above 0.").max(10_000_000, "That amount is too large."),
-  orderIds: z.array(z.string().trim().min(1)).max(500).default([]),
-  note: z.string().trim().max(400).optional()
+  kind: z.enum(["missing_fee", "late_send"]),
+  orderId: z.string().trim().min(1).max(100),
+  decision: z.enum(["charged", "skipped"]),
+  amount: z.number().int("Use whole naira.").positive("Enter an amount above 0.").max(10_000_000, "That amount is too large.").optional(),
+  reason: z.string().trim().max(600).optional()
+}).superRefine((body, ctx) => {
+  if (body.decision === "charged" && !body.amount) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["amount"], message: "Enter the amount to charge." });
+  if (body.decision === "skipped" && (body.reason ?? "").length < 3) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["reason"], message: "Say why this order is skipped." });
 });
 
-router.post("/rep/:repId/late-send-fine", requireRole(...LEADERSHIP), async (req, res) => {
-  const parsed = LateSendFineSchema.safeParse(req.body);
+router.post("/rep/:repId/order-decision", requireRole(...LEADERSHIP), async (req, res) => {
+  const parsed = OrderDecisionSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
-  const { weekStart, amount, orderIds, note } = parsed.data;
+  const body = parsed.data;
   try {
     const branchId = requireBranch(req);
     const orgId = req.user!.orgId;
     const repId = String(req.params.repId);
-    const { data: rep, error: repError } = await supabase.from("users").select("id, name").eq("id", repId).eq("org_id", orgId).maybeSingle();
-    if (repError) throw repError;
-    if (!rep) throw httpError(404, "That sales rep was not found.");
-    const list = orderIds.length ? `: ${orderIds.map((id) => `#${id}`).join(", ")}` : "";
-    const { error } = await supabase.from("rep_penalties").insert({
-      org_id: orgId, branch_id: branchId, rep_id: repId, rep_name: rep.name ?? "Sales rep",
-      type: LATE_SEND_FINE_TYPE, amount, remove_all_bonuses: false,
-      period: weekEndFromStart(weekStart).slice(0, 7), week_start: weekStart,
-      reason: `Order${orderIds.length === 1 ? "" : "s"} not sent out within 15 minutes${list}${note ? ` (${note})` : ""}`.slice(0, 1000),
-      by_name: req.user!.name ?? req.user!.role
+    const [rep, company, missingFees, lateSends] = await Promise.all([
+      supabase.from("users").select("id, name").eq("id", repId).eq("org_id", orgId).maybeSingle(),
+      loadCompanyReport(orgId, branchId, body.weekStart),
+      body.kind === "missing_fee" ? missingFeesFor(orgId, body.weekStart) : Promise.resolve(null),
+      body.kind === "late_send" ? lateSendsFor(orgId, body.weekStart) : Promise.resolve(null)
+    ]);
+    if (rep.error) throw rep.error;
+    if (!rep.data) throw httpError(404, "That sales rep was not found.");
+    if (company?.status === "submitted_to_owner" || company?.status === "locked") {
+      throw httpError(409, company.status === "locked" ? "This week is approved and locked." : "This week is with the owner. Nothing can change until the owner returns it.");
+    }
+    // Only an order the system really lists against this rep for this week.
+    const fee = missingFees?.[repId]?.orders.find((order) => order.orderId === body.orderId);
+    const late = lateSends?.[repId]?.orders.find((order) => order.orderId === body.orderId);
+    if (!fee && !late) throw httpError(404, `Order #${body.orderId} is not on ${rep.data.name ?? "this rep"}'s list for this week. Reload the page.`);
+    await saveDecision({
+      orgId, branchId, weekStart: body.weekStart, repId, repName: rep.data.name ?? "Sales rep",
+      kind: body.kind, orderId: body.orderId, decision: body.decision, amount: body.amount, reason: body.reason,
+      chargeLine: chargeReason(body.kind, body.orderId, { deliveredDate: fee?.deliveredDate, workingMinutesLate: late?.workingMinutesLate }, body.reason),
+      user: { id: req.user!.id, name: req.user!.name ?? null, role: req.user!.role }
     });
-    if (error) throw error;
+    await audit(req, { branchId, weekStart: body.weekStart, action: `order_${body.decision}`, repId,
+      detail: { kind: body.kind, orderId: body.orderId, amount: body.amount ?? null, reason: body.reason ?? null } });
     res.json({ ok: true });
   } catch (error: any) {
-    sendError(res, error, "Could not add this fine.");
+    if (error?.code === "23505") { sendError(res, httpError(409, "Someone already decided on this order. Reload the page."), "Could not save this decision."); return; }
+    sendError(res, error, "Could not save this decision.");
+  }
+});
+
+router.delete("/order-decision/:id", requireRole(...LEADERSHIP), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const { data: row, error } = await supabase.from("weekly_review_order_decisions").select("week_start, branch_id, rep_id, kind, order_id, decision")
+      .eq("org_id", orgId).eq("id", String(req.params.id)).maybeSingle();
+    if (error) throw error;
+    if (!row) throw httpError(404, "This decision was already undone. Reload the page.");
+    const [report, company] = await Promise.all([
+      loadRepReport(orgId, String(row.branch_id), String(row.rep_id), String(row.week_start)),
+      loadCompanyReport(orgId, String(row.branch_id), String(row.week_start))
+    ]);
+    if (company?.status === "submitted_to_owner" || company?.status === "locked") throw httpError(409, "This week is with the owner or locked. Nothing can change.");
+    if (report && ["manager_approved", "owner_approved", "locked"].includes(String(report.status))) {
+      throw httpError(409, "This rep's report is already approved, so its decisions are final.");
+    }
+    await removeDecision(orgId, String(req.params.id));
+    await audit(req, { branchId: String(row.branch_id), weekStart: String(row.week_start), action: "order_decision_undone", repId: String(row.rep_id),
+      detail: { kind: row.kind, orderId: row.order_id, was: row.decision } });
+    res.json({ ok: true });
+  } catch (error: any) {
+    sendError(res, error, "Could not undo this decision.");
   }
 });
 

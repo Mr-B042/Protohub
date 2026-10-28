@@ -4,7 +4,7 @@ import { alertRecipients } from "./notification-routing.js";
 import { getOrgPushBranding } from "./push-branding.js";
 import { sendPushToUser } from "./push.js";
 import { weekEndFromStart, addDaysToDateKey } from "./sales-bonus-engine.js";
-import { LATE_SEND_FROM, LATE_SEND_MINUTES, lagosDateOf, lateSendWindow, minutesLate } from "./late-send-rules.js";
+import { LATE_SEND_FROM, LATE_SEND_MINUTES, lagosDateOf, lateSendWindow, minutesLate, workingMinutesBetween } from "./late-send-rules.js";
 
 // ── Order not sent out within 15 working minutes (Bright, 23 Oct 2026) ─────
 // Rules (hours, Monday 11am, what "sent" means): late-send-rules.ts.
@@ -20,6 +20,13 @@ export const LATE_SEND_FINE_TYPE = "late_order_send";
 export type LateSendOrder = {
   orderId: string; customer: string; arrivedAt: string; clockStart: string; deadline: string;
   sentAt: string | null; sentStatus: string | null; minutesLate: number;
+  product: string; quantity: number; amount: number; state: string;
+  /** When the customer placed it, and when it was given to this rep (null = never re-assigned). */
+  placedAt: string; assignedAt: string | null;
+  /** Who moved it out of New (may not be the rep). */
+  sentByName: string | null; sentByRep: boolean;
+  /** Working time only (nights and Sundays skipped): from clock start to sent out (or now), and past the 15 minutes. */
+  workingMinutesTaken: number; workingMinutesLate: number;
 };
 
 /** When the order reached the rep: the later of when it was placed and when it was (re)assigned. */
@@ -111,7 +118,7 @@ export async function lateSendsFor(orgId: string, weekStart: string, nowMs = Dat
   // A night order placed up to 3 days earlier (Saturday night → Monday) can fall due this week.
   const placedFrom = `${addDaysToDateKey(weekStart, -3)}T00:00:00+01:00`;
   const { data: orders, error } = await supabase.from("orders")
-    .select("id, customer, status, assigned_rep_id, created_at, original_created_at, assigned_at")
+    .select("id, customer, status, assigned_rep_id, created_at, original_created_at, assigned_at, product_name, quantity, amount, state")
     .eq("org_id", orgId).not("assigned_rep_id", "is", null)
     .gte("created_at", placedFrom).lte("created_at", `${weekEnd}T23:59:59+01:00`)
     .limit(5000);
@@ -124,18 +131,26 @@ export async function lateSendsFor(orgId: string, weekStart: string, nowMs = Dat
     });
 
   // First status change of each order.
-  const audit = new Map<string, Array<{ from: string | null; to: string | null; at: string }>>();
+  const audit = new Map<string, Array<{ from: string | null; to: string | null; at: string; by: string | null }>>();
   const ids = inWeek.map(({ order }) => String(order.id));
   for (let i = 0; i < ids.length; i += 200) {
-    const { data: rows, error: auditError } = await supabase.from("order_audit").select("order_id, from_status, to_status, created_at")
+    const { data: rows, error: auditError } = await supabase.from("order_audit").select("order_id, from_status, to_status, created_at, changed_by")
       .eq("org_id", orgId).in("order_id", ids.slice(i, i + 200)).order("created_at", { ascending: true }).limit(10000);
     if (auditError) throw auditError;
     for (const row of rows ?? []) {
       const list = audit.get(String(row.order_id)) ?? [];
-      list.push({ from: row.from_status ?? null, to: row.to_status ?? null, at: String(row.created_at) });
+      list.push({ from: row.from_status ?? null, to: row.to_status ?? null, at: String(row.created_at), by: row.changed_by ? String(row.changed_by) : null });
       audit.set(String(row.order_id), list);
     }
   }
+
+  const senders = new Set<string>();
+  for (const rows of audit.values()) for (const row of rows) if (row.by) senders.add(row.by);
+  const { data: senderRows, error: senderError } = senders.size
+    ? await supabase.from("users").select("id, name").in("id", [...senders])
+    : { data: [], error: null };
+  if (senderError) throw senderError;
+  const senderName = new Map((senderRows ?? []).map((row: any) => [String(row.id), String(row.name ?? "")]));
 
   for (const { order, window } of inWeek) {
     const rows = audit.get(String(order.id)) ?? [];
@@ -152,7 +167,14 @@ export async function lateSendsFor(orgId: string, weekStart: string, nowMs = Dat
       orderId: String(order.id), customer: String(order.customer ?? ""),
       arrivedAt: new Date(arrivedAtMs(order)).toISOString(),
       clockStart: new Date(window.startMs).toISOString(), deadline: new Date(window.deadlineMs).toISOString(),
-      sentAt: left ? left.at : null, sentStatus: left?.to ?? null, minutesLate: late
+      sentAt: left ? left.at : null, sentStatus: left?.to ?? null, minutesLate: late,
+      product: String(order.product_name ?? ""), quantity: Number(order.quantity ?? 0), amount: Number(order.amount ?? 0), state: String(order.state ?? ""),
+      placedAt: new Date(Date.parse(order.original_created_at ?? order.created_at)).toISOString(),
+      assignedAt: order.assigned_at && Date.parse(order.assigned_at) > Date.parse(order.original_created_at ?? order.created_at) ? new Date(Date.parse(order.assigned_at)).toISOString() : null,
+      sentByName: left?.by ? senderName.get(left.by) ?? null : null,
+      sentByRep: !left?.by || left.by === repId,
+      workingMinutesTaken: workingMinutesBetween(window.startMs, sentAtMs ?? nowMs),
+      workingMinutesLate: workingMinutesBetween(window.deadlineMs, sentAtMs ?? nowMs)
     });
   }
   for (const entry of Object.values(out)) entry.orders.sort((a, b) => a.deadline.localeCompare(b.deadline));

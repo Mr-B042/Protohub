@@ -7,11 +7,12 @@ import {
   Pencil, RotateCcw, Search, Send, ShoppingCart, Target, Undo2, Wallet, X, Crown, Flag, History, Users, BarChart3, ChevronLeft
 } from "lucide-react";
 import {
-  Avatar, AuditTable, BonusInitialCells, ChartLegend, CorrectionForm, CorrectionList, KpiCard, Modal, NoteBox, NumberedHeader, OrderStatusPill, PayoutChangeForm, PayoutChangeNote, MissingFeeNote, LateSendNote, LateSendFineModal, type LateSendWeek,
+  Avatar, AuditTable, BonusInitialCells, ChartLegend, CorrectionForm, CorrectionList, KpiCard, Modal, NoteBox, NumberedHeader, OrderStatusPill, PayoutChangeForm, PayoutChangeNote, MissingFeeNote, LateSendNote, type LateSendWeek,
   OrderTypePill, OrdersRateChart, Panel, ProductDonut, RateBar, RepStatusPill, StepBadge, WeekPicker, WorkflowSteps,
   dailyChartRows, deltaPct, downloadCsv, longDate, nf, pctText, shortDateTime, shortDay, type CorrectionDraft, type WorkflowStep
 } from "../components/WeeklyReportParts";
 import { LogMissDisputesPanel } from "../components/LogMissParts";
+import { OrderDecisionsModal, undecidedCount, type DecisionKind } from "../components/OrderDecisionsModal";
 import { HeadOfSalesBadge } from "../components/HeadOfSalesParts";
 import {
   CORRECTION_SECTION_LABEL, bonusComponentsFull, bonusInitialFinal, buildCompanySnapshot, type ManagerBonusPreview, type MonthlyIncentiveReport, type SnapshotDifference, type WeeklyReportSnapshot
@@ -73,10 +74,14 @@ export default function ManagerWeeklyReviewPage({
   renderFunds, fundsPending, fundsSummary, onSaveDraftNote, initialTab, logMissDisputes = [], onDecideLogMiss,
   renderHeadOfSales, headOfSalesAttention = false,
   onApprove, onReturn, onFlag, onSubmitToOwner, onBack, onEditManagerBonus, monthlyIncentive = null,
-  onSavePayoutChange, onRemovePayoutChange, repsWaiting = false, waitingWeeks = [], onLateSendFine, onRemoveLateSendFine
+  onSavePayoutChange, onRemovePayoutChange, repsWaiting = false, waitingWeeks = [], onDecideOrder, onUndoOrderDecision, onRemoveLateSendFine, orderDecisionsReady = true
 }: {
-  /** Fine a rep for orders not sent out in 15 minutes (amount typed by Admin / Manager / Owner). */
-  onLateSendFine?: (repId: string, amount: number, orderIds: string[], note: string) => Promise<void>;
+  /** false until the decisions table exists on the database: Approve is not held. */
+  orderDecisionsReady?: boolean;
+  /** Charge or skip one "No fee" / "Late send" order (Admin / Manager / Owner). Every one needs a decision before Approve. */
+  onDecideOrder?: (repId: string, kind: DecisionKind, orderId: string, decision: "charged" | "skipped", amount: number | undefined, reason: string) => Promise<void>;
+  onUndoOrderDecision?: (id: string) => Promise<void>;
+  /** Remove a lump late-send fine added before order-by-order decisions. */
   onRemoveLateSendFine?: (id: string) => Promise<void>;
   /** Weeks with reports waiting on the manager (any week, not only the one on screen). */
   waitingWeeks?: Array<{ weekStart: string; toApprove: number; approved: number; returned: number }>;
@@ -137,7 +142,8 @@ export default function ManagerWeeklyReviewPage({
   const [returning, setReturning] = useState<string | null>(null);
   const [flagging, setFlagging] = useState<string | null>(null);
   const [changingPayout, setChangingPayout] = useState<string | null>(null);
-  const [lateSendFor, setLateSendFor] = useState<string | null>(null);
+  // The "orders to decide" window: which rep, and which tab it opens on.
+  const [decisionsFor, setDecisionsFor] = useState<{ repId: string; kind: DecisionKind } | null>(null);
   // The "is this the bonus to be paid?" window (Bright, 13 Oct 2026).
   const [approving, setApproving] = useState<string | null>(null);
   const [approveBusy, setApproveBusy] = useState(false);
@@ -659,8 +665,8 @@ export default function ManagerWeeklyReviewPage({
                                   )}
                                 </span>
                                 {row.payoutChange && <PayoutChangeNote change={row.payoutChange} sym={sym} />}
-                                {snap?.missingFeeDetail && <MissingFeeNote detail={snap.missingFeeDetail} sym={sym} />}
-                                <LateSendNote detail={row.lateSend} sym={sym} onOpen={() => setLateSendFor(row.repId)} />
+                                {snap?.missingFeeDetail && <MissingFeeNote detail={snap.missingFeeDetail} sym={sym} onOpen={() => setDecisionsFor({ repId: row.repId, kind: "missing_fee" })} />}
+                                <LateSendNote detail={row.lateSend} sym={sym} onOpen={() => setDecisionsFor({ repId: row.repId, kind: "late_send" })} />
                               </td>
                               <td className={`px-2 py-3 ${pinnedCell}`}>
                                 <span className="flex items-center gap-1">
@@ -836,18 +842,22 @@ export default function ManagerWeeklyReviewPage({
         document.body
       )}
 
-      {/* ── Orders not sent out in 15 minutes: list + fine ──────── */}
+      {/* ── "No fee" / "Late send" orders: charge or skip each one ── */}
       {(() => {
-        const lateRow = lateSendFor ? rows.find((row) => row.repId === lateSendFor) ?? null : null;
-        if (!lateRow?.lateSend) return null;
+        const decisionRow = decisionsFor ? rows.find((row) => row.repId === decisionsFor.repId) ?? null : null;
+        if (!decisionRow) return null;
         return (
-          <LateSendFineModal
-            repName={lateRow.repName}
+          <OrderDecisionsModal
+            repName={decisionRow.repName}
+            weekLabel={`${longDate(weekStart)} to ${longDate(weekEnd)}`}
             sym={sym}
-            detail={lateRow.lateSend}
-            onClose={() => setLateSendFor(null)}
-            onFine={onLateSendFine ? (amount, orderIds, note) => onLateSendFine(lateRow.repId, amount, orderIds, note) : undefined}
-            onRemoveFine={onRemoveLateSendFine}
+            lateSend={decisionRow.lateSend}
+            missingFee={shownSnapshot(decisionRow)?.missingFeeDetail}
+            startOn={decisionsFor?.kind}
+            onClose={() => setDecisionsFor(null)}
+            onDecide={onDecideOrder && !frozenWeek ? (kind, orderId, decision, amount, reason) => onDecideOrder(decisionRow.repId, kind, orderId, decision, amount, reason) : undefined}
+            onUndo={onUndoOrderDecision && !frozenWeek && !isApproved(decisionRow.report?.status) ? onUndoOrderDecision : undefined}
+            onRemoveOldFine={frozenWeek ? undefined : onRemoveLateSendFine}
           />
         );
       })()}
@@ -881,6 +891,8 @@ export default function ManagerWeeklyReviewPage({
           ...(change !== 0 ? [{ label: change < 0 ? "Taken off by manager" : "Added by manager", value: Math.abs(change), minus: change < 0 }] : [])
         ];
         const canAdjust = canChangePayout(approveRow);
+        // Every "No fee" / "Late send" order needs a charge or skip first (Bright, 28 Oct 2026).
+        const toDecide = orderDecisionsReady ? undecidedCount(approveRow.lateSend, snap?.missingFeeDetail) : 0;
         return (
           <Modal title="Approve report" subtitle={`${approveRow.repName} · ${longDate(weekStart)} to ${longDate(weekEnd)}`} onClose={() => { if (!approveBusy) setApproving(null); }}>
             <div className="space-y-4 px-6 py-5">
@@ -919,6 +931,17 @@ export default function ManagerWeeklyReviewPage({
                 </div>
               )}
 
+              {toDecide > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-[12.5px] text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
+                  <span className="flex items-start gap-2">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span><strong>{toDecide} flagged order{toDecide === 1 ? "" : "s"} still need{toDecide === 1 ? "s" : ""} a decision.</strong> Charge or skip each one before approving.</span>
+                  </span>
+                  <button type="button" onClick={() => { const repId = approveRow.repId; setApproving(null); setDecisionsFor({ repId, kind: undecidedCount(approveRow.lateSend, null) > 0 ? "late_send" : "missing_fee" }); }}
+                    className="!min-h-0 rounded-lg bg-rose-600 px-3 py-1.5 text-[12px] font-bold text-white hover:bg-rose-700">Decide now</button>
+                </div>
+              )}
+
               <p className="m-0 text-center text-[15px] font-bold text-gray-900 dark:text-slate-50">Is this the actual bonus to be paid?</p>
               {approveError && <p className="m-0 rounded-lg bg-rose-50 px-3 py-2 text-center text-[12px] font-semibold text-rose-700">{approveError}</p>}
 
@@ -929,7 +952,7 @@ export default function ManagerWeeklyReviewPage({
                   className="!min-h-0 flex flex-1 items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 text-[13px] font-bold text-gray-800 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
                   <Pencil className="h-4 w-4" /> No, adjust it
                 </button>
-                <button type="button" disabled={approveBusy} onClick={() => void confirmApprove()}
+                <button type="button" disabled={approveBusy || toDecide > 0} title={toDecide > 0 ? "Decide on every flagged order first." : undefined} onClick={() => void confirmApprove()}
                   className="!min-h-0 flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-[13px] font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60">
                   <Check className="h-4 w-4" /> {approveBusy ? "Approving..." : "Yes, approve"}
                 </button>

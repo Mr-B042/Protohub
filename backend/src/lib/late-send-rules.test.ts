@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { lateSendWindow, minutesLate } from "./late-send-rules.js";
+import { lateSendWindow, minutesLate, workingMinutesBetween } from "./late-send-rules.js";
 
 // Lagos is UTC+1: 10:00 Lagos = 09:00Z.
 const at = (iso: string) => Date.parse(iso);
@@ -49,4 +49,23 @@ test("minutes late", () => {
   assert.equal(minutesLate(d, at("2026-10-27T09:14:00Z"), 0), 0);
   assert.equal(minutesLate(d, at("2026-10-27T09:40:00Z"), 0), 25);
   assert.equal(minutesLate(d, null, at("2026-10-27T09:16:00Z")), 1);
+});
+
+test("Working minutes: same afternoon", () => {
+  // Tue 13:00 -> 14:10 Lagos
+  assert.equal(workingMinutesBetween(at("2026-10-27T12:00:00Z"), at("2026-10-27T13:10:00Z")), 70);
+});
+
+test("Working minutes: the night does not count", () => {
+  // Tue 17:25 Lagos -> Wed 10:20 Lagos = 5 + 20
+  assert.equal(workingMinutesBetween(at("2026-10-27T16:25:00Z"), at("2026-10-28T09:20:00Z")), 25);
+});
+
+test("Working minutes: Sunday skipped, Monday opens at 11", () => {
+  // Sat 17:00 Lagos -> Mon 11:30 Lagos = 30 + 30
+  assert.equal(workingMinutesBetween(at("2026-10-31T16:00:00Z"), at("2026-11-02T10:30:00Z")), 60);
+});
+
+test("Working minutes: night arrival to before opening is zero", () => {
+  assert.equal(workingMinutesBetween(at("2026-10-26T23:30:00Z"), at("2026-10-27T08:00:00Z")), 0);
 });

@@ -57,6 +57,31 @@ export function minutesLate(deadlineMs: number, sentAtMs: number | null, nowMs: 
   return end > deadlineMs ? Math.ceil((end - deadlineMs) / 60_000) : 0;
 }
 
+/**
+ * Working minutes between two moments: only time inside opening hours counts
+ * (nights and Sundays are skipped). Used to show how long a rep really took,
+ * so a 5:25pm order sent at 10:20am next day reads "15 min", not "17 hours".
+ */
+export function workingMinutesBetween(fromMs: number, toMs: number) {
+  if (!(toMs > fromMs)) return 0;
+  let t = fromMs + LAGOS_OFFSET_MS;
+  const end = toMs + LAGOS_OFFSET_MS;
+  let total = 0;
+  for (let guard = 0; guard < 400 && t < end; guard += 1) {
+    const day = new Date(t);
+    const midnight = Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate());
+    const nextDay = midnight + 24 * 60 * 60_000;
+    const open = openingMinute(day.getUTCDay());
+    if (open !== null) {
+      const from = Math.max(t, midnight + open * 60_000);
+      const to = Math.min(end, midnight + CLOSE_MIN * 60_000);
+      if (to > from) total += to - from;
+    }
+    t = nextDay;
+  }
+  return Math.ceil(total / 60_000);
+}
+
 /** The Lagos date (YYYY-MM-DD) of a moment. */
 export function lagosDateOf(ms: number) {
   return new Date(ms + LAGOS_OFFSET_MS).toISOString().slice(0, 10);
