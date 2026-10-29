@@ -940,14 +940,31 @@ const RepActionSchema = z.object({ weekStart: weekStartSchema, note: z.string().
 // sends it here, once per report. Only for that week, only while the week is
 // still with the manager, and only for a report not yet worked out under the
 // rule (no bonusBeforeRateCut). The old figures stay in the audit trail.
-const RATE_RULE_REWORK_WEEKS = new Set(["2026-10-04"]);
+//
+// Same route, week of 18 Oct (Bright, 29 Oct 2026): the upgrade ladder paid
+// every step on top of the steps below (2 upgrades = ₦800 + ₦1,600). Bright
+// chose to correct last week only. A report counts as re-worked once its
+// figures carry upgradeLadder "highest_step".
+const REWORK_WEEKS: Record<string, { done: (snapshot: any) => boolean; label: string; why: string }> = {
+  "2026-10-04": {
+    done: (snapshot) => snapshot?.totals?.bonusBeforeRateCut !== undefined && snapshot?.totals?.bonusBeforeRateCut !== null,
+    label: "the new delivery-rate rule",
+    why: "New weekly delivery-rate rule brought back to this week (Bright, 14 Oct 2026)"
+  },
+  "2026-10-18": {
+    done: (snapshot) => snapshot?.upgradeLadder === "highest_step",
+    label: "the corrected upgrade ladder",
+    why: "Upgrade ladder paid every step on top of the steps below; now only the highest step reached (Bright, 29 Oct 2026)"
+  }
+};
 const ReworkSchema = z.object({ weekStart: weekStartSchema, snapshot: snapshotSchema });
 router.post("/rep/:repId/rework-figures", requireRole("Owner", ...REVIEWERS), async (req, res) => {
   const parsed = ReworkSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   const { weekStart, snapshot } = parsed.data;
   try {
-    if (!RATE_RULE_REWORK_WEEKS.has(weekStart)) throw httpError(400, "Only the week of 4 Oct is re-worked for the new delivery-rate rule.");
+    const rework = REWORK_WEEKS[weekStart];
+    if (!rework) throw httpError(400, "Only the weeks of 4 Oct and 18 Oct are re-worked.");
     const branchId = requireBranch(req);
     const orgId = req.user!.orgId;
     const repId = String(req.params.repId);
@@ -956,8 +973,8 @@ router.post("/rep/:repId/rework-figures", requireRole("Owner", ...REVIEWERS), as
     if (company && company.status !== "open" && company.status !== "returned_to_manager") throw httpError(409, "This week is already with the owner.");
     const oldTotals = ((report.snapshot as any)?.totals ?? {}) as Record<string, unknown>;
     const newTotals = ((snapshot as any)?.totals ?? {}) as Record<string, unknown>;
-    if (oldTotals.bonusBeforeRateCut !== undefined && oldTotals.bonusBeforeRateCut !== null) { res.json({ ok: true, already: true }); return; }
-    if (newTotals.bonusBeforeRateCut === undefined || newTotals.bonusBeforeRateCut === null) throw httpError(400, "These figures were not worked out under the new rule.");
+    if (rework.done(report.snapshot)) { res.json({ ok: true, already: true }); return; }
+    if (!rework.done(snapshot)) throw httpError(400, `These figures were not worked out under ${rework.label}.`);
     if ((snapshot as any)?.repId !== repId || (snapshot as any)?.weekStart !== weekStart) throw httpError(400, "These figures are for another rep or week.");
 
     const now = new Date().toISOString();
@@ -973,13 +990,13 @@ router.post("/rep/:repId/rework-figures", requireRole("Owner", ...REVIEWERS), as
     for (const row of dropped ?? []) {
       await audit(req, {
         branchId, weekStart, action: "payout_change_removed", repReportId: report.id, repId,
-        detail: { systemAmount: Number(row.system_amount), amount: Number(row.amount), reason: row.reason, why: "The figures were re-worked for the new delivery-rate rule, so the change must be made again." }
+        detail: { systemAmount: Number(row.system_amount), amount: Number(row.amount), reason: row.reason, why: `The figures were re-worked for ${rework.label}, so the change must be made again.` }
       });
     }
     await audit(req, {
       branchId, weekStart, action: "figures_reworked", repReportId: report.id, repId,
       detail: {
-        why: "New weekly delivery-rate rule brought back to this week (Bright, 14 Oct 2026)",
+        why: rework.why,
         before: { baseBonus: oldTotals.baseBonus ?? null, upsellBonus: oldTotals.upsellBonus ?? null, crossSellBonus: oldTotals.crossSellBonus ?? null, finalBonus: oldTotals.finalBonus ?? null },
         after: { baseBonus: newTotals.baseBonus ?? null, upsellBonus: newTotals.upsellBonus ?? null, crossSellBonus: newTotals.crossSellBonus ?? null, finalBonus: newTotals.finalBonus ?? null, rateCut: newTotals.rateCut ?? null }
       }

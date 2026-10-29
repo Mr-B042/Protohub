@@ -226,6 +226,9 @@ export function monthlyIncentiveForWeek(
 
 export type WeeklyReportSnapshot = {
   version: number;
+  /** Set on reports worked out with the upgrade ladder paying only the highest
+   *  step reached (Bright, 29 Oct 2026). Missing = the old, added-up ladder. */
+  upgradeLadder?: "highest_step";
   repId: string;
   repName: string;
   weekStart: string;
@@ -694,6 +697,7 @@ export function buildRepWeeklySnapshot(input: {
       carryOverBonus: orders.filter((order) => !order.placedThisWeek).reduce((sum, order) => sum + order.bonus, 0)
     },
     previous: input.previous,
+    upgradeLadder: "highest_step",
     ...(input.monthlyIncentive ? { monthlyIncentive: input.monthlyIncentive } : {}),
     products,
     daily,

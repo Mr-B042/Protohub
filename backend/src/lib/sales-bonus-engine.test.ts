@@ -457,10 +457,11 @@ test("attributeRuleEarningsToOrders: tiered upgrade rules stay on their own unlo
   ]);
 
   assert.deepEqual(Object.fromEntries(attributeRuleEarningsToOrders(result.rules[0]!, new Map())), { first: 750 });
-  assert.deepEqual(Object.fromEntries(attributeRuleEarningsToOrders(result.rules[1]!, new Map())), { second: 1_500 });
+  // The 2-customer step is ₦1,500 IN TOTAL, so the second order adds ₦750.
+  assert.deepEqual(Object.fromEntries(attributeRuleEarningsToOrders(result.rules[1]!, new Map())), { second: 750 });
 });
 
-test("tiered upgrade ladder repeats and uses the stable order number within a delivery day", () => {
+test("tiered upgrade ladder pays the highest step only, repeats, and uses the stable order number within a delivery day", () => {
   const rules: SalesBonusRule[] = [
     { targetCount: 1, amount: 800 },
     { targetCount: 2, amount: 1_600 },
@@ -484,7 +485,10 @@ test("tiered upgrade ladder repeats and uses the stable order number within a de
     order("2162", { delivered_date: "2026-07-15", created_at: "2026-07-14T10:00:00", upsell_from_qty: 3, upsell_to_qty: 6 })
   ]);
 
-  assert.equal(result.earnedSoFar, 5_600);
+  // Each step's amount is the total for that many upgrades (Bright, 29 Oct
+  // 2026): 3 upgrades = ₦2,400, then the ladder starts again, so 4 = ₦3,200.
+  // It used to add every step (₦800 + ₦1,600 + ₦2,400 + ₦800 = ₦5,600).
+  assert.equal(result.earnedSoFar, 3_200);
   const attributed = new Map<string, number>();
   for (const rule of result.rules) {
     for (const [orderId, amount] of attributeRuleEarningsToOrders(rule, new Map())) {
@@ -493,10 +497,32 @@ test("tiered upgrade ladder repeats and uses the stable order number within a de
   }
   assert.deepEqual(Object.fromEntries(attributed), {
     "2024": 800,
-    "2087": 1_600,
-    "2099": 2_400,
+    "2087": 800,
+    "2099": 800,
     "2162": 800
   });
+});
+
+test("upgrade ladder: two upgrades pay the 2-customer total, not both steps added", () => {
+  const rules: SalesBonusRule[] = [
+    { targetCount: 1, amount: 800 },
+    { targetCount: 2, amount: 1_600 },
+    { targetCount: 3, amount: 2_400 }
+  ].map(({ targetCount, amount }) => ({
+    id: `tier-${targetCount}`, org_id: "org-1", program_id: activeProgram.id, name: `Upgrade ${targetCount}`, type: "upgrade_count",
+    status: "active", config: { fromQty: 3, toQtyMin: 6, targetCount, amount }, display_order: targetCount
+  }));
+  const two = run(rules, [
+    order("5430", { delivered_date: "2026-10-22", upsell_from_qty: 3, upsell_to_qty: 6 }),
+    order("5537", { delivered_date: "2026-10-24", upsell_from_qty: 3, upsell_to_qty: 6 })
+  ]);
+  assert.equal(two.earnedSoFar, 1_600);
+  const third = two.rules.find((rule) => rule.ruleId === "tier-3")!;
+  assert.equal(third.earnedAmount, 0);
+  // Reaching the 3rd upgrade adds ₦800 more, not ₦2,400.
+  assert.equal(third.potentialAmount, 800);
+  const one = run(rules, [order("5430", { delivered_date: "2026-10-22", upsell_from_qty: 3, upsell_to_qty: 6 })]);
+  assert.equal(one.earnedSoFar, 800);
 });
 
 test("attributeRuleEarningsToOrders: inactive rule or zero earnings yields an empty map", () => {
