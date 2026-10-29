@@ -230,6 +230,32 @@ export function claimableRemittances(rows: ClaimRow[], walletAccountIds: Set<str
 }
 
 /**
+ * Cash the manager still holds from orders she already cleared on the
+ * Remittance screen (Bright, 29 Oct 2026: a manager cleared many orders there
+ * before logging them in her wallet, then could only move them back one by
+ * one). Groups her payment rows by order, by the same rule as
+ * claimableRemittances: not in anyone's wallet, not already moved. Orders
+ * whose rows net to nothing are left out.
+ */
+export type HeldPaymentRow = ClaimRow & { orderId: string; receivedAt: string | null; customer: string | null; product: string | null };
+export type HeldOrder = { orderId: string; customer: string | null; product: string | null; receivedAt: string | null; total: number; rows: ClaimRow[] };
+export function heldOrders(rows: HeldPaymentRow[], walletAccountIds: Set<string>, alreadyClaimed: Set<string>): HeldOrder[] {
+  const byOrder = new Map<string, HeldPaymentRow[]>();
+  for (const row of rows) byOrder.set(row.orderId, [...(byOrder.get(row.orderId) ?? []), row]);
+  const out: HeldOrder[] = [];
+  for (const [orderId, orderRows] of byOrder) {
+    const free = claimableRemittances(orderRows, walletAccountIds, alreadyClaimed);
+    if (free.total <= 0) continue;
+    const latest = orderRows.reduce((best, row) => ((row.receivedAt ?? "") > (best.receivedAt ?? "") ? row : best), orderRows[0]);
+    out.push({
+      orderId, customer: latest.customer, product: latest.product, receivedAt: latest.receivedAt, total: free.total,
+      rows: free.rows.map((row) => ({ id: row.id, amount: row.amount, accountId: row.accountId }))
+    });
+  }
+  return out.sort((a, b) => (b.receivedAt ?? "").localeCompare(a.receivedAt ?? "") || a.orderId.localeCompare(b.orderId));
+}
+
+/**
  * A rider / logistics fee the manager pays for orders whose delivery fee is
  * already on the order (Bright, 3 Oct 2026). The order's fee is already a
  * "Delivery" expense (EXP-DEL-<order>), so only the part ABOVE the fees still

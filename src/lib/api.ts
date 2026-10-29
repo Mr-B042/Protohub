@@ -4274,7 +4274,10 @@ export type ManagerFundLogInput = {
   ownCost?: boolean;
   /** Customer payment on an already-paid order: move its existing payment into the wallet. */
   claimExisting?: boolean;
+  /** Cash still held from several orders already cleared: move all their payments in one entry. */
+  heldOrderIds?: string[];
 };
+export type ManagerFundHeldOrder = { orderId: string; customer: string | null; product: string | null; receivedAt: string | null; total: number };
 
 export const managerFundsApi = {
   week: (weekStart: string, managerId?: string) => {
@@ -4283,6 +4286,7 @@ export const managerFundsApi = {
     return get<ManagerFundWeek>(`/api/manager-funds/week?${qs.toString()}`);
   },
   log: (body: ManagerFundLogInput) => post<{ id: string }>("/api/manager-funds/transactions", body),
+  heldOrders: () => get<{ days: number; orders: ManagerFundHeldOrder[] }>("/api/manager-funds/held-orders"),
   edit: (id: string, body: Partial<Omit<ManagerFundLogInput, "kind" | "orderId">>) => patch<{ ok: true }>(`/api/manager-funds/transactions/${encodeURIComponent(id)}`, body),
   void: (id: string, reason: string) => post<{ ok: true }>(`/api/manager-funds/transactions/${encodeURIComponent(id)}/void`, { reason }),
   uploadEvidence: (id: string, dataUrl: string, name: string) => post<{ ok: true }>(`/api/manager-funds/transactions/${encodeURIComponent(id)}/evidence`, { dataUrl, name }),
