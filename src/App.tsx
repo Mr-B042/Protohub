@@ -32596,6 +32596,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         onRemoveLateSendFine={(id) => weeklyRun(() => weeklyReportsApi.removeLateSendFine(id), "Fine removed.")}
         questions={week?.questions ?? []}
         viewerRole={currentRole}
+        lookupOrder={(id) => {
+          const order = trackedOrders.find((item) => String(item.id) === id);
+          if (!order) return null;
+          return {
+            id: String(order.id), customer: order.customer ?? "", product: [order.productName, order.packageName].filter(Boolean).join(" – "),
+            status: order.status ?? "New", placedKey: orderCreatedKey(order) ?? "", deliveredKey: orderDeliveredKey(order) || null,
+            repName: users.find((user) => user.id === order.assignedRepId)?.name ?? null
+          };
+        }}
         onAskQuestion={currentRole === "Owner" && week?.questionsReady !== false ? (repId, text) => weeklyRun(() => weeklyReportsApi.askQuestion(repId, { weekStart: weeklyReportWeekStart, text }), `Question sent to the manager about ${repName(repId)}.`) : undefined}
         onAnswerQuestion={(id, text) => weeklyRun(() => weeklyReportsApi.answerQuestion(id, text), "Answer sent to the owner.")}
         onAcceptQuestion={(id) => weeklyRun(() => weeklyReportsApi.acceptQuestion(id), "Answer accepted.")}

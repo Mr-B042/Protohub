@@ -1,6 +1,6 @@
 import MonthlyIncentiveSection from "./MonthlyIncentiveSection";
 import WeeklyRepReportModal from "../components/WeeklyRepReportModal";
-import { BonusBreakdownModal } from "../components/BonusBreakdownModal";
+import { BonusBreakdownModal, type FoundOrder } from "../components/BonusBreakdownModal";
 import { ReportQuestionsModal } from "../components/ReportQuestionsModal";
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -77,8 +77,10 @@ export default function ManagerWeeklyReviewPage({
   renderHeadOfSales, headOfSalesAttention = false,
   onApprove, onReturn, onFlag, onSubmitToOwner, onBack, onEditManagerBonus, monthlyIncentive = null,
   onSavePayoutChange, onRemovePayoutChange, repsWaiting = false, waitingWeeks = [], onDecideOrder, onUndoOrderDecision, onRemoveLateSendFine, orderDecisionsReady = true,
-  questions = [], viewerRole = "", onAskQuestion, onAnswerQuestion, onAcceptQuestion, onFollowUpQuestion
+  questions = [], viewerRole = "", onAskQuestion, onAnswerQuestion, onAcceptQuestion, onFollowUpQuestion, lookupOrder
 }: {
+  /** Any order as it is today, for the breakdown's "which week is its bonus in?" search. */
+  lookupOrder?: (id: string) => FoundOrder | null;
   /** Questions to the manager on reps' figures (29 Oct 2026): Protohub's own and the Owner's. */
   questions?: WeeklyReportQuestion[];
   /** Who is looking: the Owner asks / accepts, a Manager or Admin answers. */
@@ -905,7 +907,7 @@ export default function ManagerWeeklyReviewPage({
         const breakdownRow = breakdownFor ? rows.find((row) => row.repId === breakdownFor) ?? null : null;
         const breakdownSnap = breakdownRow ? shownSnapshot(breakdownRow) : null;
         if (!breakdownRow || !breakdownSnap) return null;
-        return <BonusBreakdownModal snap={breakdownSnap} repName={breakdownRow.repName} sym={sym} onClose={() => setBreakdownFor(null)} />;
+        return <BonusBreakdownModal snap={breakdownSnap} repName={breakdownRow.repName} sym={sym} onClose={() => setBreakdownFor(null)} lookupOrder={lookupOrder} />;
       })()}
       {(() => {
         const decisionRow = decisionsFor ? rows.find((row) => row.repId === decisionsFor.repId) ?? null : null;
