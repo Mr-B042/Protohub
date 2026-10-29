@@ -319,6 +319,30 @@ export const addDaysKey = (dateKey: string, days: number) => {
  */
 export const reportDueDate = (weekStart: string) => addDaysKey(weekStart, 9);
 
+// ── Which week's bonus pays an order (Bright, 29 Oct 2026) ──────────────────
+// Until the week of 25 Oct an order was paid in the week it was DELIVERED, so
+// an order placed on Friday and delivered on Monday was paid the next week
+// (carried over). From the week of 25 Oct, an order placed in a week and
+// delivered by that week's report day (the Tuesday after) is paid in its OWN
+// week's bonus, and is not carried into the next one. Delivered later than
+// that, it is still paid in the week it is delivered. The delivery rate is
+// unchanged. Mirrored on the server in backend/src/lib/late-deliveries.ts.
+export const PAY_BY_REPORT_DAY_FROM = "2026-10-25";
+const sundayOfKey = (dateKey: string) => {
+  const date = new Date(`${dateKey.slice(0, 10)}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - date.getUTCDay());
+  return date.toISOString().slice(0, 10);
+};
+export function bonusWeekFor(placedKey: string | null | undefined, deliveredKey: string | null | undefined): string | null {
+  if (!deliveredKey) return null;
+  const delivered = deliveredKey.slice(0, 10);
+  const deliveredWeek = sundayOfKey(delivered);
+  if (!placedKey) return deliveredWeek;
+  const placedWeek = sundayOfKey(placedKey);
+  if (placedWeek >= PAY_BY_REPORT_DAY_FROM && deliveredWeek === addDaysKey(placedWeek, 7) && delivered <= reportDueDate(placedWeek)) return placedWeek;
+  return deliveredWeek;
+}
+
 // ── The manager's change to a rep's payout (Bright, 11 Oct 2026) ────────────
 // "In most cases the system doesn't read 100% accuracy": a Manager or Admin
 // can add to or take off a rep's FINAL payout before the week goes to the
@@ -549,7 +573,7 @@ export function buildRepWeeklySnapshot(input: {
 }): WeeklyReportSnapshot {
   const { weekStart, weekEnd } = input;
   const placed = input.orders.filter((order) => inWeek(order.createdKey, weekStart, weekEnd));
-  const deliveredInWeek = input.orders.filter((order) => order.status === "Delivered" && (inWeek(order.deliveredKey, weekStart, weekEnd) || !!order.lateRecorded));
+  const deliveredInWeek = input.orders.filter((order) => order.status === "Delivered" && (bonusWeekFor(order.createdKey, order.deliveredKey) === weekStart || !!order.lateRecorded));
   // The rate's cohort: this week's orders that are delivered. Carried-over
   // deliveries are paid (deliveredInWeek) but never lift this week's rate.
   const placedDelivered = placed.filter((order) => order.status === "Delivered");
@@ -604,7 +628,7 @@ export function buildRepWeeklySnapshot(input: {
   for (const order of [...placed, ...deliveredInWeek]) {
     if (seen.has(order.id)) continue;
     seen.add(order.id);
-    const deliveredThisWeek = order.status === "Delivered" && (inWeek(order.deliveredKey, weekStart, weekEnd) || !!order.lateRecorded);
+    const deliveredThisWeek = order.status === "Delivered" && (bonusWeekFor(order.createdKey, order.deliveredKey) === weekStart || !!order.lateRecorded);
     orders.push({
       id: order.id,
       date: order.createdKey,

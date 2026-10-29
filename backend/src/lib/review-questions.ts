@@ -1,5 +1,6 @@
 import { supabase } from "./supabase.js";
 import { deliver, leadershipRecipients } from "./weekly-report-notifications.js";
+import { bonusWeekFor } from "./late-deliveries.js";
 
 /**
  * Questions to the manager on a rep's weekly figures (Bright, 29 Oct 2026).
@@ -52,7 +53,7 @@ type SnapshotLike = {
   weekStart?: string;
   weekEnd?: string;
   totals?: Record<string, any>;
-  orders?: Array<{ status?: string; deliveredDate?: string | null; placedThisWeek?: boolean; bonus?: number; lateRecorded?: unknown }>;
+  orders?: Array<{ status?: string; date?: string | null; deliveredDate?: string | null; placedThisWeek?: boolean; bonus?: number; lateRecorded?: unknown }>;
 };
 type PayoutLike = { amount: number; systemAmount: number; reason: string } | null;
 
@@ -65,9 +66,7 @@ export function autoChecks(snapshot: SnapshotLike | null, payout: PayoutLike): A
   const t = snapshot.totals;
   const name = snapshot.repName || "this rep";
   const weekStart = String(snapshot.weekStart ?? "");
-  const weekEnd = String(snapshot.weekEnd ?? "");
-  const inWeek = (key: string | null | undefined) => !!key && key.slice(0, 10) >= weekStart && key.slice(0, 10) <= weekEnd;
-  const paidOrders = (snapshot.orders ?? []).filter((order) => order.status === "Delivered" && (inWeek(order.deliveredDate) || !!order.lateRecorded));
+  const paidOrders = (snapshot.orders ?? []).filter((order) => order.status === "Delivered" && (bonusWeekFor(order.date, order.deliveredDate) === weekStart || !!order.lateRecorded));
   const paidThisWeek = paidOrders.filter((order) => order.placedThisWeek).length;
   const paidCarried = paidOrders.length - paidThisWeek;
   const paidCount = Number(t.deliveredForBonus ?? paidOrders.length);
