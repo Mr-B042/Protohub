@@ -11,6 +11,7 @@ import { disputesForWeek, logMissesForWeek } from "./log-misses.js";
 import { MISSING_FEE_TYPE, missingFeesFor } from "../lib/missing-fee-penalty.js";
 import { LATE_SEND_FINE_TYPE, lateSendsFor } from "../lib/late-send.js";
 import { NO_FEE_CHARGE_TYPE, attachDecisions, chargeReason, removeDecision, saveDecision, undecidedFor } from "../lib/review-order-decisions.js";
+import { lateDeliveriesFor } from "../lib/late-deliveries.js";
 import { QUESTION_COLUMNS, mapQuestion, notifyManagers, notifyOwner, openQuestionCount, questionsForWeek, syncAutoQuestions, type QuestionMessage } from "../lib/review-questions.js";
 import { addDaysToDateKey, sundayWeekStartForDateKey, lagosDateKey, weekEndFromStart } from "../lib/sales-bonus-engine.js";
 import { FIRST_REPORT_WEEK,
@@ -496,11 +497,12 @@ router.get("/mine", requireScopedRep, async (req, res) => {
       sendGateFor(orgId, branchId, weekStart)
     ]);
     if (bonusQueries.error) throw bonusQueries.error;
-    const [logMisses, previousLogMisses, logMissDisputes, carried] = await Promise.all([
+    const [logMisses, previousLogMisses, logMissDisputes, carried, lateDeliveries] = await Promise.all([
       logMissesForWeek(orgId, [repId], weekStart),
       logMissesForWeek(orgId, [repId], addDaysToDateKey(weekStart, -7)),
       disputesForWeek(orgId, branchId, [repId], weekStart),
-      carriedFinesFor(orgId, branchId, [repId], weekStart)
+      carriedFinesFor(orgId, branchId, [repId], weekStart),
+      lateDeliveriesFor(orgId, branchId, weekStart, repId)
     ]);
     const [corrections, auditRows] = report
       ? await Promise.all([
@@ -529,6 +531,8 @@ router.get("/mine", requireScopedRep, async (req, res) => {
       // The manager's change to this rep's payout, if any. Shown to the rep
       // with its reason, so the amount on their report is the amount they get.
       payoutChange: payoutChanges[0] ?? null,
+      // Delivered too late for their own week's sent report: paid in this one.
+      lateDeliveries,
       // Last week must reach the owner before this one can be sent.
       gate,
       // Flags are for the owner. The rep sees returns, not flags.
@@ -862,7 +866,11 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
     if (!company || company.status === "open" || company.status === "returned_to_manager") {
       await syncAutoQuestions(orgId, branchId, weekStart, (repReports.data ?? []) as any[], payoutChanges);
     }
-    const questions = await questionsForWeek(orgId, branchId, weekStart);
+    const [questions, lateDeliveries] = await Promise.all([
+      questionsForWeek(orgId, branchId, weekStart),
+      // Delivered too late for their own week's sent report: paid in this one.
+      lateDeliveriesFor(orgId, branchId, weekStart)
+    ]);
     res.json({
       weekStart,
       weekEnd: weekEndFromStart(weekStart),
@@ -891,6 +899,7 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
       orderDecisionsReady,
       questions: questions ?? [],
       questionsReady: questions !== null,
+      lateDeliveries,
       funds: funds.map(({ manager, fund }) => ({
         managerId: manager.id,
         managerName: manager.name,

@@ -23,6 +23,7 @@ const partsOf = (orders: Order[]): Parts => {
   return { base: sum((order) => order.baseBonus ?? order.bonus - (order.upsellBonus ?? 0) - (order.crossSellBonus ?? 0)), upsell, cross, total };
 };
 
+const whenText = (iso: string) => new Date(iso).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Africa/Lagos" });
 const pcs = (qty: number) => `${qty} ${qty === 1 ? "pc" : "pcs"}`;
 
 const dayText = (key: string | null | undefined) => {
@@ -51,11 +52,16 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder }
   const paidNow = placedDelivered.filter((order) => inWeek(order.deliveredDate));
   const paidNextWeek = placedDelivered.filter((order) => !inWeek(order.deliveredDate));
   const carried = snap.orders.filter((order) => !order.placedThisWeek && delivered(order) && inWeek(order.deliveredDate));
+  // Delivered in an earlier week but marked delivered after that week's
+  // report was sent, so no report paid it: paid now (29 Oct 2026).
+  const late = snap.orders.filter((order) => delivered(order) && !!order.lateRecorded && !inWeek(order.deliveredDate));
+  const paidCount = paidNow.length + carried.length + late.length;
 
   const thisWeek = partsOf(paidNow);
   const earlier = partsOf(carried);
+  const lateParts = partsOf(late);
   const paid = { base: Math.round(t.baseBonus), upsell: Math.round(t.upsellBonus), cross: Math.round(t.crossSellBonus), total: Math.round(t.baseBonus + t.upsellBonus + t.crossSellBonus) };
-  const ordersSum = thisWeek.total + earlier.total;
+  const ordersSum = thisWeek.total + earlier.total + lateParts.total;
   const gap = paid.total - ordersSum;
 
   const full = bonusComponentsFull(snap);
@@ -91,22 +97,29 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder }
               ) : null}
             </div>
           </div>
+          {late.length > 0 ? (
+            <div className="mt-2">
+              <Box tone="amber" icon={<CalendarClock className="h-4 w-4" />} label="Recorded late: delivered in an earlier week, marked delivered after that week's report was sent: bonus paid now" value={`${nf(late.length)} delivered`}
+                note="No earlier report paid them, so this report does. Their dates are listed in the table below." />
+            </div>
+          ) : null}
           <div className="mt-2">
             <Box tone="blue" icon={<History className="h-4 w-4" />} label="Carried over: placed in an earlier week, delivered this week: bonus paid now" value={`${nf(carried.length)} delivered`}
               note="They are not in this week's orders or delivery rate (they belong to the week they were placed), but their bonus is paid now." />
           </div>
           <p className="m-0 mt-2 rounded-xl bg-gray-900 px-3 py-2.5 text-[13.5px] font-bold text-white dark:bg-slate-700">
-            Bonus paid this week on {nf(paidNow.length + carried.length)} delivered orders = {nf(paidNow.length)} from this week + {nf(carried.length)} carried over
+            Bonus paid this week on {nf(paidCount)} delivered orders = {nf(paidNow.length)} from this week + {nf(carried.length)} carried over{late.length > 0 ? ` + ${nf(late.length)} recorded late` : ""}
           </p>
           {/* Bright, 29 Oct 2026: "44 delivered, now 48?" Say how one becomes the other. */}
           <div className="mt-2 rounded-xl border border-gray-200 px-3 py-2.5 text-[12.5px] dark:border-slate-700">
-            <p className="m-0 font-bold text-gray-900 dark:text-slate-50">Why {nf(paidNow.length + carried.length)} and not {nf(placedDelivered.length)}?</p>
+            <p className="m-0 font-bold text-gray-900 dark:text-slate-50">Why {nf(paidCount)} and not {nf(placedDelivered.length)}?</p>
             <ul className="m-0 mt-1 list-none space-y-0.5 p-0 text-gray-700 dark:text-slate-300">
               <li><b>{nf(placedDelivered.length)}</b> delivered from this week's orders (the delivery-rate figure)</li>
               {paidNextWeek.length > 0 ? <li><b>− {nf(paidNextWeek.length)}</b> of them delivered after {dayText(snap.weekEnd)}: their bonus is paid next week</li> : null}
               <li><b>= {nf(paidNow.length)}</b> delivered from this week's orders, bonus paid now</li>
               <li><b>+ {nf(carried.length)}</b> delivered this week from earlier weeks' orders (carried over)</li>
-              <li className="font-bold text-gray-900 dark:text-slate-50">= {nf(paidNow.length + carried.length)} delivered orders paid this week</li>
+              {late.length > 0 ? <li><b>+ {nf(late.length)}</b> delivered in an earlier week but recorded too late for that week's report</li> : null}
+              <li className="font-bold text-gray-900 dark:text-slate-50">= {nf(paidCount)} delivered orders paid this week</li>
             </ul>
           </div>
         </section>
@@ -122,9 +135,10 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder }
               <tbody>
                 <PartsRow label={`Placed this week, delivered by ${dayText(snap.weekEnd)}`} tone="text-emerald-700" count={paidNow.length} parts={thisWeek} money={money} />
                 <PartsRow label="+ Placed earlier, delivered this week (carried over)" tone="text-blue-700" count={carried.length} parts={earlier} money={money} />
+                {late.length > 0 ? <PartsRow label="+ Delivered earlier, recorded late" tone="text-amber-700" count={late.length} parts={lateParts} money={money} /> : null}
                 <tr className="border-t-2 border-gray-300 bg-gray-50 font-black dark:border-slate-600 dark:bg-slate-800/60">
                   <td className="px-3 py-2">= Bonus earned on delivered orders</td>
-                  <td className="px-3 py-2">{nf(paidNow.length + carried.length)}</td>
+                  <td className="px-3 py-2">{nf(paidCount)}</td>
                   <td className="px-3 py-2 text-right">{money(paid.base)}</td>
                   <td className="px-3 py-2 text-right">{money(paid.upsell)}</td>
                   <td className="px-3 py-2 text-right">{money(paid.cross)}</td>
@@ -135,7 +149,7 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder }
           </div>
           {Math.abs(gap) < 1 ? (
             <p className="m-0 mt-1.5 flex items-center gap-1.5 text-[12px] font-semibold text-emerald-700"><CheckCircle2 className="h-4 w-4" />
-              It adds up: {money(thisWeek.total)} + {money(earlier.total)} = {money(paid.total)}. The carried-over money is already inside Base, Upsell and Cross-sell, not extra.
+              It adds up: {money(thisWeek.total)} + {money(earlier.total)}{late.length > 0 ? ` + ${money(lateParts.total)}` : ""} = {money(paid.total)}. The carried-over money is already inside Base, Upsell and Cross-sell, not extra.
             </p>
           ) : (
             <p className="m-0 mt-1.5 text-[12px] font-semibold text-amber-700">
@@ -173,9 +187,32 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder }
             <OrderTable orders={carried} money={money} totalLabel={`Total: ${nf(carried.length)} carried over`} />
           </section>
         ) : null}
+        {late.length > 0 ? (
+          <section>
+            <SectionTitle n={4 + (paidNow.length > 0 ? 1 : 0) + (carried.length > 0 ? 1 : 0)} title={`Recorded late: ${nf(late.length)} order${late.length === 1 ? "" : "s"}`} sub="Delivered in an earlier week, but marked delivered after that week's report was sent." />
+            <div className="mt-2 overflow-x-auto rounded-xl border border-amber-200 dark:border-amber-500/30">
+              <table className="w-full !min-w-[560px] text-[12.5px]">
+                <thead className="bg-amber-50 text-[11px] uppercase text-amber-800 dark:bg-amber-500/10 [&_th]:bg-transparent [&_th]:[color:inherit]">
+                  <tr>{["Order", "Placed", "Delivery date", "Marked delivered", "Bonus"].map((h) => <th key={h} className={`px-3 py-2 font-bold ${h === "Bonus" ? "text-right" : "text-left"}`}>{h}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {late.map((order) => (
+                    <tr key={order.id} className="border-t border-amber-100 dark:border-amber-500/20">
+                      <td className="px-3 py-1.5"><b>#{order.id}</b><span className="block text-[11px] text-gray-500">{order.customer} · {order.product}</span></td>
+                      <td className="whitespace-nowrap px-3 py-1.5">{dayText(order.date)}</td>
+                      <td className="whitespace-nowrap px-3 py-1.5">{dayText(order.deliveredDate)}<span className="block text-[11px] text-gray-500">week of {dayText(order.lateRecorded!.deliveredWeek)}</span></td>
+                      <td className="whitespace-nowrap px-3 py-1.5 font-semibold text-amber-800">{order.lateRecorded!.recordedAt ? whenText(order.lateRecorded!.recordedAt) : "-"}<span className="block text-[11px] font-normal text-gray-500">after that week's report was sent</span></td>
+                      <td className="px-3 py-1.5 text-right font-bold">{money(Math.round(order.bonus))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ) : null}
         {paidNextWeek.length > 0 ? (
           <section>
-            <SectionTitle n={4 + (paidNow.length > 0 ? 1 : 0) + (carried.length > 0 ? 1 : 0)} title={`Paid next week: ${nf(paidNextWeek.length)} order${paidNextWeek.length === 1 ? "" : "s"}`} sub="Placed this week, delivered after it ended. They will show as carried over next week." />
+            <SectionTitle n={4 + (paidNow.length > 0 ? 1 : 0) + (carried.length > 0 ? 1 : 0) + (late.length > 0 ? 1 : 0)} title={`Paid next week: ${nf(paidNextWeek.length)} order${paidNextWeek.length === 1 ? "" : "s"}`} sub="Placed this week, delivered after it ended. They will show as carried over next week." />
             <ul className="m-0 mt-2 list-none space-y-1 p-0 text-[12.5px]">
               {paidNextWeek.map((order) => (
                 <li key={order.id} className="flex flex-wrap justify-between gap-2 rounded-lg bg-amber-50 px-3 py-1.5 dark:bg-amber-500/10">
@@ -297,52 +334,58 @@ const weekRange = (sunday: string) => {
 
 function OrderFinder({ snap, repName, money, lookupOrder }: { snap: WeeklyReportSnapshot; repName: string; money: (value: number) => string; lookupOrder?: (id: string) => FoundOrder | null }) {
   const [query, setQuery] = useState("");
-  const id = query.trim().replace(/^#/, "");
-  const inReport = id ? snap.orders.find((order) => order.id === id) ?? null : null;
-  const found: FoundOrder | null = id
-    ? lookupOrder?.(id) ?? (inReport ? { id, customer: inReport.customer, product: inReport.product, status: inReport.status, placedKey: inReport.date, deliveredKey: inReport.deliveredDate ?? null, repName } : null)
-    : null;
-  const thisWeek = snap.weekStart;
-  const lines: Array<{ label: string; value: string; tone?: string }> = [];
-  let verdict: { text: string; tone: string } | null = null;
-  if (found) {
-    const placedWeek = sundayOf(found.placedKey);
-    lines.push({ label: "Placed", value: `${dayText(found.placedKey)} (week of ${weekRange(placedWeek)})` });
-    if (found.repName && found.repName !== repName) lines.push({ label: "Sales rep", value: found.repName, tone: "text-amber-700" });
-    if (found.status === "Delivered" && found.deliveredKey) {
-      const paidWeek = sundayOf(found.deliveredKey);
-      lines.push({ label: "Delivered", value: `${dayText(found.deliveredKey)} (week of ${weekRange(paidWeek)})` });
-      const paidHere = paidWeek === thisWeek && inReport && (!found.repName || found.repName === repName);
-      verdict = paidHere
-        ? { text: `Bonus paid in THIS report: ${money(Math.round(inReport!.bonus))}${placedWeek !== thisWeek ? " (carried over: placed in an earlier week)" : ""}.`, tone: "bg-emerald-50 text-emerald-800 ring-emerald-200" }
-        : paidWeek > thisWeek
-          ? { text: `Bonus paid in the week of ${weekRange(paidWeek)}: that week's report (due ${dayText(reportDueDate(paidWeek))}). Not in this one, because it was delivered after ${dayText(snap.weekEnd)}.`, tone: "bg-amber-50 text-amber-900 ring-amber-200" }
-          : { text: `Bonus paid in the week of ${weekRange(paidWeek)}: that week's report, not this one.`, tone: "bg-blue-50 text-blue-800 ring-blue-200" };
-    } else if (["Failed", "Cancelled", "Returned"].includes(found.status)) {
-      verdict = { text: `No bonus: the order is ${found.status}.`, tone: "bg-rose-50 text-rose-800 ring-rose-200" };
-    } else {
-      lines.push({ label: "Status now", value: found.status });
-      verdict = { text: `Not delivered yet, so no bonus yet. When it is delivered, its bonus goes into the report of the week it is delivered in.`, tone: "bg-gray-50 text-gray-700 ring-gray-200" };
-    }
-  }
+  // Several at once (Bright, 29 Oct 2026): numbers separated by spaces, commas or new lines.
+  const ids = Array.from(new Set(query.split(/[\s,;]+/).map((part) => part.trim().replace(/^#/, "")).filter(Boolean))).slice(0, 30);
   return (
     <section className="rounded-2xl border border-[#1F6FEB]/30 bg-blue-50/40 p-3 dark:border-blue-500/30 dark:bg-blue-500/10">
-      <p className="m-0 text-[13px] font-bold text-gray-900 dark:text-slate-50">Find an order: which week is its bonus in?</p>
-      <p className="m-0 text-[11.5px] text-gray-600 dark:text-slate-300">A bonus is paid in the week the order is <b>delivered</b> (Sunday to Saturday), whatever week it was placed.</p>
-      <label className="mt-2 flex h-10 items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900">
-        <Search className="h-4 w-4 text-gray-400" />
-        <input value={query} onChange={(event) => setQuery(event.target.value)} inputMode="numeric" placeholder="Order number, e.g. 5578" className="w-full border-0 bg-transparent text-[13px] outline-none dark:text-slate-100" />
+      <p className="m-0 text-[13px] font-bold text-gray-900 dark:text-slate-50">Find orders: which week is each bonus in?</p>
+      <p className="m-0 text-[11.5px] text-gray-600 dark:text-slate-300">A bonus is paid in the week the order is <b>delivered</b> (Sunday to Saturday), whatever week it was placed. Type one or more order numbers.</p>
+      <label className="mt-2 flex min-h-10 items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900">
+        <Search className="h-4 w-4 shrink-0 text-gray-400" />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="e.g. 5578, 5303, 5022" className="w-full border-0 bg-transparent py-2 text-[13px] outline-none dark:text-slate-100" />
       </label>
-      {id && !found ? <p className="m-0 mt-2 text-[12.5px] text-gray-600 dark:text-slate-300">No order #{id} found.</p> : null}
-      {found ? (
-        <div className="mt-2 rounded-xl bg-white p-3 dark:bg-slate-900">
-          <p className="m-0 text-[13px] font-bold text-gray-900 dark:text-slate-50">#{found.id} · {found.customer}<span className="block text-[11.5px] font-normal text-gray-500">{found.product}</span></p>
-          <dl className="m-0 mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[12.5px]">
-            {lines.map((line) => <Fragment key={line.label}><dt className="text-gray-500">{line.label}</dt><dd className={`m-0 font-semibold ${line.tone ?? "text-gray-900 dark:text-slate-100"}`}>{line.value}</dd></Fragment>)}
-          </dl>
-          {verdict ? <p className={`m-0 mt-2 rounded-lg px-3 py-2 text-[12.5px] font-bold ring-1 ${verdict.tone}`}>{verdict.text}</p> : null}
-        </div>
-      ) : null}
+      {ids.length > 1 ? <p className="m-0 mt-1.5 text-[11.5px] font-semibold text-gray-600 dark:text-slate-300">{ids.length} orders</p> : null}
+      <div className="mt-2 space-y-2">
+        {ids.map((id) => <OrderAnswer key={id} id={id} snap={snap} repName={repName} money={money} lookupOrder={lookupOrder} />)}
+      </div>
     </section>
+  );
+}
+
+function OrderAnswer({ id, snap, repName, money, lookupOrder }: { id: string; snap: WeeklyReportSnapshot; repName: string; money: (value: number) => string; lookupOrder?: (id: string) => FoundOrder | null }) {
+  const inReport = snap.orders.find((order) => order.id === id) ?? null;
+  const found: FoundOrder | null = lookupOrder?.(id)
+    ?? (inReport ? { id, customer: inReport.customer, product: inReport.product, status: inReport.status, placedKey: inReport.date, deliveredKey: inReport.deliveredDate ?? null, repName } : null);
+  if (!found) return <p className="m-0 rounded-xl bg-white px-3 py-2 text-[12.5px] text-gray-600 dark:bg-slate-900 dark:text-slate-300">No order #{id} found.</p>;
+  const thisWeek = snap.weekStart;
+  const lines: Array<{ label: string; value: string; tone?: string }> = [];
+  let verdict: { text: string; tone: string };
+  const placedWeek = sundayOf(found.placedKey);
+  lines.push({ label: "Placed", value: `${dayText(found.placedKey)} (week of ${weekRange(placedWeek)})` });
+  if (found.repName && found.repName !== repName) lines.push({ label: "Sales rep", value: found.repName, tone: "text-amber-700" });
+  if (found.status === "Delivered" && found.deliveredKey) {
+    const paidWeek = sundayOf(found.deliveredKey);
+    lines.push({ label: "Delivered", value: `${dayText(found.deliveredKey)} (week of ${weekRange(paidWeek)})` });
+    if (inReport?.lateRecorded?.recordedAt) lines.push({ label: "Marked delivered", value: whenText(inReport.lateRecorded.recordedAt), tone: "text-amber-700" });
+    const paidHere = (paidWeek === thisWeek || !!inReport?.lateRecorded) && inReport && (!found.repName || found.repName === repName);
+    verdict = paidHere
+      ? { text: `Bonus paid in THIS report: ${money(Math.round(inReport!.bonus))}${inReport!.lateRecorded ? " (recorded late: marked delivered after its own week's report was sent)" : placedWeek !== thisWeek ? " (carried over: placed in an earlier week)" : ""}.`, tone: "bg-emerald-50 text-emerald-800 ring-emerald-200" }
+      : paidWeek > thisWeek
+        ? { text: `Bonus paid in the week of ${weekRange(paidWeek)}: that week's report (due ${dayText(reportDueDate(paidWeek))}). Not in this one, because it was delivered after ${dayText(snap.weekEnd)}.`, tone: "bg-amber-50 text-amber-900 ring-amber-200" }
+        : { text: `Bonus paid in the week of ${weekRange(paidWeek)}: that week's report, not this one.`, tone: "bg-blue-50 text-blue-800 ring-blue-200" };
+  } else if (["Failed", "Cancelled", "Returned"].includes(found.status)) {
+    verdict = { text: `No bonus: the order is ${found.status}.`, tone: "bg-rose-50 text-rose-800 ring-rose-200" };
+  } else {
+    lines.push({ label: "Status now", value: found.status });
+    verdict = { text: "Not delivered yet, so no bonus yet. When it is delivered, its bonus goes into the report of the week it is delivered in.", tone: "bg-gray-50 text-gray-700 ring-gray-200" };
+  }
+  return (
+    <div className="rounded-xl bg-white p-3 dark:bg-slate-900">
+      <p className="m-0 text-[13px] font-bold text-gray-900 dark:text-slate-50">#{found.id} · {found.customer}<span className="block text-[11.5px] font-normal text-gray-500">{found.product}</span></p>
+      <dl className="m-0 mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[12.5px]">
+        {lines.map((line) => <Fragment key={line.label}><dt className="text-gray-500">{line.label}</dt><dd className={`m-0 font-semibold ${line.tone ?? "text-gray-900 dark:text-slate-100"}`}>{line.value}</dd></Fragment>)}
+      </dl>
+      <p className={`m-0 mt-2 rounded-lg px-3 py-2 text-[12.5px] font-bold ring-1 ${verdict.tone}`}>{verdict.text}</p>
+    </div>
   );
 }

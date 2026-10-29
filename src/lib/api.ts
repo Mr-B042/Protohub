@@ -4157,6 +4157,8 @@ export type WeeklyBonusQuery = {
 export type WeeklyReportCorrectionInput = { weekStart: string; section: string; problem: string; comment: string; orderRef?: string; fundTransactionId?: string; repIds?: string[] };
 export type WeeklyReportResponseInput = { correctionId: string; response: string };
 
+/** Delivered too late for its own week's sent report: paid in this week's (29 Oct 2026). */
+export type WeeklyLateDelivery = { repId: string; orderId: string; deliveredDate: string; deliveredWeek: string; placedAt?: string | null; recordedAt?: string | null };
 /** A question to the manager on one rep's figures (29 Oct 2026). */
 export type WeeklyQuestionMessage = { kind: "question" | "answer" | "follow_up" | "accepted" | "closed"; text: string; byId: string | null; byName: string; byRole: string; at: string };
 export type WeeklyReportQuestion = {
@@ -4171,7 +4173,7 @@ export const weeklyReportsApi = {
     get<{ weekStart: string; weekEnd: string; report: WeeklyRepReport | null; companyStatus: WeeklyCompanyReportStatus; corrections: WeeklyReportCorrection[]; audit: WeeklyReportAuditEntry[]; fines: WeeklyReportFineRow[]; previousFines: WeeklyReportFineRow[];
       adjustments: WeeklyReportAdjustmentRow[]; previousAdjustments: WeeklyReportAdjustmentRow[]; bonusQueries: WeeklyBonusQuery[];
       logMisses: WeeklyLogMissRow[]; previousLogMisses: WeeklyLogMissRow[]; logMissDisputes: LogMissDispute[]; carriedFines: number;
-      payoutChange?: WeeklyPayoutChange | null; gate?: WeeklySendGate }>(
+      payoutChange?: WeeklyPayoutChange | null; gate?: WeeklySendGate; lateDeliveries?: WeeklyLateDelivery[] }>(
       `/api/weekly-reports/mine?${new URLSearchParams({ weekStart }).toString()}`
     ),
   myHistory: () => get<{ rows: Array<WeeklyRepReport & { openReturns: number; payoutChange?: WeeklyPayoutChange | null }> }>("/api/weekly-reports/mine/history"),
@@ -4194,6 +4196,7 @@ export const weeklyReportsApi = {
       orderDecisionsReady?: boolean;
       questions?: WeeklyReportQuestion[];
       questionsReady?: boolean;
+      lateDeliveries?: WeeklyLateDelivery[];
       /** Weeks with reports sent in by reps that have not gone to the owner yet. */
       waitingWeeks?: Array<{ weekStart: string; toApprove: number; approved: number; returned: number }>;
       funds?: Array<{ managerId: string; managerName: string; totals: ManagerFundTotals; readiness: string[]; locked: boolean; varianceExplanation: string | null; notes: string | null; returned: number }>;
