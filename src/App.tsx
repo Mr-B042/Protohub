@@ -32594,6 +32594,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         onUndoOrderDecision={(id) => weeklyRun(() => weeklyReportsApi.undoOrderDecision(id), "Decision undone.")}
         orderDecisionsReady={week?.orderDecisionsReady !== false}
         onRemoveLateSendFine={(id) => weeklyRun(() => weeklyReportsApi.removeLateSendFine(id), "Fine removed.")}
+        questions={week?.questions ?? []}
+        viewerRole={currentRole}
+        onAskQuestion={currentRole === "Owner" && week?.questionsReady !== false ? (repId, text) => weeklyRun(() => weeklyReportsApi.askQuestion(repId, { weekStart: weeklyReportWeekStart, text }), `Question sent to the manager about ${repName(repId)}.`) : undefined}
+        onAnswerQuestion={(id, text) => weeklyRun(() => weeklyReportsApi.answerQuestion(id, text), "Answer sent to the owner.")}
+        onAcceptQuestion={(id) => weeklyRun(() => weeklyReportsApi.acceptQuestion(id), "Answer accepted.")}
+        onFollowUpQuestion={(id, text) => weeklyRun(() => weeklyReportsApi.followUpQuestion(id, text), "Question sent again.")}
         repsWaiting={Boolean(week?.gate?.blocked)}
         waitingWeeks={week?.waitingWeeks ?? []}
         onSubmitToOwner={async (note, responses) => {

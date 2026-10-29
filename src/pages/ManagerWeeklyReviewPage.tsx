@@ -1,11 +1,12 @@
 import MonthlyIncentiveSection from "./MonthlyIncentiveSection";
 import WeeklyRepReportModal from "../components/WeeklyRepReportModal";
 import { BonusBreakdownModal } from "../components/BonusBreakdownModal";
+import { ReportQuestionsModal } from "../components/ReportQuestionsModal";
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   AlertTriangle, Box, Check, CheckCircle2, ChevronRight, ClipboardList, Download, FileText, Inbox, MessageCircle, MoreVertical,
-  Pencil, RotateCcw, Search, Send, ShoppingCart, Target, Undo2, Wallet, X, Crown, Flag, History, Users, BarChart3, ChevronLeft
+  Pencil, RotateCcw, Search, Send, ShoppingCart, Target, Undo2, Wallet, X, Crown, Flag, History, Users, BarChart3, ChevronLeft, HelpCircle
 } from "lucide-react";
 import {
   Avatar, AuditTable, BonusInitialCells, ChartLegend, CorrectionForm, CorrectionList, KpiCard, Modal, NoteBox, NumberedHeader, OrderStatusPill, PayoutChangeForm, PayoutChangeNote, MissingFeeNote, LateSendNote, type LateSendWeek,
@@ -19,7 +20,7 @@ import {
   CORRECTION_SECTION_LABEL, bonusComponentsFull, bonusInitialFinal, buildCompanySnapshot, type ManagerBonusPreview, type MonthlyIncentiveReport, type SnapshotDifference, type WeeklyReportSnapshot
 } from "./weekly-report-model";
 import type {
-  LogMissDispute, ManagerFundTotals, WeeklyBonusQuery, WeeklyPayoutChange, WeeklyCompanyReport, WeeklyRepReport, WeeklyReportAuditEntry, WeeklyReportCorrection, WeeklyReportResponseInput
+  LogMissDispute, ManagerFundTotals, WeeklyBonusQuery, WeeklyPayoutChange, WeeklyCompanyReport, WeeklyRepReport, WeeklyReportAuditEntry, WeeklyReportCorrection, WeeklyReportResponseInput, WeeklyReportQuestion
 } from "../lib/api";
 import { currencySymbol } from "../lib/money-privacy";
 
@@ -75,8 +76,17 @@ export default function ManagerWeeklyReviewPage({
   renderFunds, fundsPending, fundsSummary, onSaveDraftNote, initialTab, logMissDisputes = [], onDecideLogMiss,
   renderHeadOfSales, headOfSalesAttention = false,
   onApprove, onReturn, onFlag, onSubmitToOwner, onBack, onEditManagerBonus, monthlyIncentive = null,
-  onSavePayoutChange, onRemovePayoutChange, repsWaiting = false, waitingWeeks = [], onDecideOrder, onUndoOrderDecision, onRemoveLateSendFine, orderDecisionsReady = true
+  onSavePayoutChange, onRemovePayoutChange, repsWaiting = false, waitingWeeks = [], onDecideOrder, onUndoOrderDecision, onRemoveLateSendFine, orderDecisionsReady = true,
+  questions = [], viewerRole = "", onAskQuestion, onAnswerQuestion, onAcceptQuestion, onFollowUpQuestion
 }: {
+  /** Questions to the manager on reps' figures (29 Oct 2026): Protohub's own and the Owner's. */
+  questions?: WeeklyReportQuestion[];
+  /** Who is looking: the Owner asks / accepts, a Manager or Admin answers. */
+  viewerRole?: string;
+  onAskQuestion?: (repId: string, text: string) => Promise<void>;
+  onAnswerQuestion?: (id: string, text: string) => Promise<void>;
+  onAcceptQuestion?: (id: string) => Promise<void>;
+  onFollowUpQuestion?: (id: string, text: string) => Promise<void>;
   /** false until the decisions table exists on the database: Approve is not held. */
   orderDecisionsReady?: boolean;
   /** Charge or skip one "No fee" / "Late send" order (Admin / Manager / Owner). Every one needs a decision before Approve. */
@@ -147,6 +157,9 @@ export default function ManagerWeeklyReviewPage({
   const [decisionsFor, setDecisionsFor] = useState<{ repId: string; kind: DecisionKind } | null>(null);
   // "How the bonus adds up" for one rep (Bright, 29 Oct 2026).
   const [breakdownFor, setBreakdownFor] = useState<string | null>(null);
+  const [questionsFor, setQuestionsFor] = useState<string | null>(null);
+  const questionsOf = (repId: string) => questions.filter((question) => question.repId === repId);
+  const openQuestions = questions.filter((question) => question.status === "open").length;
   // The "is this the bonus to be paid?" window (Bright, 13 Oct 2026).
   const [approving, setApproving] = useState<string | null>(null);
   const [approveBusy, setApproveBusy] = useState(false);
@@ -263,7 +276,7 @@ export default function ManagerWeeklyReviewPage({
   const repNameById = (id: string | null) => rows.find((row) => row.repId === id)?.repName ?? "-";
 
   const fundsProblems = (fundsSummary ?? []).filter((item) => item.readiness.length > 0);
-  const canSubmit = canAct && allApproved && fundsProblems.length === 0 && (companyStatus === "open" || companyStatus === "returned_to_manager")
+  const canSubmit = canAct && allApproved && fundsProblems.length === 0 && openQuestions === 0 && (companyStatus === "open" || companyStatus === "returned_to_manager")
     && ownerReturns.every((row) => (ownerResponses[row.id] ?? "").trim().length >= 2);
   const submitBlocker = !canAct
     ? readOnlyReason ?? "Only a Manager or Admin can submit."
@@ -273,6 +286,8 @@ export default function ManagerWeeklyReviewPage({
         ? `${total - approvedCount} of ${total} report${total === 1 ? "" : "s"} still need${total - approvedCount === 1 ? "s" : ""} your approval.`
         : fundsProblems.length > 0
           ? `Funds & Expenses: ${fundsProblems.map((item) => `${item.managerName}: ${item.readiness.join(" ")}`).join(" ")}`
+        : openQuestions > 0
+          ? `${openQuestions} question${openQuestions === 1 ? "" : "s"} on the reps' figures need${openQuestions === 1 ? "s" : ""} your answer first. Open the red "Question" tag on the rep's row.`
         : ownerReturns.length > 0 && !ownerReturns.every((row) => (ownerResponses[row.id] ?? "").trim().length >= 2)
           ? "Answer the owner's comments first: write what you changed in the box under \"Returned by the owner\"."
           : "";
@@ -648,6 +663,23 @@ export default function ManagerWeeklyReviewPage({
                                 {row.overdue && <span className="mt-0.5 inline-block rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">Overdue</span>}
                                 {ownerSentBack(row) && <span className="mt-0.5 block w-fit rounded bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold text-white">Owner sent back: check bonus</span>}
                                 {row.differences.length > 0 && <span className="mt-0.5 flex items-center gap-1 text-[11px] font-bold text-amber-600"><AlertTriangle className="h-3 w-3" />{row.differences.length} figure{row.differences.length === 1 ? "" : "s"} changed</span>}
+                                {(() => {
+                                  const mine = questionsOf(row.repId);
+                                  const waiting = mine.filter((question) => question.status === "open").length;
+                                  const answered = mine.filter((question) => question.status === "answered").length;
+                                  if (waiting === 0 && answered === 0) return null;
+                                  return (
+                                    <button type="button" onClick={() => setQuestionsFor(row.repId)} className="!min-h-0 mt-1 flex flex-col gap-1 text-left">
+                                      {waiting > 0 && (
+                                        <span className="relative inline-flex w-fit items-center gap-1 rounded-full bg-rose-600 px-2 py-0.5 text-[10.5px] font-bold text-white">
+                                          <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-rose-400 motion-safe:animate-ping" />
+                                          <HelpCircle className="h-3 w-3" />{waiting} question{waiting === 1 ? "" : "s"} for the manager
+                                        </span>
+                                      )}
+                                      {answered > 0 && <span className="inline-flex w-fit items-center gap-1 rounded-full bg-blue-600 px-2 py-0.5 text-[10.5px] font-bold text-white"><HelpCircle className="h-3 w-3" />{answered} answered: owner to check</span>}
+                                    </button>
+                                  );
+                                })()}
                               </td>
                               <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.orders ?? 0)}</td>
                               <td className="px-2 py-3 text-gray-800 dark:text-slate-200">
@@ -838,6 +870,7 @@ export default function ManagerWeeklyReviewPage({
         <div className="fixed inset-0 z-[70]" onClick={() => setMenuFor(null)}>
           <div className="absolute w-52 rounded-xl border border-gray-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-900" style={menuFor.up ? { bottom: menuFor.y + 4, left: Math.max(8, menuFor.x - 208) } : { top: menuFor.y + 4, left: Math.max(8, menuFor.x - 208) }} onClick={(event) => event.stopPropagation()}>
             <MenuItem icon={ClipboardList} label="Review report" onClick={() => { setReviewing(menuFor.repId); setMenuFor(null); }} />
+            {(viewerRole === "Owner" ? onAskQuestion : questionsOf(menuFor.repId).length > 0) && companyStatus !== "locked" && <MenuItem icon={HelpCircle} label={viewerRole === "Owner" ? "Question the manager" : "Questions on this rep"} onClick={() => { setQuestionsFor(menuFor.repId); setMenuFor(null); }} />}
             {(() => {
               const menuRow = rows.find((row) => row.repId === menuFor.repId);
               return menuRow && canApproveFromList(menuRow)
@@ -858,6 +891,16 @@ export default function ManagerWeeklyReviewPage({
       )}
 
       {/* ── "No fee" / "Late send" orders: charge or skip each one ── */}
+      {(() => {
+        const questionRow = questionsFor ? rows.find((row) => row.repId === questionsFor) ?? null : null;
+        if (!questionRow) return null;
+        return (
+          <ReportQuestionsModal repName={questionRow.repName} questions={questionsOf(questionRow.repId)} viewerRole={viewerRole}
+            onAsk={onAskQuestion ? (text) => onAskQuestion(questionRow.repId, text) : undefined}
+            onAnswer={onAnswerQuestion} onAccept={onAcceptQuestion} onFollowUp={onFollowUpQuestion}
+            onClose={() => setQuestionsFor(null)} />
+        );
+      })()}
       {(() => {
         const breakdownRow = breakdownFor ? rows.find((row) => row.repId === breakdownFor) ?? null : null;
         const breakdownSnap = breakdownRow ? shownSnapshot(breakdownRow) : null;

@@ -11,6 +11,7 @@ import { disputesForWeek, logMissesForWeek } from "./log-misses.js";
 import { MISSING_FEE_TYPE, missingFeesFor } from "../lib/missing-fee-penalty.js";
 import { LATE_SEND_FINE_TYPE, lateSendsFor } from "../lib/late-send.js";
 import { NO_FEE_CHARGE_TYPE, attachDecisions, chargeReason, removeDecision, saveDecision, undecidedFor } from "../lib/review-order-decisions.js";
+import { QUESTION_COLUMNS, mapQuestion, notifyManagers, notifyOwner, openQuestionCount, questionsForWeek, syncAutoQuestions, type QuestionMessage } from "../lib/review-questions.js";
 import { addDaysToDateKey, sundayWeekStartForDateKey, lagosDateKey, weekEndFromStart } from "../lib/sales-bonus-engine.js";
 import { FIRST_REPORT_WEEK,
   CORRECTION_SECTIONS,
@@ -856,6 +857,12 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
     if (auditRows.error) throw auditRows.error;
     // Each listed order's charge / skip (or null = still to decide).
     const orderDecisionsReady = await attachDecisions(orgId, missingFees, lateSends);
+    // Questions to the manager (29 Oct 2026). Protohub raises its own while the
+    // week is with the manager; null = the table is not on this database yet.
+    if (!company || company.status === "open" || company.status === "returned_to_manager") {
+      await syncAutoQuestions(orgId, branchId, weekStart, (repReports.data ?? []) as any[], payoutChanges);
+    }
+    const questions = await questionsForWeek(orgId, branchId, weekStart);
     res.json({
       weekStart,
       weekEnd: weekEndFromStart(weekStart),
@@ -882,6 +889,8 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
       // Orders not sent out in 15 working minutes, and any fine already added for them.
       lateSends,
       orderDecisionsReady,
+      questions: questions ?? [],
+      questionsReady: questions !== null,
       funds: funds.map(({ manager, fund }) => ({
         managerId: manager.id,
         managerName: manager.name,
@@ -1243,6 +1252,102 @@ async function payoutChangeContext(req: Request, weekStart: string) {
   return { branchId, orgId, repId, report };
 }
 
+// ── Questions to the manager on a rep's figures (Bright, 29 Oct 2026) ────────
+// The Owner asks; Protohub asks by itself (lib/review-questions.ts). The
+// manager answers; the Owner accepts or asks again. Open questions hold the
+// week: no Submit to Owner, no lock.
+const QuestionTextSchema = z.object({ text: z.string().trim().min(5, "Write a little more.").max(1500) });
+const AskSchema = QuestionTextSchema.extend({ weekStart: weekStartSchema });
+
+const messageFrom = (req: Request, kind: QuestionMessage["kind"], text: string): QuestionMessage => ({
+  kind, text, byId: req.user!.id, byName: req.user!.name ?? req.user!.role, byRole: req.user!.role, at: new Date().toISOString()
+});
+
+async function loadQuestion(req: Request) {
+  const branchId = requireBranch(req);
+  const orgId = req.user!.orgId;
+  const { data, error } = await supabase.from("weekly_report_questions").select(QUESTION_COLUMNS)
+    .eq("org_id", orgId).eq("branch_id", branchId).eq("id", String(req.params.id)).maybeSingle();
+  if (error) throw error;
+  if (!data) throw httpError(404, "This question was not found.");
+  const company = await loadCompanyReport(orgId, branchId, String(data.week_start));
+  if (company?.status === "locked") throw httpError(409, "This week is locked.");
+  return { orgId, branchId, row: data as any };
+}
+
+async function saveQuestion(id: string, fromStatus: string, status: string, messages: QuestionMessage[]) {
+  const now = new Date().toISOString();
+  const { data, error } = await supabase.from("weekly_report_questions")
+    .update({ status, messages, updated_at: now, closed_at: status === "accepted" ? now : null })
+    .eq("id", id).eq("status", fromStatus).select(QUESTION_COLUMNS);
+  if (error) throw error;
+  if (!data || data.length === 0) throw httpError(409, "This question changed. Reload and try again.");
+  return mapQuestion(data[0]);
+}
+
+router.post("/rep/:repId/questions", requireRole("Owner"), async (req, res) => {
+  const parsed = AskSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+  try {
+    const branchId = requireBranch(req);
+    const orgId = req.user!.orgId;
+    const company = await loadCompanyReport(orgId, branchId, parsed.data.weekStart);
+    if (company?.status === "locked") throw httpError(409, "This week is locked.");
+    const { data, error } = await supabase.from("weekly_report_questions").insert({
+      org_id: orgId, branch_id: branchId, week_start: parsed.data.weekStart, rep_id: String(req.params.repId),
+      source: "owner", status: "open", messages: [messageFrom(req, "question", parsed.data.text)], created_by: req.user!.id
+    }).select(QUESTION_COLUMNS).single();
+    if (error) throw error;
+    await audit(req, { branchId, weekStart: parsed.data.weekStart, action: "question_asked", repId: String(req.params.repId), detail: { text: parsed.data.text } });
+    await notifyManagers(orgId, branchId, parsed.data.weekStart, 1, req.user!.name ?? "The owner");
+    res.status(201).json(mapQuestion(data));
+  } catch (error: any) {
+    sendError(res, error, "Could not send the question.");
+  }
+});
+
+router.post("/questions/:id/answer", requireRole(...REVIEWERS), async (req, res) => {
+  const parsed = QuestionTextSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+  try {
+    const { orgId, branchId, row } = await loadQuestion(req);
+    if (row.status !== "open") throw httpError(409, "This question is not waiting for an answer.");
+    const question = await saveQuestion(row.id, "open", "answered", [...(row.messages ?? []), messageFrom(req, "answer", parsed.data.text)]);
+    await audit(req, { branchId, weekStart: row.week_start, action: "question_answered", repId: row.rep_id, detail: { text: parsed.data.text } });
+    await notifyOwner(orgId, branchId, row.week_start, req.user!.name ?? "The manager");
+    res.json(question);
+  } catch (error: any) {
+    sendError(res, error, "Could not send the answer.");
+  }
+});
+
+router.post("/questions/:id/accept", requireRole("Owner"), async (req, res) => {
+  try {
+    const { branchId, row } = await loadQuestion(req);
+    if (row.status !== "answered") throw httpError(409, "Only an answered question can be accepted.");
+    const question = await saveQuestion(row.id, "answered", "accepted", [...(row.messages ?? []), messageFrom(req, "accepted", "Answer accepted.")]);
+    await audit(req, { branchId, weekStart: row.week_start, action: "question_accepted", repId: row.rep_id });
+    res.json(question);
+  } catch (error: any) {
+    sendError(res, error, "Could not accept the answer.");
+  }
+});
+
+router.post("/questions/:id/follow-up", requireRole("Owner"), async (req, res) => {
+  const parsed = QuestionTextSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+  try {
+    const { orgId, branchId, row } = await loadQuestion(req);
+    if (row.status !== "answered") throw httpError(409, "Only an answered question can be asked again.");
+    const question = await saveQuestion(row.id, "answered", "open", [...(row.messages ?? []), messageFrom(req, "follow_up", parsed.data.text)]);
+    await audit(req, { branchId, weekStart: row.week_start, action: "question_asked_again", repId: row.rep_id, detail: { text: parsed.data.text } });
+    await notifyManagers(orgId, branchId, row.week_start, 1, req.user!.name ?? "The owner");
+    res.json(question);
+  } catch (error: any) {
+    sendError(res, error, "Could not send the question.");
+  }
+});
+
 router.put("/rep/:repId/payout-change", requireRole(...REVIEWERS), async (req, res) => {
   const parsed = PayoutChangeSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
@@ -1358,6 +1463,8 @@ router.post("/company/submit", requireRole(...REVIEWERS), async (req, res) => {
     const responseById = new Map(responses.map((item) => [item.correctionId, item.response]));
     const unanswered = (openReturns ?? []).filter((row: any) => !responseById.get(row.id));
     if (unanswered.length > 0) throw httpError(400, "Answer the owner's comments before you resubmit.");
+    const openQuestions = await openQuestionCount(orgId, branchId, weekStart);
+    if (openQuestions > 0) throw httpError(409, `${openQuestions} question${openQuestions === 1 ? "" : "s"} on the reps' figures need${openQuestions === 1 ? "s" : ""} your answer before you submit.`);
 
     const now = new Date().toISOString();
     const { data: updated, error } = await supabase.from("company_weekly_reports")
@@ -1408,6 +1515,8 @@ router.post("/company/approve-lock", requireRole("Owner"), async (req, res) => {
     const company = await loadCompanyReport(orgId, branchId, weekStart);
     const verdict = canOwnerAct("approve_lock", company?.status ?? null);
     if (!verdict.ok || !company) throw httpError(409, verdict.ok ? "The manager has not submitted this week yet." : verdict.error);
+    const openQuestions = await openQuestionCount(orgId, branchId, weekStart);
+    if (openQuestions > 0) throw httpError(409, `${openQuestions} question${openQuestions === 1 ? " is" : "s are"} still waiting for the manager's answer.`);
 
     const now = new Date().toISOString();
     const { data: updated, error } = await supabase.from("company_weekly_reports")

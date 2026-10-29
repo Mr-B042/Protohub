@@ -4157,6 +4157,15 @@ export type WeeklyBonusQuery = {
 export type WeeklyReportCorrectionInput = { weekStart: string; section: string; problem: string; comment: string; orderRef?: string; fundTransactionId?: string; repIds?: string[] };
 export type WeeklyReportResponseInput = { correctionId: string; response: string };
 
+/** A question to the manager on one rep's figures (29 Oct 2026). */
+export type WeeklyQuestionMessage = { kind: "question" | "answer" | "follow_up" | "accepted" | "closed"; text: string; byId: string | null; byName: string; byRole: string; at: string };
+export type WeeklyReportQuestion = {
+  id: string; weekStart: string; repId: string; source: "owner" | "auto"; checkKey: string | null;
+  /** open = waiting for the manager; answered = waiting for the owner; accepted = done. */
+  status: "open" | "answered" | "accepted";
+  messages: WeeklyQuestionMessage[]; createdAt: string; updatedAt: string; closedAt: string | null;
+};
+
 export const weeklyReportsApi = {
   mine: (weekStart: string) =>
     get<{ weekStart: string; weekEnd: string; report: WeeklyRepReport | null; companyStatus: WeeklyCompanyReportStatus; corrections: WeeklyReportCorrection[]; audit: WeeklyReportAuditEntry[]; fines: WeeklyReportFineRow[]; previousFines: WeeklyReportFineRow[];
@@ -4183,6 +4192,8 @@ export const weeklyReportsApi = {
       lateSends?: Record<string, LateSendWeek>;
       /** false until migration 311 is applied: decisions are not saved and Approve is not held. */
       orderDecisionsReady?: boolean;
+      questions?: WeeklyReportQuestion[];
+      questionsReady?: boolean;
       /** Weeks with reports sent in by reps that have not gone to the owner yet. */
       waitingWeeks?: Array<{ weekStart: string; toApprove: number; approved: number; returned: number }>;
       funds?: Array<{ managerId: string; managerName: string; totals: ManagerFundTotals; readiness: string[]; locked: boolean; varianceExplanation: string | null; notes: string | null; returned: number }>;
@@ -4202,6 +4213,11 @@ export const weeklyReportsApi = {
   decideOrder: (repId: string, body: { weekStart: string; kind: "missing_fee" | "late_send"; orderId: string; decision: "charged" | "skipped"; amount?: number; reason?: string }) =>
     post<{ ok: true }>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/order-decision`, body),
   undoOrderDecision: (id: string) => del<{ ok: true }>(`/api/weekly-reports/order-decision/${encodeURIComponent(id)}`),
+  askQuestion: (repId: string, body: { weekStart: string; text: string }) =>
+    post<WeeklyReportQuestion>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/questions`, body),
+  answerQuestion: (id: string, text: string) => post<WeeklyReportQuestion>(`/api/weekly-reports/questions/${encodeURIComponent(id)}/answer`, { text }),
+  acceptQuestion: (id: string) => post<WeeklyReportQuestion>(`/api/weekly-reports/questions/${encodeURIComponent(id)}/accept`, {}),
+  followUpQuestion: (id: string, text: string) => post<WeeklyReportQuestion>(`/api/weekly-reports/questions/${encodeURIComponent(id)}/follow-up`, { text }),
   removeLateSendFine: (id: string) => del<{ ok: true }>(`/api/weekly-reports/late-send-fine/${encodeURIComponent(id)}`),
   removePayoutChange: (repId: string, weekStart: string) =>
     del<{ ok: true }>(`/api/weekly-reports/rep/${encodeURIComponent(repId)}/payout-change?${new URLSearchParams({ weekStart }).toString()}`),
