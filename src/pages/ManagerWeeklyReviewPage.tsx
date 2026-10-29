@@ -907,7 +907,7 @@ export default function ManagerWeeklyReviewPage({
         const breakdownRow = breakdownFor ? rows.find((row) => row.repId === breakdownFor) ?? null : null;
         const breakdownSnap = breakdownRow ? shownSnapshot(breakdownRow) : null;
         if (!breakdownRow || !breakdownSnap) return null;
-        return <BonusBreakdownModal snap={breakdownSnap} repName={breakdownRow.repName} sym={sym} onClose={() => setBreakdownFor(null)} lookupOrder={lookupOrder} />;
+        return <BonusBreakdownModal snap={breakdownSnap} repName={breakdownRow.repName} sym={sym} onClose={() => setBreakdownFor(null)} lookupOrder={lookupOrder} detailSource={breakdownRow.live} />;
       })()}
       {(() => {
         const decisionRow = decisionsFor ? rows.find((row) => row.repId === decisionsFor.repId) ?? null : null;
