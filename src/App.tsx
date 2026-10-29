@@ -16975,6 +16975,45 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       total: customerSelectedBonus + repDrivenBonus
     };
   };
+  // The weekly report's upsell and cross-sell detail per order (Bright, 29 Oct
+  // 2026: "it should say if 3 to 5 or 6 to 8, the same for cross-sell").
+  // Same rules as crossSellBonusDetails, one entry per add-on line.
+  const weeklyUpsellAndCrossSell = (order: TrackedOrder, repName: string) => {
+    const cfg = productBonusConfig(products.find((product) => product.id === order.productId));
+    const from = Number(order.upsellFromQty ?? 0);
+    const to = Number(order.upsellToQty ?? 0);
+    const upsellDetail = from > 0 && to > from
+      ? { fromQty: from, toQty: to, ruleAmount: cfg.upgradeBonuses.find((rule) => rule.fromQty === from && rule.toQty === to)?.amount ?? null }
+      : undefined;
+    const lines = order.crossSellLines ?? [];
+    if (lines.length === 0) return upsellDetail ? { upsellDetail } : {};
+    const details = crossSellBonusDetails(lines, cfg);
+    const repIndex = new Map(details.repDriven.map((line, index) => [line, index]));
+    const crossSellItems = lines.map((line) => {
+      const base = {
+        name: line.displayName || line.productName || "Add-on",
+        pack: line.packageName ?? null,
+        qty: Math.max(1, Number(line.quantity) || 1),
+        value: Math.round(Math.max(0, Number(line.amount) || 0))
+      };
+      if (isCustomerSelectedCrossSell(line)) {
+        return { ...base, addedBy: "customer" as const, bonus: CUSTOMER_SELECTED_CROSS_SELL_BONUS,
+          how: `The customer chose it on the order form: a flat ${formatMoney(CUSTOMER_SELECTED_CROSS_SELL_BONUS)}.` };
+      }
+      if (isAutoIncludedCrossSell(line)) {
+        return { ...base, addedBy: "auto" as const, bonus: 0, how: "Included with the order automatically: no bonus." };
+      }
+      const paid = details.repDrivenLineBonuses[repIndex.get(line) ?? -1];
+      const who = line.addedByName || repName;
+      if (!paid || paid.ruleSource === "none") {
+        return { ...base, addedBy: "rep" as const, bonus: null,
+          how: `Added by ${who}. No per-item rule for this product, so any pay comes from a weekly cross-sell rule.` };
+      }
+      return { ...base, addedBy: "rep" as const, bonus: paid.bonus,
+        how: `Added by ${who}. ${paid.percent}% of ${formatMoney(paid.value)}${paid.fixed ? ` + ${formatMoney(paid.fixed)}` : ""} = ${formatMoney(paid.bonus)}${paid.ruleSource === "main_product_fallback" ? " (main product's rule)" : ""}.` };
+    });
+    return { ...(upsellDetail ? { upsellDetail } : {}), crossSellItems };
+  };
   // Per-product unit cost in the order's currency (falls back to primary).
   // Cost history, so an old order is costed at what it cost THEN. Without this
   // a unit-cost change silently restates every past line that reads pricing
@@ -26209,7 +26248,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           // report. Lines that say "nothing here" (no gift, no add-on) are left out.
           bonusLines: linesByOrder.get(order.id)?.components
             .filter((line) => line.amount !== 0 || line.tone === "blocked")
-            .map((line) => ({ label: line.label, amount: Math.round(line.amount), note: line.note.slice(0, 600), tone: line.tone }))
+            .map((line) => ({ label: line.label, amount: Math.round(line.amount), note: line.note.slice(0, 600), tone: line.tone })),
+          ...weeklyUpsellAndCrossSell(order, rep.name)
         })),
         bonus: {
           base: row?.base ?? 0, upsell: row?.upsell ?? 0, crossSell: row?.crossSell ?? 0, total: row?.total ?? 0, perOrder,

@@ -44,7 +44,16 @@ export type WeeklyReportOrderInput = {
   /** How the bonus was worked out, line by line (rule matched, quantities,
    *  gates). Frozen with the report so a submitted week keeps its reasons. */
   bonusLines?: WeeklyBonusLine[];
+  /** The upgrade on this order, e.g. 3 -> 5 pieces (Bright, 29 Oct 2026). */
+  upsellDetail?: WeeklyUpsellDetail;
+  /** Each add-on sold on this order and what it paid (Bright, 29 Oct 2026). */
+  crossSellItems?: WeeklyCrossSellItem[];
 };
+
+/** Pieces before and after the upgrade; ruleAmount = what the product's upgrade rule pays in full (null if none). */
+export type WeeklyUpsellDetail = { fromQty: number; toQty: number; ruleAmount: number | null };
+/** One add-on line. bonus is null when the add-on is paid by a weekly rule instead of per line. */
+export type WeeklyCrossSellItem = { name: string; pack: string | null; qty: number; value: number; addedBy: "rep" | "customer" | "auto"; bonus: number | null; how: string };
 
 export type WeeklyBonusLine = { label: string; amount: number; note: string; tone: "earned" | "blocked" | "info" };
 
@@ -105,6 +114,9 @@ export type WeeklyReportOrderRow = {
   baseBonus?: number;
   /** How the bonus was worked out (Bright, 8 Oct 2026). Missing on reports built before. */
   bonusLines?: WeeklyBonusLine[];
+  /** Missing on reports built before 29 Oct 2026; the window falls back to today's records. */
+  upsellDetail?: WeeklyUpsellDetail;
+  crossSellItems?: WeeklyCrossSellItem[];
 };
 
 // ── Monthly incentive in the last week of the month (Bright, 3 Oct 2026) ────
@@ -602,7 +614,9 @@ export function buildRepWeeklySnapshot(input: {
       baseBonus: deliveredThisWeek ? Math.round(input.bonus.perOrder[order.id]?.base ?? 0) : 0,
       bonusManuallyAdjusted: order.bonusManuallyAdjusted,
       ...(deliveredThisWeek && order.bonusNote ? { bonusNote: order.bonusNote } : {}),
-      ...(deliveredThisWeek && order.bonusLines?.length ? { bonusLines: order.bonusLines } : {})
+      ...(deliveredThisWeek && order.bonusLines?.length ? { bonusLines: order.bonusLines } : {}),
+      ...(order.upsellDetail ? { upsellDetail: order.upsellDetail } : {}),
+      ...(order.crossSellItems?.length ? { crossSellItems: order.crossSellItems } : {})
     });
   }
   orders.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
