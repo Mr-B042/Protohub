@@ -222,12 +222,18 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder, 
         ) : null}
         {paidNextWeek.length > 0 ? (
           <section>
-            <SectionTitle n={5 + (paidNow.length > 0 ? 1 : 0) + (carried.length > 0 ? 1 : 0) + (late.length > 0 ? 1 : 0)} title={`Paid next week: ${nf(paidNextWeek.length)} order${paidNextWeek.length === 1 ? "" : "s"}`} sub="Placed this week, delivered after it ended. They will show as carried over next week." />
+            <SectionTitle n={5 + (paidNow.length > 0 ? 1 : 0) + (carried.length > 0 ? 1 : 0) + (late.length > 0 ? 1 : 0)} title={`Not paid in this report: ${nf(paidNextWeek.length)} order${paidNextWeek.length === 1 ? "" : "s"}`} sub={`Placed this week but delivered after ${cutoffText}, so this report pays them ₦0. Each is paid in the report of the week it was delivered (shown on the right), as carried over. Nothing is lost.`} />
             <ul className="m-0 mt-2 list-none space-y-1 p-0 text-[12.5px]">
               {paidNextWeek.map((order) => (
-                <li key={order.id} className="flex flex-wrap justify-between gap-2 rounded-lg bg-amber-50 px-3 py-1.5 dark:bg-amber-500/10">
-                  <span><b>#{order.id}</b> · {order.customer} · {order.product}</span>
-                  <span className="text-gray-600 dark:text-slate-300">placed {dayText(order.date)} · delivered {dayText(order.deliveredDate)}</span>
+                <li key={order.id} className="rounded-lg bg-amber-50 px-3 py-2 dark:bg-amber-500/10">
+                  <span className="block"><b>#{order.id}</b> · {order.customer} · {order.product}</span>
+                  <span className="mt-0.5 flex flex-wrap justify-between gap-x-3 text-gray-600 dark:text-slate-300">
+                    <span>placed {dayText(order.date)} · delivered {dayText(order.deliveredDate)}</span>
+                    {(() => {
+                      const payWeek = bonusWeekFor(order.date, order.deliveredDate);
+                      return payWeek ? <b className="text-amber-800 dark:text-amber-200">→ paid in the report for {weekRange(payWeek)} (due {dayText(reportDueDate(payWeek))})</b> : null;
+                    })()}
+                  </span>
                 </li>
               ))}
             </ul>
