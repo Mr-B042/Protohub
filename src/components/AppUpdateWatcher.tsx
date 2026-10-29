@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { isNativeShell } from "../lib/native-shell";
 
 // ── Keep open apps on the latest version (21 Oct 2026) ──────────────────────
 // A Protohub tab or the Android app can stay open for days. It only picked up
@@ -11,6 +12,10 @@ import { useEffect, useState } from "react";
 // time someone opens"). It used to reload on opening and on coming back after
 // a minute away; on a day with many releases that was nearly every time.
 // The page reloads only when someone presses Update.
+//
+// Mobile app only (Bright, 29 Oct 2026). A web browser already loads the
+// newest version every time the page is opened or refreshed, so it shows
+// nothing; the Android app can stay open for days, so it gets the bar.
 
 declare const __APP_BUILD__: string;
 const CURRENT = (() => { try { return __APP_BUILD__; } catch { return "local"; } })();
@@ -29,7 +34,7 @@ export function AppUpdateWatcher() {
   const [waiting, setWaiting] = useState(false);
 
   useEffect(() => {
-    if (CURRENT === "local") return;
+    if (CURRENT === "local" || !isNativeShell) return;
     let stopped = false;
     const check = async () => {
       const build = await liveBuild();
