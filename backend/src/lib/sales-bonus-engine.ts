@@ -384,30 +384,44 @@ const upgradeTierLadderKey = (rule: SalesBonusRule) => {
   });
 };
 
-const upgradeTierCycleSizes = (rules: SalesBonusRule[]) => {
-  const targetsByKey = new Map<string, Set<number>>();
+// An upgrade ladder: the same product's "Upgrade 1 / 2 / 3 customers" rules,
+// targets 1..n. Each step's amount is the TOTAL for that many upgrades
+// (₦800 / ₦1,600 / ₦2,400), so only the highest step reached is paid, then the
+// ladder starts again (Bright, 29 Oct 2026). Before, every step was paid on
+// top of the ones below it: two upgrades paid ₦800 + ₦1,600 = ₦2,400 instead
+// of ₦1,600. Each step's rule now pays only its own part (step amount minus
+// the step below), so the rules still add up to the right total and each
+// upgrade order carries its own share.
+type UpgradeLadder = { size: number; amountByTarget: Map<number, number> };
+const upgradeTierLadders = (rules: SalesBonusRule[]) => {
+  const amountsByKey = new Map<string, Map<number, number>>();
   for (const rule of rules) {
     const key = upgradeTierLadderKey(rule);
     if (!key || rule.status !== "active") continue;
-    const target = Math.max(1, Math.round(toNumber(asConfig(rule).targetCount, 1)));
-    const targets = targetsByKey.get(key) ?? new Set<number>();
-    targets.add(target);
-    targetsByKey.set(key, targets);
+    const cfg = asConfig(rule);
+    const target = Math.max(1, Math.round(toNumber(cfg.targetCount, 1)));
+    const amounts = amountsByKey.get(key) ?? new Map<number, number>();
+    amounts.set(target, Math.max(amounts.get(target) ?? 0, positiveAmount(cfg.amount)));
+    amountsByKey.set(key, amounts);
   }
 
-  const cycleSizes = new Map<string, number>();
-  for (const [key, targets] of targetsByKey) {
-    const ordered = Array.from(targets).sort((a, b) => a - b);
+  const ladders = new Map<string, UpgradeLadder>();
+  for (const [key, amountByTarget] of amountsByKey) {
+    const ordered = Array.from(amountByTarget.keys()).sort((a, b) => a - b);
     const contiguous = ordered.length > 1 && ordered.every((target, index) => target === index + 1);
-    if (contiguous) cycleSizes.set(key, ordered.length);
+    if (contiguous) ladders.set(key, { size: ordered.length, amountByTarget });
   }
-  return cycleSizes;
+  return ladders;
 };
 
-const cyclicTierEarned = (current: number, target: number, cycleSize: number, amount: number) => {
-  if (current < target || target < 1 || cycleSize < 2 || amount <= 0) return 0;
+/** What reaching this step adds on top of the step below (never negative). */
+const ladderStepAmount = (ladder: UpgradeLadder, target: number) =>
+  Math.max(0, (ladder.amountByTarget.get(target) ?? 0) - (ladder.amountByTarget.get(target - 1) ?? 0));
+
+const cyclicTierEarned = (current: number, target: number, cycleSize: number, stepAmount: number) => {
+  if (current < target || target < 1 || cycleSize < 2 || stepAmount <= 0) return 0;
   const milestoneCount = 1 + Math.floor((current - target) / cycleSize);
-  return milestoneCount * amount;
+  return milestoneCount * stepAmount;
 };
 
 const appliesToRep = (program: SalesBonusProgram, repId: string) => {
@@ -466,7 +480,7 @@ export const computeSalesBonusForRep = (input: {
   const assignedCount = repOrders.length;
   const deliveredCount = deliveredOrders.length;
   const deliveryRate = assignedCount > 0 ? Math.round((deliveredCount / assignedCount) * 100) : 0;
-  const upgradeCycleSizes = upgradeTierCycleSizes(input.rules);
+  const upgradeLadders = upgradeTierLadders(input.rules);
 
   const rules: SalesBonusRuleProgress[] = [];
 
@@ -507,15 +521,19 @@ export const computeSalesBonusForRep = (input: {
       progressTarget = targetCount;
       qualifiedOrderIds = qualifying.map((order) => order.id);
       completed = qualifying.length >= targetCount;
-      const tierCycleSize = upgradeCycleSizes.get(upgradeTierLadderKey(rule)) ?? 0;
+      const ladder = upgradeLadders.get(upgradeTierLadderKey(rule)) ?? null;
+      const tierCycleSize = ladder?.size ?? 0;
+      const stepAmount = ladder ? ladderStepAmount(ladder, targetCount) : amount;
       earnedAmount = active
-        ? tierCycleSize > 0
-          ? cyclicTierEarned(qualifying.length, targetCount, tierCycleSize, amount)
+        ? ladder
+          ? cyclicTierEarned(qualifying.length, targetCount, tierCycleSize, stepAmount)
           : countEarnedForTarget(qualifying.length, targetCount, amount, cfg.repeatMode)
         : 0;
-      potentialAmount = amount;
-      helper = tierCycleSize > 0
-        ? `${qualifying.length} scoped upgrades from ${fromQty}pcs to ${toQtyMin}+pcs · ${tierCycleSize}-step ladder repeats`
+      potentialAmount = stepAmount;
+      helper = ladder
+        ? targetCount === 1
+          ? `${qualifying.length} scoped upgrades from ${fromQty}pcs to ${toQtyMin}+pcs · ₦${amount.toLocaleString("en-NG")} for the 1st upgrade · ${tierCycleSize}-step ladder repeats`
+          : `${qualifying.length} scoped upgrades from ${fromQty}pcs to ${toQtyMin}+pcs · ₦${stepAmount.toLocaleString("en-NG")} more for upgrade ${targetCount} (₦${amount.toLocaleString("en-NG")} in total, not added to the steps below) · ${tierCycleSize}-step ladder repeats`
         : `${qualifying.length} / ${targetCount} scoped upgrades from ${fromQty}pcs to ${toQtyMin}+pcs`;
       if (tierCycleSize > 0) cfg.tierCycleSize = tierCycleSize;
     } else if (rule.type === "cross_sell_count") {

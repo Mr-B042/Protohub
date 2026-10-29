@@ -26393,13 +26393,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const weeklyReworkTriedRef = useRef(new Set<string>());
   useEffect(() => {
     const week = weeklyWeek && weeklyWeek.weekStart === weeklyReportWeekStart ? weeklyWeek : null;
-    if (!week || weeklyReportWeekStart !== "2026-10-04" || isPreviewing || !hasCompletedInitialDataLoad) return;
+    // Also the week of 18 Oct (Bright, 29 Oct 2026): the upgrade ladder paid
+    // every step on top of the steps below; he chose to correct that week only.
+    const ladderWeek = weeklyReportWeekStart === "2026-10-18";
+    if (!week || (weeklyReportWeekStart !== "2026-10-04" && !ladderWeek) || isPreviewing || !hasCompletedInitialDataLoad) return;
     if (currentRole !== "Owner" && currentRole !== "Admin" && currentRole !== "Manager") return;
     if (!weeklyBonusMaps || weeklyBonusMaps.weekStart !== weeklyReportWeekStart) return;
     if (week.company && week.company.status !== "open" && week.company.status !== "returned_to_manager") return;
     const pending = week.repReports.filter((report) =>
       (report.status === "submitted" || report.status === "manager_approved")
-      && report.snapshot && (report.snapshot as WeeklyReportSnapshot).totals?.bonusBeforeRateCut == null
+      && report.snapshot
+      && (ladderWeek ? (report.snapshot as WeeklyReportSnapshot).upgradeLadder !== "highest_step" : (report.snapshot as WeeklyReportSnapshot).totals?.bonusBeforeRateCut == null)
       && !weeklyReworkTriedRef.current.has(report.id));
     if (pending.length === 0) return;
     void (async () => {
@@ -26408,16 +26412,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         weeklyReworkTriedRef.current.add(report.id);
         const name = users.find((user) => user.id === report.repId)?.name ?? "Sales rep";
         const live = buildWeeklyRepSnapshot({ id: report.repId, name }, weeklyReportWeekStart, week.fines ?? [], week.previousFines ?? [], week.adjustments ?? [], week.previousAdjustments ?? [], week.logMisses ?? [], week.previousLogMisses ?? [], week.carriedFines?.[report.repId] ?? 0);
-        if (!live || live.totals.bonusBeforeRateCut == null) continue;
+        if (!live || (ladderWeek ? live.upgradeLadder !== "highest_step" : live.totals.bonusBeforeRateCut == null)) continue;
         // Safety: the rule changes money, never the order counts. If the counts
         // differ from what the rep sent (orders still loading, or edited since),
         // leave the report for the manager instead of writing doubtful figures.
         const sent = report.snapshot as WeeklyReportSnapshot;
         if (live.totals.orders !== sent.totals.orders || live.totals.delivered !== sent.totals.delivered || live.totals.deliveredForBonus !== sent.totals.deliveredForBonus) continue;
+        // The ladder fix only changes upsell pay: leave every other report as sent.
+        if (ladderWeek && Math.round(live.totals.upsellBonus ?? 0) === Math.round(sent.totals.upsellBonus ?? 0)) continue;
         try { await weeklyReportsApi.reworkFigures(report.repId, { weekStart: weeklyReportWeekStart, snapshot: live }); changed += 1; }
         catch (err: any) { console.warn("[weekly] re-work skipped", report.repId, err?.message); }
       }
-      if (changed > 0) { showToast(`${changed} sent report${changed === 1 ? "" : "s"} updated to the new delivery-rate rule.`); weeklyRefresh(); }
+      if (changed > 0) { showToast(`${changed} sent report${changed === 1 ? "" : "s"} updated to ${ladderWeek ? "the corrected upgrade bonus" : "the new delivery-rate rule"}.`); weeklyRefresh(); }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weeklyWeek, weeklyBonusMaps, weeklyReportWeekStart, currentRole, isPreviewing, hasCompletedInitialDataLoad]);
