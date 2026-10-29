@@ -11246,6 +11246,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return formatDateKey(d);
   });
   const [weeklyAccountingData, setWeeklyAccountingData] = useState<WeeklyAccountingDataset | null>(null);
+  // Each rep's SENT weekly report pay for the accounting week (29 Oct 2026):
+  // once a rep has sent, Top performers shows the report's figure, so the two
+  // pages never disagree. Missing = not sent yet (the estimate is shown).
+  const [weeklyAcctReportPay, setWeeklyAcctReportPay] = useState<{ weekStart: string; byRep: Record<string, number> } | null>(null);
   const [weeklyAccountingLoading, setWeeklyAccountingLoading] = useState(false);
   const [weeklyAccountingError, setWeeklyAccountingError] = useState("");
   const [financeSummaryData, setFinanceSummaryData] = useState<FinanceSummaryDataset | null>(null);
@@ -12204,6 +12208,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const loadWeeklyAccountingData = async (options: { quiet?: boolean } = {}) => {
     setWeeklyAccountingLoading(true);
+    const reportWeek = weeklyAcctSunday;
+    weeklyReportsApi.week(reportWeek)
+      .then((week) => {
+        const byRep: Record<string, number> = {};
+        for (const report of week.repReports ?? []) {
+          if (!report.snapshot || !["submitted", "manager_approved", "owner_approved", "locked"].includes(report.status)) continue;
+          const change = (week.payoutChanges ?? []).find((item) => item.repId === report.repId) ?? null;
+          const shown = withPayoutChange(report.snapshot as WeeklyReportSnapshot, change);
+          if (shown) byRep[report.repId] = Math.round(shown.totals.finalBonus);
+        }
+        setWeeklyAcctReportPay({ weekStart: reportWeek, byRep });
+      })
+      .catch(() => setWeeklyAcctReportPay({ weekStart: reportWeek, byRep: {} }));
     try {
       const result = await weeklyAccountingApi.summary({
         weekStart: weeklyAcctSunday,
@@ -88943,7 +88960,10 @@ ${waybillLineItems(w).length > 1
                         const legacyBonusEstimate = bonusOrderBreakdowns.reduce((s, o) => s + o.legacyTotal, 0);
                         const newEngineBonusEstimate = cashOrders.reduce((s, o) => s + (newEngineBonusByOrderId[o.id] ?? 0), 0);
                         const bonusEstimate = legacyBonusEstimate + newEngineBonusEstimate;
-                        const directCost = cogs + logistics + bonusEstimate;
+                        const reportPay = weeklyAcctReportPay?.weekStart === startKey ? weeklyAcctReportPay.byRep[u.id] : undefined;
+                        // The cost is what the sent report pays; the estimate only until it is sent.
+                        const bonusCost = reportPay ?? bonusEstimate;
+                        const directCost = cogs + logistics + bonusCost;
                         const directProfit = revenue - directCost;
                         const directMargin = revenue > 0 ? Math.round((directProfit / revenue) * 1000) / 10 : null;
                         const allocatedOpex = weekDeliveredRevenue > 0 ? Math.round(weekOperatingExpense * (revenue / weekDeliveredRevenue)) : 0;
@@ -88960,6 +88980,8 @@ ${waybillLineItems(w).length > 1
                           cogs,
                           logistics,
                           bonusEstimate,
+                          reportPay,
+                          bonusCost,
                           legacyBonusEstimate,
                           newEngineBonusEstimate,
                           directCost,
@@ -88988,7 +89010,8 @@ ${waybillLineItems(w).length > 1
 
                       if (repStats.length === 0) return null;
                       const hasBonusAdmin = repStats.some((r) => r.user.role === "Admin" && r.bonusEstimate > 0);
-                      const totalBonusEstimate = repStats.reduce((s, r) => s + r.bonusEstimate, 0);
+                      const totalBonusEstimate = repStats.reduce((s, r) => s + r.bonusCost, 0);
+                      const sentCount = repStats.filter((r) => r.reportPay !== undefined).length;
                       const totalDirectProfit = repStats.reduce((s, r) => s + r.directProfit, 0);
                       const totalNetProfit = repStats.reduce((s, r) => s + r.netProfit, 0);
                       const totalAllocatedOpex = repStats.reduce((s, r) => s + r.allocatedOpex, 0);
@@ -89025,9 +89048,9 @@ ${waybillLineItems(w).length > 1
                                 <p className="text-[10px] text-gray-400 mt-0.5">Revenue − COGS − logistics − bonus</p>
                               </div>
                               <div className="text-right">
-                                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Total bonus estimate</p>
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">{sentCount === repStats.length ? "Total bonus (weekly reports)" : "Total bonus"}</p>
                                 <p className="text-base font-extrabold text-emerald-700 m-0">{formatMoney(totalBonusEstimate)}</p>
-                                <p className="text-[10px] text-gray-400 mt-0.5">Per-order only · final payroll may differ</p>
+                                <p className="text-[10px] text-gray-400 mt-0.5">{sentCount === repStats.length ? "Same as the reps' sent weekly reports" : `${sentCount} of ${repStats.length} from sent reports · the rest estimated`}</p>
                               </div>
                               <div className="text-right">
                                 <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Avg AOV</p>
@@ -89039,14 +89062,15 @@ ${waybillLineItems(w).length > 1
                             <table className="w-full text-sm">
                               <thead className="bg-gray-50">
                                 <tr className="text-left">
-                                  {["Rank", hasBonusAdmin ? "Person" : "Rep","Delivered this week","Revenue","Net profit","Direct profit","AOV","Per-order bonus est.","This week's cohort","Cohort rate"].map((h) => (
+                                  {["Rank", hasBonusAdmin ? "Person" : "Rep","Delivered this week","Revenue","Net profit","Direct profit","AOV","Bonus","This week's cohort","Delivery rate"].map((h) => (
                                     <th key={h} className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-500">{h}</th>
                                   ))}
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-gray-100">
                                 {repStats.map((r, idx) => {
-                                  const rateValue = r.finalRate ?? r.cohortRate;
+                                  // The weekly report's rate (delivered ÷ all placed), the one bonuses use.
+                                  const rateValue = r.cohortRate ?? r.finalRate;
                                   const rateMet   = rateValue !== null && rateValue >= target;
                                   const medal     = idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : "";
                                   return (
@@ -89156,9 +89180,14 @@ ${waybillLineItems(w).length > 1
                                               .finally(() => setBonusBreakdownSalesBonusLoading(false));
                                           }}
                                         >
-                                          {formatMoney(r.bonusEstimate)}
+                                          {formatMoney(r.bonusCost)}
                                           <Eye className="h-3.5 w-3.5" />
                                         </button>
+                                        <div className="mt-0.5 text-[10px] font-semibold text-gray-500">
+                                          {r.reportPay !== undefined
+                                            ? <>From the sent weekly report{Math.round(r.reportPay) !== Math.round(r.bonusEstimate) ? <> · estimate {formatMoney(r.bonusEstimate)}</> : null}</>
+                                            : r.user.role === "Sales Rep" ? "Estimate · report not sent yet" : "Estimate · no weekly report"}
+                                        </div>
                                       </td>
                                       <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">
                                         <span className="font-semibold text-gray-900">{r.cohortDelivered}</span>
@@ -89174,7 +89203,7 @@ ${waybillLineItems(w).length > 1
                                           </span>
                                         )}
                                         {r.finalRate !== null && r.cohortRate !== null && r.finalRate !== r.cohortRate && (
-                                          <div className="text-[10px] text-gray-500">current {r.cohortRate}%</div>
+                                          <div className="text-[10px] text-gray-500">{r.finalRate}% leaving out pending orders</div>
                                         )}
                                       </td>
                                     </tr>
