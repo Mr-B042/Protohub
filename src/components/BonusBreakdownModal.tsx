@@ -1,7 +1,7 @@
 import { ArrowDown, ArrowRight, CalendarClock, CheckCircle2, History, Package, Search, Truck } from "lucide-react";
 import { Fragment, useState, type ReactNode } from "react";
 import { Modal, longDate, nf } from "./WeeklyReportParts";
-import { bonusComponentsFull, bonusInitialFinal, reportDueDate, type WeeklyReportSnapshot } from "../pages/weekly-report-model";
+import { PAY_BY_REPORT_DAY_FROM, bonusComponentsFull, bonusInitialFinal, bonusWeekFor, reportDueDate, type WeeklyReportSnapshot } from "../pages/weekly-report-model";
 
 /**
  * How a rep's weekly bonus adds up (Bright, 29 Oct 2026: "they said this
@@ -44,17 +44,22 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder }
 }) {
   const money = (value: number) => `${value < 0 ? "-" : ""}${sym}${nf(Math.abs(value))}`;
   const t = snap.totals;
-  const inWeek = (key: string | null | undefined) => !!key && key.slice(0, 10) >= snap.weekStart && key.slice(0, 10) <= snap.weekEnd;
   const delivered = (order: Order) => order.status === "Delivered";
 
   const placed = snap.orders.filter((order) => order.placedThisWeek);
   const placedDelivered = placed.filter(delivered);
-  const paidNow = placedDelivered.filter((order) => inWeek(order.deliveredDate));
-  const paidNextWeek = placedDelivered.filter((order) => !inWeek(order.deliveredDate));
-  const carried = snap.orders.filter((order) => !order.placedThisWeek && delivered(order) && inWeek(order.deliveredDate));
+  // Which week pays an order: bonusWeekFor (by the report day from 25 Oct).
+  const paysHere = (order: Order) => bonusWeekFor(order.date, order.deliveredDate) === snap.weekStart;
+  const paidNow = placedDelivered.filter(paysHere);
+  const paidNextWeek = placedDelivered.filter((order) => !paysHere(order));
+  const carried = snap.orders.filter((order) => !order.placedThisWeek && delivered(order) && paysHere(order) && !order.lateRecorded);
+  // The last day this week's own orders are paid here: Saturday, or the
+  // report day (Tuesday after) from the week of 25 Oct.
+  const cutoff = snap.weekStart >= PAY_BY_REPORT_DAY_FROM ? reportDueDate(snap.weekStart) : snap.weekEnd;
+  const cutoffText = snap.weekStart >= PAY_BY_REPORT_DAY_FROM ? `${dayText(cutoff)} (report day)` : dayText(cutoff);
   // Delivered in an earlier week but marked delivered after that week's
   // report was sent, so no report paid it: paid now (29 Oct 2026).
-  const late = snap.orders.filter((order) => delivered(order) && !!order.lateRecorded && !inWeek(order.deliveredDate));
+  const late = snap.orders.filter((order) => delivered(order) && !!order.lateRecorded && !paysHere(order));
   const paidCount = paidNow.length + carried.length + late.length;
 
   const thisWeek = partsOf(paidNow);
@@ -90,9 +95,9 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder }
               note={`${nf(placedDelivered.length)} of them delivered so far = ${Math.round(t.deliveryRate)}% delivery rate. These ${nf(placedDelivered.length)} are split on the right.`} />
             <span className="hidden items-center text-gray-400 sm:flex"><ArrowRight className="h-5 w-5" /></span>
             <div className="grid gap-2">
-              <Box tone="green" icon={<Truck className="h-4 w-4" />} label={`Delivered by ${dayText(snap.weekEnd)}: bonus paid now`} value={`${nf(paidNow.length)} delivered`} />
+              <Box tone="green" icon={<Truck className="h-4 w-4" />} label={`Delivered by ${cutoffText}: bonus paid now`} value={`${nf(paidNow.length)} delivered`} />
               {paidNextWeek.length > 0 ? (
-                <Box tone="amber" icon={<CalendarClock className="h-4 w-4" />} label="Delivered after the week ended: bonus paid next week" value={`${nf(paidNextWeek.length)} delivered`}
+                <Box tone="amber" icon={<CalendarClock className="h-4 w-4" />} label={`Delivered after ${cutoffText}: bonus paid in the week it was delivered`} value={`${nf(paidNextWeek.length)} delivered`}
                   note="They count in this week's delivery rate, but their bonus is paid in the week they were delivered." />
               ) : null}
             </div>
@@ -115,7 +120,7 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder }
             <p className="m-0 font-bold text-gray-900 dark:text-slate-50">Why {nf(paidCount)} and not {nf(placedDelivered.length)}?</p>
             <ul className="m-0 mt-1 list-none space-y-0.5 p-0 text-gray-700 dark:text-slate-300">
               <li><b>{nf(placedDelivered.length)}</b> delivered from this week's orders (the delivery-rate figure)</li>
-              {paidNextWeek.length > 0 ? <li><b>− {nf(paidNextWeek.length)}</b> of them delivered after {dayText(snap.weekEnd)}: their bonus is paid next week</li> : null}
+              {paidNextWeek.length > 0 ? <li><b>− {nf(paidNextWeek.length)}</b> of them delivered after {cutoffText}: their bonus is paid in the week they were delivered</li> : null}
               <li><b>= {nf(paidNow.length)}</b> delivered from this week's orders, bonus paid now</li>
               <li><b>+ {nf(carried.length)}</b> delivered this week from earlier weeks' orders (carried over)</li>
               {late.length > 0 ? <li><b>+ {nf(late.length)}</b> delivered in an earlier week but recorded too late for that week's report</li> : null}
@@ -133,7 +138,7 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder }
                 <tr>{["", "Delivered orders", "Base", "Upsell", "Cross-sell", "Total"].map((h) => <th key={h} className={`px-3 py-2 font-bold ${h && h !== "Delivered orders" ? "text-right" : "text-left"}`}>{h}</th>)}</tr>
               </thead>
               <tbody>
-                <PartsRow label={`Placed this week, delivered by ${dayText(snap.weekEnd)}`} tone="text-emerald-700" count={paidNow.length} parts={thisWeek} money={money} />
+                <PartsRow label={`Placed this week, delivered by ${cutoffText}`} tone="text-emerald-700" count={paidNow.length} parts={thisWeek} money={money} />
                 <PartsRow label="+ Placed earlier, delivered this week (carried over)" tone="text-blue-700" count={carried.length} parts={earlier} money={money} />
                 {late.length > 0 ? <PartsRow label="+ Delivered earlier, recorded late" tone="text-amber-700" count={late.length} parts={lateParts} money={money} /> : null}
                 <tr className="border-t-2 border-gray-300 bg-gray-50 font-black dark:border-slate-600 dark:bg-slate-800/60">
@@ -177,7 +182,7 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder }
             orders id, full breakdown"), then the carried-over ones. */}
         {paidNow.length > 0 ? (
           <section>
-            <SectionTitle n={4} title={`The ${nf(paidNow.length)} order${paidNow.length === 1 ? "" : "s"} placed this week and delivered by ${dayText(snap.weekEnd)}`} sub="Every order in the green row of section 2." />
+            <SectionTitle n={4} title={`The ${nf(paidNow.length)} order${paidNow.length === 1 ? "" : "s"} placed this week and delivered by ${cutoffText}`} sub="Every order in the green row of section 2." />
             <OrderTable orders={paidNow} money={money} totalLabel={`Total: ${nf(paidNow.length)} delivered orders`} />
           </section>
         ) : null}
@@ -364,14 +369,14 @@ function OrderAnswer({ id, snap, repName, money, lookupOrder }: { id: string; sn
   lines.push({ label: "Placed", value: `${dayText(found.placedKey)} (week of ${weekRange(placedWeek)})` });
   if (found.repName && found.repName !== repName) lines.push({ label: "Sales rep", value: found.repName, tone: "text-amber-700" });
   if (found.status === "Delivered" && found.deliveredKey) {
-    const paidWeek = sundayOf(found.deliveredKey);
+    const paidWeek = bonusWeekFor(found.placedKey, found.deliveredKey) ?? sundayOf(found.deliveredKey);
     lines.push({ label: "Delivered", value: `${dayText(found.deliveredKey)} (week of ${weekRange(paidWeek)})` });
     if (inReport?.lateRecorded?.recordedAt) lines.push({ label: "Marked delivered", value: whenText(inReport.lateRecorded.recordedAt), tone: "text-amber-700" });
     const paidHere = (paidWeek === thisWeek || !!inReport?.lateRecorded) && inReport && (!found.repName || found.repName === repName);
     verdict = paidHere
       ? { text: `Bonus paid in THIS report: ${money(Math.round(inReport!.bonus))}${inReport!.lateRecorded ? " (recorded late: marked delivered after its own week's report was sent)" : placedWeek !== thisWeek ? " (carried over: placed in an earlier week)" : ""}.`, tone: "bg-emerald-50 text-emerald-800 ring-emerald-200" }
       : paidWeek > thisWeek
-        ? { text: `Bonus paid in the week of ${weekRange(paidWeek)}: that week's report (due ${dayText(reportDueDate(paidWeek))}). Not in this one, because it was delivered after ${dayText(snap.weekEnd)}.`, tone: "bg-amber-50 text-amber-900 ring-amber-200" }
+        ? { text: `Bonus paid in the week of ${weekRange(paidWeek)}: that week's report (due ${dayText(reportDueDate(paidWeek))}). Not in this one, because it was delivered after ${snap.weekStart >= PAY_BY_REPORT_DAY_FROM ? `${dayText(reportDueDate(snap.weekStart))} (report day)` : dayText(snap.weekEnd)}.`, tone: "bg-amber-50 text-amber-900 ring-amber-200" }
         : { text: `Bonus paid in the week of ${weekRange(paidWeek)}: that week's report, not this one.`, tone: "bg-blue-50 text-blue-800 ring-blue-200" };
   } else if (["Failed", "Cancelled", "Returned"].includes(found.status)) {
     verdict = { text: `No bonus: the order is ${found.status}.`, tone: "bg-rose-50 text-rose-800 ring-rose-200" };

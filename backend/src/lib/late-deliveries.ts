@@ -28,8 +28,27 @@ const addDays = (dateKey: string, days: number) => {
   return date.toISOString().slice(0, 10);
 };
 
+/**
+ * The week whose bonus pays an order (Bright, 29 Oct 2026). From the week of
+ * 25 Oct, an order placed in a week and delivered by that week's report day
+ * (the Tuesday after) is paid in its own week; otherwise in the week it was
+ * delivered. Same rule as bonusWeekFor in src/pages/weekly-report-model.ts.
+ */
+export const PAY_BY_REPORT_DAY_FROM = "2026-10-25";
+export function bonusWeekFor(placedKey: string | null | undefined, deliveredKey: string | null | undefined): string | null {
+  if (!deliveredKey) return null;
+  const delivered = deliveredKey.slice(0, 10);
+  const deliveredWeek = sundayOf(delivered);
+  if (!placedKey) return deliveredWeek;
+  const placedWeek = sundayOf(placedKey);
+  if (placedWeek >= PAY_BY_REPORT_DAY_FROM && deliveredWeek === addDays(placedWeek, 7) && delivered <= addDays(placedWeek, 9)) return placedWeek;
+  return deliveredWeek;
+}
+/** A Lagos calendar day (YYYY-MM-DD) from a timestamp. */
+const lagosDay = (iso: string | null | undefined) => (iso ? new Date(new Date(iso).getTime() + 60 * 60 * 1000).toISOString().slice(0, 10) : null);
+
 type ReportRow = { rep_id: string; week_start: string; status: string; orders: any[] | null };
-type OrderRow = { id: string | number; assigned_rep_id: string; delivered_date: string };
+type OrderRow = { id: string | number; assigned_rep_id: string; delivered_date: string; created_at?: string | null };
 
 /**
  * Pure: which delivered orders were missed by every sent report, and the week
@@ -46,15 +65,17 @@ export function findLateDeliveries(reports: ReportRow[], orders: OrderRow[]): Ar
     const set = paid.get(report.rep_id) ?? paid.set(report.rep_id, new Set()).get(report.rep_id)!;
     for (const order of Array.isArray(report.orders) ? report.orders : []) {
       const delivered = String(order?.deliveredDate ?? "").slice(0, 10);
-      const inWeek = order?.status === "Delivered" && delivered >= report.week_start && delivered <= weekEnd;
-      if (inWeek || order?.lateRecorded) set.add(String(order.id));
+      const paidHere = order?.status === "Delivered" && delivered !== ""
+        && (bonusWeekFor(order?.date ?? null, delivered) === report.week_start || (delivered >= report.week_start && delivered <= weekEnd));
+      if (paidHere || order?.lateRecorded) set.add(String(order.id));
     }
   }
   const result: Array<LateDelivery & { payWeek: string }> = [];
   for (const order of orders) {
     const repId = order.assigned_rep_id;
     const deliveredDate = String(order.delivered_date).slice(0, 10);
-    const deliveredWeek = sundayOf(deliveredDate);
+    // The week that should have paid it (its own week when delivered by its report day).
+    const deliveredWeek = bonusWeekFor(lagosDay(order.created_at), deliveredDate) ?? sundayOf(deliveredDate);
     const sent = sentWeeks.get(repId);
     // Its own week not sent yet: that report will take it in the normal way.
     if (!sent?.has(deliveredWeek)) continue;
@@ -70,7 +91,7 @@ export function findLateDeliveries(reports: ReportRow[], orders: OrderRow[]): Ar
 export async function lateDeliveriesFor(orgId: string, branchId: string, weekStart: string, repId: string | null = null): Promise<LateDelivery[]> {
   let reportsQuery = supabase.from("rep_weekly_reports").select("rep_id, week_start, status, orders:snapshot->orders")
     .eq("org_id", orgId).eq("branch_id", branchId).gte("week_start", FIRST_REPORT_WEEK).lt("week_start", weekStart);
-  let ordersQuery = supabase.from("orders").select("id, assigned_rep_id, delivered_date")
+  let ordersQuery = supabase.from("orders").select("id, assigned_rep_id, delivered_date, created_at")
     .eq("org_id", orgId).eq("branch_id", branchId).eq("status", "Delivered")
     .gte("delivered_date", FIRST_REPORT_WEEK).lt("delivered_date", weekStart)
     .not("assigned_rep_id", "is", null).or("review_hold.is.null,review_hold.eq.false");

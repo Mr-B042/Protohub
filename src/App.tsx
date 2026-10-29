@@ -272,7 +272,7 @@ import OwnerWeeklyApprovalPage, { type WeeklyFinancialSummary } from "./pages/Ow
 import { CompanyReportHistoryPage, MyReportsHistoryPage, WeeklyAuditLogPage } from "./pages/WeeklyReportHistoryPages";
 import {
   buildCompanySnapshot, buildRepWeeklySnapshot, compareSnapshots,
-  FIRST_REPORT_WEEK, WEEKLY_RATE_RULE_FROM, weeklyRateRule, monthlyIncentiveForWeek, reportDueDate, reportOpensOn, runBonusCheck, wasSubmittedLate, withMissingFees, withPayoutChange, type ManagerBonusPreview, type NamedOrderLookup, type WeeklyReportSnapshot
+  FIRST_REPORT_WEEK, WEEKLY_RATE_RULE_FROM, weeklyRateRule, monthlyIncentiveForWeek, reportDueDate, reportOpensOn, runBonusCheck, wasSubmittedLate, withMissingFees, withPayoutChange, bonusWeekFor, type ManagerBonusPreview, type NamedOrderLookup, type WeeklyReportSnapshot
 } from "./pages/weekly-report-model";
 import type { CorrectionDraft } from "./components/WeeklyReportParts";
 import {
@@ -26220,8 +26220,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const one = (start: string, weekFines: typeof fines, weekAdjustments: typeof adjustments, weekMisses: WeeklyLogMissRow[], carried: number, previous: WeeklyReportSnapshot["previous"], monthlyIncentive: ReturnType<typeof weeklyIncentiveFor> = null) => {
       const end = windowShiftDay(start, 6);
       const placed = repOrders.filter((order) => !order.reviewHold && inRange(orderCreatedKey(order), start, end));
+      // Paid in the week bonusWeekFor says (by report day from 25 Oct), or late.
       const delivered = repOrders.filter((order) => (order.status ?? "New") === "Delivered"
-        && (inRange(orderDeliveredKey(order), start, end) || (start === weekStart && lateById.has(String(order.id)))));
+        && (bonusWeekFor(orderCreatedKey(order), orderDeliveredKey(order)) === start || (start === weekStart && lateById.has(String(order.id)))));
       const [row] = buildManagerBonusRepRows(delivered, placed, { start, end }, {
         users: [{ id: rep.id, name: rep.name, role: "Sales Rep" }],
         attributionByOrderId: weeklyBonusMaps.attribution,
@@ -26272,7 +26273,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             .filter((line) => line.amount !== 0 || line.tone === "blocked")
             .map((line) => ({ label: line.label, amount: Math.round(line.amount), note: line.note.slice(0, 600), tone: line.tone })),
           ...weeklyUpsellAndCrossSell(order, rep.name),
-          ...(start === weekStart && lateById.has(String(order.id)) && !inRange(orderDeliveredKey(order), start, end)
+          ...(start === weekStart && lateById.has(String(order.id)) && bonusWeekFor(orderCreatedKey(order), orderDeliveredKey(order)) !== start
             ? { lateRecorded: { deliveredWeek: lateById.get(String(order.id))!.deliveredWeek, recordedAt: lateById.get(String(order.id))!.recordedAt ?? null } } : {})
         })),
         bonus: {
