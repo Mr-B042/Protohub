@@ -7827,6 +7827,9 @@ const CART_DETAIL_FALLBACK_POLL_MS = 60_000;
 // Realtime journey events refresh this panel immediately. This interval only
 // repairs websocket gaps, so it can stay slow and inexpensive.
 const FORM_PULSE_POLL_MS = 2 * 60_000;
+// A busy form sends several steps a minute. Reload the Pulse at most this
+// often instead of once per step.
+const LIVE_FORM_PULSE_MIN_GAP_MS = 15_000;
 const NOTIFICATION_FALLBACK_POLL_MS = 5 * 60_000;
 // Presence intentionally favors low infrastructure usage over second-by-second
 // updates. Visibility/focus events still sync immediately; these timers only
@@ -30173,23 +30176,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       });
     });
 
-    // Keep overview analytics current without repeatedly downloading every
-    // cart timeline. The 60-second incremental HTTP poll remains as a safety
-    // net for websocket reconnect gaps.
-    channel.on("postgres_changes", { event: "INSERT", schema: "public", table: "cart_journey_events" }, (payload) => {
-      const nextEvent = normalizeCartJourneyEvent(payload.new);
-      if (!nextEvent.id || !nextEvent.cartId) return;
-      setAdTrackingCartJourneyMap((current) => mergeRealtimeCartJourneyEvent(current, nextEvent));
-      setAbandonedCartJourneyMap((current) => mergeRealtimeCartJourneyEvent(current, nextEvent));
-      setRepCartJourneyMap((current) => mergeRealtimeCartJourneyEvent(current, nextEvent));
-      if (liveFormPulseRefreshTimerRef.current) {
-        window.clearTimeout(liveFormPulseRefreshTimerRef.current);
-      }
-      liveFormPulseRefreshTimerRef.current = window.setTimeout(() => {
-        liveFormPulseRefreshTimerRef.current = null;
-        liveFormPulseRefreshRef.current?.();
-      }, 500);
-    });
+    // Form steps (cart_journey_events) are NOT on this channel: they have
+    // their own channel below, open only on the screens that show them.
 
     channel.on("postgres_changes", { event: "*", schema: "public", table: "users" }, (payload) => {
       const row = payload.eventType === "DELETE" ? snakeToCamel<any>(payload.old) : snakeToCamel<any>(payload.new);
@@ -30290,16 +30278,50 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return () => {
       cancelled = true;
       if (productsReloadTimer) window.clearTimeout(productsReloadTimer);
-      if (liveFormPulseRefreshTimerRef.current) {
-        window.clearTimeout(liveFormPulseRefreshTimerRef.current);
-        liveFormPulseRefreshTimerRef.current = null;
-      }
       window.removeEventListener("focus", syncRealtimeAuth);
       window.removeEventListener("online", syncRealtimeAuth);
       window.removeEventListener("protohub:auth-changed", syncRealtimeAuth as EventListener);
       realtimeClient?.removeChannel(channel);
     };
   }, []);
+
+  // ── Live form steps, only where they are shown ──
+  // cart_journey_events gets ~1,650 rows a day. On the shared channel every
+  // logged-in screen received every one of them, and the database checks
+  // each row once per listener - that live feed was the database's single
+  // biggest job. Each step also reloaded the whole Live Form Pulse. Now only
+  // the three screens that show form steps listen, and the Pulse reloads at
+  // most once every LIVE_FORM_PULSE_MIN_GAP_MS. The 5-minute polls on those
+  // screens still fill any gap.
+  const showsLiveFormSteps =
+    activePage === "Abandoned Carts" ||
+    activePage === "Sales Rep Workspace" ||
+    (activePage === "Ad Tracking" && adTrackingTab === "Abandoned Carts");
+  useEffect(() => {
+    const client = realtimeClient;
+    if (!client || !showsLiveFormSteps || !auth.isLoggedIn()) return;
+    const channel = client.channel(`protohub-form-steps-${auth.getUser()?.id ?? "session"}`);
+    channel.on("postgres_changes", { event: "INSERT", schema: "public", table: "cart_journey_events" }, (payload) => {
+      const nextEvent = normalizeCartJourneyEvent(payload.new);
+      if (!nextEvent.id || !nextEvent.cartId) return;
+      setAdTrackingCartJourneyMap((current) => mergeRealtimeCartJourneyEvent(current, nextEvent));
+      setAbandonedCartJourneyMap((current) => mergeRealtimeCartJourneyEvent(current, nextEvent));
+      setRepCartJourneyMap((current) => mergeRealtimeCartJourneyEvent(current, nextEvent));
+      if (liveFormPulseRefreshTimerRef.current) return;
+      liveFormPulseRefreshTimerRef.current = window.setTimeout(() => {
+        liveFormPulseRefreshTimerRef.current = null;
+        liveFormPulseRefreshRef.current?.();
+      }, LIVE_FORM_PULSE_MIN_GAP_MS);
+    });
+    void channel.subscribe();
+    return () => {
+      if (liveFormPulseRefreshTimerRef.current) {
+        window.clearTimeout(liveFormPulseRefreshTimerRef.current);
+        liveFormPulseRefreshTimerRef.current = null;
+      }
+      client.removeChannel(channel);
+    };
+  }, [showsLiveFormSteps]);
 
   useEffect(() => {
     if (!auth.isLoggedIn()) return;

@@ -783,6 +783,7 @@ async function getSessionDir(orgId: string) {
 }
 
 async function clearSessionDir(orgId: string) {
+  orgAuthStateCache.delete(orgId);
   await rm(path.join(sessionRoot, orgId), { recursive: true, force: true }).catch(() => undefined);
   // Also wipe Supabase creds so stale credentials don't cause instant re-logout on next pair
   await supabase.from("whatsapp_settings")
@@ -820,10 +821,38 @@ function createDebouncedAuthSaver(write: () => Promise<void>): () => Promise<voi
   };
 }
 
+// The login, once read, stays in this process. Every write goes through the
+// state object below, so the in-memory copy is always the newest; reading it
+// back from the database on each reconnect only re-downloaded the same block
+// (5 MB+ for one account) - 161k reads at ~70 ms each since July, mostly from
+// QR codes left open, which reconnect every few seconds. Cleared wherever the
+// saved login is wiped, so a fresh pairing still starts clean.
+type CachedAuthState = Awaited<ReturnType<typeof readOrgSupabaseAuthState>>;
+const orgAuthStateCache = new Map<string, CachedAuthState>();
+const userAuthStateCache = new Map<string, CachedAuthState>();
+const userAuthKey = (orgId: string, userId: string) => `${orgId}:${userId}`;
+
+async function useOrgSupabaseAuthState(orgId: string) {
+  const cached = orgAuthStateCache.get(orgId);
+  if (cached) return cached;
+  const loaded = await readOrgSupabaseAuthState(orgId);
+  orgAuthStateCache.set(orgId, loaded);
+  return loaded;
+}
+
+async function useUserSupabaseAuthState(orgId: string, userId: string) {
+  const key = userAuthKey(orgId, userId);
+  const cached = userAuthStateCache.get(key);
+  if (cached) return cached;
+  const loaded = await readUserSupabaseAuthState(orgId, userId);
+  userAuthStateCache.set(key, loaded);
+  return loaded;
+}
+
 // Supabase-backed auth state for org connections.
 // Stores Baileys credentials + signal keys in the whatsapp_settings row so
 // sessions survive Railway deploys (ephemeral filesystem).
-async function useOrgSupabaseAuthState(orgId: string) {
+async function readOrgSupabaseAuthState(orgId: string) {
   const { data } = await supabase
     .from("whatsapp_settings")
     .select("baileys_creds, baileys_keys")
@@ -871,7 +900,7 @@ async function useOrgSupabaseAuthState(orgId: string) {
 }
 
 // Supabase-backed auth state for per-user personal dispatch accounts.
-async function useUserSupabaseAuthState(orgId: string, userId: string) {
+async function readUserSupabaseAuthState(orgId: string, userId: string) {
   const { data } = await supabase
     .from("whatsapp_user_accounts")
     .select("baileys_creds, baileys_keys")
@@ -1020,6 +1049,7 @@ async function getUserSessionDir(orgId: string, userId: string) {
 }
 
 async function clearUserSessionDir(orgId: string, userId: string) {
+  userAuthStateCache.delete(userAuthKey(orgId, userId));
   await rm(path.join(sessionRoot, "users", orgId, userId), { recursive: true, force: true }).catch(() => undefined);
   // Also wipe Supabase creds so stale credentials don't cause instant re-logout on next pair
   await supabase.from("whatsapp_user_accounts")
