@@ -27,9 +27,12 @@ create table if not exists public.weekly_report_questions (
   check (source = 'owner' or check_key is not null)
 );
 
+-- Full, not partial: the server's upsert names these columns, and PostgREST
+-- cannot use a partial index for that ("no unique or exclusion constraint
+-- matching the ON CONFLICT", 29 Oct 2026). Owner questions have a null
+-- check_key; nulls never clash, so they are unaffected.
 create unique index if not exists weekly_report_questions_auto_once
-  on public.weekly_report_questions (org_id, branch_id, week_start, rep_id, check_key)
-  where check_key is not null;
+  on public.weekly_report_questions (org_id, branch_id, week_start, rep_id, check_key);
 create index if not exists weekly_report_questions_branch_week
   on public.weekly_report_questions (branch_id, week_start);
 
