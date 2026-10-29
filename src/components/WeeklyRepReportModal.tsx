@@ -158,8 +158,10 @@ export default function WeeklyRepReportModal(props: WeeklyRepReportModalProps) {
     up: order.upsellDetail ?? liveDetail.get(order.id)?.upsellDetail ?? null,
     items: order.crossSellItems ?? liveDetail.get(order.id)?.crossSellItems ?? []
   });
-  const piecesText = (up: { fromQty: number; toQty: number }) => `${up.fromQty} → ${up.toQty} pcs`;
-  const itemText = (item: { name: string; pack: string | null; qty: number }) => `${item.name}${item.pack ? ` (${item.pack})` : ""} ×${item.qty}`;
+  // "1 pc", "2 pcs" (Bright, 29 Oct 2026: not ×1 / ×2).
+  const pcs = (qty: number) => `${qty} ${qty === 1 ? "pc" : "pcs"}`;
+  const piecesText = (up: { fromQty: number; toQty: number }) => `${pcs(up.fromQty)} → ${pcs(up.toQty)}`;
+  const itemText = (item: { name: string; pack: string | null; qty: number }) => `${item.name}${item.pack ? ` (${item.pack})` : ""} · ${pcs(item.qty)}`;
   const toggleOrder = (id: string) => { const next = new Set(openOrder); if (next.has(id)) next.delete(id); else next.add(id); setOpenOrder(next); };
 
   const exportCsv = (withWorkings: boolean) => {
@@ -539,8 +541,8 @@ export default function WeeklyRepReportModal(props: WeeklyRepReportModalProps) {
                                     {detail.up ? (
                                       <div className="rounded-xl border border-blue-200 bg-white p-3 dark:border-blue-500/30 dark:bg-slate-900">
                                         <p className="m-0 flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-wide text-blue-700"><ArrowUpRight className="h-4 w-4" />Upsell</p>
-                                        <p className="m-0 mt-1.5 text-[20px] font-black text-gray-900 dark:text-slate-50">{detail.up.fromQty} pcs → {detail.up.toQty} pcs</p>
-                                        <p className="m-0 text-[12px] text-gray-600 dark:text-slate-400">The customer first wanted {detail.up.fromQty} and {repName} moved them up to {detail.up.toQty} (+{detail.up.toQty - detail.up.fromQty} pcs).</p>
+                                        <p className="m-0 mt-1.5 text-[20px] font-black text-gray-900 dark:text-slate-50">{piecesText(detail.up)}</p>
+                                        <p className="m-0 text-[12px] text-gray-600 dark:text-slate-400">The customer first wanted {pcs(detail.up.fromQty)} and {repName} moved them up to {pcs(detail.up.toQty)} (+{pcs(detail.up.toQty - detail.up.fromQty)}).</p>
                                         <dl className="m-0 mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[12.5px]">
                                           <dt className="text-gray-500">Rule for {detail.up.fromQty} → {detail.up.toQty}</dt><dd className="m-0 text-right font-semibold">{detail.up.ruleAmount !== null ? money(detail.up.ruleAmount) : "no rule set"}</dd>
                                           <dt className="text-gray-500">Paid on this order</dt><dd className="m-0 text-right font-black text-blue-700">{money(p.upsell)}</dd>
@@ -559,7 +561,7 @@ export default function WeeklyRepReportModal(props: WeeklyRepReportModalProps) {
                                               <Fragment key={i}>
                                                 <tr className="border-t border-gray-100 dark:border-slate-800">
                                                   <td className="py-1.5 pr-3 font-semibold">{item.name}{item.pack ? <span className="block text-[11px] font-normal text-gray-500">{item.pack}</span> : null}</td>
-                                                  <td className="py-1.5 pr-3">×{item.qty}</td>
+                                                  <td className="whitespace-nowrap py-1.5 pr-3">{pcs(item.qty)}</td>
                                                   <td className="py-1.5 pr-3 text-right">{money(item.value)}</td>
                                                   <td className="py-1.5 pr-3">{item.addedBy === "customer" ? "Customer (order form)" : item.addedBy === "auto" ? "Included automatically" : repName}</td>
                                                   <td className="py-1.5 text-right font-black text-rose-700">{item.bonus === null ? "weekly rule" : money(item.bonus)}</td>
