@@ -73,23 +73,34 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose }: {
           <SectionTitle n={1} title="Which deliveries are paid this week" />
           <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto_1fr]">
             <Box tone="gray" icon={<Package className="h-4 w-4" />} label="Orders placed this week" value={nf(t.orders)}
-              note={`${nf(placedDelivered.length)} of them delivered, so far = ${Math.round(t.deliveryRate)}% delivery rate`} />
+              note={`${nf(placedDelivered.length)} of them delivered so far = ${Math.round(t.deliveryRate)}% delivery rate. These ${nf(placedDelivered.length)} are split on the right.`} />
             <span className="hidden items-center text-gray-400 sm:flex"><ArrowRight className="h-5 w-5" /></span>
             <div className="grid gap-2">
-              <Box tone="green" icon={<Truck className="h-4 w-4" />} label={`Delivered by ${dayText(snap.weekEnd)}: paid now`} value={nf(paidNow.length)} />
+              <Box tone="green" icon={<Truck className="h-4 w-4" />} label={`Delivered by ${dayText(snap.weekEnd)}: bonus paid now`} value={`${nf(paidNow.length)} delivered`} />
               {paidNextWeek.length > 0 ? (
-                <Box tone="amber" icon={<CalendarClock className="h-4 w-4" />} label="Delivered after the week ended: paid next week" value={nf(paidNextWeek.length)}
+                <Box tone="amber" icon={<CalendarClock className="h-4 w-4" />} label="Delivered after the week ended: bonus paid next week" value={`${nf(paidNextWeek.length)} delivered`}
                   note="They count in this week's delivery rate, but their bonus is paid in the week they were delivered." />
               ) : null}
             </div>
           </div>
           <div className="mt-2">
-            <Box tone="blue" icon={<History className="h-4 w-4" />} label="Carried over: placed in an earlier week, delivered this week: paid now" value={nf(carried.length)}
+            <Box tone="blue" icon={<History className="h-4 w-4" />} label="Carried over: placed in an earlier week, delivered this week: bonus paid now" value={`${nf(carried.length)} delivered`}
               note="They are not in this week's orders or delivery rate (they belong to the week they were placed), but their bonus is paid now." />
           </div>
           <p className="m-0 mt-2 rounded-xl bg-gray-900 px-3 py-2.5 text-[13.5px] font-bold text-white dark:bg-slate-700">
-            Bonus paid this week on {nf(paidNow.length + carried.length)} deliveries = {nf(paidNow.length)} from this week + {nf(carried.length)} carried over
+            Bonus paid this week on {nf(paidNow.length + carried.length)} delivered orders = {nf(paidNow.length)} from this week + {nf(carried.length)} carried over
           </p>
+          {/* Bright, 29 Oct 2026: "44 delivered, now 48?" Say how one becomes the other. */}
+          <div className="mt-2 rounded-xl border border-gray-200 px-3 py-2.5 text-[12.5px] dark:border-slate-700">
+            <p className="m-0 font-bold text-gray-900 dark:text-slate-50">Why {nf(paidNow.length + carried.length)} and not {nf(placedDelivered.length)}?</p>
+            <ul className="m-0 mt-1 list-none space-y-0.5 p-0 text-gray-700 dark:text-slate-300">
+              <li><b>{nf(placedDelivered.length)}</b> delivered from this week's orders (the delivery-rate figure)</li>
+              {paidNextWeek.length > 0 ? <li><b>− {nf(paidNextWeek.length)}</b> of them delivered after {dayText(snap.weekEnd)}: their bonus is paid next week</li> : null}
+              <li><b>= {nf(paidNow.length)}</b> delivered from this week's orders, bonus paid now</li>
+              <li><b>+ {nf(carried.length)}</b> delivered this week from earlier weeks' orders (carried over)</li>
+              <li className="font-bold text-gray-900 dark:text-slate-50">= {nf(paidNow.length + carried.length)} delivered orders paid this week</li>
+            </ul>
+          </div>
         </section>
 
         {/* 2. Where the money comes from */}
@@ -98,13 +109,13 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose }: {
           <div className="mt-2 overflow-x-auto rounded-xl border border-gray-200 dark:border-slate-700">
             <table className="w-full !min-w-[520px] text-[12.5px]">
               <thead className="bg-gray-50 text-[11px] uppercase text-gray-500 dark:bg-slate-800/60 [&_th]:bg-transparent [&_th]:[color:inherit]">
-                <tr>{["", "Orders", "Base", "Upsell", "Cross-sell", "Total"].map((h) => <th key={h} className={`px-3 py-2 font-bold ${h && h !== "Orders" ? "text-right" : "text-left"}`}>{h}</th>)}</tr>
+                <tr>{["", "Delivered orders", "Base", "Upsell", "Cross-sell", "Total"].map((h) => <th key={h} className={`px-3 py-2 font-bold ${h && h !== "Delivered orders" ? "text-right" : "text-left"}`}>{h}</th>)}</tr>
               </thead>
               <tbody>
-                <PartsRow label="Placed this week" tone="text-emerald-700" count={paidNow.length} parts={thisWeek} money={money} />
-                <PartsRow label="+ Carried over" tone="text-blue-700" count={carried.length} parts={earlier} money={money} />
+                <PartsRow label={`Placed this week, delivered by ${dayText(snap.weekEnd)}`} tone="text-emerald-700" count={paidNow.length} parts={thisWeek} money={money} />
+                <PartsRow label="+ Placed earlier, delivered this week (carried over)" tone="text-blue-700" count={carried.length} parts={earlier} money={money} />
                 <tr className="border-t-2 border-gray-300 bg-gray-50 font-black dark:border-slate-600 dark:bg-slate-800/60">
-                  <td className="px-3 py-2">= Bonus earned</td>
+                  <td className="px-3 py-2">= Bonus earned on delivered orders</td>
                   <td className="px-3 py-2">{nf(paidNow.length + carried.length)}</td>
                   <td className="px-3 py-2 text-right">{money(paid.base)}</td>
                   <td className="px-3 py-2 text-right">{money(paid.upsell)}</td>
