@@ -945,7 +945,7 @@ const RepActionSchema = z.object({ weekStart: weekStartSchema, note: z.string().
 // every step on top of the steps below (2 upgrades = ₦800 + ₦1,600). Bright
 // chose to correct last week only. A report counts as re-worked once its
 // figures carry upgradeLadder "highest_step".
-const REWORK_WEEKS: Record<string, { done: (snapshot: any) => boolean; label: string; why: string }> = {
+const REWORK_WEEKS: Record<string, { done: (snapshot: any) => boolean; label: string; why: string; keepRepIds?: string[] }> = {
   "2026-10-04": {
     done: (snapshot) => snapshot?.totals?.bonusBeforeRateCut !== undefined && snapshot?.totals?.bonusBeforeRateCut !== null,
     label: "the new delivery-rate rule",
@@ -954,7 +954,10 @@ const REWORK_WEEKS: Record<string, { done: (snapshot: any) => boolean; label: st
   "2026-10-18": {
     done: (snapshot) => snapshot?.upgradeLadder === "highest_step",
     label: "the corrected upgrade ladder",
-    why: "Upgrade ladder paid every step on top of the steps below; now only the highest step reached (Bright, 29 Oct 2026)"
+    why: "Upgrade ladder paid every step on top of the steps below; now only the highest step reached (Bright, 29 Oct 2026)",
+    // Bright, 29 Oct 2026: leave this rep's week as sent; the corrected
+    // ladder counts for her from the week of 25 Oct.
+    keepRepIds: ["def73b93-5e07-47f6-b935-f7590f820aa4"]
   }
 };
 const ReworkSchema = z.object({ weekStart: weekStartSchema, snapshot: snapshotSchema });
@@ -965,6 +968,7 @@ router.post("/rep/:repId/rework-figures", requireRole("Owner", ...REVIEWERS), as
   try {
     const rework = REWORK_WEEKS[weekStart];
     if (!rework) throw httpError(400, "Only the weeks of 4 Oct and 18 Oct are re-worked.");
+    if (rework.keepRepIds?.includes(String(req.params.repId))) { res.json({ ok: true, already: true }); return; }
     const branchId = requireBranch(req);
     const orgId = req.user!.orgId;
     const repId = String(req.params.repId);

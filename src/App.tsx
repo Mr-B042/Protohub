@@ -26420,7 +26420,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         if (live.totals.orders !== sent.totals.orders || live.totals.delivered !== sent.totals.delivered || live.totals.deliveredForBonus !== sent.totals.deliveredForBonus) continue;
         // The ladder fix only changes upsell pay: leave every other report as sent.
         if (ladderWeek && Math.round(live.totals.upsellBonus ?? 0) === Math.round(sent.totals.upsellBonus ?? 0)) continue;
-        try { await weeklyReportsApi.reworkFigures(report.repId, { weekStart: weeklyReportWeekStart, snapshot: live }); changed += 1; }
+        try { const result = await weeklyReportsApi.reworkFigures(report.repId, { weekStart: weeklyReportWeekStart, snapshot: live }); if (!result.already) changed += 1; }
         catch (err: any) { console.warn("[weekly] re-work skipped", report.repId, err?.message); }
       }
       if (changed > 0) { showToast(`${changed} sent report${changed === 1 ? "" : "s"} updated to ${ladderWeek ? "the corrected upgrade bonus" : "the new delivery-rate rule"}.`); weeklyRefresh(); }
