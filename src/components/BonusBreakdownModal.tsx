@@ -35,12 +35,15 @@ const dayText = (key: string | null | undefined) => {
 /** An order as it is today, for "which week is this order's bonus in?" (any week, any rep). */
 export type FoundOrder = { id: string; customer: string; product: string; status: string; placedKey: string; deliveredKey: string | null; repName: string | null };
 
-export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder }: {
+export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder, detailSource }: {
   snap: WeeklyReportSnapshot;
   repName: string;
   sym: string;
   onClose: () => void;
   lookupOrder?: (id: string) => FoundOrder | null;
+  /** Today's figures, for the upgrade pieces and add-on items a report sent
+   *  before they were saved does not carry. Amounts always come from snap. */
+  detailSource?: WeeklyReportSnapshot | null;
 }) {
   const money = (value: number) => `${value < 0 ? "-" : ""}${sym}${nf(Math.abs(value))}`;
   const t = snap.totals;
@@ -163,9 +166,11 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder }
           )}
         </section>
 
+        <UpsellCrossList snap={snap} detailSource={detailSource ?? null} money={money} paidOrders={[...paidNow, ...carried, ...late]} carriedIds={new Set(carried.map((order) => order.id))} lateIds={new Set(late.map((order) => order.id))} />
+
         {/* 3. From the full bonus to the final pay */}
         <section>
-          <SectionTitle n={3} title="From the full bonus to the final pay" />
+          <SectionTitle n={4} title="From the full bonus to the final pay" />
           <ol className="m-0 mt-2 list-none space-y-0 p-0">
             <Step label="Full bonus by the rules (before the delivery-rate cut)" value={money(fullTotal)}
               note={`Base ${money(Math.round(full.base))} + Upsell ${money(Math.round(full.upsell))} + Cross-sell ${money(Math.round(full.crossSell))}. These are the columns on the reps table.`} />
@@ -182,19 +187,19 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder }
             orders id, full breakdown"), then the carried-over ones. */}
         {paidNow.length > 0 ? (
           <section>
-            <SectionTitle n={4} title={`The ${nf(paidNow.length)} order${paidNow.length === 1 ? "" : "s"} placed this week and delivered by ${cutoffText}`} sub="Every order in the green row of section 2." />
+            <SectionTitle n={5} title={`The ${nf(paidNow.length)} order${paidNow.length === 1 ? "" : "s"} placed this week and delivered by ${cutoffText}`} sub="Every order in the green row of section 2." />
             <OrderTable orders={paidNow} money={money} totalLabel={`Total: ${nf(paidNow.length)} delivered orders`} />
           </section>
         ) : null}
         {carried.length > 0 ? (
           <section>
-            <SectionTitle n={paidNow.length > 0 ? 5 : 4} title={`The ${nf(carried.length)} carried-over order${carried.length === 1 ? "" : "s"}`} sub="Placed in an earlier week, delivered this week. Every order in the blue row of section 2." />
+            <SectionTitle n={paidNow.length > 0 ? 6 : 5} title={`The ${nf(carried.length)} carried-over order${carried.length === 1 ? "" : "s"}`} sub="Placed in an earlier week, delivered this week. Every order in the blue row of section 2." />
             <OrderTable orders={carried} money={money} totalLabel={`Total: ${nf(carried.length)} carried over`} />
           </section>
         ) : null}
         {late.length > 0 ? (
           <section>
-            <SectionTitle n={4 + (paidNow.length > 0 ? 1 : 0) + (carried.length > 0 ? 1 : 0)} title={`Recorded late: ${nf(late.length)} order${late.length === 1 ? "" : "s"}`} sub="Delivered in an earlier week, but marked delivered after that week's report was sent." />
+            <SectionTitle n={5 + (paidNow.length > 0 ? 1 : 0) + (carried.length > 0 ? 1 : 0)} title={`Recorded late: ${nf(late.length)} order${late.length === 1 ? "" : "s"}`} sub="Delivered in an earlier week, but marked delivered after that week's report was sent." />
             <div className="mt-2 overflow-x-auto rounded-xl border border-amber-200 dark:border-amber-500/30">
               <table className="w-full !min-w-[560px] text-[12.5px]">
                 <thead className="bg-amber-50 text-[11px] uppercase text-amber-800 dark:bg-amber-500/10 [&_th]:bg-transparent [&_th]:[color:inherit]">
@@ -217,7 +222,7 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder }
         ) : null}
         {paidNextWeek.length > 0 ? (
           <section>
-            <SectionTitle n={4 + (paidNow.length > 0 ? 1 : 0) + (carried.length > 0 ? 1 : 0) + (late.length > 0 ? 1 : 0)} title={`Paid next week: ${nf(paidNextWeek.length)} order${paidNextWeek.length === 1 ? "" : "s"}`} sub="Placed this week, delivered after it ended. They will show as carried over next week." />
+            <SectionTitle n={5 + (paidNow.length > 0 ? 1 : 0) + (carried.length > 0 ? 1 : 0) + (late.length > 0 ? 1 : 0)} title={`Paid next week: ${nf(paidNextWeek.length)} order${paidNextWeek.length === 1 ? "" : "s"}`} sub="Placed this week, delivered after it ended. They will show as carried over next week." />
             <ul className="m-0 mt-2 list-none space-y-1 p-0 text-[12.5px]">
               {paidNextWeek.map((order) => (
                 <li key={order.id} className="flex flex-wrap justify-between gap-2 rounded-lg bg-amber-50 px-3 py-1.5 dark:bg-amber-500/10">
@@ -344,7 +349,7 @@ function OrderFinder({ snap, repName, money, lookupOrder }: { snap: WeeklyReport
   return (
     <section className="rounded-2xl border border-[#1F6FEB]/30 bg-blue-50/40 p-3 dark:border-blue-500/30 dark:bg-blue-500/10">
       <p className="m-0 text-[13px] font-bold text-gray-900 dark:text-slate-50">Find orders: which week is each bonus in?</p>
-      <p className="m-0 text-[11.5px] text-gray-600 dark:text-slate-300">A bonus is paid in the week the order is <b>delivered</b> (Sunday to Saturday), whatever week it was placed. Type one or more order numbers.</p>
+      <p className="m-0 text-[11.5px] text-gray-600 dark:text-slate-300">A bonus is paid in the week the order is <b>delivered</b> (Sunday to Saturday). From the week of 25 Oct, an order delivered by its week's report day (the Tuesday after) is paid in its own week. Type one or more order numbers.</p>
       <label className="mt-2 flex min-h-10 items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-900">
         <Search className="h-4 w-4 shrink-0 text-gray-400" />
         <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="e.g. 5578, 5303, 5022" className="w-full border-0 bg-transparent py-2 text-[13px] outline-none dark:text-slate-100" />
@@ -392,5 +397,91 @@ function OrderAnswer({ id, snap, repName, money, lookupOrder }: { id: string; sn
       </dl>
       <p className={`m-0 mt-2 rounded-lg px-3 py-2 text-[12.5px] font-bold ring-1 ${verdict.tone}`}>{verdict.text}</p>
     </div>
+  );
+}
+
+// ── Every upsell and cross-sell, order by order (Bright, 29 Oct 2026) ───────
+// The Upsell and Cross-sell columns of section 2, opened up: each order that
+// earned either, the upgrade in pieces, each add-on and what it paid. The
+// totals equal those columns.
+function UpsellCrossList({ snap, detailSource, money, paidOrders, carriedIds, lateIds }: {
+  snap: WeeklyReportSnapshot; detailSource: WeeklyReportSnapshot | null; money: (value: number) => string;
+  paidOrders: Order[]; carriedIds: Set<string>; lateIds: Set<string>;
+}) {
+  const liveById = new Map((detailSource?.orders ?? []).map((order) => [order.id, order]));
+  const rows = paidOrders.filter((order) => (order.upsellBonus ?? 0) !== 0 || (order.crossSellBonus ?? 0) !== 0);
+  const upsellTotal = Math.round(rows.reduce((sum, order) => sum + (order.upsellBonus ?? 0), 0));
+  const crossTotal = Math.round(rows.reduce((sum, order) => sum + (order.crossSellBonus ?? 0), 0));
+  const t = snap.totals;
+  const matches = Math.abs(upsellTotal - Math.round(t.upsellBonus)) < 1 && Math.abs(crossTotal - Math.round(t.crossSellBonus)) < 1;
+  return (
+    <section>
+      <SectionTitle n={3} title="Upsell and cross-sell, order by order" sub="Every order behind the Upsell and Cross-sell columns above. Amounts actually paid." />
+      {rows.length === 0 ? (
+        <p className="m-0 mt-2 rounded-xl bg-gray-50 px-3 py-2.5 text-[12.5px] text-gray-600 dark:bg-slate-800/60 dark:text-slate-300">No upsell or cross-sell paid this week.</p>
+      ) : (
+        <div className="mt-2 overflow-x-auto rounded-xl border border-gray-200 dark:border-slate-700">
+          <table className="w-full !min-w-[600px] text-[12.5px]">
+            <thead className="bg-gray-50 text-[11px] uppercase text-gray-500 dark:bg-slate-800/60 [&_th]:bg-transparent [&_th]:[color:inherit]">
+              <tr>{["Order", "Upsell", "Cross-sell", "Paid"].map((h, i) => <th key={h} className={`px-3 py-2 font-bold ${i === 3 ? "text-right" : "text-left"}`}>{h}</th>)}</tr>
+            </thead>
+            <tbody>
+              {rows.map((order) => {
+                const up = order.upsellDetail ?? liveById.get(order.id)?.upsellDetail ?? null;
+                const items = order.crossSellItems ?? liveById.get(order.id)?.crossSellItems ?? [];
+                const upsell = Math.round(order.upsellBonus ?? 0);
+                const cross = Math.round(order.crossSellBonus ?? 0);
+                const group = lateIds.has(order.id) ? "recorded late" : carriedIds.has(order.id) ? "carried over" : null;
+                return (
+                  <tr key={order.id} className="border-t border-gray-100 align-top dark:border-slate-800">
+                    <td className="max-w-[190px] px-3 py-2">
+                      <b>#{order.id}</b>{group ? <span className="ml-1 rounded bg-blue-50 px-1 text-[10px] font-bold text-blue-700">{group}</span> : null}
+                      <span className="block truncate text-[11px] text-gray-500">{order.customer}</span>
+                      <span className="block truncate text-[11px] text-gray-500">{order.product}</span>
+                    </td>
+                    <td className="px-3 py-2">
+                      {upsell !== 0 || up ? (
+                        <>
+                          {up ? <span className="block font-semibold text-blue-700">{pcs(up.fromQty)} → {pcs(up.toQty)}</span> : <span className="block text-gray-500">Upgrade</span>}
+                          <span className="block font-bold">{money(upsell)}</span>
+                          {up?.ruleAmount && upsell > 0 && upsell < up.ruleAmount ? <span className="block text-[11px] font-semibold text-amber-700">half of {money(up.ruleAmount)} (delivery rate)</span> : null}
+                          {up?.ruleAmount && upsell === up.ruleAmount ? <span className="block text-[11px] text-gray-500">full rule amount</span> : null}
+                        </>
+                      ) : <span className="text-gray-400">-</span>}
+                    </td>
+                    <td className="px-3 py-2">
+                      {cross !== 0 || items.length ? (
+                        <>
+                          {items.map((item, i) => (
+                            <span key={i} className="block text-[12px]">
+                              <b className="text-rose-700">{item.name}</b>{item.pack ? ` (${item.pack})` : ""} · {pcs(item.qty)} · {money(item.value)}
+                              <span className="block text-[11px] text-gray-500">{item.addedBy === "customer" ? "Chosen by the customer" : item.addedBy === "auto" ? "Included automatically" : "Added by the rep"}{item.bonus !== null ? ` → ${money(item.bonus)}` : " → weekly rule"}</span>
+                            </span>
+                          ))}
+                          <span className="block font-bold">{money(cross)}</span>
+                          {items.length === 0 ? <span className="block text-[11px] text-gray-500">Item details not saved with this report</span> : null}
+                        </>
+                      ) : <span className="text-gray-400">-</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right font-black">{money(upsell + cross)}</td>
+                  </tr>
+                );
+              })}
+              <tr className="border-t-2 border-gray-300 bg-gray-50 font-black dark:border-slate-600 dark:bg-slate-800/60">
+                <td className="px-3 py-2">Total: {nf(rows.length)} order{rows.length === 1 ? "" : "s"}</td>
+                <td className="px-3 py-2">{money(upsellTotal)}</td>
+                <td className="px-3 py-2">{money(crossTotal)}</td>
+                <td className="px-3 py-2 text-right">{money(upsellTotal + crossTotal)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+      {rows.length > 0 ? (
+        matches
+          ? <p className="m-0 mt-1.5 flex items-center gap-1.5 text-[12px] font-semibold text-emerald-700"><CheckCircle2 className="h-4 w-4" />Same as section 2: Upsell {money(upsellTotal)}, Cross-sell {money(crossTotal)}.</p>
+          : <p className="m-0 mt-1.5 text-[12px] font-semibold text-amber-700">The orders add up to Upsell {money(upsellTotal)} and Cross-sell {money(crossTotal)}; the report says {money(Math.round(t.upsellBonus))} and {money(Math.round(t.crossSellBonus))}. The difference is a weekly rule not tied to one order.</p>
+      ) : null}
+    </section>
   );
 }
