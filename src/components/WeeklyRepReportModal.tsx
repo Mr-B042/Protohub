@@ -151,16 +151,27 @@ export default function WeeklyRepReportModal(props: WeeklyRepReportModalProps) {
   const pages = Math.max(1, Math.ceil(listed.length / pageSize));
   const pageRows = listed.slice((page - 1) * pageSize, page * pageSize);
   const liveLines = useMemo(() => new Map((live?.orders ?? []).map((order) => [order.id, order.bonusLines])), [live]);
+  // Upgrade pieces and add-on items (Bright, 29 Oct 2026). Reports submitted
+  // before these were saved read them from today's records.
+  const liveDetail = useMemo(() => new Map((live?.orders ?? []).map((order) => [order.id, order])), [live]);
+  const detailOf = (order: OrderRow) => ({
+    up: order.upsellDetail ?? liveDetail.get(order.id)?.upsellDetail ?? null,
+    items: order.crossSellItems ?? liveDetail.get(order.id)?.crossSellItems ?? []
+  });
+  const piecesText = (up: { fromQty: number; toQty: number }) => `${up.fromQty} → ${up.toQty} pcs`;
+  const itemText = (item: { name: string; pack: string | null; qty: number }) => `${item.name}${item.pack ? ` (${item.pack})` : ""} ×${item.qty}`;
   const toggleOrder = (id: string) => { const next = new Set(openOrder); if (next.has(id)) next.delete(id); else next.add(id); setOpenOrder(next); };
 
   const exportCsv = (withWorkings: boolean) => {
     const cell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
-    const head = ["Order", "Customer", "Product", "Placed", "Delivered", "Status", "Base", "Upsell", "Cross-sell", "Total bonus", ...(withWorkings ? ["How it was worked out"] : [])];
+    const head = ["Order", "Customer", "Product", "Placed", "Delivered", "Status", "Base", "Upsell", "Upgrade (pieces)", "Cross-sell", "Cross-sell items", "Total bonus", ...(withWorkings ? ["How it was worked out"] : [])];
     const lines = [head.map(cell).join(",")];
     for (const order of listed) {
       const p = parts(order);
       const workings = (order.bonusLines ?? liveLines.get(order.id) ?? []).map((line) => `${line.label}: ${line.amount ? money(line.amount) : "—"} (${line.note})`).join(" | ");
-      lines.push([order.id, order.customer, order.product, order.date, order.deliveredDate ?? "", order.status, p.base, p.upsell, p.cross, p.total, ...(withWorkings ? [workings] : [])].map(cell).join(","));
+      const detail = detailOf(order);
+      const items = detail.items.map((item) => `${itemText(item)} ${money(item.value)}${item.bonus !== null ? ` → ${money(item.bonus)}` : ""}`).join("; ");
+      lines.push([order.id, order.customer, order.product, order.date, order.deliveredDate ?? "", order.status, p.base, p.upsell, detail.up ? piecesText(detail.up) : "", p.cross, items, p.total, ...(withWorkings ? [workings] : [])].map(cell).join(","));
     }
     const link = document.createElement("a");
     link.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" }));
@@ -473,7 +484,7 @@ export default function WeeklyRepReportModal(props: WeeklyRepReportModalProps) {
               </div>
 
               <div className="mt-3 overflow-x-auto">
-                <table className="w-full !min-w-[1100px] text-left text-[13px]">
+                <table className="w-full !min-w-[1180px] text-left text-[13px]">
                   <thead className="bg-gray-50 text-[11.5px] uppercase text-gray-600 dark:bg-slate-800/60 dark:text-slate-400 [&_th]:bg-transparent [&_th]:[color:inherit]">
                     <tr>{["#", "Order ID", "Customer", "Product", "Placed Date", "Delivered Date", "Status", "Base", "Upsell", "Cross-sell", "Total Bonus", "Actions"].map((head) => <th key={head} className={`whitespace-nowrap px-3 py-2.5 font-bold ${head === "Actions" ? "text-center" : ""}`}>{head}</th>)}</tr>
                   </thead>
@@ -484,6 +495,8 @@ export default function WeeklyRepReportModal(props: WeeklyRepReportModalProps) {
                       const lines = order.bonusLines ?? liveLines.get(order.id) ?? null;
                       const expanded = openOrder.has(order.id);
                       const cell = (value: number) => <td className="px-3 py-3">{money(value)}</td>;
+                      const detail = detailOf(order);
+                      const halfOfRule = !!detail.up?.ruleAmount && p.upsell > 0 && p.upsell < detail.up.ruleAmount;
                       return (
                         <Fragment key={order.id}>
                           <tr className="border-t border-gray-100 text-gray-800 dark:border-slate-800 dark:text-slate-200">
@@ -494,7 +507,26 @@ export default function WeeklyRepReportModal(props: WeeklyRepReportModalProps) {
                             <td className="whitespace-nowrap px-3 py-3">{order.placedThisWeek ? day(order.date) : <><span className="text-blue-700">{day(order.date)}</span><span className="mt-1 flex w-fit items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700"><span className="h-1.5 w-1.5 rounded-full bg-blue-600" />Earlier week</span></>}</td>
                             <td className="whitespace-nowrap px-3 py-3">{day(order.deliveredDate)}</td>
                             <td className="px-3 py-3"><span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-50 px-2 py-1 text-[12px] font-semibold text-emerald-700"><span className="h-1.5 w-1.5 rounded-full bg-emerald-600" />{order.status}</span></td>
-                            {cell(p.base)}{cell(p.upsell)}{cell(p.cross)}
+                            {cell(p.base)}
+                            <td className="px-3 py-3 align-top">
+                              <span className="block">{money(p.upsell)}</span>
+                              {detail.up ? (
+                                <span className="mt-1 inline-flex items-center gap-1 whitespace-nowrap rounded-md bg-blue-50 px-1.5 py-0.5 text-[11.5px] font-bold text-blue-700 dark:bg-blue-500/15 dark:text-blue-300">
+                                  <ArrowUpRight className="h-3 w-3" />{piecesText(detail.up)}
+                                </span>
+                              ) : null}
+                              {halfOfRule ? <span className="mt-0.5 block whitespace-nowrap text-[11px] font-semibold text-amber-700">half of {money(detail.up!.ruleAmount!)}</span> : null}
+                              {detail.up && p.upsell === 0 ? <span className="mt-0.5 block text-[11px] text-gray-500">not paid</span> : null}
+                            </td>
+                            <td className="max-w-[200px] px-3 py-3 align-top">
+                              <span className="block">{money(p.cross)}</span>
+                              {detail.items.slice(0, 3).map((item, i) => (
+                                <span key={i} className="mt-1 flex w-fit max-w-full items-center gap-1 rounded-md bg-rose-50 px-1.5 py-0.5 text-[11.5px] font-semibold text-rose-700 dark:bg-rose-500/15 dark:text-rose-300" title={item.how}>
+                                  <Tag className="h-3 w-3 shrink-0" /><span className="truncate">{itemText(item)}</span>
+                                </span>
+                              ))}
+                              {detail.items.length > 3 ? <span className="mt-0.5 block text-[11px] text-gray-500">+{detail.items.length - 3} more</span> : null}
+                            </td>
                             <td className="px-3 py-3 font-black">{money(p.total)}</td>
                             <td className="px-3 py-3 text-center"><button type="button" aria-label="How it was worked out" onClick={() => toggleOrder(order.id)} className={`!min-h-0 rounded-lg p-1.5 ${expanded ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100 dark:hover:bg-slate-800"}`}><Eye className="h-4 w-4" /></button></td>
                           </tr>
@@ -502,6 +534,46 @@ export default function WeeklyRepReportModal(props: WeeklyRepReportModalProps) {
                             <tr className="bg-gray-50/70 dark:bg-slate-800/30">
                               <td />
                               <td colSpan={11} className="px-3 pb-3 pt-1 text-[12.5px]">
+                                {detail.up || detail.items.length ? (
+                                  <div className="mb-3 grid gap-3 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)]">
+                                    {detail.up ? (
+                                      <div className="rounded-xl border border-blue-200 bg-white p-3 dark:border-blue-500/30 dark:bg-slate-900">
+                                        <p className="m-0 flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-wide text-blue-700"><ArrowUpRight className="h-4 w-4" />Upsell</p>
+                                        <p className="m-0 mt-1.5 text-[20px] font-black text-gray-900 dark:text-slate-50">{detail.up.fromQty} pcs → {detail.up.toQty} pcs</p>
+                                        <p className="m-0 text-[12px] text-gray-600 dark:text-slate-400">The customer first wanted {detail.up.fromQty} and {repName} moved them up to {detail.up.toQty} (+{detail.up.toQty - detail.up.fromQty} pcs).</p>
+                                        <dl className="m-0 mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[12.5px]">
+                                          <dt className="text-gray-500">Rule for {detail.up.fromQty} → {detail.up.toQty}</dt><dd className="m-0 text-right font-semibold">{detail.up.ruleAmount !== null ? money(detail.up.ruleAmount) : "no rule set"}</dd>
+                                          <dt className="text-gray-500">Paid on this order</dt><dd className="m-0 text-right font-black text-blue-700">{money(p.upsell)}</dd>
+                                        </dl>
+                                        {halfOfRule ? <p className="m-0 mt-1.5 text-[11.5px] font-semibold text-amber-700">Half paid: {order.bonusNote ?? "the week's delivery rate was under the upgrade line."}</p> : null}
+                                        {p.upsell === 0 ? <p className="m-0 mt-1.5 text-[11.5px] text-gray-500">Nothing paid for this upgrade on this order. The lines below say why.</p> : null}
+                                      </div>
+                                    ) : null}
+                                    {detail.items.length ? (
+                                      <div className="overflow-x-auto rounded-xl border border-rose-200 bg-white p-3 dark:border-rose-500/30 dark:bg-slate-900">
+                                        <p className="m-0 flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-wide text-rose-700"><Tag className="h-4 w-4" />Cross-sell · {detail.items.length} item{detail.items.length === 1 ? "" : "s"}</p>
+                                        <table className="mt-1.5 w-full !min-w-0 text-[12.5px]">
+                                          <thead className="text-[11px] uppercase text-gray-500 [&_th]:bg-transparent [&_th]:[color:inherit]"><tr>{["Item", "Qty", "Price", "Added by", "Bonus"].map((h) => <th key={h} className={`py-1 pr-3 font-bold ${h === "Bonus" || h === "Price" ? "text-right" : "text-left"}`}>{h}</th>)}</tr></thead>
+                                          <tbody>
+                                            {detail.items.map((item, i) => (
+                                              <Fragment key={i}>
+                                                <tr className="border-t border-gray-100 dark:border-slate-800">
+                                                  <td className="py-1.5 pr-3 font-semibold">{item.name}{item.pack ? <span className="block text-[11px] font-normal text-gray-500">{item.pack}</span> : null}</td>
+                                                  <td className="py-1.5 pr-3">×{item.qty}</td>
+                                                  <td className="py-1.5 pr-3 text-right">{money(item.value)}</td>
+                                                  <td className="py-1.5 pr-3">{item.addedBy === "customer" ? "Customer (order form)" : item.addedBy === "auto" ? "Included automatically" : repName}</td>
+                                                  <td className="py-1.5 text-right font-black text-rose-700">{item.bonus === null ? "weekly rule" : money(item.bonus)}</td>
+                                                </tr>
+                                                <tr><td colSpan={5} className="pb-1.5 text-[11.5px] text-gray-500">{item.how}</td></tr>
+                                              </Fragment>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                        <p className="m-0 mt-1 flex justify-between border-t border-gray-100 pt-1.5 text-[12.5px] font-bold dark:border-slate-800"><span>Cross-sell paid on this order</span><span className="text-rose-700">{money(p.cross)}</span></p>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ) : null}
                                 <b className="text-gray-800 dark:text-slate-200">How #{order.id}'s bonus was worked out</b>
                                 {lines?.length ? (
                                   <ul className="m-0 mt-1.5 list-none space-y-1 p-0">
