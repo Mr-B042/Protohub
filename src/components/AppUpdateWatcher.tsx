@@ -5,15 +5,16 @@ import { useEffect, useState } from "react";
 // new code on a full reload, so staff kept running old versions - Ihuoma was
 // on a week-old build when she reported BUG-1001, after the fix was live.
 // Every build now publishes /version.json; this compares it with the build
-// running here. Coming back after a minute away (or a page restored from
-// memory) reloads at once; while someone is working it offers an Update bar,
-// so nothing being typed is lost. Reloads at most once per new build.
+// running here and offers an Update bar when a newer one is out.
+//
+// ⚠️ It NEVER reloads by itself (Bright, 29 Oct 2026: "stop refreshing each
+// time someone opens"). It used to reload on opening and on coming back after
+// a minute away; on a day with many releases that was nearly every time.
+// The page reloads only when someone presses Update.
 
 declare const __APP_BUILD__: string;
 const CURRENT = (() => { try { return __APP_BUILD__; } catch { return "local"; } })();
-const RELOADED_KEY = "protohub.update-reloaded-for";
 const CHECK_EVERY_MS = 5 * 60_000;
-const AWAY_MS = 60_000;
 
 async function liveBuild(): Promise<string | null> {
   try {
@@ -30,26 +31,15 @@ export function AppUpdateWatcher() {
   useEffect(() => {
     if (CURRENT === "local") return;
     let stopped = false;
-    let hiddenAt = 0;
-    const check = async (reloadNow: boolean) => {
+    const check = async () => {
       const build = await liveBuild();
       if (stopped || !build || build === CURRENT) return;
-      let alreadyTried = false;
-      try { alreadyTried = sessionStorage.getItem(RELOADED_KEY) === build; } catch { /* private window */ }
-      if (reloadNow && !alreadyTried) {
-        try { sessionStorage.setItem(RELOADED_KEY, build); } catch { /* private window */ }
-        window.location.reload();
-        return;
-      }
       setWaiting(true);
     };
-    const onVisibility = () => {
-      if (document.visibilityState === "hidden") { hiddenAt = Date.now(); return; }
-      void check(hiddenAt > 0 && Date.now() - hiddenAt >= AWAY_MS);
-    };
-    const onPageShow = (event: PageTransitionEvent) => { if (event.persisted) void check(true); };
-    void check(true);
-    const timer = window.setInterval(() => void check(false), CHECK_EVERY_MS);
+    const onVisibility = () => { if (document.visibilityState === "visible") void check(); };
+    const onPageShow = (event: PageTransitionEvent) => { if (event.persisted) void check(); };
+    void check();
+    const timer = window.setInterval(() => void check(), CHECK_EVERY_MS);
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("pageshow", onPageShow);
     return () => {
