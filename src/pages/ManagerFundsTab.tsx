@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { Bar, CartesianGrid, Cell, ComposedChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Modal, Panel, dateTimeText, longDate, nf, shortDay } from "../components/WeeklyReportParts";
-import { expensesApi, managerFundsApi, type ManagerFundLogInput, type WaybillWeekPosition, type ManagerFundOrderCheck, type ManagerFundTxn, type ManagerFundWeek, type FundKindKey } from "../lib/api";
+import { expensesApi, managerFundsApi, type ManagerFundLogInput, type WaybillWeekPosition, type ManagerFundOrderCheck, type ManagerFundHeldOrder, type ManagerFundTxn, type ManagerFundWeek, type FundKindKey } from "../lib/api";
 import { currencySymbol } from "../lib/money-privacy";
 
 /**
@@ -127,6 +127,78 @@ function WaybillWeekNote({ date, productId, amount, sym, nf }: { date: string; p
         ? <>This week's waybill total typed on the Expenses page: <b>{sym}{nf(typed)}</b>. Your {sym}{nf(amount)} counts <b>toward it</b>, not on top of it.{paid + amount > typed ? <span className="mt-1 block font-semibold text-amber-700">Wallet payments ({sym}{nf(paid + amount)}) would be more than that total. Check the total or this amount.</span> : null}</>
         : <>No weekly waybill total typed yet for this week. This payment counts as a cost now; when the week's total is typed on the Expenses page, only the rest is added (you won't be counted twice).</>}
     </p>
+  );
+}
+
+/**
+ * Cash still held from orders the manager already cleared on the Remittance
+ * page (Bright, 29 Oct 2026). She ticks the ones whose cash is with her; their
+ * payments move into her wallet in one entry. The orders are not changed.
+ */
+function HeldOrdersPicker({ selected, sym, nf, onChange }: {
+  selected: string[]; sym: string; nf: (value: number) => string;
+  onChange: (ids: string[], total: number) => void;
+}) {
+  const [orders, setOrders] = useState<ManagerFundHeldOrder[] | null>(null);
+  const [days, setDays] = useState(14);
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    managerFundsApi.heldOrders()
+      .then((result) => { if (!cancelled) { setOrders(result.orders); setDays(result.days); } })
+      .catch((err: any) => { if (!cancelled) setError(err?.message ?? "Couldn't load your cleared orders."); });
+    return () => { cancelled = true; };
+  }, []);
+  const chosen = new Set(selected);
+  const totalOf = (ids: Set<string>) => (orders ?? []).filter((order) => ids.has(order.orderId)).reduce((sum, order) => sum + order.total, 0);
+  const pick = (ids: Set<string>) => onChange((orders ?? []).filter((order) => ids.has(order.orderId)).map((order) => order.orderId), Math.round(totalOf(ids) * 100) / 100);
+  const toggle = (id: string) => { const next = new Set(chosen); if (next.has(id)) next.delete(id); else next.add(id); pick(next); };
+  const q = search.trim().toLowerCase().replace(/^#/, "");
+  const shown = (orders ?? []).filter((order) => !q || `${order.orderId} ${order.customer ?? ""} ${order.product ?? ""}`.toLowerCase().includes(q));
+  const allShownChosen = shown.length > 0 && shown.every((order) => chosen.has(order.orderId));
+
+  if (error) return <p className="m-0 rounded-xl bg-rose-50 px-3 py-2 text-[12px] text-rose-700">{error}</p>;
+  if (!orders) return <p className="m-0 rounded-xl bg-gray-50 px-3 py-2 text-[12px] text-gray-500 dark:bg-slate-800/60">Loading the orders you cleared…</p>;
+  if (orders.length === 0) {
+    return <p className="m-0 rounded-xl bg-gray-50 px-3 py-2.5 text-[12px] text-gray-600 dark:bg-slate-800/60 dark:text-slate-300">No orders to move. Orders you cleared on the Remittance page in the last {days} days are all in a wallet already.</p>;
+  }
+  return (
+    <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 dark:border-emerald-500/30 dark:bg-emerald-500/10">
+      <div className="px-3 pt-2.5">
+        <p className="m-0 text-[12.5px] font-bold text-gray-900 dark:text-slate-50">Tick the orders whose cash is with you</p>
+        <p className="m-0 mt-0.5 text-[11.5px] text-gray-600 dark:text-slate-300">Orders you cleared on the Remittance page in the last {days} days. Their money moves into your wallet. The orders stay paid and nothing is counted twice.</p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <label className="flex h-9 min-w-[160px] flex-1 items-center gap-2 rounded-lg border border-gray-200 bg-white px-2.5 dark:border-slate-700 dark:bg-slate-900">
+            <Search className="h-3.5 w-3.5 text-gray-400" />
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find an order or customer" className="w-full border-0 bg-transparent text-[12px] outline-none dark:text-slate-100" />
+          </label>
+          <button type="button" onClick={() => { const next = new Set(chosen); for (const order of shown) { if (allShownChosen) next.delete(order.orderId); else next.add(order.orderId); } pick(next); }}
+            className="!min-h-0 rounded-lg bg-white px-2.5 py-2 text-[11.5px] font-bold text-emerald-800 ring-1 ring-emerald-300 hover:bg-emerald-50 dark:bg-slate-900 dark:text-emerald-300">
+            {allShownChosen ? "Untick all" : `Tick all ${shown.length}`}
+          </button>
+        </div>
+      </div>
+      <ul className="m-0 mt-2 max-h-[260px] list-none overflow-y-auto border-t border-emerald-100 p-0 dark:border-emerald-500/20">
+        {shown.map((order) => (
+          <li key={order.orderId} className="border-b border-emerald-100 last:border-b-0 dark:border-emerald-500/20">
+            <label className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-[12px] hover:bg-white/70 dark:hover:bg-slate-900/40">
+              <input type="checkbox" className="h-4 w-4 shrink-0" checked={chosen.has(order.orderId)} onChange={() => toggle(order.orderId)} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-bold text-gray-900 dark:text-slate-50">#{order.orderId} · {order.customer ?? "Customer"}</span>
+                <span className="block truncate text-[11px] text-gray-500 dark:text-slate-400">{order.product ?? "Product"}{order.receivedAt ? ` · cleared ${new Date(order.receivedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Africa/Lagos" })}` : ""}</span>
+              </span>
+              <span className="shrink-0 font-bold text-gray-900 dark:text-slate-50">{sym}{nf(order.total)}</span>
+            </label>
+          </li>
+        ))}
+        {shown.length === 0 && <li className="px-3 py-3 text-[12px] text-gray-500">No order matches "{search}".</li>}
+      </ul>
+      <div className="flex items-center justify-between gap-2 rounded-b-xl border-t border-emerald-200 bg-white px-3 py-2.5 dark:border-emerald-500/30 dark:bg-slate-900">
+        <span className="text-[12px] text-gray-600 dark:text-slate-300">{selected.length} of {orders.length} orders ticked</span>
+        <strong className="text-[15px] text-emerald-800 dark:text-emerald-300">{sym}{nf(totalOf(chosen))} into your wallet</strong>
+      </div>
+    </div>
   );
 }
 
@@ -256,6 +328,8 @@ type Draft = {
   ownCost: boolean;
   /** Customer payment: move the order's existing payment into the wallet (no new income). */
   claimExisting: boolean;
+  /** Customer payment: cash still held from orders already cleared (null = one new payment). */
+  heldOrderIds: string[] | null;
   file: File | null;
 };
 
@@ -275,7 +349,7 @@ const withEqualShares = (draft: Draft): Draft => {
 
 const emptyDraft = (kind: FundKindKey): Draft => ({
   kind, category: kind === "expense" ? "logistics" : "", amount: "", occurredAt: nowLocalInput(), description: "", paidTo: "",
-  paymentMethod: "transfer", reference: "", orderId: "", relatedOrders: "", counterpartyAccountId: "", products: [{ productId: "", amount: "" }], splitEdited: false, ownCost: false, claimExisting: false, file: null
+  paymentMethod: "transfer", reference: "", orderId: "", relatedOrders: "", counterpartyAccountId: "", products: [{ productId: "", amount: "" }], splitEdited: false, ownCost: false, claimExisting: false, heldOrderIds: null, file: null
 });
 
 export default function ManagerFundsTab({
@@ -387,7 +461,7 @@ export default function ManagerFundsTab({
         ? txn.productSplits.map((split) => ({ productId: split.productId, amount: String(split.amount) }))
         : [{ productId: txn.productId ?? "", amount: "" }],
       splitEdited: !!(txn.productSplits && txn.productSplits.length > 1),
-      ownCost: txn.ownCost === true, claimExisting: false,
+      ownCost: txn.ownCost === true, claimExisting: false, heldOrderIds: null,
       occurredAt: new Date(new Date(txn.occurredAt).getTime() + 60 * 60 * 1000).toISOString().slice(0, 16),
       description: txn.description ?? "", paidTo: txn.paidTo ?? "", paymentMethod: txn.paymentMethod ?? "transfer",
       reference: txn.reference ?? "", orderId: txn.orderIds[0] ?? "", relatedOrders: txn.kind === "expense" ? txn.orderIds.join(", ") : "",
@@ -398,6 +472,7 @@ export default function ManagerFundsTab({
   const saveDraft = async () => {
     if (!draft) return;
     const amount = Number(draft.amount.replace(/[^0-9.]/g, ""));
+    if (draft.heldOrderIds && draft.heldOrderIds.length === 0) { setFormError("Tick the orders whose cash is with you."); return; }
     if (!(amount > 0)) { setFormError("Enter the amount."); return; }
     const waybillRows = draft.products.filter((row) => row.productId);
     if (draft.kind === "expense" && draft.category === "waybill") {
@@ -436,7 +511,11 @@ export default function ManagerFundsTab({
             : {}),
           relatedOrderIds: draft.relatedOrders.split(/[\s,]+/).map((id) => id.replace(/^#/, "").trim()).filter(Boolean)
         } : {}),
-        ...(draft.kind === "customer_payment" ? { orderId: draft.orderId.replace(/^#/, "").trim(), ...(draft.claimExisting ? { claimExisting: true } : {}) } : {}),
+        ...(draft.kind === "customer_payment"
+          ? draft.heldOrderIds
+            ? { heldOrderIds: draft.heldOrderIds }
+            : { orderId: draft.orderId.replace(/^#/, "").trim(), ...(draft.claimExisting ? { claimExisting: true } : {}) }
+          : {}),
         ...(["owner_funding", "company_transfer_in", "remittance_out"].includes(draft.kind) ? { counterpartyAccountId: draft.counterpartyAccountId } : {})
       };
       let id = editing?.id ?? "";
@@ -652,7 +731,7 @@ export default function ManagerFundsTab({
                     <td className={td}>{inPage * PAGE + index + 1}</td>
                     <td className={td}>{dateTimeText(txn.occurredAt).replace(/ \d{4},/, "")}</td>
                     <td className={td}>{txn.kindLabel}{txn.movedExistingPayment && <span className="ml-1 block text-[10.5px] font-semibold text-emerald-700 dark:text-emerald-300">Moved into wallet</span>}</td>
-                    <td className={`${td} font-semibold`}>{txn.orderIds[0] ? `#${txn.orderIds[0]}` : txn.reference || "-"}</td>
+                    <td className={`${td} font-semibold`}>{txn.orderIds[0] ? `#${txn.orderIds[0]}` : txn.reference || "-"}{txn.orderIds.length > 1 && <span className="block text-[10.5px] font-semibold text-gray-500" title={txn.orderIds.map((id) => `#${id}`).join(", ")}>+{txn.orderIds.length - 1} more orders</span>}</td>
                     <td className={`${td} font-semibold`}>{nf(txn.amount)}</td>
                     <td className={td}><MethodPill method={txn.paymentMethod} /></td>
                     <td className={`${td} max-w-[160px]`}>{txn.kind === "owner_funding" || txn.kind === "company_transfer_in" ? `From ${accountName(txn.counterpartyAccountId)}${txn.description ? ` · ${txn.description}` : ""}` : txn.description || "-"}{txn.evidence.length > 0 && <Paperclip className="ml-1 inline h-3 w-3 text-gray-400" />}</td>
@@ -855,13 +934,37 @@ export default function ManagerFundsTab({
                 {!editing && draft.kind !== "expense" && draft.kind !== "remittance_out" && (
                   <div className="grid grid-cols-2 gap-2">
                     {IN_KINDS.map((kind) => (
-                      <button key={kind.key} type="button" onClick={() => setDraft({ ...draft, kind: kind.key })} title={kind.hint}
+                      <button key={kind.key} type="button" onClick={() => setDraft({ ...draft, kind: kind.key, heldOrderIds: null })} title={kind.hint}
                         className={`!min-h-0 rounded-xl border px-3 py-2 text-left text-[12px] font-bold ${draft.kind === kind.key ? "border-emerald-500 bg-emerald-50 text-emerald-800" : "border-gray-200 text-gray-600 dark:border-slate-700 dark:text-slate-300"}`}>
                         {kind.label}
                       </button>
                     ))}
-                    <p className="col-span-2 m-0 text-[11px] text-gray-500">{IN_KINDS.find((kind) => kind.key === draft.kind)?.hint}</p>
+                    <p className="col-span-2 m-0 text-[11px] text-gray-500">{draft.kind === "customer_payment" && draft.heldOrderIds !== null ? "Cash you still have from orders already cleared. The orders are not changed." : IN_KINDS.find((kind) => kind.key === draft.kind)?.hint}</p>
                   </div>
+                )}
+                {!editing && draft.kind === "customer_payment" && (
+                  <div className="rounded-xl border border-gray-200 p-1 dark:border-slate-700">
+                    <div className="grid grid-cols-2 gap-1">
+                      {([
+                        [false, "A customer just paid me", "Logs a new payment on the order."],
+                        [true, "Cash from orders I already cleared", "You cleared them on the Remittance page but still have the cash."]
+                      ] as const).map(([held, label, hint]) => {
+                        const active = (draft.heldOrderIds !== null) === held;
+                        return (
+                          <button key={label} type="button"
+                            onClick={() => setDraft({ ...draft, heldOrderIds: held ? [] : null, claimExisting: false, orderId: "", amount: "" })}
+                            className={`!min-h-0 rounded-lg px-3 py-2 text-left ${active ? "bg-emerald-600 text-white" : "text-gray-700 hover:bg-gray-50 dark:text-slate-200 dark:hover:bg-slate-800"}`}>
+                            <span className="block text-[12.5px] font-bold">{label}</span>
+                            <span className={`block text-[10.5px] ${active ? "text-emerald-50" : "text-gray-500 dark:text-slate-400"}`}>{hint}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                {!editing && draft.kind === "customer_payment" && draft.heldOrderIds !== null && (
+                  <HeldOrdersPicker selected={draft.heldOrderIds} sym={sym} nf={nf}
+                    onChange={(ids, total) => setDraft({ ...draft, heldOrderIds: ids, amount: total > 0 ? String(total) : "" })} />
                 )}
                 {draft.kind === "expense" && (
                   <label className="block"><span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Category</span>
@@ -931,7 +1034,8 @@ export default function ManagerFundsTab({
                 )}
                 <div className="grid grid-cols-2 gap-3">
                   <label className="block"><span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Amount ({sym})</span>
-                    <input className={field} inputMode="decimal" value={draft.amount} onChange={(event) => setDraft(withEqualShares({ ...draft, amount: event.target.value }))} placeholder="e.g. 6500" /></label>
+                    <input className={field} inputMode="decimal" value={draft.amount} readOnly={draft.heldOrderIds !== null} onChange={(event) => setDraft(withEqualShares({ ...draft, amount: event.target.value }))} placeholder={draft.heldOrderIds !== null ? "Tick the orders above" : "e.g. 6500"} />
+                    {draft.heldOrderIds !== null && <span className="mt-1 block text-[11px] text-gray-500">Adds up the orders you ticked.</span>}</label>
                   <label className="block"><span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Date & time</span>
                     <input className={field} type="datetime-local" value={draft.occurredAt} onChange={(event) => setDraft({ ...draft, occurredAt: event.target.value })} /></label>
                 </div>
@@ -976,12 +1080,12 @@ export default function ManagerFundsTab({
                     </>
                   );
                 })() : draft.occurredAt ? <p className="m-0 text-[11.5px] text-gray-500">Recorded in the week of {weekText(sundayOf(draft.occurredAt))}. Keep the date inside that week; to move it, remove it and log it again.</p> : null}
-                {draft.kind === "customer_payment" && (
+                {draft.kind === "customer_payment" && draft.heldOrderIds === null && (
                   <label className="block"><span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Order number</span>
                     <input className={field} value={draft.orderId} disabled={!!editing} onChange={(event) => setDraft({ ...draft, orderId: event.target.value, claimExisting: false })} placeholder="e.g. 4358" />
                     <span className="mt-1 block text-[11px] text-gray-500">The order is marked paid. A part or extra payment must be recorded by an Admin or the Owner.</span></label>
                 )}
-                {draft.kind === "customer_payment" && !editing && (
+                {draft.kind === "customer_payment" && !editing && draft.heldOrderIds === null && (
                   <OrderMoneyCheck kind={draft.kind} category="" amount={draft.amount} orderText={draft.orderId} sym={sym} nf={nf}
                     onUseAmount={(value) => setDraft({ ...draft, amount: String(value), claimExisting: false })}
                     claiming={draft.claimExisting}
@@ -1052,7 +1156,7 @@ export default function ManagerFundsTab({
       )}
 
       {voiding && (
-        <Modal title={`Remove this ${voiding.kindLabel.toLowerCase()}?`} subtitle={`${sym}${nf(voiding.amount)}. It stays in the audit trail, marked removed.${voiding.movedExistingPayment ? " The order's payment goes back to the account it was filed under before." : voiding.kind === "customer_payment" ? " The payment is taken off the order too." : ""}`} onClose={() => setVoiding(null)}>
+        <Modal title={`Remove this ${voiding.kindLabel.toLowerCase()}?`} subtitle={`${sym}${nf(voiding.amount)}. It stays in the audit trail, marked removed.${voiding.movedExistingPayment ? (voiding.orderIds.length > 1 ? ` The ${voiding.orderIds.length} orders' payments go back to where they were filed before.` : " The order's payment goes back to the account it was filed under before.") : voiding.kind === "customer_payment" ? " The payment is taken off the order too." : ""}`} onClose={() => setVoiding(null)}>
           <div className="space-y-3 px-6 py-5">
             <input className={field} value={textInput} onChange={(event) => setTextInput(event.target.value)} placeholder="Why? e.g. Entered twice" />
             {formError && <p className="m-0 rounded-lg bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700">{formError}</p>}

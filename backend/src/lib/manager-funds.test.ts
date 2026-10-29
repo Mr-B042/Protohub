@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  DEFAULT_FUND_SETTINGS, customerPaymentEffect, fundTotals, fundsEditable, fundsReadiness, logisticsSplit, missingProof, equalSplit, splitProblem, scaleSplits, claimableRemittances, type FundTxn
+  DEFAULT_FUND_SETTINGS, customerPaymentEffect, fundTotals, fundsEditable, fundsReadiness, logisticsSplit, missingProof, equalSplit, splitProblem, scaleSplits, claimableRemittances, heldOrders, type FundTxn
 } from "./manager-funds.js";
 
 const txn = (overrides: Partial<FundTxn>): FundTxn => ({
@@ -136,4 +136,22 @@ test("waybill shared by products: a new amount keeps each product's proportion",
   assert.deepEqual(scaleSplits([{ productId: "a", amount: 6000 }, { productId: "b", amount: 3000 }], 12000), [{ productId: "a", amount: 8000 }, { productId: "b", amount: 4000 }]);
   const scaled = scaleSplits([{ productId: "a", amount: 1 }, { productId: "b", amount: 1 }, { productId: "c", amount: 1 }], 100);
   assert.equal(Math.round(scaled.reduce((sum, split) => sum + split.amount, 0) * 100), 10000);
+});
+
+test("heldOrders: cleared orders not in a wallet, grouped, newest first", () => {
+  const wallets = new Set(["wallet-manager"]);
+  const row = (id: string, orderId: string, amount: number, accountId: string | null, receivedAt: string) =>
+    ({ id, orderId, amount, accountId, receivedAt, customer: `C${orderId}`, product: "Shelf" });
+  const rows = [
+    row("r1", "5598", 13000, null, "2026-10-28T11:00:00Z"),
+    row("r2", "5516", 12000, null, "2026-10-27T11:00:00Z"),
+    row("r3", "5516", 500, "company", "2026-10-27T12:00:00Z"),
+    row("r4", "5677", 13500, "wallet-manager", "2026-10-28T12:00:00Z"), // already in her wallet
+    row("r5", "5680", 10000, null, "2026-10-28T10:00:00Z"),            // already moved by an entry
+    row("r6", "5700", 9000, null, "2026-10-28T09:00:00Z"),
+    row("r7", "5700", -9000, null, "2026-10-28T09:30:00Z")              // paid then reversed
+  ];
+  const held = heldOrders(rows, wallets, new Set(["r5"]));
+  assert.deepEqual(held.map((order) => [order.orderId, order.total]), [["5598", 13000], ["5516", 12500]]);
+  assert.deepEqual(held[1].rows.map((r) => r.id), ["r2", "r3"]);
 });
