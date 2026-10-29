@@ -48,6 +48,9 @@ export type WeeklyReportOrderInput = {
   upsellDetail?: WeeklyUpsellDetail;
   /** Each add-on sold on this order and what it paid (Bright, 29 Oct 2026). */
   crossSellItems?: WeeklyCrossSellItem[];
+  /** Delivered in an earlier week but marked delivered after that week's
+   *  report was sent, so no report paid it: paid in this one (29 Oct 2026). */
+  lateRecorded?: { deliveredWeek: string; recordedAt?: string | null };
 };
 
 /** Pieces before and after the upgrade; ruleAmount = what the product's upgrade rule pays in full (null if none). */
@@ -117,6 +120,7 @@ export type WeeklyReportOrderRow = {
   /** Missing on reports built before 29 Oct 2026; the window falls back to today's records. */
   upsellDetail?: WeeklyUpsellDetail;
   crossSellItems?: WeeklyCrossSellItem[];
+  lateRecorded?: { deliveredWeek: string; recordedAt?: string | null };
 };
 
 // ── Monthly incentive in the last week of the month (Bright, 3 Oct 2026) ────
@@ -545,7 +549,7 @@ export function buildRepWeeklySnapshot(input: {
 }): WeeklyReportSnapshot {
   const { weekStart, weekEnd } = input;
   const placed = input.orders.filter((order) => inWeek(order.createdKey, weekStart, weekEnd));
-  const deliveredInWeek = input.orders.filter((order) => order.status === "Delivered" && inWeek(order.deliveredKey, weekStart, weekEnd));
+  const deliveredInWeek = input.orders.filter((order) => order.status === "Delivered" && (inWeek(order.deliveredKey, weekStart, weekEnd) || !!order.lateRecorded));
   // The rate's cohort: this week's orders that are delivered. Carried-over
   // deliveries are paid (deliveredInWeek) but never lift this week's rate.
   const placedDelivered = placed.filter((order) => order.status === "Delivered");
@@ -600,7 +604,7 @@ export function buildRepWeeklySnapshot(input: {
   for (const order of [...placed, ...deliveredInWeek]) {
     if (seen.has(order.id)) continue;
     seen.add(order.id);
-    const deliveredThisWeek = order.status === "Delivered" && inWeek(order.deliveredKey, weekStart, weekEnd);
+    const deliveredThisWeek = order.status === "Delivered" && (inWeek(order.deliveredKey, weekStart, weekEnd) || !!order.lateRecorded);
     orders.push({
       id: order.id,
       date: order.createdKey,
@@ -619,7 +623,8 @@ export function buildRepWeeklySnapshot(input: {
       ...(deliveredThisWeek && order.bonusNote ? { bonusNote: order.bonusNote } : {}),
       ...(deliveredThisWeek && order.bonusLines?.length ? { bonusLines: order.bonusLines } : {}),
       ...(order.upsellDetail ? { upsellDetail: order.upsellDetail } : {}),
-      ...(order.crossSellItems?.length ? { crossSellItems: order.crossSellItems } : {})
+      ...(order.crossSellItems?.length ? { crossSellItems: order.crossSellItems } : {}),
+      ...(order.lateRecorded ? { lateRecorded: order.lateRecorded } : {})
     });
   }
   orders.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));

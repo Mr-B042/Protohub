@@ -52,7 +52,7 @@ type SnapshotLike = {
   weekStart?: string;
   weekEnd?: string;
   totals?: Record<string, any>;
-  orders?: Array<{ status?: string; deliveredDate?: string | null; placedThisWeek?: boolean; bonus?: number }>;
+  orders?: Array<{ status?: string; deliveredDate?: string | null; placedThisWeek?: boolean; bonus?: number; lateRecorded?: unknown }>;
 };
 type PayoutLike = { amount: number; systemAmount: number; reason: string } | null;
 
@@ -67,7 +67,7 @@ export function autoChecks(snapshot: SnapshotLike | null, payout: PayoutLike): A
   const weekStart = String(snapshot.weekStart ?? "");
   const weekEnd = String(snapshot.weekEnd ?? "");
   const inWeek = (key: string | null | undefined) => !!key && key.slice(0, 10) >= weekStart && key.slice(0, 10) <= weekEnd;
-  const paidOrders = (snapshot.orders ?? []).filter((order) => order.status === "Delivered" && inWeek(order.deliveredDate));
+  const paidOrders = (snapshot.orders ?? []).filter((order) => order.status === "Delivered" && (inWeek(order.deliveredDate) || !!order.lateRecorded));
   const paidThisWeek = paidOrders.filter((order) => order.placedThisWeek).length;
   const paidCarried = paidOrders.length - paidThisWeek;
   const paidCount = Number(t.deliveredForBonus ?? paidOrders.length);

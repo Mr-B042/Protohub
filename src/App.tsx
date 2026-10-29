@@ -26196,10 +26196,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const settlementByOrderId = { ...newEngineBonusSettlementByOrderId, ...weeklyBonusMaps.settlement };
     const repOrders = trackedOrders.filter((order) => order.assignedRepId === rep.id);
     const inRange = (key: string | undefined, start: string, end: string) => !!key && key >= start && key <= end;
+    // Delivered too late for their own week's sent report (29 Oct 2026): the
+    // server names them, and this week's report pays them.
+    const lateSource = weeklyWeek?.weekStart === weekStart ? weeklyWeek.lateDeliveries : weeklyMine?.weekStart === weekStart ? weeklyMine.lateDeliveries : undefined;
+    const lateById = new Map((lateSource ?? []).filter((item) => item.repId === rep.id).map((item) => [item.orderId, item]));
     const one = (start: string, weekFines: typeof fines, weekAdjustments: typeof adjustments, weekMisses: WeeklyLogMissRow[], carried: number, previous: WeeklyReportSnapshot["previous"], monthlyIncentive: ReturnType<typeof weeklyIncentiveFor> = null) => {
       const end = windowShiftDay(start, 6);
       const placed = repOrders.filter((order) => !order.reviewHold && inRange(orderCreatedKey(order), start, end));
-      const delivered = repOrders.filter((order) => (order.status ?? "New") === "Delivered" && inRange(orderDeliveredKey(order), start, end));
+      const delivered = repOrders.filter((order) => (order.status ?? "New") === "Delivered"
+        && (inRange(orderDeliveredKey(order), start, end) || (start === weekStart && lateById.has(String(order.id)))));
       const [row] = buildManagerBonusRepRows(delivered, placed, { start, end }, {
         users: [{ id: rep.id, name: rep.name, role: "Sales Rep" }],
         attributionByOrderId: weeklyBonusMaps.attribution,
@@ -26249,7 +26254,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           bonusLines: linesByOrder.get(order.id)?.components
             .filter((line) => line.amount !== 0 || line.tone === "blocked")
             .map((line) => ({ label: line.label, amount: Math.round(line.amount), note: line.note.slice(0, 600), tone: line.tone })),
-          ...weeklyUpsellAndCrossSell(order, rep.name)
+          ...weeklyUpsellAndCrossSell(order, rep.name),
+          ...(start === weekStart && lateById.has(String(order.id)) && !inRange(orderDeliveredKey(order), start, end)
+            ? { lateRecorded: { deliveredWeek: lateById.get(String(order.id))!.deliveredWeek, recordedAt: lateById.get(String(order.id))!.recordedAt ?? null } } : {})
         })),
         bonus: {
           base: row?.base ?? 0, upsell: row?.upsell ?? 0, crossSell: row?.crossSell ?? 0, total: row?.total ?? 0, perOrder,
