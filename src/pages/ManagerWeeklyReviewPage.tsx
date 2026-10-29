@@ -1,5 +1,6 @@
 import MonthlyIncentiveSection from "./MonthlyIncentiveSection";
 import WeeklyRepReportModal from "../components/WeeklyRepReportModal";
+import { BonusBreakdownModal } from "../components/BonusBreakdownModal";
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -144,6 +145,8 @@ export default function ManagerWeeklyReviewPage({
   const [changingPayout, setChangingPayout] = useState<string | null>(null);
   // The "orders to decide" window: which rep, and which tab it opens on.
   const [decisionsFor, setDecisionsFor] = useState<{ repId: string; kind: DecisionKind } | null>(null);
+  // "How the bonus adds up" for one rep (Bright, 29 Oct 2026).
+  const [breakdownFor, setBreakdownFor] = useState<string | null>(null);
   // The "is this the bonus to be paid?" window (Bright, 13 Oct 2026).
   const [approving, setApproving] = useState<string | null>(null);
   const [approveBusy, setApproveBusy] = useState(false);
@@ -649,7 +652,19 @@ export default function ManagerWeeklyReviewPage({
                               <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap?.totals.orders ?? 0)}</td>
                               <td className="px-2 py-3 text-gray-800 dark:text-slate-200">
                                 {nf(snap?.totals.delivered ?? 0)}
-                                {(snap?.totals.carryOverOrders ?? 0) > 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-blue-700 dark:text-blue-300">+{nf(snap?.totals.carryOverOrders ?? 0)} carried over · {sym}{nf(snap?.totals.carryOverBonus ?? 0)}</span>}
+                                {/* The carried-over money is INSIDE Base / Upsell / Cross-sell, not on
+                                    top (Bright, 29 Oct 2026: reps read "+7 · ₦1,400" as extra). Say so,
+                                    and open the step-by-step breakdown. */}
+                                {snap && (snap.totals.carryOverOrders ?? 0) > 0 && (
+                                  <button type="button" onClick={() => setBreakdownFor(row.repId)}
+                                    className="!min-h-0 mt-0.5 block whitespace-nowrap text-left text-[10.5px] font-semibold text-blue-700 underline decoration-dotted underline-offset-2 hover:text-blue-900 dark:text-blue-300">
+                                    incl. {nf(snap.totals.carryOverOrders ?? 0)} from earlier weeks · {sym}{nf(snap.totals.carryOverBonus ?? 0)}
+                                    <span className="block font-bold no-underline">How it adds up →</span>
+                                  </button>
+                                )}
+                                {snap && !(snap.totals.carryOverOrders ?? 0) && (
+                                  <button type="button" onClick={() => setBreakdownFor(row.repId)} className="!min-h-0 mt-0.5 block text-[10.5px] font-bold text-blue-700 hover:underline dark:text-blue-300">How it adds up →</button>
+                                )}
                               </td>
                               <td className="px-2 py-3"><span className="flex items-center gap-2 text-gray-800 dark:text-slate-200"><span className="w-11">{pctText(snap?.totals.deliveryRate ?? 0)}</span><span className="w-14"><RateBar value={snap?.totals.deliveryRate ?? 0} /></span></span></td>
                               <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap ? bonusComponentsFull(snap).crossSell : 0)}</td>
@@ -699,7 +714,7 @@ export default function ManagerWeeklyReviewPage({
                           <td className="px-2 py-3">{nf(totals.orders)}</td>
                           <td className="px-2 py-3">
                             {nf(totals.delivered)}
-                            {carryOver.orders > 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-blue-700 dark:text-blue-300">+{nf(carryOver.orders)} carried over · {sym}{nf(carryOver.bonus)}</span>}
+                            {carryOver.orders > 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-blue-700 dark:text-blue-300">incl. {nf(carryOver.orders)} from earlier weeks · {sym}{nf(carryOver.bonus)}<span className="block text-gray-500">already in the bonus</span></span>}
                           </td>
                           <td className="px-2 py-3">{pctText(totals.deliveryRate)}</td>
                           <td className="px-2 py-3">{nf(splitTotals.crossSell)}</td>
@@ -843,6 +858,12 @@ export default function ManagerWeeklyReviewPage({
       )}
 
       {/* ── "No fee" / "Late send" orders: charge or skip each one ── */}
+      {(() => {
+        const breakdownRow = breakdownFor ? rows.find((row) => row.repId === breakdownFor) ?? null : null;
+        const breakdownSnap = breakdownRow ? shownSnapshot(breakdownRow) : null;
+        if (!breakdownRow || !breakdownSnap) return null;
+        return <BonusBreakdownModal snap={breakdownSnap} repName={breakdownRow.repName} sym={sym} onClose={() => setBreakdownFor(null)} />;
+      })()}
       {(() => {
         const decisionRow = decisionsFor ? rows.find((row) => row.repId === decisionsFor.repId) ?? null : null;
         if (!decisionRow) return null;
