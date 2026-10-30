@@ -392,6 +392,7 @@ export default function ManagerFundsTab({
 
   const [draft, setDraft] = useState<Draft | null>(null);
   const [editing, setEditing] = useState<ManagerFundTxn | null>(null);
+  const [formMode, setFormMode] = useState<"entry" | "proof">("entry");
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
   const [menuFor, setMenuFor] = useState<string | null>(null);
@@ -451,9 +452,11 @@ export default function ManagerFundsTab({
     return Array.from(map.values()).sort((a, b) => b.amount - a.amount);
   }, [liveExpenses]);
 
-  const startLog = (kind: FundKindKey) => { setFormError(""); setEditing(null); setDraft({ ...emptyDraft(kind), occurredAt: defaultOccurredAt(data?.weekStart) }); };
+  const closeDraft = () => { setDraft(null); setEditing(null); setFormMode("entry"); };
+  const startLog = (kind: FundKindKey) => { setFormError(""); setFormMode("entry"); setEditing(null); setDraft({ ...emptyDraft(kind), occurredAt: defaultOccurredAt(data?.weekStart) }); };
   const startEdit = (txn: ManagerFundTxn) => {
     setFormError("");
+    setFormMode("entry");
     setEditing(txn);
     setDraft({
       kind: txn.kind, category: txn.category ?? "", amount: String(txn.amount),
@@ -526,8 +529,7 @@ export default function ManagerFundsTab({
         id = (await onLog(body)).id;
       }
       if (draft.file) await onUpload(id, draft.file);
-      setDraft(null);
-      setEditing(null);
+      closeDraft();
       // Saved into another week: open that week, so the entry is in front of
       // the manager and not "missing" from the week they were on.
       if (otherWeek) onGoToWeek?.(savedWeek);
@@ -547,7 +549,7 @@ export default function ManagerFundsTab({
     txn.evidence.forEach((item, index) => items.push({ label: `Open proof${txn.evidence.length > 1 ? ` ${index + 1}` : ""}`, run: () => void onOpenEvidence(txn.id, item.path) }));
     if (mode === "manager" && canWrite && txn.status !== "voided") {
       if (txn.kind !== "customer_payment") items.push({ label: "Edit", run: () => startEdit(txn) });
-      items.push({ label: "Add proof", run: () => { setEditing(txn); setDraft({ ...emptyDraft(txn.kind), file: null }); setFormError(""); } });
+      items.push({ label: "Add proof", run: () => { setFormMode("proof"); setEditing(txn); setDraft({ ...emptyDraft(txn.kind), file: null }); setFormError(""); } });
       items.push({ label: "Remove", run: () => { setTextInput(""); setVoiding(txn); } });
     }
     if (mode === "manager" && locked && txn.status !== "voided" && txn.kind !== "customer_payment") {
@@ -924,12 +926,13 @@ export default function ManagerFundsTab({
       {/* ── Log / edit form ───────────────────────────────────── */}
       {draft && (
         <Modal
-          title={editing && !draft.amount ? "Add proof" : editing ? `Edit ${editing.kindLabel}` : draft.kind === "expense" ? "Log Expense" : draft.kind === "remittance_out" ? "Log Remittance to Company" : "Log Income"}
-          subtitle={editing && !draft.amount ? "Upload a photo or PDF of the receipt or transfer." : "Protohub does the maths. Log it as soon as the money moves."}
-          onClose={() => { setDraft(null); setEditing(null); }}
+          title={formMode === "proof" ? "Add proof" : editing ? `Edit ${editing.kindLabel}` : draft.kind === "expense" ? "Log Expense" : draft.kind === "remittance_out" ? "Log Remittance to Company" : "Log Income"}
+          subtitle={formMode === "proof" ? "Upload a photo or PDF of the receipt or transfer." : "Protohub does the maths. Log it as soon as the money moves."}
+          onClose={closeDraft}
+          closeOnBackdrop={false}
         >
           <div className="space-y-3 px-6 py-5">
-            {!(editing && !draft.amount) && (
+            {formMode !== "proof" && (
               <>
                 {!editing && draft.kind !== "expense" && draft.kind !== "remittance_out" && (
                   <div className="grid grid-cols-2 gap-2">
@@ -1124,7 +1127,7 @@ export default function ManagerFundsTab({
             )}
             <label className="block"><span className="mb-1 block text-[12px] font-bold text-gray-700 dark:text-slate-300">Receipt / proof (photo or PDF, up to 10MB)</span>
               <input type="file" accept="image/png,image/jpeg,image/webp,application/pdf" onChange={(event) => setDraft({ ...draft, file: event.target.files?.[0] ?? null })} className="block w-full text-[12px]" />
-              {data?.settings && !(editing && !draft.amount) && (
+              {data?.settings && formMode !== "proof" && (
                 <span className="mt-1 block text-[11px] text-gray-500">
                   {(() => {
                     const rules = data.settings;
@@ -1140,12 +1143,13 @@ export default function ManagerFundsTab({
               )}</label>
             {formError && <p className="m-0 rounded-lg bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700">{formError}</p>}
             <div className="flex justify-end gap-2 pt-1">
-              <button type="button" onClick={() => { setDraft(null); setEditing(null); }} className="!min-h-0 rounded-xl border border-gray-200 px-4 py-2 text-[13px] font-semibold text-gray-700 dark:border-slate-700 dark:text-slate-200">Cancel</button>
+              <button type="button" onClick={closeDraft} className="!min-h-0 rounded-xl border border-gray-200 px-4 py-2 text-[13px] font-semibold text-gray-700 dark:border-slate-700 dark:text-slate-200">Cancel</button>
               <button type="button" disabled={saving} onClick={async () => {
-                if (editing && !draft.amount) {
+                if (formMode === "proof") {
+                  if (!editing) { setFormError("Choose the entry to attach proof to."); return; }
                   if (!draft.file) { setFormError("Choose a file."); return; }
                   setSaving(true);
-                  try { await onUpload(editing.id, draft.file); setDraft(null); setEditing(null); } catch (err: any) { setFormError(err?.message ?? "Could not upload."); } finally { setSaving(false); }
+                  try { await onUpload(editing.id, draft.file); closeDraft(); } catch (err: any) { setFormError(err?.message ?? "Could not upload."); } finally { setSaving(false); }
                   return;
                 }
                 await saveDraft();
