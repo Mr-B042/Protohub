@@ -26446,7 +26446,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       (report.status === "submitted" || report.status === "manager_approved")
       && report.snapshot
       && (ladderWeek
-        ? !((report.snapshot as WeeklyReportSnapshot).upgradeLadder === "highest_step" && (report.snapshot as WeeklyReportSnapshot).deliveryBonusRule === 1)
+        ? !((report.snapshot as WeeklyReportSnapshot).upgradeLadder === "highest_step" && (report.snapshot as WeeklyReportSnapshot).deliveryBonusRule === 2)
         : (report.snapshot as WeeklyReportSnapshot).totals?.bonusBeforeRateCut == null)
       && !weeklyReworkTriedRef.current.has(report.id));
     if (pending.length === 0) return;
@@ -26456,7 +26456,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         weeklyReworkTriedRef.current.add(report.id);
         const name = users.find((user) => user.id === report.repId)?.name ?? "Sales rep";
         const live = buildWeeklyRepSnapshot({ id: report.repId, name }, weeklyReportWeekStart, week.fines ?? [], week.previousFines ?? [], week.adjustments ?? [], week.previousAdjustments ?? [], week.logMisses ?? [], week.previousLogMisses ?? [], week.carriedFines?.[report.repId] ?? 0);
-        if (!live || (ladderWeek ? !(live.upgradeLadder === "highest_step" && live.deliveryBonusRule === 1) : live.totals.bonusBeforeRateCut == null)) continue;
+        if (!live || (ladderWeek ? !(live.upgradeLadder === "highest_step" && live.deliveryBonusRule === 2) : live.totals.bonusBeforeRateCut == null)) continue;
         // Safety: the rule changes money, never the order counts. If the counts
         // differ from what the rep sent (orders still loading, or edited since),
         // leave the report for the manager instead of writing doubtful figures.
