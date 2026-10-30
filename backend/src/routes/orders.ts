@@ -1,4 +1,5 @@
 import { liteOrder } from "../lib/lite-lists.js";
+import { fetchPagesTogether } from "../lib/paged-fetch.js";
 import { Router } from "express";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { randomUUID } from "node:crypto";
@@ -675,10 +676,10 @@ router.get("/", async (req, res) => {
 
   // Fresh filtered query per sub-batch (Supabase caps one response at 1000 rows,
   // so a large pageSize must be fetched in 1000-row chunks or the oldest drop).
-  const buildQuery = (rFrom: number, rTo: number) => {
+  const buildQuery = (rFrom: number, rTo: number, withCount = true) => {
     let query = applyBranchScope(supabase
       .from("orders")
-      .select("*", selectOptions)
+      .select("*", withCount ? selectOptions : undefined)
       .eq("org_id", req.user!.orgId)
       .order(sortColumn, { ascending: false })
       .range(rFrom, rTo), req);
@@ -704,19 +705,13 @@ router.get("/", async (req, res) => {
     return query;
   };
 
-  const SUPA_MAX = 1000;
-  const rows: any[] = [];
-  let total = 0;
-  for (let offset = 0; offset < pageSize; offset += SUPA_MAX) {
-    const rFrom = windowFrom + offset;
-    const rTo = Math.min(windowFrom + pageSize, rFrom + SUPA_MAX) - 1;
-    const { data, error, count } = await buildQuery(rFrom, rTo);
-    if (error) { res.status(500).json({ error: error.message }); return; }
-    if (typeof count === "number") total = count;
-    const batch = data ?? [];
-    rows.push(...batch);
-    if (batch.length < SUPA_MAX) break; // last page reached
-  }
+  // Pages are read together, not one after another (lib/paged-fetch.ts).
+  const { rows, total: counted, error } = await fetchPagesTogether(
+    (rFrom, rTo, withCount) => buildQuery(rFrom, rTo, withCount),
+    { start: windowFrom, limit: pageSize }
+  );
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  const total = counted ?? 0;
   // ?lite=1: lists leave out the form details shown only in the detail window (lib/lite-lists.ts).
   const listRows = lite === "1" ? rows.map(liteOrder) : rows;
   res.json({

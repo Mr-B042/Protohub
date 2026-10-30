@@ -1,4 +1,5 @@
 import { liteCart } from "../lib/lite-lists.js";
+import { fetchPagesTogether } from "../lib/paged-fetch.js";
 import { Router } from "express";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
@@ -43,17 +44,15 @@ router.get("/", requireRole(...CART_LIST_ROLES), async (req, res) => {
   // ?lite=1: leave out the form details shown only in that window (lib/lite-lists.ts).
   const onlyId = typeof req.query.id === "string" && req.query.id ? req.query.id : null;
   const lite = req.query.lite === "1" && !onlyId;
-  const PAGE = 1000;
   const SAFETY_CAP = 50_000; // hard ceiling so a runaway never loads unbounded memory
-  const all: any[] = [];
-  for (let from = 0; from < SAFETY_CAP; from += PAGE) {
+  const readPage = (from: number, to: number, withCount: boolean) => {
     let query = applyBranchScope(supabase
       .from("abandoned_carts")
-      .select("*")
+      .select("*", withCount ? { count: "exact" as const } : undefined)
       .eq("org_id", req.user!.orgId)
       .is("merged_into", null)  // hide carts absorbed into another (the "Merged" state)
       .order("created_at", { ascending: false })
-      .range(from, from + PAGE - 1), req);
+      .range(from, to), req);
     if (onlyId) query = query.eq("id", onlyId);
     // Sales Reps see assigned carts; Marketers see only attributed cart traffic.
     if (req.user!.role === "Marketer") {
@@ -61,12 +60,10 @@ router.get("/", requireRole(...CART_LIST_ROLES), async (req, res) => {
     } else if (scopeOf(req).role === "Sales Rep") {
       query = query.eq("assigned_rep_id", scopeOf(req).id);
     }
-    const { data, error } = await query;
-    if (error) { res.status(500).json({ error: error.message }); return; }
-    const batch = data ?? [];
-    all.push(...batch);
-    if (batch.length < PAGE) break; // last page reached
-  }
+    return query;
+  };
+  // Pages are read together, not one after another (lib/paged-fetch.ts).
+  const cartsRead = fetchPagesTogether(readPage, { limit: SAFETY_CAP });
 
   // ⚠️ THE CART'S STATUS DOES NOT SAY WHAT THE LAST CALL FOUND. Five different
   // call results all collapse to the status "Contacted" (see
@@ -79,33 +76,37 @@ router.get("/", requireRole(...CART_LIST_ROLES), async (req, res) => {
   // carts have ever been called, so this is a few hundred rows of three short
   // columns. Cheap enough that it does not need a stored column on the cart.
   const attempts = new Map<string, { code: string | null; at: string | null }>();
-  const { data: attemptRows } = await supabase
+  const attemptsRead = supabase
     .from("cart_contact_attempts")
     .select("cart_id, outcome_code, attempted_at")
     .eq("org_id", req.user!.orgId)
     .order("attempted_at", { ascending: false })
     .limit(REPORT_ROW_CEILING);
+  const stripped = req.user!.role === "Inventory Manager & Logistics Operations"
+    || scopeOf(req).role === "Inventory Manager & Logistics Operations";
+  const deletedRead = stripped ? null : supabase
+    .from("deleted_orders")
+    .select("order_id, source_cart_id, deleted_at, deleted_by_name, note")
+    .eq("org_id", req.user!.orgId)
+    .not("source_cart_id", "is", null)
+    .order("deleted_at", { ascending: false })
+    .limit(REPORT_ROW_CEILING);
+  // The three reads run together.
+  const [cartsResult, { data: attemptRows }, deletedResult] = await Promise.all([cartsRead, attemptsRead, deletedRead]);
+  if (cartsResult.error) { res.status(500).json({ error: cartsResult.error.message }); return; }
+  const all = cartsResult.rows;
   // Sorted newest first, so the first row seen for a cart is its latest call.
   for (const row of attemptRows ?? []) {
     if (!row.cart_id || attempts.has(row.cart_id)) continue;
     attempts.set(row.cart_id, { code: row.outcome_code ?? null, at: row.attempted_at ?? null });
   }
 
-  const stripped = req.user!.role === "Inventory Manager & Logistics Operations"
-    || scopeOf(req).role === "Inventory Manager & Logistics Operations";
-
   // A converted cart whose order was later deleted (Bright, 5 Oct 2026): say so
   // instead of a bare "Converted" with no order behind it. Deleted orders are
   // few, so this is one small read; the newest deletion per cart wins.
   const deletedByCart = new Map<string, { order_id: string; deleted_at: string; deleted_by_name: string | null; note: string | null }>();
-  if (!stripped) {
-    const { data: deletedRows, error: deletedError } = await supabase
-      .from("deleted_orders")
-      .select("order_id, source_cart_id, deleted_at, deleted_by_name, note")
-      .eq("org_id", req.user!.orgId)
-      .not("source_cart_id", "is", null)
-      .order("deleted_at", { ascending: false })
-      .limit(REPORT_ROW_CEILING);
+  if (deletedResult) {
+    const { data: deletedRows, error: deletedError } = deletedResult;
     // Missing table (migration not yet applied) just means no notes.
     if (deletedError && !/deleted_orders/i.test(deletedError.message ?? "")) { res.status(500).json({ error: deletedError.message }); return; }
     for (const row of deletedRows ?? []) {
