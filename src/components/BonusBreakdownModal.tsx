@@ -92,7 +92,7 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder, 
 
         {/* This week's own bonus vs carry-over (Bright, 30 Oct 2026): two clear
             amounts, with how many orders each, before any detail. */}
-        <section className="grid gap-2 sm:grid-cols-3">
+        <section className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-500/30 dark:bg-emerald-500/10">
             <p className="m-0 text-[12px] font-bold text-emerald-800 dark:text-emerald-200">This week's own bonus</p>
             <p className="m-0 mt-0.5 text-[24px] font-black leading-tight text-emerald-900 dark:text-emerald-100">{money(thisWeek.total)}</p>
@@ -107,6 +107,12 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder, 
             <p className="m-0 text-[12px] font-bold text-white/80">Total to be paid this week</p>
             <p className="m-0 mt-0.5 text-[24px] font-black leading-tight">{money(thisWeek.total + earlier.total + lateParts.total)}</p>
             <p className="m-0 text-[12px] text-white/80">{nf(paidCount)} delivered orders{Math.round(t.finalBonus) !== Math.round(thisWeek.total + earlier.total + lateParts.total) ? ` · final pay after cuts and changes: ${money(Math.round(t.finalBonus))}` : ""}</p>
+          </div>
+          {/* This week's orders delivered after the cut-off: paid next week (Bright, 30 Oct 2026). */}
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-500/30 dark:bg-amber-500/10">
+            <p className="m-0 text-[12px] font-bold text-amber-800 dark:text-amber-200">To be paid next week</p>
+            <p className="m-0 mt-0.5 text-[24px] font-black leading-tight text-amber-900 dark:text-amber-100">{nf(paidNextWeek.length)} order{paidNextWeek.length === 1 ? "" : "s"}</p>
+            <p className="m-0 text-[12px] text-amber-800 dark:text-amber-200">Placed this week, delivered after {cutoffText}. Not in this total: paid in next week's report as carry-over.</p>
           </div>
         </section>
 
