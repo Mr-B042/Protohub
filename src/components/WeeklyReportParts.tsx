@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentType, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   Bar, CartesianGrid, Cell, ComposedChart, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis
@@ -423,20 +423,33 @@ export function ProductDonut({ products, metric = "orders", compact }: {
 
 // ── Modal shell ─────────────────────────────────────────────────────────────
 
-export function Modal({ title, subtitle, onClose, children, wide }: {
+export function Modal({ title, subtitle, onClose, children, wide, closeOnBackdrop = true }: {
   title: string;
   subtitle?: string;
   onClose: () => void;
   children: ReactNode;
   wide?: boolean;
+  closeOnBackdrop?: boolean;
 }) {
+  const pointerStartedOnBackdrop = useRef(false);
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented && !event.isComposing) onClose();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   return createPortal(
-    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-[80] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
+      onPointerDown={(event) => { pointerStartedOnBackdrop.current = event.target === event.currentTarget; }}
+      onPointerCancel={() => { pointerStartedOnBackdrop.current = false; }}
+      onClick={(event) => {
+        const dismiss = closeOnBackdrop && pointerStartedOnBackdrop.current && event.target === event.currentTarget;
+        pointerStartedOnBackdrop.current = false;
+        if (dismiss) onClose();
+      }}
+    >
       <div
         role="dialog"
         aria-modal="true"

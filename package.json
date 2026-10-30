@@ -17,6 +17,7 @@
     "lint:hooks": "eslint src/App.tsx src/pages/PublicOrderFormPage.tsx",
     "mock:products": "node mock-api/products-server.mjs",
     "test:products:curl": "bash scripts/test-product-api.sh",
+    "test:weekly-dialogs": "node --test tests/weekly-modal.test.mjs tests/manager-funds-edit.test.mjs",
     "test:public-form:smoke": "playwright test tests/public-form.smoke.spec.ts",
     "release:public-form": "npm run lint:hooks && npm run build && npm --prefix backend run build && npm run test:public-form:smoke",
     "guard:realtime-env": "node scripts/check-realtime-env.mjs"
@@ -74,6 +75,7 @@
     "eslint": "^10.4.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.6.0",
+    "jsdom": "^26.1.0",
     "postcss": "^8.5.14",
     "tailwindcss": "^3.4.19"
   }
