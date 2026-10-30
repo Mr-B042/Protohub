@@ -9,7 +9,8 @@ import compression from "compression";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import cron from "node-cron";
+// Every scheduled job is watched for memory jumps (lib/memory-watch.ts).
+import { cron, processMemory, watchRequestMemory } from "./lib/memory-watch.js";
 import { runLateSendAlerts } from "./lib/late-send.js";
 import { logger } from "./lib/logger.js";
 import { runtimeDataProfile } from "./lib/local-safety.js";
@@ -226,6 +227,8 @@ app.use("/api", (_req, res, next) => {
 //
 // Declared before the routes so it wraps every response, and before helmet so
 // the security headers it sets are themselves compressed with the body.
+// Before compression so each request is measured from its very start.
+app.use(watchRequestMemory);
 app.use(compression({
   // Below about a KB the gzip header costs more than it saves.
   threshold: 1024,
@@ -322,7 +325,10 @@ app.get("/health", (_req, res) => {
         heapUsedMb: mb(usage.heapUsed),
         heapTotalMb: mb(usage.heapTotal),
         externalMb: mb(usage.external),
-        uptimeMinutes: Math.round(process.uptime() / 60)
+        arrayBuffersMb: mb(usage.arrayBuffers),
+        uptimeMinutes: Math.round(process.uptime() / 60),
+        // The system's split of rss: program memory vs library files (lib/memory-watch.ts).
+        process: processMemory()
       };
     })()
   });
