@@ -2,8 +2,9 @@ import { CheckCircle2, CircleDashed, Trophy, XCircle } from "lucide-react";
 import { DELIVERY_BONUS_MAIN, DELIVERY_BONUS_TOP, type DeliveryBonus } from "../pages/weekly-report-model";
 
 /**
- * The weekly delivery bonus (Bright, 30 Oct 2026): ₦400 / ₦300 per delivered
- * order on top of the per-order bonus. One card, two moods:
+ * The weekly delivery bonus (Bright, 30 Oct 2026): this week's own delivered
+ * orders are paid ₦300 (or ₦400) each INSTEAD of the ₦200 base when the rule is
+ * met; the card shows the top-up. One card, two moods:
  * - "progress": the rep's own week while it is running - every requirement
  *   with a bar and exactly what is still missing.
  * - "result": a sent week - achieved (amount and how) or not reached (why).
@@ -43,19 +44,29 @@ export function DeliveryBonusCard({ bonus, mode, sym, orders, delivered }: {
           <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${achieved ? "bg-emerald-600 text-white" : "bg-white text-gray-500 ring-1 ring-gray-200 dark:bg-slate-900 dark:ring-slate-700"}`}><Trophy className="h-5 w-5" /></span>
           <div>
             <p className="m-0 text-[14px] font-bold text-gray-900 dark:text-slate-50">{title}</p>
-            <p className="m-0 text-[11.5px] text-gray-600 dark:text-slate-300">Extra on top of the per-order bonus. {money(DELIVERY_BONUS_MAIN.perOrder)} per delivered order at {DELIVERY_BONUS_MAIN.minOrders}+ orders and {DELIVERY_BONUS_MAIN.minRate}%+; {money(DELIVERY_BONUS_TOP.perOrder)} for one product with {DELIVERY_BONUS_TOP.minOrders}+ orders at {DELIVERY_BONUS_TOP.minRate}%+.</p>
+            <p className="m-0 text-[11.5px] text-gray-600 dark:text-slate-300">This week's own delivered orders are paid {money(DELIVERY_BONUS_MAIN.perOrder)} each instead of the usual base, at {DELIVERY_BONUS_MAIN.minOrders}+ orders and {DELIVERY_BONUS_MAIN.minRate}%+; {money(DELIVERY_BONUS_TOP.perOrder)} each for one product with {DELIVERY_BONUS_TOP.minOrders}+ orders at {DELIVERY_BONUS_TOP.minRate}%+. Carry-over orders keep their base.</p>
           </div>
         </div>
         <div className="text-right">
-          <p className={`m-0 text-[26px] font-black leading-none ${achieved ? "text-emerald-800 dark:text-emerald-200" : "text-gray-400"}`}>{money(bonus.amount)}</p>
-          <p className="m-0 mt-1 text-[11px] text-gray-600 dark:text-slate-300">{mode === "progress" ? "if the week ended now" : achieved ? "added to this week's pay" : "nothing this week"}</p>
+          <p className={`m-0 text-[26px] font-black leading-none ${achieved ? "text-emerald-800 dark:text-emerald-200" : "text-gray-400"}`}>+{money(bonus.amount)}</p>
+          <p className="m-0 mt-1 text-[11px] text-gray-600 dark:text-slate-300">{mode === "progress" ? "extra if the week ended now" : achieved ? "extra on this week's pay" : "nothing extra this week"}</p>
         </div>
       </div>
 
       {achieved ? (
         <div className="mt-3 space-y-1 rounded-xl bg-white px-3 py-2 text-[12.5px] dark:bg-slate-900">
-          {bonus.topProduct ? <p className="m-0 flex justify-between gap-2"><span>{money(DELIVERY_BONUS_TOP.perOrder)} × {bonus.topProduct.delivered} delivered {bonus.topProduct.name} ({bonus.topProduct.orders} orders, {Math.round(bonus.topProduct.rate)}%)</span><b>{money(bonus.topProduct.amount)}</b></p> : null}
-          {bonus.mainOrders > 0 ? <p className="m-0 flex justify-between gap-2"><span>{money(DELIVERY_BONUS_MAIN.perOrder)} × {bonus.mainOrders} delivered order{bonus.mainOrders === 1 ? "" : "s"}{bonus.topProduct ? " (other products)" : ""}</span><b>{money(bonus.mainAmount)}</b></p> : null}
+          {bonus.topProduct ? (
+            <p className="m-0 flex justify-between gap-2">
+              <span>{bonus.topProduct.name}: {money(DELIVERY_BONUS_TOP.perOrder)} × {bonus.topProduct.paidOrders} = {money(DELIVERY_BONUS_TOP.perOrder * bonus.topProduct.paidOrders)} <span className="text-gray-500">(base was {money(bonus.topProduct.baseWas)})</span></span>
+              <b>+{money(bonus.topProduct.amount)}</b>
+            </p>
+          ) : null}
+          {bonus.mainOrders > 0 ? (
+            <p className="m-0 flex justify-between gap-2">
+              <span>{money(DELIVERY_BONUS_MAIN.perOrder)} × {bonus.mainOrders} own-week delivered order{bonus.mainOrders === 1 ? "" : "s"}{bonus.topProduct ? " (other products)" : ""} = {money(DELIVERY_BONUS_MAIN.perOrder * bonus.mainOrders)} <span className="text-gray-500">(base was {money(bonus.mainBaseWas)})</span></span>
+              <b>+{money(bonus.mainAmount)}</b>
+            </p>
+          ) : null}
           {bonus.topProduct && !bonus.mainMet ? <p className="m-0 text-[11.5px] text-amber-700">The other products did not meet the {money(DELIVERY_BONUS_MAIN.perOrder)} rule, so only {bonus.topProduct.name} is paid.</p> : null}
         </div>
       ) : null}
