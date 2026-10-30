@@ -64,6 +64,15 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder, 
   // report was sent, so no report paid it: paid now (29 Oct 2026).
   const late = snap.orders.filter((order) => delivered(order) && !!order.lateRecorded && !paysHere(order));
   const paidCount = paidNow.length + carried.length + late.length;
+  // Orders paid next week carry ₦0 here, so their money is not in this report.
+  // Estimate: the base each paid order earned this week, before any rate cut
+  // (₦200 an order today). Upsell, cross-sell and next week's rate rule are
+  // decided in that week's report (Bright, 30 Oct 2026: "why no amount?").
+  const fullBase = bonusComponentsFull(snap).base;
+  const estBaseEach = paidCount > 0 ? Math.round(fullBase / paidCount) : 0;
+  const nextWeekEstimate = estBaseEach * paidNextWeek.length;
+  const liveDetail = new Map((detailSource?.orders ?? []).map((order) => [order.id, order]));
+  const showNotPaidList = () => document.getElementById("not-paid-list")?.scrollIntoView({ behavior: "smooth", block: "start" });
 
   const thisWeek = partsOf(paidNow);
   const earlier = partsOf(carried);
@@ -111,8 +120,9 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder, 
           {/* This week's orders delivered after the cut-off: paid next week (Bright, 30 Oct 2026). */}
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-500/30 dark:bg-amber-500/10">
             <p className="m-0 text-[12px] font-bold text-amber-800 dark:text-amber-200">To be paid next week</p>
-            <p className="m-0 mt-0.5 text-[24px] font-black leading-tight text-amber-900 dark:text-amber-100">{nf(paidNextWeek.length)} order{paidNextWeek.length === 1 ? "" : "s"}</p>
-            <p className="m-0 text-[12px] text-amber-800 dark:text-amber-200">Placed this week, delivered after {cutoffText}. Not in this total: paid in next week's report as carry-over.</p>
+            <p className="m-0 mt-0.5 text-[24px] font-black leading-tight text-amber-900 dark:text-amber-100">{nextWeekEstimate > 0 ? `≈ ${money(nextWeekEstimate)}` : `${nf(paidNextWeek.length)} orders`}</p>
+            <p className="m-0 text-[12px] text-amber-800 dark:text-amber-200">{nf(paidNextWeek.length)} order{paidNextWeek.length === 1 ? "" : "s"} placed this week, delivered after {cutoffText}{estBaseEach > 0 ? ` · estimate: base ${money(estBaseEach)} each` : ""}. Not in this total: the exact amount (with any upsell / cross-sell) is in next week's report.</p>
+            {paidNextWeek.length > 0 ? <button type="button" onClick={showNotPaidList} className="!min-h-0 mt-1 text-[12px] font-bold text-amber-900 underline dark:text-amber-100">See the {nf(paidNextWeek.length)} orders ↓</button> : null}
           </div>
         </section>
 
@@ -247,22 +257,40 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder, 
           </section>
         ) : null}
         {paidNextWeek.length > 0 ? (
-          <section>
+          <section id="not-paid-list" className="scroll-mt-4">
             <SectionTitle n={5 + (paidNow.length > 0 ? 1 : 0) + (carried.length > 0 ? 1 : 0) + (late.length > 0 ? 1 : 0)} title={`Not paid in this report: ${nf(paidNextWeek.length)} order${paidNextWeek.length === 1 ? "" : "s"}`} sub={`Placed this week but delivered after ${cutoffText}, so this report pays them ₦0. Each is paid in the report of the week it was delivered (shown on the right), as carried over. Nothing is lost.`} />
-            <ul className="m-0 mt-2 list-none space-y-1 p-0 text-[12.5px]">
-              {paidNextWeek.map((order) => (
-                <li key={order.id} className="rounded-lg bg-amber-50 px-3 py-2 dark:bg-amber-500/10">
-                  <span className="block"><b>#{order.id}</b> · {order.customer} · {order.product}</span>
-                  <span className="mt-0.5 flex flex-wrap justify-between gap-x-3 text-gray-600 dark:text-slate-300">
-                    <span>placed {dayText(order.date)} · delivered {dayText(order.deliveredDate)}</span>
-                    {(() => {
-                      const payWeek = bonusWeekFor(order.date, order.deliveredDate);
-                      return payWeek ? <b className="text-amber-800 dark:text-amber-200">→ paid in the report for {weekRange(payWeek)} (due {dayText(reportDueDate(payWeek))})</b> : null;
-                    })()}
-                  </span>
-                </li>
-              ))}
-            </ul>
+            <div className="mt-2 overflow-x-auto rounded-xl border border-amber-200 dark:border-amber-500/30">
+              <table className="w-full !min-w-[620px] text-[12.5px]">
+                <thead className="bg-amber-50 text-[11px] uppercase text-amber-800 dark:bg-amber-500/10 [&_th]:bg-transparent [&_th]:[color:inherit]">
+                  <tr>{["Order", "Placed · delivered", "Upsell / cross-sell", "Est. base", "Paid in"].map((h) => <th key={h} className={`px-3 py-2 font-bold ${h === "Est. base" ? "text-right" : "text-left"}`}>{h}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {paidNextWeek.map((order) => {
+                    const payWeek = bonusWeekFor(order.date, order.deliveredDate);
+                    const up = order.upsellDetail ?? liveDetail.get(order.id)?.upsellDetail ?? null;
+                    const items = order.crossSellItems ?? liveDetail.get(order.id)?.crossSellItems ?? [];
+                    return (
+                      <tr key={order.id} className="border-t border-amber-100 align-top dark:border-amber-500/20">
+                        <td className="max-w-[210px] px-3 py-2"><b>#{order.id}</b><span className="block truncate text-[11px] text-gray-500">{order.customer}</span><span className="block truncate text-[11px] text-gray-500">{order.product}</span></td>
+                        <td className="whitespace-nowrap px-3 py-2 text-[12px]"><span className="block">placed {dayText(order.date)}</span><span className="block font-semibold text-amber-800 dark:text-amber-200">delivered {dayText(order.deliveredDate)}</span></td>
+                        <td className="px-3 py-2 text-[12px]">
+                          {up ? <span className="block font-semibold text-blue-700">Upgrade {pcs(up.fromQty)} → {pcs(up.toQty)}</span> : null}
+                          {items.map((item, i) => <span key={i} className="block text-rose-700">+ {item.name} · {pcs(item.qty)}</span>)}
+                          {!up && items.length === 0 ? <span className="text-gray-400">none</span> : null}
+                        </td>
+                        <td className="px-3 py-2 text-right font-bold">{estBaseEach > 0 ? `≈ ${money(estBaseEach)}` : "-"}</td>
+                        <td className="px-3 py-2 text-[12px] font-semibold text-amber-800 dark:text-amber-200">{payWeek ? <>report for {weekRange(payWeek)}<span className="block font-normal text-gray-500">due {dayText(reportDueDate(payWeek))}</span></> : "-"}</td>
+                      </tr>
+                    );
+                  })}
+                  <tr className="border-t-2 border-amber-300 bg-amber-50 font-black dark:border-amber-500/40 dark:bg-amber-500/10">
+                    <td className="px-3 py-2" colSpan={3}>Total: {nf(paidNextWeek.length)} order{paidNextWeek.length === 1 ? "" : "s"} (estimate, base only)</td>
+                    <td className="px-3 py-2 text-right">{estBaseEach > 0 ? `≈ ${money(nextWeekEstimate)}` : "-"}</td>
+                    <td />
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </section>
         ) : null}
       </div>
