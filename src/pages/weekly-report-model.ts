@@ -233,6 +233,9 @@ export type WeeklyReportSnapshot = {
   /** Set on reports worked out with the upgrade ladder paying only the highest
    *  step reached (Bright, 29 Oct 2026). Missing = the old, added-up ladder. */
   upgradeLadder?: "highest_step";
+  /** Set on reports worked out with the weekly delivery bonus (from 18 Oct 2026). */
+  deliveryBonusRule?: 1;
+  deliveryBonus?: DeliveryBonus | null;
   repId: string;
   repName: string;
   weekStart: string;
@@ -260,6 +263,8 @@ export type WeeklyReportSnapshot = {
     unpaidFines?: number;
     /** What the rep is paid. With a payout change this is the CHANGED amount. */
     finalBonus: number;
+    /** The weekly delivery bonus (₦400 / ₦300 per delivered order), inside finalBonus. */
+    deliveryBonus?: number;
     /** From 11 Oct 2026: base + upsell + cross-sell BEFORE the delivery-rate
      *  cut, and how much the cut took off. Missing on older reports. */
     bonusBeforeRateCut?: number;
@@ -341,6 +346,59 @@ export function bonusWeekFor(placedKey: string | null | undefined, deliveredKey:
   const placedWeek = sundayOfKey(placedKey);
   if (placedWeek >= PAY_BY_REPORT_DAY_FROM && deliveredWeek === addDaysKey(placedWeek, 7) && delivered <= reportDueDate(placedWeek)) return placedWeek;
   return deliveredWeek;
+}
+
+// ── Weekly delivery bonus (Bright, 30 Oct 2026) ─────────────────────────────
+// Extra, on top of the per-order bonus, from the week of 18 Oct:
+//   ₦400 per delivered order of a single product with 50+ orders at 70%+.
+//   ₦300 per (other) delivered order with 50+ orders overall at 70%+, when
+//        every product with 10+ orders (other than that ₦400 product) is at
+//        60%+. Products with fewer than 10 orders are not checked.
+//   Nothing otherwise.
+// Orders and delivered are the report's own cohort counts (orders placed in
+// the week, how many delivered), the same figures as the delivery rate.
+export const DELIVERY_BONUS_FROM = "2026-10-18";
+export const DELIVERY_BONUS_TOP = { perOrder: 400, minOrders: 50, minRate: 70 };
+export const DELIVERY_BONUS_MAIN = { perOrder: 300, minOrders: 50, minRate: 70, productMinOrders: 10, productMinRate: 60 };
+export type DeliveryBonusCheck = { label: string; current: string; target: string; ok: boolean; progress: number };
+export type DeliveryBonus = {
+  amount: number;
+  /** The single product paid ₦400 an order, if any. */
+  topProduct: { name: string; orders: number; delivered: number; rate: number; amount: number } | null;
+  /** The orders paid ₦300 each (0 when the ₦300 rule is not met). */
+  mainOrders: number;
+  mainAmount: number;
+  mainMet: boolean;
+  checks: DeliveryBonusCheck[];
+  products: Array<{ name: string; orders: number; delivered: number; rate: number; checked: boolean; ok: boolean; top: boolean }>;
+};
+const rateOf = (delivered: number, orders: number) => (orders > 0 ? Math.round((delivered / orders) * 1000) / 10 : 0);
+export function deliveryBonusFor(weekStart: string, orders: number, delivered: number, products: Array<{ name: string; orders: number; delivered: number }>): DeliveryBonus | null {
+  if (weekStart < DELIVERY_BONUS_FROM) return null;
+  const rows = products.map((row) => ({ ...row, rate: rateOf(row.delivered, row.orders) }));
+  const top = rows
+    .filter((row) => row.orders >= DELIVERY_BONUS_TOP.minOrders && row.rate >= DELIVERY_BONUS_TOP.minRate)
+    .sort((a, b) => b.delivered - a.delivered)[0] ?? null;
+  const overallRate = rateOf(delivered, orders);
+  const checked = rows.filter((row) => row.orders >= DELIVERY_BONUS_MAIN.productMinOrders && row !== top);
+  const productsOk = checked.every((row) => row.rate >= DELIVERY_BONUS_MAIN.productMinRate);
+  const mainMet = orders >= DELIVERY_BONUS_MAIN.minOrders && overallRate >= DELIVERY_BONUS_MAIN.minRate && productsOk;
+  const mainOrders = mainMet ? Math.max(0, delivered - (top?.delivered ?? 0)) : 0;
+  const mainAmount = mainOrders * DELIVERY_BONUS_MAIN.perOrder;
+  const topAmount = top ? top.delivered * DELIVERY_BONUS_TOP.perOrder : 0;
+  const bestSingle = [...rows].sort((a, b) => b.orders - a.orders)[0] ?? null;
+  const checks: DeliveryBonusCheck[] = [
+    { label: "Orders this week", current: String(orders), target: `${DELIVERY_BONUS_MAIN.minOrders}+`, ok: orders >= DELIVERY_BONUS_MAIN.minOrders, progress: Math.min(1, orders / DELIVERY_BONUS_MAIN.minOrders) },
+    { label: "Delivery rate, all products", current: `${Math.round(overallRate)}%`, target: `${DELIVERY_BONUS_MAIN.minRate}%+`, ok: overallRate >= DELIVERY_BONUS_MAIN.minRate, progress: Math.min(1, overallRate / DELIVERY_BONUS_MAIN.minRate) },
+    { label: `Every product with ${DELIVERY_BONUS_MAIN.productMinOrders}+ orders`, current: checked.length === 0 ? "none yet" : `${checked.filter((row) => row.rate >= DELIVERY_BONUS_MAIN.productMinRate).length} of ${checked.length} at ${DELIVERY_BONUS_MAIN.productMinRate}%+`, target: `all at ${DELIVERY_BONUS_MAIN.productMinRate}%+`, ok: productsOk, progress: checked.length === 0 ? 1 : checked.filter((row) => row.rate >= DELIVERY_BONUS_MAIN.productMinRate).length / checked.length },
+    { label: "₦400: one product", current: bestSingle ? `${bestSingle.name}: ${bestSingle.orders} orders, ${Math.round(bestSingle.rate)}%` : "-", target: `${DELIVERY_BONUS_TOP.minOrders}+ orders at ${DELIVERY_BONUS_TOP.minRate}%+`, ok: !!top, progress: bestSingle ? Math.min(1, bestSingle.orders / DELIVERY_BONUS_TOP.minOrders) : 0 }
+  ];
+  return {
+    amount: topAmount + mainAmount,
+    topProduct: top ? { name: top.name, orders: top.orders, delivered: top.delivered, rate: top.rate, amount: topAmount } : null,
+    mainOrders, mainAmount, mainMet, checks,
+    products: rows.map((row) => ({ ...row, checked: row.orders >= DELIVERY_BONUS_MAIN.productMinOrders && row !== top, ok: row.rate >= DELIVERY_BONUS_MAIN.productMinRate, top: row === top }))
+  };
 }
 
 // ── The manager's change to a rep's payout (Bright, 11 Oct 2026) ────────────
@@ -483,7 +541,8 @@ export function bonusInitialFinal(snap: WeeklyReportSnapshot) {
   const before = full.base + full.upsell + full.crossSell;
   const adjustments = Math.max(0, t.adjustments ?? 0);
   const change = t.payoutChange ?? 0;
-  const initial = Math.round(before + adjustments + Math.max(0, change));
+  const delivery = Math.max(0, t.deliveryBonus ?? 0);
+  const initial = Math.round(before + delivery + adjustments + Math.max(0, change));
   const final = Math.round(t.finalBonus);
   const finesApplied = Math.max(0, (t.fines ?? 0) + (t.carriedFines ?? 0) - (t.unpaidFines ?? 0));
   // The delivery-rate cut, one line per part, each saying why.
@@ -496,7 +555,7 @@ export function bonusInitialFinal(snap: WeeklyReportSnapshot) {
     { label: (t.carriedFines ?? 0) > 0 ? "Fines (incl. carried from last week)" : "Fines", amount: Math.round(finesApplied) },
     { label: "Taken off by the manager", amount: Math.round(Math.max(0, -change)) }
   ].filter((item) => item.amount > 0);
-  return { initial, takenOff: Math.max(0, initial - final), final, items, full, extraInInitial: Math.round(adjustments + Math.max(0, change)) };
+  return { initial, takenOff: Math.max(0, initial - final), final, items, full, extraInInitial: Math.round(adjustments + Math.max(0, change)), deliveryInInitial: Math.round(delivery) };
 }
 
 /** "+₦2,000" / "-₦2,000", for the line that says what was changed. */
@@ -681,7 +740,10 @@ export function buildRepWeeklySnapshot(input: {
   const baseBonus = Math.round(input.bonus.base);
   const upsellBonus = Math.round(input.bonus.upsell);
   const crossSellBonus = Math.round(input.bonus.crossSell);
-  const earned = baseBonus + upsellBonus + crossSellBonus;
+  const deliveryBonus = deliveryBonusFor(weekStart, placed.length, placedDelivered.length, products.map((row) => ({ name: row.name, orders: row.orders, delivered: row.delivered })));
+  const deliveryBonusAmount = Math.round(deliveryBonus?.amount ?? 0);
+  // The delivery bonus is extra, on top of the per-order bonus.
+  const earned = baseBonus + upsellBonus + crossSellBonus + deliveryBonusAmount;
   const beforeRateCut = input.bonus.beforeRateCut;
   const bonusBeforeRateCut = beforeRateCut ? Math.round(beforeRateCut.base + beforeRateCut.upsell + beforeRateCut.crossSell) : null;
   const adjustments = input.adjustments ?? [];
@@ -702,6 +764,7 @@ export function buildRepWeeklySnapshot(input: {
       baseBonus,
       upsellBonus,
       crossSellBonus,
+      ...(deliveryBonus ? { deliveryBonus: deliveryBonusAmount } : {}),
       fines: Math.round(fineTotal),
       adjustments: adjustmentTotal,
       logMissFines: Math.round(logMissFineTotal),
@@ -716,7 +779,7 @@ export function buildRepWeeklySnapshot(input: {
         baseBeforeRateCut: Math.round(beforeRateCut!.base),
         upsellBeforeRateCut: Math.round(beforeRateCut!.upsell),
         crossSellBeforeRateCut: Math.round(beforeRateCut!.crossSell),
-        rateCut: Math.max(0, bonusBeforeRateCut - earned),
+        rateCut: Math.max(0, bonusBeforeRateCut - (earned - deliveryBonusAmount)),
         ...(input.bonus.rateCutLabel ? { rateCutLabel: input.bonus.rateCutLabel } : {})
       } : {}),
       upsellOrders: upsellPlaced.length,
@@ -727,6 +790,8 @@ export function buildRepWeeklySnapshot(input: {
     },
     previous: input.previous,
     upgradeLadder: "highest_step",
+    deliveryBonusRule: 1,
+    ...(deliveryBonus ? { deliveryBonus } : {}),
     ...(input.monthlyIncentive ? { monthlyIncentive: input.monthlyIncentive } : {}),
     products,
     daily,
