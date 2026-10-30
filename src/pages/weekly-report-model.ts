@@ -357,23 +357,32 @@ export function bonusWeekFor(placedKey: string | null | undefined, deliveredKey:
 //   Nothing otherwise.
 // Orders and delivered are the report's own cohort counts (orders placed in
 // the week, how many delivered), the same figures as the delivery rate.
+//
+// ⚠️ ₦300 / ₦400 REPLACES the ₦200 base, it is not added to it (Bright,
+// 30 Oct 2026, checked against a real report). It is paid on
+// the week's OWN delivered orders that this report pays (placed this week);
+// carried-over orders keep their own base. The amount stored is the top-up:
+// for each such order, the new rate minus the base it already earned.
 export const DELIVERY_BONUS_FROM = "2026-10-18";
 export const DELIVERY_BONUS_TOP = { perOrder: 400, minOrders: 50, minRate: 70 };
 export const DELIVERY_BONUS_MAIN = { perOrder: 300, minOrders: 50, minRate: 70, productMinOrders: 10, productMinRate: 60 };
 export type DeliveryBonusCheck = { label: string; current: string; target: string; ok: boolean; progress: number };
 export type DeliveryBonus = {
   amount: number;
-  /** The single product paid ₦400 an order, if any. */
-  topProduct: { name: string; orders: number; delivered: number; rate: number; amount: number } | null;
-  /** The orders paid ₦300 each (0 when the ₦300 rule is not met). */
+  /** The single product paid ₦400 an order, if any. paidOrders: its own-week orders this report pays. */
+  topProduct: { name: string; orders: number; delivered: number; rate: number; amount: number; paidOrders: number; baseWas: number } | null;
+  /** Own-week orders raised to ₦300 each (0 when the ₦300 rule is not met), the top-up, and the base they had. */
   mainOrders: number;
   mainAmount: number;
+  mainBaseWas: number;
   mainMet: boolean;
   checks: DeliveryBonusCheck[];
   products: Array<{ name: string; orders: number; delivered: number; rate: number; checked: boolean; ok: boolean; top: boolean }>;
 };
 const rateOf = (delivered: number, orders: number) => (orders > 0 ? Math.round((delivered / orders) * 1000) / 10 : 0);
-export function deliveryBonusFor(weekStart: string, orders: number, delivered: number, products: Array<{ name: string; orders: number; delivered: number }>): DeliveryBonus | null {
+export function deliveryBonusFor(weekStart: string, orders: number, delivered: number, products: Array<{ name: string; orders: number; delivered: number }>,
+  /** This week's own delivered orders that this report pays, with the base each earned. */
+  paidOwn: Array<{ product: string; base: number }> = []): DeliveryBonus | null {
   if (weekStart < DELIVERY_BONUS_FROM) return null;
   const rows = products.map((row) => ({ ...row, rate: rateOf(row.delivered, row.orders) }));
   const top = rows
@@ -383,9 +392,13 @@ export function deliveryBonusFor(weekStart: string, orders: number, delivered: n
   const checked = rows.filter((row) => row.orders >= DELIVERY_BONUS_MAIN.productMinOrders && row !== top);
   const productsOk = checked.every((row) => row.rate >= DELIVERY_BONUS_MAIN.productMinRate);
   const mainMet = orders >= DELIVERY_BONUS_MAIN.minOrders && overallRate >= DELIVERY_BONUS_MAIN.minRate && productsOk;
-  const mainOrders = mainMet ? Math.max(0, delivered - (top?.delivered ?? 0)) : 0;
-  const mainAmount = mainOrders * DELIVERY_BONUS_MAIN.perOrder;
-  const topAmount = top ? top.delivered * DELIVERY_BONUS_TOP.perOrder : 0;
+  const topPaid = top ? paidOwn.filter((order) => order.product === top.name) : [];
+  const mainPaid = mainMet ? paidOwn.filter((order) => !top || order.product !== top.name) : [];
+  const topUp = (list: Array<{ base: number }>, rate: number) => list.reduce((sum, order) => sum + Math.max(0, rate - Math.max(0, order.base)), 0);
+  const sumBase = (list: Array<{ base: number }>) => list.reduce((sum, order) => sum + Math.max(0, order.base), 0);
+  const mainOrders = mainPaid.length;
+  const mainAmount = Math.round(topUp(mainPaid, DELIVERY_BONUS_MAIN.perOrder));
+  const topAmount = Math.round(topUp(topPaid, DELIVERY_BONUS_TOP.perOrder));
   const bestSingle = [...rows].sort((a, b) => b.orders - a.orders)[0] ?? null;
   const checks: DeliveryBonusCheck[] = [
     { label: "Orders this week", current: String(orders), target: `${DELIVERY_BONUS_MAIN.minOrders}+`, ok: orders >= DELIVERY_BONUS_MAIN.minOrders, progress: Math.min(1, orders / DELIVERY_BONUS_MAIN.minOrders) },
@@ -395,8 +408,8 @@ export function deliveryBonusFor(weekStart: string, orders: number, delivered: n
   ];
   return {
     amount: topAmount + mainAmount,
-    topProduct: top ? { name: top.name, orders: top.orders, delivered: top.delivered, rate: top.rate, amount: topAmount } : null,
-    mainOrders, mainAmount, mainMet, checks,
+    topProduct: top ? { name: top.name, orders: top.orders, delivered: top.delivered, rate: top.rate, amount: topAmount, paidOrders: topPaid.length, baseWas: Math.round(sumBase(topPaid)) } : null,
+    mainOrders, mainAmount, mainBaseWas: Math.round(sumBase(mainPaid)), mainMet, checks,
     products: rows.map((row) => ({ ...row, checked: row.orders >= DELIVERY_BONUS_MAIN.productMinOrders && row !== top, ok: row.rate >= DELIVERY_BONUS_MAIN.productMinRate, top: row === top }))
   };
 }
@@ -740,7 +753,11 @@ export function buildRepWeeklySnapshot(input: {
   const baseBonus = Math.round(input.bonus.base);
   const upsellBonus = Math.round(input.bonus.upsell);
   const crossSellBonus = Math.round(input.bonus.crossSell);
-  const deliveryBonus = deliveryBonusFor(weekStart, placed.length, placedDelivered.length, products.map((row) => ({ name: row.name, orders: row.orders, delivered: row.delivered })));
+  const nameByKey = new Map(products.map((row) => [row.key, row.name]));
+  const paidOwn = deliveredInWeek
+    .filter((order) => inWeek(order.createdKey, weekStart, weekEnd) && !order.lateRecorded)
+    .map((order) => ({ product: nameByKey.get(order.productKey) ?? order.productName, base: Math.round(input.bonus.perOrder[order.id]?.base ?? 0) }));
+  const deliveryBonus = deliveryBonusFor(weekStart, placed.length, placedDelivered.length, products.map((row) => ({ name: row.name, orders: row.orders, delivered: row.delivered })), paidOwn);
   const deliveryBonusAmount = Math.round(deliveryBonus?.amount ?? 0);
   // The delivery bonus is extra, on top of the per-order bonus.
   const earned = baseBonus + upsellBonus + crossSellBonus + deliveryBonusAmount;
