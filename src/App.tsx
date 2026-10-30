@@ -14630,6 +14630,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [dataRefreshing, setDataRefreshing] = useState(false);
   const [hasCompletedInitialDataLoad, setHasCompletedInitialDataLoad] = useState(() => !auth.isLoggedIn());
   const hasCompletedInitialDataLoadRef = useRef(!auth.isLoggedIn());
+  // ⚠️ The sign-in load shows the last 90 days first and brings older orders and
+  // carts after (speed, 31 Oct 2026). hasCompletedInitialDataLoad turns true at
+  // the first half; anything that SAVES figures worked out from the order list
+  // waits for this one instead, so it never saves from a part-loaded history.
+  const [orderHistoryComplete, setOrderHistoryComplete] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
   const [ordersCappedWarning, setOrdersCappedWarning] = useState<string | null>(null);
   const [penaltyTargetRepId, setPenaltyTargetRepId] = useState<string>("");
@@ -26490,7 +26495,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // Also the week of 18 Oct (Bright, 29 Oct 2026): the upgrade ladder paid
     // every step on top of the steps below; he chose to correct that week only.
     const ladderWeek = weeklyReportWeekStart === "2026-10-18";
-    if (!week || (weeklyReportWeekStart !== "2026-10-04" && !ladderWeek) || isPreviewing || !hasCompletedInitialDataLoad) return;
+    if (!week || (weeklyReportWeekStart !== "2026-10-04" && !ladderWeek) || isPreviewing || !hasCompletedInitialDataLoad || !orderHistoryComplete) return;
     if (currentRole !== "Owner" && currentRole !== "Admin" && currentRole !== "Manager") return;
     if (!weeklyBonusMaps || weeklyBonusMaps.weekStart !== weeklyReportWeekStart) return;
     if (week.company && week.company.status !== "open" && week.company.status !== "returned_to_manager") return;
@@ -26524,7 +26529,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (changed > 0) { showToast(`${changed} sent report${changed === 1 ? "" : "s"} updated to ${ladderWeek ? "the corrected upgrade bonus and the weekly delivery bonus" : "the new delivery-rate rule"}.`); weeklyRefresh(); }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [weeklyWeek, weeklyBonusMaps, weeklyReportWeekStart, currentRole, isPreviewing, hasCompletedInitialDataLoad]);
+  }, [weeklyWeek, weeklyBonusMaps, weeklyReportWeekStart, currentRole, isPreviewing, hasCompletedInitialDataLoad, orderHistoryComplete]);
   const weeklyRun = async (action: () => Promise<unknown>, done: string) => {
     await action();
     showToast(done);
@@ -27636,7 +27641,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     [smartStockNotificationPayload, smartStockTodayKey]
   );
   useEffect(() => {
-    if (!auth.isLoggedIn() || !hasCompletedInitialDataLoad || !smartStockNotificationKey || smartStockNotificationPayload.length === 0) {
+    if (!auth.isLoggedIn() || !hasCompletedInitialDataLoad || !orderHistoryComplete || !smartStockNotificationKey || smartStockNotificationPayload.length === 0) {
       return;
     }
     if (!(canTriggerTeamStockRiskNotifications || realRole === "Sales Rep")) {
@@ -27672,7 +27677,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         // The server also dedupes, so a later data refresh can safely retry.
         smartStockNotificationKeysRef.current.delete(smartStockNotificationKey);
       });
-  }, [smartStockNotificationKey, smartStockNotificationPayload, hasCompletedInitialDataLoad, canTriggerTeamStockRiskNotifications, realRole]);
+  }, [smartStockNotificationKey, smartStockNotificationPayload, hasCompletedInitialDataLoad, orderHistoryComplete, canTriggerTeamStockRiskNotifications, realRole]);
   const repDeliveredOrders = repOrders.filter((order) => (order.status ?? "New") === "Delivered");
   const repRevenue = repDeliveredOrders.reduce((sum, order) => sum + order.amount, 0);
   const repPendingCount = repOrders.filter((order) => (order.status ?? "New") === "New").length;
@@ -29386,7 +29391,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const isMarketer = role === "Marketer";
       const canLoadMarketingLinks = !roleKnown || isAdmin || isMarketer;
       const canLoadMarketingSpend = !roleKnown || isAdmin || isMarketer;
-      const fastBootDashboard = activePage === "Dashboard";
+      // Every page now (was the Dashboard only): last 90 days of orders and carts
+      // first, older ones in the background. See orderHistoryComplete.
+      const fastBootDashboard = true;
       const skipped = Symbol("skipped");
       type Skipped = typeof skipped;
       const ifAdmin = <T,>(p: () => Promise<T>): Promise<T | Skipped> =>
@@ -29568,6 +29575,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           latestCartSyncAt.current = new Date(Date.now() - 5_000).toISOString();
         }
       };
+      // Older carts (before the 90-day cut) arrive after the recent ones: add only
+      // carts not already on screen, so a live update is never overwritten.
+      const hydrateCartsOlder = (result: PromiseSettledResult<any>) => {
+        if (result.status !== "fulfilled" || !Array.isArray(result.value) || result.value.length === 0) return;
+        const older = (result.value as any[]).map(normalizeRealtimeCart);
+        setAbandonedCarts((current) => {
+          const known = new Set(current.map((cart) => cart.id));
+          const added = older.filter((cart) => !known.has(cart.id));
+          return added.length ? [...current, ...added] : current;
+        });
+      };
       const hydrateSalesTeams = (result: PromiseSettledResult<any>) => {
         if (result.status === "fulfilled" && Array.isArray(result.value)) {
           setExtraTeams(result.value.map((t: any) => ({
@@ -29693,12 +29711,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           // spike that tips an under-provisioned DB into timeouts. Full history is
           // pulled in the background batch below and replaces this set within ~1s.
           const recentOrdersCutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+          // The recent half replaces the lists below, so the history is part-loaded again until the older half lands.
+          setOrderHistoryComplete(false);
           const [apiProducts, apiOrders, apiExpenses, apiNotifications, apiCarts] = await Promise.allSettled([
             productsApi.list(),
             ordersApi.list({ limit: ORDER_LIST_LIMIT, dateFrom: recentOrdersCutoff, lite: "1" }),
             ifNotMarketer(() => expensesApi.list()),
             notificationsApi.list(),
-            cartsApi.list({ lite: "1" })
+            cartsApi.list({ lite: "1", dateFrom: recentOrdersCutoff })
           ]);
 
           if (cancelled) return;
@@ -29732,6 +29752,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             // was pulled from the database twice on every single page load.
             // dateTo makes the two halves meet without overlapping.
             ordersApi.list({ limit: ORDER_LIST_LIMIT, dateTo: recentOrdersCutoff, lite: "1" }),
+            cartsApi.list({ lite: "1", dateTo: recentOrdersCutoff }),
             ifNotMarketer(() => agentsApi.list()),
             ifNotMarketer(() => stockApi.movements({ limit: "500" })),
             ifNotMarketer(() => waybillsApi.list()),
@@ -29746,6 +29767,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             ifMarketingSpend(() => marketingSpendApi.list())
           ]).then(([
             apiOrdersFull,
+            apiCartsOlder,
             apiAgents,
             apiMovements,
             apiWaybills,
@@ -29763,6 +29785,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             // Full order history (all-time), pulled off the critical path - replaces
             // the recent-only set so reports/Orders list are complete.
             hydrateOrdersOlder(apiOrdersFull);
+            hydrateCartsOlder(apiCartsOlder);
+            // Both older halves in: the order history is whole again.
+            if (apiOrdersFull.status === "fulfilled" && apiCartsOlder.status === "fulfilled") setOrderHistoryComplete(true);
             hydrateAgents(apiAgents);
             hydrateMovements(apiMovements);
             hydrateWaybills(apiWaybills);
@@ -29863,6 +29888,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           setDataRefreshing(false);
           setHasCompletedInitialDataLoad(true);
           hasCompletedInitialDataLoadRef.current = true;
+          setOrderHistoryComplete(true);
         }
       }
     };

@@ -44,6 +44,11 @@ router.get("/", requireRole(...CART_LIST_ROLES), async (req, res) => {
   // ?lite=1: leave out the form details shown only in that window (lib/lite-lists.ts).
   const onlyId = typeof req.query.id === "string" && req.query.id ? req.query.id : null;
   const lite = req.query.lite === "1" && !onlyId;
+  // ?dateFrom / ?dateTo (YYYY-MM-DD, by created_at, like the orders list): the
+  // app loads recent carts first at sign-in and older ones after.
+  const dayParam = (value: unknown) => (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null);
+  const dateFrom = dayParam(req.query.dateFrom);
+  const dateTo = dayParam(req.query.dateTo);
   const SAFETY_CAP = 50_000; // hard ceiling so a runaway never loads unbounded memory
   const readPage = (from: number, to: number, withCount: boolean) => {
     let query = applyBranchScope(supabase
@@ -54,6 +59,8 @@ router.get("/", requireRole(...CART_LIST_ROLES), async (req, res) => {
       .order("created_at", { ascending: false })
       .range(from, to), req);
     if (onlyId) query = query.eq("id", onlyId);
+    if (dateFrom) query = query.gte("created_at", `${dateFrom}T00:00:00.000Z`);
+    if (dateTo) query = query.lte("created_at", `${dateTo}T23:59:59.999Z`);
     // Sales Reps see assigned carts; Marketers see only attributed cart traffic.
     if (req.user!.role === "Marketer") {
       query = applyCartMarketingScope(query, req.user!.marketingAttributionTags, req.user!.id);
