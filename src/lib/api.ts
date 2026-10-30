@@ -3937,7 +3937,8 @@ export const cartsApi = {
   logContactAttempt: (cartId: string, body: unknown) =>
     post<{ row: CartAttemptRow; statusMovedTo: string | null }>(`/api/carts/${cartId}/contact-attempts`, body),
   followUpOverview: () => get<{ rows: CartFollowUpRow[] }>("/api/carts/follow-up-overview"),
-  list: () => get<any[]>("/api/carts"),
+  /** lite: "1" leaves out form details shown only in the cart window; id: just that cart, full. */
+  list: (params?: { lite?: "1"; id?: string }) => get<any[]>(`/api/carts${params ? `?${new URLSearchParams(params as Record<string, string>).toString()}` : ""}`),
   changes: (after: string) => {
     const qs = new URLSearchParams({ after });
     return get<{ rows: any[]; serverTime: string; truncated: boolean }>(`/api/carts/changes?${qs.toString()}`);

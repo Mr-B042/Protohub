@@ -1,3 +1,4 @@
+import { liteOrder } from "../lib/lite-lists.js";
 import { Router } from "express";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { randomUUID } from "node:crypto";
@@ -642,7 +643,7 @@ const deliveryStockHistoryForOrder = async (orgId: string, orderId: string) => {
 // ── GET /api/orders ───────────────────────────────────────
 // Supports: ?status=Delivered&source=TikTok&search=Kemi&page=1&limit=25
 router.get("/", async (req, res) => {
-  const { status, source, search, page = "1", limit = "25", repId, since, updatedSince, dateFrom, dateTo } = req.query;
+  const { status, source, search, page = "1", limit = "25", repId, since, updatedSince, dateFrom, dateTo, id, lite } = req.query;
   const pageNum  = Math.max(1, parseInt(page as string, 10));
   // Allow large bulk loads (the UI fetches all orders for client-side filtering).
   // Raised from 2000 so growing orgs don't silently lose their oldest orders.
@@ -690,6 +691,8 @@ router.get("/", async (req, res) => {
     }
     if (status && status !== "All Orders") query = query.eq("status", status);
     if (source && source !== "All Sources") query = query.eq("source", source);
+    // One order, exactly (the detail window's full record).
+    if (id) query = query.eq("id", String(id));
     if (search) {
       const safe = (search as string).replace(/[.,()"\\%_]/g, (ch) => `\\${ch}`);
       query = query.or(`customer.ilike.%${safe}%,phone.ilike.%${safe}%,id.ilike.%${safe}%`);
@@ -714,10 +717,12 @@ router.get("/", async (req, res) => {
     rows.push(...batch);
     if (batch.length < SUPA_MAX) break; // last page reached
   }
+  // ?lite=1: lists leave out the form details shown only in the detail window (lib/lite-lists.ts).
+  const listRows = lite === "1" ? rows.map(liteOrder) : rows;
   res.json({
     data: scopeRole === "Inventory Manager & Logistics Operations"
-      ? rows.map(inventoryOperationsOrder)
-      : rows,
+      ? listRows.map(inventoryOperationsOrder)
+      : listRows,
     total,
     page: pageNum,
     pageSize

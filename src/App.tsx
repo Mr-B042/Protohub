@@ -297,6 +297,10 @@ const OrderReceiptSheet = lazyPage(() => import("./components/order-receipt/Orde
 const SalesClosersOwnerPage = lazyPage(() => import("./pages/SalesClosersOwnerPage").then((m) => ({ default: m.SalesClosersOwnerPage })));
 
 const ORG_MANIFEST_PATH = "/org-manifest.webmanifest";
+// The order lists ask for up to the server's ceiling (it fetches 1,000 at a
+// time). It was 5,000 with 4,813 orders on 30 Oct 2026: a few days more and
+// the oldest orders would have silently stopped loading.
+const ORDER_LIST_LIMIT = "50000";
 // These screens monitor trends rather than a single live cart. They load the
 // complete timeline once, then poll incrementally. A one-minute cadence keeps
 // the dashboard fresh without repeatedly moving a large analytics dataset.
@@ -1372,6 +1376,8 @@ type TrackedOrder = {
   preferredDelivery?: string;
   embedLabel?: string;
   formContext?: Record<string, string | number | boolean | null>;
+  /** The list left out display-only form details (lite list); the detail window fetches them. */
+  formContextTrimmed?: boolean;
   source?: Exclude<OrderSource, "All Sources">;
   status?: Exclude<OrderStatus, "All Orders">;
   // Parked for manual review (a repeat order from the same phone within 7 days).
@@ -7247,6 +7253,7 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
     ...value,
     sourceCartId: sourceCartIdForOrder(value) || undefined,
     formContext: value?.formContext ?? value?.form_context ?? undefined,
+    formContextTrimmed: Boolean(value?.formContextTrimmed ?? value?.form_context_trimmed),
     embedLabel: value?.embedLabel ?? value?.embed_label ?? undefined,
     reviewHold: value?.reviewHold ?? value?.review_hold ?? false,
     reviewReason: value?.reviewReason ?? value?.review_reason ?? undefined,
@@ -13627,10 +13634,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setSelectedCartLiveStatus(null);
     if (!selectedCartId) return;
     const poll = async () => {
+      // Not while the app is in the background, and no redraw of the whole
+      // app when nothing changed (30 Oct 2026: slow on low-end devices).
+      if (document.visibilityState !== "visible") return;
       try {
         const r = await cartsApi.liveStatus(selectedCartId);
-        if (r?.liveStatus) setSelectedCartLiveStatus(r.liveStatus);
-        else setSelectedCartLiveStatus(null);
+        const next = r?.liveStatus ?? null;
+        setSelectedCartLiveStatus((previous: any) => (JSON.stringify(previous) === JSON.stringify(next) ? previous : next));
       } catch { /* ignore - cart may have been deleted */ }
     };
     poll();
@@ -14723,6 +14733,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // "View Order" on a candidate therefore resolved to undefined and opened an
   // empty modal. The candidates endpoint is her authorised view of those
   // orders, so fall back to it rather than leaving the popup blank.
+  // The order window shows every form detail; lite lists leave some out, so
+  // fetch this one order in full when it is opened (30 Oct 2026).
+  useEffect(() => {
+    const order = trackedOrders.find((item) => item.id === selectedOrderId);
+    if (!order?.formContextTrimmed) return;
+    let cancelled = false;
+    void ordersApi.list({ id: order.id, limit: "1" }).then((result: any) => {
+      const row = Array.isArray(result?.data) ? result.data[0] : null;
+      if (cancelled || !row) return;
+      const full = normalizeTrackedOrder(row);
+      setTrackedOrders((previous) => previous.map((item) => (item.id === full.id ? { ...item, formContext: full.formContext, formContextTrimmed: false } : item)));
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedOrderId]);
   const selectedOrder = trackedOrders.find((order) => order.id === selectedOrderId)
     ?? (selectedOrderId
       ? (() => {
@@ -14877,7 +14902,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // belt-and-braces refresh - fires on initial open and every 30s.
     const refreshSelectedCart = async () => {
       try {
-        const rows = await cartsApi.list();
+        // Just this cart, with every field (was the whole cart list, ~20 MB, every minute).
+        const rows = await cartsApi.list({ id: selectedCartId });
         if (cancelled || !Array.isArray(rows)) return;
         const fresh = (rows as any[]).find((row) => row?.id === selectedCartId);
         if (!fresh) return;
@@ -14900,7 +14926,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   state:        fresh.state ?? cart.state,
                   status:       fresh.status ?? cart.status,
                   assignedRepId:fresh.assignedRepId ?? fresh.assigned_rep_id ?? cart.assignedRepId,
-                  lastActivity: fresh.lastActivity ?? fresh.last_activity ?? cart.lastActivity
+                  lastActivity: fresh.lastActivity ?? fresh.last_activity ?? cart.lastActivity,
+                  // The list leaves out display-only form details; the window shows them all.
+                  capturePayload: (fresh.capturePayload ?? fresh.capture_payload ?? cart.capturePayload) as any
                 }
               : cart
           )
@@ -14966,7 +14994,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => {
     if (modal !== "cartDetails" || !selectedCartId) return;
     setJourneyNow(Date.now());
-    const handle = window.setInterval(() => setJourneyNow(Date.now()), 5000);
+    // Only "x minutes ago" labels hang on this, and each tick redraws the whole
+    // app: every 15 s, and not while the app is in the background.
+    const handle = window.setInterval(() => { if (document.visibilityState === "visible") setJourneyNow(Date.now()); }, 15_000);
     return () => window.clearInterval(handle);
   }, [modal, selectedCartId]);
 
@@ -14976,7 +15006,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (modal !== "cartDetails" || !selectedCartId) return;
     if (abandonedCarts.some((cart) => cart.id === selectedCartId)) return;
     let cancelled = false;
-    void cartsApi.list().then((rows) => {
+    void cartsApi.list({ lite: "1" }).then((rows) => {
       if (cancelled || !Array.isArray(rows)) return;
       setAbandonedCarts(rows.map((c: any) => ({
         id:           c.id,
@@ -29646,10 +29676,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           const recentOrdersCutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
           const [apiProducts, apiOrders, apiExpenses, apiNotifications, apiCarts] = await Promise.allSettled([
             productsApi.list(),
-            ordersApi.list({ limit: "5000", dateFrom: recentOrdersCutoff }),
+            ordersApi.list({ limit: ORDER_LIST_LIMIT, dateFrom: recentOrdersCutoff, lite: "1" }),
             ifNotMarketer(() => expensesApi.list()),
             notificationsApi.list(),
-            cartsApi.list()
+            cartsApi.list({ lite: "1" })
           ]);
 
           if (cancelled) return;
@@ -29682,7 +29712,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             // including those same 90 days, so the heaviest table in the system
             // was pulled from the database twice on every single page load.
             // dateTo makes the two halves meet without overlapping.
-            ordersApi.list({ limit: "5000", dateTo: recentOrdersCutoff }),
+            ordersApi.list({ limit: ORDER_LIST_LIMIT, dateTo: recentOrdersCutoff, lite: "1" }),
             ifNotMarketer(() => agentsApi.list()),
             ifNotMarketer(() => stockApi.movements({ limit: "500" })),
             ifNotMarketer(() => waybillsApi.list()),
@@ -29750,7 +29780,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           apiMarketingSpend
         ] = await Promise.allSettled([
           productsApi.list(),
-          ordersApi.list({ limit: "5000" }),
+          ordersApi.list({ limit: ORDER_LIST_LIMIT, lite: "1" }),
           ifNotMarketer(() => agentsApi.list()),
           ifNotMarketer(() => stockApi.movements({ limit: "500" })),
           ifNotMarketer(() => expensesApi.list()),
@@ -29758,7 +29788,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           notificationsApi.list(),
           ifNotMarketer(() => stockApi.countSessions()),
           teamApi.list(),
-          cartsApi.list(),
+          cartsApi.list({ lite: "1" }),
           ifAdmin(() => salesTeamsApi.list()),
           ifAdmin(() => payStructuresApi.list()),
           ifAdmin(() => payrollApi.list()),

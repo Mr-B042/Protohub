@@ -1,3 +1,4 @@
+import { liteCart } from "../lib/lite-lists.js";
 import { Router } from "express";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
@@ -38,6 +39,10 @@ const CART_LIST_ROLES = ["Owner", "Admin", "Manager", "Sales Rep", "Marketer", "
   "Recovery Rep", "Sales Closer", "Inventory Manager", "Inventory Manager & Logistics Operations"] as const;
 
 router.get("/", requireRole(...CART_LIST_ROLES), async (req, res) => {
+  // ?id=<cart>: just that cart, with every field (the open cart window).
+  // ?lite=1: leave out the form details shown only in that window (lib/lite-lists.ts).
+  const onlyId = typeof req.query.id === "string" && req.query.id ? req.query.id : null;
+  const lite = req.query.lite === "1" && !onlyId;
   const PAGE = 1000;
   const SAFETY_CAP = 50_000; // hard ceiling so a runaway never loads unbounded memory
   const all: any[] = [];
@@ -49,6 +54,7 @@ router.get("/", requireRole(...CART_LIST_ROLES), async (req, res) => {
       .is("merged_into", null)  // hide carts absorbed into another (the "Merged" state)
       .order("created_at", { ascending: false })
       .range(from, from + PAGE - 1), req);
+    if (onlyId) query = query.eq("id", onlyId);
     // Sales Reps see assigned carts; Marketers see only attributed cart traffic.
     if (req.user!.role === "Marketer") {
       query = applyCartMarketingScope(query, req.user!.marketingAttributionTags, req.user!.id);
@@ -109,7 +115,8 @@ router.get("/", requireRole(...CART_LIST_ROLES), async (req, res) => {
     }
   }
 
-  res.json(all.map((cart) => {
+  res.json(all.map((row) => {
+    const cart = lite ? liteCart(row) : row;
     const withOutcome = {
       ...cart,
       last_outcome_code: attempts.get(cart.id)?.code ?? null,
