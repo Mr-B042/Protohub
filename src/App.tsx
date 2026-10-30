@@ -132,14 +132,9 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { OrderSourceLogo } from "./components/OrderSourceLogo";
 import { LandingPagePreview, useProductLandingPages } from "./components/LandingPagePreview";
-import { ProductsStockPage } from "./components/products-stock/ProductsStockPage";
 import { periodBounds } from "./lib/period-bounds";
 import { WhatsAppIcon } from "./components/WhatsAppIcon";
-import {
-  ManagerProductChallenges,
-  type ManagerChallengeDraft,
-  type ManagerProductChallenge
-} from "./components/ManagerProductChallenges";
+import type { ManagerChallengeDraft, ManagerProductChallenge } from "./components/ManagerProductChallenges";
 import { auth } from "./lib/auth";
 import { snakeToCamel } from "./lib/normalize";
 import { makeCartId } from "./lib/cart-id";
@@ -222,54 +217,32 @@ import {
   rectSortingStrategy
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import {
-  InventoryLogisticsOperationsPage,
-  type InventoryOperationsAction,
-} from "./pages/InventoryLogisticsOperationsPage";
-import {
-  SalesCloserWorkspacePage,
-  type SalesCloserLead,
-  type SalesCloserSection,
-  type SalesLeadDraft,
-  type SalesLeadStatus,
-} from "./pages/SalesCloserWorkspacePage";
-import AgentAccessPage from "./pages/AgentAccessPage";
-import CashFlowPage, { type CashFlowPeriod, type CashFlowView, type OpeningBalanceRow } from "./pages/CashFlowPage";
-import MarketingPerformancePage from "./pages/MarketingPerformancePage";
-import ProductTrendPage from "./pages/product-trend/ProductTrendPage";
+import type { InventoryOperationsAction } from "./pages/InventoryLogisticsOperationsPage";
+import type { SalesCloserLead, SalesCloserSection, SalesLeadDraft, SalesLeadStatus } from "./pages/SalesCloserWorkspacePage";
+import type { CashFlowPeriod, CashFlowView, OpeningBalanceRow } from "./pages/CashFlowPage";
 import type { TrendOrder } from "./pages/product-trend/product-trend-model";
-import WeeklyOpeningCashWizard, { type WeeklyOpeningView } from "./pages/WeeklyOpeningCashWizard";
+import type { WeeklyOpeningView } from "./pages/WeeklyOpeningCashWizard";
 import DraftTextarea from "./components/DraftTextarea";
 import ChargeRiskBanner from "./components/ChargeRiskBanner";
 import CartLogOwedBanner from "./components/CartLogOwedBanner";
 import OrderHistoryModal from "./components/OrderHistoryModal";
 import DateWindowNav from "./components/DateWindowNav";
-import UpsellPerformancePage, { type UpsellPerfOrder } from "./pages/UpsellPerformancePage";
-import RepProductPerformancePage, { type RepProductOrder } from "./pages/RepProductPerformancePage";
-import RepWeeklyReportPage from "./pages/RepWeeklyReportPage";
+import type { UpsellPerfOrder } from "./pages/UpsellPerformancePage";
+import type { RepProductOrder } from "./pages/RepProductPerformancePage";
 import type { ManagerFundTxn, WeeklyLogMissRow } from "./lib/api";
 import { HeadOfSalesReviewPanel, headOfSalesBonusStatus, useHeadOfSalesReview } from "./components/HeadOfSalesParts";
 import RepScriptsPanel from "./components/RepScriptsPanel";
 import { buildEmbedSnippet } from "./lib/embed-snippet";
-import TrackingHubPage from "./pages/TrackingHubPage";
 import EmbedTrackingChoice from "./components/EmbedTrackingChoice";
 import { MetaCapiSummary, MetaOrderEventsCard } from "./components/MetaCapiParts";
 import SalesScriptingPage, { SalesScriptingOverviewCard } from "./pages/SalesScriptingPage";
-import ReportBugPage from "./pages/ReportBugPage";
-import MyReportsPage from "./pages/MyReportsPage";
-import IssueManagementPage from "./pages/IssueManagementPage";
 import { installErrorRecorder } from "./lib/error-recorder";
 
 // Failed requests and page errors in this tab, for bug reports (Issue Management).
 installErrorRecorder();
-import ScriptUsageReportPage from "./pages/ScriptUsageReportPage";
-import ManagerFundsTab from "./pages/ManagerFundsTab";
-import ManagerWeeklyReviewPage, { type ReviewRepRow } from "./pages/ManagerWeeklyReviewPage";
+import type { ReviewRepRow } from "./pages/ManagerWeeklyReviewPage";
 import { itemCountLabel } from "./lib/item-count-label";
-import TeamChallengesManager from "./components/team-challenges/TeamChallengesManager";
-import TeamChallengesRep from "./components/team-challenges/TeamChallengesRep";
-import OwnerWeeklyApprovalPage, { type WeeklyFinancialSummary } from "./pages/OwnerWeeklyApprovalPage";
-import { CompanyReportHistoryPage, MyReportsHistoryPage, WeeklyAuditLogPage } from "./pages/WeeklyReportHistoryPages";
+import type { WeeklyFinancialSummary } from "./pages/OwnerWeeklyApprovalPage";
 import {
   buildCompanySnapshot, buildRepWeeklySnapshot, compareSnapshots,
   FIRST_REPORT_WEEK, WEEKLY_RATE_RULE_FROM, weeklyRateRule, monthlyIncentiveForWeek, reportDueDate, reportOpensOn, runBonusCheck, wasSubmittedLate, withMissingFees, withPayoutChange, bonusWeekFor, type ManagerBonusPreview, type NamedOrderLookup, type WeeklyReportSnapshot
@@ -280,10 +253,8 @@ import {
   formatWindow as formatDateWindow, shiftDay as windowShiftDay, weekStart as windowWeekStart, windowLabel as dateWindowLabel,
   shiftWindow as shiftDateWindow, windowSize as dateWindowSize
 } from "./lib/date-window";
-import RecoveryBonusCalendar from "./components/RecoveryBonusCalendar";
 import UpgradeBonusGrid, { withUpgradeAmount } from "./components/UpgradeBonusGrid";
 import AlertRoutingSettings from "./components/settings/AlertRoutingSettings";
-import OrderReceiptSheet from "./components/order-receipt/OrderReceiptSheet";
 import { STALE_TIER_STYLE, staleOrderVerdict, summariseStaleOrders } from "./lib/stale-orders";
 import { indexCostChanges, ProductCostChange, unitCostAsOf } from "./lib/product-cost-history";
 import { spaceNaira } from "./lib/naira-glyph";
@@ -291,7 +262,39 @@ import {
   isMoneyHidden, maskFormattedMoney, maskMoneyText, money, money as moneyAmount,
   setActiveCurrency, setMoneyHiddenGlobal, shortMoney, subscribeMoneyHidden
 , currencySymbol } from "./lib/money-privacy";
-import { SalesClosersOwnerPage } from "./pages/SalesClosersOwnerPage";
+import { lazyPage } from "./lib/lazy-page";
+import type { ProductsStockPage as ProductsStockPageType } from "./components/products-stock/ProductsStockPage";
+
+// ── Pages loaded on demand (30 Oct 2026, see lib/lazy-page.tsx) ──
+const ManagerProductChallenges = lazyPage(() => import("./components/ManagerProductChallenges").then((m) => ({ default: m.ManagerProductChallenges })));
+const InventoryLogisticsOperationsPage = lazyPage(() => import("./pages/InventoryLogisticsOperationsPage").then((m) => ({ default: m.InventoryLogisticsOperationsPage })));
+const SalesCloserWorkspacePage = lazyPage(() => import("./pages/SalesCloserWorkspacePage").then((m) => ({ default: m.SalesCloserWorkspacePage })));
+// Generic component: keep its own type (the wrapper would lose the <P>).
+const ProductsStockPage = lazyPage(() => import("./components/products-stock/ProductsStockPage").then((m) => ({ default: m.ProductsStockPage }))) as unknown as typeof ProductsStockPageType;
+const AgentAccessPage = lazyPage(() => import("./pages/AgentAccessPage"));
+const CashFlowPage = lazyPage(() => import("./pages/CashFlowPage"));
+const MarketingPerformancePage = lazyPage(() => import("./pages/MarketingPerformancePage"));
+const ProductTrendPage = lazyPage(() => import("./pages/product-trend/ProductTrendPage"));
+const WeeklyOpeningCashWizard = lazyPage(() => import("./pages/WeeklyOpeningCashWizard"));
+const UpsellPerformancePage = lazyPage(() => import("./pages/UpsellPerformancePage"));
+const RepProductPerformancePage = lazyPage(() => import("./pages/RepProductPerformancePage"));
+const RepWeeklyReportPage = lazyPage(() => import("./pages/RepWeeklyReportPage"));
+const TrackingHubPage = lazyPage(() => import("./pages/TrackingHubPage"));
+const ReportBugPage = lazyPage(() => import("./pages/ReportBugPage"));
+const MyReportsPage = lazyPage(() => import("./pages/MyReportsPage"));
+const IssueManagementPage = lazyPage(() => import("./pages/IssueManagementPage"));
+const ScriptUsageReportPage = lazyPage(() => import("./pages/ScriptUsageReportPage"));
+const ManagerFundsTab = lazyPage(() => import("./pages/ManagerFundsTab"));
+const ManagerWeeklyReviewPage = lazyPage(() => import("./pages/ManagerWeeklyReviewPage"));
+const TeamChallengesManager = lazyPage(() => import("./components/team-challenges/TeamChallengesManager"));
+const TeamChallengesRep = lazyPage(() => import("./components/team-challenges/TeamChallengesRep"));
+const OwnerWeeklyApprovalPage = lazyPage(() => import("./pages/OwnerWeeklyApprovalPage"));
+const CompanyReportHistoryPage = lazyPage(() => import("./pages/WeeklyReportHistoryPages").then((m) => ({ default: m.CompanyReportHistoryPage })));
+const MyReportsHistoryPage = lazyPage(() => import("./pages/WeeklyReportHistoryPages").then((m) => ({ default: m.MyReportsHistoryPage })));
+const WeeklyAuditLogPage = lazyPage(() => import("./pages/WeeklyReportHistoryPages").then((m) => ({ default: m.WeeklyAuditLogPage })));
+const RecoveryBonusCalendar = lazyPage(() => import("./components/RecoveryBonusCalendar"));
+const OrderReceiptSheet = lazyPage(() => import("./components/order-receipt/OrderReceiptSheet"));
+const SalesClosersOwnerPage = lazyPage(() => import("./pages/SalesClosersOwnerPage").then((m) => ({ default: m.SalesClosersOwnerPage })));
 
 const ORG_MANIFEST_PATH = "/org-manifest.webmanifest";
 // These screens monitor trends rather than a single live cart. They load the
