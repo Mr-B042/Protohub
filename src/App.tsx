@@ -4197,9 +4197,20 @@ const chooseRangeDate = (range: DateRange, nextDate: string): DateRange => {
 // a day in the org timezone (Settings -> Timezone, default Africa/Lagos).
 // formatDateKey itself stays as it is: it is also used for pure day arithmetic
 // on local-midnight Date objects, where switching zone would shift days.
+// ⚠️ SPEED: toLocaleDateString(…, { timeZone }) builds a new formatter on every
+// call, and this runs for every order on every filter and redraw - on a slow
+// phone opening Orders froze for ~28 s. One formatter per zone is reused, and
+// a timestamp already turned into a day is remembered (same result, no work).
+let orgDayFormatter: { zone: string; format: Intl.DateTimeFormat } | null = null;
+const orgDayKeyByTimestamp = new Map<string, string>();
 const orgDayKey = (date: Date) => {
   try {
-    return date.toLocaleDateString("en-CA", { timeZone: _currentTimezone || DEFAULT_TIMEZONE });
+    const zone = _currentTimezone || DEFAULT_TIMEZONE;
+    if (orgDayFormatter?.zone !== zone) {
+      orgDayFormatter = { zone, format: new Intl.DateTimeFormat("en-CA", { timeZone: zone }) };
+      orgDayKeyByTimestamp.clear();
+    }
+    return orgDayFormatter.format.format(date);
   } catch {
     return formatDateKey(date);
   }
@@ -4238,11 +4249,19 @@ const normalizeDateKey = (value?: string) => {
     return value;
   }
 
+  // Only zoned timestamps are remembered, and only for the zone they were worked out in.
+  const known = orgDayKeyByTimestamp.get(value);
+  if (known !== undefined && orgDayFormatter?.zone === (_currentTimezone || DEFAULT_TIMEZONE)) return known;
+
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return todayKey();
   // A moment with a zone (…Z or …+01:00, e.g. an order's created_at) is a day
   // in the org timezone. A bare local "YYYY-MM-DDTHH:MM" keeps the device day.
-  return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value.trim()) ? orgDayKey(parsed) : formatDateKey(parsed);
+  if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(value.trim())) return formatDateKey(parsed);
+  const day = orgDayKey(parsed); // clears the remembered days if the zone changed
+  if (orgDayKeyByTimestamp.size > 50000) orgDayKeyByTimestamp.clear();
+  orgDayKeyByTimestamp.set(value, day);
+  return day;
 };
 const isTodayDate = (value?: string | null) => {
   if (!value) return false;
