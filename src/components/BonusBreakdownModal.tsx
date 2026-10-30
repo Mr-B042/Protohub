@@ -72,6 +72,14 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder, 
   const estBaseEach = paidCount > 0 ? Math.round(fullBase / paidCount) : 0;
   const nextWeekEstimate = estBaseEach * paidNextWeek.length;
   const liveDetail = new Map((detailSource?.orders ?? []).map((order) => [order.id, order]));
+  // Date ranges for the cards (Bright, 30 Oct 2026: "put the date range").
+  const span = (keys: Array<string | null | undefined>) => {
+    const days = keys.filter((key): key is string => !!key).map((key) => key.slice(0, 10)).sort();
+    if (days.length === 0) return "";
+    return days[0] === days[days.length - 1] ? dayText(days[0]) : `${dayText(days[0])} – ${dayText(days[days.length - 1])}`;
+  };
+  const weekSpan = `${dayText(snap.weekStart)} – ${dayText(snap.weekEnd)}`;
+  const nextPayWeek = paidNextWeek.length > 0 ? bonusWeekFor(paidNextWeek[0].date, paidNextWeek[0].deliveredDate) : null;
   const showNotPaidList = () => document.getElementById("not-paid-list")?.scrollIntoView({ behavior: "smooth", block: "start" });
 
   const thisWeek = partsOf(paidNow);
@@ -105,23 +113,38 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder, 
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-500/30 dark:bg-emerald-500/10">
             <p className="m-0 text-[12px] font-bold text-emerald-800 dark:text-emerald-200">This week's own bonus</p>
             <p className="m-0 mt-0.5 text-[24px] font-black leading-tight text-emerald-900 dark:text-emerald-100">{money(thisWeek.total)}</p>
-            <p className="m-0 text-[12px] text-emerald-800 dark:text-emerald-200">{nf(paidNow.length)} order{paidNow.length === 1 ? "" : "s"} placed this week, delivered by {cutoffText}</p>
+            <p className="m-0 text-[12px] text-emerald-800 dark:text-emerald-200">{nf(paidNow.length)} order{paidNow.length === 1 ? "" : "s"}</p>
+            <dl className="m-0 mt-1 grid grid-cols-[auto_1fr] gap-x-2 text-[11.5px] text-emerald-900 dark:text-emerald-100">
+              <dt className="opacity-70">Placed</dt><dd className="m-0 font-semibold">{weekSpan}</dd>
+              <dt className="opacity-70">Delivered</dt><dd className="m-0 font-semibold">{span(paidNow.map((order) => order.deliveredDate)) || "-"}</dd>
+            </dl>
           </div>
           <div className="rounded-2xl border border-blue-200 bg-blue-50 p-3 dark:border-blue-500/30 dark:bg-blue-500/10">
             <p className="m-0 text-[12px] font-bold text-blue-800 dark:text-blue-200">Carry-over bonus</p>
             <p className="m-0 mt-0.5 text-[24px] font-black leading-tight text-blue-900 dark:text-blue-100">{money(earlier.total + lateParts.total)}</p>
             <p className="m-0 text-[12px] text-blue-800 dark:text-blue-200">{nf(carried.length + late.length)} order{carried.length + late.length === 1 ? "" : "s"} from earlier weeks{late.length > 0 ? ` (incl. ${nf(late.length)} recorded late)` : ""}</p>
+            <dl className="m-0 mt-1 grid grid-cols-[auto_1fr] gap-x-2 text-[11.5px] text-blue-900 dark:text-blue-100">
+              <dt className="opacity-70">Placed</dt><dd className="m-0 font-semibold">{span([...carried, ...late].map((order) => order.date)) || "-"}</dd>
+              <dt className="opacity-70">Delivered</dt><dd className="m-0 font-semibold">{span([...carried, ...late].map((order) => order.deliveredDate)) || "-"}</dd>
+            </dl>
           </div>
           <div className="rounded-2xl bg-gray-900 p-3 text-white dark:bg-slate-700">
             <p className="m-0 text-[12px] font-bold text-white/80">Total to be paid this week</p>
             <p className="m-0 mt-0.5 text-[24px] font-black leading-tight">{money(thisWeek.total + earlier.total + lateParts.total)}</p>
-            <p className="m-0 text-[12px] text-white/80">{nf(paidCount)} delivered orders{Math.round(t.finalBonus) !== Math.round(thisWeek.total + earlier.total + lateParts.total) ? ` · final pay after cuts and changes: ${money(Math.round(t.finalBonus))}` : ""}</p>
+            <p className="m-0 text-[12px] text-white/80">{nf(paidCount)} delivered orders · report for {weekSpan} (due {dayText(reportDueDate(snap.weekStart))})</p>
+            {Math.round(t.finalBonus) !== Math.round(thisWeek.total + earlier.total + lateParts.total) ? <p className="m-0 mt-1 text-[12px] font-bold text-amber-300">Final pay after cuts and changes: {money(Math.round(t.finalBonus))}</p> : null}
           </div>
           {/* This week's orders delivered after the cut-off: paid next week (Bright, 30 Oct 2026). */}
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-500/30 dark:bg-amber-500/10">
             <p className="m-0 text-[12px] font-bold text-amber-800 dark:text-amber-200">To be paid next week</p>
             <p className="m-0 mt-0.5 text-[24px] font-black leading-tight text-amber-900 dark:text-amber-100">{nextWeekEstimate > 0 ? `≈ ${money(nextWeekEstimate)}` : `${nf(paidNextWeek.length)} orders`}</p>
-            <p className="m-0 text-[12px] text-amber-800 dark:text-amber-200">{nf(paidNextWeek.length)} order{paidNextWeek.length === 1 ? "" : "s"} placed this week, delivered after {cutoffText}{estBaseEach > 0 ? ` · estimate: base ${money(estBaseEach)} each` : ""}. Not in this total: the exact amount (with any upsell / cross-sell) is in next week's report.</p>
+            <p className="m-0 text-[12px] text-amber-800 dark:text-amber-200">{nf(paidNextWeek.length)} order{paidNextWeek.length === 1 ? "" : "s"}{estBaseEach > 0 ? ` · estimate: base ${money(estBaseEach)} each` : ""}</p>
+            <dl className="m-0 mt-1 grid grid-cols-[auto_1fr] gap-x-2 text-[11.5px] text-amber-900 dark:text-amber-100">
+              <dt className="opacity-70">Placed</dt><dd className="m-0 font-semibold">{span(paidNextWeek.map((order) => order.date)) || "-"}</dd>
+              <dt className="opacity-70">Delivered</dt><dd className="m-0 font-semibold">{span(paidNextWeek.map((order) => order.deliveredDate)) || "-"}</dd>
+              <dt className="opacity-70">Paid in</dt><dd className="m-0 font-semibold">{nextPayWeek ? `report for ${weekRange(nextPayWeek)} (due ${dayText(reportDueDate(nextPayWeek))})` : "-"}</dd>
+            </dl>
+            <p className="m-0 mt-1 text-[11px] text-amber-800 dark:text-amber-200">Not in this total. The exact amount (with any upsell / cross-sell) is in that report.</p>
             {paidNextWeek.length > 0 ? <button type="button" onClick={showNotPaidList} className="!min-h-0 mt-1 text-[12px] font-bold text-amber-900 underline dark:text-amber-100">See the {nf(paidNextWeek.length)} orders ↓</button> : null}
           </div>
         </section>
