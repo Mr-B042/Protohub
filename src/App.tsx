@@ -26445,7 +26445,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const pending = week.repReports.filter((report) =>
       (report.status === "submitted" || report.status === "manager_approved")
       && report.snapshot
-      && (ladderWeek ? (report.snapshot as WeeklyReportSnapshot).upgradeLadder !== "highest_step" : (report.snapshot as WeeklyReportSnapshot).totals?.bonusBeforeRateCut == null)
+      && (ladderWeek
+        ? !((report.snapshot as WeeklyReportSnapshot).upgradeLadder === "highest_step" && (report.snapshot as WeeklyReportSnapshot).deliveryBonusRule === 1)
+        : (report.snapshot as WeeklyReportSnapshot).totals?.bonusBeforeRateCut == null)
       && !weeklyReworkTriedRef.current.has(report.id));
     if (pending.length === 0) return;
     void (async () => {
@@ -26454,18 +26456,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         weeklyReworkTriedRef.current.add(report.id);
         const name = users.find((user) => user.id === report.repId)?.name ?? "Sales rep";
         const live = buildWeeklyRepSnapshot({ id: report.repId, name }, weeklyReportWeekStart, week.fines ?? [], week.previousFines ?? [], week.adjustments ?? [], week.previousAdjustments ?? [], week.logMisses ?? [], week.previousLogMisses ?? [], week.carriedFines?.[report.repId] ?? 0);
-        if (!live || (ladderWeek ? live.upgradeLadder !== "highest_step" : live.totals.bonusBeforeRateCut == null)) continue;
+        if (!live || (ladderWeek ? !(live.upgradeLadder === "highest_step" && live.deliveryBonusRule === 1) : live.totals.bonusBeforeRateCut == null)) continue;
         // Safety: the rule changes money, never the order counts. If the counts
         // differ from what the rep sent (orders still loading, or edited since),
         // leave the report for the manager instead of writing doubtful figures.
         const sent = report.snapshot as WeeklyReportSnapshot;
         if (live.totals.orders !== sent.totals.orders || live.totals.delivered !== sent.totals.delivered || live.totals.deliveredForBonus !== sent.totals.deliveredForBonus) continue;
         // The ladder fix only changes upsell pay: leave every other report as sent.
-        if (ladderWeek && Math.round(live.totals.upsellBonus ?? 0) === Math.round(sent.totals.upsellBonus ?? 0)) continue;
+        // Only reports whose upsell or delivery bonus actually changes.
+        if (ladderWeek && Math.round(live.totals.upsellBonus ?? 0) === Math.round(sent.totals.upsellBonus ?? 0)
+          && Math.round(live.totals.deliveryBonus ?? 0) === Math.round(sent.totals.deliveryBonus ?? 0)) continue;
         try { const result = await weeklyReportsApi.reworkFigures(report.repId, { weekStart: weeklyReportWeekStart, snapshot: live }); if (!result.already) changed += 1; }
         catch (err: any) { console.warn("[weekly] re-work skipped", report.repId, err?.message); }
       }
-      if (changed > 0) { showToast(`${changed} sent report${changed === 1 ? "" : "s"} updated to ${ladderWeek ? "the corrected upgrade bonus" : "the new delivery-rate rule"}.`); weeklyRefresh(); }
+      if (changed > 0) { showToast(`${changed} sent report${changed === 1 ? "" : "s"} updated to ${ladderWeek ? "the corrected upgrade bonus and the weekly delivery bonus" : "the new delivery-rate rule"}.`); weeklyRefresh(); }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weeklyWeek, weeklyBonusMaps, weeklyReportWeekStart, currentRole, isPreviewing, hasCompletedInitialDataLoad]);

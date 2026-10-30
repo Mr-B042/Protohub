@@ -1,3 +1,4 @@
+import { DeliveryBonusCard } from "../components/DeliveryBonusCard";
 import MonthlyIncentiveSection from "./MonthlyIncentiveSection";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -307,6 +308,12 @@ export default function RepWeeklyReportPage({
                 </table>
               </div>
             </Panel>
+
+            {/* ── Weekly delivery bonus (Bright, 30 Oct 2026): progress while the
+                week runs and before sending; the result once sent. ────────── */}
+            {snap?.deliveryBonus ? (
+              <DeliveryBonusCard bonus={snap.deliveryBonus} mode={showingFrozen ? "result" : "progress"} sym={sym} orders={snap.totals.orders} delivered={snap.totals.delivered} />
+            ) : null}
 
             {/* ── 4 Bonus Breakdown ──────────────────────────────── */}
             <Panel>

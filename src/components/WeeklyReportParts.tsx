@@ -534,13 +534,14 @@ export function MissingFeeNote({ detail, sym = "₦", onOpen }: { detail: Missin
  * stays on record beside the change for the owner to compare.
  */
 /** The "Initial" and "Taken off" cells of a rep row (Bright, 14 Oct 2026). */
-export function BonusInitialCells({ info, sym }: { info: { initial: number; takenOff: number; items: Array<{ label: string; amount: number }>; extraInInitial?: number }; sym: string }) {
+export function BonusInitialCells({ info, sym }: { info: { initial: number; takenOff: number; items: Array<{ label: string; amount: number }>; extraInInitial?: number; deliveryInInitial?: number }; sym: string }) {
   return (
     <>
       <td className="px-2 py-3 font-semibold text-gray-800 dark:text-slate-200">
         {nf(info.initial)}
         {/* Cross-sell + Upsell + Base = Initial, unless corrections or an amount
             the manager added come on top: then say so. */}
+        {(info.deliveryInInitial ?? 0) > 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-emerald-700">incl. +{sym}{nf(info.deliveryInInitial ?? 0)} delivery bonus</span>}
         {(info.extraInInitial ?? 0) > 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-gray-500">incl. +{sym}{nf(info.extraInInitial ?? 0)} corrections / added</span>}
       </td>
       <td className="px-2 py-3 align-top">

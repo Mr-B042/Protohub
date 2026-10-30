@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowRight, CalendarClock, CheckCircle2, History, Package, Search, Truck } from "lucide-react";
 import { Fragment, useState, type ReactNode } from "react";
 import { Modal, longDate, nf } from "./WeeklyReportParts";
+import { DeliveryBonusCard } from "./DeliveryBonusCard";
 import { PAY_BY_REPORT_DAY_FROM, bonusComponentsFull, bonusInitialFinal, bonusWeekFor, reportDueDate, type WeeklyReportSnapshot } from "../pages/weekly-report-model";
 
 /**
@@ -130,9 +131,10 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder, 
           </div>
           <div className="rounded-2xl bg-gray-900 p-3 text-white dark:bg-slate-700">
             <p className="m-0 text-[12px] font-bold text-white/80">Total to be paid this week</p>
-            <p className="m-0 mt-0.5 text-[24px] font-black leading-tight">{money(thisWeek.total + earlier.total + lateParts.total)}</p>
+            <p className="m-0 mt-0.5 text-[24px] font-black leading-tight">{money(thisWeek.total + earlier.total + lateParts.total + Math.round(t.deliveryBonus ?? 0))}</p>
+            {(t.deliveryBonus ?? 0) > 0 ? <p className="m-0 text-[12px] font-bold text-emerald-300">incl. {money(Math.round(t.deliveryBonus ?? 0))} weekly delivery bonus</p> : null}
             <p className="m-0 text-[12px] text-white/80">{nf(paidCount)} delivered orders · report for {weekSpan} (due {dayText(reportDueDate(snap.weekStart))})</p>
-            {Math.round(t.finalBonus) !== Math.round(thisWeek.total + earlier.total + lateParts.total) ? <p className="m-0 mt-1 text-[12px] font-bold text-amber-300">Final pay after cuts and changes: {money(Math.round(t.finalBonus))}</p> : null}
+            {Math.round(t.finalBonus) !== Math.round(thisWeek.total + earlier.total + lateParts.total + (t.deliveryBonus ?? 0)) ? <p className="m-0 mt-1 text-[12px] font-bold text-amber-300">Final pay after cuts and changes: {money(Math.round(t.finalBonus))}</p> : null}
           </div>
           {/* This week's orders delivered after the cut-off: paid next week (Bright, 30 Oct 2026). */}
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-500/30 dark:bg-amber-500/10">
@@ -148,6 +150,8 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder, 
             {paidNextWeek.length > 0 ? <button type="button" onClick={showNotPaidList} className="!min-h-0 mt-1 text-[12px] font-bold text-amber-900 underline dark:text-amber-100">See the {nf(paidNextWeek.length)} orders ↓</button> : null}
           </div>
         </section>
+
+        {snap.deliveryBonus ? <DeliveryBonusCard bonus={snap.deliveryBonus} mode="result" sym={sym} orders={t.orders} delivered={t.delivered} /> : null}
 
         {/* 1. Which deliveries are paid this week */}
         <section>
@@ -235,6 +239,7 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder, 
               note={`Base ${money(Math.round(full.base))} + Upsell ${money(Math.round(full.upsell))} + Cross-sell ${money(Math.round(full.crossSell))}. These are the columns on the reps table.`} />
             {cutItems.map((item) => <Step key={item.label} minus label={item.label} value={`-${money(item.amount)}`} />)}
             <Step total label="Bonus earned (section 2)" value={money(paid.total)} />
+            {(t.deliveryBonus ?? 0) > 0 ? <Step plus label="Weekly delivery bonus" value={`+${money(Math.round(t.deliveryBonus ?? 0))}`} note={snap.deliveryBonus?.topProduct ? `₦400 × ${snap.deliveryBonus.topProduct.delivered} ${snap.deliveryBonus.topProduct.name}${snap.deliveryBonus.mainOrders ? ` + ₦300 × ${snap.deliveryBonus.mainOrders}` : ""}` : `₦300 × ${snap.deliveryBonus?.mainOrders ?? 0} delivered orders`} /> : null}
             {adjustments > 0 ? <Step plus label="Corrections paid this week (answered bonus queries)" value={`+${money(adjustments)}`} /> : null}
             {added > 0 ? <Step plus label="Added by the manager" value={`+${money(added)}`} note={changeNote} /> : null}
             {otherTaken.map((item) => <Step key={item.label} minus label={item.label} value={`-${money(item.amount)}`} note={item.label === "Taken off by the manager" ? changeNote : undefined} />)}
