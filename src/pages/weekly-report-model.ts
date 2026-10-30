@@ -234,7 +234,9 @@ export type WeeklyReportSnapshot = {
    *  step reached (Bright, 29 Oct 2026). Missing = the old, added-up ladder. */
   upgradeLadder?: "highest_step";
   /** Set on reports worked out with the weekly delivery bonus (from 18 Oct 2026). */
-  deliveryBonusRule?: 1;
+  /** 1 = first version (rate added on top, on all delivered); 2 = rate replaces
+   *  the base on own-week paid orders. A report on 1 is re-worked to 2. */
+  deliveryBonusRule?: 1 | 2;
   deliveryBonus?: DeliveryBonus | null;
   repId: string;
   repName: string;
@@ -807,7 +809,7 @@ export function buildRepWeeklySnapshot(input: {
     },
     previous: input.previous,
     upgradeLadder: "highest_step",
-    deliveryBonusRule: 1,
+    deliveryBonusRule: 2,
     ...(deliveryBonus ? { deliveryBonus } : {}),
     ...(input.monthlyIncentive ? { monthlyIncentive: input.monthlyIncentive } : {}),
     products,

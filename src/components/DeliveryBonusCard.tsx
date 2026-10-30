@@ -57,13 +57,13 @@ export function DeliveryBonusCard({ bonus, mode, sym, orders, delivered }: {
         <div className="mt-3 space-y-1 rounded-xl bg-white px-3 py-2 text-[12.5px] dark:bg-slate-900">
           {bonus.topProduct ? (
             <p className="m-0 flex justify-between gap-2">
-              <span>{bonus.topProduct.name}: {money(DELIVERY_BONUS_TOP.perOrder)} × {bonus.topProduct.paidOrders} = {money(DELIVERY_BONUS_TOP.perOrder * bonus.topProduct.paidOrders)} <span className="text-gray-500">(base was {money(bonus.topProduct.baseWas)})</span></span>
+              <span>{bonus.topProduct.name}: {money(DELIVERY_BONUS_TOP.perOrder)} × {bonus.topProduct.paidOrders} = {money(DELIVERY_BONUS_TOP.perOrder * bonus.topProduct.paidOrders)} {Number.isFinite(bonus.topProduct.baseWas) ? <span className="text-gray-500">(base was {money(bonus.topProduct.baseWas)})</span> : null}</span>
               <b>+{money(bonus.topProduct.amount)}</b>
             </p>
           ) : null}
           {bonus.mainOrders > 0 ? (
             <p className="m-0 flex justify-between gap-2">
-              <span>{money(DELIVERY_BONUS_MAIN.perOrder)} × {bonus.mainOrders} own-week delivered order{bonus.mainOrders === 1 ? "" : "s"}{bonus.topProduct ? " (other products)" : ""} = {money(DELIVERY_BONUS_MAIN.perOrder * bonus.mainOrders)} <span className="text-gray-500">(base was {money(bonus.mainBaseWas)})</span></span>
+              <span>{money(DELIVERY_BONUS_MAIN.perOrder)} × {bonus.mainOrders} own-week delivered order{bonus.mainOrders === 1 ? "" : "s"}{bonus.topProduct ? " (other products)" : ""} = {money(DELIVERY_BONUS_MAIN.perOrder * bonus.mainOrders)} {Number.isFinite(bonus.mainBaseWas) ? <span className="text-gray-500">(base was {money(bonus.mainBaseWas)})</span> : null}</span>
               <b>+{money(bonus.mainAmount)}</b>
             </p>
           ) : null}

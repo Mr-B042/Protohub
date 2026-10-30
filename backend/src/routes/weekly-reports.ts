@@ -972,7 +972,7 @@ const REWORK_WEEKS: Record<string, { done: (snapshot: any) => boolean; label: st
   "2026-10-18": {
     // Re-worked once for the upgrade ladder (29 Oct) and again for the weekly
     // delivery bonus, which Bright started from this week (30 Oct 2026).
-    done: (snapshot) => snapshot?.upgradeLadder === "highest_step" && snapshot?.deliveryBonusRule === 1,
+    done: (snapshot) => snapshot?.upgradeLadder === "highest_step" && snapshot?.deliveryBonusRule === 2,
     label: "the corrected upgrade ladder and the weekly delivery bonus",
     why: "Upgrade ladder paid only the highest step (29 Oct 2026); weekly delivery bonus ₦400 / ₦300 per delivered order from this week (Bright, 30 Oct 2026)",
     // Bright, 29 Oct 2026: leave this rep's week as sent; the corrected
