@@ -90,6 +90,32 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder, 
 
         <OrderFinder snap={snap} repName={repName} money={money} lookupOrder={lookupOrder} />
 
+        {/* This week's own bonus vs carry-over (Bright, 30 Oct 2026): two clear
+            amounts, with how many orders each, before any detail. */}
+        <section className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-500/30 dark:bg-emerald-500/10">
+            <p className="m-0 text-[12px] font-bold text-emerald-800 dark:text-emerald-200">This week's own bonus</p>
+            <p className="m-0 mt-0.5 text-[24px] font-black leading-tight text-emerald-900 dark:text-emerald-100">{money(thisWeek.total)}</p>
+            <p className="m-0 text-[12px] text-emerald-800 dark:text-emerald-200">{nf(paidNow.length)} order{paidNow.length === 1 ? "" : "s"} placed this week, delivered by {cutoffText}</p>
+          </div>
+          <div className="rounded-2xl border border-blue-200 bg-blue-50 p-3 dark:border-blue-500/30 dark:bg-blue-500/10">
+            <p className="m-0 text-[12px] font-bold text-blue-800 dark:text-blue-200">Carry-over bonus</p>
+            <p className="m-0 mt-0.5 text-[24px] font-black leading-tight text-blue-900 dark:text-blue-100">{money(earlier.total + lateParts.total)}</p>
+            <p className="m-0 text-[12px] text-blue-800 dark:text-blue-200">{nf(carried.length + late.length)} order{carried.length + late.length === 1 ? "" : "s"} from earlier weeks{late.length > 0 ? ` (incl. ${nf(late.length)} recorded late)` : ""}</p>
+          </div>
+          <div className="rounded-2xl bg-gray-900 p-3 text-white dark:bg-slate-700">
+            <p className="m-0 text-[12px] font-bold text-white/80">Total to be paid this week</p>
+            <p className="m-0 mt-0.5 text-[24px] font-black leading-tight">{money(thisWeek.total + earlier.total + lateParts.total)}</p>
+            <p className="m-0 text-[12px] text-white/80">{nf(paidCount)} delivered orders{Math.round(t.finalBonus) !== Math.round(thisWeek.total + earlier.total + lateParts.total) ? ` · final pay after cuts and changes: ${money(Math.round(t.finalBonus))}` : ""}</p>
+          </div>
+          {/* This week's orders delivered after the cut-off: paid next week (Bright, 30 Oct 2026). */}
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-500/30 dark:bg-amber-500/10">
+            <p className="m-0 text-[12px] font-bold text-amber-800 dark:text-amber-200">To be paid next week</p>
+            <p className="m-0 mt-0.5 text-[24px] font-black leading-tight text-amber-900 dark:text-amber-100">{nf(paidNextWeek.length)} order{paidNextWeek.length === 1 ? "" : "s"}</p>
+            <p className="m-0 text-[12px] text-amber-800 dark:text-amber-200">Placed this week, delivered after {cutoffText}. Not in this total: paid in next week's report as carry-over.</p>
+          </div>
+        </section>
+
         {/* 1. Which deliveries are paid this week */}
         <section>
           <SectionTitle n={1} title="Which deliveries are paid this week" />

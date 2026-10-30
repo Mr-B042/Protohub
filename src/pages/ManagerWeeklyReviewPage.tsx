@@ -713,6 +713,12 @@ export default function ManagerWeeklyReviewPage({
                                       className="!min-h-0 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-[#1F8FE0] dark:hover:bg-slate-800"><Pencil className="h-3 w-3" /></button>
                                   )}
                                 </span>
+                                {/* Own week vs carry-over (Bright, 30 Oct 2026), both after any rate cut. */}
+                                {snap && (snap.totals.carryOverBonus ?? 0) > 0 && (() => {
+                                  const earned = Math.round(snap.totals.baseBonus + snap.totals.upsellBonus + snap.totals.crossSellBonus);
+                                  const carry = Math.round(snap.totals.carryOverBonus ?? 0);
+                                  return <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-gray-500"><span className="text-emerald-700">{sym}{nf(earned - carry)} this week</span> + <span className="text-blue-700">{sym}{nf(carry)} carry-over</span></span>;
+                                })()}
                                 {row.payoutChange && <PayoutChangeNote change={row.payoutChange} sym={sym} />}
                                 {snap?.missingFeeDetail && <MissingFeeNote detail={snap.missingFeeDetail} sym={sym} onOpen={() => setDecisionsFor({ repId: row.repId, kind: "missing_fee" })} />}
                                 <LateSendNote detail={row.lateSend} sym={sym} onOpen={() => setDecisionsFor({ repId: row.repId, kind: "late_send" })} />
