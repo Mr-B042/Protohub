@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { shareRepeatedPictures } from "../lib/shared-pictures.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { Router } from "express";
 import { z } from "zod";
@@ -105,7 +106,7 @@ router.get("/", async (req, res) => {
     .order("created_at", { ascending: false });
 
   if (error) { res.status(500).json({ error: error.message }); return; }
-  const rows = data ?? [];
+  const rows = req.query.shared_pictures === "1" ? shareRepeatedPictures(data ?? []) : data ?? [];
   res.json(
     req.user!.role === "Marketer"
       ? rows.map(productForMarketer)

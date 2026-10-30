@@ -2,6 +2,7 @@
 // All requests go through `request()` which attaches the Bearer token
 // and auto-refreshes if the token has expired (401).
 
+import { restoreSharedPictures } from "./shared-pictures";
 import type { LateSendWeek } from "../components/WeeklyReportParts";
 import type { MissingFeeDetail } from "../pages/weekly-report-model";
 import { recordFailedRequest } from "./error-recorder";
@@ -614,8 +615,9 @@ const normaliseProductRow = (row: any) => ({
 
 export const productsApi = {
   list: async () => {
-    const rows = await get<any[]>("/api/products");
-    return Array.isArray(rows) ? rows.map(normaliseProductRow) : rows;
+    // Repeated add-on pictures come once and are put back here (lib/shared-pictures.ts).
+    const rows = await get<any[]>("/api/products?shared_pictures=1");
+    return Array.isArray(rows) ? restoreSharedPictures(rows).map(normaliseProductRow) : rows;
   },
   // Every recorded unit-cost move, so a historical line can be costed at what
   // it cost THEN instead of what the product record says today.
