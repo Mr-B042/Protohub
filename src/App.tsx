@@ -4181,7 +4181,21 @@ const chooseRangeDate = (range: DateRange, nextDate: string): DateRange => {
   return { start: range.start, end: nextDate };
 };
 
-const todayKey = () => formatDateKey(new Date());
+// ⚠️ Days are the ORGANISATION's days, not the device's (Bright, 30 Oct 2026).
+// formatDateKey reads the device's clock zone: a rep whose phone was set to a
+// US zone saw an order placed 07:05 Sunday Lagos as Saturday, so her weekly
+// report put it in the previous week. Timestamps (and "today") are turned into
+// a day in the org timezone (Settings -> Timezone, default Africa/Lagos).
+// formatDateKey itself stays as it is: it is also used for pure day arithmetic
+// on local-midnight Date objects, where switching zone would shift days.
+const orgDayKey = (date: Date) => {
+  try {
+    return date.toLocaleDateString("en-CA", { timeZone: _currentTimezone || DEFAULT_TIMEZONE });
+  } catch {
+    return formatDateKey(date);
+  }
+};
+const todayKey = () => orgDayKey(new Date());
 // Follow-up chase slots: the "later" (Afternoon or Evening) slot is locked until
 // noon Lagos so a rep can't clear both same-day slots in one morning sitting.
 // Morning stays open all day. Backend enforces the same rule authoritatively.
@@ -4216,7 +4230,10 @@ const normalizeDateKey = (value?: string) => {
   }
 
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? todayKey() : formatDateKey(parsed);
+  if (Number.isNaN(parsed.getTime())) return todayKey();
+  // A moment with a zone (…Z or …+01:00, e.g. an order's created_at) is a day
+  // in the org timezone. A bare local "YYYY-MM-DDTHH:MM" keeps the device day.
+  return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value.trim()) ? orgDayKey(parsed) : formatDateKey(parsed);
 };
 const isTodayDate = (value?: string | null) => {
   if (!value) return false;
