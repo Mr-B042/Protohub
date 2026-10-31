@@ -80,13 +80,13 @@ router.get("/", requireRole(...CART_LIST_ROLES), async (req, res) => {
   // Stock page has to tell those apart to count real waiting demand, and until
   // now the browser had no way to.
   //
-  // A recent/exact-cart request reads only the returned carts' history. A full
-  // history request keeps the existing parallel reads rather than multiplying
-  // queries for every historical cart.
+  // An exact-cart refresh reads only that cart's history. List requests keep
+  // the existing parallel reads: batching metadata for thousands of recent
+  // cart IDs would add many database round trips to the workspace load.
   const attempts = new Map<string, { code: string | null; at: string | null }>();
   const stripped = req.user!.role === "Inventory Manager & Logistics Operations"
     || scopeOf(req).role === "Inventory Manager & Logistics Operations";
-  const enrichmentRead: Promise<CartListEnrichment> = onlyId || dateFrom
+  const enrichmentRead: Promise<CartListEnrichment> = onlyId
     ? cartsRead.then((result) => readScopedCartListEnrichment(supabase, {
         orgId: req.user!.orgId,
         cartIds: result.error ? [] : result.rows.map((row) => String(row.id)),
