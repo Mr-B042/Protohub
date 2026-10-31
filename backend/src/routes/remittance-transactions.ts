@@ -3,6 +3,7 @@ import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { fetchAllRows } from "../lib/paginated-query.js";
+import { fetchPagesTogether } from "../lib/paged-fetch.js";
 import { requireAuth, scopeOf } from "../middleware/auth.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 
@@ -103,18 +104,21 @@ router.get("/", async (req, res) => {
   const receivedFrom = toWatUtcIso(dateFrom, "start");
   const receivedTo = toWatUtcIso(dateTo, "end");
 
-  const txResult = await fetchAllRows<any>(async (from, to) => {
+  // Pages, and the batched lookups below, are read together rather than one
+  // after another: this list took ~8 s and +300 MB a load (31 Oct 2026).
+  const txPages = await fetchPagesTogether(async (from, to, withCount) => {
     const result = await supabase
       .from("remittance_transactions")
-      .select("*")
+      .select("*", withCount ? { count: "exact" } : undefined)
       .eq("org_id", req.user!.orgId)
       .gte("received_at", receivedFrom)
       .lte("received_at", receivedTo)
       .order("received_at", { ascending: false })
       .order("id", { ascending: false })
       .range(from, to);
-    return { data: result.data, error: result.error };
-  });
+    return { data: result.data, error: result.error, count: result.count };
+  }, { limit: 200_000 });
+  const txResult = { data: txPages.rows, error: txPages.error as any };
 
   if (txResult.error) {
     if (isMissingRemittanceTableError(txResult.error)) {
@@ -145,13 +149,13 @@ router.get("/", async (req, res) => {
   );
 
   const receiptOrders: any[] = [];
-  for (const ids of chunk(orderIds, 500)) {
-    const result = await supabase
-      .from("orders")
-      .select("id, product_id, product_name, package_name, customer, created_at, delivered_date, assigned_rep_id, agent_id, agent_name_snapshot, amount, logistics_cost, amount_remitted, remittance_status")
-      .limit(REPORT_ROW_CEILING)
-      .eq("org_id", req.user!.orgId)
-      .in("id", ids);
+  const receiptResults = await Promise.all(chunk(orderIds, 500).map((ids) => supabase
+    .from("orders")
+    .select("id, product_id, product_name, package_name, customer, created_at, delivered_date, assigned_rep_id, agent_id, agent_name_snapshot, amount, logistics_cost, amount_remitted, remittance_status")
+    .limit(REPORT_ROW_CEILING)
+    .eq("org_id", req.user!.orgId)
+    .in("id", ids)));
+  for (const result of receiptResults) {
     if (result.error) {
       res.status(500).json({ error: result.error.message });
       return;
@@ -208,10 +212,10 @@ router.get("/", async (req, res) => {
   // ledger (not just receipts inside the selected date range). This catches a
   // genuinely missing historical ledger row without mislabeling a receipt
   // entered in an earlier/later accounting period.
-  const remittedOrdersResult = await fetchAllRows<any>(async (from, to) => {
+  const remittedOrdersPages = await fetchPagesTogether(async (from, to, withCount) => {
     let query = supabase
       .from("orders")
-      .select("id, customer, product_id, product_name, package_name, assigned_rep_id, agent_id, agent_name_snapshot, amount, logistics_cost, amount_remitted, remittance_status, delivered_date")
+      .select("id, customer, product_id, product_name, package_name, assigned_rep_id, agent_id, agent_name_snapshot, amount, logistics_cost, amount_remitted, remittance_status, delivered_date", withCount ? { count: "exact" } : undefined)
       .eq("org_id", req.user!.orgId)
       .eq("status", "Delivered")
       .gt("amount_remitted", 0)
@@ -222,8 +226,9 @@ router.get("/", async (req, res) => {
     if (scopeOf(req).role === "Sales Rep") query = query.eq("assigned_rep_id", scopeOf(req).id);
     if (requestedProductIds.length > 0) query = query.in("product_id", requestedProductIds);
     const result = await query.range(from, to);
-    return { data: result.data, error: result.error };
-  });
+    return { data: result.data, error: result.error, count: result.count };
+  }, { limit: 200_000 });
+  const remittedOrdersResult = { data: remittedOrdersPages.rows, error: remittedOrdersPages.error as any };
   if (remittedOrdersResult.error) {
     res.status(500).json({ error: remittedOrdersResult.error.message });
     return;
@@ -231,8 +236,8 @@ router.get("/", async (req, res) => {
 
   const remittedOrders = remittedOrdersResult.data ?? [];
   const ledgerOrderIds = new Set<string>();
-  for (const ids of chunk(remittedOrders.map((order: any) => String(order.id)), 500)) {
-    const ledgerResult = await fetchAllRows<any>(async (from, to) => {
+  const ledgerResults = await Promise.all(chunk(remittedOrders.map((order: any) => String(order.id)), 500).map((ids) =>
+    fetchAllRows<any>(async (from, to) => {
       const result = await supabase
         .from("remittance_transactions")
         .select("order_id")
@@ -241,7 +246,8 @@ router.get("/", async (req, res) => {
         .order("id", { ascending: true })
         .range(from, to);
       return { data: result.data, error: result.error };
-    });
+    })));
+  for (const ledgerResult of ledgerResults) {
     if (ledgerResult.error) {
       res.status(500).json({ error: ledgerResult.error.message });
       return;
