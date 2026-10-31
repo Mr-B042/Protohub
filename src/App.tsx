@@ -1,5 +1,6 @@
 import { type Dispatch, type ReactNode, type SetStateAction, Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { mergeWaybillWeeks } from "./lib/waybill-expense-lines";
+import { isCompleteOrderChunk, isCompleteWorkspaceHistory, mergeOlderRows, settleBootstrapResource } from "./lib/bootstrap-resource";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { PAGE_HELP, DEFAULT_HELP } from "./help-content";
@@ -180,18 +181,7 @@ import {
   type FollowUpOutcomeGroup,
   type FollowUpRecoveryBucket
 } from "./lib/followUpOutcomes";
-import {
-  Cell,
-  Legend,
-  Line,
-  LineChart,
-  Pie,
-  PieChart as RePieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis
-} from "recharts";
+import { DeferredCharts } from "./components/DeferredCharts";
 import {
   cartStats,
   emptyProductsIcon,
@@ -14628,6 +14618,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return window.location.hash.startsWith("#/order-form/embed");
   });
   const [dataRefreshing, setDataRefreshing] = useState(false);
+  const [ordersInitialLoadSettled, setOrdersInitialLoadSettled] = useState(() => !auth.isLoggedIn());
+  const ordersHaveLoadedRef = useRef(!auth.isLoggedIn());
+  const [ordersLoadError, setOrdersLoadError] = useState<string | null>(null);
+  const [ordersHistoryComplete, setOrdersHistoryComplete] = useState(false);
+  const [ordersHistoryError, setOrdersHistoryError] = useState("");
   const [hasCompletedInitialDataLoad, setHasCompletedInitialDataLoad] = useState(() => !auth.isLoggedIn());
   const hasCompletedInitialDataLoadRef = useRef(!auth.isLoggedIn());
   // ⚠️ The sign-in load shows the last 90 days first and brings older orders and
@@ -20405,7 +20400,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const cutoff = (heatmapWindow === "30" || heatmapWindow === "90") ? Date.now() - (heatmapWindow === "30" ? 30 : 90) * 86_400_000 : null;
     let max = 0;
     let total = 0;
-    for (const o of trackedOrders) {
+    for (const o of activePage === "Dashboard" ? trackedOrders : []) {
       if (!matchesProductFilter(o.productId, o.productName, dashboardProductIds)) continue;
       const raw = o.createdAt ?? o.date;
       if (!raw) continue;
@@ -22448,7 +22443,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       latenessMinutes
     };
   };
-  const managerPerformanceRowsLocal = salesTeams.map((team) => {
+  const managerPerformanceRowsLocal = (activePage === "Sales Teams" ? salesTeams : []).map((team) => {
     const memberIds = new Set(team.memberIds);
     const teamProductScope = new Set(team.productIds);
     const lead = users.find((user) => user.id === team.leadId);
@@ -22651,6 +22646,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     || salesTeams.length > 0
     || waybillRecords.length > 0;
   const workspacePageBlockingLoad = dataLoading && !hasRenderableWorkspaceData;
+  const orderWorkspaceBlockingLoad = !ordersInitialLoadSettled;
+  const orderWorkspaceCanRender = ordersInitialLoadSettled && (!ordersLoadError || trackedOrders.length > 0);
   const salesTeamsPageBlockingLoad = dataLoading && salesTeams.length === 0 && salesRepUsers.length === 0 && trackedOrders.length === 0;
   const agentRows = agents.map((agent) => {
     const assigned = trackedOrders.filter((order) =>
@@ -26705,7 +26702,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast(`Delivery fee for ${order.id} not synced: ${err?.message ?? "please retry"}.`);
     });
   };
-  const productProfitabilityRowsAll = products.map((product) => {
+  const productProfitabilityRowsAll = (activePage === "Finance & Accounting" ? products : []).map((product) => {
     const allOrders = financePeriodOrders.filter((order) => order.productId === product.id);
     const delivered = financeCohortDeliveredRows.filter((order) => order.productId === product.id);
     const unitsSold = delivered.reduce((sum, order) => {
@@ -26766,6 +26763,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return { product: best.product, marginPct: (best.netProfit / best.revenue) * 100, netProfit: best.netProfit, revenue: best.revenue };
   })();
   const packagePerformanceRows = (() => {
+    if (activePage !== "Finance & Accounting") return [];
     const search = financeProductSearch.trim().toLowerCase();
     return products
       .filter((product) => !selectedProductId || product.id === selectedProductId)
@@ -29353,6 +29351,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     let retryTimer: number | null = null;
     let reconnectAttempts = 0;
     let loadInFlight = false;
+    let loadGeneration = 0;
 
     const scheduleReconnect = () => {
       if (cancelled || retryTimer) return;
@@ -29368,6 +29367,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const load = async () => {
       if (loadInFlight) return;
       loadInFlight = true;
+      const generation = ++loadGeneration;
+      const isCurrent = () => !cancelled && generation === loadGeneration;
       if (retryTimer) {
         window.clearTimeout(retryTimer);
         retryTimer = null;
@@ -29378,6 +29379,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       } else {
         setDataRefreshing(true);
       }
+      if (!ordersHaveLoadedRef.current) setOrdersInitialLoadSettled(false);
+      setOrdersLoadError(null);
+      setOrdersHistoryComplete(false);
+      setOrdersHistoryError("");
+      setOrderHistoryComplete(false);
       // Owner-only / admin-only endpoints - backend enforces requireRole on
       // sales-teams, pay-structures, payroll, and penalties. Skipping them for
       // lower roles avoids 14-per-mount 403 noise + auth-audit pollution. Sales
@@ -29391,9 +29397,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const isMarketer = role === "Marketer";
       const canLoadMarketingLinks = !roleKnown || isAdmin || isMarketer;
       const canLoadMarketingSpend = !roleKnown || isAdmin || isMarketer;
-      // Every page now (was the Dashboard only): last 90 days of orders and carts
-      // first, older ones in the background. See orderHistoryComplete.
-      const fastBootDashboard = true;
       const skipped = Symbol("skipped");
       type Skipped = typeof skipped;
       const ifAdmin = <T,>(p: () => Promise<T>): Promise<T | Skipped> =>
@@ -29434,13 +29437,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         }
         if (older.length === 0) return;
         setTrackedOrders((current) => {
-          const byId = new Map(current.map((order) => [order.id, order]));
-          for (const order of older) if (!byId.has(order.id)) byId.set(order.id, order);
-          return sortOrdersByCreatedAtDesc(Array.from(byId.values()));
+          const merged = mergeOlderRows(current, older);
+          return merged === current ? current : sortOrdersByCreatedAtDesc(merged);
         });
       };
 
-      const hydrateOrders = (result: PromiseSettledResult<any>) => {
+      const hydrateOrders = (result: PromiseSettledResult<any>, firstBatch = false) => {
         if (result.status === "fulfilled" && Array.isArray(result.value?.data)) {
           setTrackedOrders((result.value.data as any[]).map((order) => normalizeTrackedOrder(order)));
           const first = result.value.data[0];
@@ -29454,12 +29456,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           }
           const total = result.value.total ?? 0;
           const fetched = result.value.data.length;
-          if (total > fetched) {
+          if (!firstBatch && total > fetched) {
             setOrdersCappedWarning(`Showing most recent ${fetched.toLocaleString()} of ${total.toLocaleString()} orders. Dashboard stats may be incomplete.`);
-          } else {
+          } else if (!firstBatch) {
             setOrdersCappedWarning(null);
           }
+          ordersHaveLoadedRef.current = true;
+          setOrdersLoadError(null);
+        } else {
+          setOrdersLoadError("Orders could not load. Check your connection and retry; existing rows are kept on screen.");
         }
+        setOrdersInitialLoadSettled(true);
       };
       const hydrateAgents = (result: PromiseSettledResult<any>) => {
         if (result.status === "fulfilled" && Array.isArray(result.value)) {
@@ -29580,11 +29587,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const hydrateCartsOlder = (result: PromiseSettledResult<any>) => {
         if (result.status !== "fulfilled" || !Array.isArray(result.value) || result.value.length === 0) return;
         const older = (result.value as any[]).map(normalizeRealtimeCart);
-        setAbandonedCarts((current) => {
-          const known = new Set(current.map((cart) => cart.id));
-          const added = older.filter((cart) => !known.has(cart.id));
-          return added.length ? [...current, ...added] : current;
-        });
+        setAbandonedCarts((current) => mergeOlderRows(current, older));
       };
       const hydrateSalesTeams = (result: PromiseSettledResult<any>) => {
         if (result.status === "fulfilled" && Array.isArray(result.value)) {
@@ -29703,192 +29706,106 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           })));
         }
       };
+      const resource = <T,>(request: Promise<T>, hydrate: (result: PromiseSettledResult<T>) => void) =>
+        settleBootstrapResource(request, hydrate, isCurrent);
       try {
-        if (fastBootDashboard) {
-          // Load only recent orders on the critical path so the Dashboard doesn't
-          // fire one giant all-history query (limit 5000 = several 1000-row round
-          // trips of select("*")) racing the other critical calls - the main load
-          // spike that tips an under-provisioned DB into timeouts. Full history is
-          // pulled in the background batch below and replaces this set within ~1s.
-          const recentOrdersCutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-          // The recent half replaces the lists below, so the history is part-loaded again until the older half lands.
-          setOrderHistoryComplete(false);
-          const [apiProducts, apiOrders, apiExpenses, apiNotifications, apiCarts] = await Promise.allSettled([
-            productsApi.list(),
-            ordersApi.list({ limit: ORDER_LIST_LIMIT, dateFrom: recentOrdersCutoff, lite: "1" }),
-            ifNotMarketer(() => expensesApi.list()),
-            notificationsApi.list(),
-            cartsApi.list({ lite: "1", dateFrom: recentOrdersCutoff })
-          ]);
+        // Orders get their own readiness signal. A slow payroll, notification or
+        // product request cannot hold their rows behind a workspace-wide barrier.
+        const recentOrdersCutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        // A cold load first fetches a small usable list. Downloading thousands
+        // of rows must not precede the first order on a low-end phone. The full
+        // recent/history requests still retain the original50k ceiling.
+        const firstOrders = !ordersHaveLoadedRef.current ? resource(
+          ordersApi.list({ limit: "100", dateFrom: recentOrdersCutoff, lite: "1" }),
+          (result) => hydrateOrders(result, true)
+        ) : null;
+        const recentOrders = (firstOrders ?? Promise.resolve()).then(() => {
+          if (!isCurrent()) return { status: "rejected" as const, reason: "Superseded workspace load" };
+          return resource(ordersApi.list({ limit: ORDER_LIST_LIMIT, dateFrom: recentOrdersCutoff, lite: "1" }), hydrateOrders);
+        });
+        const recentCarts = resource(cartsApi.list({ lite: "1", dateFrom: recentOrdersCutoff }), hydrateCarts);
+        const criticalJobs = [
+          recentOrders,
+          recentCarts,
+          resource(productsApi.list(), hydrateProducts),
+          resource(ifNotMarketer(() => expensesApi.list()), hydrateExpenses),
+          resource(notificationsApi.list(), hydrateNotifications)
+        ];
 
-          if (cancelled) return;
+        // Each older half starts as soon as its recent half settles and hydrates
+        // independently. Neither history waits for any payroll/marketing request.
+        const olderOrders = recentOrders.then(() => {
+          if (!isCurrent()) return { status: "rejected" as const, reason: "Superseded workspace load" };
+          return resource(ordersApi.list({ limit: ORDER_LIST_LIMIT, dateTo: recentOrdersCutoff, lite: "1" }), hydrateOrdersOlder);
+        });
+        const olderCarts = recentCarts.then(() => {
+          if (!isCurrent()) return { status: "rejected" as const, reason: "Superseded workspace load" };
+          return resource(cartsApi.list({ lite: "1", dateTo: recentOrdersCutoff }), hydrateCartsOlder);
+        });
+        void Promise.all([recentOrders, olderOrders]).then(([recent, older]) => {
+          if (!isCurrent()) return;
+          const complete = isCompleteOrderChunk(recent) && isCompleteOrderChunk(older);
+          setOrdersHistoryComplete(complete);
+          setOrdersHistoryError(complete ? "" : "Full order history could not load. Counts, filters and exports cover the orders loaded so far. Retry to load the rest.");
+        }).catch(() => {
+          if (isCurrent()) setOrdersHistoryError("Full order history could not load. Retry to load the rest.");
+        });
+        // Start supporting resources after the first Orders response to keep the
+        // initial connection queue small. Apply each one as it arrives, rather
+        // than waiting for the slowest unrelated endpoint to release them all.
+        const supportingJobs = (firstOrders ?? recentOrders).then(() => {
+          if (!isCurrent()) return [];
+          const calculationInputs = [
+            resource(ifNotMarketer(() => agentsApi.list()), hydrateAgents),
+            resource(ifNotMarketer(() => stockApi.movements({ limit: "500" })), hydrateMovements),
+            resource(ifNotMarketer(() => waybillsApi.list()), hydrateWaybills),
+            resource(ifNotMarketer(() => stockApi.countSessions()), hydrateStockCounts),
+            resource(teamApi.list(), hydrateTeam),
+            resource(ifAdmin(() => salesTeamsApi.list()), hydrateSalesTeams),
+            resource(ifAdmin(() => payStructuresApi.list()), hydratePayStructures),
+            resource(ifAdmin(() => payrollApi.list()), hydratePayrollRuns),
+            resource(ifAdmin(() => penaltiesApi.list()), hydratePenalties),
+            resource(ifAdminOrRep(() => salesBonusesApi.orderBonusSettlementMap(lagosDateKeyNow())), hydrateNewEngineBonusMap)
+          ];
+          void Promise.all([
+            resource(ifMarketingLinks(() => marketingLinkVariantsApi.list()), hydrateMarketingLinkVariants),
+            resource(ifMarketingSpend(() => marketingSpendApi.list()), hydrateMarketingSpend)
+          ]).catch(() => { /* Marketing does not block Orders or stock inputs. */ });
+          return Promise.all(calculationInputs);
+        });
 
-          const criticalResults = [apiProducts, apiOrders, apiExpenses, apiNotifications, apiCarts];
-          if (criticalResults.every((r) => r.status === "rejected")) {
-            setDataError("Live data is temporarily unavailable. Showing cached data while reconnecting.");
-            scheduleReconnect();
-          } else {
-            reconnectAttempts = 0;
-            setDataError(null);
-          }
+        // Reworking reports and sending stock alerts consumes stock, users,
+        // expenses and bonus inputs as well as history. Their write gate waits
+        // for those resources even when Orders has already appeared on screen.
+        void Promise.all([Promise.all(criticalJobs), olderOrders, olderCarts, supportingJobs])
+          .then(([critical, older, cartsOlder, supporting]) => {
+            if (!isCurrent()) return;
+            setOrderHistoryComplete(isCompleteWorkspaceHistory(
+              [critical[0], older], [critical[1], cartsOlder], [...critical.slice(2), ...supporting]
+            ));
+          }).catch(() => { /* Incomplete inputs keep persisted calculations gated. */ });
 
-          hydrateProducts(apiProducts);
-          hydrateOrders(apiOrders);
-          hydrateExpenses(apiExpenses);
-          hydrateNotifications(apiNotifications);
-          hydrateCarts(apiCarts);
-
-          if (!cancelled) {
-            setDataLoading(false);
-            setDataRefreshing(false);
-            setHasCompletedInitialDataLoad(true);
-            hasCompletedInitialDataLoadRef.current = true;
-          }
-
-          void Promise.allSettled([
-            // Only what the critical-path load did NOT already fetch. That call
-            // takes the last 90 days; this one previously re-fetched everything
-            // including those same 90 days, so the heaviest table in the system
-            // was pulled from the database twice on every single page load.
-            // dateTo makes the two halves meet without overlapping.
-            ordersApi.list({ limit: ORDER_LIST_LIMIT, dateTo: recentOrdersCutoff, lite: "1" }),
-            cartsApi.list({ lite: "1", dateTo: recentOrdersCutoff }),
-            ifNotMarketer(() => agentsApi.list()),
-            ifNotMarketer(() => stockApi.movements({ limit: "500" })),
-            ifNotMarketer(() => waybillsApi.list()),
-            ifNotMarketer(() => stockApi.countSessions()),
-            teamApi.list(),
-            ifAdmin(() => salesTeamsApi.list()),
-            ifAdmin(() => payStructuresApi.list()),
-            ifAdmin(() => payrollApi.list()),
-            ifAdmin(() => penaltiesApi.list()),
-            ifAdminOrRep(() => salesBonusesApi.orderBonusSettlementMap(lagosDateKeyNow())),
-            ifMarketingLinks(() => marketingLinkVariantsApi.list()),
-            ifMarketingSpend(() => marketingSpendApi.list())
-          ]).then(([
-            apiOrdersFull,
-            apiCartsOlder,
-            apiAgents,
-            apiMovements,
-            apiWaybills,
-            apiStockCounts,
-            apiTeam,
-            apiSalesTeams,
-            apiPayStructures,
-            apiPayrollRuns,
-            apiPenalties,
-            apiNewEngineBonusMap,
-            apiMarketingLinkVariants,
-            apiMarketingSpend
-          ]) => {
-            if (cancelled) return;
-            // Full order history (all-time), pulled off the critical path - replaces
-            // the recent-only set so reports/Orders list are complete.
-            hydrateOrdersOlder(apiOrdersFull);
-            hydrateCartsOlder(apiCartsOlder);
-            // Both older halves in: the order history is whole again.
-            if (apiOrdersFull.status === "fulfilled" && apiCartsOlder.status === "fulfilled") setOrderHistoryComplete(true);
-            hydrateAgents(apiAgents);
-            hydrateMovements(apiMovements);
-            hydrateWaybills(apiWaybills);
-            hydrateStockCounts(apiStockCounts);
-            hydrateTeam(apiTeam);
-            hydrateSalesTeams(apiSalesTeams);
-            hydratePayStructures(apiPayStructures);
-            hydratePayrollRuns(apiPayrollRuns);
-            hydratePenalties(apiPenalties);
-            hydrateNewEngineBonusMap(apiNewEngineBonusMap);
-            hydrateMarketingLinkVariants(apiMarketingLinkVariants);
-            hydrateMarketingSpend(apiMarketingSpend);
-          }).catch(() => { /* background hydrate failures should not block dashboard */ });
-          return;
-        }
-
-        const [
-          apiProducts,
-          apiOrders,
-          apiAgents,
-          apiMovements,
-          apiExpenses,
-          apiWaybills,
-          apiNotifications,
-          apiStockCounts,
-          apiTeam,
-          apiCarts,
-          apiSalesTeams,
-          apiPayStructures,
-          apiPayrollRuns,
-          apiPenalties,
-          apiNewEngineBonusMap,
-          apiMarketingLinkVariants,
-          apiMarketingSpend
-        ] = await Promise.allSettled([
-          productsApi.list(),
-          ordersApi.list({ limit: ORDER_LIST_LIMIT, lite: "1" }),
-          ifNotMarketer(() => agentsApi.list()),
-          ifNotMarketer(() => stockApi.movements({ limit: "500" })),
-          ifNotMarketer(() => expensesApi.list()),
-          ifNotMarketer(() => waybillsApi.list()),
-          notificationsApi.list(),
-          ifNotMarketer(() => stockApi.countSessions()),
-          teamApi.list(),
-          cartsApi.list({ lite: "1" }),
-          ifAdmin(() => salesTeamsApi.list()),
-          ifAdmin(() => payStructuresApi.list()),
-          ifAdmin(() => payrollApi.list()),
-          ifAdmin(() => penaltiesApi.list()),
-          ifAdminOrRep(() => salesBonusesApi.orderBonusSettlementMap(lagosDateKeyNow())),
-          ifMarketingLinks(() => marketingLinkVariantsApi.list()),
-          ifMarketingSpend(() => marketingSpendApi.list())
-        ]);
-
-        if (cancelled) return;
-
-        const allResults = [apiProducts, apiOrders, apiAgents, apiMovements, apiExpenses, apiWaybills, apiNotifications, apiStockCounts, apiTeam, apiCarts, apiSalesTeams, apiPayStructures, apiPayrollRuns, apiPenalties, apiNewEngineBonusMap, apiMarketingLinkVariants, apiMarketingSpend];
-        if (allResults.every((r) => r.status === "rejected")) {
+        const criticalResults = await Promise.all(criticalJobs);
+        if (!isCurrent()) return;
+        if (criticalResults.every((result) => result.status === "rejected")) {
           setDataError("Live data is temporarily unavailable. Showing cached data while reconnecting.");
           scheduleReconnect();
         } else {
           reconnectAttempts = 0;
           setDataError(null);
         }
-
-        hydrateProducts(apiProducts);
-        hydrateOrders(apiOrders);
-        hydrateAgents(apiAgents);
-        hydrateMovements(apiMovements);
-        hydrateExpenses(apiExpenses);
-        hydrateWaybills(apiWaybills);
-        hydrateNotifications(apiNotifications);
-        hydrateStockCounts(apiStockCounts);
-        hydrateTeam(apiTeam);
-        hydrateCarts(apiCarts);
-        hydrateSalesTeams(apiSalesTeams);
-        hydratePayStructures(apiPayStructures);
-        hydratePayrollRuns(apiPayrollRuns);
-        hydratePenalties(apiPenalties);
-        hydrateNewEngineBonusMap(apiNewEngineBonusMap);
-        hydrateMarketingLinkVariants(apiMarketingLinkVariants);
-        hydrateMarketingSpend(apiMarketingSpend);
       } catch (_) {
-        if (!cancelled) {
+        if (isCurrent()) {
           setDataError("Live data is temporarily unavailable. Showing cached data while reconnecting.");
           scheduleReconnect();
-          if (fastBootDashboard) {
-            setDataLoading(false);
-            setDataRefreshing(false);
-            setHasCompletedInitialDataLoad(true);
-            hasCompletedInitialDataLoadRef.current = true;
-          }
         }
       } finally {
         loadInFlight = false;
-        if (!cancelled && !fastBootDashboard) {
+        if (isCurrent()) {
           setDataLoading(false);
           setDataRefreshing(false);
           setHasCompletedInitialDataLoad(true);
           hasCompletedInitialDataLoadRef.current = true;
-          setOrderHistoryComplete(true);
         }
       }
     };
@@ -29901,15 +29818,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    if (!dataLoading) return;
-    if (!hasRenderableWorkspaceData) return;
-    setDataLoading(false);
-    setDataRefreshing(true);
-    setHasCompletedInitialDataLoad(true);
-    hasCompletedInitialDataLoadRef.current = true;
-  }, [dataLoading, hasRenderableWorkspaceData]);
 
   useEffect(() => {
     if (!auth.isLoggedIn()) return;
@@ -65317,7 +65225,8 @@ ${waybillLineItems(w).length > 1
             <div className="mt-2 flex flex-wrap items-center gap-4">
             {recoveryAll.assigned > 0 && (
               <div className="relative h-44 w-44 shrink-0">
-                <ResponsiveContainer width="100%" height="100%">
+                <DeferredCharts>{({ Cell, Legend, Line, LineChart, Pie, PieChart: RePieChart, ResponsiveContainer, Tooltip, XAxis, YAxis }) => (
+                  <ResponsiveContainer width="100%" height="100%">
                   <RePieChart>
                     <Pie
                       data={outcomeSlices} dataKey="n" nameKey="label"
@@ -65344,6 +65253,7 @@ ${waybillLineItems(w).length > 1
                     <Tooltip formatter={(value: any, name: any) => [`${value} carts`, name]} />
                   </RePieChart>
                 </ResponsiveContainer>
+                )}</DeferredCharts>
                 {/* The centre carries the denominator, so every percentage on
                     the ring is readable against the number it came from. */}
                 <span className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
@@ -68136,7 +68046,8 @@ ${waybillLineItems(w).length > 1
           ) : (
             <>
               <div className="mt-3 h-48">
-                <ResponsiveContainer width="100%" height="100%">
+                <DeferredCharts>{({ Cell, Legend, Line, LineChart, Pie, PieChart: RePieChart, ResponsiveContainer, Tooltip, XAxis, YAxis }) => (
+                  <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={rows}>
                     <XAxis dataKey="label" tick={{ fontSize: 10 }} />
                     <YAxis tick={{ fontSize: 10 }} width={isPct ? 36 : 52} tickFormatter={(v) => isPct ? `${v}%` : shortMoney(Number(v))} />
@@ -68147,6 +68058,7 @@ ${waybillLineItems(w).length > 1
                     <Line type="monotone" dataKey="teamAverage" name="Team Average" stroke="#9CA3AF" strokeDasharray="4 4" strokeWidth={1.5} dot={false} />
                   </LineChart>
                 </ResponsiveContainer>
+                )}</DeferredCharts>
               </div>
               <ul className="m-0 mt-3 list-none space-y-1 p-0 text-xs">
                 {trend.map((rep: any, index: number) => {
@@ -68282,7 +68194,8 @@ ${waybillLineItems(w).length > 1
           {distSegments.some((segment) => segment.value > 0) && (
             <div className="mt-4 flex items-center gap-4 border-t border-gray-100 pt-4">
               <div className="h-28 w-28 shrink-0">
-                <ResponsiveContainer width="100%" height="100%">
+                <DeferredCharts>{({ Cell, Legend, Line, LineChart, Pie, PieChart: RePieChart, ResponsiveContainer, Tooltip, XAxis, YAxis }) => (
+                  <ResponsiveContainer width="100%" height="100%">
                   <RePieChart>
                     <Pie data={distSegments} dataKey="value" nameKey="label" innerRadius={30} outerRadius={48} paddingAngle={2}>
                       {distSegments.map((segment) => (
@@ -68292,6 +68205,7 @@ ${waybillLineItems(w).length > 1
                     <Tooltip formatter={(value: any, name: any) => [`${value} rep${value === 1 ? "" : "s"}`, name]} />
                   </RePieChart>
                 </ResponsiveContainer>
+                )}</DeferredCharts>
               </div>
               <div>
                 <strong className="block text-sm font-bold text-gray-900">AOV Improvement Distribution</strong>
@@ -68652,7 +68566,8 @@ ${waybillLineItems(w).length > 1
           <section className="rounded-2xl border border-gray-200 bg-white p-5">
             <h2 className="m-0 text-base font-bold text-gray-900">Upsell &amp; Cross-sell Trend <span className="font-medium text-gray-400">(4-Week)</span></h2>
             <div className="mt-3 h-40">
-              <ResponsiveContainer width="100%" height="100%">
+              <DeferredCharts>{({ Cell, Legend, Line, LineChart, Pie, PieChart: RePieChart, ResponsiveContainer, Tooltip, XAxis, YAxis }) => (
+                <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={data.trend.map((point: any) => ({ ...point, label: formatDateOnly(point.weekStart) }))}>
                   <XAxis dataKey="label" tick={{ fontSize: 10 }} />
                   <YAxis tick={{ fontSize: 10 }} unit="%" width={36} />
@@ -68663,6 +68578,7 @@ ${waybillLineItems(w).length > 1
                   <Line type="monotone" dataKey="crossSellRateTarget" name="Cross-sell Target" stroke="#8B5CF6" strokeDasharray="4 4" strokeWidth={1.5} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
+              )}</DeferredCharts>
             </div>
             <div className="mt-3 flex flex-wrap gap-4 text-xs text-gray-500">
               <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#1F8FE0]" /> Upsell Rate</span>
@@ -69660,7 +69576,8 @@ ${waybillLineItems(w).length > 1
             <h3 className="m-0 text-sm font-bold text-gray-900">Bonus History</h3>
             {historyChronological.length > 0 && (
               <div className="mt-3 h-48">
-                <ResponsiveContainer width="100%" height="100%">
+                <DeferredCharts>{({ Cell, Legend, Line, LineChart, Pie, PieChart: RePieChart, ResponsiveContainer, Tooltip, XAxis, YAxis }) => (
+                  <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={historyChronological.map((row: any) => ({ ...row, label: formatDateOnly(row.weekStart) }))}>
                     <XAxis dataKey="label" tick={{ fontSize: 10 }} />
                     <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => shortMoney(Number(v))} width={60} />
@@ -69668,6 +69585,7 @@ ${waybillLineItems(w).length > 1
                     <Line type="monotone" dataKey="amount" stroke="#1F8FE0" strokeWidth={2} dot={{ r: 4 }} />
                   </LineChart>
                 </ResponsiveContainer>
+                )}</DeferredCharts>
               </div>
             )}
             <div className="mt-3 overflow-x-auto">
@@ -76305,6 +76223,13 @@ ${waybillLineItems(w).length > 1
 
   const DataErrorBanner = () => (
     <>
+      {isOrderWorkspacePage(activePage) && ordersLoadError && (
+        <div className="flex items-center gap-3 px-5 py-4 bg-red-50 border border-red-200 rounded-xl text-sm" role="alert">
+          <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
+          <span className="font-medium text-red-800 flex-1">{ordersLoadError}</span>
+          <button className="!min-h-0 px-4 py-1.5 text-xs font-bold bg-red-600 text-white rounded-lg hover:bg-red-700" onClick={() => retryLoadData.current()}>Retry Orders</button>
+        </div>
+      )}
       {dataError && (
         <div className="flex items-center gap-3 px-5 py-4 bg-red-50 border border-red-200 rounded-xl text-sm">
           <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
@@ -76318,6 +76243,13 @@ ${waybillLineItems(w).length > 1
           <span className="font-medium text-amber-800 flex-1">{ordersCappedWarning}</span>
         </div>
       )}
+      {ordersInitialLoadSettled && !ordersHistoryComplete && (
+        <div className="flex items-center gap-3 px-5 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm" role="status">
+          <History className="w-5 h-5 text-amber-500 shrink-0" />
+          <span className="font-medium text-amber-900 flex-1">{ordersHistoryError || "Older order history is loading. Counts, filters and exports currently cover the orders loaded so far."}</span>
+          {ordersHistoryError && <button className="!min-h-0 rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-bold text-amber-900" onClick={() => retryLoadData.current()}>Retry history</button>}
+        </div>
+      )}
     </>
   );
 
@@ -76328,6 +76260,7 @@ ${waybillLineItems(w).length > 1
   // upgrade-gap check) - it only needs to answer "is anything flagged right
   // now", the full panel remains the source of truth for the exact breakdown.
   const needsAttentionBadgeCount = (() => {
+    if (activePage !== "Manager Dashboard") return 0;
     // Same fresh-start baseline as the panel. Both must apply it or the badge
     // and the cards disagree - which is exactly the bug that had the badge
     // showing 194 against a card showing 46.
@@ -77751,7 +77684,8 @@ ${waybillLineItems(w).length > 1
                         )}
                       </div>
 
-                      <ResponsiveContainer width="100%" height={260}>
+                      <DeferredCharts>{({ Cell, Legend, Line, LineChart, Pie, PieChart: RePieChart, ResponsiveContainer, Tooltip, XAxis, YAxis }) => (
+                        <ResponsiveContainer width="100%" height={260}>
                         <LineChart data={dashboardRevenueChartData} margin={{ left: -24, right: 16, top: 8, bottom: 0 }}>
                           <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "#9ca3af" }} />
                           <YAxis hide domain={[0, dashboardRevenueChartMax]} />
@@ -77776,6 +77710,7 @@ ${waybillLineItems(w).length > 1
                           ))}
                         </LineChart>
                       </ResponsiveContainer>
+                      )}</DeferredCharts>
                     </article>
 
                     <article className="lg:col-span-2 bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4">
@@ -78737,8 +78672,8 @@ ${waybillLineItems(w).length > 1
                   </div>
                 );
               })()}
-              {dataLoading && !(orderWorkspacePage === "Follow-up Queue" && followUpView === "carts") && <TableSkeleton cols={8} rows={6} />}
-              {!dataLoading && (orderWorkspacePage !== "Follow-up Queue" || followUpView === "list") && (
+              {orderWorkspaceBlockingLoad && !(orderWorkspacePage === "Follow-up Queue" && followUpView === "carts") && <TableSkeleton cols={8} rows={6} />}
+              {orderWorkspaceCanRender && (orderWorkspacePage !== "Follow-up Queue" || followUpView === "list") && (
               <div className="space-y-6 lg:space-y-8">
               {/* Period + date + currency controls */}
               <div className="flex flex-col gap-2">
@@ -84822,7 +84757,8 @@ ${waybillLineItems(w).length > 1
                                     <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-500 m-0">Weekly trend - last {sparkData.length} weeks</p>
                                     <p className="text-[11px] text-gray-400 m-0">{canViewInventoryFinancials ? "Solid = deliveries · dashed = revenue (scaled)" : "Delivered orders by week"}</p>
                                   </div>
-                                  <ResponsiveContainer width="100%" height={140}>
+                                  <DeferredCharts>{({ Cell, Legend, Line, LineChart, Pie, PieChart: RePieChart, ResponsiveContainer, Tooltip, XAxis, YAxis }) => (
+                                    <ResponsiveContainer width="100%" height={140}>
                                     <LineChart data={sparkData} margin={{ left: -20, right: 8, top: 8, bottom: 0 }}>
                                       <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: "#9ca3af" }} />
                                       <YAxis yAxisId="left" allowDecimals={false} tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: "#9ca3af" }} />
@@ -84835,6 +84771,7 @@ ${waybillLineItems(w).length > 1
                                       {canViewInventoryFinancials && <Line yAxisId="right" type="monotone" dataKey="Revenue" stroke="#1F8FE0" strokeWidth={1.6} strokeDasharray="4 3" dot={false} />}
                                     </LineChart>
                                   </ResponsiveContainer>
+                                  )}</DeferredCharts>
                                 </article>
                               ) : null}
                             </section>
@@ -84853,7 +84790,8 @@ ${waybillLineItems(w).length > 1
                         <span className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500" /> Cancelled</span>
                       </div>
                     </div>
-                    <ResponsiveContainer width="100%" height={260}>
+                    <DeferredCharts>{({ Cell, Legend, Line, LineChart, Pie, PieChart: RePieChart, ResponsiveContainer, Tooltip, XAxis, YAxis }) => (
+                      <ResponsiveContainer width="100%" height={260}>
                       <LineChart data={chartData} margin={{ left: -16, right: 16, top: 8, bottom: 0 }}>
                         <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "#9ca3af" }} />
                         <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "#9ca3af" }} />
@@ -84862,6 +84800,7 @@ ${waybillLineItems(w).length > 1
                         <Line type="monotone" dataKey="Cancelled" stroke="#ef4444" strokeWidth={2} dot={{ r: 3, fill: "#ef4444" }} />
                       </LineChart>
                     </ResponsiveContainer>
+                    )}</DeferredCharts>
                   </section>
 
                   {/* Hub picker - only for agents that cover multiple state-hubs.
@@ -94130,7 +94069,8 @@ ${waybillLineItems(w).length > 1
                   <h2 className="text-sm font-bold text-gray-800 mb-1">User Growth</h2>
                   <p className="text-xs text-gray-400 mb-3">Growth trend over the last 6 months</p>
                   <div style={{ height: 120 }}>
-                    <ResponsiveContainer width="100%" height="100%">
+                    <DeferredCharts>{({ Cell, Legend, Line, LineChart, Pie, PieChart: RePieChart, ResponsiveContainer, Tooltip, XAxis, YAxis }) => (
+                      <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={(() => {
                         const now = new Date();
                         return Array.from({ length: 6 }, (_, i) => {
@@ -94152,6 +94092,7 @@ ${waybillLineItems(w).length > 1
                         <Line type="monotone" dataKey="users" stroke="#1F8FE0" strokeWidth={2} dot={{ r: 3, strokeWidth: 2, fill: "#fff" }} />
                       </LineChart>
                     </ResponsiveContainer>
+                    )}</DeferredCharts>
                   </div>
                 </div>
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
