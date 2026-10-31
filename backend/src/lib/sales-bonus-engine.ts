@@ -757,6 +757,7 @@ const bonusProgramsCache = new TtlCache<Array<SalesBonusProgram & { rules: Sales
 export function invalidateSalesBonusPrograms(orgId: string): void {
   bonusProgramsCache.invalidate(`${orgId}:0`);
   bonusProgramsCache.invalidate(`${orgId}:1`);
+  mapWeekProgressCache.clear();
 }
 
 export const listSalesBonusPrograms = async (orgId: string, includeDeleted = false) =>
@@ -1013,6 +1014,19 @@ export const attributeRuleSettlementToOrders = (
   return result;
 };
 
+// The two per-order maps below rebuild every week since launch, and the app
+// asks for both at each sign-in - ~17 weeks x 2 maps x every signing-in user,
+// 8-19 s each, and one run grew the server ~700 MB (31 Oct 2026). Each week's
+// result is now worked out once and shared: by both maps, by requests running
+// at the same time, and for 60 s after. Only these maps use it; live progress
+// screens still calculate fresh. A bonus program edit clears it at once.
+const mapWeekProgressCache = new TtlCache<SalesBonusProgressResponse>(60_000);
+const mapWeekProgress = (orgId: string, weekStart: string, repId?: string) =>
+  mapWeekProgressCache.get(
+    `${orgId}:${weekStart}:${repId ?? "all"}`,
+    () => getSalesBonusProgress(orgId, weekStart, repId ? { repId } : {})
+  );
+
 // Anchors the week search on each delivered order's OWN created_at (the
 // engine's actual cohort key) rather than the requested range - an order
 // created weeks before the range but delivered inside it still needs its
@@ -1056,7 +1070,7 @@ export const perOrderBonusSettlementMapForDeliveredRange = async (
     // Passing repId here (not just filtering the output afterward) scopes
     // progress.reps to that one rep, so a Sales Rep caller only ever sees
     // their own orders' attribution - never another rep's compensation.
-    const progress = await getSalesBonusProgress(orgId, weekStart, options.repId ? { repId: options.repId } : {});
+    const progress = await mapWeekProgress(orgId, weekStart, options.repId);
     for (const rep of progress.reps) {
       for (const rule of rep.rules) {
         for (const [orderId, settlement] of attributeRuleSettlementToOrders(rule, orderAmountById)) {
@@ -1140,7 +1154,7 @@ export const perOrderExpansionBonusBreakdownMapForDeliveredRange = async (
 
   const itemsByOrder = new Map<string, SalesBonusOrderBreakdownItem[]>();
   for (const weekStart of weeks) {
-    const progress = await getSalesBonusProgress(orgId, weekStart, options.repId ? { repId: options.repId } : {});
+    const progress = await mapWeekProgress(orgId, weekStart, options.repId);
     for (const rep of progress.reps) {
       for (const rule of rep.rules) {
         if (!isExpansionCommissionRuleType(rule.type)) continue;
