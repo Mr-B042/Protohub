@@ -1,0 +1,6 @@
+# jemalloc: an allocator that hands freed memory back to the system. The
+# default one (glibc) kept the server near 1 GB after a heavy request while
+# only ~80 MB was in use, and Railway bills what is held (31 Oct 2026).
+# start-railway.sh switches it on; "..." keeps Nixpacks' own packages.
+[phases.setup]
+aptPkgs = ["...", "libjemalloc2"]
