@@ -536,7 +536,9 @@ const buildConvertedCartLinkRepairReport = async (orgId: string) => {
       .select(CART_LINK_ORDER_PREVIEW_SELECT)
       .eq("org_id", orgId)
       .order("created_at", { ascending: false })
-      .limit(5000);
+      // Was 5,000: with 4,825 orders (31 Oct 2026) the oldest would soon stop
+      // being matched. Same ceiling as the reports.
+      .limit(REPORT_ROW_CEILING);
 
     const orderByPhone = new Map<string, any>();
     for (const order of phoneOrders ?? []) {
