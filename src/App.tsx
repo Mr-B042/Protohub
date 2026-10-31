@@ -29712,10 +29712,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         // Orders get their own readiness signal. A slow payroll, notification or
         // product request cannot hold their rows behind a workspace-wide barrier.
         const recentOrdersCutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-        // A cold load first fetches a small usable list. Downloading thousands
+        // A cold Orders load first fetches a small usable list. Downloading thousands
         // of rows must not precede the first order on a low-end phone. The full
         // recent/history requests still retain the original50k ceiling.
-        const firstOrders = !ordersHaveLoadedRef.current ? resource(
+        const firstOrders = !ordersHaveLoadedRef.current && isOrderWorkspacePage(activePage) ? resource(
           ordersApi.list({ limit: "100", dateFrom: recentOrdersCutoff, lite: "1" }),
           (result) => hydrateOrders(result, true)
         ) : null;
