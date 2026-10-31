@@ -19,6 +19,8 @@ export type TabCtx = {
   hubs: TrendHub[];
   agents: TrendAgent[];
   canSeeProfit: boolean;
+  /** False for the logistics role: no revenue, order value or fees. */
+  canSeeMoney: boolean;
   money: (value: number) => string;
   from: string;
   to: string;

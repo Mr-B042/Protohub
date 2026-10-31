@@ -61,7 +61,7 @@ type TopMode = "orders" | "delivered" | "rate" | "net";
 type StateSort = "orders" | "confirmed" | "delivered" | "rate" | "revenue" | "net" | "aov" | "agents";
 
 export function StateBreakdownTab({ ctx, onShowState, filters }: { ctx: TabCtx; onShowState: (state: string) => void; filters?: ReactNode }) {
-  const { model, money, canSeeProfit, days, from, to } = ctx;
+  const { model, money, canSeeProfit, canSeeMoney, days, from, to } = ctx;
   const rows = model.stateRows;
   const [mapMetric, setMapMetric] = useState<TopMode>("delivered");
   const [topMode, setTopMode] = useState<TopMode>("orders");
@@ -118,7 +118,7 @@ export function StateBreakdownTab({ ctx, onShowState, filters }: { ctx: TabCtx; 
   };
   const tableRows = rows.filter((r) => !term || stateLabel(r.state).toLowerCase().includes(term)).sort((a, b) => (sort.desc ? sortValue(b) - sortValue(a) : sortValue(a) - sortValue(b)));
   const productName = (id: string) => ctx.products.find((p) => p.id === id)?.name ?? "—";
-  const COLS = ["Confirmed Orders", "Delivered Revenue", ...(canSeeProfit ? ["Net Profit"] : []), "Avg. AOV", "Top Product", "Active Agents", "Stock Status", "Trend"];
+  const COLS = ["Confirmed Orders", ...(canSeeMoney ? ["Delivered Revenue"] : []), ...(canSeeProfit ? ["Net Profit"] : []), ...(canSeeMoney ? ["Avg. AOV"] : []), "Top Product", "Active Agents", "Stock Status", "Trend"];
   const show = (col: string) => !hidden.has(col);
   const head = (key: StateSort | null, label: string) => (
     <th className={th}>
@@ -127,9 +127,9 @@ export function StateBreakdownTab({ ctx, onShowState, filters }: { ctx: TabCtx; 
   );
 
   ctx.exportRef.current = () => downloadCsv(`state-performance-${from}-to-${to}.csv`, [
-    ["State", "Total Orders", "Confirmed Orders", "Delivered Orders", "Delivery Rate %", "Delivered Revenue", ...(canSeeProfit ? ["Net Profit (shared costs by sales)"] : []), "Avg. AOV", "Top Product", "Active Agents", "Stock with Agents", "Stock Status"],
-    ...tableRows.map((r) => [stateLabel(r.state), r.now.orders, r.now.confirmed, r.now.delivered, r.now.rate.toFixed(1), Math.round(r.now.revenue), ...(canSeeProfit ? [Math.round(r.now.net)] : []),
-      Math.round(r.now.aov), r.topProducts[0] ? productName(r.topProducts[0].key) : "", r.activeAgents, r.stockWithAgents, stockStatusOf(r, days).label])
+    ["State", "Total Orders", "Confirmed Orders", "Delivered Orders", "Delivery Rate %", ...(canSeeMoney ? ["Delivered Revenue"] : []), ...(canSeeProfit ? ["Net Profit (shared costs by sales)"] : []), ...(canSeeMoney ? ["Avg. AOV"] : []), "Top Product", "Active Agents", "Stock with Agents", "Stock Status"],
+    ...tableRows.map((r) => [stateLabel(r.state), r.now.orders, r.now.confirmed, r.now.delivered, r.now.rate.toFixed(1), ...(canSeeMoney ? [Math.round(r.now.revenue)] : []), ...(canSeeProfit ? [Math.round(r.now.net)] : []),
+      ...(canSeeMoney ? [Math.round(r.now.aov)] : []), r.topProducts[0] ? productName(r.topProducts[0].key) : "", r.activeAgents, r.stockWithAgents, stockStatusOf(r, days).label])
   ]);
 
   // Insights, each from the figures.
@@ -157,10 +157,14 @@ export function StateBreakdownTab({ ctx, onShowState, filters }: { ctx: TabCtx; 
         <KpiTile Icon={ShoppingCart} tone="bg-blue-50 text-blue-600" label="Total Orders" value={nf(totals.orders)} delta={growthPct(totals.orders, before.orders)} spark={spark((b) => b.length)} />
         <KpiTile Icon={Truck} tone="bg-emerald-50 text-emerald-600" label="Delivered Orders" value={nf(totals.delivered)} delta={growthPct(totals.delivered, before.delivered)} spark={spark((b) => b.filter(isDelivered).length)} />
         <KpiTile Icon={CirclePercent} tone="bg-emerald-50 text-emerald-600" label="Delivery Rate" value={pct1(totals.rate)} delta={before.orders > 0 ? totals.rate - before.rate : null} deltaPoints spark={spark(rateOf)} />
-        <KpiTile Icon={Banknote} tone="bg-amber-50 text-amber-600" label="Delivered Revenue" value={money(totals.revenue)} delta={growthPct(totals.revenue, before.revenue)} spark={spark((b) => b.filter(isDelivered).reduce((s, o) => s + o.amount, 0))} />
+        {canSeeMoney
+          ? <KpiTile Icon={Banknote} tone="bg-amber-50 text-amber-600" label="Delivered Revenue" value={money(totals.revenue)} delta={growthPct(totals.revenue, before.revenue)} spark={spark((b) => b.filter(isDelivered).reduce((s, o) => s + o.amount, 0))} />
+          : <KpiTile Icon={Banknote} tone="bg-amber-50 text-amber-600" label="Units Delivered" value={nf(totals.unitsDelivered)} delta={growthPct(totals.unitsDelivered, before.unitsDelivered)} spark={spark((b) => b.filter(isDelivered).reduce((s, o) => s + o.units, 0))} />}
         {canSeeProfit
           ? <KpiTile Icon={BarChart3} tone="bg-violet-50 text-violet-600" label="Net Profit (Delivered)" value={money(totals.net)} delta={before.net > 0 ? growthPct(totals.net, before.net) : null} spark={spark((b) => netOf(b, model.costs))} info="Same as Finance › Product Profitability: Direct Net Profit − Shared Opex." />
-          : <KpiTile Icon={BarChart3} tone="bg-violet-50 text-violet-600" label="Delivered AOV" value={totals.delivered > 0 ? money(totals.aov) : "—"} delta={before.delivered > 0 && totals.delivered > 0 ? growthPct(totals.aov, before.aov) : null} />}
+          : canSeeMoney
+            ? <KpiTile Icon={BarChart3} tone="bg-violet-50 text-violet-600" label="Delivered AOV" value={totals.delivered > 0 ? money(totals.aov) : "—"} delta={before.delivered > 0 && totals.delivered > 0 ? growthPct(totals.aov, before.aov) : null} />
+            : <KpiTile Icon={BarChart3} tone="bg-violet-50 text-violet-600" label="Confirmed Orders" value={nf(totals.confirmed)} delta={growthPct(totals.confirmed, before.confirmed)} />}
         <KpiTile Icon={MapPin} tone="bg-rose-50 text-rose-500" label="Active States" value={`${activeNow} / ${STATE_COUNT}`}
           foot={<span className="inline-flex items-center gap-1"><CircleCheck className="h-3 w-3 text-emerald-600" />{activeNow - activeBefore >= 0 ? `${activeNow - activeBefore} more` : `${activeBefore - activeNow} fewer`} than last period</span>} />
       </div>
@@ -251,7 +255,7 @@ export function StateBreakdownTab({ ctx, onShowState, filters }: { ctx: TabCtx; 
             <table className="w-full !min-w-[1060px] border-separate border-spacing-0">
               <thead><tr>
                 <th className={th}>#</th><th className={th}>State</th>{head("orders", "Total Orders")}{show("Confirmed Orders") && head("confirmed", "Confirmed Orders")}{head("delivered", "Delivered Orders")}{head("rate", "Delivery Rate")}
-                {show("Delivered Revenue") && head("revenue", "Delivered Revenue")}{canSeeProfit && show("Net Profit") && head("net", "Net Profit")}{show("Avg. AOV") && head("aov", "Avg. AOV")}
+                {canSeeMoney && show("Delivered Revenue") && head("revenue", "Delivered Revenue")}{canSeeProfit && show("Net Profit") && head("net", "Net Profit")}{canSeeMoney && show("Avg. AOV") && head("aov", "Avg. AOV")}
                 {show("Top Product") && head(null, "Top Product")}{show("Active Agents") && head("agents", "Active Agents")}{show("Stock Status") && head(null, "Stock Status")}{show("Trend") && head(null, "Trend")}{head(null, "Actions")}
               </tr></thead>
               <tbody>
@@ -268,9 +272,9 @@ export function StateBreakdownTab({ ctx, onShowState, filters }: { ctx: TabCtx; 
                       {show("Confirmed Orders") && <td className={td} title="Orders that got past the call: Confirmed or later.">{nf(row.now.confirmed)}</td>}
                       <td className={td}>{nf(row.now.delivered)}</td>
                       <td className={td}><span className={`font-semibold ${rateUp === null ? "" : rateUp >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{rateUp === null ? "" : rateUp >= 0 ? "↑ " : "↓ "}{pct1(row.now.rate)}</span></td>
-                      {show("Delivered Revenue") && <td className={td}>{money(row.now.revenue)}</td>}
+                      {canSeeMoney && show("Delivered Revenue") && <td className={td}>{money(row.now.revenue)}</td>}
                       {canSeeProfit && show("Net Profit") && <td className={td} title={NET_NOTE}><span className={row.now.net < 0 ? "text-rose-600" : row.now.net >= row.before.net ? "text-emerald-700" : "text-rose-600"}>{row.now.net >= row.before.net ? "↑ " : "↓ "}{money(row.now.net)}</span></td>}
-                      {show("Avg. AOV") && <td className={td}>{row.now.delivered > 0 ? money(row.now.aov) : "—"}</td>}
+                      {canSeeMoney && show("Avg. AOV") && <td className={td}>{row.now.delivered > 0 ? money(row.now.aov) : "—"}</td>}
                       {show("Top Product") && <td className={`${td} max-w-[120px] truncate`}>{row.topProducts[0] ? productName(row.topProducts[0].key) : "—"}</td>}
                       {show("Active Agents") && <td className={td}>{nf(row.activeAgents)}</td>}
                       {show("Stock Status") && <td className={td} title={`${nf(row.stockWithAgents)} units with agents`}><Pill tone={status.tone}>{status.label}</Pill></td>}

@@ -31,7 +31,7 @@ const shortMoney = (v: number) => Math.abs(v) >= 1e6 ? `₦${(v / 1e6).toFixed(1
 type AgentSort = "orders" | "delivered" | "rate" | "time" | "failed" | "fees" | "net" | "stock" | "pending";
 
 export function AgentPerformanceTab({ ctx, filters }: { ctx: TabCtx; filters?: ReactNode }) {
-  const { model, money, canSeeProfit, from, to, days, hubs, agents } = ctx;
+  const { model, money, canSeeProfit, canSeeMoney, from, to, days, hubs, agents } = ctx;
   const withAgent = model.orders.filter((o) => o.agentId);
   const withAgentBefore = model.previous.filter((o) => o.agentId);
   const rows = useMemo(() => buildAgentRows({ orders: model.orders, previousOrders: model.previous, costs: model.costs, previousCosts: model.previousCosts, hubs, agents, productId: ctx.productId }),
@@ -98,16 +98,16 @@ export function AgentPerformanceTab({ ctx, filters }: { ctx: TabCtx; filters?: R
   };
   const tableRows = rows.filter((r) => !term || r.name.toLowerCase().includes(term) || r.states.some((s) => stateLabel(s).toLowerCase().includes(term)))
     .sort((a, b) => (sort.desc ? sortValue(b) - sortValue(a) : sortValue(a) - sortValue(b)));
-  const COLS = ["Avg. Delivery Time", "Failed Deliveries", "Cancelled Rate", "Delivery Expenses", ...(canSeeProfit ? ["Net Profit (Delivered)"] : []), "Inventory Held", "Pending Deliveries", "Status"];
+  const COLS = ["Avg. Delivery Time", "Failed Deliveries", "Cancelled Rate", ...(canSeeMoney ? ["Delivery Expenses"] : []), ...(canSeeProfit ? ["Net Profit (Delivered)"] : []), "Inventory Held", "Pending Deliveries", "Status"];
   const show = (c: string) => !hidden.has(c);
   const head = (key: AgentSort | null, label: string, title?: string) => (
     <th className={th} title={title}>{key ? <button type="button" onClick={() => setSort((s) => ({ key, desc: s.key === key ? !s.desc : true }))} className="!min-h-0 whitespace-nowrap">{label} <span className={sort.key === key ? "text-[#1F8FE0]" : "text-gray-400"}>⇅</span></button> : <span className="whitespace-nowrap">{label}</span>}</th>
   );
 
   ctx.exportRef.current = () => downloadCsv(`agent-performance-${from}-to-${to}.csv`, [
-    ["Agent", "State", "Orders Assigned", "Delivered Orders", "Delivery Rate %", "Avg. Delivery Time (days)", "Failed Deliveries", "Cancelled Rate %", "Delivery Expenses", ...(canSeeProfit ? ["Net Profit (Delivered)"] : []), "Inventory Held", "Pending Deliveries", "Status"],
+    ["Agent", "State", "Orders Assigned", "Delivered Orders", "Delivery Rate %", "Avg. Delivery Time (days)", "Failed Deliveries", "Cancelled Rate %", ...(canSeeMoney ? ["Delivery Expenses"] : []), ...(canSeeProfit ? ["Net Profit (Delivered)"] : []), "Inventory Held", "Pending Deliveries", "Status"],
     ...tableRows.map((r) => [r.name, r.states.map(stateLabel).join("; "), r.now.orders, r.now.delivered, r.now.rate.toFixed(1), r.now.avgDeliveryDays?.toFixed(1) ?? "", r.now.failed,
-      (r.now.orders > 0 ? (r.now.cancelled / r.now.orders) * 100 : 0).toFixed(1), Math.round(r.now.logistics), ...(canSeeProfit ? [Math.round(r.now.net)] : []), r.stockHeld, r.now.open, statusInfo(agentStatusOf(r.now)).label])
+      (r.now.orders > 0 ? (r.now.cancelled / r.now.orders) * 100 : 0).toFixed(1), ...(canSeeMoney ? [Math.round(r.now.logistics)] : []), ...(canSeeProfit ? [Math.round(r.now.net)] : []), r.stockHeld, r.now.open, statusInfo(agentStatusOf(r.now)).label])
   ]);
 
   // Distribution.
@@ -222,7 +222,7 @@ export function AgentPerformanceTab({ ctx, filters }: { ctx: TabCtx; filters?: R
               <th className={th}>#</th><th className={th}>Agent</th><th className={th}>State</th>{head("orders", "Orders Assigned")}{head("delivered", "Delivered Orders")}{head("rate", "Delivery Rate")}
               {show("Avg. Delivery Time") && head("time", "Avg. Delivery Time")}{show("Failed Deliveries") && head("failed", "Failed Deliveries")}
               {show("Cancelled Rate") && head(null, "Cancelled Rate", "Cancelled after the order reached the agent. The app does not record returns separately.")}
-              {show("Delivery Expenses") && head("fees", "Delivery Expenses")}{canSeeProfit && show("Net Profit (Delivered)") && head("net", "Net Profit (Delivered)", NET_NOTE)}
+              {canSeeMoney && show("Delivery Expenses") && head("fees", "Delivery Expenses")}{canSeeProfit && show("Net Profit (Delivered)") && head("net", "Net Profit (Delivered)", NET_NOTE)}
               {show("Inventory Held") && head("stock", "Inventory Held")}{show("Pending Deliveries") && head("pending", "Pending Deliveries")}{show("Status") && head(null, "Status", STATUS_HINT)}{head(null, "Actions")}
             </tr></thead>
             <tbody>
@@ -241,7 +241,7 @@ export function AgentPerformanceTab({ ctx, filters }: { ctx: TabCtx; filters?: R
                     {show("Avg. Delivery Time") && <td className={td}>{r.now.avgDeliveryDays === null ? "—" : `${r.now.avgDeliveryDays.toFixed(1)} days`}</td>}
                     {show("Failed Deliveries") && <td className={td}>{nf(r.now.failed)} ({pct1(r.now.orders > 0 ? (r.now.failed / r.now.orders) * 100 : 0)})</td>}
                     {show("Cancelled Rate") && <td className={`${td} text-rose-600`}>{pct1(r.now.orders > 0 ? (r.now.cancelled / r.now.orders) * 100 : 0)}</td>}
-                    {show("Delivery Expenses") && <td className={td}>{money(r.now.logistics)}</td>}
+                    {canSeeMoney && show("Delivery Expenses") && <td className={td}>{money(r.now.logistics)}</td>}
                     {canSeeProfit && show("Net Profit (Delivered)") && <td className={`${td} ${r.now.net < 0 ? "text-rose-600" : ""}`}>{money(r.now.net)}</td>}
                     {show("Inventory Held") && <td className={td}>{nf(r.stockHeld)}</td>}
                     {show("Pending Deliveries") && <td className={td}>{nf(r.now.open)}</td>}
@@ -337,7 +337,7 @@ type ChartKind = "line" | "area" | "bar";
 type GrowthMode = "orders" | "delivered" | "revenue" | "net";
 
 export function TrendsOverTimeTab({ ctx, filters }: { ctx: TabCtx; filters?: ReactNode }) {
-  const { model, money, canSeeProfit, from, to, days, products } = ctx;
+  const { model, money, canSeeProfit, canSeeMoney, from, to, days, products } = ctx;
   const [mainGrain, setMainGrain] = useState<Granularity>(ctx.grain);
   const [series, setSeries] = useState<Series>("all");
   const [kind, setKind] = useState<ChartKind>("line");
@@ -418,10 +418,14 @@ export function TrendsOverTimeTab({ ctx, filters }: { ctx: TabCtx; filters?: Rea
         <KpiTile Icon={ShoppingCart} tone="bg-blue-50 text-blue-600" label="Total Orders" value={nf(now.orders)} delta={growthPct(now.orders, before.orders)} spark={spark((b) => b.length)} />
         <KpiTile Icon={Truck} tone="bg-emerald-50 text-emerald-600" label="Delivered Orders" value={nf(now.delivered)} delta={growthPct(now.delivered, before.delivered)} spark={spark((b) => b.filter(isDelivered).length)} />
         <KpiTile Icon={CirclePercent} tone="bg-emerald-50 text-emerald-600" label="Delivery Rate" value={pct1(now.rate)} delta={before.orders > 0 ? now.rate - before.rate : null} deltaPoints spark={spark(rateOf)} sparkColor="#a21caf" />
-        <KpiTile Icon={Banknote} tone="bg-orange-50 text-orange-500" label="Delivered Revenue" value={money(now.revenue)} delta={growthPct(now.revenue, before.revenue)} spark={spark((b) => b.filter(isDelivered).reduce((s, o) => s + o.amount, 0))} />
+        {canSeeMoney
+          ? <KpiTile Icon={Banknote} tone="bg-orange-50 text-orange-500" label="Delivered Revenue" value={money(now.revenue)} delta={growthPct(now.revenue, before.revenue)} spark={spark((b) => b.filter(isDelivered).reduce((s, o) => s + o.amount, 0))} />
+          : <KpiTile Icon={Banknote} tone="bg-orange-50 text-orange-500" label="Pending Deliveries" value={nf(now.open)} delta={growthPct(now.open, before.open)} />}
         {canSeeProfit
           ? <KpiTile Icon={BarChart3} tone="bg-violet-50 text-violet-600" label="Net Profit (Delivered)" value={money(now.net)} delta={before.net > 0 ? growthPct(now.net, before.net) : null} spark={spark((b) => netOf(b, model.costs))} sparkColor="#a21caf" />
-          : <KpiTile Icon={BarChart3} tone="bg-violet-50 text-violet-600" label="Delivered AOV" value={now.delivered > 0 ? money(now.aov) : "—"} delta={before.delivered > 0 && now.delivered > 0 ? growthPct(now.aov, before.aov) : null} />}
+          : canSeeMoney
+            ? <KpiTile Icon={BarChart3} tone="bg-violet-50 text-violet-600" label="Delivered AOV" value={now.delivered > 0 ? money(now.aov) : "—"} delta={before.delivered > 0 && now.delivered > 0 ? growthPct(now.aov, before.aov) : null} />
+            : <KpiTile Icon={BarChart3} tone="bg-violet-50 text-violet-600" label="Confirmed Orders" value={nf(now.confirmed)} delta={growthPct(now.confirmed, before.confirmed)} />}
         <KpiTile Icon={Package} tone="bg-amber-50 text-amber-500" label="Units Delivered" value={nf(now.unitsDelivered)} delta={growthPct(now.unitsDelivered, before.unitsDelivered)} spark={spark((b) => b.filter(isDelivered).reduce((s, o) => s + o.units, 0))} sparkColor="#dc2626" />
       </div>
       {filters}
@@ -457,7 +461,7 @@ export function TrendsOverTimeTab({ ctx, filters }: { ctx: TabCtx; filters?: Rea
 
         <Panel title={<span>Compare Products (Trends)<span className="block text-[12px] font-normal text-gray-500">Select up to 5 products to compare their performance over time.</span></span>}
           action={<div className="flex items-center gap-2"><span className="text-[12px] text-gray-500">Metric:</span>
-            <SelectBox label="Metric" className="w-40" value={compareMetric} onChange={setCompareMetric} options={[{ value: "delivered", label: "Delivered Orders" }, { value: "orders", label: "Total Orders" }, { value: "rate", label: "Delivery Rate" }, { value: "revenue", label: "Delivered Revenue" }, { value: "unitsDelivered", label: "Units Delivered" }]} />
+            <SelectBox label="Metric" className="w-40" value={compareMetric} onChange={setCompareMetric} options={[{ value: "delivered", label: "Delivered Orders" }, { value: "orders", label: "Total Orders" }, { value: "rate", label: "Delivery Rate" }, ...(canSeeMoney ? [{ value: "revenue", label: "Delivered Revenue" }] : []), { value: "unitsDelivered", label: "Units Delivered" }]} />
             {grainSelect(compareGrain, setCompareGrain)}</div>}>
           <div className="mb-2 flex flex-wrap items-center gap-1.5">
             {chosen.map((id, i) => {
@@ -520,7 +524,7 @@ export function TrendsOverTimeTab({ ctx, filters }: { ctx: TabCtx; filters?: Rea
             </ResponsiveContainer>
           </div>
         </Panel>
-        <Panel title={canSeeProfit ? "Revenue & Net Profit Trend" : "Revenue Trend"} action={grainSelect(moneyGrain, setMoneyGrain)}>
+        {canSeeMoney && <Panel title={canSeeProfit ? "Revenue & Net Profit Trend" : "Revenue Trend"} action={grainSelect(moneyGrain, setMoneyGrain)}>
           <div className="h-56">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={moneyData} margin={{ top: 6, right: 6, left: -4, bottom: 0 }}>
@@ -534,12 +538,12 @@ export function TrendsOverTimeTab({ ctx, filters }: { ctx: TabCtx; filters?: Rea
               </AreaChart>
             </ResponsiveContainer>
           </div>
-        </Panel>
+        </Panel>}
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <Panel title="Top Products by Growth">
-          <Segmented small fill value={growthMode} onChange={setGrowthMode} options={[{ value: "orders", label: "Orders" }, { value: "delivered", label: "Delivered Orders" }, { value: "revenue", label: "Revenue" }, ...(canSeeProfit ? [{ value: "net" as GrowthMode, label: "Net Profit" }] : [])]} />
+          <Segmented small fill value={growthMode} onChange={setGrowthMode} options={[{ value: "orders", label: "Orders" }, { value: "delivered", label: "Delivered Orders" }, ...(canSeeMoney ? [{ value: "revenue" as GrowthMode, label: "Revenue" }] : []), ...(canSeeProfit ? [{ value: "net" as GrowthMode, label: "Net Profit" }] : [])]} />
           <table className="mt-2 w-full !min-w-0 border-separate border-spacing-0">
             <thead><tr><th className={th}>#</th><th className={th}>Product</th><th className={th}>Current Period</th><th className={th}>Previous Period</th><th className={th}>Growth</th></tr></thead>
             <tbody>{productGrowth.map(({ r, cur, prev }, i) => (
