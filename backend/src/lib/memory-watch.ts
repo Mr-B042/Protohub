@@ -53,6 +53,15 @@ const reportJump = (label: string, rssBefore: number, startedAt: number, extra?:
   });
 };
 
+/** Which memory allocator the server runs on: "jemalloc" when start-railway.sh loaded it. */
+export function memoryAllocator(): string {
+  try {
+    return fs.readFileSync("/proc/self/maps", "utf8").includes("libjemalloc") ? "jemalloc" : "default";
+  } catch {
+    return "unknown";
+  }
+}
+
 /** Runs fn and logs a "memory jump" if the server grew 50 MB+ while it ran. */
 export async function watchMemory<T>(label: string, fn: () => T | Promise<T>): Promise<T> {
   const rssBefore = process.memoryUsage.rss();

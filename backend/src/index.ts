@@ -10,7 +10,7 @@ import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 // Every scheduled job is watched for memory jumps (lib/memory-watch.ts).
-import { cron, processMemory, watchRequestMemory } from "./lib/memory-watch.js";
+import { cron, memoryAllocator, processMemory, watchRequestMemory } from "./lib/memory-watch.js";
 import { runLateSendAlerts } from "./lib/late-send.js";
 import { logger } from "./lib/logger.js";
 import { runtimeDataProfile } from "./lib/local-safety.js";
@@ -328,7 +328,8 @@ app.get("/health", (_req, res) => {
         arrayBuffersMb: mb(usage.arrayBuffers),
         uptimeMinutes: Math.round(process.uptime() / 60),
         // The system's split of rss: program memory vs library files (lib/memory-watch.ts).
-        process: processMemory()
+        process: processMemory(),
+        allocator: memoryAllocator()
       };
     })()
   });
