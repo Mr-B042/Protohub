@@ -8,7 +8,7 @@ import { Suspense, lazy, type ComponentProps, type ComponentType } from "react";
  *
  * Each one carries its own Suspense, so while its code arrives only that spot
  * shows "Loading…". Without it the app-level fallback in main.tsx would take
- * over the whole screen (and reload after 12 s on a slow device).
+ * over the whole screen.
  */
 export function lazyPage<T extends ComponentType<any>>(load: () => Promise<{ default: T }>) {
   const Lazy = lazy(load);

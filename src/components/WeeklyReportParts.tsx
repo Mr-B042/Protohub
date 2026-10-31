@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import {
-  Bar, CartesianGrid, Cell, ComposedChart, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis
-} from "recharts";
+import { DeferredCharts } from "./DeferredCharts";
 import { ArrowDown, ArrowUp, Calendar, Check, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { money } from "../lib/money-privacy";
 import {
@@ -336,6 +334,7 @@ export function OrdersRateChart({ rows, ordersColor, deliveredColor, height = 23
 }) {
   return (
     <div style={{ height }} className="w-full">
+      <DeferredCharts>{({ Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis }) => (
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={rows} margin={{ top: 8, right: 4, left: -18, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
@@ -348,6 +347,7 @@ export function OrdersRateChart({ rows, ordersColor, deliveredColor, height = 23
           <Line yAxisId="right" dataKey="deliveryRate" name="Delivery Rate" stroke="#f97316" strokeWidth={2} dot={{ r: 4, fill: "#f97316" }} />
         </ComposedChart>
       </ResponsiveContainer>
+      )}</DeferredCharts>
     </div>
   );
 }
@@ -391,6 +391,7 @@ export function ProductDonut({ products, metric = "orders", compact }: {
   return (
     <div className={`flex flex-col items-center gap-4 px-5 pb-5 pt-2 ${compact ? "sm:flex-row" : "md:flex-row"}`}>
       <div className={`relative shrink-0 ${compact ? "h-[150px] w-[150px]" : "h-[170px] w-[170px]"}`}>
+        <DeferredCharts>{({ Cell, Pie, PieChart, ResponsiveContainer }) => (
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie data={total > 0 ? data : [{ name: "None", value: 1 }]} dataKey="value" innerRadius={compact ? 46 : 52} outerRadius={compact ? 70 : 78} startAngle={90} endAngle={-270} stroke="none">
@@ -400,6 +401,7 @@ export function ProductDonut({ products, metric = "orders", compact }: {
             </Pie>
           </PieChart>
         </ResponsiveContainer>
+        )}</DeferredCharts>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
           <span className="text-2xl font-black text-gray-900 dark:text-slate-50">{nf(total)}</span>
           <span className="text-[11px] text-gray-500 dark:text-slate-400">Total {metric === "orders" ? "Orders" : "Delivered"}</span>

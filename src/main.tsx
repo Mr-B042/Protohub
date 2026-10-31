@@ -6,7 +6,7 @@ import { ensureFreshAuthSession } from "./lib/api";
 import { ensureServiceWorkerRegistration } from "./lib/push-client";
 import { AppUpdateWatcher } from "./components/AppUpdateWatcher";
 import { NativeAppUpdatePrompt } from "./components/NativeAppUpdatePrompt";
-import PublicOrderFormPage from "./pages/PublicOrderFormPage";
+import { RouteFallback } from "./components/RouteFallback";
 import "./styles.css";
 
 // Keep the customer order-form entry independent from the much larger admin
@@ -16,35 +16,7 @@ const LoginScreen = lazy(() => import("./components/LoginScreen").then((module) 
 const ResetPasswordScreen = lazy(() => import("./components/ResetPasswordScreen").then((module) => ({ default: module.ResetPasswordScreen })));
 const PublicAgentApplicationPage = lazy(() => import("./PublicAgentApplicationPage"));
 const PublicAgentStatusPage = lazy(() => import("./PublicAgentStatusPage"));
-
-function RouteFallback({ message }: { message: string }) {
-  const [stalled, setStalled] = useState(false);
-  useEffect(() => {
-    if (!message.toLowerCase().includes("loading workspace")) return;
-    const timer = window.setTimeout(() => {
-      const key = "protohub.workspace-load-retry";
-      const now = Date.now();
-      const previous = Number(window.sessionStorage.getItem(key) ?? 0);
-      if (!previous || now - previous > 60_000) {
-        window.sessionStorage.setItem(key, String(now));
-        window.location.reload();
-        return;
-      }
-      setStalled(true);
-    }, 12_000);
-    return () => window.clearTimeout(timer);
-  }, [message]);
-  return (
-    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#eef1f4", color: "#374151", fontFamily: "Inter, system-ui, sans-serif" }}>
-      <div style={{ textAlign: "center", padding: "24px 20px" }}>
-        <img src="/brand/company-logo.png" alt="Protohub" style={{ width: 96, height: 96, objectFit: "contain", borderRadius: 18, margin: "0 auto 18px" }} onError={(event) => { event.currentTarget.style.display = "none"; }} />
-        <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", color: "#1f8fe0", marginBottom: 10 }}>Protohub</div>
-        <div style={{ fontSize: 28, fontWeight: 800, color: "#111827" }}>{stalled ? "Workspace could not finish loading" : message}</div>
-        {stalled && <button type="button" onClick={() => window.location.reload()} style={{ marginTop: 18, border: 0, borderRadius: 10, padding: "10px 16px", background: "#1f8fe0", color: "#fff", fontWeight: 700, cursor: "pointer" }}>Retry workspace</button>}
-      </div>
-    </div>
-  );
-}
+const PublicOrderFormPage = lazy(() => import("./pages/PublicOrderFormPage"));
 
 const STALE_IMPORT_PATTERNS = [
   /Failed to fetch dynamically imported module/i,

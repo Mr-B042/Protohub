@@ -1,5 +1,6 @@
 import { liteCart } from "../lib/lite-lists.js";
 import { fetchPagesTogether } from "../lib/paged-fetch.js";
+import { readScopedCartListEnrichment, type CartListEnrichment } from "../lib/cart-list-enrichment.js";
 import { Router } from "express";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
@@ -79,27 +80,27 @@ router.get("/", requireRole(...CART_LIST_ROLES), async (req, res) => {
   // Stock page has to tell those apart to count real waiting demand, and until
   // now the browser had no way to.
   //
-  // Read as its own small query rather than joined per cart: only ~400 of 3,400
-  // carts have ever been called, so this is a few hundred rows of three short
-  // columns. Cheap enough that it does not need a stored column on the cart.
+  // An exact-cart refresh reads only that cart's history. List requests keep
+  // the existing parallel reads: batching metadata for thousands of recent
+  // cart IDs would add many database round trips to the workspace load.
   const attempts = new Map<string, { code: string | null; at: string | null }>();
-  const attemptsRead = supabase
-    .from("cart_contact_attempts")
-    .select("cart_id, outcome_code, attempted_at")
-    .eq("org_id", req.user!.orgId)
-    .order("attempted_at", { ascending: false })
-    .limit(REPORT_ROW_CEILING);
   const stripped = req.user!.role === "Inventory Manager & Logistics Operations"
     || scopeOf(req).role === "Inventory Manager & Logistics Operations";
-  const deletedRead = stripped ? null : supabase
-    .from("deleted_orders")
-    .select("order_id, source_cart_id, deleted_at, deleted_by_name, note")
-    .eq("org_id", req.user!.orgId)
-    .not("source_cart_id", "is", null)
-    .order("deleted_at", { ascending: false })
-    .limit(REPORT_ROW_CEILING);
-  // The three reads run together.
-  const [cartsResult, { data: attemptRows }, deletedResult] = await Promise.all([cartsRead, attemptsRead, deletedRead]);
+  const enrichmentRead: Promise<CartListEnrichment> = onlyId
+    ? cartsRead.then((result) => readScopedCartListEnrichment(supabase, {
+        orgId: req.user!.orgId,
+        cartIds: result.error ? [] : result.rows.map((row) => String(row.id)),
+        includeDeleted: !stripped
+      }))
+    : Promise.all([
+        supabase.from("cart_contact_attempts").select("cart_id, outcome_code, attempted_at")
+          .eq("org_id", req.user!.orgId).order("attempted_at", { ascending: false }).limit(REPORT_ROW_CEILING),
+        stripped ? null : supabase.from("deleted_orders")
+          .select("order_id, source_cart_id, deleted_at, deleted_by_name, note")
+          .eq("org_id", req.user!.orgId).not("source_cart_id", "is", null)
+          .order("deleted_at", { ascending: false }).limit(REPORT_ROW_CEILING)
+      ]).then(([attempts, deleted]) => ({ attempts, deleted }));
+  const [cartsResult, { attempts: { data: attemptRows }, deleted: deletedResult }] = await Promise.all([cartsRead, enrichmentRead]);
   if (cartsResult.error) { res.status(500).json({ error: cartsResult.error.message }); return; }
   const all = cartsResult.rows;
   // Sorted newest first, so the first row seen for a cart is its latest call.

@@ -17,6 +17,7 @@ jobs:
           node-version: '20'
           cache: 'npm'
       - run: npm ci
+      - run: npm run test:performance && npm run test:weekly-dialogs
       - run: npm run build
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
@@ -36,4 +37,5 @@ jobs:
           cache: 'npm'
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
+      - run: node --import tsx --test src/lib/cart-list-enrichment.test.ts src/lib/paged-fetch.test.ts
       - run: npm run build
