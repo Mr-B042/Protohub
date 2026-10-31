@@ -64,6 +64,7 @@ const AllocationSchema = z.object({
 }).strict();
 const AllocationsSchema = z.object({ allocations: z.array(AllocationSchema).min(1).max(500) }).strict();
 
+const LAGOS_DAY_FORMAT = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Lagos" });
 const todayInLagos = () => new Date(Date.now() + 3_600_000).toISOString().slice(0, 10);
 const lagosDateKeyFromIso = (value: string) => {
   const timestamp = new Date(value).getTime();
@@ -265,10 +266,20 @@ router.get("/", async (req, res) => {
       .eq("org_id", req.user!.orgId).in("role", ["Manager", "Admin"]).eq("active", true).order("name", { ascending: true });
     // The manager reward goes to the active Manager; with none, the Admin who runs the team.
     const managerRecipient = (leaders ?? []).find((user) => user.role === "Manager") ?? (leaders ?? [])[0] ?? null;
-    const lagosDay = (iso: unknown) => (iso ? new Date(String(iso)).toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" }) : "");
+    // Each order's Lagos day, worked out once. This used toLocaleDateString per
+    // order per person per challenge (~200,000 calls): each builds a new date
+    // formatter, so one request took ~7 s and grew the server by 450-950 MB
+    // (31 Oct 2026). One shared formatter gives the identical date.
+    const placedDayById = new Map((rateOrders ?? []).map((order) => [
+      order.id,
+      order.created_at ? LAGOS_DAY_FORMAT.format(new Date(String(order.created_at))) : ""
+    ]));
     const monthRate = (from: string, to: string, repId: string | null) => {
-      const placedOrders = (rateOrders ?? []).filter((order) => (!repId || order.assigned_rep_id === repId)
-        && lagosDay(order.created_at) >= from && lagosDay(order.created_at) <= to);
+      const placedOrders = (rateOrders ?? []).filter((order) => {
+        if (repId && order.assigned_rep_id !== repId) return false;
+        const placedDay = placedDayById.get(order.id) ?? "";
+        return placedDay >= from && placedDay <= to;
+      });
       const delivered = placedOrders.filter((order) => String(order.status ?? "").trim().toLowerCase() === "delivered").length;
       return { placed: placedOrders.length, delivered, rate: monthlyDeliveryRate(placedOrders.length, delivered) };
     };
