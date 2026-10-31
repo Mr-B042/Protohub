@@ -3079,6 +3079,8 @@ const PREVIEW_ROLE_STORAGE_KEY = "protohub.previewRole";
 // once instead of to every role's list. Issue Management is the technical
 // team's: Owner and Admin only (Bright's choice).
 const SUPPORT_PAGES: AccessiblePage[] = ["Report a Bug", "My Reports"];
+// The only extra pages the logistics role can be granted (see currentAllowedPages).
+const INVENTORY_OPERATIONS_EXTRA_PAGES: AccessiblePage[] = ["Product Trend"];
 const ISSUE_TEAM_ROLES: EditableUserRole[] = ["Owner", "Admin"];
 const allowedPagesFor = (role: EditableUserRole | undefined, extraPages: AccessiblePage[] = []): AccessiblePage[] => {
   if (!role) return sanitizeActivePageList([...roleAllowedPages["Viewer"], ...SUPPORT_PAGES]);
@@ -11653,10 +11655,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const pricesWithheldForViewer = [realRole, currentRole].some((role) => role === "Inventory Manager & Logistics Operations" || role === "Marketer");
   // Physical stock and logistics is a hard security boundary. Extra-page
   // grants must not quietly restore sales, finance, messaging or settings.
+  // The one grant that passes is Product Trend (Bright, 1 Nov 2026): the role
+  // gets it with no money on it, and the server sends it stripped orders.
   const currentAllowedPages = currentRole === "Sales Rep" && currentManagedUser?.isHeadOfSalesRep
     ? sanitizeActivePageList([...allowedPagesFor(currentRole, currentManagedUser?.extraPages ?? []), "Head of Sales Rep"])
     : isInventoryOperationsRole
-      ? allowedPagesFor(currentRole)
+      ? allowedPagesFor(currentRole, (currentManagedUser?.extraPages ?? []).filter((page) => INVENTORY_OPERATIONS_EXTRA_PAGES.includes(page)))
       : allowedPagesFor(currentRole, currentManagedUser?.extraPages ?? []);
   // Page-aware + role-aware Help: the (?) modal explains the page you're on,
   // with an optional role-specific note. Content lives in src/help-content.ts.
@@ -91613,7 +91617,8 @@ ${waybillLineItems(w).length > 1
             // Owner / Admin / Manager (Bright, 20 Oct 2026). Net profit is
             // Owner / Admin only: Managers have no Finance page. Gated on
             // currentRole so "view as" shows what that role would see.
-            ["Owner", "Admin", "Manager"].includes(currentRole) ? (
+            // The logistics role when granted it (1 Nov 2026), with no money.
+            ["Owner", "Admin", "Manager"].includes(currentRole) || (isInventoryOperationsRole && currentAllowedPages.includes("Product Trend")) ? (
               <ProductTrendPage
                 products={catalogProducts.map((product) => ({ id: product.id, name: product.name, sku: product.sku, active: product.active !== false, warehouseStock: Math.max(0, Number(product.warehouseStock ?? 0)) }))}
                 agents={agents.map((agent) => ({ id: agent.id, name: agent.name }))}
@@ -91628,9 +91633,10 @@ ${waybillLineItems(w).length > 1
                     quantity: Math.max(0, Number(stock.quantity ?? 0) - Number(stock.defective ?? 0) - Number(stock.missing ?? 0))
                   }))
                 }))}
-                expenses={expenses.map((expense) => ({ amount: Number(expense.amount) || 0, dateKey: normalizeDateKey(expense.date), productId: expense.productId ?? null, type: expense.type }))}
+                expenses={isInventoryOperationsRole ? [] : expenses.map((expense) => ({ amount: Number(expense.amount) || 0, dateKey: normalizeDateKey(expense.date), productId: expense.productId ?? null, type: expense.type }))}
                 loadOrders={loadProductTrendOrders}
                 canSeeProfit={currentRole === "Owner" || currentRole === "Admin"}
+                canSeeMoney={!isInventoryOperationsRole}
                 formatMoney={formatMoney}
                 canCreateTransfer={["Owner", "Admin", "Inventory Manager", "Inventory Manager & Logistics Operations"].includes(currentRole)}
                 onCreateTransfer={openCreateWaybillForReplenishment}

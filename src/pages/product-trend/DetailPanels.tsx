@@ -98,9 +98,9 @@ export function ProductStatePanel({ productId, state, orders, costs, products, h
 
 // ── Product details (the View button) ──────────────────────────────────────
 
-export function ProductDetailPanel({ productId, products, orders, previous, costs, previousCosts, hubs, agents, canSeeProfit, money, imageOf, from, to, onClose }: {
+export function ProductDetailPanel({ productId, products, orders, previous, costs, previousCosts, hubs, agents, canSeeProfit, canSeeMoney = true, money, imageOf, from, to, onClose }: {
   productId: string; products: TrendProduct[]; orders: TrendOrder[]; previous: TrendOrder[]; costs: CostBook; previousCosts: CostBook; hubs: TrendHub[]; agents: TrendAgent[];
-  canSeeProfit: boolean; money: Money; imageOf: (productId: string) => string | null; from: string; to: string; onClose: () => void;
+  canSeeProfit: boolean; canSeeMoney?: boolean; money: Money; imageOf: (productId: string) => string | null; from: string; to: string; onClose: () => void;
 }) {
   const [view, setView] = useState<"states" | "agents" | "trend">("states");
   const product = products.find((p) => p.id === productId);
@@ -124,7 +124,7 @@ export function ProductDetailPanel({ productId, products, orders, previous, cost
         {kpi("Delivered", nf(now.delivered), <Delta value={growthPct(now.delivered, was.delivered)} />)}
         {kpi("Delivery rate", pct1(now.rate), <Delta value={was.orders > 0 ? now.rate - was.rate : null} points />)}
         {kpi("Units delivered", nf(now.unitsDelivered))}
-        {kpi("Delivered AOV", now.delivered > 0 ? money(now.aov) : "—")}
+        {canSeeMoney && kpi("Delivered AOV", now.delivered > 0 ? money(now.aov) : "—")}
         {canSeeProfit && kpi("Net profit", <span className={now.net < 0 ? "text-rose-600" : ""}>{money(now.net)}</span>, <Delta value={was.net > 0 ? growthPct(now.net, was.net) : null} />)}
         {canSeeProfit && kpi("Per delivered order", now.delivered > 0 ? money(now.net / now.delivered) : "—")}
         {kpi("Stock with agents", nf(stockTotal), <span className="text-[11px] text-gray-500">{now.unitsDelivered > 0 ? `≈ ${Math.round(stockTotal / (now.unitsDelivered / days))} days` : "no deliveries yet"}</span>)}

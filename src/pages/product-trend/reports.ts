@@ -8,6 +8,8 @@ import type { TrendModel } from "./tab-context";
 
 export type ReportInput = {
   model: TrendModel; products: TrendProduct[]; hubs: TrendHub[]; agents: TrendAgent[]; canSeeProfit: boolean;
+  /** False for the logistics role: no revenue, order value or fees in the report. */
+  canSeeMoney?: boolean;
   from: string; to: string; prevFrom: string; prevTo: string; days: number; filtersText: string; updatedAt: number;
 };
 
@@ -25,7 +27,10 @@ const r1 = (v: number) => Math.round(v * 10) / 10;
 const r0 = (v: number) => Math.round(v);
 
 export function buildReportSheets(input: ReportInput): { sheets: Sheet[]; summary: Array<[string, string]>; kpis: Array<[string, string]> } {
-  const { model, products, hubs, agents, canSeeProfit, from, to, prevFrom, prevTo, days, filtersText, updatedAt } = input;
+  const { model, products, hubs, agents, from, to, prevFrom, prevTo, days, filtersText, updatedAt } = input;
+  const canSeeMoney = input.canSeeMoney !== false;
+  const canSeeProfit = canSeeMoney && input.canSeeProfit;
+  const ifMoney = <T,>(values: T[]): T[] => (canSeeMoney ? values : []);
   const totals = figuresFor(model.orders, model.costs);
   const before = figuresFor(model.previous, model.previousCosts);
   const net = model.productRows.reduce((s, r) => s + r.now.net, 0);
@@ -41,14 +46,16 @@ export function buildReportSheets(input: ReportInput): { sheets: Sheet[]; summar
     ["Delivered", `${totals.delivered.toLocaleString("en-NG")} (${fmtGrowth(growthPct(totals.delivered, before.delivered))})`],
     ["Delivery rate", `${totals.rate.toFixed(1)}%`],
     ["Units delivered", totals.unitsDelivered.toLocaleString("en-NG")],
-    ["Delivered revenue", `₦${r0(totals.revenue).toLocaleString("en-NG")}`],
-    canSeeProfit ? ["Net profit (delivered)", `₦${r0(net).toLocaleString("en-NG")}`] : ["Delivered AOV", `₦${r0(totals.aov).toLocaleString("en-NG")}`]
+    ...ifMoney<[string, string]>([
+      ["Delivered revenue", `₦${r0(totals.revenue).toLocaleString("en-NG")}`],
+      canSeeProfit ? ["Net profit (delivered)", `₦${r0(net).toLocaleString("en-NG")}`] : ["Delivered AOV", `₦${r0(totals.aov).toLocaleString("en-NG")}`]
+    ])
   ];
 
-  const productHead: Cell[] = ["Product", "SKU", "Orders", "Orders before", "Growth %", "Delivered", "Units delivered", "Delivery rate %", "Delivered revenue", "Delivered AOV", ...(canSeeProfit ? ["Net profit"] : []), "Stock with agents", "Top states (orders)"];
+  const productHead: Cell[] = ["Product", "SKU", "Orders", "Orders before", "Growth %", "Delivered", "Units delivered", "Delivery rate %", ...ifMoney(["Delivered revenue", "Delivered AOV"]), ...(canSeeProfit ? ["Net profit"] : []), "Stock with agents", "Top states (orders)"];
   const productRows = [...model.productRows].sort((a, b) => b.now.orders - a.now.orders).map((r) => [
     r.product.name, r.product.sku ?? "", r.now.orders, r.before.orders, growthPct(r.now.orders, r.before.orders) === null ? "" : r1(growthPct(r.now.orders, r.before.orders)!),
-    r.now.delivered, r.now.unitsDelivered, r1(r.now.rate), r0(r.now.revenue), r0(r.now.aov), ...(canSeeProfit ? [r0(r.now.net)] : []), r.stockWithAgents,
+    r.now.delivered, r.now.unitsDelivered, r1(r.now.rate), ...ifMoney([r0(r.now.revenue), r0(r.now.aov)]), ...(canSeeProfit ? [r0(r.now.net)] : []), r.stockWithAgents,
     r.topStatesByOrders.map((s) => `${stateLabel(s.key)} ${r0(s.share)}%`).join("; ")
   ] as Cell[]);
 
@@ -59,9 +66,9 @@ export function buildReportSheets(input: ReportInput): { sheets: Sheet[]; summar
     w.row.product.name, w.row.now.orders, r1(w.row.now.rate), ...(canSeeProfit ? [r0(w.row.now.net)] : []), w.why, w.check
   ] as Cell[]));
 
-  const stateHead: Cell[] = ["State", "Orders", "Orders before", "Confirmed", "Delivered", "Units delivered", "Delivery rate %", "Failed", "Cancelled", "Still open", "Delivered revenue", ...(canSeeProfit ? ["Net profit"] : []), "Stock with agents", "Active agents"];
+  const stateHead: Cell[] = ["State", "Orders", "Orders before", "Confirmed", "Delivered", "Units delivered", "Delivery rate %", "Failed", "Cancelled", "Still open", ...ifMoney(["Delivered revenue"]), ...(canSeeProfit ? ["Net profit"] : []), "Stock with agents", "Active agents"];
   const stateRows = model.stateRows.map((r) => [stateLabel(r.state), r.now.orders, r.before.orders, r.now.confirmed, r.now.delivered, r.now.unitsDelivered, r1(r.now.rate), r.now.failed, r.now.cancelled, r.now.open,
-    r0(r.now.revenue), ...(canSeeProfit ? [r0(r.now.net)] : []), r.stockWithAgents, r.activeAgents] as Cell[]);
+    ...ifMoney([r0(r.now.revenue)]), ...(canSeeProfit ? [r0(r.now.net)] : []), r.stockWithAgents, r.activeAgents] as Cell[]);
 
   const heat = buildHeatmap(model.orders, model.costs);
   const states = model.stateRows.map((r) => r.state);
@@ -71,9 +78,9 @@ export function buildReportSheets(input: ReportInput): { sheets: Sheet[]; summar
   })] as Cell[]));
 
   const agentRows = buildAgentRows({ orders: model.orders, previousOrders: model.previous, costs: model.costs, previousCosts: model.previousCosts, hubs, agents, productId: "all" });
-  const agentHead: Cell[] = ["Agent", "States", "Orders", "Delivered", "Delivery rate %", "vs other agents in state (points)", "Avg. delivery days", "Failed", "Cancelled", "Pending", "Delivery fees", ...(canSeeProfit ? ["Net profit"] : []), "Stock held"];
+  const agentHead: Cell[] = ["Agent", "States", "Orders", "Delivered", "Delivery rate %", "vs other agents in state (points)", "Avg. delivery days", "Failed", "Cancelled", "Pending", ...ifMoney(["Delivery fees"]), ...(canSeeProfit ? ["Net profit"] : []), "Stock held"];
   const agentData = agentRows.map((a) => [a.name, a.states.map(stateLabel).join("; "), a.now.orders, a.now.delivered, r1(a.now.rate), a.vsPeers === null ? "" : r1(a.vsPeers),
-    a.now.avgDeliveryDays === null ? "" : r1(a.now.avgDeliveryDays), a.now.failed, a.now.cancelled, a.now.open, r0(a.now.logistics), ...(canSeeProfit ? [r0(a.now.net)] : []), a.stockHeld] as Cell[]);
+    a.now.avgDeliveryDays === null ? "" : r1(a.now.avgDeliveryDays), a.now.failed, a.now.cancelled, a.now.open, ...ifMoney([r0(a.now.logistics)]), ...(canSeeProfit ? [r0(a.now.net)] : []), a.stockHeld] as Cell[]);
 
   const stockHead: Cell[] = ["Product", "State", "Stock with agents", "Waiting units", "30-day forecast", "Delivery rate %", "Days of cover", "Need", "Recommended from warehouse", "Priority", "Forecast confidence"];
   const ids = new Set(model.orders.map((o) => o.productId));
@@ -105,22 +112,23 @@ export function exportExcel(input: ReportInput) {
 
 export function exportPdf(input: ReportInput) {
   const { sheets, summary, kpis } = buildReportSheets(input);
-  const take = (name: string, cols: number[], limit = 12) => {
+  // Columns by heading, so a column a viewer may not see simply drops out.
+  const take = (name: string, headings: string[], limit = 12) => {
     const rows = sheets.find((s) => s.name === name)?.rows ?? [];
+    const cols = headings.map((heading) => (rows[0] ?? []).indexOf(heading)).filter((index) => index >= 0);
     return rows.slice(0, limit + 1).map((row) => cols.map((c) => row[c]));
   };
-  const profit = input.canSeeProfit;
   printReport({
     title: "Product Trend Report",
     subtitle: "Best and worst products, states, agents and stock - from Protohub's live orders.",
     meta: summary,
     kpis,
     sections: [
-      { title: "Top products (by orders)", rows: take("Products", profit ? [0, 2, 4, 5, 7, 8, 10, 11] : [0, 2, 4, 5, 7, 8, 10]) },
-      { title: "Worst performing products", note: "Ranked three ways; products need 10+ orders, except money-losers, which are always shown.", rows: take("Worst Products", profit ? [0, 1, 2, 3, 4, 5] : [0, 1, 2, 3, 4], 15) },
-      { title: "States", rows: take("States", profit ? [0, 1, 4, 6, 7, 10, 11, 12] : [0, 1, 4, 6, 7, 10, 11]) },
-      { title: "Delivery agents", rows: take("Agents", [0, 1, 2, 3, 4, 5, 6, 7]) },
-      { title: "Stock plan (states needing stock first)", note: "Recommended units come from the warehouse; nothing moves without an approved waybill.", rows: take("Stock Plan", [0, 1, 2, 3, 4, 6, 8, 9, 10], 15) }
+      { title: "Top products (by orders)", rows: take("Products", ["Product", "Orders", "Growth %", "Delivered", "Delivery rate %", "Delivered revenue", "Net profit", "Stock with agents"]) },
+      { title: "Worst performing products", note: "Ranked three ways; products need 10+ orders, except money-losers, which are always shown.", rows: take("Worst Products", ["Ranking", "Product", "Orders", "Delivery rate %", "Net profit", "Why it is here"], 15) },
+      { title: "States", rows: take("States", ["State", "Orders", "Delivered", "Delivery rate %", "Failed", "Delivered revenue", "Net profit", "Stock with agents"]) },
+      { title: "Delivery agents", rows: take("Agents", ["Agent", "States", "Orders", "Delivered", "Delivery rate %", "vs other agents in state (points)", "Avg. delivery days", "Failed"]) },
+      { title: "Stock plan (states needing stock first)", note: "Recommended units come from the warehouse; nothing moves without an approved waybill.", rows: take("Stock Plan", ["Product", "State", "Stock with agents", "Waiting units", "30-day forecast", "Days of cover", "Recommended from warehouse", "Priority", "Forecast confidence"], 15) }
     ],
     definitions: DEFINITIONS
   });

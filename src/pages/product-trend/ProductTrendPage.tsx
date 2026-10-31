@@ -36,6 +36,10 @@ export type ProductTrendPageProps = {
   loadOrders: (from: string, to: string) => Promise<TrendOrder[]>;
   /** Net profit is for Owner / Admin (Manager has no Finance page). */
   canSeeProfit: boolean;
+  /** False for the logistics role (Bright, 1 Nov 2026): no revenue, order
+   *  value or fees anywhere on the page - counts, rates and stock only. The
+   *  server also sends this role no amounts, so a missed spot reads ₦0. */
+  canSeeMoney?: boolean;
   formatMoney: (value: number) => string;
   /** Who may create stock transfers (Owner / Admin / inventory roles). */
   canCreateTransfer: boolean;
@@ -113,7 +117,12 @@ const CHIP_TONES = [
 const shortState = (state: string) => (state === "Rivers" ? "PH" : stateLabel(state));
 
 export default function ProductTrendPage(props: ProductTrendPageProps) {
-  const { products, agents, hubs, expenses, loadOrders, canSeeProfit, formatMoney } = props;
+  const { products, agents, hubs, expenses, loadOrders, formatMoney } = props;
+  const canSeeMoney = props.canSeeMoney !== false;
+  const canSeeProfit = canSeeMoney && props.canSeeProfit;
+  // A money measure saved on this device (or picked before) never applies here.
+  const allowedMetric = (metric: TrendMetric): TrendMetric => (!canSeeMoney && TREND_METRICS.find((m) => m.key === metric)?.money ? "delivered" : metric);
+  const metricOptions = TREND_METRICS.filter((m) => canSeeMoney || !m.money).map((m) => ({ value: m.key, label: m.label }));
   const money = formatMoney;
   const [tab, setTab] = useState<TabKey>("trend");
   const [compare, setCompare] = useState(true);
@@ -186,6 +195,7 @@ export default function ProductTrendPage(props: ProductTrendPageProps) {
       orders, previousOrders, delivered, previousDelivered, rate, previousRate,
       net: sum((row) => row.now.net), previousNet: sum((row) => row.before.net),
       revenue: sum((row) => row.now.revenue), previousRevenue: sum((row) => row.before.revenue),
+      unitsDelivered: sum((row) => row.now.unitsDelivered), previousUnitsDelivered: sum((row) => row.before.unitsDelivered),
       topProduct, topState
     };
   }, [model]);
@@ -214,8 +224,8 @@ export default function ProductTrendPage(props: ProductTrendPageProps) {
   const exportMenuRef = useClickAway<HTMLDivElement>(exportOpen, closeExport);
   const days = daysBetween(applied.from, applied.to) + 1;
   const ctx: TabCtx | null = model ? {
-    model, products, hubs, agents, canSeeProfit, money, from: applied.from, to: applied.to, prevFrom: prev.from, prevTo: prev.to, days, exportRef, imageOf,
-    onViewProduct: setDetailProductId, productId: applied.productId, state: applied.state, metric: applied.metric, grain: applied.grain, stockStatus: applied.stockStatus,
+    model, products, hubs, agents, canSeeProfit, canSeeMoney, money, from: applied.from, to: applied.to, prevFrom: prev.from, prevTo: prev.to, days, exportRef, imageOf,
+    onViewProduct: setDetailProductId, productId: applied.productId, state: applied.state, metric: allowedMetric(applied.metric), grain: applied.grain, stockStatus: applied.stockStatus,
     canCreateTransfer: props.canCreateTransfer, onCreateTransfer: props.onCreateTransfer, onOpenReplenishment: props.onOpenReplenishment,
     onOnlyAgent: (agentId) => { const next = { ...applied, agentId }; setApplied(next); setDraft(next); },
     role: props.role, userId: props.userId, loadOrders, today: lagosToday()
@@ -227,7 +237,7 @@ export default function ProductTrendPage(props: ProductTrendPageProps) {
     applied.status !== ALL ? `Status: ${applied.status}` : ""
   ].filter(Boolean).join(" · ");
   const reportInput: ReportInput | null = model && ready ? {
-    model, products, hubs, agents, canSeeProfit, from: applied.from, to: applied.to, prevFrom: prev.from, prevTo: prev.to, days, filtersText, updatedAt: ready.at
+    model, products, hubs, agents, canSeeProfit, canSeeMoney, from: applied.from, to: applied.to, prevFrom: prev.from, prevTo: prev.to, days, filtersText, updatedAt: ready.at
   } : null;
   const onShowState = (state: string) => { const next = { ...applied, state }; setApplied(next); setDraft(next); };
 
@@ -238,7 +248,7 @@ export default function ProductTrendPage(props: ProductTrendPageProps) {
   const statusField = <Field label="Order Status"><SelectBox label="Order Status" value={draft.status} onChange={(status) => setDraft((d) => ({ ...d, status }))} options={[{ value: ALL, label: "All Orders" }, ...STATUSES.map((status) => ({ value: status, label: status }))]} /></Field>;
   const fields: ReactNode[] = tab === "time"
     ? [productField, stateField, agentField("Delivery Agent"),
-      <Field key="m" label="Metric"><SelectBox label="Metric" value={draft.metric} onChange={(metric) => setDraft((d) => ({ ...d, metric }))} options={TREND_METRICS.map((m) => ({ value: m.key, label: m.label }))} /></Field>,
+      <Field key="m" label="Metric"><SelectBox label="Metric" value={allowedMetric(draft.metric)} onChange={(metric) => setDraft((d) => ({ ...d, metric }))} options={metricOptions} /></Field>,
       <Field key="g" label="Group By"><SelectBox label="Group By" value={draft.grain} onChange={(grain) => setDraft((d) => ({ ...d, grain }))} options={[{ value: "daily", label: "Daily" }, { value: "weekly", label: "Weekly" }, { value: "monthly", label: "Monthly" }]} /></Field>]
     : tab === "stock"
       ? [productField, stateField, agentField("Agent"),
@@ -321,9 +331,12 @@ export default function ProductTrendPage(props: ProductTrendPageProps) {
             <Kpi Icon={TrendingUp} tone="bg-blue-50 text-[#1F8FE0]" label="Total Net Profit (Delivered)" value={totals ? money(totals.net) : null}
               info="Delivered revenue − product cost − delivery fees − every running cost of the period (ads, salaries, rent...). Same as Finance › Product Profitability: Direct Net Profit − Shared Opex."
               foot={totals && compare ? <><Delta value={totals.previousNet > 0 ? growthPct(totals.net, totals.previousNet) : null} /> <span>vs previous period</span></> : null} />
-          ) : (
+          ) : canSeeMoney ? (
             <Kpi Icon={TrendingUp} tone="bg-blue-50 text-[#1F8FE0]" label="Delivered Revenue" value={totals ? money(totals.revenue) : null}
               foot={totals && compare ? <><Delta value={growthPct(totals.revenue, totals.previousRevenue)} /> <span>vs previous period</span></> : null} />
+          ) : (
+            <Kpi Icon={TrendingUp} tone="bg-blue-50 text-[#1F8FE0]" label="Units Delivered" value={totals ? nf(totals.unitsDelivered) : null}
+              foot={totals && compare ? <><Delta value={growthPct(totals.unitsDelivered, totals.previousUnitsDelivered)} /> <span>vs previous period</span></> : null} />
           )}
         </div>
       )}
@@ -345,7 +358,7 @@ export default function ProductTrendPage(props: ProductTrendPageProps) {
       ) : (
         <TabBody tab={tab} ctx={ctx}
           filters={<FilterRow fields={fields} draft={draft} setDraft={setDraft} onApply={applyFilters} onReset={resetFilters} onSave={withSaveView ? saveView : undefined} savedNote={savedNote} />}
-          trend={<TrendTab model={ctx.model} compare={compare} canSeeProfit={canSeeProfit} money={money} imageOf={imageOf} totalsOrders={totals?.orders ?? 0}
+          trend={<TrendTab model={ctx.model} compare={compare} canSeeProfit={canSeeProfit} canSeeMoney={canSeeMoney} money={money} imageOf={imageOf} totalsOrders={totals?.orders ?? 0}
             products={products} from={applied.from} to={applied.to} exportRef={exportRef}
             onView={setDetailProductId} onOnly={(productId) => { const next = { ...applied, productId }; setApplied(next); setDraft(next); }}
             onOpenProducts={props.onOpenProducts} onShowStates={() => setTab("states")} />}
@@ -361,7 +374,7 @@ export default function ProductTrendPage(props: ProductTrendPageProps) {
 
       {detailProductId && model && (
         <ProductDetailPanel productId={detailProductId} products={products} orders={model.orders} previous={model.previous} costs={model.costs} previousCosts={model.previousCosts}
-          hubs={hubs} agents={agents} canSeeProfit={canSeeProfit} money={money} imageOf={imageOf} from={applied.from} to={applied.to} onClose={() => setDetailProductId(null)} />
+          hubs={hubs} agents={agents} canSeeProfit={canSeeProfit} canSeeMoney={canSeeMoney} money={money} imageOf={imageOf} from={applied.from} to={applied.to} onClose={() => setDetailProductId(null)} />
       )}
     </div>
   );
@@ -478,15 +491,15 @@ type Model = TrendModel;
 
 // ── Tab 1: Product Trend ────────────────────────────────────────────────────
 
-function TrendTab({ model, compare, canSeeProfit, money, imageOf, totalsOrders, products, from, to, exportRef, onView, onOnly, onOpenProducts, onShowStates }: {
-  model: Model; compare: boolean; canSeeProfit: boolean; money: (value: number) => string; imageOf: (productId: string) => string | null; totalsOrders: number;
+function TrendTab({ model, compare, canSeeProfit, canSeeMoney, money, imageOf, totalsOrders, products, from, to, exportRef, onView, onOnly, onOpenProducts, onShowStates }: {
+  model: Model; compare: boolean; canSeeProfit: boolean; canSeeMoney: boolean; money: (value: number) => string; imageOf: (productId: string) => string | null; totalsOrders: number;
   products: TrendProduct[]; from: string; to: string; exportRef: MutableRefObject<() => void>;
   onView: (productId: string) => void; onOnly: (productId: string) => void; onOpenProducts?: () => void; onShowStates: () => void;
 }) {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<{ key: LeaderKey; desc: boolean }>({ key: "orders", desc: true });
   const [columns, setColumns] = useState<Record<ColumnKey, boolean>>(() => ({
-    orders: true, delivered: true, rate: true, aov: true, net: canSeeProfit, statesOrders: true, statesDelivered: true, trend: true
+    orders: true, delivered: true, rate: true, aov: canSeeMoney, net: canSeeProfit, statesOrders: true, statesDelivered: true, trend: true
   }));
   const [columnsOpen, setColumnsOpen] = useState(false);
   const closeColumns = useCallback(() => setColumnsOpen(false), []);
@@ -524,11 +537,11 @@ function TrendTab({ model, compare, canSeeProfit, money, imageOf, totalsOrders, 
   }, [model.productRows]);
 
   exportRef.current = () => downloadCsv(`product-trend-${from}-to-${to}.csv`, [
-    ["Rank", "Product", "SKU", "Active", "Total Orders", "Orders before", "Delivered", "Units Delivered", "Delivery Rate %", "Delivered Revenue", "Delivered AOV",
+    ["Rank", "Product", "SKU", "Active", "Total Orders", "Orders before", "Delivered", "Units Delivered", "Delivery Rate %", ...(canSeeMoney ? ["Delivered Revenue", "Delivered AOV"] : []),
       ...(canSeeProfit ? ["Net Profit (Delivered)"] : []), "Stock with agents", "Top 3 States (by Orders)", "Top 3 States (by Delivered)"],
     ...rows.map((row) => [
       rankOf.get(row.product.id) ?? "", row.product.name, row.product.sku ?? "", row.product.active ? "Yes" : "No", row.now.orders, row.before.orders, row.now.delivered,
-      row.now.unitsDelivered, row.now.rate.toFixed(1), Math.round(row.now.revenue), Math.round(row.now.aov),
+      row.now.unitsDelivered, row.now.rate.toFixed(1), ...(canSeeMoney ? [Math.round(row.now.revenue), Math.round(row.now.aov)] : []),
       ...(canSeeProfit ? [Math.round(row.now.net)] : []), row.stockWithAgents,
       row.topStatesByOrders.map((s) => `${stateLabel(s.key)} ${s.share.toFixed(0)}%`).join("; "),
       row.topStatesByDelivered.map((s) => `${stateLabel(s.key)} ${s.share.toFixed(0)}%`).join("; ")
@@ -573,7 +586,7 @@ function TrendTab({ model, compare, canSeeProfit, money, imageOf, totalsOrders, 
               <button type="button" onClick={() => setColumnsOpen((o) => !o)} className="!min-h-0 inline-flex h-9 items-center gap-1.5 rounded-lg border border-gray-200 px-3 text-[13px] font-semibold text-gray-700 hover:bg-gray-50 dark:border-slate-700 dark:text-slate-200"><Columns3 className="h-4 w-4" /> Columns</button>
               {columnsOpen && (
                 <div className="absolute right-0 top-full z-30 mt-1 w-60 rounded-xl border border-gray-200 bg-white p-2 shadow-xl dark:border-slate-700 dark:bg-slate-900">
-                  {(Object.keys(COLUMN_LABELS) as ColumnKey[]).filter((key) => key !== "net" || canSeeProfit).map((key) => (
+                  {(Object.keys(COLUMN_LABELS) as ColumnKey[]).filter((key) => (key !== "net" || canSeeProfit) && (key !== "aov" || canSeeMoney)).map((key) => (
                     <label key={key} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-[12.5px] hover:bg-gray-50 dark:hover:bg-slate-800">
                       <input type="checkbox" checked={columns[key]} onChange={(e) => setColumns((c) => ({ ...c, [key]: e.target.checked }))} />{COLUMN_LABELS[key]}
                     </label>
@@ -593,7 +606,7 @@ function TrendTab({ model, compare, canSeeProfit, money, imageOf, totalsOrders, 
                 {columns.orders && header("orders", "Total Orders")}
                 {columns.delivered && header("delivered", "Delivered")}
                 {columns.rate && header("rate", "Delivery Rate")}
-                {columns.aov && header("aov", "Delivered AOV")}
+                {columns.aov && canSeeMoney && header("aov", "Delivered AOV")}
                 {columns.net && canSeeProfit && header("net", "Net Profit (Delivered)")}
                 {columns.statesOrders && header(null, "Top 3 States (by Orders)")}
                 {columns.statesDelivered && header(null, "Top 3 States (by Delivered)")}
@@ -625,7 +638,7 @@ function TrendTab({ model, compare, canSeeProfit, money, imageOf, totalsOrders, 
                       {compare && <Delta value={row.before.orders > 0 && row.now.orders > 0 ? row.now.rate - row.before.rate : null} points />}
                     </td>
                   )}
-                  {columns.aov && <td className={cell}><div className="text-[14px] font-bold">{row.now.delivered > 0 ? money(row.now.aov) : "—"}</div>{compare && <Delta value={row.before.delivered > 0 && row.now.delivered > 0 ? growthPct(row.now.aov, row.before.aov) : null} />}</td>}
+                  {columns.aov && canSeeMoney && <td className={cell}><div className="text-[14px] font-bold">{row.now.delivered > 0 ? money(row.now.aov) : "—"}</div>{compare && <Delta value={row.before.delivered > 0 && row.now.delivered > 0 ? growthPct(row.now.aov, row.before.aov) : null} />}</td>}
                   {columns.net && canSeeProfit && (
                     <td className={cell}>
                       <div className={`text-[14px] font-bold ${row.now.net < 0 ? "text-rose-600" : ""}`}>{money(row.now.net)}</div>
@@ -663,7 +676,7 @@ function TrendTab({ model, compare, canSeeProfit, money, imageOf, totalsOrders, 
       <WorstProducts rows={model.productRows} canSeeProfit={canSeeProfit} money={money} imageOf={imageOf} onView={onView}
         overallRate={model.orders.length > 0 ? (model.orders.filter((o) => o.status === "Delivered").length / model.orders.length) * 100 : 0} />
 
-      <BottomPanels model={model} products={products} totalsOrders={totalsOrders} from={from} to={to} money={money} onShowStates={onShowStates} />
+      <BottomPanels model={model} products={products} totalsOrders={totalsOrders} from={from} to={to} money={money} canSeeMoney={canSeeMoney} onShowStates={onShowStates} />
     </div>
   );
 }
@@ -676,8 +689,8 @@ function MenuButton({ onClick, children }: { onClick: () => void; children: Reac
 
 type StateMode = "orders" | "delivered" | "rate";
 
-function BottomPanels({ model, products, totalsOrders, from, to, money, onShowStates }: {
-  model: Model; products: TrendProduct[]; totalsOrders: number; from: string; to: string; money: (value: number) => string; onShowStates: () => void;
+function BottomPanels({ model, products, totalsOrders, from, to, money, canSeeMoney, onShowStates }: {
+  model: Model; products: TrendProduct[]; totalsOrders: number; from: string; to: string; money: (value: number) => string; canSeeMoney: boolean; onShowStates: () => void;
 }) {
   const [stateMode, setStateMode] = useState<StateMode>("orders");
   const [mapProduct, setMapProduct] = useState<string>(ALL);
@@ -814,7 +827,7 @@ function BottomPanels({ model, products, totalsOrders, from, to, money, onShowSt
 
       <Panel title="Trend Over Time" info="The five products with the most orders in the period.">
         <div className="mb-2 flex gap-2">
-          <SelectBox label="Measure" className="flex-1" value={trendMetric} onChange={setTrendMetric} options={TREND_METRICS.map((m) => ({ value: m.key, label: m.label }))} />
+          <SelectBox label="Measure" className="flex-1" value={trendMetric} onChange={setTrendMetric} options={TREND_METRICS.filter((m) => canSeeMoney || !m.money).map((m) => ({ value: m.key, label: m.label }))} />
           <SelectBox label="Grouping" className="w-28" value={grain} onChange={setGrain} options={[{ value: "daily", label: "Daily" }, { value: "weekly", label: "Weekly" }, { value: "monthly", label: "Monthly" }]} />
         </div>
         <div className="h-60">

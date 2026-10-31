@@ -4,10 +4,15 @@ import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { fetchPagesTogether } from "../lib/paged-fetch.js";
 import { liteOrder } from "../lib/lite-lists.js";
+import { inventoryOperationsOrder } from "../lib/inventory-operations-access.js";
 import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 
 const router = Router();
-router.use(requireAuth, requireRole("Owner", "Admin", "Manager", "Viewer"));
+// The logistics role reads this for Product Trend only (Bright, 1 Nov 2026),
+// and gets the same stripped orders as its order list: no amount, customer
+// or phone ever leaves the server for it (lib/inventory-operations-access.ts).
+const LOGISTICS_ROLE = "Inventory Manager & Logistics Operations";
+router.use(requireAuth, requireRole("Owner", "Admin", "Manager", "Viewer", LOGISTICS_ROLE));
 
 const QuerySchema = z.object({
   dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -88,14 +93,15 @@ router.get("/", async (req, res) => {
     return;
   }
 
+  const shape = scopeOf(req).role === LOGISTICS_ROLE ? inventoryOperationsOrder : liteOrder;
   res.json({
     dateFrom,
     dateTo,
     generatedAt: new Date().toISOString(),
     // Lite, like every other order list: leaves out the browser/landing-page
     // details only the order detail window shows - a third of each order.
-    cohortOrders: cohortOrdersResult.rows.map(liteOrder),
-    deliveredOrders: deliveredOrdersResult.rows.map(liteOrder)
+    cohortOrders: cohortOrdersResult.rows.map(shape),
+    deliveredOrders: deliveredOrdersResult.rows.map(shape)
   });
 });
 
