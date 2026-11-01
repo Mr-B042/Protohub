@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Ban, CheckCircle2, ChevronRight, ClipboardList, EyeOff, History, Loader2, Megaphone, Power, Rocket, Settings2, Users, X } from "lucide-react";
-import { productLaunchApi, type ProductLaunchEvent, type ProductLaunchOrder, type ProductLaunchProduct } from "../../lib/api";
+import { productLaunchApi, type ProductLaunchCart, type ProductLaunchEvent, type ProductLaunchOrder, type ProductLaunchProduct } from "../../lib/api";
 import { LAUNCH_STAGE_LABEL, type LaunchSettings, type LaunchStage } from "../../lib/product-launch";
 import { ProductThumb, nf, pct1 } from "../product-trend/parts";
 
@@ -44,6 +44,8 @@ const SETTING_ROWS: Array<{ key: keyof LaunchSettings; stage: string; title: str
 ];
 
 const OPEN = (status: string) => !["Delivered", "Failed", "Cancelled"].includes(status);
+/** A cart still waiting for a rep: open and nobody given it yet (held back during Silent Test). */
+const CART_WAITING = (cart: ProductLaunchCart) => !cart.repId && (cart.status === "Open abandoned" || cart.status === "In progress");
 const shortDate = (iso: string | null | undefined) => iso ? new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "Africa/Lagos" }) : "—";
 const dateTime = (iso: string) => new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Africa/Lagos" });
 
@@ -83,7 +85,7 @@ function Stepper({ stage }: { stage: LaunchStage }) {
 type Pending = { product: ProductLaunchProduct; to: LaunchStage };
 
 export default function ProductLaunchPage({ onToast, onChanged, readOnly = false }: Props) {
-  const [data, setData] = useState<{ products: ProductLaunchProduct[]; orders: ProductLaunchOrder[]; events: ProductLaunchEvent[] } | null>(null);
+  const [data, setData] = useState<{ products: ProductLaunchProduct[]; orders: ProductLaunchOrder[]; carts: ProductLaunchCart[]; events: ProductLaunchEvent[] } | null>(null);
   const [error, setError] = useState("");
   const [pending, setPending] = useState<Pending | null>(null);
   const [ending, setEnding] = useState<ProductLaunchProduct | null>(null);
@@ -182,12 +184,12 @@ export default function ProductLaunchPage({ onToast, onChanged, readOnly = false
       )}
 
       {ending && (
-        <EndDialog product={ending} orders={data.orders.filter((order) => order.productId === ending.id)} onClose={() => setEnding(null)}
+        <EndDialog product={ending} orders={data.orders.filter((order) => order.productId === ending.id)} carts={(data.carts ?? []).filter((cart) => cart.productId === ending.id)} onClose={() => setEnding(null)}
           onConfirm={async (choice, note) => {
             try {
               const result = await productLaunchApi.endTest(ending.id, choice, note);
               onToast(choice === "cancel"
-                ? `Test ended. ${ending.name} is switched off${result.cancelled > 0 ? `; ${result.cancelled} hidden order${result.cancelled === 1 ? "" : "s"} cancelled quietly` : ""}.`
+                ? `Test ended. ${ending.name} is switched off${result.cancelled > 0 ? `; ${result.cancelled} hidden order${result.cancelled === 1 ? "" : "s"} cancelled quietly` : ""}${result.cartsClosed > 0 ? `; ${result.cartsClosed} held cart${result.cartsClosed === 1 ? "" : "s"} closed` : ""}.`
                 : `Test ended. ${ending.name} is switched off${result.revealed > 0 ? `; ${result.revealed} order${result.revealed === 1 ? "" : "s"} handed to the team, alerts going out one by one` : ""}.`);
               setEnding(null);
               await load();
@@ -199,7 +201,7 @@ export default function ProductLaunchPage({ onToast, onChanged, readOnly = false
       )}
 
       {pending && (
-        <SwitchDialog pending={pending} orders={data.orders.filter((order) => order.productId === pending.product.id)} onClose={() => setPending(null)}
+        <SwitchDialog pending={pending} orders={data.orders.filter((order) => order.productId === pending.product.id)} carts={(data.carts ?? []).filter((cart) => cart.productId === pending.product.id)} onClose={() => setPending(null)}
           onConfirm={async (note) => {
             try {
               const result = await productLaunchApi.setStage(pending.product.id, pending.to, note);
@@ -221,7 +223,7 @@ export default function ProductLaunchPage({ onToast, onChanged, readOnly = false
 
 function ProductCard({ product, data, readOnly, compact = false, onSwitch, onEnd, onSettings }: {
   product: ProductLaunchProduct;
-  data: { orders: ProductLaunchOrder[]; events: ProductLaunchEvent[] };
+  data: { orders: ProductLaunchOrder[]; carts?: ProductLaunchCart[]; events: ProductLaunchEvent[] };
   readOnly: boolean;
   compact?: boolean;
   onSwitch: (to: LaunchStage) => void;
@@ -240,6 +242,8 @@ function ProductCard({ product, data, readOnly, compact = false, onSwitch, onEnd
   const closed = orders.filter((order) => order.status === "Failed" || order.status === "Cancelled");
   const open = orders.filter((order) => OPEN(order.status));
   const pieces = delivered.reduce((sum, order) => sum + order.quantity, 0);
+  const carts = (data.carts ?? []).filter((cart) => cart.productId === product.id);
+  const heldCarts = carts.filter((cart) => CART_WAITING(cart));
   const byRep = useMemo(() => {
     const map = new Map<string, { name: string; orders: number; hidden: number; delivered: number; open: number }>();
     for (const order of orders) {
@@ -299,13 +303,15 @@ function ProductCard({ product, data, readOnly, compact = false, onSwitch, onEnd
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 p-4 sm:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-2 p-4 sm:grid-cols-4 xl:grid-cols-7">
         <Stat label="Test orders" value={nf(orders.length)} sub={orders.length > 0 ? `first ${shortDate(orders.map((order) => order.createdAt).sort()[0])}` : "none yet"} />
         <Stat label="Hidden from the team" value={nf(hidden.length)} sub={product.stage === "silent" ? "appear at Soft Launch" : hidden.length > 0 ? "still hidden" : "none"} />
         <Stat label="Being worked" value={nf(open.length)} sub="not yet closed" />
         <Stat label="Delivered" value={nf(delivered.length)} sub={`${nf(pieces)} piece${pieces === 1 ? "" : "s"}`} />
         <Stat label="Delivery rate" value={orders.length > 0 ? pct1((delivered.length / orders.length) * 100) : "—"} sub="of test orders" />
         <Stat label="Failed or cancelled" value={nf(closed.length)} />
+        <Stat label="Abandoned carts" value={nf(carts.length)}
+          sub={product.stage === "silent" && product.settings.silentHoldCarts ? `${nf(heldCarts.length)} held back from reps` : `${nf(carts.filter((cart) => cart.status === "Converted").length)} became orders`} />
       </div>
 
       {!compact && (
@@ -363,6 +369,8 @@ function ProductCard({ product, data, readOnly, compact = false, onSwitch, onEnd
                       {event.endedWith && <span className="font-semibold text-gray-700">Test ended, product switched off</span>}
                       {event.ordersCancelled > 0 && <span className="text-gray-600">{event.ordersCancelled} hidden order{event.ordersCancelled === 1 ? "" : "s"} cancelled quietly</span>}
                       {event.ordersRevealed > 0 && <span className="text-gray-600">{event.ordersRevealed} order{event.ordersRevealed === 1 ? "" : "s"} shown to the team</span>}
+                      {event.cartsHandedOut > 0 && <span className="text-gray-600">{event.cartsHandedOut} held cart{event.cartsHandedOut === 1 ? "" : "s"} shared to reps</span>}
+                      {event.cartsClosed > 0 && <span className="text-gray-600">{event.cartsClosed} held cart{event.cartsClosed === 1 ? "" : "s"} closed</span>}
                       {event.by && <span className="text-gray-500">by {event.by}</span>}
                       {event.note && <span className="w-full text-gray-600">“{event.note}”</span>}
                     </li>
@@ -404,7 +412,7 @@ function OrdersTable({ orders }: { orders: ProductLaunchOrder[] }) {
 }
 
 /** Says exactly what a switch will do before it happens. */
-function SwitchDialog({ pending, orders, onClose, onConfirm }: { pending: Pending; orders: ProductLaunchOrder[]; onClose: () => void; onConfirm: (note: string) => Promise<void> }) {
+function SwitchDialog({ pending, orders, carts, onClose, onConfirm }: { pending: Pending; orders: ProductLaunchOrder[]; carts: ProductLaunchCart[]; onClose: () => void; onConfirm: (note: string) => Promise<void> }) {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const { product, to } = pending;
@@ -427,6 +435,8 @@ function SwitchDialog({ pending, orders, onClose, onConfirm }: { pending: Pendin
     if (hiddenOpen.length > 0 && product.settings.revealRepAlerts) effects.push(`Each rep, Admin and Manager gets the normal new-order alert for the ${hiddenOpen.length} still open, one every few seconds (about ${minutes} minute${minutes === 1 ? "" : "s"}).`);
     if (hiddenOpen.length > 0 && product.settings.revealCustomerMessages && !product.settings.silentCustomerMessages) effects.push(`${hiddenOpen.length} customer${hiddenOpen.length === 1 ? "" : "s"} get their order confirmation.`);
     effects.push("The 15-minute rule and daily follow-up logging start from now for these orders, not from when they came in.");
+    const held = carts.filter(CART_WAITING).length;
+    if (held > 0 && product.settings.silentHoldCarts) effects.push(`${held} held abandoned cart${held === 1 ? "" : "s"} will be shared out to reps now, in turn, each with the normal cart alert - however old.`);
   }
   if (to === "soft") effects.push(product.settings.softLeaveOutOfRate ? "These orders stay out of the weekly delivery rate; delivered ones still pay the rep." : "These orders count in the weekly delivery rate (setting is off).");
   if (to === "live") effects.push("New orders are normal orders from now on. Orders from the test keep their badge and stay out of the delivery rate.");
@@ -462,12 +472,13 @@ function SwitchDialog({ pending, orders, onClose, onConfirm }: { pending: Pendin
 }
 
 /** Ending a test that did not sell: the Owner picks what happens to its hidden orders. */
-function EndDialog({ product, orders, onClose, onConfirm }: {
-  product: ProductLaunchProduct; orders: ProductLaunchOrder[]; onClose: () => void;
+function EndDialog({ product, orders, carts, onClose, onConfirm }: {
+  product: ProductLaunchProduct; orders: ProductLaunchOrder[]; carts: ProductLaunchCart[]; onClose: () => void;
   onConfirm: (choice: "cancel" | "deliver", note: string) => Promise<void>;
 }) {
   const hiddenOpen = orders.filter((order) => order.stage === "silent" && OPEN(order.status));
   const reps = new Set(hiddenOpen.map((order) => order.repId).filter(Boolean)).size;
+  const heldCarts = product.stage === "silent" && product.settings.silentHoldCarts ? carts.filter(CART_WAITING).length : 0;
   const [choice, setChoice] = useState<"cancel" | "deliver">("cancel");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -490,20 +501,25 @@ function EndDialog({ product, orders, onClose, onConfirm }: {
           <button type="button" aria-label="Close" onClick={onClose} className="!min-h-0 rounded-lg p-1 text-gray-400 hover:bg-gray-100"><X className="h-5 w-5" /></button>
         </div>
         <div className="space-y-3 px-5 py-4">
-          {hiddenOpen.length === 0 ? (
+          {hiddenOpen.length === 0 && heldCarts === 0 ? (
             <p className="m-0 text-[13px] text-gray-700 dark:text-slate-200">No hidden orders are waiting, so nothing else changes.</p>
           ) : (
             <>
-              <p className="m-0 text-[12.5px] font-semibold text-gray-500">{hiddenOpen.length} hidden order{hiddenOpen.length === 1 ? " is" : "s are"} still open{reps > 0 ? `, shared to ${reps} rep${reps === 1 ? "" : "s"}` : ""}. What should happen to {hiddenOpen.length === 1 ? "it" : "them"}?</p>
+              <p className="m-0 text-[12.5px] font-semibold text-gray-500">
+                {[hiddenOpen.length > 0 ? `${hiddenOpen.length} hidden order${hiddenOpen.length === 1 ? " is" : "s are"} still open${reps > 0 ? `, shared to ${reps} rep${reps === 1 ? "" : "s"}` : ""}` : "",
+                  heldCarts > 0 ? `${heldCarts} abandoned cart${heldCarts === 1 ? " is" : "s are"} held back` : ""].filter(Boolean).join(", and ")}. What should happen to them?
+              </p>
               {option("cancel", "Cancel them quietly", [
                 "Marked Cancelled, with \"test ended\" written in each order's history.",
                 "Reps never see them and nobody is alerted. Customers get no message.",
-                "They never count in any rate, report or recovery list."
+                "They never count in any rate, report or recovery list.",
+                ...(heldCarts > 0 ? [`The ${heldCarts} held cart${heldCarts === 1 ? " is" : "s are"} closed as Lost, given to nobody.`] : [])
               ])}
               {option("deliver", "Let the team deliver them", [
                 "They appear for their reps now, with the normal new-order alert.",
                 product.settings.revealCustomerMessages && !product.settings.silentCustomerMessages ? "Customers get their order confirmation." : "Customers get no automatic message (settings).",
-                "Left out of the weekly delivery rate; delivered ones still pay the rep. No new orders come in."
+                "Left out of the weekly delivery rate; delivered ones still pay the rep. No new orders come in.",
+                ...(heldCarts > 0 ? [`The ${heldCarts} held cart${heldCarts === 1 ? " is" : "s are"} shared out to reps, in turn, so they can call those customers too.`] : [])
               ])}
             </>
           )}
