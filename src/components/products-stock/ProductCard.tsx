@@ -4,6 +4,8 @@ import type { GalleryItem } from "./MediaViewer";
 import { MenuItem, PopoverMenu, categoryTone } from "./shared";
 
 export type ProductView = {
+  /** Product Launch stage, set for the Owner only (a badge must not tell reps about a Silent Test). */
+  launchStage?: "live" | "silent" | "soft";
   id: string;
   name: string;
   sku: string;
@@ -102,6 +104,11 @@ export function ProductCard({ view, actions }: { view: ProductView; actions: Car
         <span className="pointer-events-none absolute left-2.5 top-2.5 inline-flex items-center gap-1.5 rounded-full bg-white/95 px-2.5 py-1 text-[11px] font-bold shadow-sm dark:bg-slate-900/90">
           <span className={`h-2 w-2 rounded-full ${view.active ? "bg-emerald-500" : "bg-gray-400"}`} />
           <span className={view.active ? "text-emerald-700 dark:text-emerald-300" : "text-gray-500"}>{view.active ? "Active" : "Inactive"}</span>
+          {view.launchStage && view.launchStage !== "live" && (
+            <span className={`ml-1 rounded-full px-1.5 py-0.5 text-[10px] font-black uppercase ${view.launchStage === "silent" ? "bg-violet-100 text-violet-800" : "bg-teal-100 text-teal-800"}`}>
+              {view.launchStage === "silent" ? "Silent Test" : "Soft Launch"}
+            </span>
+          )}
         </span>
         <div className="absolute right-2.5 top-2.5 flex items-center gap-1.5">
           {view.pendingCount > 0 && (

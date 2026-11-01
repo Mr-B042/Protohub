@@ -246,6 +246,9 @@ export type ProductPublicOrderAssignmentMode = "inherit" | "auto_assign" | "manu
 export type Product = {
   id: string;
   name: string;
+  /** Product Launch stage (migration 314): "live" for a normal product. */
+  launchStage?: "live" | "silent" | "soft";
+  launchSettings?: Partial<import("./lib/product-launch").LaunchSettings>;
   description: string;
   sku: string;
   active: boolean;

@@ -5,6 +5,7 @@ import { supabase } from "../lib/supabase.js";
 import { fetchPagesTogether } from "../lib/paged-fetch.js";
 import { liteOrder } from "../lib/lite-lists.js";
 import { inventoryOperationsOrder } from "../lib/inventory-operations-access.js";
+import { hideSilentOrders } from "../lib/product-launch.js";
 import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 
 const router = Router();
@@ -57,6 +58,8 @@ router.get("/", async (req, res) => {
       .order("id", { ascending: false });
     if (scopeOf(req).role === "Sales Rep") query = query.eq("assigned_rep_id", scopeOf(req).id);
     if (requestedProductIds.length > 0) query = query.in("product_id", requestedProductIds);
+    // Silent Test orders (Product Launch) are the Owner's alone.
+    query = hideSilentOrders(query, scopeOf(req).role);
     const result = await query.range(from, to);
     return { data: result.data, error: result.error, count: result.count };
   };
@@ -73,6 +76,8 @@ router.get("/", async (req, res) => {
       .order("id", { ascending: false });
     if (scopeOf(req).role === "Sales Rep") query = query.eq("assigned_rep_id", scopeOf(req).id);
     if (requestedProductIds.length > 0) query = query.in("product_id", requestedProductIds);
+    // Silent Test orders (Product Launch) are the Owner's alone.
+    query = hideSilentOrders(query, scopeOf(req).role);
     const result = await query.range(from, to);
     return { data: result.data, error: result.error, count: result.count };
   };

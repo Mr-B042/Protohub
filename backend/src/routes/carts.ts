@@ -1,5 +1,6 @@
 import { liteCart } from "../lib/lite-lists.js";
 import { fetchPagesTogether } from "../lib/paged-fetch.js";
+import { canSeeSilentOrders, silentHeldCartProductIds } from "../lib/product-launch.js";
 import { readScopedCartListEnrichment, type CartListEnrichment } from "../lib/cart-list-enrichment.js";
 import { Router } from "express";
 import { humanFieldErrors } from "../lib/validation-message.js";
@@ -51,6 +52,9 @@ router.get("/", requireRole(...CART_LIST_ROLES), async (req, res) => {
   const dateFrom = dayParam(req.query.dateFrom);
   const dateTo = dayParam(req.query.dateTo);
   const SAFETY_CAP = 50_000; // hard ceiling so a runaway never loads unbounded memory
+  // Product Launch: carts for a Silent Test product are kept from everyone but
+  // the Owner (when the product's settings hold them back).
+  const heldProductIds = canSeeSilentOrders(scopeOf(req).role) ? [] : await silentHeldCartProductIds(req.user!.orgId);
   const readPage = (from: number, to: number, withCount: boolean) => {
     let query = applyBranchScope(supabase
       .from("abandoned_carts")
@@ -60,6 +64,8 @@ router.get("/", requireRole(...CART_LIST_ROLES), async (req, res) => {
       .order("created_at", { ascending: false })
       .range(from, to), req);
     if (onlyId) query = query.eq("id", onlyId);
+    // "not in" alone would also drop carts with no product, so keep those explicitly.
+    if (heldProductIds.length > 0) query = query.or(`product_id.is.null,product_id.not.in.(${heldProductIds.join(",")})`);
     if (dateFrom) query = query.gte("created_at", `${dateFrom}T00:00:00.000Z`);
     if (dateTo) query = query.lte("created_at", `${dateTo}T23:59:59.999Z`);
     // Sales Reps see assigned carts; Marketers see only attributed cart traffic.

@@ -39,7 +39,8 @@ import {
   WalletCards,
   Bug,
   ClipboardList,
-  ShieldAlert
+  ShieldAlert,
+  Rocket
 } from "lucide-react";
 
 export const navItems = [
@@ -76,6 +77,8 @@ export const navItems = [
   { label: "Expenses", icon: CreditCard },
   { label: "Finance & Accounting", icon: WalletCards },
   { label: "Product Trend", icon: TrendingUp },
+  // Product Launch (1 Nov 2026): Owner-only Silent Test / Soft Launch controls.
+  { label: "Product Launch", icon: Rocket },
   // Tracking Hub (2 Oct 2026): Pixels, CAPI, websites, links, ledger.
   { label: "Tracking Hub", icon: Share2 },
   { label: "Marketing Performance", icon: TrendingUp },

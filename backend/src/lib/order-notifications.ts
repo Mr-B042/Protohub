@@ -2,6 +2,7 @@ import { supabase } from "./supabase.js";
 import { alertRecipients, type AlertKey } from "./notification-routing.js";
 import { getOrgPushBranding } from "./push-branding.js";
 import { sendPushToUser } from "./push.js";
+import { LAUNCH_STAGE_LABEL, orderLaunchStage, ownerRecipients, type LaunchStage } from "./product-launch.js";
 
 type OrderContext = {
   id: string;
@@ -12,6 +13,8 @@ type OrderContext = {
   amount?: number | null;
   currency?: string | null;
   assignedRepId?: string | null;
+  /** The stage the order came in under; looked up when not given. */
+  launchStage?: LaunchStage;
 };
 
 const orderDisplayName = (order: OrderContext) =>
@@ -91,12 +94,18 @@ export async function notifyOrderEvent(orgId: string, order: OrderContext, toSta
   if (!config) return; // Postponed and other untracked statuses — no notification
 
   try {
+    // A Silent Test order (Product Launch) is the Owner's alone: no rep, Admin
+    // or Manager is told, whatever Alert routing says, and the title says why.
+    const launchStage = order.launchStage ?? await orderLaunchStage(orgId, order.id);
+    const silent = launchStage === "silent";
     // Who gets it is the Owner's choice in Settings → Alert routing.
-    const { recipients, push } = await alertRecipients(orgId, config.type as AlertKey, order.assignedRepId);
+    const { recipients, push } = silent
+      ? { recipients: await ownerRecipients(orgId), push: true }
+      : await alertRecipients(orgId, config.type as AlertKey, order.assignedRepId);
 
     if (recipients.size === 0) return;
 
-    const title = `${config.title} #${order.id}`;
+    const title = `${silent ? `${LAUNCH_STAGE_LABEL.silent} · ` : ""}${config.title} #${order.id}`;
     const body = orderNotificationSummary(order);
     const branding = await getOrgPushBranding(orgId);
 
@@ -142,10 +151,13 @@ export async function notifyOrderEvent(orgId: string, order: OrderContext, toSta
  */
 export async function notifyOutageRecoveredOrder(orgId: string, order: OrderContext) {
   try {
-    const { recipients, push } = await alertRecipients(orgId, "order_recovered", order.assignedRepId);
+    const silent = (order.launchStage ?? await orderLaunchStage(orgId, order.id)) === "silent";
+    const { recipients, push } = silent
+      ? { recipients: await ownerRecipients(orgId), push: true }
+      : await alertRecipients(orgId, "order_recovered", order.assignedRepId);
     if (recipients.size === 0) return;
 
-    const title = `⚡ Recovered Order #${order.id}`;
+    const title = `${silent ? `${LAUNCH_STAGE_LABEL.silent} · ` : ""}⚡ Recovered Order #${order.id}`;
     const body = `${orderNotificationSummary(order)} — came in during a system outage. Please verify with the customer before dispatch.`;
     const branding = await getOrgPushBranding(orgId);
 

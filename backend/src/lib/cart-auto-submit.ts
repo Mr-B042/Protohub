@@ -15,6 +15,7 @@ import { randomUUID } from "node:crypto";
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { sendOrderNewCustomerWhatsApp, sendOrderNewRepWhatsApp, sendOrderUpsellWhatsApp } from "./whatsapp.js";
+import { productLaunch } from "./product-launch.js";
 import { metaIdsFromFormContext, resolveMetaTrackingConfig, recordMetaCapiEvent, sendMetaCapiPurchase, fbclidSeenAt } from "./meta-capi.js";
 import { serverEventsAllowed, withDataSource } from "./tracking-credentials.js";
 import { purchasePixelFor } from "./tracking-click-pixel.js";
@@ -354,9 +355,13 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     }).catch(() => {});
   }
 
-  void sendOrderNewCustomerWhatsApp(orgId, orderForWa).catch(() => {});
+  // Product Launch (1 Nov 2026): a Silent Test order sends no rep message, and
+  // the customer hears nothing unless the product's settings say so.
+  const silentTest = order?.launch_stage === "silent";
+  const quietCustomer = silentTest && !(await productLaunch(product.id)).settings.silentCustomerMessages;
+  if (!quietCustomer) void sendOrderNewCustomerWhatsApp(orgId, orderForWa).catch(() => {});
   // Look up the assigned rep's phone for the rep-alert WhatsApp
-  if (assignedRepId) {
+  if (assignedRepId && !silentTest) {
     const { data: repUser } = await supabase.from("users").select("name, phone").eq("id", assignedRepId).maybeSingle();
     if (repUser?.phone) {
       void sendOrderNewRepWhatsApp(orgId, orderForWa, { name: repUser.name ?? "", phone: repUser.phone }).catch(() => {});
@@ -365,7 +370,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
 
   // Upsell (delayed via setTimeout so the initial WhatsApp goes first)
   const upsellDelay = 5 * 60 * 1000;
-  setTimeout(() => {
+  if (!quietCustomer) setTimeout(() => {
     void sendOrderUpsellWhatsApp(orgId, orderForWa).catch(() => {});
   }, upsellDelay);
 

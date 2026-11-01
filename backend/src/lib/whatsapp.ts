@@ -6,6 +6,7 @@ import { isWithinWorkingSchedule, nextWorkingScheduleAt, type WorkingSchedule } 
 import { generateOrderReceiptPdf, fetchReceiptBranding } from "./order-receipt-pdf.js";
 import { createShortLink } from "./short-links.js";
 import { dueIsoMoment, withinReminderWindow } from "./sms.js";
+import { productLaunch } from "./product-launch.js";
 
 export type WhatsAppProvider = "baileys" | "cloud_api";
 export type WhatsAppTrigger =
@@ -2243,7 +2244,16 @@ export async function runCartRecoveryWhatsApp(): Promise<void> {
     .limit(100);
   if (error) { logger.error("cart_recovery: query failed", { error: error.message }); return; }
   if (!carts?.length) return;
+  // Product Launch: no customer messages for a Silent Test product unless its settings allow.
+  const quiet = new Map<string, boolean>();
   for (const cart of carts as Array<Record<string, any>>) {
+    if (cart.product_id) {
+      if (!quiet.has(cart.product_id)) {
+        const launch = await productLaunch(cart.product_id);
+        quiet.set(cart.product_id, launch.stage === "silent" && !launch.settings.silentCustomerMessages);
+      }
+      if (quiet.get(cart.product_id)) continue;
+    }
     try { await sendCartRecoveryWhatsApp(cart.org_id, cart); }
     catch (e) { logger.warn("cart_recovery: send failed", { cartId: cart.id, error: (e as Error).message }); }
   }

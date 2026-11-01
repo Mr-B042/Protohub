@@ -20,6 +20,7 @@ import { logger } from "../lib/logger.js";
 import { itemCountLabel } from "../lib/item-count-label.js";
 import { notifyOrderEvent } from "../lib/order-notifications.js";
 import { assignOrderRep } from "../lib/order-assignment.js";
+import { orderLaunchStage, ownerRecipients, productLaunch } from "../lib/product-launch.js";
 import { buildPackageComponentSnapshot } from "../lib/order-inventory.js";
 import { packageAllowsState, packageHasAgentStateStock } from "../lib/package-availability.js";
 import { serverEventsAllowed, withDataSource } from "../lib/tracking-credentials.js";
@@ -662,6 +663,11 @@ const notifyAfterSubmitUpsellAccepted = async (
       if (user.id) recipients.add(user.id);
     }
     if (order.assigned_rep_id) recipients.add(order.assigned_rep_id);
+    // A Silent Test order (Product Launch) is the Owner's alone.
+    if (await orderLaunchStage(orgId, order.id) === "silent") {
+      recipients.clear();
+      for (const ownerId of (await ownerRecipients(orgId)).keys()) recipients.add(ownerId);
+    }
     if (recipients.size === 0) return;
 
     const lineAmount = formatNotificationMoney(line.amount, currency);
@@ -1600,6 +1606,12 @@ router.post("/", submitRateLimit, async (req, res) => {
     });
   }
 
+  // Product Launch (1 Nov 2026): a Silent Test order is the Owner's alone -
+  // no rep or staff message, and the customer hears nothing unless the
+  // product's settings say so. notifyOrderEvent sends the Owner's alert.
+  const silentTest = (order as any).launch_stage === "silent";
+  const quietCustomer = silentTest && !(await productLaunch(product.id)).settings.silentCustomerMessages;
+
   // 6. Audit, in-app notification, emails (fire-and-forget).
   await supabase.from("order_audit").insert({
     order_id:    order.id,
@@ -1617,16 +1629,17 @@ router.post("/", submitRateLimit, async (req, res) => {
   await notifyOrderEvent(product.org_id, {
     id: order.id, customer: order.customer, phone: order.phone, amount: order.amount, currency: order.currency,
     productName: order.product_name, packageName: order.package_name,
-    assignedRepId: order.assigned_rep_id
+    assignedRepId: order.assigned_rep_id,
+    launchStage: silentTest ? "silent" : undefined
   }, "New");
 
-  sendNewOrderEmail(product.org_id, {
+  if (!quietCustomer) sendNewOrderEmail(product.org_id, {
     id: order.id, customer: order.customer, email: order.email,
     phone: order.phone, product_name: order.product_name, package_name: order.package_name,
     amount: order.amount, currency: order.currency, source: order.source,
     cross_sell_lines: Array.isArray((order as any).cross_sell_lines) ? (order as any).cross_sell_lines : null
   });
-  sendNewOrderSms(product.org_id, {
+  if (!quietCustomer) sendNewOrderSms(product.org_id, {
     id: order.id,
     customer: order.customer,
     phone: order.phone,
@@ -1665,14 +1678,16 @@ router.post("/", submitRateLimit, async (req, res) => {
       ? (order as any).package_components_snapshot
       : null
   };
-  sendOrderNewCustomerWhatsApp(product.org_id, waOrderPayload).catch((err) =>
-    logger.warn("wa order_new customer failed", { orderId: order.id, error: (err as Error).message })
-  );
-  // Post-order upsell — fires after configured delay (default 5 min), checks stock first
-  sendOrderUpsellWhatsApp(product.org_id, waOrderPayload).catch((err) =>
-    logger.warn("wa order_upsell failed", { orderId: order.id, error: (err as Error).message })
-  );
-  if (assignedRepId) {
+  if (!quietCustomer) {
+    sendOrderNewCustomerWhatsApp(product.org_id, waOrderPayload).catch((err) =>
+      logger.warn("wa order_new customer failed", { orderId: order.id, error: (err as Error).message })
+    );
+    // Post-order upsell — fires after configured delay (default 5 min), checks stock first
+    sendOrderUpsellWhatsApp(product.org_id, waOrderPayload).catch((err) =>
+      logger.warn("wa order_upsell failed", { orderId: order.id, error: (err as Error).message })
+    );
+  }
+  if (assignedRepId && !silentTest) {
     const repRow = await supabase.from("users").select("name, phone").eq("id", assignedRepId).single();
     const repPhone = (repRow.data as any)?.phone;
     const repName = (repRow.data as any)?.name ?? "Rep";
@@ -1683,7 +1698,7 @@ router.post("/", submitRateLimit, async (req, res) => {
     }
   }
 
-  sendInternalNewOrderEmail(product.org_id, {
+  if (!silentTest) sendInternalNewOrderEmail(product.org_id, {
     id: order.id, customer: order.customer, phone: order.phone,
     product_name: order.product_name, package_name: order.package_name, amount: order.amount,
     currency: order.currency,
@@ -1694,7 +1709,7 @@ router.post("/", submitRateLimit, async (req, res) => {
       : "Auto-assigned from public form"
   });
 
-  if (assignedRepId) {
+  if (assignedRepId && !silentTest) {
     sendOrderAssignedEmail(product.org_id, assignedRepId, {
       id: order.id, customer: order.customer, phone: order.phone,
       product_name: order.product_name, package_name: order.package_name, amount: order.amount,
