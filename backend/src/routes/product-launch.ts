@@ -10,6 +10,8 @@ import { sendNewOrderEmail } from "../lib/mailer.js";
 import { sendNewOrderSms } from "../lib/sms.js";
 import { sendOrderNewCustomerWhatsApp, sendOrderNewRepWhatsApp } from "../lib/whatsapp.js";
 import { closeHeldCarts, handOutHeldCarts } from "../lib/cart-assignment.js";
+import { releaseHeldAdSpend } from "../lib/ad-spend-expenses.js";
+import { lagosDateKey } from "../lib/sales-bonus-engine.js";
 import {
   LAUNCH_STAGE_LABEL, isAllowedSwitch, isLaunchStage, launchSettingsOf, switchRevealsOrders,
   type LaunchSettings, type LaunchStage
@@ -215,6 +217,12 @@ async function silentSince(orgId: string, productId: string): Promise<string> {
   return (data as any)?.created_at ?? new Date(Date.now() - 48 * 3600_000).toISOString();
 }
 
+/** Ad spend held during Silent Test goes into Expenses now, each day on its real date. */
+function releaseHeldAdSpendLater(orgId: string, productId: string, sinceIso: string) {
+  void releaseHeldAdSpend(orgId, lagosDateKey(sinceIso))
+    .catch((error) => logger.warn("product-launch: releasing held ad spend failed", { productId, error: (error as Error).message }));
+}
+
 const stillOpen = (order: any) => !["Delivered", "Failed", "Cancelled"].includes(String(order.status ?? "New"));
 
 router.put("/:productId/stage", async (req, res) => {
@@ -259,7 +267,11 @@ router.put("/:productId/stage", async (req, res) => {
   res.json({ productId: product.id, from, to, revealed: revealed.length });
 
   // Leaving Silent Test: the carts it held back go out to reps now, whatever their age.
-  if (switchRevealsOrders(from, to) && settings.silentHoldCarts) handOutHeldCartsLater(orgId, product.id, await silentSince(orgId, product.id), (eventRow as any)?.id ?? null);
+  if (switchRevealsOrders(from, to)) {
+    const since = await silentSince(orgId, product.id);
+    if (settings.silentHoldCarts) handOutHeldCartsLater(orgId, product.id, since, (eventRow as any)?.id ?? null);
+    releaseHeldAdSpendLater(orgId, product.id, since);
+  }
 
   // Only orders still being worked are announced; a cancelled one stays quiet.
   const toAnnounce = revealed.filter(stillOpen);
@@ -297,7 +309,7 @@ router.post("/:productId/end", async (req, res) => {
   let cartsClosed = 0;
   let revealed: any[] = [];
   const heldCarts = from === "silent" && settings.silentHoldCarts;
-  const heldSince = heldCarts ? await silentSince(orgId, product.id) : "";
+  const heldSince = from === "silent" ? await silentSince(orgId, product.id) : "";
   if (parsed.data.orders === "cancel") {
     // The carts it held back are closed as Lost, unassigned and unannounced.
     if (heldCarts) {
@@ -337,6 +349,8 @@ router.post("/:productId/end", async (req, res) => {
 
   // "Let the team deliver": its held carts go out to reps too.
   if (parsed.data.orders === "deliver" && heldCarts) handOutHeldCartsLater(orgId, product.id, heldSince, (eventRow as any)?.id ?? null);
+  // The test did not go ahead: its held ad spend is recorded now, each day on its real date.
+  if (from === "silent") releaseHeldAdSpendLater(orgId, product.id, heldSince);
 
   const toAnnounce = revealed.filter(stillOpen);
   if (toAnnounce.length > 0) {

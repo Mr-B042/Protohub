@@ -18,6 +18,32 @@ import { loadAdSpendInputs } from "./ad-spend-data.js";
 // "ads-tiktok-typed-...". The two never overwrite each other.
 
 export const AUTO_AD_SPEND_FROM = "2026-10-04";
+
+/** Is this product-day's spend held back (its product is in Silent Test since `heldSince`)? */
+export const isHeldAdSpend = (productId: string | null | undefined, day: string, heldSince: Map<string, string>) => {
+  const held = productId ? heldSince.get(productId) : undefined;
+  return !!held && day >= held;
+};
+
+/**
+ * Product Launch (Bright, 1 Nov 2026): a product in Silent Test records no ad
+ * spend in Expenses from the day its test started - the Tracking Hub still
+ * shows it. When the test leaves Silent Test (Soft Launch, or End test),
+ * releaseHeldAdSpend rewrites those days, so each day's spend lands on its
+ * real date, and from then on it records as normal.
+ * Returns product id -> first held day (Lagos).
+ */
+async function silentHeldSince(orgId: string): Promise<Map<string, string>> {
+  const { data: products } = await supabase.from("products").select("id").eq("org_id", orgId).eq("launch_stage", "silent");
+  const held = new Map<string, string>();
+  for (const product of (products ?? []) as any[]) {
+    const { data: started } = await supabase.from("product_launch_events").select("created_at")
+      .eq("org_id", orgId).eq("product_id", product.id).eq("to_stage", "silent")
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
+    held.set(String(product.id), (started as any)?.created_at ? lagosDateKey((started as any).created_at) : lagosDateKey());
+  }
+  return held;
+}
 export const autoExpenseId = (platform: AdPlatform, branchId: string, productId: string | null, day: string) =>
   `ads-auto-${platform}-${branchId.slice(0, 8)}-${productId ?? "unassigned"}-${day}`;
 
@@ -40,10 +66,14 @@ export async function syncAdSpendExpenses(orgId: string, branchId: string, windo
   for (const account of data.basics.adAccounts as any[]) if (account.currency) currencyOf.set(String(account.account_id), String(account.currency));
   for (const connection of data.tiktokConnections) for (const adv of (connection.advertisers ?? []) as any[]) if (adv.currency) currencyOf.set(`tt:${adv.id}`, String(adv.currency));
   const productName = new Map(data.basics.products.map((row) => [row.id, row.name]));
+  const heldSince = await silentHeldSince(orgId);
 
   const rows = new Map<string, any>();
   for (const piece of pieces) {
     if (piece.day < from || piece.day > to) continue;
+    // Held while the product is in Silent Test; any row already written for
+    // those days is removed below as stale and comes back at the release.
+    if (isHeldAdSpend(piece.productId, piece.day, heldSince)) continue;
     const id = autoExpenseId(piece.platform, branchId, piece.productId, piece.day);
     const row = rows.get(id) ?? {
       id, org_id: orgId, branch_id: branchId, date: piece.day, category: "Ad Spend", amount: 0,
@@ -70,4 +100,23 @@ export async function syncAdSpendExpenses(orgId: string, branchId: string, windo
     if (error) throw error;
   }
   return { written: keep.length, removed: stale.length };
+}
+
+/**
+ * The test has left Silent Test: write the held days back, each on its real
+ * date, for every branch of the organisation that has ad accounts.
+ */
+export async function releaseHeldAdSpend(orgId: string, fromDay: string) {
+  const [accounts, sources, tiktok] = await Promise.all([
+    supabase.from("tracking_meta_ad_accounts").select("branch_id").eq("org_id", orgId).eq("active", true),
+    supabase.from("tracking_data_sources").select("branch_id, ad_account_ids").eq("org_id", orgId),
+    supabase.from("tracking_tiktok_connections").select("branch_id").eq("org_id", orgId).not("access_token", "is", null)
+  ]);
+  const branches = new Set<string>();
+  for (const row of [...(accounts.data ?? []), ...(tiktok.data ?? []), ...((sources.data ?? []) as any[]).filter((item) => (item.ad_account_ids ?? []).length)] as any[]) {
+    if (row.branch_id) branches.add(String(row.branch_id));
+  }
+  let written = 0;
+  for (const branchId of branches) written += (await syncAdSpendExpenses(orgId, branchId, { from: fromDay })).written;
+  return { branches: branches.size, written };
 }
