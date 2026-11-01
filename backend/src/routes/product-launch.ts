@@ -56,6 +56,18 @@ router.get("/", async (req, res) => {
     .eq("org_id", orgId).in("product_id", testedIds).is("merged_into", null).gte("created_at", earliest).limit(REPORT_ROW_CEILING);
   if (cartError) { res.status(500).json({ error: cartError.message }); return; }
 
+  const productIds = (products.data ?? []).map((product: any) => String(product.id));
+  const packages = productIds.length === 0 ? { data: [] as any[], error: null } : await supabase.from("product_packages")
+    .select("product_id, attribution_product_id").in("product_id", productIds).eq("active", true);
+  if (packages.error) { res.status(500).json({ error: packages.error.message }); return; }
+  // On the order form = has an active package to sell, or an active package
+  // whose orders are credited to it ("Attribute orders to a different product").
+  const onForm = new Set<string>();
+  for (const pkg of packages.data ?? []) {
+    onForm.add(String((pkg as any).product_id));
+    if ((pkg as any).attribution_product_id) onForm.add(String((pkg as any).attribution_product_id));
+  }
+
   const repName = new Map((reps.data ?? []).map((user: any) => [String(user.id), String(user.name ?? "")]));
   res.json({
     products: (products.data ?? []).map((product: any) => ({
@@ -63,6 +75,7 @@ router.get("/", async (req, res) => {
       name: product.name,
       sku: product.sku ?? null,
       active: product.active !== false,
+      onOrderForm: product.active !== false && onForm.has(String(product.id)),
       imageUrl: product.image_url ?? null,
       stage: isLaunchStage(product.launch_stage) ? product.launch_stage : "live",
       settings: launchSettingsOf(product.launch_settings)
