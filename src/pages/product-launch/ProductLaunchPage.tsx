@@ -104,7 +104,7 @@ export default function ProductLaunchPage({ onToast, onChanged, readOnly = false
   const testing = useMemo(() => (data?.products ?? []).filter((product) => product.stage !== "live"), [data]);
   // Products that ran a test before and are now live: kept below with their history.
   const finished = useMemo(() => (data?.products ?? []).filter((product) => product.stage === "live" && (data?.events ?? []).some((event) => event.productId === product.id)), [data]);
-  const startable = useMemo(() => (data?.products ?? []).filter((product) => product.stage === "live" && product.active), [data]);
+  const startable = useMemo(() => (data?.products ?? []).filter((product) => product.stage === "live" && product.onOrderForm), [data]);
 
   if (error && !data) {
     return (
@@ -143,7 +143,7 @@ export default function ProductLaunchPage({ onToast, onChanged, readOnly = false
       {/* Start a test */}
       <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <h2 className="m-0 text-[16px] font-black">Start a test</h2>
-        <p className="m-0 mt-0.5 text-[12.5px] text-gray-500">Pick a product. From the moment you start, its new orders follow the test rules. Orders it already has are not changed.</p>
+        <p className="m-0 mt-0.5 text-[12.5px] text-gray-500">Pick a product that is on the order form (switched on, with at least one package switched on). From the moment you start, its new orders follow the test rules. Orders it already has are not changed.</p>
         <div className="mt-3 flex flex-col gap-2 sm:flex-row">
           <select value={startProductId} onChange={(event) => setStartProductId(event.target.value)} aria-label="Product to test"
             className="h-10 min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 text-[13px] dark:border-slate-700 dark:bg-slate-900">

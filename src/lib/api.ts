@@ -2242,7 +2242,7 @@ export const managerBonusApi = {
 // Product Launch (Bright, 1 Nov 2026): Owner-only page moving a product between
 // Silent Test, Soft Launch and Live (backend/src/routes/product-launch.ts).
 export type ProductLaunchProduct = {
-  id: string; name: string; sku: string | null; active: boolean; imageUrl: string | null;
+  id: string; name: string; sku: string | null; active: boolean; onOrderForm: boolean; imageUrl: string | null;
   stage: import("./product-launch").LaunchStage; settings: import("./product-launch").LaunchSettings;
 };
 export type ProductLaunchOrder = {
