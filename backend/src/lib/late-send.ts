@@ -29,12 +29,25 @@ export type LateSendOrder = {
   workingMinutesTaken: number; workingMinutesLate: number;
 };
 
-/** When the order reached the rep: the later of when it was placed and when it was (re)assigned. */
+/**
+ * When the order reached the rep: the latest of when it was placed, when it
+ * was (re)assigned, and when it was revealed (Product Launch: a Silent Test
+ * order only reaches its rep at the switch to Soft Launch).
+ */
 function arrivedAtMs(order: any) {
   const placed = Date.parse(order.original_created_at ?? order.created_at);
   const assigned = order.assigned_at ? Date.parse(order.assigned_at) : NaN;
-  return Number.isFinite(assigned) && assigned > placed ? assigned : placed;
+  const revealed = order.revealed_at ? Date.parse(order.revealed_at) : NaN;
+  return Math.max(placed, Number.isFinite(assigned) ? assigned : placed, Number.isFinite(revealed) ? revealed : placed);
 }
+
+/** Placed in the window, or revealed in it (a Silent Test order placed earlier). */
+const placedOrRevealedBetween = (fromIso: string, toIso?: string) => {
+  const from = new Date(fromIso).toISOString();
+  if (!toIso) return `created_at.gte.${from},revealed_at.gte.${from}`;
+  const to = new Date(toIso).toISOString();
+  return `and(created_at.gte.${from},created_at.lte.${to}),and(revealed_at.gte.${from},revealed_at.lte.${to})`;
+};
 
 const fromIso = () => `${LATE_SEND_FROM}T00:00:00+01:00`;
 
@@ -55,9 +68,11 @@ export async function runLateSendAlerts(nowMs = Date.now()) {
   for (const org of orgs ?? []) {
     const orgId = String(org.id);
     const { data: orders, error: orderError } = await supabase.from("orders")
-      .select("id, customer, product_name, assigned_rep_id, created_at, original_created_at, assigned_at")
+      .select("id, customer, product_name, assigned_rep_id, created_at, original_created_at, assigned_at, revealed_at")
       .eq("org_id", orgId).eq("status", "New").not("assigned_rep_id", "is", null)
-      .gte("created_at", since).limit(1000);
+      // Silent Test orders are hidden from the rep, so they are never late.
+      .neq("launch_stage", "silent")
+      .or(placedOrRevealedBetween(since)).limit(1000);
     if (orderError) { logger.warn("late-send order query failed", { orgId, error: orderError.message }); continue; }
     const salesReps = await salesRepIds(orgId);
     const late = (orders ?? []).filter((order: any) => {
@@ -118,9 +133,10 @@ export async function lateSendsFor(orgId: string, weekStart: string, nowMs = Dat
   // A night order placed up to 3 days earlier (Saturday night → Monday) can fall due this week.
   const placedFrom = `${addDaysToDateKey(weekStart, -3)}T00:00:00+01:00`;
   const { data: orders, error } = await supabase.from("orders")
-    .select("id, customer, status, assigned_rep_id, created_at, original_created_at, assigned_at, product_name, quantity, amount, state")
+    .select("id, customer, status, assigned_rep_id, created_at, original_created_at, assigned_at, revealed_at, product_name, quantity, amount, state")
     .eq("org_id", orgId).not("assigned_rep_id", "is", null)
-    .gte("created_at", placedFrom).lte("created_at", `${weekEnd}T23:59:59+01:00`)
+    .neq("launch_stage", "silent")
+    .or(placedOrRevealedBetween(placedFrom, `${weekEnd}T23:59:59+01:00`))
     .limit(5000);
   if (error) throw error;
   const reps = await salesRepIds(orgId);
@@ -170,7 +186,8 @@ export async function lateSendsFor(orgId: string, weekStart: string, nowMs = Dat
       sentAt: left ? left.at : null, sentStatus: left?.to ?? null, minutesLate: late,
       product: String(order.product_name ?? ""), quantity: Number(order.quantity ?? 0), amount: Number(order.amount ?? 0), state: String(order.state ?? ""),
       placedAt: new Date(Date.parse(order.original_created_at ?? order.created_at)).toISOString(),
-      assignedAt: order.assigned_at && Date.parse(order.assigned_at) > Date.parse(order.original_created_at ?? order.created_at) ? new Date(Date.parse(order.assigned_at)).toISOString() : null,
+      // When the clock started, if not at placing: a reassignment or a Product Launch reveal.
+      assignedAt: arrivedAtMs(order) > Date.parse(order.original_created_at ?? order.created_at) ? new Date(arrivedAtMs(order)).toISOString() : null,
       sentByName: left?.by ? senderName.get(left.by) ?? null : null,
       sentByRep: !left?.by || left.by === repId,
       workingMinutesTaken: workingMinutesBetween(window.startMs, sentAtMs ?? nowMs),

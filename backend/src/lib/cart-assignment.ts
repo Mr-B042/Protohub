@@ -37,6 +37,7 @@ import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { notifyCartAssignedToRep } from "./cart-notifications.js";
 import { isWorkingDay, lagosDateKey } from "./follow-up-kpi.js";
+import { silentHeldCartProductIds } from "./product-launch.js";
 
 /**
  * What the rules are when a branch has no row of its own - which should not
@@ -366,9 +367,20 @@ export async function runCartAutoAssign(options: {
     return modeCache.get(orgId)!;
   };
 
+  // Product Launch: carts for a Silent Test product are not handed out (a
+  // hidden cart would still count against the rep's daily cart logging).
+  // They wait, seen by the Owner, and go out normally after the switch.
+  const heldByOrg = new Map<string, Set<string>>();
+  const isHeld = async (cart: any) => {
+    if (!cart.product_id) return false;
+    if (!heldByOrg.has(cart.org_id)) heldByOrg.set(cart.org_id, new Set(await silentHeldCartProductIds(cart.org_id)));
+    return heldByOrg.get(cart.org_id)!.has(String(cart.product_id));
+  };
+
   const waiting: any[] = [];
   for (const cart of (carts ?? []) as any[]) {
     if (!cartContactNumber(cart)) continue;
+    if (await isHeld(cart)) continue;
     const rules = await rulesFor(cart.branch_id ?? null);
     if (!isAssignmentWindowOpen(rules, new Date(now))) continue;
     const quietSince = Date.parse(cart.last_activity ?? cart.created_at ?? "");

@@ -204,16 +204,18 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
 
   let orderQuery = supabase
     .from("orders")
-    .select("id, assigned_rep_id, customer, phone, status, created_at, updated_at, next_follow_up_at, scheduled_at, scheduled_date, call_outcome, buyer_health")
+    .select("id, assigned_rep_id, customer, phone, status, created_at, revealed_at, updated_at, next_follow_up_at, scheduled_at, scheduled_date, call_outcome, buyer_health")
     .limit(REPORT_ROW_CEILING)
     .eq("org_id", orgId)
     .in("status", IN_SCOPE_STATUSES as unknown as string[])
-    .not("assigned_rep_id", "is", null);
+    .not("assigned_rep_id", "is", null)
+    // Silent Test orders (Product Launch) are hidden from reps: nothing is owed on them.
+    .neq("launch_stage", "silent");
   if (repId) orderQuery = orderQuery.eq("assigned_rep_id", repId);
   const [{ data: orders }, optedOutPhones] = await Promise.all([orderQuery, optedOutPhoneSet(orgId)]);
   const rawOrderRows = (orders ?? []) as Array<{
     id: string; assigned_rep_id: string | null; customer: string | null; phone: string | null;
-    status: string; created_at: string; updated_at: string | null; next_follow_up_at: string | null; scheduled_at: string | null; scheduled_date: string | null;
+    status: string; created_at: string; revealed_at?: string | null; updated_at: string | null; next_follow_up_at: string | null; scheduled_at: string | null; scheduled_date: string | null;
     call_outcome: string | null; buyer_health: string | null;
   }>;
   const activeRepIds = await activeRepIdsFor(orgId, Array.from(new Set(rawOrderRows.map((o) => o.assigned_rep_id).filter(Boolean))) as string[]);
@@ -270,13 +272,13 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
   }
 
   const obligations: FollowUpObligation[] = orderRows.map((o) => {
-    const createdKey = lagosDateKey(o.created_at);
+    const createdKey = lagosDateKey(o.revealed_at ?? o.created_at);
     const dayNumber = workingDayNumber(createdKey, dateKey);
     const plannedRaw = o.next_follow_up_at ?? o.scheduled_at ?? (o.scheduled_date ? `${o.scheduled_date}T12:00:00+01:00` : null);
     const plannedKey = plannedRaw ? lagosDateKey(plannedRaw) : null;
     const paused = !!plannedKey && plannedKey > dateKey;
     // Grace: an order created today, outside working hours, isn't due/charged today.
-    const createdMins = lagosMinutesOfDay(o.created_at);
+    const createdMins = lagosMinutesOfDay(o.revealed_at ?? o.created_at);
     const exempt = createdKey === dateKey && (createdMins < WORK_START_MIN || createdMins >= WORK_END_MIN);
     const readyGrace = hasReadySameDayGrace(o, dateKey);
     const t = todayByOrder.get(o.id);
@@ -560,16 +562,18 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
 
   let orderQuery = supabase
     .from("orders")
-    .select("id, assigned_rep_id, customer, phone, status, created_at, updated_at, next_follow_up_at, scheduled_at, scheduled_date, product_name, package_name, amount, currency, location, call_outcome, buyer_health")
+    .select("id, assigned_rep_id, customer, phone, status, created_at, revealed_at, updated_at, next_follow_up_at, scheduled_at, scheduled_date, product_name, package_name, amount, currency, location, call_outcome, buyer_health")
     .limit(REPORT_ROW_CEILING)
     .eq("org_id", orgId)
     .in("status", IN_SCOPE_STATUSES as unknown as string[])
-    .not("assigned_rep_id", "is", null);
+    .not("assigned_rep_id", "is", null)
+    // Silent Test orders (Product Launch) are hidden from reps: nothing is owed on them.
+    .neq("launch_stage", "silent");
   if (repId) orderQuery = orderQuery.eq("assigned_rep_id", repId);
   const [{ data: orders }, optedOutPhones] = await Promise.all([orderQuery, optedOutPhoneSet(orgId)]);
   const rawOrderRows = (orders ?? []) as Array<{
     id: string; assigned_rep_id: string | null; customer: string | null; phone: string | null;
-    status: string; created_at: string; updated_at: string | null; next_follow_up_at: string | null; scheduled_at: string | null; scheduled_date: string | null;
+    status: string; created_at: string; revealed_at?: string | null; updated_at: string | null; next_follow_up_at: string | null; scheduled_at: string | null; scheduled_date: string | null;
     product_name: string | null; package_name: string | null; amount: number | null; currency: string | null; location: string | null;
     call_outcome: string | null; buyer_health: string | null;
   }>;
@@ -644,7 +648,7 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
   const todayObligation = new Map(board.obligations.map((o) => [o.orderId, o]));
 
   const rows = orderRows.map((o) => {
-    const createdKey = lagosDateKey(o.created_at);
+    const createdKey = lagosDateKey(o.revealed_at ?? o.created_at);
     const cells: Record<string, FollowUpGridCell> = {};
     const todayOb = todayObligation.get(o.id);
     for (const d of days) {

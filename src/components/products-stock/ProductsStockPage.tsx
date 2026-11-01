@@ -185,6 +185,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
     const low = stock > 0 && stock <= lowStockThreshold;
     return {
       id: product.id, name: product.name, sku: settings?.showSku === false ? "" : product.sku, description: product.description, active: product.active,
+      launchStage: props.viewerRole === "Owner" ? (product as any).launchStage : undefined,
       stock, stockState: stock <= 0 ? "out" : low && settings?.showLowStockWarning !== false ? "low" : "ok",
       priceText: showMoney ? formatPrice(price.amount, price.currency) : "",
       category: category ? { name: category.name, color: category.color } : null,

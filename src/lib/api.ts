@@ -2239,6 +2239,34 @@ export const managerBonusApi = {
   updateSettings: (body: unknown) => patch<any>("/api/manager-bonuses/settings", body)
 };
 
+// Product Launch (Bright, 1 Nov 2026): Owner-only page moving a product between
+// Silent Test, Soft Launch and Live (backend/src/routes/product-launch.ts).
+export type ProductLaunchProduct = {
+  id: string; name: string; sku: string | null; active: boolean; imageUrl: string | null;
+  stage: import("./product-launch").LaunchStage; settings: import("./product-launch").LaunchSettings;
+};
+export type ProductLaunchOrder = {
+  id: string; productId: string; stage: import("./product-launch").LaunchStage; status: string;
+  repId: string | null; repName: string | null; createdAt: string; revealedAt: string | null;
+  deliveredDate: string | null; amount: number; quantity: number;
+};
+export type ProductLaunchEvent = {
+  id: string; productId: string; from: import("./product-launch").LaunchStage; to: import("./product-launch").LaunchStage;
+  ordersRevealed: number; note: string | null; by: string | null; at: string;
+  /** Set when the test was ended: its hidden orders were cancelled or handed to the team. */
+  endedWith: "cancelled" | "delivered" | null; ordersCancelled: number;
+};
+export const productLaunchApi = {
+  list: () => get<{ products: ProductLaunchProduct[]; orders: ProductLaunchOrder[]; events: ProductLaunchEvent[] }>("/api/product-launch"),
+  setStage: (productId: string, stage: import("./product-launch").LaunchStage, note?: string) =>
+    put<{ productId: string; from: string; to: string; revealed: number }>(`/api/product-launch/${productId}/stage`, { stage, ...(note ? { note } : {}) }),
+  /** A test that did not sell: switch the product off; hidden orders cancelled quietly or handed to the team. */
+  endTest: (productId: string, orders: "cancel" | "deliver", note?: string) =>
+    post<{ productId: string; ended: true; cancelled: number; revealed: number }>(`/api/product-launch/${productId}/end`, { orders, ...(note ? { note } : {}) }),
+  saveSettings: (productId: string, settings: Partial<import("./product-launch").LaunchSettings>) =>
+    put<{ productId: string; settings: import("./product-launch").LaunchSettings }>(`/api/product-launch/${productId}/settings`, settings)
+};
+
 export const managerProductChallengesApi = {
   list: (window?: { from?: string; to?: string }) => {
     const params = new URLSearchParams();

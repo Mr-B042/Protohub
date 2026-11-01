@@ -292,6 +292,8 @@ export async function syncDueOrderFollowUpNotifications(limitPerOrg = 300) {
       .select("id, org_id, customer, phone, assigned_rep_id, product_name, package_name, amount, currency, status, scheduled_date, scheduled_at, response, notes, timeline_notes")
       .eq("org_id", orgId)
       .in("status", [...ACTIVE_ORDER_STATUSES])
+      // Silent Test orders (Product Launch): no rep is reminded about them.
+      .neq("launch_stage", "silent")
       .limit(limitPerOrg);
 
     if (ordersError) {

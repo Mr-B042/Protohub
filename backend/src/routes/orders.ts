@@ -25,6 +25,7 @@ import {
   sendInternalDeliveredEmail
 } from "../lib/mailer.js";
 import { notifyOrderEvent } from "../lib/order-notifications.js";
+import { hideSilentOrders, productLaunch } from "../lib/product-launch.js";
 import { sendNewOrderSms, sendOrderStatusSms } from "../lib/sms.js";
 import {
   sendOrderNewCustomerWhatsApp,
@@ -677,12 +678,13 @@ router.get("/", async (req, res) => {
   // Fresh filtered query per sub-batch (Supabase caps one response at 1000 rows,
   // so a large pageSize must be fetched in 1000-row chunks or the oldest drop).
   const buildQuery = (rFrom: number, rTo: number, withCount = true) => {
-    let query = applyBranchScope(supabase
+    // Silent Test orders (Product Launch) are the Owner's alone.
+    let query = hideSilentOrders(applyBranchScope(supabase
       .from("orders")
       .select("*", withCount ? selectOptions : undefined)
       .eq("org_id", req.user!.orgId)
       .order(sortColumn, { ascending: false })
-      .range(rFrom, rTo), req);
+      .range(rFrom, rTo), req), scopeRole);
     if (scopeRole === "Marketer") {
       query = applyOrderMarketingScope(query, req.user!.marketingAttributionTags, scopeId);
     } else if (isFrontlineRepRole(scopeRole)) {
@@ -979,10 +981,17 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery
   delete legacyInsert.confirmation_checked;
   delete legacyInsert.preferred_delivery;
 
+  // Product Launch (1 Nov 2026): an order a staff member types in for a Silent
+  // Test product would vanish from the person who entered it, so it comes in
+  // as Soft Launch (seen by all, still left out of the rate). Only the Owner's
+  // own entries stay silent.
+  const productLaunchNow = d.productId ? await productLaunch(d.productId) : null;
+  const staffEnteredSilent = productLaunchNow?.stage === "silent" && req.user!.role !== "Owner";
   let { data, error } = await supabase
     .from("orders")
     .insert({
       ...baseInsert,
+      ...(staffEnteredSilent ? { launch_stage: "soft" } : {}),
       scheduled_at:   d.scheduledAt ?? null,
       timeline_notes: timelineNotes
     })
@@ -1024,15 +1033,19 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery
   }, "New");
 
   // Fire-and-forget emails
+  // A Silent Test order (only the Owner's own entries) sends no rep or staff
+  // message, and the customer hears nothing unless the product's settings say so.
+  const silentTest = (data as any).launch_stage === "silent";
+  const quietCustomer = silentTest && !productLaunchNow?.settings.silentCustomerMessages;
   // Customer confirmation (only if email in order form)
-  sendNewOrderEmail(req.user!.orgId, {
+  if (!quietCustomer) sendNewOrderEmail(req.user!.orgId, {
     id: data.id, customer: data.customer, email: data.email,
     phone: data.phone, product_name: data.product_name, package_name: data.package_name,
     amount: data.amount, currency: data.currency, source: data.source,
     cross_sell_lines: Array.isArray(data.cross_sell_lines) ? data.cross_sell_lines : null,
     additional_lines: Array.isArray(data.additional_lines) ? data.additional_lines : null
   });
-  sendNewOrderSms(req.user!.orgId, {
+  if (!quietCustomer) sendNewOrderSms(req.user!.orgId, {
     id: data.id,
     customer: data.customer,
     phone: data.phone,
@@ -1084,12 +1097,12 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery
         if (imageUrl) waNewOrderPayload.productImageUrl = imageUrl;
         if (videoUrl) waNewOrderPayload.productVideoUrl = videoUrl;
       }
-      await sendOrderNewCustomerWhatsApp(orgIdSnap, waNewOrderPayload);
+      if (!quietCustomer) await sendOrderNewCustomerWhatsApp(orgIdSnap, waNewOrderPayload);
     } catch (err) {
       logger.warn("wa order_new customer failed", { orderId: orderIdSnap, error: (err as Error).message });
     }
   })();
-  if (data.assigned_rep_id && data.assigned_rep_id !== req.user!.id) {
+  if (data.assigned_rep_id && data.assigned_rep_id !== req.user!.id && !silentTest) {
     // Alert the assigned rep via WhatsApp — look up their phone first
     const repId = data.assigned_rep_id;
     const ordId = data.id;
@@ -1109,7 +1122,7 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery
   }
 
   // Internal: notify owner + admins
-  sendInternalNewOrderEmail(req.user!.orgId, {
+  if (!silentTest) sendInternalNewOrderEmail(req.user!.orgId, {
     id: data.id, customer: data.customer, phone: data.phone,
     product_name: data.product_name, package_name: data.package_name, amount: data.amount,
     currency: data.currency, source: data.source, rep_name: req.user!.name,
@@ -1118,7 +1131,7 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery
   });
 
   // Internal: notify assigned rep (only if someone else assigned the order)
-  if (data.assigned_rep_id && data.assigned_rep_id !== req.user!.id) {
+  if (data.assigned_rep_id && data.assigned_rep_id !== req.user!.id && !silentTest) {
     sendOrderAssignedEmail(req.user!.orgId, data.assigned_rep_id, {
       id: data.id, customer: data.customer, phone: data.phone,
       product_name: data.product_name, package_name: data.package_name, amount: data.amount,

@@ -51,6 +51,9 @@ export type WeeklyReportOrderInput = {
   /** Delivered in an earlier week but marked delivered after that week's
    *  report was sent, so no report paid it: paid in this one (29 Oct 2026). */
   lateRecorded?: { deliveredWeek: string; recordedAt?: string | null };
+  /** A Product Launch test order (Bright, 1 Nov 2026): left out of the week's
+   *  orders and delivery rate, but still paid if delivered. */
+  outsideRate?: boolean;
 };
 
 /** Pieces before and after the upgrade; ruleAmount = what the product's upgrade rule pays in full (null if none). */
@@ -646,7 +649,8 @@ export function buildRepWeeklySnapshot(input: {
   now?: Date;
 }): WeeklyReportSnapshot {
   const { weekStart, weekEnd } = input;
-  const placed = input.orders.filter((order) => inWeek(order.createdKey, weekStart, weekEnd));
+  // Product Launch test orders are never "placed" for the rate; they are still paid below.
+  const placed = input.orders.filter((order) => inWeek(order.createdKey, weekStart, weekEnd) && !order.outsideRate);
   const deliveredInWeek = input.orders.filter((order) => order.status === "Delivered" && (bonusWeekFor(order.createdKey, order.deliveredKey) === weekStart || !!order.lateRecorded));
   // The rate's cohort: this week's orders that are delivered. Carried-over
   // deliveries are paid (deliveredInWeek) but never lift this week's rate.

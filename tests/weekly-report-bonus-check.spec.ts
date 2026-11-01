@@ -190,3 +190,18 @@ test("lateness follows the server's verdict, so a rep held up by the manager is 
   expect(wasSubmittedLate("2026-09-27", entry("2026-10-06T09:00:00Z"), "rep-1")).toBe(false);
   expect(wasSubmittedLate("2026-09-27", [], "rep-1")).toBe(false);
 });
+
+test("Product Launch test orders stay out of the week's orders and delivery rate, but a delivered one is still paid", () => {
+  const live = snapshot([
+    order({ id: "1" }),
+    order({ id: "2", status: "Failed", deliveredKey: null }),
+    order({ id: "3", outsideRate: true }),
+    order({ id: "4", status: "Cancelled", deliveredKey: null, outsideRate: true })
+  ], {
+    "1": { base: 200, upsell: 0, crossSell: 0 },
+    "3": { base: 200, upsell: 0, crossSell: 0 }
+  });
+  expect(live.totals.orders).toBe(2);
+  expect(Math.round(live.totals.deliveryRate)).toBe(50);
+  expect(live.orders.map((row) => row.id).sort()).toEqual(["1", "2", "3"]);
+});

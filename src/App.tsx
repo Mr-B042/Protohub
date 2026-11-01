@@ -138,6 +138,7 @@ import { WhatsAppIcon } from "./components/WhatsAppIcon";
 import type { ManagerChallengeDraft, ManagerProductChallenge } from "./components/ManagerProductChallenges";
 import { auth } from "./lib/auth";
 import { snakeToCamel } from "./lib/normalize";
+import { LAUNCH_STAGE_LABEL, normalizeLaunchStage, outsideDeliveryRate, type LaunchStage } from "./lib/product-launch";
 import { makeCartId } from "./lib/cart-id";
 import {
   deliveryGoalMessages,
@@ -265,6 +266,7 @@ const AgentAccessPage = lazyPage(() => import("./pages/AgentAccessPage"));
 const CashFlowPage = lazyPage(() => import("./pages/CashFlowPage"));
 const MarketingPerformancePage = lazyPage(() => import("./pages/MarketingPerformancePage"));
 const ProductTrendPage = lazyPage(() => import("./pages/product-trend/ProductTrendPage"));
+const ProductLaunchPage = lazyPage(() => import("./pages/product-launch/ProductLaunchPage"));
 const WeeklyOpeningCashWizard = lazyPage(() => import("./pages/WeeklyOpeningCashWizard"));
 const UpsellPerformancePage = lazyPage(() => import("./pages/UpsellPerformancePage"));
 const RepProductPerformancePage = lazyPage(() => import("./pages/RepProductPerformancePage"));
@@ -326,7 +328,7 @@ type CurrencyCode = "NGN" | "GHS" | "KES" | "ZMW" | "XOF" | "XAF" | "TZS" | "MWK
 // currency no product can be priced in.
 type ProductCurrencyCode = CurrencyCode;
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "addBranch" | "cartAssignmentRules" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addExtraItems" | "addFreeGift" | "salesBonusFullReport" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | "pdaPortalCredentials" | null;
-type ActivePage = "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Team Challenges" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Product Trend" | "Ad Tracking" | "Tracking Hub" | "Marketing" | "Marketing Performance" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers" | "Weekly Reports" | "Report a Bug" | "My Reports" | "Issue Management";
+type ActivePage = "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Team Challenges" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Product Trend" | "Product Launch" | "Ad Tracking" | "Tracking Hub" | "Marketing" | "Marketing Performance" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers" | "Weekly Reports" | "Report a Bug" | "My Reports" | "Issue Management";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type PendingSalesExpansionAction =
@@ -1121,6 +1123,9 @@ type ProductRole = "Main" | "Cross-sell" | "Free Gift";
 type ProductCatalogType = "standard" | "combo_only";
 type ProductPublicOrderAssignmentMode = "inherit" | "auto_assign" | "manual_review";
 type Product = {
+  /** Product Launch stage (migration 314): "live" for a normal product. */
+  launchStage?: LaunchStage;
+  launchSettings?: Partial<import("./lib/product-launch").LaunchSettings>;
   id: string;
   name: string;
   description: string;
@@ -1374,6 +1379,11 @@ type TrackedOrder = {
   // The order is still "New" but not auto-assigned; Owner/Admin releases or rejects.
   reviewHold?: boolean;
   reviewReason?: string;
+  // Product Launch (1 Nov 2026): the stage the order came in under. "silent"
+  // orders are the Owner's alone; "silent" and "soft" are left out of the
+  // weekly report's delivery rate. revealedAt = when its rep could first see it.
+  launchStage?: LaunchStage;
+  revealedAt?: string;
   // Recovered from an outage capture: the customer submitted while the API was down,
   // saved to Supabase, reconciled into an order later. Higher-risk - verify it.
   outageRecovered?: boolean;
@@ -2930,7 +2940,7 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   "Owner": [
     "Dashboard", "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
-    "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting", "Product Trend",
+    "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting", "Product Trend", "Product Launch",
     "Tracking Hub", "Ad Tracking", "Marketing", "Marketing Performance", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp", "Weekly Reports"
   ],
   "Admin": [
@@ -3053,6 +3063,7 @@ const dashboardHashByPage: Record<ActivePage, string> = {
   Marketing: "#/dashboard/admin/marketing",
   "Marketing Performance": "#/dashboard/admin/marketing-performance",
   "Product Trend": "#/dashboard/admin/product-trend",
+  "Product Launch": "#/dashboard/admin/product-launch",
   "Weekly Reports": "#/dashboard/admin/weekly-reports",
   "Report a Bug": "#/dashboard/admin/report-a-bug",
   "My Reports": "#/dashboard/admin/my-reports",
@@ -7267,6 +7278,8 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
     formContextTrimmed: Boolean(value?.formContextTrimmed ?? value?.form_context_trimmed),
     embedLabel: value?.embedLabel ?? value?.embed_label ?? undefined,
     reviewHold: value?.reviewHold ?? value?.review_hold ?? false,
+    launchStage: normalizeLaunchStage(value?.launchStage ?? value?.launch_stage),
+    revealedAt: value?.revealedAt ?? value?.revealed_at ?? undefined,
     reviewReason: value?.reviewReason ?? value?.review_reason ?? undefined,
     outageRecovered: value?.outageRecovered ?? value?.outage_recovered ?? false,
     remittanceReason: value?.remittanceReason ?? value?.remittance_reason ?? undefined,
@@ -26294,7 +26307,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const lateById = new Map((lateSource ?? []).filter((item) => item.repId === rep.id).map((item) => [item.orderId, item]));
     const one = (start: string, weekFines: typeof fines, weekAdjustments: typeof adjustments, weekMisses: WeeklyLogMissRow[], carried: number, previous: WeeklyReportSnapshot["previous"], monthlyIncentive: ReturnType<typeof weeklyIncentiveFor> = null) => {
       const end = windowShiftDay(start, 6);
-      const placed = repOrders.filter((order) => !order.reviewHold && inRange(orderCreatedKey(order), start, end));
+      // Product Launch test orders stay out of the rate (Bright, 1 Nov 2026); they are still paid when delivered.
+      const outsideRate = (order: TrackedOrder) => outsideDeliveryRate(order, (productId) => products.find((product) => product.id === productId)?.launchSettings);
+      const placed = repOrders.filter((order) => !order.reviewHold && !outsideRate(order) && inRange(orderCreatedKey(order), start, end));
       // Paid in the week bonusWeekFor says (by report day from 25 Oct), or late.
       const delivered = repOrders.filter((order) => (order.status ?? "New") === "Delivered"
         && (bonusWeekFor(orderCreatedKey(order), orderDeliveredKey(order)) === start || (start === weekStart && lateById.has(String(order.id)))));
@@ -26340,6 +26355,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           hasUpsell: orderHasVerifiedUpsell(order),
           hasCrossSell: (order.crossSellLines?.length ?? 0) > 0,
           bonusManuallyAdjusted: !!order.bonusManuallyAdjusted,
+          outsideRate: outsideRate(order),
           bonusNote: bonusNoteFor(order),
           // How each delivered order's bonus was worked out (Bright, 8 Oct 2026):
           // the same lines as the Bonus page's order breakdown, kept with the
@@ -28663,6 +28679,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       marketing: "Marketing",
       "marketing-performance": "Marketing Performance",
       "product-trend": "Product Trend",
+      "product-launch": "Product Launch",
       "weekly-reports": "Weekly Reports",
       "report-a-bug": "Report a Bug",
       "my-reports": "My Reports",
@@ -38104,6 +38121,7 @@ ${waybillLineItems(w).length > 1
       Marketing: "#/dashboard/admin/marketing",
   "Marketing Performance": "#/dashboard/admin/marketing-performance",
   "Product Trend": "#/dashboard/admin/product-trend",
+  "Product Launch": "#/dashboard/admin/product-launch",
   "Weekly Reports": "#/dashboard/admin/weekly-reports",
   "Report a Bug": "#/dashboard/admin/report-a-bug",
   "My Reports": "#/dashboard/admin/my-reports",
@@ -38204,7 +38222,7 @@ ${waybillLineItems(w).length > 1
       return;
     }
 
-    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory & Logistics Operations" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Head of Sales Rep" || label === "Sales Closers" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Tracking Hub" || label === "Marketing" || label === "Marketing Performance" || label === "Product Trend" || label === "Weekly Reports" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp" || label === "Report a Bug" || label === "My Reports" || label === "Issue Management") {
+    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory & Logistics Operations" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Head of Sales Rep" || label === "Sales Closers" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Tracking Hub" || label === "Marketing" || label === "Marketing Performance" || label === "Product Trend" || label === "Product Launch" || label === "Weekly Reports" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp" || label === "Report a Bug" || label === "My Reports" || label === "Issue Management") {
       if (label === "Inventory & Logistics Operations") {
         setInventoryOperationsSection("dashboard");
       }
@@ -79074,6 +79092,12 @@ ${waybillLineItems(w).length > 1
                                   title="Recovered after a system outage - the customer submitted while the system was offline. Please verify the order with them."
                                 >⚡ Recovered</span>
                               )}
+                              {order.launchStage && order.launchStage !== "live" && (
+                                <span
+                                  className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wide ${order.launchStage === "silent" ? "bg-violet-100 text-violet-800 dark:bg-violet-500/15 dark:text-violet-200" : "bg-teal-100 text-teal-800 dark:bg-teal-500/15 dark:text-teal-200"}`}
+                                  title={order.launchStage === "silent" ? "Silent Test: only you can see this order. The rep it was shared to cannot see it yet." : "Soft Launch: a product still being tried out. Left out of the weekly delivery rate; still paid if delivered."}
+                                >{LAUNCH_STAGE_LABEL[order.launchStage]}</span>
+                              )}
                               {(() => {
                                 const cartOrigin = cartOriginBadgeFor(order);
                                 return cartOrigin ? (
@@ -79313,6 +79337,12 @@ ${waybillLineItems(w).length > 1
                                     className="mt-1.5 inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-sky-800 dark:bg-sky-500/15 dark:text-sky-200"
                                     title="Recovered after a system outage - the customer submitted while the system was offline. Please verify the order with them."
                                   >⚡ Recovered</span>
+                                )}
+                                {order.launchStage && order.launchStage !== "live" && (
+                                  <span
+                                    className={`mt-1.5 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ${order.launchStage === "silent" ? "bg-violet-100 text-violet-800 dark:bg-violet-500/15 dark:text-violet-200" : "bg-teal-100 text-teal-800 dark:bg-teal-500/15 dark:text-teal-200"}`}
+                                    title={order.launchStage === "silent" ? "Silent Test: only you can see this order. The rep it was shared to cannot see it yet." : "Soft Launch: a product still being tried out. Left out of the weekly delivery rate; still paid if delivered."}
+                                  >{LAUNCH_STAGE_LABEL[order.launchStage]}</span>
                                 )}
                                 {(() => {
                                   const cartOrigin = cartOriginBadgeFor(order);
@@ -91613,6 +91643,13 @@ ${waybillLineItems(w).length > 1
             currentRole === "Owner"
               ? <TrackingHubPage onToast={showToast} renderMetaDefaults={renderMetaAdsSettings} onOpenOrder={(orderId) => { setSelectedOrderId(orderId); setModal("orderDetails"); }} />
               : <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center text-sm text-gray-500">The Tracking Hub is for the Owner.</section>
+          ) : activePage === "Product Launch" ? (
+            // Product Launch (Bright, 1 Nov 2026): Owner only. Gated on
+            // currentRole so "view as" lands on a note, not the controls.
+            currentRole === "Owner"
+              ? <ProductLaunchPage onToast={showToast} readOnly={isPreviewing && previewReadOnly}
+                  onChanged={() => { void productsApi.list().then((rows: any) => { if (Array.isArray(rows)) setProducts(rows as Product[]); }).catch(() => undefined); }} />
+              : <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center text-sm text-gray-500">Product Launch is for the Owner.</section>
           ) : activePage === "Product Trend" ? (
             // Owner / Admin / Manager (Bright, 20 Oct 2026). Net profit is
             // Owner / Admin only: Managers have no Finance page. Gated on

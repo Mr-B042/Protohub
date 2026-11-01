@@ -173,6 +173,8 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
         .gte("updated_at", `${start}T00:00:00`)
         .lt("updated_at", `${exclusiveEnd}T00:00:00`)
         .neq("review_hold", true)
+        // Product Launch: a quietly cancelled Silent Test order is never recovery work.
+        .neq("launch_stage", "silent")
     ]);
     if (deliveredThisMonthResult.error) { res.status(500).json({ error: deliveredThisMonthResult.error.message }); return; }
     if (closedNonDeliveredResult.error) { res.status(500).json({ error: closedNonDeliveredResult.error.message }); return; }
