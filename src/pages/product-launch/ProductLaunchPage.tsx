@@ -30,7 +30,7 @@ const STAGE_TONE: Record<LaunchStage, string> = {
 };
 
 const STAGE_HELP: Record<LaunchStage, string> = {
-  silent: "Orders are shared to reps as normal, but only you can see them. Nobody else is told, and customers get no message.",
+  silent: "Orders are shared to reps as normal, but only you can see them. Nobody else is told, and customers get no message. Its ad spend stays out of Expenses until the test moves on (you still see it in the Tracking Hub).",
   soft: "Everyone sees and works these orders. They are left out of the weekly delivery rate; delivered ones still pay the rep.",
   live: "A normal product. Orders count everywhere."
 };
@@ -429,6 +429,7 @@ function SwitchDialog({ pending, orders, carts, onClose, onConfirm }: { pending:
     effects.push(product.settings.silentCustomerMessages ? "Customers still get the usual automatic messages." : "Customers get no message until you move to Soft Launch.");
     if (product.settings.silentHoldCarts) effects.push("Its abandoned carts are kept away from reps.");
     effects.push("Orders it already has are not hidden.");
+    effects.push("Its ad spend stops going into Expenses from today. It is added back, each day on its real date, when the test moves on or ends.");
   }
   if (reveals) {
     effects.push(`${hidden.length} hidden order${hidden.length === 1 ? "" : "s"} will appear on the team's dashboards now${reps > 0 ? `, for ${reps} rep${reps === 1 ? "" : "s"}` : ""}.`);
@@ -436,6 +437,7 @@ function SwitchDialog({ pending, orders, carts, onClose, onConfirm }: { pending:
     if (hiddenOpen.length > 0 && product.settings.revealCustomerMessages && !product.settings.silentCustomerMessages) effects.push(`${hiddenOpen.length} customer${hiddenOpen.length === 1 ? "" : "s"} get their order confirmation.`);
     effects.push("The 15-minute rule and daily follow-up logging start from now for these orders, not from when they came in.");
     const held = carts.filter(CART_WAITING).length;
+    effects.push("The ad spend held during Silent Test goes into Expenses now, each day on its real date, and records as normal from here.");
     if (held > 0 && product.settings.silentHoldCarts) effects.push(`${held} held abandoned cart${held === 1 ? "" : "s"} will be shared out to reps now, in turn, each with the normal cart alert - however old.`);
   }
   if (to === "soft") effects.push(product.settings.softLeaveOutOfRate ? "These orders stay out of the weekly delivery rate; delivered ones still pay the rep." : "These orders count in the weekly delivery rate (setting is off).");
@@ -496,7 +498,7 @@ function EndDialog({ product, orders, carts, onClose, onConfirm }: {
         <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4 dark:border-slate-800">
           <div>
             <h2 className="m-0 text-[17px] font-black">End the test of {product.name}?</h2>
-            <p className="m-0 mt-1 text-[12.5px] text-gray-500">The product is switched off, so its order form stops taking orders. The test stays on this page with its numbers and history. You can switch the product back on later in Products &amp; Stock.</p>
+            <p className="m-0 mt-1 text-[12.5px] text-gray-500">The product is switched off, so its order form stops taking orders. The test stays on this page with its numbers and history. You can switch the product back on later in Products &amp; Stock.{product.stage === "silent" ? " The ad spend held during the test goes into Expenses now, each day on its real date." : ""}</p>
           </div>
           <button type="button" aria-label="Close" onClick={onClose} className="!min-h-0 rounded-lg p-1 text-gray-400 hover:bg-gray-100"><X className="h-5 w-5" /></button>
         </div>
