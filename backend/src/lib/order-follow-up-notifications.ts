@@ -289,7 +289,7 @@ export async function syncDueOrderFollowUpNotifications(limitPerOrg = 300) {
     const orgId = org.id as string;
     const { data: orders, error: ordersError } = await supabase
       .from("orders")
-      .select("id, org_id, customer, phone, assigned_rep_id, product_name, package_name, amount, currency, status, scheduled_date, scheduled_at, response, notes, timeline_notes")
+      .select("id, org_id, customer, phone, assigned_rep_id, product_name, package_name, amount, currency, status, scheduled_date, scheduled_at, response, notes, timeline_notes").neq("launch_stage", "silent")
       .eq("org_id", orgId)
       .in("status", [...ACTIVE_ORDER_STATUSES])
       // Silent Test orders (Product Launch): no rep is reminded about them.

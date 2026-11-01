@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import {
   addDaysToDateKey,
   computeRepWeekMetrics,
@@ -19,6 +19,7 @@ import {
 } from "../lib/head-of-sales-metrics.js";
 import { DEFAULT_HEAD_OF_SALES_BONUS_SETTINGS, evaluateHeadOfSalesBonus } from "../lib/head-of-sales-bonus.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 const router = Router();
 // Owner/Admin/Manager can browse any Head of Sales Rep's dashboard; a Sales
@@ -114,7 +115,7 @@ export async function loadOrdersSince(orgId: string, repIds: string[], sinceDate
     const from = page * ORDER_PAGE_SIZE;
     const { data, error } = await supabase
       .from("orders")
-      .select("id, assigned_rep_id, status, amount, quantity, created_at, delivered_date, review_hold, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines")
+      .select("id, assigned_rep_id, status, amount, quantity, created_at, delivered_date, review_hold, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines").neq("launch_stage", "silent")
       .eq("org_id", orgId)
       .in("assigned_rep_id", repIds)
       .gte("created_at", `${sinceDateKey}T00:00:00Z`)
@@ -682,7 +683,7 @@ router.get("/upsell-cross-sell", async (req, res) => {
     if (orderIds.length > 0) {
       const { data: statusRows, error: statusError } = await supabase
         .from("orders")
-        .select("id, status")
+        .select("id, status").neq("launch_stage", silentFilterFor(scopeOf(req).role))
         .limit(REPORT_ROW_CEILING)
         .eq("org_id", orgId)
         .in("id", orderIds);

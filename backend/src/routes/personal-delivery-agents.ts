@@ -14,7 +14,7 @@ import { Router } from "express";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { randomUUID } from "node:crypto";
 import { approvalBlockers } from "../lib/pda-approval.js";
 import { sendCustomWhatsApp } from "../lib/whatsapp.js";
@@ -44,6 +44,7 @@ import {
   agreementTemplateRows, isPdaAgreementKey, PDA_AGREEMENT_VERSION, renderPdaAgreement
 } from "../lib/pda-agreements.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -1596,7 +1597,7 @@ router.get("/cod-overview", requireRole(...MANAGEMENT_ROLES), async (req, res) =
     // number exists to expose.
     const deliveredValue = thisMonth.reduce((total, r) => total + Number(r.delivery_fee ?? 0) * 0, 0);
     const { data: orderValues } = thisMonth.length
-      ? await supabase.from("orders").select("id, amount").eq("org_id", orgId)
+      ? await supabase.from("orders").select("id, amount").neq("launch_stage", silentFilterFor(scopeOf(req).role)).eq("org_id", orgId)
           .in("id", [...new Set(thisMonth.map((r) => r.order_id))])
       : { data: [] as any[] };
     const valueById = new Map((orderValues ?? []).map((o: any) => [o.id, Number(o.amount ?? 0)]));
@@ -3193,7 +3194,7 @@ router.post("/:id/assign", requireRole(...MANAGEMENT_ROLES), async (req, res) =>
       .select("delivery_status, amount_collected, amount_remitted, delivery_fee")
       .eq("agent_id", agent.id);
     const { data: incomingOrder } = await supabase.from("orders")
-      .select("amount").eq("org_id", orgId).eq("id", parsed.data.orderId).maybeSingle();
+      .select("amount").neq("launch_stage", silentFilterFor(scopeOf(req).role)).eq("org_id", orgId).eq("id", parsed.data.orderId).maybeSingle();
     const cashBlockers = codAssignmentBlockers(
       cashPositionFor((agentCash ?? []).map((row: any) => ({
         deliveryStatus: row.delivery_status,
@@ -3296,7 +3297,7 @@ router.get("/my/orders", requireAgentPortal, async (req, res) => {
     const orderIds = [...new Set((assignments ?? []).map((row: any) => row.order_id))];
     const { data: orders } = orderIds.length
       ? await supabase.from("orders")
-          .select("id, customer, phone, address, state, product_name, package_name, amount, quantity, status")
+          .select("id, customer, phone, address, state, product_name, package_name, amount, quantity, status").neq("launch_stage", silentFilterFor(scopeOf(req).role))
           .limit(REPORT_ROW_CEILING)
           .eq("org_id", orgId).in("id", orderIds)
       : { data: [] as any[] };
@@ -3334,7 +3335,7 @@ async function moveAssignmentStock(
 ): Promise<string | null> {
   const orgId = orgIdOf(req);
   const { data: order, error } = await supabase.from("orders")
-    .select("product_id, product_name, quantity").eq("org_id", orgId).eq("id", assignment.order_id).maybeSingle();
+    .select("product_id, product_name, quantity").neq("launch_stage", silentFilterFor(scopeOf(req).role)).eq("org_id", orgId).eq("id", assignment.order_id).maybeSingle();
   if (error) return error.message;
   if (!order?.product_id) return "The assigned order has no inventory product.";
   const common = {
@@ -3932,7 +3933,7 @@ router.get("/:id/cod", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
 
     const orderIds = [...new Set(assignments.map((row: any) => row.order_id))];
     const { data: orders } = orderIds.length
-      ? await supabase.from("orders").select("id, customer, amount").eq("org_id", orgId).in("id", orderIds)
+      ? await supabase.from("orders").select("id, customer, amount").neq("launch_stage", silentFilterFor(scopeOf(req).role)).eq("org_id", orgId).in("id", orderIds)
       : { data: [] as any[] };
     const orderById = new Map((orders ?? []).map((o: any) => [o.id, o]));
 
@@ -4175,7 +4176,7 @@ router.get("/assignments/candidates", requireRole(...MANAGEMENT_ROLES), async (r
     if (!orderId) { res.status(400).json({ error: "An order id is required." }); return; }
 
     const { data: order } = await supabase.from("orders")
-      .select("id, customer, state, product_id, product_name, quantity, amount")
+      .select("id, customer, state, product_id, product_name, quantity, amount").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", orgId).eq("id", orderId).maybeSingle();
     if (!order) { res.status(404).json({ error: "Order not found." }); return; }
 
@@ -4220,7 +4221,7 @@ router.get("/assignments", requireRole(...READ_ROLES), async (req, res) => {
     const orderIds = [...new Set((assignments ?? []).map((row: any) => row.order_id))];
     const { data: orders } = orderIds.length
       ? await supabase.from("orders")
-          .select("id, customer, phone, state, product_name, package_name, amount, assigned_rep_id")
+          .select("id, customer, phone, state, product_name, package_name, amount, assigned_rep_id").neq("launch_stage", silentFilterFor(scopeOf(req).role))
           .limit(REPORT_ROW_CEILING)
           .eq("org_id", orgId).in("id", orderIds)
       : { data: [] as any[] };
@@ -4434,7 +4435,7 @@ router.get("/fees/quote", requireRole(...MANAGEMENT_ROLES), async (req, res) => 
     const orgId = orgIdOf(req);
     const orderId = typeof req.query.orderId === "string" ? req.query.orderId : "";
     const { data: order } = await supabase.from("orders")
-      .select("id, state, city, product_id").eq("org_id", orgId).eq("id", orderId).maybeSingle();
+      .select("id, state, city, product_id").neq("launch_stage", silentFilterFor(scopeOf(req).role)).eq("org_id", orgId).eq("id", orderId).maybeSingle();
     if (!order) { res.status(404).json({ error: "Order not found." }); return; }
     const { data: rules } = await supabase.from(FEE_RULES).select("*").eq("org_id", orgId).eq("active", true);
     const quote = resolveStandardFee((rules ?? []).map(mapFeeRule) as any, {
@@ -4707,7 +4708,7 @@ router.get("/cod/agent/:agentId/remittance", requireRole(...MANAGEMENT_ROLES), a
     const rows = (assignments ?? []) as any[];
     const orderIds = [...new Set(rows.map((r) => r.order_id))];
     const { data: orders } = orderIds.length
-      ? await supabase.from("orders").select("id, customer, phone, amount").eq("org_id", orgId).in("id", orderIds)
+      ? await supabase.from("orders").select("id, customer, phone, amount").neq("launch_stage", silentFilterFor(scopeOf(req).role)).eq("org_id", orgId).in("id", orderIds)
       : { data: [] as any[] };
     const orderById = new Map((orders ?? []).map((o: any) => [o.id, o]));
 

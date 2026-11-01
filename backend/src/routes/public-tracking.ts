@@ -45,6 +45,7 @@ router.post("/browser-event", beaconLimit, async (req, res) => {
   }
   const event = parsed.data;
   try {
+    // launch-safe: Meta tracking for the customer's own order.
     const { data: order } = await supabase.from("orders").select("id, org_id, branch_id").eq("id", event.orderId).maybeSingle();
     if (!order) { res.status(404).json({ error: "Unknown order." }); return; }
     if (event.eventId !== String(order.id)) {

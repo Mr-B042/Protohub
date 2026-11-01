@@ -1,7 +1,7 @@
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { addDaysToDateKey, incrementalRevenueForOrder, lagosDateKey, sundayWeekStartForDateKey } from "../lib/head-of-sales-metrics.js";
 import {
   CATEGORY_LABEL, HEALTH_LABEL, fillScriptText, funnelOf, mergeSettings, nearDuplicates, outdatedPrices,
@@ -9,6 +9,7 @@ import {
 } from "../lib/sales-scripting.js";
 import { activeHead, releaseFor } from "./sales-scripts.js";
 import { notifySalesScript } from "../lib/weekly-report-notifications.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 // Sales Scripting (Bright, 1 Oct 2026): replaces the Head of Sales
 // "Initiatives" page and the single weekly script.
@@ -677,7 +678,7 @@ router.post("/scripts/:id/retire", requireRole(...(APPROVERS as any)), async (re
 
 async function loadOrder(orgId: string, orderId: string) {
   const { data, error } = await supabase.from("orders")
-    .select("id, assigned_rep_id, product_id, product_name, quantity, status, created_at, cross_sell_lines")
+    .select("id, assigned_rep_id, product_id, product_name, quantity, status, created_at, cross_sell_lines").neq("launch_stage", "silent")
     .eq("org_id", orgId).eq("id", orderId).maybeSingle();
   if (error) throw error;
   if (!data) throw httpError(404, "Order not found.");
@@ -823,7 +824,7 @@ async function ordersByIds(orgId: string, ids: string[]) {
   const unique = Array.from(new Set(ids));
   for (let i = 0; i < unique.length; i += 200) {
     const { data, error } = await supabase.from("orders")
-      .select("id, status, amount, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines")
+      .select("id, status, amount, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines").neq("launch_stage", "silent")
       .eq("org_id", orgId).in("id", unique.slice(i, i + 200));
     if (error) throw error;
     for (const row of data ?? []) map.set(String(row.id), row);

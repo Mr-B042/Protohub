@@ -310,7 +310,7 @@ export const buildRepBonusSnapshot = async (
       .maybeSingle(),
     supabase
       .from("orders")
-      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name")
+      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name").neq("launch_stage", "silent")
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .eq("status", "Delivered")
@@ -318,7 +318,7 @@ export const buildRepBonusSnapshot = async (
       .lt("delivered_date", nextWeekStart),
     supabase
       .from("orders")
-      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name")
+      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name").neq("launch_stage", "silent")
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .eq("status", "Delivered")
@@ -327,7 +327,7 @@ export const buildRepBonusSnapshot = async (
       .lt("updated_at", nextWeekStartTs),
     supabase
       .from("orders")
-      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name")
+      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name").neq("launch_stage", "silent")
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .eq("assigned_rep_id", repId)
@@ -336,7 +336,7 @@ export const buildRepBonusSnapshot = async (
       .lt("created_at", nextWeekStartTs),
     supabase
       .from("orders")
-      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name")
+      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name").neq("launch_stage", "silent")
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .eq("assigned_rep_id", repId)

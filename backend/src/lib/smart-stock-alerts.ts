@@ -220,7 +220,7 @@ async function scanOrgForSmartStockAlerts(orgId: string): Promise<number> {
   const [deliveredResult, committedResult] = await Promise.all([
     supabase
       .from("orders")
-      .select(orderFields)
+      .select(orderFields).neq("launch_stage", "silent")
       .eq("org_id", orgId)
       .eq("status", "Delivered")
       .gte("delivered_date", deliveredSinceKey)
@@ -228,7 +228,7 @@ async function scanOrgForSmartStockAlerts(orgId: string): Promise<number> {
       .limit(REPORT_ROW_CEILING),
     supabase
       .from("orders")
-      .select(orderFields)
+      .select(orderFields).neq("launch_stage", "silent")
       .eq("org_id", orgId)
       .in("status", ["Confirmed", "In Process", "Dispatched"])
       .limit(REPORT_ROW_CEILING)

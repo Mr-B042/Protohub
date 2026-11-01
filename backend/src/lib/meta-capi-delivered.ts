@@ -89,6 +89,7 @@ export async function runMetaDeliveredEvents(): Promise<{ sent: number; skipped:
   let skipped = 0;
   for (const orgId of Array.from(new Set(usable.map((row) => row.org_id)))) {
     const orgConfigs = usable.filter((row) => row.org_id === orgId);
+    // launch-safe: sends a delivered sale to Meta; no person sees it.
     const { data: orders, error: orderError } = await supabase.from("orders")
       .select("id, org_id, branch_id, customer, phone, email, city, state, amount, currency, product_id, product_name, package_id, package_name, quantity, delivered_date, review_hold, form_context, created_at")
       .eq("org_id", orgId).eq("status", "Delivered").gte("delivered_date", since)

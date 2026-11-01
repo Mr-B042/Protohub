@@ -2,9 +2,10 @@ import { Router } from "express";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { sendConnectedWhatsApp, ensureWhatsAppReady } from "../lib/whatsapp-runtime.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 const router = Router();
 router.use(requireAuth, requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep", "Sales Closer"));
@@ -52,7 +53,7 @@ router.get("/", async (req, res) => {
       // Admin sees all conversations from phones that have ANY order assigned to a rep
       const { data: allOrderPhones } = await supabase
         .from("orders")
-        .select("phone")
+        .select("phone").neq("launch_stage", silentFilterFor(scopeOf(req).role))
         .limit(REPORT_ROW_CEILING)
         .eq("org_id", orgId)
         .not("phone", "is", null)
@@ -66,7 +67,7 @@ router.get("/", async (req, res) => {
       // Scope to orders assigned to this specific user
       const { data: myOrders } = await supabase
         .from("orders")
-        .select("phone")
+        .select("phone").neq("launch_stage", silentFilterFor(scopeOf(req).role))
         .limit(REPORT_ROW_CEILING)
         .eq("org_id", orgId)
         .eq("assigned_rep_id", userId)
@@ -115,7 +116,7 @@ router.get("/", async (req, res) => {
     if (orderIds.length > 0) {
       const { data: orders } = await supabase
         .from("orders")
-        .select("id, customer, phone, assigned_rep_id")
+        .select("id, customer, phone, assigned_rep_id").neq("launch_stage", silentFilterFor(scopeOf(req).role))
         .limit(REPORT_ROW_CEILING)
         .eq("org_id", orgId)
         .in("id", orderIds);
@@ -157,7 +158,7 @@ router.get("/:phone", async (req, res) => {
     //   Sales Rep / Manager → only their assigned order phones
     if (role === "Sales Rep" || role === "Manager" || role === "Recovery Rep") {
       const { data: assignedOrders } = await supabase
-        .from("orders").select("phone").eq("org_id", orgId).eq("assigned_rep_id", userId);
+        .from("orders").select("phone").neq("launch_stage", silentFilterFor(scopeOf(req).role)).eq("org_id", orgId).eq("assigned_rep_id", userId);
       const myPhones = new Set(
         (assignedOrders ?? []).map((o: any) => normalizeNgPhone(o.phone ?? "")).filter((p: string) => p.length >= 10)
       );
@@ -195,7 +196,7 @@ router.get("/:phone", async (req, res) => {
     if (linkedOrderId) {
       const { data: ord } = await supabase
         .from("orders")
-        .select("id, customer, phone, status, product_name, package_name, amount, currency, assigned_rep_id")
+        .select("id, customer, phone, status, product_name, package_name, amount, currency, assigned_rep_id").neq("launch_stage", silentFilterFor(scopeOf(req).role))
         .eq("org_id", orgId)
         .eq("id", linkedOrderId)
         .maybeSingle();
@@ -265,7 +266,7 @@ router.post("/:phone/send", async (req, res) => {
 
   // Rep/Manager can only message their assigned customers
   if (role === "Sales Rep" || role === "Manager" || role === "Recovery Rep") {
-    const { data: assignedOrders } = await supabase.from("orders").select("phone").eq("org_id", orgId).eq("assigned_rep_id", userId);
+    const { data: assignedOrders } = await supabase.from("orders").select("phone").neq("launch_stage", silentFilterFor(scopeOf(req).role)).eq("org_id", orgId).eq("assigned_rep_id", userId);
     const myPhones = new Set(
       (assignedOrders ?? []).map((o: any) => normalizeNgPhone(o.phone ?? "")).filter((p: string) => p.length >= 10)
     );

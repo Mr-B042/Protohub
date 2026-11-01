@@ -2,7 +2,8 @@ import { Router } from "express";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 import {
   computeBatchEconomics,
   type CostTier,
@@ -133,7 +134,7 @@ router.get("/", async (req, res) => {
 
   const rows = await Promise.all((batches ?? []).map(async (b) => {
     const { data: orders } = await supabase
-      .from("orders").select(BATCH_ORDER_SELECT).eq("org_id", orgId).eq("batch_id", b.id);
+      .from("orders").select(BATCH_ORDER_SELECT).neq("launch_stage", silentFilterFor(scopeOf(req).role)).eq("org_id", orgId).eq("batch_id", b.id);
     const econ = computeBatchEconomics((orders ?? []).map((o) => orderToBatchOrder(o, pricingMap)), batchInputs(b), tiers, statusMap);
     return {
       id: b.id, label: b.label, periodStart: b.period_start, periodEnd: b.period_end, status: b.status,
@@ -256,7 +257,7 @@ router.get("/:id/economics", async (req, res) => {
   const { tiers, statusMap } = await loadTierConfig(orgId);
   const pricingMap = await loadPricingMap(orgId);
   const { data: orders } = await supabase
-    .from("orders").select(BATCH_ORDER_SELECT).eq("org_id", orgId).eq("batch_id", req.params.id);
+    .from("orders").select(BATCH_ORDER_SELECT).neq("launch_stage", silentFilterFor(scopeOf(req).role)).eq("org_id", orgId).eq("batch_id", req.params.id);
   const econ = computeBatchEconomics((orders ?? []).map((o) => orderToBatchOrder(o, pricingMap)), batchInputs(batch), tiers, statusMap);
   res.json({
     batch: {
@@ -286,7 +287,7 @@ router.get("/:id/autofill", async (req, res) => {
   if (!batch) { res.status(404).json({ error: "Batch not found." }); return; }
 
   const { data: orderRows } = await supabase
-    .from("orders").select("status, quantity, product_id, created_at, logistics_cost, currency")
+    .from("orders").select("status, quantity, product_id, created_at, logistics_cost, currency").neq("launch_stage", silentFilterFor(scopeOf(req).role))
     .eq("org_id", orgId).eq("batch_id", id);
   const orders = orderRows ?? [];
   const suggestions: Record<string, number> = {};

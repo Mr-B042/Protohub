@@ -3,8 +3,9 @@ import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { buildManagerPerformance } from "../lib/manager-performance.js";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 const router = Router();
 router.use(requireAuth, requireRole("Owner", "Admin"));
@@ -53,7 +54,7 @@ router.get("/performance", async (req, res) => {
 
   let ordersQuery = supabase
     .from("orders")
-    .select("id, customer, assigned_rep_id, product_id, status, call_outcome, buyer_health, created_at, date, scheduled_date, scheduled_at, next_follow_up_at, last_contact_attempt_at, last_contact_attempt_outcome, notes, timeline_notes")
+    .select("id, customer, assigned_rep_id, product_id, status, call_outcome, buyer_health, created_at, date, scheduled_date, scheduled_at, next_follow_up_at, last_contact_attempt_at, last_contact_attempt_outcome, notes, timeline_notes").neq("launch_stage", silentFilterFor(scopeOf(req).role))
     .limit(REPORT_ROW_CEILING)
     .eq("org_id", req.user!.orgId);
 
@@ -193,7 +194,7 @@ router.post("/:id/manager-actions", async (req, res) => {
   if (orderId) {
     const { data: order, error: orderError } = await supabase
       .from("orders")
-      .select("id, assigned_rep_id, product_id")
+      .select("id, assigned_rep_id, product_id").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("id", orderId)
       .eq("org_id", req.user!.orgId)
       .maybeSingle();

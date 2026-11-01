@@ -284,7 +284,7 @@ const FAILED_DELIVERY_ORDER = /^EXP-DEL-(.+)$/;
 async function fetchPeriod(orgId: string, branchId: string | null, from: string, to: string): Promise<PeriodData> {
   let orders = supabase
     .from("orders")
-    .select("id, status, amount, logistics_cost, cogs_snapshot, utm_source, utm_campaign, source, form_context, product_id, product_name")
+    .select("id, status, amount, logistics_cost, cogs_snapshot, utm_source, utm_campaign, source, form_context, product_id, product_name").neq("launch_stage", "silent")
     .eq("org_id", orgId)
     .gte("created_at", lagosStart(from))
     .lte("created_at", lagosEnd(to));
@@ -343,7 +343,7 @@ async function fetchPeriod(orgId: string, branchId: string | null, from: string,
   const weekTo = addDays(sundayWeekStartForDateKey(addDays(to, 1)), 7);
   let weekOrders = supabase
     .from("orders")
-    .select(BONUS_ORDER_COLUMNS)
+    .select(BONUS_ORDER_COLUMNS).neq("launch_stage", "silent")
     .eq("org_id", orgId)
     .gte("created_at", `${weekFrom}T00:00:00.000Z`)
     .lt("created_at", `${weekTo}T00:00:00.000Z`);
@@ -362,7 +362,7 @@ async function fetchPeriod(orgId: string, branchId: string | null, from: string,
   if (orderIds.length > 0) {
     const { data } = await supabase
       .from("orders")
-      .select("id, product_id, source, utm_source, utm_campaign, form_context")
+      .select("id, product_id, source, utm_source, utm_campaign, form_context").neq("launch_stage", "silent")
       .eq("org_id", orgId)
       .in("id", orderIds);
     for (const row of data ?? []) failedOrders.set(String((row as any).id), row);
@@ -891,7 +891,7 @@ export async function loadDailyOrderCounts(
 ): Promise<Record<string, number>> {
   let query = supabase
     .from("orders")
-    .select("created_at, product_id, source, utm_source, utm_campaign, media_buyer:form_context->>media_buyer")
+    .select("created_at, product_id, source, utm_source, utm_campaign, media_buyer:form_context->>media_buyer").neq("launch_stage", "silent")
     .eq("org_id", orgId)
     .gte("created_at", lagosStart(from))
     .lte("created_at", lagosEnd(to));

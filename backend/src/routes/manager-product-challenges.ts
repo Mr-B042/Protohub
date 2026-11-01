@@ -9,10 +9,11 @@ import {
 } from "../lib/manager-product-challenge.js";
 import { supabase } from "../lib/supabase.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 import { logger } from "../lib/logger.js";
 import { INCENTIVE_EXPENSE_CATEGORY, calendarMonthOf, challengeWeekStarts, incentiveExpenseIdPrefix, incentiveExpenseSplit, incentiveTier, incentiveWindow, monthlyDeliveryRate, payableAmount } from "../lib/challenge-incentive.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 const router = Router();
 router.use(requireAuth, requireRole("Owner", "Admin", "Manager", "Sales Rep"));
@@ -196,7 +197,7 @@ router.get("/", async (req, res) => {
     const latest = rows.reduce((value, row) => row.end_date > value ? row.end_date : value, rows[0].end_date);
     const deliveredOrdersQuery = supabase
       .from("orders")
-      .select("id, product_id, quantity, status, created_at, delivered_date, assigned_rep_id, review_hold")
+      .select("id, product_id, quantity, status, created_at, delivered_date, assigned_rep_id, review_hold").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", req.user!.orgId)
       // ⚠️ status is the order_status ENUM, not text. ilike compiles to ~~*,
@@ -208,7 +209,7 @@ router.get("/", async (req, res) => {
       .or("review_hold.is.null,review_hold.eq.false");
     const activityOrdersQuery = supabase
       .from("orders")
-      .select("id, product_id, quantity, status, created_at, delivered_date, assigned_rep_id, review_hold")
+      .select("id, product_id, quantity, status, created_at, delivered_date, assigned_rep_id, review_hold").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", req.user!.orgId)
       .gte("created_at", toWatUtcIso(earliest, "start"))
@@ -252,7 +253,7 @@ router.get("/", async (req, res) => {
     const rateTo = rateMonths.reduce((value, month) => month.to > value ? month.to : value, rateMonths[0].to);
     const { data: rateOrders, error: rateOrdersError } = await supabase
       .from("orders")
-      .select("id, status, created_at, assigned_rep_id")
+      .select("id, status, created_at, assigned_rep_id").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", req.user!.orgId)
       .gte("created_at", toWatUtcIso(rateFrom, "start"))

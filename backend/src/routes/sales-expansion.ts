@@ -10,7 +10,8 @@ import {
   salesExpansionSettingsFromRow,
   salesExpansionSummaryFromRows, invalidateSalesExpansionSettings } from "../lib/sales-expansion.js";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -105,7 +106,7 @@ router.get("/attempts", async (req, res) => {
     const orderIds = [...new Set(attempts.map((row: any) => row.order_id))];
     const repIds = [...new Set(attempts.map((row: any) => row.rep_id))];
     const [{ data: orders }, { data: users }] = await Promise.all([
-      orderIds.length ? supabase.from("orders").select("id, customer, product_id, product_name, package_name, status, amount, currency, cross_sell_lines, delivered_date").eq("org_id", req.user!.orgId).in("id", orderIds) : Promise.resolve({ data: [] } as any),
+      orderIds.length ? supabase.from("orders").select("id, customer, product_id, product_name, package_name, status, amount, currency, cross_sell_lines, delivered_date").neq("launch_stage", silentFilterFor(scopeOf(req).role)).eq("org_id", req.user!.orgId).in("id", orderIds) : Promise.resolve({ data: [] } as any),
       repIds.length ? supabase.from("users").select("id, name").eq("org_id", req.user!.orgId).in("id", repIds) : Promise.resolve({ data: [] } as any)
     ]);
     const orderMap = new Map((orders ?? []).map((row: any) => [row.id, row]));
@@ -124,7 +125,7 @@ router.get("/summary", async (req, res) => {
     if (error) throw error;
     const orderIds = [...new Set((attempts ?? []).map((row: any) => row.order_id))];
     const [{ data: orders }, { data: lines }] = await Promise.all([
-      orderIds.length ? supabase.from("orders").select("id, status, cross_sell_lines, amount, product_id, product_name, assigned_rep_id, created_at").eq("org_id", req.user!.orgId).in("id", orderIds) : Promise.resolve({ data: [] } as any),
+      orderIds.length ? supabase.from("orders").select("id, status, cross_sell_lines, amount, product_id, product_name, assigned_rep_id, created_at").neq("launch_stage", silentFilterFor(scopeOf(req).role)).eq("org_id", req.user!.orgId).in("id", orderIds) : Promise.resolve({ data: [] } as any),
       orderIds.length ? supabase.from("order_sales_expansion_offer_lines").select("*").eq("org_id", req.user!.orgId).in("order_id", orderIds) : Promise.resolve({ data: [] } as any)
     ]);
     const base = salesExpansionSummaryFromRows(attempts ?? [], orders ?? [], lines ?? []);
@@ -166,7 +167,7 @@ router.get("/summary", async (req, res) => {
       pairingCounts.set(key, current);
     }
 
-    let confirmedQuery = supabase.from("orders").select("id, assigned_rep_id, customer, product_name, call_outcome, created_at")
+    let confirmedQuery = supabase.from("orders").select("id, assigned_rep_id, customer, product_name, call_outcome, created_at").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", req.user!.orgId).gte("created_at", settingsResult.settings.enforcementStartsAt).in("status", ["Confirmed", "In Process", "Dispatched", "Delivered", "Postponed"]);
     const role = req.user!.effectiveUserRole ?? req.user!.role;
     const userId = req.user!.effectiveUserId ?? req.user!.id;

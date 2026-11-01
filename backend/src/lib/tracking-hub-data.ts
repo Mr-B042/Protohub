@@ -30,6 +30,7 @@ const ORDER_FIELDS = "id, created_at, product_id, product_name, package_name, am
 export async function formOrders(orgId: string, branchId: string, from: string, to: string): Promise<OrderRow[]> {
   const rows: OrderRow[] = [];
   for (let page = 0; page < 40; page += 1) {
+    // launch-safe: Owner-only Tracking Hub.
     const { data, error } = await supabase.from("orders").select(ORDER_FIELDS)
       .eq("org_id", orgId).eq("branch_id", branchId).gte("created_at", startIso(from)).lte("created_at", endIso(to))
       .not("form_context", "is", null).order("id").range(page * 1000, page * 1000 + 999);

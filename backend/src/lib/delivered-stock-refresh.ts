@@ -22,7 +22,7 @@ import { orderInventoryLinesFromRow } from "./order-inventory.js";
 export async function refreshPendingDeliveredLines(orgId: string, orderId: string): Promise<void> {
   try {
     const { data: order } = await supabase
-      .from("orders").select("*")
+      .from("orders").select("*").neq("launch_stage", "silent")
       .eq("id", orderId).eq("org_id", orgId).maybeSingle();
 
     // ⚠️ ONLY WHILE THE ORDER IS STILL PENDING. A reconciled order records what

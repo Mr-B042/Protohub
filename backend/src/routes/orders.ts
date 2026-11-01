@@ -17,7 +17,7 @@ import { isPerUserWhatsAppDispatch } from "../lib/whatsapp-dispatch-mode.js";
 import { logger } from "../lib/logger.js";
 import { syncOrderDeliveryExpense } from "../lib/order-delivery-expense.js";
 import { supabase } from "../lib/supabase.js";
-import { applyBranchScope, requireAuth, requireRole } from "../middleware/auth.js";
+import { applyBranchScope, requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { isFrontlineRepRole } from "../lib/roles.js";
 import {
   sendOrderStatusEmail, sendNewOrderEmail,
@@ -46,6 +46,7 @@ import {
   checkAgentStock, normalizeAdditionalLines, orderMoneyBreakdown, stockShortfallMessage
 } from "../lib/order-additional-lines.js";
 import { refreshPendingDeliveredLines } from "../lib/delivered-stock-refresh.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -200,10 +201,10 @@ const normalizeCustomerWhatsAppPhone = (value: string | null | undefined) => {
 const orderWhatsAppTarget = (order: { phone?: string | null; whatsapp?: string | null }) =>
   order.whatsapp?.trim() || order.phone?.trim() || "";
 
-async function loadWhatsAppDispatchOrder(orgId: string, orderId: string) {
+async function loadWhatsAppDispatchOrder(orgId: string, orderId: string, scopeRole?: string) {
   const { data, error } = await supabase
     .from("orders")
-    .select(WHATSAPP_DISPATCH_ORDER_SELECT)
+    .select(WHATSAPP_DISPATCH_ORDER_SELECT).neq("launch_stage", silentFilterFor(scopeRole))
     .eq("org_id", orgId)
     .eq("id", orderId)
     .single();
@@ -791,7 +792,7 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery
   if (d.sourceCartId) {
     const { data: existingForCart } = await supabase
       .from("orders")
-      .select("*")
+      .select("*").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", req.user!.orgId)
       .eq("source_cart_id", d.sourceCartId)
       .not("status", "in", "(Cancelled,Failed)")
@@ -1199,7 +1200,7 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery
 
 router.get("/:id/whatsapp-dispatch/preview", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
   try {
-    const order = await loadWhatsAppDispatchOrder(req.user!.orgId, String(req.params.id));
+    const order = await loadWhatsAppDispatchOrder(req.user!.orgId, String(req.params.id), scopeOf(req).role);
     if (!canDispatchWhatsAppOrder(req.user!.role, req.user!.id, order)) {
       res.status(403).json({ error: "You can only dispatch orders assigned to you." });
       return;
@@ -1261,7 +1262,7 @@ router.post("/:id/whatsapp-dispatch", requireRole("Owner", "Admin", "Manager", "
   }
 
   try {
-    const order = await loadWhatsAppDispatchOrder(req.user!.orgId, String(req.params.id));
+    const order = await loadWhatsAppDispatchOrder(req.user!.orgId, String(req.params.id), scopeOf(req).role);
     if (!canDispatchWhatsAppOrder(req.user!.role, req.user!.id, order)) {
       res.status(403).json({ error: "You can only dispatch orders assigned to you." });
       return;
@@ -1478,7 +1479,7 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
   // Fetch current order for audit trail + delivery logic
   const { data: existing } = await supabase
     .from("orders")
-    .select("*")
+    .select("*").neq("launch_stage", silentFilterFor(scopeOf(req).role))
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .single();
@@ -1813,7 +1814,7 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
   if (error && shouldCreateDeliveredStockPending && (error as any).code === "PGRST116") {
     const { data: latest } = await supabase
       .from("orders")
-      .select("*")
+      .select("*").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("id", req.params.id)
       .eq("org_id", req.user!.orgId)
       .single();
@@ -2391,7 +2392,7 @@ router.patch("/:id/date", requireRole("Owner", "Admin"), async (req, res) => {
 
   const { data: current, error: currentError } = await supabase
     .from("orders")
-    .select("*")
+    .select("*").neq("launch_stage", silentFilterFor(scopeOf(req).role))
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .maybeSingle();
@@ -2551,7 +2552,7 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Reco
 
   const { data: current } = await supabase
     .from("orders")
-    .select("*")
+    .select("*").neq("launch_stage", silentFilterFor(scopeOf(req).role))
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .single();
@@ -3348,7 +3349,7 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Reco
 router.get("/:id/follow-up-tasks", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
   const { data: order, error: orderError } = await supabase
     .from("orders")
-    .select("id, assigned_rep_id")
+    .select("id, assigned_rep_id").neq("launch_stage", silentFilterFor(scopeOf(req).role))
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .maybeSingle();
@@ -3377,7 +3378,7 @@ router.get("/:id/follow-up-tasks", requireRole("Owner", "Admin", "Manager", "Sal
 router.get("/:id/contact-attempts", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
   const { data: order, error: orderError } = await supabase
     .from("orders")
-    .select("id, assigned_rep_id")
+    .select("id, assigned_rep_id").neq("launch_stage", silentFilterFor(scopeOf(req).role))
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .maybeSingle();
@@ -3431,7 +3432,7 @@ router.post("/:id/contact-attempts", requireRole("Owner", "Admin", "Manager", "S
 
   const { data: order, error: orderError } = await supabase
     .from("orders")
-    .select("id, source_cart_id, assigned_rep_id, product_id, package_id, state, product_name, package_name, customer")
+    .select("id, source_cart_id, assigned_rep_id, product_id, package_id, state, product_name, package_name, customer").neq("launch_stage", silentFilterFor(scopeOf(req).role))
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .maybeSingle();
@@ -3494,7 +3495,7 @@ router.post("/:id/contact-attempts", requireRole("Owner", "Admin", "Manager", "S
 router.delete("/:id", requireRole("Owner", "Admin"), async (req, res) => {
   // Fetch before deleting so we can log context and reverse side-effects
   const { data: existing } = await supabase
-    .from("orders").select("status, customer, product_name, product_id, amount, agent_id, agent_location_id, quantity, stock_deducted, state, city, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines")
+    .from("orders").select("status, customer, product_name, product_id, amount, agent_id, agent_location_id, quantity, stock_deducted, state, city, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines").neq("launch_stage", silentFilterFor(scopeOf(req).role))
     .eq("id", req.params.id).eq("org_id", req.user!.orgId).single();
 
   if (!existing) { res.status(404).json({ error: "Order not found." }); return; }
@@ -3503,7 +3504,7 @@ router.delete("/:id", requireRole("Owner", "Admin"), async (req, res) => {
   // written below goes when the order goes, so on its own a delete left no
   // trace of who did it (order #4844). deleted_orders has no link to orders,
   // so this survives. No record, no delete: nothing has been changed yet.
-  const { data: fullRow } = await supabase.from("orders").select("*")
+  const { data: fullRow } = await supabase.from("orders").select("*").neq("launch_stage", silentFilterFor(scopeOf(req).role))
     .eq("id", req.params.id).eq("org_id", req.user!.orgId).maybeSingle();
   const kept = await supabase.from("deleted_orders").insert({
     org_id: req.user!.orgId,
@@ -3597,7 +3598,7 @@ router.delete("/:id", requireRole("Owner", "Admin"), async (req, res) => {
 // Returns the latest WhatsApp message log entries for this order's WhatsApp/phone target.
 router.get("/:id/whatsapp-status", requireRole("Owner", "Admin", "Manager"), async (req, res) => {
   const { data: order } = await supabase
-    .from("orders").select("phone, whatsapp").eq("id", req.params.id).eq("org_id", req.user!.orgId).single();
+    .from("orders").select("phone, whatsapp").neq("launch_stage", silentFilterFor(scopeOf(req).role)).eq("id", req.params.id).eq("org_id", req.user!.orgId).single();
   const targetPhone = orderWhatsAppTarget(order ?? {});
   if (!targetPhone) { res.json({ messages: [], normalizedPhone: "" }); return; }
 
@@ -3620,7 +3621,7 @@ router.get("/:id/whatsapp-status", requireRole("Owner", "Admin", "Manager"), asy
 router.post("/:id/whatsapp-resend", requireRole("Owner", "Admin"), async (req, res) => {
   const { data: order, error } = await supabase
     .from("orders")
-    .select("id, customer, phone, whatsapp, product_name, package_name, quantity, amount, currency, source, city, state, package_id, cross_sell_lines")
+    .select("id, customer, phone, whatsapp, product_name, package_name, quantity, amount, currency, source, city, state, package_id, cross_sell_lines").neq("launch_stage", silentFilterFor(scopeOf(req).role))
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .single();
@@ -3693,7 +3694,7 @@ router.post("/:id/whatsapp-resend", requireRole("Owner", "Admin"), async (req, r
 router.get("/:id/receipt", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
   const { data: order, error } = await supabase
     .from("orders")
-    .select("id, customer, phone, product_name, package_name, quantity, amount, currency, source, address, city, state, created_at, scheduled_date, cross_sell_lines, package_components_snapshot, assigned_rep_id")
+    .select("id, customer, phone, product_name, package_name, quantity, amount, currency, source, address, city, state, created_at, scheduled_date, cross_sell_lines, package_components_snapshot, assigned_rep_id").neq("launch_stage", silentFilterFor(scopeOf(req).role))
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .single();
@@ -3766,7 +3767,7 @@ router.put("/:id/additional-lines",
       const body = parsed.data;
 
       const { data: order } = await supabase.from("orders")
-        .select("id, status, amount, agent_id, agent_location_id, additional_lines, cross_sell_lines, stock_deducted")
+        .select("id, status, amount, agent_id, agent_location_id, additional_lines, cross_sell_lines, stock_deducted").neq("launch_stage", silentFilterFor(scopeOf(req).role))
         .eq("id", req.params.id).eq("org_id", orgId).maybeSingle();
       if (!order) { res.status(404).json({ error: "That order no longer exists." }); return; }
 

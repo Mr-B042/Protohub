@@ -4,9 +4,10 @@ import { Router, type Request, type Response } from "express";
 import sharp from "sharp";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, scopeOf } from "../middleware/auth.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { deliver } from "../lib/weekly-report-notifications.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 import {
   ACCEPTED_TYPES, IMAGE_TYPE_KEYS, MAX_PENDING_PER_PERSON, MEDIA_APPROVER_ROLES, MEDIA_LABELS, MEDIA_USAGE, SNIFF_BYTES, TYPE_KEYS,
   UPLOADS_PER_HOUR, VIDEO_TYPE_KEYS, canApproveMedia, canSendMedia, cleanFileName, cleanImportUrl, describeNotPicture, extensionOf, isPrivateAddress, kindOf, nameFromUrl,
@@ -925,7 +926,7 @@ router.get("/order-counts", async (req, res) => {
     const counts: Record<string, number> = {};
     const page = 1000;
     for (let from = 0; from < 50000; from += page) {
-      const { data, error } = await supabase.from("orders").select("product_id")
+      const { data, error } = await supabase.from("orders").select("product_id").neq("launch_stage", silentFilterFor(scopeOf(req).role))
         .eq("org_id", orgOf(req)).eq("review_hold", false).gte("created_at", since)
         .not("product_id", "is", null).order("id").range(from, from + page - 1);
       if (error) throw error;
@@ -950,7 +951,7 @@ router.get("/offer-performance", async (req, res) => {
       let orders = 0, delivered = 0, revenue = 0;
       const page = 1000;
       for (let from = 0; from < 50000; from += page) {
-        const { data, error } = await supabase.from("orders").select("status, amount")
+        const { data, error } = await supabase.from("orders").select("status, amount").neq("launch_stage", silentFilterFor(scopeOf(req).role))
           .eq("org_id", orgOf(req)).eq("package_id", packageId).eq("review_hold", false)
           .gte("created_at", new Date(now - fromDaysAgo * 86400000).toISOString())
           .lt("created_at", new Date(now - toDaysAgo * 86400000).toISOString())

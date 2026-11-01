@@ -7,6 +7,7 @@ import { isFrontlineRepRole } from "../lib/roles.js";
 import { randomUUID } from "node:crypto";
 import { createShortLink } from "../lib/short-links.js";
 import { RECEIPT_BUCKET, receiptPageUrl } from "./public-receipts.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 // ── Order receipts (Bright's design, 20 Oct 2026) ───────────────────────────
 // The receipt image is drawn in the browser from the order record; this route
@@ -56,7 +57,7 @@ router.get("/:orderId/verification", async (req, res) => {
   try {
     const orgId = req.user!.orgId;
     const { data: order, error } = await supabase.from("orders")
-      .select("id, amount, original_amount, created_at, original_created_at, assigned_rep_id, form_context, source_cart_id, package_name, currency")
+      .select("id, amount, original_amount, created_at, original_created_at, assigned_rep_id, form_context, source_cart_id, package_name, currency").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", orgId).eq("id", String(req.params.orderId)).maybeSingle();
     if (error) throw error;
     if (!order) { res.status(404).json({ error: "Order not found." }); return; }
@@ -109,7 +110,7 @@ router.post("/:orderId/image", async (req, res) => {
   if (!parsed.success) { res.status(400).json({ error: "The receipt picture could not be read. Try again." }); return; }
   try {
     const orgId = req.user!.orgId;
-    const { data: order, error } = await supabase.from("orders").select("id, assigned_rep_id")
+    const { data: order, error } = await supabase.from("orders").select("id, assigned_rep_id").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", orgId).eq("id", String(req.params.orderId)).maybeSingle();
     if (error) throw error;
     if (!order) { res.status(404).json({ error: "Order not found." }); return; }

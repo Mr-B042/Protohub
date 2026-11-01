@@ -281,6 +281,7 @@ const buildCompanionSocialProof = async (product: DbProduct) => {
   const recentWindowStartIso = new Date(new Date(todayStartIso).getTime() - (6 * DAY_MS)).toISOString();
 
   const { data: recentOrders, error } = await supabase
+    // launch-safe: the public order form; no staff member sees this.
     .from("orders")
     .select("created_at, cross_sell_lines")
     .eq("org_id", product.org_id)
@@ -556,6 +557,7 @@ router.get("/:id/free-delivery-slots", readRateLimit, async (req, res) => {
 
   const packageIds = (packageRows ?? []).map((row) => row.id).filter(Boolean);
   let query = supabase
+    // launch-safe: the public order form; no staff member sees this.
     .from("orders")
     .select("id", { count: "exact", head: true })
     .eq("org_id", product.org_id)

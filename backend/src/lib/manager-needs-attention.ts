@@ -57,7 +57,7 @@ type NeedsAttentionOrderRow = {
 export const computeNeedsAttentionSummary = async (orgId: string): Promise<NeedsAttentionSummary> => {
   const { data, error } = await supabase
     .from("orders")
-    .select("id, status, review_hold, assigned_rep_id, stock_deducted, stock_reconciliation_status, call_outcome, logistics_cost, upsell_from_qty, upsell_to_qty, product_id, product_name, state, created_at, delivered_date, quantity, package_components_snapshot, cross_sell_lines, free_gift_lines")
+    .select("id, status, review_hold, assigned_rep_id, stock_deducted, stock_reconciliation_status, call_outcome, logistics_cost, upsell_from_qty, upsell_to_qty, product_id, product_name, state, created_at, delivered_date, quantity, package_components_snapshot, cross_sell_lines, free_gift_lines").neq("launch_stage", "silent")
     .eq("org_id", orgId);
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as NeedsAttentionOrderRow[];

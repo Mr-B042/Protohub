@@ -33,7 +33,7 @@ const middle = (values: number[]) => {
 /** Per rep: orders delivered in this week whose delivery fee is still blank or 0. */
 export async function missingFeesFor(orgId: string, weekStart: string) {
   const { data, error } = await supabase.from("orders")
-    .select("id, assigned_rep_id, delivered_date, logistics_cost, customer, phone, state, city, product_name, quantity, amount, agent_id, agent_name_snapshot")
+    .select("id, assigned_rep_id, delivered_date, logistics_cost, customer, phone, state, city, product_name, quantity, amount, agent_id, agent_name_snapshot").neq("launch_stage", "silent")
     .eq("org_id", orgId).eq("status", "Delivered").not("assigned_rep_id", "is", null)
     .gte("delivered_date", weekStart).lte("delivered_date", weekEndFromStart(weekStart))
     .order("delivered_date", { ascending: true })
@@ -50,7 +50,7 @@ export async function missingFeesFor(orgId: string, weekStart: string) {
     agentIds.length ? supabase.from("agents").select("id, name").in("id", agentIds) : Promise.resolve({ data: [], error: null }),
     // The agent's recent fees, to show what this order should have cost.
     agentIds.length
-      ? supabase.from("orders").select("agent_id, state, logistics_cost").eq("org_id", orgId).eq("status", "Delivered")
+      ? supabase.from("orders").select("agent_id, state, logistics_cost").neq("launch_stage", "silent").eq("org_id", orgId).eq("status", "Delivered")
         .in("agent_id", agentIds).gt("logistics_cost", 0).gte("delivered_date", since).limit(5000)
       : Promise.resolve({ data: [], error: null }),
     supabase.from("order_audit").select("order_id, changed_by, to_status, created_at")

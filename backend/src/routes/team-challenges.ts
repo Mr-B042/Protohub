@@ -9,6 +9,7 @@ import {
   type Milestone, type Scoring, needsManager } from "../lib/team-challenge.js";
 import { perOrderExpansionBonusBreakdownMapForDeliveredRange } from "../lib/sales-bonus-engine.js";
 import { notifyTeamChallenge } from "../lib/team-challenge-notifications.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 // Team Challenges (Bright, 3 Oct 2026). Two teams race to point milestones
 // made of verified upsells and cross-sells. The ledger (team_challenge_entries)
@@ -125,7 +126,7 @@ async function syncEntries(challenge: any, teams: any[]) {
   const scoring = normaliseScoring(challenge.scoring);
   const closeAt = lagosEnd(addDays(challenge.sell_to, challenge.grace_days));
 
-  const { data: orders, error } = await supabase.from("orders").select(ORDER_FIELDS)
+  const { data: orders, error } = await supabase.from("orders").select(ORDER_FIELDS).neq("launch_stage", "silent")
     .eq("org_id", challenge.org_id).eq("branch_id", challenge.branch_id).in("assigned_rep_id", members)
     .gte("created_at", lagosStart(challenge.sell_from)).lte("created_at", lagosEnd(challenge.sell_to)).limit(5000);
   if (error) throw error;
@@ -406,7 +407,7 @@ async function buildDetail(req: Request | Viewer, challenge: any, teams: any[]) 
   // Lead allocation (Bright, 5 Oct 2026): how many orders each rep was given
   // in the selling period and on which products, so a points gap can be read
   // against opportunity. Context only - never part of the race score.
-  const { data: assignedRows } = memberIds.length ? await supabase.from("orders").select("assigned_rep_id, product_name, review_hold")
+  const { data: assignedRows } = memberIds.length ? await supabase.from("orders").select("assigned_rep_id, product_name, review_hold").neq("launch_stage", "silent")
     .eq("org_id", challenge.org_id).eq("branch_id", challenge.branch_id).in("assigned_rep_id", memberIds)
     .gte("created_at", lagosStart(challenge.sell_from)).lte("created_at", lagosEnd(challenge.sell_to)).limit(10000) : { data: [] as any[] };
   const assigned = ((assignedRows ?? []) as any[]).filter((row) => row.review_hold !== true);
@@ -485,7 +486,7 @@ async function buildDetail(req: Request | Viewer, challenge: any, teams: any[]) 
   const myTeam = teams.find((team) => (team.member_ids ?? []).includes(me)) ?? null;
   const visible = leader ? all : all.filter((row) => row.rep_id === me);
   const orderIds = visible.map((row) => row.order_id);
-  const { data: orderRows } = orderIds.length ? await supabase.from("orders").select("id, customer, product_name, package_name, status").in("id", orderIds) : { data: [] as any[] };
+  const { data: orderRows } = orderIds.length ? await supabase.from("orders").select("id, customer, product_name, package_name, status").neq("launch_stage", "silent").in("id", orderIds) : { data: [] as any[] };
   const orderOf = new Map((orderRows ?? []).map((row: any) => [String(row.id), row]));
 
   return {
@@ -976,7 +977,7 @@ router.post("/:id/baseline", requireRole(...LEADERS), async (req, res) => {
     for (const team of teams) for (const id of team.member_ids ?? []) teamOf.set(String(id), team.id);
     const members = Array.from(teamOf.keys());
     if (members.length === 0) throw httpError(400, "Put reps on the teams first.");
-    const { data: orders, error } = await supabase.from("orders").select(ORDER_FIELDS)
+    const { data: orders, error } = await supabase.from("orders").select(ORDER_FIELDS).neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", challenge.org_id).eq("branch_id", challenge.branch_id).in("assigned_rep_id", members).eq("status", "Delivered").eq("remittance_status", "Paid")
       .gte("created_at", lagosStart(months[0].from)).lte("created_at", lagosEnd(months[2].to)).limit(10000);
     if (error) throw error;

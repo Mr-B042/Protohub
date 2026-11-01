@@ -992,6 +992,7 @@ router.get("/links/:id", async (req, res) => {
     const key = String(link.tracking_key).toLowerCase();
     const [orders, journey, totalRes] = await Promise.all([
       formOrders(orgId, branchId, from, today), journeyCounts(orgId, branchId, from, today).catch(() => [] as JourneyRow[]),
+      // launch-safe: Owner-only Tracking Hub.
       supabase.from("orders").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("form_context->>metaTrackingKey", link.tracking_key)
     ]);
     const events = await eventsFor(orgId, orders.map((order) => order.id));
@@ -1227,6 +1228,7 @@ router.get("/ledger/:orderId", async (req, res) => {
   try {
     const orgId = req.user!.orgId;
     const branchId = branchOf(req);
+    // launch-safe: Owner-only Tracking Hub.
     const { data: order, error } = await supabase.from("orders")
       .select("id, created_at, product_id, product_name, package_name, amount, currency, status, customer, phone, state, city, utm_source, utm_campaign, utm_content, utm_term, utm_medium, referrer, form_context, review_hold, delivered_date")
       .eq("org_id", orgId).eq("branch_id", branchId).eq("id", String(req.params.orderId)).maybeSingle();

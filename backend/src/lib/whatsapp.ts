@@ -1418,7 +1418,7 @@ export async function syncDueFollowUpWhatsApp(limitPerOrg = 300) {
   for (const orgId of eligibleOrgIds) {
     const { data: orders, error: ordersError } = await supabase
       .from("orders")
-      .select("id, org_id, customer, phone, state, assigned_rep_id, product_name, package_name, amount, currency, status, scheduled_date, scheduled_at, call_outcome, response, notes, timeline_notes")
+      .select("id, org_id, customer, phone, state, assigned_rep_id, product_name, package_name, amount, currency, status, scheduled_date, scheduled_at, call_outcome, response, notes, timeline_notes").neq("launch_stage", "silent")
       .eq("org_id", orgId)
       .in("status", ["Confirmed", "In Process", "Dispatched", "Postponed"])
       .limit(limitPerOrg);
@@ -2017,7 +2017,7 @@ export async function sendOrderUpsellWhatsApp(
     // Check not already in order
     if (cfg.productId) {
       const { data: orderRow } = await supabase
-        .from("orders").select("cross_sell_lines, product_id").eq("id", order.id).eq("org_id", orgId).maybeSingle();
+        .from("orders").select("cross_sell_lines, product_id").neq("launch_stage", "silent").eq("id", order.id).eq("org_id", orgId).maybeSingle();
       if (orderRow?.product_id === cfg.productId) continue;
       const lines = Array.isArray(orderRow?.cross_sell_lines) ? orderRow.cross_sell_lines : [];
       if (lines.some((l: any) => l.productId === cfg.productId || l.product_id === cfg.productId)) continue;

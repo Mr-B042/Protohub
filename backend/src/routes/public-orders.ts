@@ -915,6 +915,7 @@ router.post("/", submitRateLimit, async (req, res) => {
   if (phoneLast10.length >= 10) {
     const windowStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const { data: recentOrders } = await supabase
+      // launch-safe: the customer's own order form (repeat-order and duplicate checks).
       .from("orders")
       .select("phone, product_id")
       .limit(REPORT_ROW_CEILING)
@@ -1320,6 +1321,7 @@ router.post("/", submitRateLimit, async (req, res) => {
   // A retry for the same cart must reuse the order already written. This also
   // covers the server auto-submit worker racing a browser submission.
   if (d.cartId) {
+    // launch-safe: the customer's own order form (repeat-order and duplicate checks).
     const { data: existing } = await supabase.from("orders").select("*")
       .eq("org_id", product.org_id).eq("source_cart_id", d.cartId)
       .order("created_at", { ascending: true }).limit(1).maybeSingle();
@@ -1767,6 +1769,7 @@ router.post("/:id/upsell", submitRateLimit, async (req, res) => {
   }
 
   const { data: order, error: orderErr } = await supabase
+    // launch-safe: the customer's own order form (repeat-order and duplicate checks).
     .from("orders")
     .select("id, org_id, source_cart_id, product_id, product_name, package_id, package_name, state, customer, assigned_rep_id, status, amount, currency, cross_sell_lines")
     .eq("id", orderId)

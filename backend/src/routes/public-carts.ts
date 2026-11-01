@@ -215,6 +215,7 @@ router.post("/", captureRateLimit, async (req, res) => {
   const wasRekeyed = captureId !== d.id;
 
   let { data: existingOrder } = await supabase
+    // launch-safe: the public order form's duplicate check.
     .from("orders")
     .select("id")
     .eq("org_id", product.org_id)
@@ -229,6 +230,7 @@ router.post("/", captureRateLimit, async (req, res) => {
     const n = d.phone.replace(/\D/g, "");
     const recentWindow = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
     const { data: phoneOrder } = await supabase
+      // launch-safe: the public order form's duplicate check.
       .from("orders")
       .select("id")
       .eq("org_id", product.org_id)

@@ -1,8 +1,9 @@
 import { Router } from "express";
 import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 // Manager Dashboard "Needs Attention" tab. Everything except this one check is
 // computed client-side from already-loaded orders (review holds, stuck-in-New,
@@ -23,7 +24,7 @@ router.get("/stock-mismatches", async (req, res) => {
 
     const { data: orders, error: ordersError } = await supabase
       .from("orders")
-      .select("id, quantity, product_id, product_name, package_components_snapshot, cross_sell_lines, free_gift_lines, delivered_date")
+      .select("id, quantity, product_id, product_name, package_components_snapshot, cross_sell_lines, free_gift_lines, delivered_date").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .eq("status", "Delivered")

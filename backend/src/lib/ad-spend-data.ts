@@ -50,6 +50,7 @@ async function tiktokInsightsBetween(orgId: string, branchId: string, from: stri
 async function ordersBetween(orgId: string, branchId: string, from: string, to: string, campaignByName: Map<string, string | null> = new Map()): Promise<SpendOrder[]> {
   const rows: SpendOrder[] = [];
   for (let page = 0; page < 60; page += 1) {
+    // launch-safe: Owner-only Tracking Hub ad spend.
     const { data, error } = await supabase.from("orders")
       .select("id, created_at, product_id, status, amount, cogs_snapshot, logistics_cost, form_context, utm_source, utm_campaign, utm_content, utm_term, review_hold")
       .eq("org_id", orgId).eq("branch_id", branchId).gte("created_at", startIso(from)).lte("created_at", endIso(to))

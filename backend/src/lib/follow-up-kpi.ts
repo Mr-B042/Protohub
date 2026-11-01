@@ -204,7 +204,7 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
 
   let orderQuery = supabase
     .from("orders")
-    .select("id, assigned_rep_id, customer, phone, status, created_at, revealed_at, updated_at, next_follow_up_at, scheduled_at, scheduled_date, call_outcome, buyer_health")
+    .select("id, assigned_rep_id, customer, phone, status, created_at, revealed_at, updated_at, next_follow_up_at, scheduled_at, scheduled_date, call_outcome, buyer_health").neq("launch_stage", "silent")
     .limit(REPORT_ROW_CEILING)
     .eq("org_id", orgId)
     .in("status", IN_SCOPE_STATUSES as unknown as string[])
@@ -414,7 +414,7 @@ export async function logFollowUpEntry(
 ): Promise<{ ok: true }> {
   const { data: order } = await supabase
     .from("orders")
-    .select("id, assigned_rep_id, call_outcome, follow_up_attempt_count")
+    .select("id, assigned_rep_id, call_outcome, follow_up_attempt_count").neq("launch_stage", "silent")
     .eq("org_id", orgId)
     .eq("id", orderId)
     .maybeSingle();
@@ -562,7 +562,7 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
 
   let orderQuery = supabase
     .from("orders")
-    .select("id, assigned_rep_id, customer, phone, status, created_at, revealed_at, updated_at, next_follow_up_at, scheduled_at, scheduled_date, product_name, package_name, amount, currency, location, call_outcome, buyer_health")
+    .select("id, assigned_rep_id, customer, phone, status, created_at, revealed_at, updated_at, next_follow_up_at, scheduled_at, scheduled_date, product_name, package_name, amount, currency, location, call_outcome, buyer_health").neq("launch_stage", "silent")
     .limit(REPORT_ROW_CEILING)
     .eq("org_id", orgId)
     .in("status", IN_SCOPE_STATUSES as unknown as string[])

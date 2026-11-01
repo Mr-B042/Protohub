@@ -10,8 +10,9 @@ import {
 import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
 import { supabase } from "../lib/supabase.js";
 import { resolveOrderCogs } from "../lib/order-cogs.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 const router = Router();
 router.use(requireAuth, requireRole("Owner", "Admin", "Manager"));
@@ -204,7 +205,7 @@ router.get("/summary", async (req, res) => {
   try {
     let cohortOrdersQuery = supabase
       .from("orders")
-      .select("id, status, amount, quantity, currency, created_at, delivered_date, product_id, product_name, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines, cogs_snapshot, cogs_snapshot_at, logistics_cost, review_hold")
+      .select("id, status, amount, quantity, currency, created_at, delivered_date, product_id, product_name, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines, cogs_snapshot, cogs_snapshot_at, logistics_cost, review_hold").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", req.user!.orgId)
       .gte("created_at", createdFrom)
       .lte("created_at", createdTo)
@@ -215,7 +216,7 @@ router.get("/summary", async (req, res) => {
       .limit(20000);
     let deliveredOrdersQuery = supabase
       .from("orders")
-      .select("id, status, amount, quantity, currency, created_at, delivered_date, product_id, product_name, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines, cogs_snapshot, cogs_snapshot_at, logistics_cost, review_hold")
+      .select("id, status, amount, quantity, currency, created_at, delivered_date, product_id, product_name, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines, cogs_snapshot, cogs_snapshot_at, logistics_cost, review_hold").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", req.user!.orgId)
       .eq("status", "Delivered")
