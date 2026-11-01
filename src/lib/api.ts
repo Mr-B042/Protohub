@@ -2255,14 +2255,19 @@ export type ProductLaunchEvent = {
   ordersRevealed: number; note: string | null; by: string | null; at: string;
   /** Set when the test was ended: its hidden orders were cancelled or handed to the team. */
   endedWith: "cancelled" | "delivered" | null; ordersCancelled: number;
+  /** The test's held abandoned carts: handed out to reps, or closed as Lost. */
+  cartsHandedOut: number; cartsClosed: number;
+};
+export type ProductLaunchCart = {
+  id: string; productId: string; status: string; repId: string | null; repName: string | null; createdAt: string;
 };
 export const productLaunchApi = {
-  list: () => get<{ products: ProductLaunchProduct[]; orders: ProductLaunchOrder[]; events: ProductLaunchEvent[] }>("/api/product-launch"),
+  list: () => get<{ products: ProductLaunchProduct[]; orders: ProductLaunchOrder[]; carts: ProductLaunchCart[]; events: ProductLaunchEvent[] }>("/api/product-launch"),
   setStage: (productId: string, stage: import("./product-launch").LaunchStage, note?: string) =>
     put<{ productId: string; from: string; to: string; revealed: number }>(`/api/product-launch/${productId}/stage`, { stage, ...(note ? { note } : {}) }),
   /** A test that did not sell: switch the product off; hidden orders cancelled quietly or handed to the team. */
   endTest: (productId: string, orders: "cancel" | "deliver", note?: string) =>
-    post<{ productId: string; ended: true; cancelled: number; revealed: number }>(`/api/product-launch/${productId}/end`, { orders, ...(note ? { note } : {}) }),
+    post<{ productId: string; ended: true; cancelled: number; revealed: number; cartsClosed: number }>(`/api/product-launch/${productId}/end`, { orders, ...(note ? { note } : {}) }),
   saveSettings: (productId: string, settings: Partial<import("./product-launch").LaunchSettings>) =>
     put<{ productId: string; settings: import("./product-launch").LaunchSettings }>(`/api/product-launch/${productId}/settings`, settings)
 };

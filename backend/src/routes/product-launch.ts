@@ -9,6 +9,7 @@ import { notifyOrderEvent } from "../lib/order-notifications.js";
 import { sendNewOrderEmail } from "../lib/mailer.js";
 import { sendNewOrderSms } from "../lib/sms.js";
 import { sendOrderNewCustomerWhatsApp, sendOrderNewRepWhatsApp } from "../lib/whatsapp.js";
+import { closeHeldCarts, handOutHeldCarts } from "../lib/cart-assignment.js";
 import {
   LAUNCH_STAGE_LABEL, isAllowedSwitch, isLaunchStage, launchSettingsOf, switchRevealsOrders,
   type LaunchSettings, type LaunchStage
@@ -31,10 +32,27 @@ router.get("/", async (req, res) => {
     supabase.from("products").select("id, name, sku, active, image_url, launch_stage, launch_settings").eq("org_id", orgId).order("name"),
     supabase.from("orders").select(ORDER_FIELDS).eq("org_id", orgId).neq("launch_stage", "live").limit(REPORT_ROW_CEILING),
     supabase.from("users").select("id, name, role, active").eq("org_id", orgId).in("role", ["Sales Rep", "Sales Closer", "Recovery Rep", "Admin", "Manager", "Owner"]),
-    supabase.from("product_launch_events").select("id, product_id, from_stage, to_stage, orders_revealed, ended_with, orders_cancelled, note, changed_by_name, created_at").eq("org_id", orgId).order("created_at", { ascending: false }).limit(200)
+    supabase.from("product_launch_events").select("id, product_id, from_stage, to_stage, orders_revealed, ended_with, orders_cancelled, carts_handed_out, carts_closed, note, changed_by_name, created_at").eq("org_id", orgId).order("created_at", { ascending: false }).limit(200)
   ]);
   const failed = products.error ?? orders.error ?? reps.error ?? events.error;
   if (failed) { res.status(500).json({ error: failed.message }); return; }
+
+  // Abandoned carts of every product that has been tested, since its first switch.
+  const testStart = new Map<string, string>();
+  for (const event of events.data ?? []) {
+    const at = String((event as any).created_at);
+    const current = testStart.get((event as any).product_id);
+    if (!current || at < current) testStart.set((event as any).product_id, at);
+  }
+  for (const product of products.data ?? []) {
+    if ((product as any).launch_stage !== "live" && !testStart.has((product as any).id)) testStart.set((product as any).id, "1970-01-01T00:00:00Z");
+  }
+  const testedIds = [...testStart.keys()];
+  const earliest = [...testStart.values()].sort()[0];
+  const { data: cartRows, error: cartError } = testedIds.length === 0 ? { data: [] as any[], error: null } : await supabase.from("abandoned_carts")
+    .select("id, product_id, status, assigned_rep_id, created_at")
+    .eq("org_id", orgId).in("product_id", testedIds).is("merged_into", null).gte("created_at", earliest).limit(REPORT_ROW_CEILING);
+  if (cartError) { res.status(500).json({ error: cartError.message }); return; }
 
   const repName = new Map((reps.data ?? []).map((user: any) => [String(user.id), String(user.name ?? "")]));
   res.json({
@@ -60,6 +78,16 @@ router.get("/", async (req, res) => {
       amount: Number(order.amount ?? 0),
       quantity: Number(order.quantity ?? 1)
     })),
+    carts: (cartRows ?? [])
+      .filter((cart: any) => String(cart.created_at) >= (testStart.get(cart.product_id) ?? ""))
+      .map((cart: any) => ({
+        id: String(cart.id),
+        productId: cart.product_id,
+        status: String(cart.status ?? "Open abandoned"),
+        repId: cart.assigned_rep_id ?? null,
+        repName: cart.assigned_rep_id ? repName.get(String(cart.assigned_rep_id)) ?? "Unknown" : null,
+        createdAt: cart.created_at
+      })),
     events: (events.data ?? []).map((event: any) => ({
       id: event.id,
       productId: event.product_id,
@@ -68,6 +96,8 @@ router.get("/", async (req, res) => {
       ordersRevealed: event.orders_revealed ?? 0,
       endedWith: event.ended_with ?? null,
       ordersCancelled: event.orders_cancelled ?? 0,
+      cartsHandedOut: event.carts_handed_out ?? 0,
+      cartsClosed: event.carts_closed ?? 0,
       note: event.note ?? null,
       by: event.changed_by_name ?? null,
       at: event.created_at
@@ -164,6 +194,27 @@ async function revealSilentOrders(orgId: string, productId: string) {
     .select(REVEAL_FIELDS);
 }
 
+/**
+ * Hand out a test's held carts in the background (each one alerts its rep),
+ * then record how many went out on the history row.
+ */
+function handOutHeldCartsLater(orgId: string, productId: string, sinceIso: string, eventId: string | null) {
+  void handOutHeldCarts(orgId, productId, sinceIso)
+    .then(async (count) => {
+      if (eventId && count > 0) await supabase.from("product_launch_events").update({ carts_handed_out: count }).eq("id", eventId);
+    })
+    .catch((error) => logger.warn("product-launch: handing out held carts failed", { productId, error: (error as Error).message }));
+}
+
+/** When the product last went into Silent Test: held carts are the ones since then. */
+async function silentSince(orgId: string, productId: string): Promise<string> {
+  const { data } = await supabase.from("product_launch_events").select("created_at")
+    .eq("org_id", orgId).eq("product_id", productId).eq("to_stage", "silent")
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+  // No record of the start (should not happen): fall back to the regular 48 hours.
+  return (data as any)?.created_at ?? new Date(Date.now() - 48 * 3600_000).toISOString();
+}
+
 const stillOpen = (order: any) => !["Delivered", "Failed", "Cancelled"].includes(String(order.status ?? "New"));
 
 router.put("/:productId/stage", async (req, res) => {
@@ -198,14 +249,17 @@ router.put("/:productId/stage", async (req, res) => {
     revealed = data ?? [];
   }
 
-  const { error: eventError } = await supabase.from("product_launch_events").insert({
+  const { data: eventRow, error: eventError } = await supabase.from("product_launch_events").insert({
     org_id: orgId, product_id: product.id, from_stage: from, to_stage: to,
     orders_revealed: revealed.length, note: parsed.data.note ?? null,
     changed_by: req.user!.id, changed_by_name: req.user!.name ?? null
-  });
+  }).select("id").maybeSingle();
   if (eventError) logger.warn("product-launch: history row failed", { productId: product.id, error: eventError.message });
 
   res.json({ productId: product.id, from, to, revealed: revealed.length });
+
+  // Leaving Silent Test: the carts it held back go out to reps now, whatever their age.
+  if (switchRevealsOrders(from, to) && settings.silentHoldCarts) handOutHeldCartsLater(orgId, product.id, await silentSince(orgId, product.id), (eventRow as any)?.id ?? null);
 
   // Only orders still being worked are announced; a cancelled one stays quiet.
   const toAnnounce = revealed.filter(stillOpen);
@@ -240,8 +294,16 @@ router.post("/:productId/end", async (req, res) => {
   if (offError) { res.status(500).json({ error: offError.message }); return; }
 
   let cancelled = 0;
+  let cartsClosed = 0;
   let revealed: any[] = [];
+  const heldCarts = from === "silent" && settings.silentHoldCarts;
+  const heldSince = heldCarts ? await silentSince(orgId, product.id) : "";
   if (parsed.data.orders === "cancel") {
+    // The carts it held back are closed as Lost, unassigned and unannounced.
+    if (heldCarts) {
+      try { cartsClosed = await closeHeldCarts(orgId, product.id, heldSince); }
+      catch (error) { logger.warn("product-launch: closing held carts failed", { productId: product.id, error: (error as Error).message }); }
+    }
     // Quietly: they stay Silent Test (hidden from the team, out of every rate),
     // nobody is alerted, and the customer gets no message. The audit says why.
     const { data, error } = await supabase.from("orders")
@@ -263,15 +325,18 @@ router.post("/:productId/end", async (req, res) => {
     revealed = data ?? [];
   }
 
-  const { error: eventError } = await supabase.from("product_launch_events").insert({
+  const { data: eventRow, error: eventError } = await supabase.from("product_launch_events").insert({
     org_id: orgId, product_id: product.id, from_stage: from, to_stage: "live",
     ended_with: parsed.data.orders === "cancel" ? "cancelled" : "delivered",
-    orders_revealed: revealed.length, orders_cancelled: cancelled, note: parsed.data.note ?? null,
+    orders_revealed: revealed.length, orders_cancelled: cancelled, carts_closed: cartsClosed, note: parsed.data.note ?? null,
     changed_by: req.user!.id, changed_by_name: req.user!.name ?? null
-  });
+  }).select("id").maybeSingle();
   if (eventError) logger.warn("product-launch: end history row failed", { productId: product.id, error: eventError.message });
 
-  res.json({ productId: product.id, ended: true, cancelled, revealed: revealed.length });
+  res.json({ productId: product.id, ended: true, cancelled, revealed: revealed.length, cartsClosed });
+
+  // "Let the team deliver": its held carts go out to reps too.
+  if (parsed.data.orders === "deliver" && heldCarts) handOutHeldCartsLater(orgId, product.id, heldSince, (eventRow as any)?.id ?? null);
 
   const toAnnounce = revealed.filter(stillOpen);
   if (toAnnounce.length > 0) {

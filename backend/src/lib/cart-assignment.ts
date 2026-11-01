@@ -313,6 +313,70 @@ export const nextRepInLine = (reps: EligibleRep[]): EligibleRep | null => {
 export type AssignmentRun = { considered: number; assigned: number; noRepAvailable: number };
 
 /**
+ * Give each cart to the next rep in line (strict turn order), claim it so two
+ * runs can never both win, and alert the rep. Shared by the regular hand-out
+ * and by Product Launch, which releases a test's held carts all at once.
+ */
+async function handOutCarts(waiting: any[], run: AssignmentRun) {
+  // Reps are read once per organisation and per branch, then the running count
+  // is kept in memory - otherwise a batch of ten carts would all see the same
+  // "fewest carts" rep and pile onto that one person.
+  const repCache = new Map<string, EligibleRep[]>();
+
+  for (const cart of waiting as any[]) {
+    const cacheKey = `${cart.org_id}:${cart.branch_id ?? ""}`;
+    if (!repCache.has(cacheKey)) {
+      try {
+        repCache.set(cacheKey, await eligibleReps(cart.org_id, cart.branch_id));
+      } catch (err) {
+        logger.error("cart auto-assign: could not read reps", { error: (err as Error).message });
+        repCache.set(cacheKey, []);
+      }
+    }
+    const reps = repCache.get(cacheKey)!;
+    const rep = nextRepInLine(reps);
+    if (!rep) { run.noRepAvailable += 1; continue; }
+
+    // ⚠️ THE `is null` GUARD IS THE WHOLE RACE PROTECTION. Two runs overlapping,
+    // or a manager assigning by hand at the same moment, must not both win - the
+    // update simply does nothing if somebody already owns it.
+    const { data: claimed, error: claimError } = await supabase
+      .from("abandoned_carts")
+      .update({ assigned_rep_id: rep.id, assigned_at: new Date().toISOString(), status: "Assigned" })
+      .eq("id", cart.id)
+      .is("assigned_rep_id", null)
+      .in("status", OPEN_STATUSES)
+      .select("id")
+      .maybeSingle();
+    if (claimError) {
+      logger.error("cart auto-assign: claim failed", { cartId: cart.id, error: claimError.message });
+      continue;
+    }
+    if (!claimed) continue; // somebody else took it first
+
+    // Take their turn: move them to the back so the next cart in this same run
+    // goes to the following rep rather than piling onto one person.
+    rep.lastAssignedAt = new Date().toISOString();
+    rep.openCarts += 1;
+    run.assigned += 1;
+
+    await notifyCartAssignedToRep(cart.org_id, {
+      id: cart.id,
+      customer: cart.customer ?? "",
+      // The number the rep can actually use - WhatsApp when the phone box is junk.
+      phone: cartContactNumber(cart) ?? "",
+      product_name: cart.product_name ?? "",
+      package_name: cart.package_name ?? null,
+      amount: Number(cart.amount ?? 0),
+      currency: cart.currency ?? "NGN",
+      assignedRepId: rep.id,
+      assignedRepName: rep.name
+    }).catch((err) => logger.warn("cart auto-assign: notify failed", { error: (err as Error).message }));
+  }
+
+}
+
+/**
  * Hand out every cart that has been waiting long enough. Safe to run often;
  * a cart already carrying a rep is never touched again.
  */
@@ -392,64 +456,51 @@ export async function runCartAutoAssign(options: {
   const run: AssignmentRun = { considered: waiting.length, assigned: 0, noRepAvailable: 0 };
   if (waiting.length === 0) return run;
 
-  // Reps are read once per organisation and per branch, then the running count
-  // is kept in memory - otherwise a batch of ten carts would all see the same
-  // "fewest carts" rep and pile onto that one person.
-  const repCache = new Map<string, EligibleRep[]>();
-
-  for (const cart of waiting as any[]) {
-    const cacheKey = `${cart.org_id}:${cart.branch_id ?? ""}`;
-    if (!repCache.has(cacheKey)) {
-      try {
-        repCache.set(cacheKey, await eligibleReps(cart.org_id, cart.branch_id));
-      } catch (err) {
-        logger.error("cart auto-assign: could not read reps", { error: (err as Error).message });
-        repCache.set(cacheKey, []);
-      }
-    }
-    const reps = repCache.get(cacheKey)!;
-    const rep = nextRepInLine(reps);
-    if (!rep) { run.noRepAvailable += 1; continue; }
-
-    // ⚠️ THE `is null` GUARD IS THE WHOLE RACE PROTECTION. Two runs overlapping,
-    // or a manager assigning by hand at the same moment, must not both win - the
-    // update simply does nothing if somebody already owns it.
-    const { data: claimed, error: claimError } = await supabase
-      .from("abandoned_carts")
-      .update({ assigned_rep_id: rep.id, assigned_at: new Date().toISOString(), status: "Assigned" })
-      .eq("id", cart.id)
-      .is("assigned_rep_id", null)
-      .in("status", OPEN_STATUSES)
-      .select("id")
-      .maybeSingle();
-    if (claimError) {
-      logger.error("cart auto-assign: claim failed", { cartId: cart.id, error: claimError.message });
-      continue;
-    }
-    if (!claimed) continue; // somebody else took it first
-
-    // Take their turn: move them to the back so the next cart in this same run
-    // goes to the following rep rather than piling onto one person.
-    rep.lastAssignedAt = new Date().toISOString();
-    rep.openCarts += 1;
-    run.assigned += 1;
-
-    await notifyCartAssignedToRep(cart.org_id, {
-      id: cart.id,
-      customer: cart.customer ?? "",
-      // The number the rep can actually use - WhatsApp when the phone box is junk.
-      phone: cartContactNumber(cart) ?? "",
-      product_name: cart.product_name ?? "",
-      package_name: cart.package_name ?? null,
-      amount: Number(cart.amount ?? 0),
-      currency: cart.currency ?? "NGN",
-      assignedRepId: rep.id,
-      assignedRepName: rep.name
-    }).catch((err) => logger.warn("cart auto-assign: notify failed", { error: (err as Error).message }));
-  }
+  await handOutCarts(waiting, run);
 
   if (run.assigned > 0 || run.noRepAvailable > 0) {
     logger.info("cart auto-assign", run);
   }
   return run;
+}
+
+/**
+ * Product Launch (1 Nov 2026): a Silent Test product's carts were held back
+ * from reps. When the test moves on (Soft Launch, or End test with "let the
+ * team deliver"), every one of them is handed out now, whatever its age - the
+ * regular hand-out only looks at the last 48 hours, so a week-long test would
+ * otherwise leave most of its carts sitting unassigned.
+ */
+export async function handOutHeldCarts(orgId: string, productId: string, sinceIso: string): Promise<number> {
+  const { data, error } = await supabase
+    .from("abandoned_carts")
+    .select("id, org_id, branch_id, customer, phone, whatsapp, address, city, state, product_id, package_id, product_name, package_name, amount, currency, last_activity, created_at")
+    .eq("org_id", orgId).eq("product_id", productId)
+    .in("status", OPEN_STATUSES).is("assigned_rep_id", null).is("merged_into", null)
+    // Only carts that came in during the test - never old, forgotten ones from before it.
+    .gte("created_at", sinceIso)
+    .order("last_activity", { ascending: true })
+    .limit(2000);
+  if (error) throw new Error(error.message);
+  const waiting = (data ?? []).filter((cart: any) => cartContactNumber(cart));
+  const run: AssignmentRun = { considered: waiting.length, assigned: 0, noRepAvailable: 0 };
+  if (waiting.length > 0) await handOutCarts(waiting, run);
+  return run.assigned;
+}
+
+/**
+ * Product Launch End test with "cancel quietly": the test's held carts are
+ * closed as Lost, unassigned and unannounced, so no rep is ever asked to chase
+ * a product that has been switched off.
+ */
+export async function closeHeldCarts(orgId: string, productId: string, sinceIso: string): Promise<number> {
+  const { data, error } = await supabase
+    .from("abandoned_carts")
+    .update({ status: "Lost", closed_at: new Date().toISOString() })
+    .eq("org_id", orgId).eq("product_id", productId)
+    .in("status", OPEN_STATUSES).is("assigned_rep_id", null).is("merged_into", null)
+    .gte("created_at", sinceIso)
+    .select("id");
+  if (error) throw new Error(error.message);
+  return (data ?? []).length;
 }
