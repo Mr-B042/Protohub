@@ -4,7 +4,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { resolveOrderCogs } from "../lib/order-cogs.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { logger } from "../lib/logger.js";
 import { resolveDateBounds } from "../lib/date-bounds.js";
 import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
@@ -14,6 +14,7 @@ import {
   DEFAULT_RETENTION_TIMING, type LifecycleStage, type RetentionTouchpointRecord, type RetentionTiming
 } from "../lib/customer-retention-logic.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -273,7 +274,7 @@ async function loadWorklistRows(
 
   const { data: deliveredOrders, error: ordersError } = await fetchAllRows<any>((from, to) => supabase
     .from("orders")
-    .select("id, customer, phone, delivered_date, product_id, package_id, amount, currency, product_name")
+    .select("id, customer, phone, delivered_date, product_id, package_id, amount, currency, product_name").neq("launch_stage", "silent")
     .eq("org_id", orgId)
     .eq("status", "Delivered")
     .gte("delivered_date", oldestRelevant.toISOString().slice(0, 10))
@@ -455,7 +456,7 @@ router.get("/customers", requireRole(...RETENTION_ROLES), async (req, res) => {
 
     const { data: allOrders, error } = await fetchAllRows<any>((from, to) => supabase
       .from("orders")
-      .select("id, customer, phone, city, state, product_name, package_name, amount, currency, status, delivered_date, created_at")
+      .select("id, customer, phone, city, state, product_name, package_name, amount, currency, status, delivered_date, created_at").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", orgId)
       .not("phone", "is", null)
       .order("created_at", { ascending: true })
@@ -643,7 +644,7 @@ router.patch("/order/:orderId/assignment", requireRole("Owner", "Admin", "Manage
     const orgId = req.user!.orgId;
     const { data: order, error: orderError } = await supabase
       .from("orders")
-      .select("id, status")
+      .select("id, status").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", orgId)
       .eq("id", req.params.orderId)
       .maybeSingle();
@@ -716,7 +717,7 @@ router.post("/action-events", requireRole(...RETENTION_ROLES), async (req, res) 
     const orgId = req.user!.orgId;
     const { data: order, error: orderError } = await supabase
       .from("orders")
-      .select("id")
+      .select("id").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", orgId)
       .eq("id", parsed.data.orderId)
       .maybeSingle();
@@ -759,7 +760,7 @@ router.get("/order/:orderId/retention-suggestion", requireRole(...RETENTION_ROLE
     const orgId = req.user!.orgId;
     const { data: order } = await supabase
       .from("orders")
-      .select("id, product_id, package_id")
+      .select("id, product_id, package_id").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", orgId)
       .eq("id", req.params.orderId)
       .maybeSingle();
@@ -859,7 +860,7 @@ router.get("/customer/:phone", requireRole(...RETENTION_ROLES), async (req, res)
 
     const { data: allOrders, error } = await fetchAllRows<any>((from, to) => supabase
       .from("orders")
-      .select("id, customer, phone, address, city, state, product_id, product_name, package_name, quantity, amount, currency, status, delivered_date, created_at, cross_sell_lines, additional_lines, free_gift_lines, cogs_snapshot, cogs_snapshot_at, package_components_snapshot, upsell_from_qty, upsell_to_qty, upsell_note")
+      .select("id, customer, phone, address, city, state, product_id, product_name, package_name, quantity, amount, currency, status, delivered_date, created_at, cross_sell_lines, additional_lines, free_gift_lines, cogs_snapshot, cogs_snapshot_at, package_components_snapshot, upsell_from_qty, upsell_to_qty, upsell_note").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", orgId)
       .order("id", { ascending: true })
       .range(from, to));
@@ -1167,7 +1168,7 @@ router.post("/touchpoints", requireRole(...RETENTION_ROLES), async (req, res) =>
 
   const { data: order } = await supabase
     .from("orders")
-    .select("id, status")
+    .select("id, status").neq("launch_stage", silentFilterFor(scopeOf(req).role))
     .eq("org_id", orgId)
     .eq("id", d.orderId)
     .maybeSingle();
@@ -1325,7 +1326,7 @@ async function computeBonusBreakdown(
   let retentionSalesPendingDelivery = 0;
   if (retentionSaleRows.length > 0) {
     const resultingIds = retentionSaleRows.map((r) => r.resulting_order_id as string);
-    const { data: resultOrders } = await supabase.from("orders").select("id, amount, status").in("id", resultingIds);
+    const { data: resultOrders } = await supabase.from("orders").select("id, amount, status").neq("launch_stage", "silent").in("id", resultingIds);
     for (const r of retentionSaleRows) {
       const matched = (resultOrders ?? []).find((o) => o.id === r.resulting_order_id);
       if (!matched) continue;
@@ -1483,7 +1484,7 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
     if (resultingIds.length > 0) {
       const { data: resultOrdersFull } = await supabase
         .from("orders")
-        .select("id, currency, logistics_cost, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines, cogs_snapshot, cogs_snapshot_at")
+        .select("id, currency, logistics_cost, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines, cogs_snapshot, cogs_snapshot_at").neq("launch_stage", silentFilterFor(scopeOf(req).role))
         .limit(REPORT_ROW_CEILING)
         .in("id", resultingIds);
       const productIds = [...new Set((resultOrdersFull ?? []).flatMap((o) => orderInventoryLinesFromRow(o).map((l) => l.productId)))];
@@ -1539,7 +1540,7 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
     let repRetentionRevenue = 0;
     if (repRetentionSaleRows.length > 0) {
       const resultingIds = repRetentionSaleRows.map((r) => r.resulting_order_id as string);
-      const { data: resultOrders } = await supabase.from("orders").select("id, amount, source").in("id", resultingIds);
+      const { data: resultOrders } = await supabase.from("orders").select("id, amount, source").neq("launch_stage", silentFilterFor(scopeOf(req).role)).in("id", resultingIds);
       const infoById = new Map((resultOrders ?? []).map((o) => [o.id, {
         amount: Number(o.amount ?? 0),
         source: String(o.source ?? "")
@@ -1718,7 +1719,7 @@ router.get("/activity-log", requireRole(...RETENTION_ROLES), async (req, res) =>
     if (rows.length === 0 && actionRows.length === 0) { res.json({ rows: [] }); return; }
 
     const orderIds = [...new Set([...rows.map((r) => r.order_id), ...actionRows.map((r) => r.order_id)])];
-    const { data: orders } = await supabase.from("orders").select("id, customer, phone, product_name, amount, currency").in("id", orderIds);
+    const { data: orders } = await supabase.from("orders").select("id, customer, phone, product_name, amount, currency").neq("launch_stage", silentFilterFor(scopeOf(req).role)).in("id", orderIds);
     const orderById = new Map((orders ?? []).map((o) => [o.id, o]));
 
     const repIds = [...new Set([...rows.map((r) => r.logged_by), ...actionRows.map((r) => r.logged_by)].filter(Boolean))] as string[];

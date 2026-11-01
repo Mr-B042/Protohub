@@ -19,6 +19,7 @@ import {
   type RangePreset, type RepDayInput
 } from "../lib/cart-log-penalty.js";
 import { REPORT_ROW_CEILING, selectByIdBatches } from "../lib/query-limits.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 import {
   CLOSING_RUSH_WAIT_MINUTES, CLOSING_RUSH_WINDOW_MINUTES,
   DEFAULT_ASSIGNMENT_RULES, assignmentRulesForBranch, cartCanBecomeOrder,
@@ -237,7 +238,7 @@ router.get("/by-label/:label", async (req, res) => {
 
   const cartIds = (carts ?? []).map((c: any) => c.id);
   const { data: orders } = cartIds.length
-    ? await supabase.from("orders").select("id, source_cart_id, status, amount, created_at").eq("org_id", req.user!.orgId).in("source_cart_id", cartIds)
+    ? await supabase.from("orders").select("id, source_cart_id, status, amount, created_at").neq("launch_stage", silentFilterFor(scopeOf(req).role)).eq("org_id", req.user!.orgId).in("source_cart_id", cartIds)
     : { data: [] };
 
   const orderByCart = Object.fromEntries((orders ?? []).map((o: any) => [o.source_cart_id, o]));
@@ -430,7 +431,7 @@ const buildConvertedCartLinkRepairReport = async (orgId: string) => {
   const cartIds = cartRows.map((cart: any) => cart.id as string);
   const { data: linkedOrders, error: linkedOrdersError } = await supabase
     .from("orders")
-    .select(CART_LINK_ORDER_PREVIEW_SELECT)
+    .select(CART_LINK_ORDER_PREVIEW_SELECT).neq("launch_stage", "silent")
     .limit(REPORT_ROW_CEILING)
     .eq("org_id", orgId)
     .in("source_cart_id", cartIds);
@@ -469,7 +470,7 @@ const buildConvertedCartLinkRepairReport = async (orgId: string) => {
   if (submittedOrderIds.length > 0) {
     const { data: submittedOrders, error: submittedOrdersError } = await supabase
       .from("orders")
-      .select(CART_LINK_ORDER_PREVIEW_SELECT)
+      .select(CART_LINK_ORDER_PREVIEW_SELECT).neq("launch_stage", "silent")
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .in("id", submittedOrderIds);
@@ -539,7 +540,7 @@ const buildConvertedCartLinkRepairReport = async (orgId: string) => {
   if (unresolved.length > 0) {
     const { data: phoneOrders } = await supabase
       .from("orders")
-      .select(CART_LINK_ORDER_PREVIEW_SELECT)
+      .select(CART_LINK_ORDER_PREVIEW_SELECT).neq("launch_stage", "silent")
       .eq("org_id", orgId)
       .order("created_at", { ascending: false })
       // Was 5,000: with 4,825 orders (31 Oct 2026) the oldest would soon stop
@@ -747,7 +748,7 @@ router.post("/", async (req, res) => {
 
   const { data: existingOrder } = await supabase
     .from("orders")
-    .select("id")
+    .select("id").neq("launch_stage", silentFilterFor(scopeOf(req).role))
     .eq("org_id", req.user!.orgId)
     .eq("source_cart_id", d.id)
     .maybeSingle();
@@ -950,7 +951,7 @@ router.post("/converted-link-repairs/apply-one", requireRole("Owner", "Admin"), 
 
     const { data: alreadyLinkedOrders, error: alreadyLinkedError } = await supabase
       .from("orders")
-      .select("id, source_cart_id")
+      .select("id, source_cart_id").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", req.user!.orgId)
       .eq("source_cart_id", cartId);
 
@@ -983,7 +984,7 @@ router.post("/converted-link-repairs/apply-one", requireRole("Owner", "Admin"), 
 
     const { data: order, error: orderError } = await supabase
       .from("orders")
-      .select(CART_LINK_ORDER_PREVIEW_SELECT)
+      .select(CART_LINK_ORDER_PREVIEW_SELECT).neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", req.user!.orgId)
       .eq("id", orderId)
       .maybeSingle();
@@ -2043,7 +2044,7 @@ router.get("/follow-up-grid",
       const nameById = new Map((users ?? []).map((u: any) => [u.id, u.name]));
 
       const linkedOrders = await selectByIdBatches<any>(cartIds, (batch) => supabase.from("orders")
-        .select("id, source_cart_id, status").eq("org_id", orgId).in("source_cart_id", batch));
+        .select("id, source_cart_id, status").neq("launch_stage", silentFilterFor(scopeOf(req).role)).eq("org_id", orgId).in("source_cart_id", batch));
       const orderByCart = new Map((linkedOrders ?? []).map((o: any) => [o.source_cart_id, o]));
 
       // The grid's own attempts query is scoped to the displayed week, which is
@@ -2203,7 +2204,7 @@ router.get("/follow-up-overview",
       const nameById = new Map((users ?? []).map((u: any) => [u.id, u.name]));
 
       const linkedOrders = await selectByIdBatches<any>(cartIds, (batch) => supabase.from("orders")
-        .select("id, source_cart_id, status, amount, currency, created_at")
+        .select("id, source_cart_id, status, amount, currency, created_at").neq("launch_stage", silentFilterFor(scopeOf(req).role))
         .limit(REPORT_ROW_CEILING)
         .eq("org_id", orgId).in("source_cart_id", batch));
       const orderByCart = new Map((linkedOrders ?? []).map((o: any) => [o.source_cart_id, o]));
@@ -2527,7 +2528,7 @@ export async function computeCartLogBoard(orgId: string, repFilter: string | nul
             .lt("attempted_at", lagosStartOfDayUtc(addDays(to, 1)))
             .limit(REPORT_ROW_CEILING)
           : Promise.resolve({ data: [] } as any),
-        supabase.from("orders").select("source_cart_id, status")
+        supabase.from("orders").select("source_cart_id, status").neq("launch_stage", "silent")
           .eq("org_id", orgId).not("source_cart_id", "is", null).limit(REPORT_ROW_CEILING),
         supabase.from("cart_log_misses")
           .select("*").eq("org_id", orgId)
@@ -2759,7 +2760,7 @@ router.get("/recovery-summary",
           .select("cart_id, rep_id, attempted_at, customer_reached, outcome_code")
           .eq("org_id", orgId).in("cart_id", batch)
           .order("attempted_at", { ascending: true }).limit(REPORT_ROW_CEILING)),
-        selectByIdBatches<any>(cartIds, (batch) => supabase.from("orders").select("source_cart_id, status, amount")
+        selectByIdBatches<any>(cartIds, (batch) => supabase.from("orders").select("source_cart_id, status, amount").neq("launch_stage", silentFilterFor(scopeOf(req).role))
           .eq("org_id", orgId).in("source_cart_id", batch).limit(REPORT_ROW_CEILING)),
         supabase.from("users").select("id, name").eq("org_id", orgId).limit(REPORT_ROW_CEILING)
       ]);

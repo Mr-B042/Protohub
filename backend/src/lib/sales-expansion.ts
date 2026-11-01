@@ -169,7 +169,7 @@ async function packageSnapshot(orgId: string, pkg: any, fallbackProduct: { id: s
 }
 
 async function getOrder(orgId: string, orderId: string): Promise<ExpansionOrder | null> {
-  const { data, error } = await supabase.from("orders").select("*").eq("org_id", orgId).eq("id", orderId).maybeSingle();
+  const { data, error } = await supabase.from("orders").select("*").neq("launch_stage", "silent").eq("org_id", orgId).eq("id", orderId).maybeSingle();
   if (error) throw error;
   return data;
 }
@@ -637,7 +637,7 @@ async function complianceRateForRepWeek(orgId: string, repId: string, weekStart:
   const rangeStart = new Date(`${weekStart}T00:00:00Z`).getTime() < new Date(settings.enforcementStartsAt).getTime()
     ? settings.enforcementStartsAt
     : `${weekStart}T00:00:00Z`;
-  const { data: orders, error } = await supabase.from("orders").select("id, customer, product_name, package_name, status, call_outcome, created_at")
+  const { data: orders, error } = await supabase.from("orders").select("id, customer, product_name, package_name, status, call_outcome, created_at").neq("launch_stage", "silent")
     .eq("org_id", orgId).eq("assigned_rep_id", repId)
     .gte("created_at", rangeStart).lt("created_at", `${weekEndExclusive}T00:00:00Z`)
     .in("status", ["Confirmed", "In Process", "Dispatched", "Delivered", "Postponed"]);
@@ -812,7 +812,7 @@ export async function dailyComplianceBreakdownForWeek(
 
   let query = supabase
     .from("orders")
-    .select("id, created_at, assigned_rep_id, call_outcome")
+    .select("id, created_at, assigned_rep_id, call_outcome").neq("launch_stage", "silent")
     .limit(REPORT_ROW_CEILING)
     .eq("org_id", orgId)
     .gte("created_at", rangeStart)

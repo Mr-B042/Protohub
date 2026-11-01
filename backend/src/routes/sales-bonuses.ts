@@ -15,6 +15,7 @@ import {
 import { supabase } from "../lib/supabase.js";
 import { invalidateSalesBonusPrograms } from "../lib/sales-bonus-engine.js";
 import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -482,7 +483,7 @@ router.get("/order-attribution/:orderId", coachViewer, async (req, res) => {
     if (scopeOf(req).role === "Sales Rep" && items.length > 0) {
       const { data: order } = await supabase
         .from("orders")
-        .select("assigned_rep_id")
+        .select("assigned_rep_id").neq("launch_stage", silentFilterFor(scopeOf(req).role))
         .eq("org_id", req.user!.orgId)
         .eq("id", parsed.data.orderId)
         .maybeSingle();

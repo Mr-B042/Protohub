@@ -3,7 +3,8 @@ import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -223,7 +224,7 @@ router.post("/orders/:orderId/calculate", requireRole("Owner", "Admin", "Manager
 
   const { data: order, error: orderError } = await supabase
     .from("orders")
-    .select("id, org_id, agent_id, agent_location_id, customer, address, city, state, logistics_cost, latitude, longitude")
+    .select("id, org_id, agent_id, agent_location_id, customer, address, city, state, logistics_cost, latitude, longitude").neq("launch_stage", silentFilterFor(scopeOf(req).role))
     .eq("id", req.params.orderId)
     .eq("org_id", req.user!.orgId)
     .single();

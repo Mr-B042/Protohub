@@ -1228,6 +1228,7 @@ function formatCustomerStateDescriptor(order?: Pick<LinkedOrderAutomationRecord,
 
 async function loadOrderForInboundAutomation(orgId: string, orderId: string): Promise<LinkedOrderAutomationRecord | null> {
   const { data, error } = await supabase
+    // launch-safe: one order the caller already has open.
     .from("orders")
     .select("id, customer, phone, state, assigned_rep_id, product_name, package_name, amount, currency, status, scheduled_date, scheduled_at, call_outcome, response, notes, timeline_notes")
     .eq("org_id", orgId)

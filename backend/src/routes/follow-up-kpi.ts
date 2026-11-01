@@ -1,11 +1,12 @@
 import { Router } from "express";
 import { supabase } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { isFrontlineRepRole } from "../lib/roles.js";
 import { FOLLOW_UP_KPI_START_DATE, getFollowUpBoard, getFollowUpGrid, lagosHourNow, logFollowUpEntry, runFollowUpClose } from "../lib/follow-up-kpi.js";
 import { sendUnreachableFollowUpSms } from "../lib/sms.js";
 import { FOLLOW_UP_ROLES } from "../lib/follow-up-kpi.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -72,7 +73,7 @@ router.post("/log", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recov
 
   const { data: order } = await supabase
     .from("orders")
-    .select("id, assigned_rep_id")
+    .select("id, assigned_rep_id").neq("launch_stage", silentFilterFor(scopeOf(req).role))
     .eq("id", orderId)
     .eq("org_id", req.user!.orgId)
     .maybeSingle();
@@ -96,7 +97,7 @@ router.post("/log", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recov
       void (async () => {
         const { data: full } = await supabase
           .from("orders")
-          .select("id, customer, phone, assigned_rep_id, product_name, package_name, amount, currency, status")
+          .select("id, customer, phone, assigned_rep_id, product_name, package_name, amount, currency, status").neq("launch_stage", silentFilterFor(scopeOf(req).role))
           .eq("id", orderId).eq("org_id", req.user!.orgId).maybeSingle();
         if (!full?.phone) return;
         if (["Delivered", "Cancelled", "Failed"].includes(String(full.status))) return;

@@ -7,6 +7,7 @@ import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { addDaysToDateKey, lagosDateKey } from "../lib/sales-bonus-engine.js";
 import { incrementalRevenueForOrder, type HeadOfSalesOrder } from "../lib/head-of-sales-metrics.js";
 import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 const router = Router();
 router.use(requireAuth, requireRole("Owner", "Admin", "Manager", "Sales Closer"));
@@ -181,7 +182,7 @@ router.get("/overview", async (req, res) => {
     // the broader own-plus-unassigned set GET / shows for picking up work.
     const [{ data: leadRows, error: leadError }, { data: orderRows, error: orderError }, names] = await Promise.all([
       supabase.from("sales_leads").select("*").eq("org_id", orgId).eq("assigned_closer_id", closerId),
-      supabase.from("orders").select("id, status, amount, quantity, created_at, delivered_date, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines")
+      supabase.from("orders").select("id, status, amount, quantity, created_at, delivered_date, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines").neq("launch_stage", silentFilterFor(scopeOf(req).role))
         .eq("org_id", orgId).eq("closed_by_closer_id", closerId),
       productNameMap(orgId)
     ]);
@@ -330,7 +331,7 @@ router.get("/orders", async (req, res) => {
 
     const { data, error } = await supabase
       .from("orders")
-      .select("id, customer, product_name, package_name, amount, currency, status, created_at, delivered_date, closed_by_closer_name, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines")
+      .select("id, customer, product_name, package_name, amount, currency, status, created_at, delivered_date, closed_by_closer_name, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", orgId)
       .eq("closed_by_closer_id", closerId)
       .order("created_at", { ascending: false });
@@ -410,7 +411,7 @@ router.get("/performance", async (req, res) => {
 
     const [{ data: leadRows, error: leadError }, { data: orderRows, error: orderError }, names] = await Promise.all([
       supabase.from("sales_leads").select("*").eq("org_id", orgId).eq("assigned_closer_id", closerId),
-      supabase.from("orders").select("id, product_name, status, amount, created_at, delivered_date, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines")
+      supabase.from("orders").select("id, product_name, status, amount, created_at, delivered_date, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines").neq("launch_stage", silentFilterFor(scopeOf(req).role))
         .eq("org_id", orgId).eq("closed_by_closer_id", closerId),
       productNameMap(orgId)
     ]);
@@ -572,7 +573,7 @@ async function computeCloserMonthMetrics(orgId: string, closerId: string, monthS
 
   const [{ data: leadRows, error: leadError }, { data: orderRows, error: orderError }] = await Promise.all([
     supabase.from("sales_leads").select("status, created_at, last_activity_at, converted_order_id").eq("org_id", orgId).eq("assigned_closer_id", closerId),
-    supabase.from("orders").select("id, status, amount, created_at, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines")
+    supabase.from("orders").select("id, status, amount, created_at, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines").neq("launch_stage", "silent")
       .eq("org_id", orgId).eq("closed_by_closer_id", closerId)
   ]);
   if (leadError) throw leadError;
@@ -834,7 +835,7 @@ router.get("/closers-leaderboard", requireRole("Owner", "Admin", "Manager"), asy
 
     const [{ data: leadRows, error: leadError }, { data: orderRows, error: orderError }] = await Promise.all([
       supabase.from("sales_leads").select("assigned_closer_id, status, created_at, converted_order_id").eq("org_id", orgId).in("assigned_closer_id", closerIds),
-      supabase.from("orders").select("id, closed_by_closer_id, status, amount, created_at").eq("org_id", orgId).in("closed_by_closer_id", closerIds)
+      supabase.from("orders").select("id, closed_by_closer_id, status, amount, created_at").neq("launch_stage", silentFilterFor(scopeOf(req).role)).eq("org_id", orgId).in("closed_by_closer_id", closerIds)
     ]);
     if (leadError) throw leadError;
     if (orderError) throw orderError;
@@ -927,7 +928,7 @@ router.get("/cost-profitability", requireRole("Owner", "Admin"), async (req, res
 
     const { data: orderRows, error: orderError } = await supabase
       .from("orders")
-      .select("id, status, amount, original_amount, quantity, currency, logistics_cost, created_at, product_id, package_id, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines, cogs_snapshot, cogs_snapshot_at")
+      .select("id, status, amount, original_amount, quantity, currency, logistics_cost, created_at, product_id, package_id, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines, cogs_snapshot, cogs_snapshot_at").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", orgId).eq("closed_by_closer_id", parsed.data.closerId);
     if (orderError) throw orderError;
     const orders = (orderRows ?? []).filter((order) => order.created_at && lagosDateKey(order.created_at) >= monthStart && lagosDateKey(order.created_at) < nextMonth);

@@ -64,6 +64,14 @@ export function hideSilentOrders<Q extends { neq: (column: string, value: string
   return canSeeSilentOrders(scopeRole) ? query : query.neq("launch_stage", "silent");
 }
 
+/**
+ * The value for `.neq("launch_stage", ...)` on any orders read made for a
+ * signed-in person: "silent" hides Silent Test orders, and for the Owner a
+ * stage no order has, so nothing is hidden. One filter form everywhere keeps
+ * launch-hide-guard.test.ts able to check every read.
+ */
+export const silentFilterFor = (scopeRole: string | null | undefined) => (canSeeSilentOrders(scopeRole) ? "owner-sees-all" : "silent");
+
 /** The stage an order came in under ("live" when unknown). */
 export async function orderLaunchStage(orgId: string, orderId: string): Promise<LaunchStage> {
   const { data } = await supabase.from("orders").select("launch_stage").eq("org_id", orgId).eq("id", orderId).maybeSingle();

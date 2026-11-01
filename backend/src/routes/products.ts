@@ -4,12 +4,13 @@ import { humanFieldErrors } from "../lib/validation-message.js";
 import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { logger } from "../lib/logger.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
 import { costChangeImpact, needsFreezing } from "../lib/order-cogs.js";
 import { frameBlockReason, landingPagesFromLinks } from "../lib/landing-pages.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -919,7 +920,7 @@ const ORDER_COGS_COLUMNS =
 /** Freeze every delivered order that has no snapshot yet. Idempotent. */
 async function freezeDeliveredCogs(orgId: string, onlyProductId?: string) {
   const { data } = await supabase.from("orders")
-    .select(ORDER_COGS_COLUMNS)
+    .select(ORDER_COGS_COLUMNS).neq("launch_stage", "silent")
     .eq("org_id", orgId).eq("status", "Delivered")
     .is("cogs_snapshot", null)
     .limit(REPORT_ROW_CEILING);
@@ -1009,7 +1010,7 @@ router.get("/:id/cost-change-preview", requireRole("Owner", "Admin"), async (req
     const primary = ((pricing ?? []) as any[]).find((row) => row.is_primary) ?? (pricing ?? [])[0];
 
     const { data: orders } = await supabase.from("orders")
-      .select(ORDER_COGS_COLUMNS)
+      .select(ORDER_COGS_COLUMNS).neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", orgId).eq("status", "Delivered").limit(REPORT_ROW_CEILING);
 
     const delivered = ((orders ?? []) as any[])

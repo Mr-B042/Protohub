@@ -9,6 +9,7 @@ import { CART_LOG_PENALTY_START_DATE } from "../lib/cart-log-penalty.js";
 import { checkCartDay, checkFollowUpMiss, dayLabel, type CheckResult } from "../lib/log-miss-check.js";
 import { computeCartLogBoard } from "./carts.js";
 import { notifyLogMiss } from "../lib/weekly-report-notifications.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 // Missed-log charges on the weekly report, and disputes (Bright, 1 Oct 2026).
 //
@@ -112,7 +113,7 @@ async function checkMiss(orgId: string, kind: "follow_up" | "cart_log", ref: str
         .eq("org_id", orgId).eq("order_id", miss.order_id)
         .gte("attempted_at", lagosStart(miss.miss_date)).lte("attempted_at", lagosEnd(miss.miss_date))
         .order("attempted_at", { ascending: true }),
-      supabase.from("orders").select("assigned_rep_id").eq("id", miss.order_id).eq("org_id", orgId).maybeSingle(),
+      supabase.from("orders").select("assigned_rep_id").neq("launch_stage", "silent").eq("id", miss.order_id).eq("org_id", orgId).maybeSingle(),
       supabase.from("order_contact_attempts").select("order_id").eq("org_id", orgId).eq("rep_id", miss.rep_id)
         .gte("attempted_at", lagosStart(miss.miss_date)).lte("attempted_at", lagosEnd(miss.miss_date)).limit(5000)
     ]);

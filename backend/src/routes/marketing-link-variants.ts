@@ -2,8 +2,9 @@ import { Router } from "express";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { sanitizeMarketingAttributionTags } from "../lib/marketing-attribution.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -181,7 +182,7 @@ router.get("/traffic", requireRole(...ALLOWED_ROLES), async (req, res) => {
 
   const [{ data: carts }, { data: orders }] = await Promise.all([
     supabase.from("abandoned_carts").select("embed_label, last_activity").eq("org_id", orgId).not("embed_label", "is", null).gte("created_at", since),
-    supabase.from("orders").select("embed_label").eq("org_id", orgId).not("embed_label", "is", null).gte("created_at", since)
+    supabase.from("orders").select("embed_label").neq("launch_stage", silentFilterFor(scopeOf(req).role)).eq("org_id", orgId).not("embed_label", "is", null).gte("created_at", since)
   ]);
 
   const stats: Record<string, { carts: number; orders: number; lastActivity: string | null }> = {};

@@ -38,7 +38,7 @@ async function scanOrgForPhantomStock(orgId: string): Promise<number> {
   // Delivered + agent-fulfilled + physical (has a product) orders in the window.
   const { data: delivered, error } = await supabase
     .from("orders")
-    .select("id")
+    .select("id").neq("launch_stage", "silent")
     .limit(REPORT_ROW_CEILING)
     .eq("org_id", orgId)
     .eq("status", "Delivered")

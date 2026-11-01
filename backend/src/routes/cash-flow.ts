@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 import {
   computeAccountBalances,
@@ -21,6 +21,7 @@ import {
 import { summariseReceivables } from "../lib/agent-receivables.js";
 import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
 import { resolveOrderCogs } from "../lib/order-cogs.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 import {
   financialHighlights,
   healthChecks,
@@ -305,7 +306,7 @@ async function resolveOpeningCash(orgId: string, periodStartIso: string) {
  */
 async function agentReceivables(orgId: string) {
   const { data: orders } = await supabase.from("orders")
-    .select("id, amount, amount_remitted, logistics_cost, remittance_status, agent_id, agent_name_snapshot, delivered_date")
+    .select("id, amount, amount_remitted, logistics_cost, remittance_status, agent_id, agent_name_snapshot, delivered_date").neq("launch_stage", "silent")
     .eq("org_id", orgId)
     .eq("status", "Delivered").neq("review_hold", true)
     // ⚠️ NOT .neq("remittance_status", "Paid"). PostgREST renders that as
@@ -981,13 +982,13 @@ async function weekActivity(orgId: string, weekStart: string, weekEnd: string) {
   const fromIso = startOfLagosDay(weekStart);
   const toIso = endOfLagosDay(weekEnd);
   const [{ data: placed }, { data: deliveredRows }, spends, remits] = await Promise.all([
-    supabase.from("orders").select("id, status, review_hold")
+    supabase.from("orders").select("id, status, review_hold").neq("launch_stage", "silent")
       .eq("org_id", orgId).gte("created_at", fromIso).lt("created_at", toIso)
       .limit(REPORT_ROW_CEILING),
     // Delivered THIS week regardless of when placed - that is what generates
     // the cash the agents owe, so it is the right base for the remittance
     // ratio even though the delivery rate beside it is a cohort figure.
-    supabase.from("orders").select("id, amount")
+    supabase.from("orders").select("id, amount").neq("launch_stage", "silent")
       .eq("org_id", orgId).eq("status", "Delivered").neq("review_hold", true)
       // ⚠️ delivered_date, NEVER updated_at. updated_at moves on ANY write -
       // a note, a remittance, a bulk backfill - so it says when the row was
@@ -2326,7 +2327,7 @@ router.get("/period-close", async (req, res) => {
       supabase.from("inventory_valuation_snapshots").select("id, status, total_value").eq("org_id", orgId).eq("week_start", weekStart).maybeSingle(),
       supabase.from("cash_reserves").select("amount, released_amount, status, category").eq("org_id", orgId).limit(REPORT_ROW_CEILING),
       supabase.from("orders")
-        .select("id, amount, currency, logistics_cost, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines, cogs_snapshot, cogs_snapshot_at, status")
+        .select("id, amount, currency, logistics_cost, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines, cogs_snapshot, cogs_snapshot_at, status").neq("launch_stage", silentFilterFor(scopeOf(req).role))
         .eq("org_id", orgId).eq("status", "Delivered").neq("review_hold", true)
         // ⚠️ delivered_date, NEVER updated_at. updated_at moves on ANY write -
       // a note, a remittance, a bulk backfill - so it says when the row was
@@ -2679,7 +2680,7 @@ async function weekShape(orgId: string, weekStart: string) {
     loadRemittances(orgId, fromIso, toIso),
     loadExpenses(orgId, weekStart, weekEnd),
     supabase.from("orders")
-      .select("id, amount, currency, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines, cogs_snapshot, cogs_snapshot_at")
+      .select("id, amount, currency, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines, cogs_snapshot, cogs_snapshot_at").neq("launch_stage", "silent")
       .eq("org_id", orgId).eq("status", "Delivered").neq("review_hold", true)
       // ⚠️ delivered_date, NEVER updated_at. updated_at moves on ANY write -
       // a note, a remittance, a bulk backfill - so it says when the row was

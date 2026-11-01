@@ -493,7 +493,7 @@ const clampAttemptedAt = (raw: string | null | undefined): string => {
 export const recordContactAttemptAndNextAction = async (input: RecordAttemptInput) => {
   const { data: order, error: orderError } = await supabase
     .from("orders")
-    .select("id, status, assigned_rep_id, response, call_outcome, notes, timeline_notes")
+    .select("id, status, assigned_rep_id, response, call_outcome, notes, timeline_notes").neq("launch_stage", "silent")
     .eq("org_id", input.orgId)
     .eq("id", input.orderId)
     .single();
@@ -657,7 +657,7 @@ export const recordFollowUpProgressNote = async (input: RecordProgressNoteInput)
 
   const { data: order, error: orderError } = await supabase
     .from("orders")
-    .select("id, status, assigned_rep_id, response, call_outcome, notes, timeline_notes")
+    .select("id, status, assigned_rep_id, response, call_outcome, notes, timeline_notes").neq("launch_stage", "silent")
     .eq("org_id", input.orgId)
     .eq("id", input.orderId)
     .single();

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
 import { buildProductBonusConfigMap, computeOrderBonus, type PayrollOrder, type ProductRecord } from "../lib/payroll-calculator.js";
 import { salesExpansionComplianceForRepWeek } from "../lib/sales-expansion.js";
@@ -9,6 +9,7 @@ import { isWorkingDay } from "../lib/follow-up-kpi.js";
 import { scoreOrderDocumentation, type DocumentationScoreOrder } from "../lib/recovery-rep-documentation-score.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 import { buildRecoveryCalendar, calendarDayKeys } from "../lib/recovery-calendar.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 
 
@@ -155,7 +156,7 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
     const [deliveredThisMonthResult, closedNonDeliveredResult] = await Promise.all([
       supabase
         .from("orders")
-        .select(ORDER_COLUMNS)
+        .select(ORDER_COLUMNS).neq("launch_stage", silentFilterFor(scopeOf(req).role))
         .limit(REPORT_ROW_CEILING)
         .eq("org_id", orgId)
         .eq("assigned_rep_id", repId)
@@ -165,7 +166,7 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
         .neq("review_hold", true),
       supabase
         .from("orders")
-        .select(ORDER_COLUMNS)
+        .select(ORDER_COLUMNS).neq("launch_stage", silentFilterFor(scopeOf(req).role))
         .limit(REPORT_ROW_CEILING)
         .eq("org_id", orgId)
         .eq("assigned_rep_id", repId)
@@ -224,7 +225,7 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
     const currentWeekEnd = addDaysToDateKey(currentWeekStart, 7);
     const { data: weekOrders } = await supabase
       .from("orders")
-      .select("id, status, currency, amount, logistics_cost, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, free_gift_lines, manual_bonus_override, bonus_manually_adjusted, upsell_from_qty, upsell_to_qty, source, delivered_date, review_hold")
+      .select("id, status, currency, amount, logistics_cost, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, free_gift_lines, manual_bonus_override, bonus_manually_adjusted, upsell_from_qty, upsell_to_qty, source, delivered_date, review_hold").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .eq("assigned_rep_id", repId)
@@ -510,7 +511,7 @@ const REJECTION_PATTERN = /reject|refus|not interested|no longer/i;
 async function openClaimCount(orgId: string, repId: string) {
   const { count } = await supabase
     .from("orders")
-    .select("id", { count: "exact", head: true })
+    .select("id", { count: "exact", head: true }).neq("launch_stage", "silent")
     .eq("org_id", orgId)
     .eq("assigned_rep_id", repId)
     // Recovery claims begin as Failed/Cancelled. They remain active recovery
@@ -551,7 +552,7 @@ router.get("/day-activity", requireRole("Owner", "Admin", "Manager", "Recovery R
         .eq("org_id", orgId).eq("rep_id", repId)
         .gte("claimed_at", lagosDayBoundary(day)).lt("claimed_at", lagosDayBoundary(next))
         .limit(REPORT_ROW_CEILING),
-      supabase.from("orders").select("id, customer, amount")
+      supabase.from("orders").select("id, customer, amount").neq("launch_stage", silentFilterFor(scopeOf(req).role))
         .eq("org_id", orgId).eq("assigned_rep_id", repId).eq("status", "Delivered")
         .eq("delivered_date", day).neq("review_hold", true).limit(REPORT_ROW_CEILING)
     ]);
@@ -565,7 +566,7 @@ router.get("/day-activity", requireRole("Owner", "Admin", "Manager", "Recovery R
     const nameById = new Map<string, { customer: string; phone: string; status: string; amount: number }>();
     if (orderIds.length > 0) {
       const { data: orderRows } = await supabase.from("orders")
-        .select("id, customer, phone, status, amount").eq("org_id", orgId).in("id", orderIds)
+        .select("id, customer, phone, status, amount").neq("launch_stage", silentFilterFor(scopeOf(req).role)).eq("org_id", orgId).in("id", orderIds)
         .limit(REPORT_ROW_CEILING);
       ((orderRows ?? []) as any[]).forEach((row) => nameById.set(row.id, {
         customer: row.customer ?? "", phone: row.phone ?? "", status: row.status ?? "",
@@ -644,7 +645,7 @@ router.get("/follow-up-pairs", requireRole("Owner", "Admin", "Manager", "Recover
     const repId = scopeRole === "Recovery Rep" ? scopeId : (typeof req.query.repId === "string" ? req.query.repId : "");
     if (!repId) { res.json({ pairs: {} }); return; }
 
-    const { data: myOrders } = await supabase.from("orders").select("id")
+    const { data: myOrders } = await supabase.from("orders").select("id").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", orgId).eq("assigned_rep_id", repId).limit(REPORT_ROW_CEILING);
     const orderIds = ((myOrders ?? []) as any[]).map((row) => row.id as string);
     if (orderIds.length === 0) { res.json({ pairs: {} }); return; }
@@ -714,7 +715,7 @@ router.get("/calendar", requireRole("Owner", "Admin", "Manager", "Recovery Rep")
       // assigned_rep_id, Delivered, and review_hold excluded. A calendar whose
       // day cells added up to a different number than the card above it would
       // be worse than no calendar.
-      supabase.from("orders").select("id, delivered_date")
+      supabase.from("orders").select("id, delivered_date").neq("launch_stage", silentFilterFor(scopeOf(req).role))
         .eq("org_id", orgId).eq("assigned_rep_id", repId).eq("status", "Delivered")
         .gte("delivered_date", start).lt("delivered_date", exclusiveEnd)
         .neq("review_hold", true)
@@ -730,7 +731,7 @@ router.get("/calendar", requireRole("Owner", "Admin", "Manager", "Recovery Rep")
       // were holding on 20 August depends on orders claimed long before it.
       // For a Recovery Rep only Delivered closes an order, so an order is open
       // on a day when it was claimed by then and not yet delivered.
-      supabase.from("orders").select("id, assigned_at, delivered_date, status")
+      supabase.from("orders").select("id, assigned_at, delivered_date, status").neq("launch_stage", silentFilterFor(scopeOf(req).role))
         .eq("org_id", orgId).eq("assigned_rep_id", repId)
         .not("assigned_at", "is", null)
         .limit(REPORT_ROW_CEILING)
@@ -840,7 +841,7 @@ router.get("/candidates", requireRole("Owner", "Admin", "Manager", "Recovery Rep
         // endpoint rendered blank ("No state") until she claimed it. This
         // endpoint is her authorised window onto candidates, so it has to carry
         // what the card shows.
-        .select("id, customer, phone, status, amount, currency, product_name, package_name, quantity, cross_sell_lines, free_gift_lines, upsell_from_qty, upsell_to_qty, location, state, city, address, call_outcome, response, created_at, updated_at, delivered_date, assigned_rep_id, review_hold")
+        .select("id, customer, phone, status, amount, currency, product_name, package_name, quantity, cross_sell_lines, free_gift_lines, upsell_from_qty, upsell_to_qty, location, state, city, address, call_outcome, response, created_at, updated_at, delivered_date, assigned_rep_id, review_hold").neq("launch_stage", silentFilterFor(scopeOf(req).role))
         .eq("org_id", orgId)
         .or(`status.in.(${CANDIDATE_STATUSES.join(",")}),call_outcome.eq.Product Unavailable`)
         .neq("review_hold", true)
@@ -929,7 +930,7 @@ router.post("/claim", requireRole("Owner", "Admin", "Manager", "Recovery Rep"), 
     }
 
     const { data: order } = await supabase.from("orders")
-      .select("id, status, call_outcome, assigned_rep_id").eq("org_id", orgId).eq("id", orderId).maybeSingle();
+      .select("id, status, call_outcome, assigned_rep_id").neq("launch_stage", silentFilterFor(scopeOf(req).role)).eq("org_id", orgId).eq("id", orderId).maybeSingle();
     if (!order) { res.status(404).json({ error: "Order not found." }); return; }
     if (order.assigned_rep_id === repId) { res.status(409).json({ error: "That order is already theirs." }); return; }
 
@@ -1045,7 +1046,7 @@ router.get("/worklist", requireRole("Owner", "Admin", "Manager", "Recovery Rep")
 
     const { data, error } = await supabase
       .from("orders")
-      .select("id, customer, phone, status, amount, currency, product_name, state, city, call_outcome, response, scheduled_date, next_follow_up_at, created_at, updated_at, delivered_date, assigned_rep_id, review_hold")
+      .select("id, customer, phone, status, amount, currency, product_name, state, city, call_outcome, response, scheduled_date, next_follow_up_at, created_at, updated_at, delivered_date, assigned_rep_id, review_hold").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", orgId)
       .order("created_at", { ascending: false })
       .limit(4000);

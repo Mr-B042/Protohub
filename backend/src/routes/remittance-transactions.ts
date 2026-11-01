@@ -6,6 +6,7 @@ import { fetchAllRows } from "../lib/paginated-query.js";
 import { fetchPagesTogether } from "../lib/paged-fetch.js";
 import { requireAuth, scopeOf } from "../middleware/auth.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -151,7 +152,7 @@ router.get("/", async (req, res) => {
   const receiptOrders: any[] = [];
   const receiptResults = await Promise.all(chunk(orderIds, 500).map((ids) => supabase
     .from("orders")
-    .select("id, product_id, product_name, package_name, customer, created_at, delivered_date, assigned_rep_id, agent_id, agent_name_snapshot, amount, logistics_cost, amount_remitted, remittance_status")
+    .select("id, product_id, product_name, package_name, customer, created_at, delivered_date, assigned_rep_id, agent_id, agent_name_snapshot, amount, logistics_cost, amount_remitted, remittance_status").neq("launch_stage", silentFilterFor(scopeOf(req).role))
     .limit(REPORT_ROW_CEILING)
     .eq("org_id", req.user!.orgId)
     .in("id", ids)));
@@ -215,7 +216,7 @@ router.get("/", async (req, res) => {
   const remittedOrdersPages = await fetchPagesTogether(async (from, to, withCount) => {
     let query = supabase
       .from("orders")
-      .select("id, customer, product_id, product_name, package_name, assigned_rep_id, agent_id, agent_name_snapshot, amount, logistics_cost, amount_remitted, remittance_status, delivered_date", withCount ? { count: "exact" } : undefined)
+      .select("id, customer, product_id, product_name, package_name, assigned_rep_id, agent_id, agent_name_snapshot, amount, logistics_cost, amount_remitted, remittance_status, delivered_date", withCount ? { count: "exact" } : undefined).neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", req.user!.orgId)
       .eq("status", "Delivered")
       .gt("amount_remitted", 0)
@@ -329,7 +330,7 @@ router.post("/backfill", async (req, res) => {
   const ordersResult = await fetchAllRows<any>(async (from, to) => {
     const result = await supabase
       .from("orders")
-      .select("id, customer, product_id, product_name, package_name, assigned_rep_id, agent_id, amount, logistics_cost, amount_remitted, remittance_status, created_at, updated_at, delivered_date")
+      .select("id, customer, product_id, product_name, package_name, assigned_rep_id, agent_id, amount, logistics_cost, amount_remitted, remittance_status, created_at, updated_at, delivered_date").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", req.user!.orgId)
       .gt("amount_remitted", 0)
       .order("id", { ascending: true })

@@ -8,7 +8,8 @@ import { Router } from "express";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -195,7 +196,7 @@ router.get("/usage", requireRole(...READ_ROLES), async (req, res) => {
     // is answered by a real order that came after the message.
     const phones = [...new Set(sendRows.map((s: any) => String(s.customer_phone).replace(/\D/g, "")).filter(Boolean))];
     const { data: orders } = phones.length
-      ? await supabase.from("orders").select("id, phone, amount, delivered_date, status").eq("org_id", orgId).eq("status", "Delivered")
+      ? await supabase.from("orders").select("id, phone, amount, delivered_date, status").neq("launch_stage", silentFilterFor(scopeOf(req).role)).eq("org_id", orgId).eq("status", "Delivered")
       : { data: [] as any[] };
     const ordersByPhone = new Map<string, Array<{ amount: number; delivered: string }>>();
     for (const o of (orders ?? []) as any[]) {

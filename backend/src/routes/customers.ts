@@ -3,8 +3,9 @@ import { fetchAllRowsOrThrow } from "../lib/query-limits.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
-import { applyBranchScope, requireAuth, requireRole } from "../middleware/auth.js";
+import { applyBranchScope, requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { isFrontlineRepRole } from "../lib/roles.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 const router = Router();
 router.use(requireAuth, requireRole("Owner", "Admin", "Manager", "Sales Rep", "Viewer", "Recovery Rep", "Sales Closer"));
@@ -21,7 +22,7 @@ router.get("/", async (req, res) => {
   const buildCustomerQuery = () => {
     let query = applyBranchScope(supabase
       .from("orders")
-      .select("phone, customer, city, state, amount, status, created_at, assigned_rep_id")
+      .select("phone, customer, city, state, amount, status, created_at, assigned_rep_id").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", req.user!.orgId)
       .order("created_at", { ascending: false })
       .order("id", { ascending: false }), req);

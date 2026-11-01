@@ -33,12 +33,12 @@ export async function expectedRepIdsForWeek(orgId: string, branchId: string, wee
   if (repIds.length === 0) return [];
 
   const [{ data: placed, error: placedError }, { data: delivered, error: deliveredError }] = await Promise.all([
-    supabase.from("orders").select("assigned_rep_id")
+    supabase.from("orders").select("assigned_rep_id").neq("launch_stage", "silent")
       .eq("org_id", orgId).eq("branch_id", branchId).in("assigned_rep_id", repIds)
       .or("review_hold.is.null,review_hold.eq.false")
       .gte("created_at", lagosDayStartIso(weekStart)).lte("created_at", lagosDayEndIso(weekEnd))
       .limit(20000),
-    supabase.from("orders").select("assigned_rep_id")
+    supabase.from("orders").select("assigned_rep_id").neq("launch_stage", "silent")
       .eq("org_id", orgId).eq("branch_id", branchId).in("assigned_rep_id", repIds)
       .gte("delivered_date", weekStart).lte("delivered_date", weekEnd)
       .limit(20000)

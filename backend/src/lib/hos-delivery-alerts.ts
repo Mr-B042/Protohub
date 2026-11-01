@@ -56,7 +56,7 @@ export async function runHeadOfSalesDeliveryAlerts(now = new Date()): Promise<{ 
       if (branchReps.length === 0) continue;
       // Orders placed this week (Lagos), at least 48 hours ago, not held for review.
       const { data: orders, error: ordersError } = await supabase.from("orders")
-        .select("assigned_rep_id, status, review_hold")
+        .select("assigned_rep_id, status, review_hold").neq("launch_stage", "silent")
         .eq("org_id", branch.org_id).eq("branch_id", branch.id)
         .in("assigned_rep_id", branchReps.map((row: any) => row.id))
         .gte("created_at", `${weekStart}T00:00:00+01:00`)

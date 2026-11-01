@@ -402,7 +402,7 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
     supabase.from("organizations").select("top_performer_bonus_enabled, top_performer_bonus_amount").eq("id", orgId).maybeSingle(),
     supabase
       .from("orders")
-      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, date")
+      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, date").neq("launch_stage", "silent")
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .eq("status", "Delivered")
@@ -410,7 +410,7 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
       .lt("delivered_date", bounds.periodEndDate),
     supabase
       .from("orders")
-      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, date")
+      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, date").neq("launch_stage", "silent")
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .eq("status", "Delivered")
@@ -419,7 +419,7 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
       .lt("created_at", bounds.periodEndTs),
     supabase
       .from("orders")
-      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, date")
+      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, date").neq("launch_stage", "silent")
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .neq("status", "Delivered")
@@ -466,7 +466,7 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
     const cohortEnd = addDaysToDateKey(deliveredCohortWeekStarts[deliveredCohortWeekStarts.length - 1]!, 7);
     const { data: cohortData, error: cohortError } = await supabase
       .from("orders")
-      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, date")
+      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, date").neq("launch_stage", "silent")
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .gte("created_at", `${cohortStart}T00:00:00`)

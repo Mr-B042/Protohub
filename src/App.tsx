@@ -11662,6 +11662,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // isHeadOfSalesRep flag - the same layering extraPages already does on top
   // of the role's default page list.
   const isInventoryOperationsRole = currentRole === "Inventory Manager & Logistics Operations";
+  // Product Launch: live updates read this to drop Silent Test orders for
+  // anyone but the Owner (and for the Owner while previewing someone else).
+  const currentRoleRef = useRef(currentRole);
+  currentRoleRef.current = currentRole;
+  // Products in Silent Test whose carts are held back (Product Launch settings).
+  const heldCartProductIdsRef = useRef<Set<string>>(new Set());
+  heldCartProductIdsRef.current = new Set(products.filter((product) => product.launchStage === "silent" && product.launchSettings?.silentHoldCarts !== false).map((product) => product.id));
   // These roles are sent no prices, so "no price" says nothing about a product
   // for them (BUG-1001). The server's hasPricing flag says the same; this also
   // covers a server that has not been redeployed yet.
@@ -30199,6 +30206,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
 
       const nextOrder = normalizeTrackedOrder(row);
+      // Second guard behind the database rule (migration 315): a Silent Test
+      // order never enters anyone's list but the Owner's.
+      if (nextOrder.launchStage === "silent" && currentRoleRef.current !== "Owner") {
+        setTrackedOrders((prev) => prev.filter((order) => order.id !== nextOrder.id));
+        return;
+      }
       if (realtimeIsMarketer && !realtimeOrderMatchesMarketer(nextOrder)) {
         setTrackedOrders((prev) => prev.filter((order) => order.id !== nextOrder.id));
         return;
@@ -30258,6 +30271,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
 
       const nextCart = normalizeRealtimeCart(row);
+      // Second guard behind the database rule (migration 315): a held Silent Test cart is the Owner's alone.
+      if (nextCart.productId && heldCartProductIdsRef.current.has(nextCart.productId) && currentRoleRef.current !== "Owner") {
+        setAbandonedCarts((prev) => prev.filter((cart) => cart.id !== nextCart.id));
+        return;
+      }
       if (nextCart.mergedInto) {
         setAbandonedCarts((prev) => prev.filter((cart) => cart.id !== nextCart.id));
         return;

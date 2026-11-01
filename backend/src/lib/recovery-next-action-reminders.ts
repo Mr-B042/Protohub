@@ -76,7 +76,7 @@ export async function syncRecoveryNextActionReminders(limitPerOrg = 500) {
     if (repIds.length === 0) continue;
 
     const { data: orders, error: orderError } = await supabase.from("orders")
-      .select("id, customer, phone, assigned_rep_id, product_name, next_follow_up_at, status")
+      .select("id, customer, phone, assigned_rep_id, product_name, next_follow_up_at, status").neq("launch_stage", "silent")
       .eq("org_id", orgId)
       .in("assigned_rep_id", repIds)
       .neq("status", "Delivered")

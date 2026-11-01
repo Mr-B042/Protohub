@@ -150,6 +150,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
   const originalCartId = cartId.replace(/-outage-[a-z0-9]+$/i, "");
   const dedupeCartIds = originalCartId !== cartId ? [cartId, originalCartId] : [cartId];
   const { data: existingOrders } = await supabase
+    // launch-safe: duplicate check before saving the customer's order.
     .from("orders")
     .select("id")
     .eq("org_id", orgId)

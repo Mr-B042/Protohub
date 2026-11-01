@@ -1136,7 +1136,7 @@ export async function sendWeeklyReport(orgId: string): Promise<{ ok: boolean; er
     const weekEndStr   = now.toISOString().split("T")[0];
 
     const [{ data: orders }, { data: expenses }, { data: org }] = await Promise.all([
-      supabase.from("orders").select("status, amount, currency, product_name")
+      supabase.from("orders").select("status, amount, currency, product_name").neq("launch_stage", "silent")
         .eq("org_id", orgId).gte("created_at", weekAgo.toISOString()),
       supabase.from("expenses").select("category, amount")
         .eq("org_id", orgId).gte("date", weekStartStr),

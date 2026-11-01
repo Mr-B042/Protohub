@@ -55,11 +55,11 @@ export async function loadTargetActuals(
     // belongs to August's throughput but not its placed cohort, so neither date
     // alone finds every row that matters. Merged by id below.
     const [placedRows, deliveredRows, adRows, deliveryExpenseRows] = await Promise.all([
-      fetchAllRowsOrThrow<any>(() => supabase.from("orders").select(ORDER_COLUMNS)
+      fetchAllRowsOrThrow<any>(() => supabase.from("orders").select(ORDER_COLUMNS).neq("launch_stage", "silent")
         .eq("org_id", orgId).eq("product_id", target.product_id)
         .gte("created_at", `${start}T00:00:00.000Z`).lt("created_at", `${endExclusive}T00:00:00.000Z`)
         .order("created_at", { ascending: true }).order("id", { ascending: true })),
-      fetchAllRowsOrThrow<any>(() => supabase.from("orders").select(ORDER_COLUMNS)
+      fetchAllRowsOrThrow<any>(() => supabase.from("orders").select(ORDER_COLUMNS).neq("launch_stage", "silent")
         .eq("org_id", orgId).eq("product_id", target.product_id).eq("status", "Delivered")
         .gte("delivered_date", start).lte("delivered_date", end)
         .order("delivered_date", { ascending: true }).order("id", { ascending: true })),

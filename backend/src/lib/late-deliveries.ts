@@ -91,7 +91,7 @@ export function findLateDeliveries(reports: ReportRow[], orders: OrderRow[]): Ar
 export async function lateDeliveriesFor(orgId: string, branchId: string, weekStart: string, repId: string | null = null): Promise<LateDelivery[]> {
   let reportsQuery = supabase.from("rep_weekly_reports").select("rep_id, week_start, status, orders:snapshot->orders")
     .eq("org_id", orgId).eq("branch_id", branchId).gte("week_start", FIRST_REPORT_WEEK).lt("week_start", weekStart);
-  let ordersQuery = supabase.from("orders").select("id, assigned_rep_id, delivered_date, created_at")
+  let ordersQuery = supabase.from("orders").select("id, assigned_rep_id, delivered_date, created_at").neq("launch_stage", "silent")
     .eq("org_id", orgId).eq("branch_id", branchId).eq("status", "Delivered")
     .gte("delivered_date", FIRST_REPORT_WEEK).lt("delivered_date", weekStart)
     .not("assigned_rep_id", "is", null).or("review_hold.is.null,review_hold.eq.false");
@@ -116,7 +116,7 @@ export async function lateDeliveriesFor(orgId: string, branchId: string, weekSta
   // its own week's report missed it.
   const ids = late.map((item) => item.orderId);
   const [{ data: placed, error: placedError }, { data: marks, error: marksError }] = await Promise.all([
-    supabase.from("orders").select("id, created_at").eq("org_id", orgId).in("id", ids),
+    supabase.from("orders").select("id, created_at").neq("launch_stage", "silent").eq("org_id", orgId).in("id", ids),
     supabase.from("order_audit").select("order_id, created_at").eq("org_id", orgId).eq("to_status", "Delivered").in("order_id", ids)
   ]);
   if (placedError) throw placedError;

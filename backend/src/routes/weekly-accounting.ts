@@ -5,6 +5,7 @@ import { supabase } from "../lib/supabase.js";
 import { fetchAllRows } from "../lib/paginated-query.js";
 import { requireAuth, scopeOf } from "../middleware/auth.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -67,7 +68,7 @@ router.get("/", async (req, res) => {
   const fetchCohortPage = async (from: number, to: number) => {
     let query = supabase
       .from("orders")
-      .select("*")
+      .select("*").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", req.user!.orgId)
       .gte("created_at", createdFrom)
       .lte("created_at", createdTo)
@@ -83,7 +84,7 @@ router.get("/", async (req, res) => {
   const fetchDeliveredPage = async (from: number, to: number) => {
     let query = supabase
       .from("orders")
-      .select("*")
+      .select("*").neq("launch_stage", silentFilterFor(scopeOf(req).role))
       .eq("org_id", req.user!.orgId)
       .eq("status", "Delivered")
       .gte("delivered_date", weekStart)
@@ -167,7 +168,7 @@ router.get("/", async (req, res) => {
       const ids = remittanceOrderIds.slice(index, index + 500);
       const result = await supabase
         .from("orders")
-        .select("id, product_id, product_name, package_name, customer, created_at, delivered_date, assigned_rep_id")
+        .select("id, product_id, product_name, package_name, customer, created_at, delivered_date, assigned_rep_id").neq("launch_stage", silentFilterFor(scopeOf(req).role))
         .limit(REPORT_ROW_CEILING)
         .eq("org_id", req.user!.orgId)
         .in("id", ids);

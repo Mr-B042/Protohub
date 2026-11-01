@@ -11,6 +11,7 @@ import {
   logisticsSplit, missingProof, scaleSplits, splitProblem, type FundKind, type ProductSplit, type FundSettings, type FundTxn
 } from "../lib/manager-funds.js";
 import { notifyFunds } from "../lib/weekly-report-notifications.js";
+import { silentFilterFor } from "../lib/product-launch.js";
 
 // Manager Funds & Expenses (Bright, 1 Oct 2026). See migration 271 and
 // lib/manager-funds.ts for the maths and rules.
@@ -497,7 +498,7 @@ async function claimHeldOrders(orgId: string, branchId: string, userId: string, 
  */
 async function applyOrderPayment(req: Request, orderId: string, payment: number, walletId: string, receivedAt: string, reason: string) {
   const orgId = req.user!.orgId;
-  const { data: order, error } = await supabase.from("orders").select(ORDER_COLUMNS).eq("id", orderId).eq("org_id", orgId).maybeSingle();
+  const { data: order, error } = await supabase.from("orders").select(ORDER_COLUMNS).neq("launch_stage", silentFilterFor(scopeOf(req).role)).eq("id", orderId).eq("org_id", orgId).maybeSingle();
   if (error) throw error;
   if (!order) throw httpError(404, `Order #${orderId} was not found in this branch.`);
   const effect = customerPaymentEffect({
@@ -566,7 +567,7 @@ async function applyOrderPayment(req: Request, orderId: string, payment: number,
 /** Undo a customer payment: same lock as the order screen. */
 async function reverseOrderPayment(req: Request, orderId: string, payment: number, walletId: string, reason: string) {
   const orgId = req.user!.orgId;
-  const { data: order, error } = await supabase.from("orders").select(ORDER_COLUMNS).eq("id", orderId).eq("org_id", orgId).maybeSingle();
+  const { data: order, error } = await supabase.from("orders").select(ORDER_COLUMNS).neq("launch_stage", silentFilterFor(scopeOf(req).role)).eq("id", orderId).eq("org_id", orgId).maybeSingle();
   if (error) throw error;
   if (!order) throw httpError(404, `Order #${orderId} was not found.`);
   if (order.remittance_status === "Paid" && !order.remittance_edit_open && req.user!.role !== "Owner") {
@@ -618,7 +619,7 @@ const cleanOrderIds = (ids: Array<string | null | undefined> | null | undefined)
 async function ordersPosition(orgId: string, ids: string[]) {
   if (ids.length === 0) return [];
   const { data, error } = await supabase.from("orders")
-    .select("id, customer, status, amount, logistics_cost, amount_remitted, remittance_status").eq("org_id", orgId).in("id", ids);
+    .select("id, customer, status, amount, logistics_cost, amount_remitted, remittance_status").neq("launch_stage", "silent").eq("org_id", orgId).in("id", ids);
   if (error) throw error;
   const found = new Map((data ?? []).map((row: any) => [String(row.id), row]));
   const missing = ids.filter((id) => !found.has(id));

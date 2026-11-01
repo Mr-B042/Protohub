@@ -1670,7 +1670,7 @@ type SmsInboundRecord = {
 async function getRecentOrderForPhone(orgId: string, normalizedPhone: string) {
   const { data } = await supabase
     .from("orders")
-    .select("id")
+    .select("id").neq("launch_stage", "silent")
     .eq("org_id", orgId)
     .or(`phone.eq.${normalizedPhone},phone.eq.+${normalizedPhone},phone.ilike.%${normalizedPhone.slice(-10)}%`)
     .order("created_at", { ascending: false })
@@ -2074,7 +2074,7 @@ export async function syncDueFollowUpSms(limitPerOrg = 300) {
   for (const orgId of eligibleOrgIds) {
     const { data: orders, error: ordersError } = await supabase
       .from("orders")
-      .select("id, org_id, customer, phone, assigned_rep_id, product_name, package_name, amount, currency, status, scheduled_date, scheduled_at, call_outcome, response, notes, timeline_notes")
+      .select("id, org_id, customer, phone, assigned_rep_id, product_name, package_name, amount, currency, status, scheduled_date, scheduled_at, call_outcome, response, notes, timeline_notes").neq("launch_stage", "silent")
       .eq("org_id", orgId)
       .in("status", ["Confirmed", "In Process", "Dispatched", "Postponed"])
       .limit(limitPerOrg);
