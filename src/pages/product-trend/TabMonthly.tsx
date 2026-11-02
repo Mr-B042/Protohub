@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { productPerformanceApi, type MonthlyVerdict, type ProductMonthStat, type ProductMonthly } from "../../lib/api";
 import { Delta, ProductThumb, nf } from "./parts";
+import { RepMonthlyView } from "./TabRepMonthly";
 
 /**
  * Product Trend › Monthly Performance (Bright, 2 Nov 2026; design approved
@@ -30,7 +31,22 @@ const growth = (now: number, before: number) => (before > 0 ? ((now - before) / 
 
 type Product = ProductMonthly["products"][number];
 
-export function MonthlyPerformanceTab({ money, imageOf, onShowStates }: { money: (value: number) => string; imageOf: (productId: string) => string | null; onShowStates: () => void }) {
+export function MonthlyPerformanceTab(props: { money: (value: number) => string; imageOf: (productId: string) => string | null; onShowStates: () => void }) {
+  // Products | Sales reps (Bright, 2 Nov 2026). Each view keeps its own month.
+  const [view, setView] = useState<"products" | "reps">("products");
+  const switcher = (
+    <div className="inline-flex gap-1 rounded-xl border border-gray-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-900" role="tablist" aria-label="Monthly Performance view">
+      {([["products", "Products"], ["reps", "Sales reps"]] as const).map(([key, label]) => (
+        <button key={key} type="button" role="tab" aria-selected={view === key} onClick={() => setView(key)}
+          className={`!min-h-0 rounded-lg px-4 py-2 text-[13px] font-bold ${view === key ? "bg-gray-900 text-white dark:bg-slate-100 dark:text-slate-900" : "text-gray-500 hover:bg-gray-50 dark:text-slate-400 dark:hover:bg-slate-800"}`}>{label}</button>
+      ))}
+    </div>
+  );
+  if (view === "reps") return <RepMonthlyView money={props.money} switcher={switcher} startMonth={null} />;
+  return <ProductMonthlyView {...props} switcher={switcher} />;
+}
+
+function ProductMonthlyView({ money, imageOf, onShowStates, switcher }: { money: (value: number) => string; imageOf: (productId: string) => string | null; onShowStates: () => void; switcher: React.ReactNode }) {
   const [month, setMonth] = useState<string | null>(null);
   const [data, setData] = useState<ProductMonthly | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,7 +60,7 @@ export function MonthlyPerformanceTab({ money, imageOf, onShowStates }: { money:
     setLoading(true);
     setError("");
     productPerformanceApi.monthly(month ?? "")
-      .then((result) => { if (!live) return; setData(result); if (!month) setMonth(result.month); })
+      .then((result) => { if (live) setData(result); })
       .catch((err: Error) => { if (live) setError(err.message || "Could not load the months."); })
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
@@ -58,10 +74,11 @@ export function MonthlyPerformanceTab({ money, imageOf, onShowStates }: { money:
 
   if (!data) {
     return (
+      <div className="space-y-4"><div className="flex">{switcher}</div>
       <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center text-[13px] text-gray-500 shadow-sm dark:border-slate-800">
         {error ? <><p className="m-0 text-rose-700">Could not load the months: {error}</p><button type="button" onClick={() => setTick((n) => n + 1)} className="!min-h-0 mt-3 rounded-lg border border-gray-300 px-3 py-1.5 font-semibold">Try again</button></>
           : <><Loader2 className="mx-auto h-5 w-5 animate-spin" /><p className="m-0 mt-2">Working out each month…</p></>}
-      </div>
+      </div></div>
     );
   }
 
@@ -102,6 +119,8 @@ export function MonthlyPerformanceTab({ money, imageOf, onShowStates }: { money:
     <div className="space-y-4">
       {/* Month picker */}
       <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm dark:border-slate-800">
+        <div className="flex flex-wrap items-center gap-3">
+        {switcher}
         <div className="flex items-center gap-2">
           <button type="button" aria-label="Month before" onClick={() => { setMonth(shiftMonth(data.month, -1)); setSelected(null); }}
             className="!min-h-0 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 hover:bg-gray-50 dark:border-slate-700 dark:hover:bg-slate-800"><ChevronLeft className="h-4 w-4" /></button>
@@ -112,6 +131,7 @@ export function MonthlyPerformanceTab({ money, imageOf, onShowStates }: { money:
           <button type="button" aria-label="Month after" disabled={isOpen} onClick={() => { setMonth(shiftMonth(data.month, 1)); setSelected(null); }}
             className="!min-h-0 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-800"><ChevronRight className="h-4 w-4" /></button>
           {loading && <Loader2 className="ml-1 h-4 w-4 animate-spin text-gray-400" />}
+        </div>
         </div>
         <div className="text-[13px] text-gray-500 dark:text-slate-400">Compared with <b className="text-gray-900 dark:text-slate-100">{prevName}</b> · orders counted by the day they were placed</div>
       </section>

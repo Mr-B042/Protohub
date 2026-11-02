@@ -5090,9 +5090,27 @@ export type ProductMonthStat = {
 };
 export type ProductMonthly = { month: string; months: string[]; thisMonth: string; today: string; products: Array<{ id: string; name: string; active: boolean; months: ProductMonthStat[] }>; unassignedAdSpend: number[]; net: number[] };
 
+export type RepVerdict = "star" | "solid" | "coach" | "watch" | "review" | "new";
+export type RepMonthStat = {
+  month: string; orders: number; delivered: number; rate: number | null; revenue: number; aov: number | null;
+  productCost: number; deliveryFees: number; bonus: number; salary: number; pay: number; money: number;
+  upsells: number; upsellValue: number; crossSells: number; crossSellValue: number; extraRate: number | null;
+  lateSends: number; missedFollowUps: number; fines: number; carts: { handed: number; called: number; interested: number; converted: number };
+  verdict: RepVerdict | null; reason: string | null; rank: number | null;
+};
+export type RepMonthly = {
+  month: string; months: string[]; thisMonth: string; today: string; bonusRulesUnavailable: boolean; lateSendsFrom: string;
+  reps: Array<{
+    id: string; name: string; active: boolean; since: string | null; months: RepMonthStat[];
+    products: Array<{ productId: string | null; name: string; orders: number; delivered: number; rate: number; revenue: number; aov: number | null; upsells: number; crossSells: number; moneyBeforeSalary: number }>;
+    bestUpsell: { name: string; count: number } | null; topCrossSell: { name: string; count: number } | null;
+  }>;
+};
+
 /** Product Trend › Monthly Performance (Owner / Admin). */
 export const productPerformanceApi = {
-  monthly: (month: string) => get<ProductMonthly>(`/api/product-performance/monthly?month=${encodeURIComponent(month)}`)
+  monthly: (month: string) => get<ProductMonthly>(`/api/product-performance/monthly?month=${encodeURIComponent(month)}`),
+  reps: (month: string) => get<RepMonthly>(`/api/product-performance/reps?month=${encodeURIComponent(month)}`)
 };
 
 export const stockAllocationsApi = {
