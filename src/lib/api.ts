@@ -5082,6 +5082,19 @@ const normalizeWaybill = (row: any): StockAllocationWaybill => ({
   to_agent_id: pick(row, "to_agent_id") ?? null, to_agent_location_id: pick(row, "to_agent_location_id") ?? null, to_location: pick(row, "to_location") ?? null,
   status: row.status ?? null, created_at: pick(row, "created_at"), received_date: pick(row, "received_date") ?? null
 });
+export type MonthlyVerdict = "scale" | "keep" | "fix" | "stop" | "new";
+export type ProductMonthStat = {
+  month: string; orders: number; delivered: number; rate: number | null; revenue: number; productCost: number; deliveryFees: number;
+  adSpend: number; profit: number; costPerOrder: number | null; breakEven: number | null; breakEvenSource: "worked_out" | "set_by_you" | null;
+  verdict: MonthlyVerdict | null; reason: string | null;
+};
+export type ProductMonthly = { month: string; months: string[]; thisMonth: string; today: string; products: Array<{ id: string; name: string; active: boolean; months: ProductMonthStat[] }>; unassignedAdSpend: number[] };
+
+/** Product Trend › Monthly Performance (Owner / Admin). */
+export const productPerformanceApi = {
+  monthly: (month: string) => get<ProductMonthly>(`/api/product-performance/monthly?month=${encodeURIComponent(month)}`)
+};
+
 export const stockAllocationsApi = {
   list: async () => {
     const result = await get<any>("/api/stock-allocations");
