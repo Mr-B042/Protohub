@@ -91,8 +91,10 @@ export const zoneForState = (state?: string): NigeriaZone | null =>
 
 // ── Working out a state from messy address text ───────────────────────
 // ⚠️ ONLY FOR ABANDONED CARTS, and only because they have no state box the
-// customer had to fill in. An order always carries its own state; never run an
-// order through this.
+// customer had to fill in. Never use it to decide where an order is delivered.
+// The one order use is canonicalOrderState below, which only GROUPS orders on
+// screens (filters, reports) and falls back to this for an order saved with
+// no state at all.
 //
 // Carts are captured mid-checkout, so the state is blank on most of them while
 // the city box holds whatever the person typed: "Uyo,Akwa Ibom State",
@@ -216,12 +218,15 @@ export function resolveStateFromText(state?: string, city?: string): ResolvedSta
 // routing has its own matching (backend agent-coverage normalizeState).
 //
 //   1. the state's own name, any capitals / "State" / FCT spelling -> safe
-//   2. a short list of spellings and cities seen on real orders     -> a lookup
-// A lookup answer is dropped when the order's city box names a DIFFERENT
-// state ("Ibadan" with city "Ogun"): that order is left for a person to check
-// rather than guessed.
+//   2. a short list of spellings, cities and hub labels seen on real orders
+//      and hubs ("Ibadan", "Asaba Delta", "Kastina")                  -> a lookup
+//   3. no state saved at all: read the city box (cart rules above)
+// When step 2 found a city/hub name but the city box names a real state, the
+// city box wins: order 4508 said "Ibadan" (the hub that delivered it) with
+// city "Ogun" and an Ijebu Ode address - the customer is in Ogun.
 const ORDER_STATE_SPELLINGS: Record<string, string> = {
-  crossrivers: "Cross River", river: "Rivers",
+  crossrivers: "Cross River", river: "Rivers", kastina: "Katsina",
+  asabadelta: "Delta", enugunsukka: "Enugu", ibadanoyo: "Oyo",
   edobenin: "Edo", edobenincity: "Edo", benin: "Edo", benincity: "Edo",
   ibadan: "Oyo", akure: "Ondo", uyo: "Akwa Ibom", osogbo: "Osun", nsukka: "Enugu",
   asaba: "Delta", warri: "Delta", ph: "Rivers", portharcourt: "Rivers", calabar: "Cross River",
@@ -232,16 +237,32 @@ const ORDER_STATE_SPELLINGS: Record<string, string> = {
 const OFFICIAL_STATE_BY_KEY = new Map<string, string>(NIGERIA_STATES.map((name) => [zoneKey(name), name]));
 
 export function canonicalOrderState(state?: string | null, city?: string | null): string | null {
-  const official = OFFICIAL_STATE_BY_KEY.get(zoneKey(state ?? ""));
+  const typed = String(state ?? "").split(",")[0];
+  const official = OFFICIAL_STATE_BY_KEY.get(zoneKey(state ?? "")) ?? OFFICIAL_STATE_BY_KEY.get(zoneKey(typed));
   if (official) return official;
-  const looked = ORDER_STATE_SPELLINGS[zoneKey(state ?? "")];
+  if (!String(state ?? "").trim()) {
+    // No state saved: trust the city box only when it names a state outright
+    // ("Ogun State", "Abuja FCT") or the WHOLE box is one known city ("Ikeja").
+    // A word picked out of a longer address can be wrong - "Agbado Oke Odo
+    // LCDA" is in Lagos, but "Agbado" alone reads as Ogun.
+    const fromCity = resolveStateFromText(undefined, city ?? undefined);
+    if (fromCity.source === "read-from-text") return fromCity.state;
+    return CITY_STATE[squash(city ?? "")] ?? null;
+  }
+  const looked = ORDER_STATE_SPELLINGS[zoneKey(state ?? "")] ?? ORDER_STATE_SPELLINGS[zoneKey(typed)];
   if (!looked) return null;
   const cityNames = byLengthStates().filter((name) =>
     new RegExp(`\\b${name.replace(/\s+/g, "\\s+").replace("FCT Abuja", "(?:fct|abuja)")}\\b`, "i").test(String(city ?? "")));
-  if (cityNames.length > 0 && !cityNames.includes(looked)) return null;
+  if (cityNames.length > 0 && !cityNames.includes(looked)) return cityNames[0];
   return looked;
 }
+
+/** Same grouping key the stock pages use (zone key of the official name), so a hub labelled "Ibadan" counts as Oyo. */
+export const canonicalStateGroupKey = (value?: string | null) => {
+  const name = canonicalOrderState(value);
+  return name ? zoneKey(name) : "";
+};
 const byLengthStates = (): string[] => [...NIGERIA_STATES].sort((a, b) => b.length - a.length);
 
-/** Filter label for orders whose state could not be placed. */
-export const UNPLACED_ORDER_STATE = "Other / check state";
+/** Filter label for orders whose state could not be read at all (none saved, city unclear, or unknown text). */
+export const UNPLACED_ORDER_STATE = "State not given";

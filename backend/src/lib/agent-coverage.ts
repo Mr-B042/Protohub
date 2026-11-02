@@ -53,7 +53,18 @@ const CITY_LABEL_TO_STATE: Record<string, string> = {
   "asaba": "Delta",
   "asaba delta": "Delta",
   "nsukka": "Enugu",
-  "enugu nsukka": "Enugu"
+  "enugu nsukka": "Enugu",
+  // Seen on real hubs/orders (2 Nov 2026 audit): the Kastina Rider hub (a
+  // misspelling) never matched a Katsina order, and Uyo is Akwa Ibom's capital.
+  "kastina": "Katsina",
+  "uyo": "Akwa Ibom",
+  "akure": "Ondo",
+  "osogbo": "Osun",
+  "oshogbo": "Osun",
+  "benin city": "Edo",
+  "edo benin": "Edo",
+  "edo benin city": "Edo",
+  "port harcourt": "Rivers"
 };
 
 // State labels arrive spelled many ways. Canonicalize so the SAME state always

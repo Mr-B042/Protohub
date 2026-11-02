@@ -14,6 +14,14 @@ test("order states are saved one way", () => {
   assert.equal(tidyOrderState("Cross river"), "Cross River");
   assert.equal(tidyOrderState("Ibadan"), "Oyo");
   assert.equal(tidyOrderState("Akwa Ibom"), "Akwa Ibom");
+  // Hub labels seen on real hubs (2 Nov 2026 audit)
+  assert.equal(tidyOrderState("Kastina"), "Katsina");
+  assert.equal(tidyOrderState("Uyo"), "Akwa Ibom");
+  assert.equal(tidyOrderState("Asaba Delta"), "Delta");
+  assert.equal(tidyOrderState("Edo, Benin"), "Edo");
+  assert.equal(tidyOrderState("Enugu Nsukka"), "Enugu");
+  assert.equal(tidyOrderState("Kwara State"), "Kwara");
+  assert.equal(tidyOrderState("Edo Benin city"), "Edo");
 });
 
 test("what it cannot place is kept as typed", () => {
