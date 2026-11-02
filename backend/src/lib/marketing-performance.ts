@@ -812,6 +812,34 @@ async function attachRepBonuses(orgId: string, periods: PeriodData[], ruleWeeks:
   }
 }
 
+/**
+ * Rep bonus per delivered order placed in [from, to], from both bonus systems:
+ * the same figures this page takes out of net profit (attachRepBonuses). Used
+ * by Product Trend › Monthly Performance › Sales reps (Bright, 2 Nov 2026).
+ * `rulesUnavailable` = the newer rules could not be read (per-product bonus
+ * still counted).
+ */
+export async function repBonusesForPlacedRange(orgId: string, branchId: string | null, from: string, to: string) {
+  const weekFrom = sundayWeekStartForDateKey(addDays(from, -1));
+  const weekTo = addDays(sundayWeekStartForDateKey(addDays(to, 1)), 7);
+  let weekOrders = supabase
+    .from("orders")
+    .select(BONUS_ORDER_COLUMNS).neq("launch_stage", "silent")
+    .eq("org_id", orgId)
+    .gte("created_at", `${weekFrom}T00:00:00.000Z`)
+    .lt("created_at", `${weekTo}T00:00:00.000Z`)
+    .limit(20000);
+  if (branchId) weekOrders = weekOrders.eq("branch_id", branchId);
+  const [w, ruleWeeks] = await Promise.all([weekOrders, ruleWeeksFor(orgId, [{ from, to }]).catch(() => null)]);
+  if (w.error) throw new Error(w.error.message);
+  const rows = (w.data ?? []) as unknown as PayrollOrder[];
+  const start = Date.parse(lagosStart(from)), end = Date.parse(lagosEnd(to));
+  const placed = rows.filter((order: any) => { const at = Date.parse(String(order.created_at ?? "")); return at >= start && at <= end; });
+  const period: PeriodData = { orders: placed, companySpend: [], buyerSpend: [], carts: [], failedDeliveries: [], overhead: [], weekOrders: rows, bonusByOrderId: new Map() };
+  await attachRepBonuses(orgId, [period], ruleWeeks);
+  return { byOrderId: period.bonusByOrderId, rulesUnavailable: ruleWeeks === null };
+}
+
 /** Today's date in Lagos (UTC+1, no daylight saving). */
 export const lagosToday = () => new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 10);
 
