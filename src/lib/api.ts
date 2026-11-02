@@ -5085,10 +5085,10 @@ const normalizeWaybill = (row: any): StockAllocationWaybill => ({
 export type MonthlyVerdict = "scale" | "keep" | "fix" | "stop" | "new";
 export type ProductMonthStat = {
   month: string; orders: number; delivered: number; rate: number | null; revenue: number; productCost: number; deliveryFees: number;
-  adSpend: number; profit: number; costPerOrder: number | null; breakEven: number | null; breakEvenSource: "worked_out" | "set_by_you" | null;
+  adSpend: number; profit: number; otherCosts: number; net: number; costPerOrder: number | null; breakEven: number | null; breakEvenSource: "worked_out" | "set_by_you" | null;
   verdict: MonthlyVerdict | null; reason: string | null;
 };
-export type ProductMonthly = { month: string; months: string[]; thisMonth: string; today: string; products: Array<{ id: string; name: string; active: boolean; months: ProductMonthStat[] }>; unassignedAdSpend: number[] };
+export type ProductMonthly = { month: string; months: string[]; thisMonth: string; today: string; products: Array<{ id: string; name: string; active: boolean; months: ProductMonthStat[] }>; unassignedAdSpend: number[]; net: number[] };
 
 /** Product Trend › Monthly Performance (Owner / Admin). */
 export const productPerformanceApi = {
