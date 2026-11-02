@@ -172,7 +172,7 @@ import {
   setApiPreviewReadOnly,
   PreviewReadOnlyError, type BranchWorkspace
 } from "./lib/api";
-import { NIGERIA_STATES } from "./lib/nigeria";
+import { NIGERIA_STATES, canonicalOrderState, UNPLACED_ORDER_STATE } from "./lib/nigeria";
 import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid,CartRecoverySummary, CartGridRow, CartLogPenaltiesView, CartLogRangePreset, RecoveryCalendarView, RecoveryFollowUpPairs, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, TargetPeriod, TargetProgressView, TargetSuggestion, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, CostChangeImpact, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView, UpsellPerformanceLog } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
@@ -2442,6 +2442,23 @@ const moneyValues = {
 const orderStatuses: OrderStatus[] = ["All Orders", "New", "Confirmed", "In Process", "Dispatched", "Delivered", "Cancelled", "Postponed", "Failed"];
 const orderScheduleFilters: OrderScheduleFilter[] = ["All schedule marks", "Scheduled Delivered", "Scheduled Late", "Scheduled Pending", "⚡ Outage recovered"];
 const orderSources: OrderSource[] = ["All Sources", "Facebook", "Instagram", "Messenger", "Audience Network", "Threads", "TikTok", "WhatsApp", "Website", "Direct"];
+// Order state picker (Bright, 2 Nov 2026): the state is chosen from the 36 +
+// FCT list, never typed, so one place is stored one way. An old order whose
+// state was typed shows its official state when it can be placed, otherwise
+// the typed text as a choice to replace.
+function OrderStateSelect({ value, city, onChange, className }: { value: string; city?: string; onChange: (value: string) => void; className?: string }) {
+  const raw = value.trim();
+  const shown = raw ? canonicalOrderState(raw, city) ?? raw : "";
+  const official = (NIGERIA_STATES as readonly string[]).includes(shown);
+  return (
+    <select value={shown} onChange={(event) => onChange(event.target.value)} className={className} aria-label="State">
+      {!shown && <option value="">Choose a state…</option>}
+      {shown && !official && <option value={shown}>{shown} (as typed - pick a state)</option>}
+      {NIGERIA_STATES.map((state) => <option key={state} value={state}>{state}</option>)}
+    </select>
+  );
+}
+
 const orderLocations: OrderLocation[] = ["All Locations", "Lagos", "Abuja", "Port Harcourt", "Ibadan"];
 /**
  * ⚠️ "NOT INTERESTED" MUST NAME A REASON. It is the cheapest way out of a cart:
@@ -20527,16 +20544,33 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (orderWorkspacePage === "Closed Orders") return CLOSED_ORDER_STATUSES.has(statusForOrder(order));
     return true;
   };
-  // Location filter options - built from the actual states present in orders, so the
-  // dropdown is complete (not the old hard-coded 4 cities).
+  // Location filter options - one per state present in orders (Bright, 2 Nov
+  // 2026): "FCT", "FCt", "Abuja" and "FCT Abuja" are one entry, a city typed as
+  // the state sits under its state, and anything that cannot be placed is
+  // grouped under "Other / check state" instead of a row per spelling.
   const orderLocationOptions = useMemo(() => {
     const states = new Set<string>();
+    let unplaced = false;
     for (const o of trackedOrders) {
-      const s = (o.state ?? "").trim();
-      if (s) states.add(s);
+      if (!(o.state ?? "").trim()) continue;
+      const state = canonicalOrderState(o.state, o.city);
+      if (state) states.add(state); else unplaced = true;
     }
-    return ["All Locations", ...Array.from(states).sort((a, b) => a.localeCompare(b))];
+    return ["All Locations", ...Array.from(states).sort((a, b) => a.localeCompare(b)), ...(unplaced ? [UNPLACED_ORDER_STATE] : [])];
   }, [trackedOrders]);
+  // A location saved before states were grouped ("FCT") still picks its state.
+  const orderLocationChoice = orderLocation === "All Locations" || orderLocation === UNPLACED_ORDER_STATE
+    ? orderLocation
+    : canonicalOrderState(orderLocation) ?? orderLocation;
+  const orderInLocation = (order: TrackedOrder) => {
+    if (orderLocationChoice === "All Locations") return true;
+    const raw = (order.state ?? "").trim();
+    const state = raw ? canonicalOrderState(raw, order.city) : null;
+    if (orderLocationChoice === UNPLACED_ORDER_STATE) return Boolean(raw) && !state;
+    if (state) return state === orderLocationChoice;
+    const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
+    return raw === orderLocationChoice || location === orderLocationChoice; // legacy/no-state rows
+  };
   const filteredOrderRows = periodOrders.filter((order) => {
     const status = order.status ?? "New";
     const source = order.source ?? orderSourceFromUtm(order.utmSource);
@@ -20589,9 +20623,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             ? scheduleMarker?.label === "Scheduled · Late"
             : scheduleOpenStatuses.includes(status as (typeof scheduleOpenStatuses)[number]) && Boolean(scheduleMarker);
     const matchesSource = orderSource === "All Sources" || source === orderSource;
-    const matchesLocation = orderLocation === "All Locations"
-      || (order.state ?? "").trim() === orderLocation
-      || location === orderLocation; // fall back to composite for legacy/no-state rows
+    const matchesLocation = orderInLocation(order);
     const matchesProduct = matchesProductFilter(order.productId, order.productName, orderProductIds);
     const matchesAssigner = matchesOrderAssignmentScope(order);
     const matchesWorkspace = matchesOrderWorkspacePage(order);
@@ -20678,11 +20710,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Scope filters (location + source) narrow WHICH orders count - like the product
   // filter - so the summary cards reflect them too. Browse filters (status, schedule,
   // search) stay list-only since e.g. filtering status=Delivered would force a 100% rate.
-  const orderMatchesLocationFilter = (order: TrackedOrder) => {
-    if (orderLocation === "All Locations") return true;
-    const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
-    return (order.state ?? "").trim() === orderLocation || location === orderLocation;
-  };
+  const orderMatchesLocationFilter = orderInLocation;
   const orderMatchesSourceFilter = (order: TrackedOrder) => {
     if (orderSource === "All Sources") return true;
     return (order.source ?? orderSourceFromUtm(order.utmSource)) === orderSource;
@@ -78952,7 +78980,7 @@ ${waybillLineItems(w).length > 1
                   <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order source" value={orderSource} onChange={(e) => setOrderSource(e.target.value as OrderSource)}>
                     {orderSources.map((s) => <option key={s}>{s}</option>)}
                   </select>
-                  <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order location" value={orderLocation} onChange={(e) => setOrderLocation(e.target.value as OrderLocation)}>
+                  <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order location" value={orderLocationChoice} onChange={(e) => setOrderLocation(e.target.value as OrderLocation)}>
                     {orderLocationOptions.map((l) => <option key={l}>{l}</option>)}
                   </select>
                   {canFilterOrdersByAssigner && (
@@ -102897,12 +102925,8 @@ ${waybillLineItems(w).length > 1
                         </label>
                         <label className="flex flex-col gap-1.5">
                           <span className="text-xs font-semibold text-gray-700">State</span>
-                          <DraftTextarea as="input"
-                            value={createOrderState}
-                            onCommit={(value) => setCreateOrderState(value)}
-                            className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
-                            placeholder="e.g. Lagos"
-                          />
+                          <OrderStateSelect value={createOrderState} city={createOrderCity} onChange={setCreateOrderState}
+                            className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]" />
                         </label>
                       </div>
                       <label className="flex flex-col gap-1.5">
@@ -105259,7 +105283,7 @@ ${waybillLineItems(w).length > 1
 	                  <label><span>WhatsApp Number</span><DraftTextarea as="input" value={createOrderWhatsapp} onCommit={(value) => setCreateOrderWhatsapp(value)} inputMode="tel" /></label>
 	                  <label><span>Email (Optional)</span><DraftTextarea as="input" value={createOrderEmail} onCommit={(value) => setCreateOrderEmail(value)} type="email" placeholder="customer@example.com" /></label>
 	                  <label><span>City</span><DraftTextarea as="input" value={createOrderCity} onCommit={(value) => setCreateOrderCity(value)} /></label>
-	                  <label><span>State</span><DraftTextarea as="input" value={createOrderState} onCommit={(value) => setCreateOrderState(value)} /></label>
+	                  <label><span>State</span><OrderStateSelect value={createOrderState} city={createOrderCity} onChange={setCreateOrderState} /></label>
 	                  <label>
 	                    <span>Quantity{selectedOrder.originalQuantity != null && selectedOrder.originalQuantity !== (Number(createOrderQuantity) || selectedOrder.originalQuantity) && <span className="text-gray-400 font-normal text-[11px] ml-1">(original: {selectedOrder.originalQuantity})</span>}</span>
 	                    <DraftTextarea as="input" value={createOrderQuantity} onCommit={(value) => { setCreateOrderQuantity(value); const prod = products.find((p) => p.id === selectedOrder.productId); const pri = prod ? primaryPricing(prod) : null; const qty = Math.max(1, Number(value) || 1); if (pri && pri.sellingPrice > 0) setCreateOrderAmount(String(qty * pri.sellingPrice)); }} inputMode="numeric" />
@@ -105305,7 +105329,7 @@ ${waybillLineItems(w).length > 1
 	                  <label><span>WhatsApp</span><DraftTextarea as="input" value={createOrderWhatsapp} onCommit={(value) => setCreateOrderWhatsapp(value)} inputMode="tel" /></label>
 	                  <label><span>Source</span><select value={createOrderSource} onChange={(event) => setCreateOrderSource(event.target.value as Exclude<OrderSource, "All Sources">)}>{orderSources.filter((source) => source !== "All Sources").map((source) => <option key={source}>{source}</option>)}</select></label>
 	                  <label><span>City</span><DraftTextarea as="input" value={createOrderCity} onCommit={(value) => setCreateOrderCity(value)} /></label>
-	                  <label><span>State</span><DraftTextarea as="input" value={createOrderState} onCommit={(value) => setCreateOrderState(value)} /></label>
+	                  <label><span>State</span><OrderStateSelect value={createOrderState} city={createOrderCity} onChange={setCreateOrderState} /></label>
 	                </div>
 	                <label><span>Delivery Address</span><DraftTextarea value={createOrderAddress} onCommit={(value) => setCreateOrderAddress(value)} /></label>
 	                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

@@ -69,7 +69,7 @@ const PublicOrderSchema = z.object({
   email:        z.string().email().max(254).optional().or(z.literal("")),
   address:      z.string().max(500).optional(),
   city:         z.string().max(80).optional(),
-  state:        z.string().max(80).optional(),
+  state:        z.string().max(80).optional().transform(tidyOrderState),
   packageId:    z.string().uuid(),
   packageSet:   z.string().trim().max(80).optional(),
   crossSellLines:  z.array(CrossSellLineSchema).max(20).optional(),
@@ -233,6 +233,7 @@ const PublicUpsellAcceptSchema = z.object({
 
 import { ORDER_SOURCES as ALLOWED_SOURCES, resolveOrderSource } from "../lib/order-source.js";
 import { refreshPendingDeliveredLines } from "../lib/delivered-stock-refresh.js";
+import { tidyOrderState } from "../lib/order-state.js";
 const PUBLIC_UPSELL_TTL_MS = 4 * 60 * 60 * 1000;
 
 const normalizeStateName = (value: string | undefined) => {

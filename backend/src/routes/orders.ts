@@ -47,6 +47,7 @@ import {
 } from "../lib/order-additional-lines.js";
 import { refreshPendingDeliveredLines } from "../lib/delivered-stock-refresh.js";
 import { silentFilterFor } from "../lib/product-launch.js";
+import { tidyOrderState } from "../lib/order-state.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -736,7 +737,7 @@ const OrderSchema = z.object({
   email:          z.string().email().optional().or(z.literal("")),
   address:        z.string().optional(),
   city:           z.string().optional(),
-  state:          z.string().optional(),
+  state:          z.string().optional().transform(tidyOrderState),
   productId:      z.string().uuid().optional(),
   packageId:      z.string().uuid().optional(),
   productName:    z.string().min(1),
@@ -2665,7 +2666,7 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Reco
   const updates: Record<string, unknown> = {};
   for (const [dbKey, inputKeys] of Object.entries(allowed)) {
     for (const inKey of inputKeys) {
-      if (req.body[inKey] !== undefined) { updates[dbKey] = req.body[inKey]; break; }
+      if (req.body[inKey] !== undefined) { updates[dbKey] = dbKey === "state" ? tidyOrderState(req.body[inKey]) : req.body[inKey]; break; }
     }
   }
   const touchesFullUpfront = hasOwn(updates, "full_upfront_paid")
