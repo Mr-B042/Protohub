@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { judgeMonth, monthBounds, monthsEnding, productMonths, type MonthlyOrder } from "./product-monthly.js";
+import { judgeMonth, monthBounds, monthNet, monthsEnding, productMonths, type MonthlyExpense, type MonthlyOrder } from "./product-monthly.js";
 
 const orders = (productId: string, month: string, placed: number, delivered: number, amount = 10_000, productCost = 4_000, deliveryFee = 1_000): MonthlyOrder[] =>
   Array.from({ length: placed }, (_, index) => ({ productId, month, status: index < delivered ? "Delivered" : "Failed", amount, productCost, deliveryFee }));
@@ -36,7 +36,8 @@ test("verdicts follow Bright's rules", () => {
 
 test("a product's months: profit after ads, cost per order, break-even like the campaign check", () => {
   const all = [...orders("a", "2026-09", 20, 10), ...orders("a", "2026-10", 20, 14), ...orders("b", "2026-10", 50, 50)];
-  const months = productMonths({ productId: "a", months: ["2026-08", "2026-09", "2026-10"], orders: all, adSpend: [{ productId: "a", month: "2026-10", amount: 40_000 }, { productId: "b", month: "2026-10", amount: 999 }], ownBreakEven: null });
+  const ads: MonthlyExpense[] = [{ productId: "a", month: "2026-10", amount: 40_000, category: "Ad Spend" }, { productId: "b", month: "2026-10", amount: 999, category: "Ad Spend" }];
+  const months = productMonths({ productId: "a", months: ["2026-08", "2026-09", "2026-10"], orders: all, expenses: ads, ownBreakEven: null });
   assert.equal(months[0].verdict, null);
   const oct = months[2];
   assert.equal(oct.orders, 20);
@@ -52,7 +53,25 @@ test("a product's months: profit after ads, cost per order, break-even like the 
   assert.equal(oct.verdict, "scale");
   // Sept: 50% delivered.
   assert.equal(months[1].verdict, "fix");
-  const own = productMonths({ productId: "a", months: ["2026-10"], orders: all, adSpend: [], ownBreakEven: 2_500 });
+  const own = productMonths({ productId: "a", months: ["2026-10"], orders: all, expenses: [], ownBreakEven: 2_500 });
   assert.equal(own[0].breakEven, 2_500);
   assert.equal(own[0].breakEvenSource, "set_by_you");
+});
+
+test("net profit: own costs stay, untagged costs shared by delivered revenue, Delivery left out (Finance's rule)", () => {
+  // Oct: a delivers 14 × 10,000 = 140,000; b delivers 50 × 10,000 = 500,000 (a = 21.875%).
+  const all = [...orders("a", "2026-10", 20, 14), ...orders("b", "2026-10", 50, 50)];
+  const expenses: MonthlyExpense[] = [
+    { productId: "a", month: "2026-10", amount: 40_000, category: "Ad Spend" },
+    { productId: "a", month: "2026-10", amount: 6_000, category: "Waybill" },
+    { productId: null, month: "2026-10", amount: 64_000, category: "Salary" },
+    { productId: null, month: "2026-10", amount: 99_999, category: "Delivery" },
+    { productId: null, month: "2026-09", amount: 50_000, category: "Salary" }
+  ];
+  const [oct] = productMonths({ productId: "a", months: ["2026-10"], orders: all, expenses, ownBreakEven: null });
+  assert.equal(oct.profit, 30_000);
+  assert.equal(oct.otherCosts, 6_000 + 14_000);
+  assert.equal(oct.net, 10_000);
+  // The whole month: every product's margin − every running cost but Delivery.
+  assert.equal(monthNet("2026-10", all, expenses), (140_000 - 70_000) + (500_000 - 250_000) - 40_000 - 6_000 - 64_000);
 });

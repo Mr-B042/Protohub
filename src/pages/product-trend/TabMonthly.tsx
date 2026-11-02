@@ -93,6 +93,7 @@ export function MonthlyPerformanceTab({ money, imageOf, onShowStates }: { money:
     { label: "Delivered revenue", value: money(now.revenue), delta: prevTot ? growth(now.revenue, prevTot.revenue) : null, invert: false, points: false },
     { label: "Ad spend", value: money(now.adSpend), delta: prevTot ? growth(now.adSpend, prevTot.adSpend) : null, invert: true, points: false },
     { label: "Profit after ads", value: signed(now.profit), delta: prevTot && prevTot.profit > 0 ? growth(now.profit, prevTot.profit) : null, invert: false, points: false },
+    { label: "Net profit", value: signed(data.net[index] ?? 0), delta: index > 0 && (data.net[index - 1] ?? 0) > 0 ? growth(data.net[index] ?? 0, data.net[index - 1]) : null, invert: false, points: false },
     { label: "Delivery rate", value: rate1(now.rate), delta: prevTot && now.rate !== null && prevTot.rate !== null ? now.rate - prevTot.rate : null, invert: false, points: true }
   ];
 
@@ -117,11 +118,11 @@ export function MonthlyPerformanceTab({ money, imageOf, onShowStates }: { money:
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-100">Could not load that month: {error}</div>}
 
       {/* Month totals */}
-      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
         {tiles.map((tile) => (
           <div key={tile.label} className="rounded-2xl border border-gray-200 bg-white px-4 py-3.5 shadow-sm dark:border-slate-800">
             <div className="text-[13px] font-semibold text-gray-500 dark:text-slate-400">{tile.label}</div>
-            <div className={`mt-1 text-[24px] font-extrabold tracking-tight tabular-nums ${tile.label === "Profit after ads" && now.profit < 0 ? "text-rose-600" : "text-gray-900 dark:text-slate-50"}`}>{tile.value}</div>
+            <div className={`mt-1 text-[24px] font-extrabold tracking-tight tabular-nums ${(tile.label === "Profit after ads" && now.profit < 0) || (tile.label === "Net profit" && (data.net[index] ?? 0) < 0) ? "text-rose-600" : "text-gray-900 dark:text-slate-50"}`}>{tile.value}</div>
             <div className="mt-1 flex items-center gap-1 text-[12px] text-gray-500 dark:text-slate-400">
               <Delta value={tile.delta} invert={tile.invert} points={tile.points} /><span>vs {prevName.split(" ")[0]}</span>
             </div>
@@ -148,9 +149,9 @@ export function MonthlyPerformanceTab({ money, imageOf, onShowStates }: { money:
           <span className="text-[13px] text-gray-500 dark:text-slate-400">Click a product to see its month-by-month record.</span>
         </div>
         <div className="overflow-x-auto">
-          <div className="min-w-[1160px]">
-            <div className="grid grid-cols-[minmax(170px,1.4fr)_140px_56px_104px_115px_100px_145px_120px_96px] items-center gap-2.5 bg-gray-50 px-4 py-2.5 text-[11px] font-bold uppercase tracking-wide text-gray-500 dark:bg-slate-800/60 dark:text-slate-400">
-              <span>Product</span><span>Verdict</span><span>Orders</span><span>Delivery rate</span><span>Delivered revenue</span><span>Ad spend</span><span>Ad cost per order</span><span>Profit after ads</span><span>Last 6 months</span>
+          <div className="min-w-[1290px]">
+            <div className="grid grid-cols-[minmax(170px,1.4fr)_140px_56px_104px_115px_100px_145px_120px_120px_96px] items-center gap-2.5 bg-gray-50 px-4 py-2.5 text-[11px] font-bold uppercase tracking-wide text-gray-500 dark:bg-slate-800/60 dark:text-slate-400">
+              <span>Product</span><span>Verdict</span><span>Orders</span><span>Delivery rate</span><span>Delivered revenue</span><span>Ad spend</span><span>Ad cost per order</span><span>Profit after ads</span><span>Net profit</span><span>Last 6 months</span>
             </div>
             {shown.length === 0 && <div className="border-t border-gray-200 px-4 py-6 text-[13px] text-gray-500 dark:border-slate-800">{rows.length === 0 ? "No product sold or spent on ads this month." : "No product has this verdict this month."}</div>}
             {shown.map((product) => {
@@ -160,7 +161,7 @@ export function MonthlyPerformanceTab({ money, imageOf, onShowStates }: { money:
               const rate = stat.rate ?? 0;
               return (
                 <div key={product.id} role="button" tabIndex={0} onClick={() => setSelected(product.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelected(product.id); } }}
-                  className={`relative grid cursor-pointer grid-cols-[minmax(170px,1.4fr)_140px_56px_104px_115px_100px_145px_120px_96px] items-center gap-2.5 border-t border-gray-200 px-4 py-3 dark:border-slate-800 ${isSel ? "bg-blue-50/70 dark:bg-blue-500/10" : "hover:bg-gray-50 dark:hover:bg-slate-800/50"}`}>
+                  className={`relative grid cursor-pointer grid-cols-[minmax(170px,1.4fr)_140px_56px_104px_115px_100px_145px_120px_120px_96px] items-center gap-2.5 border-t border-gray-200 px-4 py-3 dark:border-slate-800 ${isSel ? "bg-blue-50/70 dark:bg-blue-500/10" : "hover:bg-gray-50 dark:hover:bg-slate-800/50"}`}>
                   <span className={`absolute inset-y-0 left-0 w-1 ${verdict.stripe}`} />
                   <span className="flex min-w-0 items-center gap-3">
                     <ProductThumb src={imageOf(product.id)} name={product.name} />
@@ -189,6 +190,10 @@ export function MonthlyPerformanceTab({ money, imageOf, onShowStates }: { money:
                     <b className={`text-[14px] ${stat.profit < 0 ? "text-rose-600" : "text-emerald-700 dark:text-emerald-400"}`}>{signed(stat.profit)}</b>
                     {stat.delivered > 0 && <small className="block text-[11.5px] text-gray-500 dark:text-slate-400">{signed(stat.profit / stat.delivered)} per delivered</small>}
                   </span>
+                  <span className="tabular-nums">
+                    <b className={`text-[14px] ${stat.net < 0 ? "text-rose-600" : "text-gray-900 dark:text-slate-100"}`}>{signed(stat.net)}</b>
+                    <small className="block text-[11.5px] text-gray-500 dark:text-slate-400">after {money(stat.otherCosts)} other costs</small>
+                  </span>
                   <span><ProfitSpark values={product.months.map((m) => m.profit)} /></span>
                 </div>
               );
@@ -199,39 +204,13 @@ export function MonthlyPerformanceTab({ money, imageOf, onShowStates }: { money:
 
       {/* Selected product */}
       {current && (
-        <section className="grid grid-cols-1 gap-3.5 2xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+        <section className="grid grid-cols-1 gap-3.5 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
           <div className="space-y-3.5 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-800">
             <div>
               <h3 className="m-0 text-[16px] font-extrabold">{current.name} · month by month</h3>
               <p className="m-0 mt-0.5 text-[13px] text-gray-500 dark:text-slate-400">Each month's verdict on its own. Two losing months in a row turn the verdict to Stop.</p>
             </div>
             <MonthChart product={current} />
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-[12.5px]">
-                <thead>
-                  <tr className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-slate-400">
-                    {["Month", "Orders", "Delivered", "Rate", "Revenue", "Ad spend", "Profit after ads", "Verdict"].map((label, i) => <th key={label} className={`whitespace-nowrap border-b border-gray-200 px-2 py-2 font-bold dark:border-slate-800 ${i === 0 ? "text-left" : "text-right"}`}>{label}</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...current.months].reverse().map((stat) => {
-                    const isCur = stat.month === data.month;
-                    const cell = `whitespace-nowrap border-b border-gray-200 px-2 py-2.5 text-right tabular-nums dark:border-slate-800 ${isCur ? "bg-blue-50/70 font-bold dark:bg-blue-500/10" : ""}`;
-                    return stat.verdict === null ? (
-                      <tr key={stat.month}><td className={`${cell} !text-left`}>{longMonth(stat.month)}</td><td colSpan={7} className={`${cell} !text-left text-gray-400`}>No orders or ad spend</td></tr>
-                    ) : (
-                      <tr key={stat.month}>
-                        <td className={`${cell} !text-left`}>{longMonth(stat.month)}{isCur && isOpen ? " (so far)" : ""}</td>
-                        <td className={cell}>{nf(stat.orders)}</td><td className={cell}>{nf(stat.delivered)}</td><td className={cell}>{rate1(stat.rate)}</td>
-                        <td className={cell}>{money(stat.revenue)}</td><td className={cell}>{money(stat.adSpend)}</td>
-                        <td className={`${cell} ${stat.profit < 0 ? "text-rose-600" : ""}`}>{signed(stat.profit)}</td>
-                        <td className={cell}><span className={`inline-flex rounded-full px-2.5 py-0.5 text-[12px] font-extrabold ${VERDICTS[stat.verdict].pill}`}>{VERDICTS[stat.verdict].label}</span></td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
           </div>
           <div className="space-y-3 self-start rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-800">
             <div>
@@ -255,6 +234,39 @@ export function MonthlyPerformanceTab({ money, imageOf, onShowStates }: { money:
         </section>
       )}
 
+      {current && (
+        <section className="space-y-2 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-800">
+          <h3 className="m-0 text-[15px] font-extrabold">{current.name} · each month's figures</h3>
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse text-[12.5px]">
+          <thead>
+            <tr className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-slate-400">
+              {["Month", "Orders", "Delivered", "Rate", "Revenue", "Ad spend", "Profit after ads", "Net profit", "Verdict"].map((label, i) => <th key={label} className={`whitespace-nowrap border-b border-gray-200 px-2 py-2 font-bold dark:border-slate-800 ${i === 0 ? "text-left" : "text-right"}`}>{label}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {[...current.months].reverse().map((stat) => {
+              const isCur = stat.month === data.month;
+              const cell = `whitespace-nowrap border-b border-gray-200 px-2 py-2.5 text-right tabular-nums dark:border-slate-800 ${isCur ? "bg-blue-50/70 font-bold dark:bg-blue-500/10" : ""}`;
+              return stat.verdict === null ? (
+                <tr key={stat.month}><td className={`${cell} !text-left`}>{longMonth(stat.month)}</td><td colSpan={8} className={`${cell} !text-left text-gray-400`}>No orders or ad spend</td></tr>
+              ) : (
+                <tr key={stat.month}>
+            <td className={`${cell} !text-left`}>{longMonth(stat.month)}{isCur && isOpen ? " (so far)" : ""}</td>
+            <td className={cell}>{nf(stat.orders)}</td><td className={cell}>{nf(stat.delivered)}</td><td className={cell}>{rate1(stat.rate)}</td>
+            <td className={cell}>{money(stat.revenue)}</td><td className={cell}>{money(stat.adSpend)}</td>
+            <td className={`${cell} ${stat.profit < 0 ? "text-rose-600" : ""}`}>{signed(stat.profit)}</td>
+            <td className={`${cell} ${stat.net < 0 ? "text-rose-600" : ""}`}>{signed(stat.net)}</td>
+            <td className={cell}><span className={`inline-flex rounded-full px-2.5 py-0.5 text-[12px] font-extrabold ${VERDICTS[stat.verdict].pill}`}>{VERDICTS[stat.verdict].label}</span></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+        </section>
+      )}
+
       {/* Rules */}
       <section className="space-y-3 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-800">
         <h3 className="m-0 text-[15px] font-extrabold">How the verdict is decided</h3>
@@ -267,7 +279,7 @@ export function MonthlyPerformanceTab({ money, imageOf, onShowStates }: { money:
           ))}
         </div>
         <p className="m-0 text-[12.5px] text-gray-500 dark:text-slate-400">
-          Profit after ads = delivered revenue − product cost − delivery fees − ad spend, the same figure as Ad Spend in the Tracking Hub. Ad spend comes from Daily Ad Spend. Delivery rate = delivered ÷ orders placed in the month. Break-even is the campaign check's: what a delivered order leaves after product cost and delivery fee, times the share delivered (or the figure you set in Ad Spend). Orders still on the way can still be delivered, so a month that has not ended is marked "so far".
+          Profit after ads = delivered revenue − product cost − delivery fees − ad spend, the same figure as Ad Spend in the Tracking Hub. Ad spend comes from Daily Ad Spend. Net profit = profit after ads − every other running cost of the month (salaries, waybill, airtime…, not Delivery), the same as Finance: costs tagged to a product stay with it, the rest is shared by each product's share of delivered revenue. The verdict uses profit after ads. Delivery rate = delivered ÷ orders placed in the month. Break-even is the campaign check's: what a delivered order leaves after product cost and delivery fee, times the share delivered (or the figure you set in Ad Spend). Orders still on the way can still be delivered, so a month that has not ended is marked "so far".
         </p>
       </section>
     </div>
