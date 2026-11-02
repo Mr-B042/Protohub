@@ -75,7 +75,7 @@ export function MonthlyPerformanceTab({ money, imageOf, onShowStates }: { money:
     const orders = all.reduce((t, p) => t + p.months[i].orders, 0), delivered = all.reduce((t, p) => t + p.months[i].delivered, 0);
     return {
       revenue: all.reduce((t, p) => t + p.months[i].revenue, 0), adSpend: all.reduce((t, p) => t + p.months[i].adSpend, 0) + (unassigned[i] ?? 0),
-      profit: all.reduce((t, p) => t + p.months[i].profit, 0) - (unassigned[i] ?? 0), rate: orders ? (delivered / orders) * 100 : null
+      profit: all.reduce((t, p) => t + p.months[i].profit, 0) - (unassigned[i] ?? 0), rate: orders ? (delivered / orders) * 100 : null, orders, delivered
     };
   })();
   const now = (() => {
@@ -83,7 +83,7 @@ export function MonthlyPerformanceTab({ money, imageOf, onShowStates }: { money:
     const orders = all.reduce((t, p) => t + p.months[index].orders, 0), delivered = all.reduce((t, p) => t + p.months[index].delivered, 0);
     return {
       revenue: all.reduce((t, p) => t + p.months[index].revenue, 0), adSpend: all.reduce((t, p) => t + p.months[index].adSpend, 0) + (unassigned[index] ?? 0),
-      profit: all.reduce((t, p) => t + p.months[index].profit, 0) - (unassigned[index] ?? 0), rate: orders ? (delivered / orders) * 100 : null
+      profit: all.reduce((t, p) => t + p.months[index].profit, 0) - (unassigned[index] ?? 0), rate: orders ? (delivered / orders) * 100 : null, orders, delivered
     };
   })();
   const prevName = longMonth(shiftMonth(data.month, -1));
@@ -91,6 +91,7 @@ export function MonthlyPerformanceTab({ money, imageOf, onShowStates }: { money:
 
   const tiles = [
     { label: "Delivered revenue", value: money(now.revenue), delta: prevTot ? growth(now.revenue, prevTot.revenue) : null, invert: false, points: false },
+    { label: "Delivered orders", value: `${nf(now.delivered)} of ${nf(now.orders)}`, delta: prevTot ? growth(now.delivered, prevTot.delivered) : null, invert: false, points: false },
     { label: "Ad spend", value: money(now.adSpend), delta: prevTot ? growth(now.adSpend, prevTot.adSpend) : null, invert: true, points: false },
     { label: "Profit after ads", value: signed(now.profit), delta: prevTot && prevTot.profit > 0 ? growth(now.profit, prevTot.profit) : null, invert: false, points: false },
     { label: "Net profit", value: signed(data.net[index] ?? 0), delta: index > 0 && (data.net[index - 1] ?? 0) > 0 ? growth(data.net[index] ?? 0, data.net[index - 1]) : null, invert: false, points: false },
@@ -118,7 +119,7 @@ export function MonthlyPerformanceTab({ money, imageOf, onShowStates }: { money:
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-100">Could not load that month: {error}</div>}
 
       {/* Month totals */}
-      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
+      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
         {tiles.map((tile) => (
           <div key={tile.label} className="rounded-2xl border border-gray-200 bg-white px-4 py-3.5 shadow-sm dark:border-slate-800">
             <div className="text-[13px] font-semibold text-gray-500 dark:text-slate-400">{tile.label}</div>
@@ -149,9 +150,9 @@ export function MonthlyPerformanceTab({ money, imageOf, onShowStates }: { money:
           <span className="text-[13px] text-gray-500 dark:text-slate-400">Click a product to see its month-by-month record.</span>
         </div>
         <div className="overflow-x-auto">
-          <div className="min-w-[1290px]">
-            <div className="grid grid-cols-[minmax(170px,1.4fr)_140px_56px_104px_115px_100px_145px_120px_120px_96px] items-center gap-2.5 bg-gray-50 px-4 py-2.5 text-[11px] font-bold uppercase tracking-wide text-gray-500 dark:bg-slate-800/60 dark:text-slate-400">
-              <span>Product</span><span>Verdict</span><span>Orders</span><span>Delivery rate</span><span>Delivered revenue</span><span>Ad spend</span><span>Ad cost per order</span><span>Profit after ads</span><span>Net profit</span><span>Last 6 months</span>
+          <div className="min-w-[1370px]">
+            <div className="grid grid-cols-[minmax(170px,1.4fr)_140px_60px_74px_104px_115px_100px_145px_120px_120px_96px] items-center gap-2.5 bg-gray-50 px-4 py-2.5 text-[11px] font-bold uppercase tracking-wide text-gray-500 dark:bg-slate-800/60 dark:text-slate-400">
+              <span>Product</span><span>Verdict</span><span>Orders</span><span>Delivered</span><span>Delivery rate</span><span>Delivered revenue</span><span>Ad spend</span><span>Ad cost per order</span><span>Profit after ads</span><span>Net profit</span><span>Last 6 months</span>
             </div>
             {shown.length === 0 && <div className="border-t border-gray-200 px-4 py-6 text-[13px] text-gray-500 dark:border-slate-800">{rows.length === 0 ? "No product sold or spent on ads this month." : "No product has this verdict this month."}</div>}
             {shown.map((product) => {
@@ -161,7 +162,7 @@ export function MonthlyPerformanceTab({ money, imageOf, onShowStates }: { money:
               const rate = stat.rate ?? 0;
               return (
                 <div key={product.id} role="button" tabIndex={0} onClick={() => setSelected(product.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelected(product.id); } }}
-                  className={`relative grid cursor-pointer grid-cols-[minmax(170px,1.4fr)_140px_56px_104px_115px_100px_145px_120px_120px_96px] items-center gap-2.5 border-t border-gray-200 px-4 py-3 dark:border-slate-800 ${isSel ? "bg-blue-50/70 dark:bg-blue-500/10" : "hover:bg-gray-50 dark:hover:bg-slate-800/50"}`}>
+                  className={`relative grid cursor-pointer grid-cols-[minmax(170px,1.4fr)_140px_60px_74px_104px_115px_100px_145px_120px_120px_96px] items-center gap-2.5 border-t border-gray-200 px-4 py-3 dark:border-slate-800 ${isSel ? "bg-blue-50/70 dark:bg-blue-500/10" : "hover:bg-gray-50 dark:hover:bg-slate-800/50"}`}>
                   <span className={`absolute inset-y-0 left-0 w-1 ${verdict.stripe}`} />
                   <span className="flex min-w-0 items-center gap-3">
                     <ProductThumb src={imageOf(product.id)} name={product.name} />
@@ -172,6 +173,7 @@ export function MonthlyPerformanceTab({ money, imageOf, onShowStates }: { money:
                     <span className="mt-1 block text-[11.5px] leading-snug text-gray-500 dark:text-slate-400">{stat.reason}</span>
                   </span>
                   <span className="text-[14px] font-extrabold tabular-nums">{nf(stat.orders)}</span>
+                  <span className="text-[14px] font-extrabold tabular-nums">{nf(stat.delivered)}</span>
                   <span>
                     <b className="text-[14px] tabular-nums">{rate1(stat.rate)}</b>
                     <span className="relative mt-1.5 block h-1.5 rounded-full bg-gray-200 dark:bg-slate-700">
@@ -182,7 +184,7 @@ export function MonthlyPerformanceTab({ money, imageOf, onShowStates }: { money:
                   <span className="text-[14px] font-extrabold tabular-nums">{money(stat.revenue)}</span>
                   <span className="text-[14px] font-extrabold tabular-nums">{money(stat.adSpend)}</span>
                   <span className="tabular-nums">
-                    {stat.costPerOrder === null ? <><b className="text-[14px]">—</b><small className="block text-[11.5px] text-gray-500 dark:text-slate-400">No ad spend</small></>
+                    {stat.costPerOrder === null ? <><b className="text-[14px]">—</b><small className="block text-[11.5px] text-gray-500 dark:text-slate-400">{stat.adSpend > 0 ? "No orders yet" : "No ad spend"}</small></>
                       : <><b className={`text-[14px] ${stat.breakEven !== null && stat.costPerOrder > stat.breakEven ? "text-rose-600" : ""}`}>{money(stat.costPerOrder)}</b>
                         <small className="block text-[11.5px] text-gray-500 dark:text-slate-400">{stat.breakEven !== null ? `Break-even ${money(stat.breakEven)} · ${Math.round((stat.costPerOrder / stat.breakEven) * 100)}%` : "No break-even yet"}</small></>}
                   </span>
@@ -198,6 +200,25 @@ export function MonthlyPerformanceTab({ money, imageOf, onShowStates }: { money:
                 </div>
               );
             })}
+            {shown.length > 1 && (() => {
+              const pick = (f: (stat: ProductMonthStat) => number) => shown.reduce((t, p) => t + f(p.months[index]), 0);
+              const o = pick((st) => st.orders), d = pick((st) => st.delivered), ads = pick((st) => st.adSpend), profit = pick((st) => st.profit), net = pick((st) => st.net);
+              return (
+                <div className="grid grid-cols-[minmax(170px,1.4fr)_140px_60px_74px_104px_115px_100px_145px_120px_120px_96px] items-center gap-2.5 border-t-2 border-gray-300 bg-gray-50 px-4 py-3 text-[14px] font-extrabold tabular-nums dark:border-slate-600 dark:bg-slate-800/60">
+                  <span>Total{filter !== "all" ? ` (${VERDICTS[filter].label})` : ""} · {shown.length} products</span>
+                  <span />
+                  <span>{nf(o)}</span>
+                  <span>{nf(d)}</span>
+                  <span>{rate1(o ? (d / o) * 100 : null)}</span>
+                  <span>{money(pick((st) => st.revenue))}</span>
+                  <span>{money(ads)}</span>
+                  <span>{o && ads ? money(ads / o) : "—"}</span>
+                  <span className={profit < 0 ? "text-rose-600" : "text-emerald-700 dark:text-emerald-400"}>{signed(profit)}</span>
+                  <span className={net < 0 ? "text-rose-600" : ""}>{signed(net)}</span>
+                  <span />
+                </div>
+              );
+            })()}
           </div>
         </div>
       </section>
