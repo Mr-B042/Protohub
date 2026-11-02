@@ -1,3 +1,4 @@
+import { NIGERIA_STATE_NAMES, tidyOrderState } from "./order-state.js";
 // Smart low-stock alerts at the agent-hub-state level.
 //
 // Instead of a fixed numeric threshold (which is wrong for both ends - too
@@ -73,6 +74,11 @@ function normalizeState(value: string | null | undefined): string {
 }
 
 function titleCaseState(value: string): string {
+  // One spelling per state, the same one orders are saved with, so a hub
+  // labelled "Ibadan" or "Asaba Delta" meets its state's orders (Oyo, Delta)
+  // and "Abuja" orders meet "FCT Abuja" hubs.
+  const tidied = tidyOrderState(normalizeState(value));
+  if (NIGERIA_STATE_NAMES.includes(tidied as (typeof NIGERIA_STATE_NAMES)[number])) return tidied;
   const normalized = normalizeState(value);
   if (!normalized) return "";
   return normalized

@@ -5,6 +5,7 @@ import type { OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryL
 // ⚠️ NOT A PRIVATE ₦ FORMATTER. A local one ignores both the branch's currency
 // and the hide-money toggle - it is how this page printed naira against cedi.
 import { money as moneyAmount } from "../lib/money-privacy";
+import { canonicalOrderState, canonicalStateGroupKey } from "../lib/nigeria";
 import type { PendingDeductionLine } from "./product-availability-model";
 
 export const CLOSED_ORDER_STATES = new Set(["delivered", "cancelled", "failed"]);
@@ -32,6 +33,9 @@ export const coverText = (days: number) => (Number.isFinite(days) ? `${Math.roun
 export const runRateText = (units: number) => `${Math.round(Math.max(0, units) * 10) / 10}`;
 
 export const canonicalStateKey = (value?: string) => {
+  // Hub labels ("Ibadan", "Asaba Delta", "Kastina") count as their state.
+  const grouped = canonicalStateGroupKey(value);
+  if (grouped) return grouped;
   const key = norm(value)
     .replace(/\bnigeria\b/g, "")
     .replace(/\bstate\b/g, "")
@@ -44,6 +48,8 @@ export const canonicalStateKey = (value?: string) => {
 const stateLabel = (value?: string) => {
   const key = canonicalStateKey(value);
   if (key === "fct") return "FCT Abuja";
+  const official = canonicalOrderState(value);
+  if (official) return official;
   const clean = String(value ?? "").replace(/,?\s*Nigeria\s*$/i, "").trim();
   return clean || "Unassigned";
 };

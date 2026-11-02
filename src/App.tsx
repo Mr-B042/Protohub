@@ -2388,6 +2388,7 @@ const stateNameAliasesByToken: Record<string, string> = {
   calabar: "Cross River",
   uyo: "Akwa Ibom",
   ibadan: "Oyo",
+  kastina: "Katsina",
   owerri: "Imo",
   benincity: "Edo",
   warri: "Delta",
@@ -20545,14 +20546,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return true;
   };
   // Location filter options - one per state present in orders (Bright, 2 Nov
-  // 2026): "FCT", "FCt", "Abuja" and "FCT Abuja" are one entry, a city typed as
-  // the state sits under its state, and anything that cannot be placed is
-  // grouped under "Other / check state" instead of a row per spelling.
+  // 2026): "FCT", "FCt", "Abuja" and "FCT Abuja" are one entry, a city or hub
+  // typed as the state sits under its state, an order saved with no state is
+  // placed by its city, and only what still cannot be read is grouped under
+  // "State not given".
   const orderLocationOptions = useMemo(() => {
     const states = new Set<string>();
     let unplaced = false;
     for (const o of trackedOrders) {
-      if (!(o.state ?? "").trim()) continue;
       const state = canonicalOrderState(o.state, o.city);
       if (state) states.add(state); else unplaced = true;
     }
@@ -20564,12 +20565,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     : canonicalOrderState(orderLocation) ?? orderLocation;
   const orderInLocation = (order: TrackedOrder) => {
     if (orderLocationChoice === "All Locations") return true;
-    const raw = (order.state ?? "").trim();
-    const state = raw ? canonicalOrderState(raw, order.city) : null;
-    if (orderLocationChoice === UNPLACED_ORDER_STATE) return Boolean(raw) && !state;
-    if (state) return state === orderLocationChoice;
-    const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
-    return raw === orderLocationChoice || location === orderLocationChoice; // legacy/no-state rows
+    const state = canonicalOrderState(order.state, order.city);
+    if (orderLocationChoice === UNPLACED_ORDER_STATE) return !state;
+    return state === orderLocationChoice;
   };
   const filteredOrderRows = periodOrders.filter((order) => {
     const status = order.status ?? "New";
@@ -41782,6 +41780,12 @@ ${waybillLineItems(w).length > 1
       showToast("Choose a product and enter customer name and phone.");
       return;
     }
+    // Every order needs the customer's state (Bright, 2 Nov 2026): ~26 a month
+    // were saved without one, so they fell out of every state report.
+    if (!createOrderState.trim()) {
+      showToast("Choose the customer's state.");
+      return;
+    }
     if (isTemporaryProductId(product.id)) {
       showToast("This product is still syncing. Try again in a moment.");
       return;
@@ -42048,6 +42052,12 @@ ${waybillLineItems(w).length > 1
     const product = products.find((item) => item.id === createOrderProductId);
     if (!product || !createOrderCustomer.trim() || !createOrderPhone.trim()) {
       showToast("Choose a product and enter customer name and phone.");
+      return;
+    }
+    // Every order needs the customer's state (Bright, 2 Nov 2026): ~26 a month
+    // were saved without one, so they fell out of every state report.
+    if (!createOrderState.trim()) {
+      showToast("Choose the customer's state.");
       return;
     }
     if (isTemporaryProductId(product.id)) {
@@ -84495,7 +84505,7 @@ ${waybillLineItems(w).length > 1
                           const byState = new Map<string, { total: number; delivered: number; revenue: number; failed: number }>();
                           const byCity = new Map<string, { total: number; delivered: number; revenue: number }>();
                           for (const o of periodAgentOrders) {
-                            const stateKey = (o.state ?? "").trim() || "Unknown";
+                            const stateKey = canonicalOrderState(o.state, o.city) ?? ((o.state ?? "").trim() || "Unknown");
                             const cityKey = `${(o.city ?? "").trim() || "Unknown city"} · ${stateKey}`;
                             const stateEntry = byState.get(stateKey) ?? { total: 0, delivered: 0, revenue: 0, failed: 0 };
                             const cityEntry = byCity.get(cityKey) ?? { total: 0, delivered: 0, revenue: 0 };
