@@ -207,3 +207,41 @@ export function resolveStateFromText(state?: string, city?: string): ResolvedSta
 
   return { state: null, source: "unknown" };
 }
+
+// ── One name per state for orders (Bright, 2 Nov 2026) ─────────────────
+// An order's state was free text for a while (Edit customer details, some
+// website forms), so the same place is stored as "FCT", "FCt", "Abuja" and
+// "FCT Abuja", or as a city ("Ibadan"). This gives the official name for the
+// Orders location filter and state reports. It does NOT decide delivery:
+// routing has its own matching (backend agent-coverage normalizeState).
+//
+//   1. the state's own name, any capitals / "State" / FCT spelling -> safe
+//   2. a short list of spellings and cities seen on real orders     -> a lookup
+// A lookup answer is dropped when the order's city box names a DIFFERENT
+// state ("Ibadan" with city "Ogun"): that order is left for a person to check
+// rather than guessed.
+const ORDER_STATE_SPELLINGS: Record<string, string> = {
+  crossrivers: "Cross River", river: "Rivers",
+  edobenin: "Edo", edobenincity: "Edo", benin: "Edo", benincity: "Edo",
+  ibadan: "Oyo", akure: "Ondo", uyo: "Akwa Ibom", osogbo: "Osun", nsukka: "Enugu",
+  asaba: "Delta", warri: "Delta", ph: "Rivers", portharcourt: "Rivers", calabar: "Cross River",
+  owerri: "Imo", onitsha: "Anambra", awka: "Anambra", abeokuta: "Ogun", ilorin: "Kwara",
+  enugu: "Enugu", aba: "Abia", umuahia: "Abia", makurdi: "Benue", lokoja: "Kogi", jos: "Plateau",
+  kaduna: "Kaduna", kano: "Kano", minna: "Niger", yenagoa: "Bayelsa", abakaliki: "Ebonyi", adoekiti: "Ekiti"
+};
+const OFFICIAL_STATE_BY_KEY = new Map<string, string>(NIGERIA_STATES.map((name) => [zoneKey(name), name]));
+
+export function canonicalOrderState(state?: string | null, city?: string | null): string | null {
+  const official = OFFICIAL_STATE_BY_KEY.get(zoneKey(state ?? ""));
+  if (official) return official;
+  const looked = ORDER_STATE_SPELLINGS[zoneKey(state ?? "")];
+  if (!looked) return null;
+  const cityNames = byLengthStates().filter((name) =>
+    new RegExp(`\\b${name.replace(/\s+/g, "\\s+").replace("FCT Abuja", "(?:fct|abuja)")}\\b`, "i").test(String(city ?? "")));
+  if (cityNames.length > 0 && !cityNames.includes(looked)) return null;
+  return looked;
+}
+const byLengthStates = (): string[] => [...NIGERIA_STATES].sort((a, b) => b.length - a.length);
+
+/** Filter label for orders whose state could not be placed. */
+export const UNPLACED_ORDER_STATE = "Other / check state";

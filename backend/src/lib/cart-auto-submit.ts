@@ -25,6 +25,7 @@ import { assignOrderRep } from "./order-assignment.js";
 import { notifyOutageRecoveredOrder } from "./order-notifications.js";
 import { buildPackageComponentSnapshot } from "./order-inventory.js";
 import { AUTO_SUBMIT_GIVES_UP_MS } from "./cart-assignment.js";
+import { tidyOrderState } from "./order-state.js";
 
 const MIN_IDLE_MS = 2 * 60 * 1000;   // must be idle at least 2 min
 // give up after 15 min - shared with the cart hand-out, which takes over from here
@@ -196,7 +197,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
   const customerPhone = cart.phone ?? capturePayload.phone ?? null;
   const customerAddress = cart.address ?? capturePayload.address ?? null;
   const customerCity = cart.city ?? capturePayload.city ?? null;
-  const customerState = cart.state ?? capturePayload.state ?? null;
+  const customerState = tidyOrderState(cart.state ?? capturePayload.state ?? null);
   if (!customerPhone || !customerAddress || !customerCity || !customerState) return;
   // Preserve package switcher selections and add-ons captured by the form.
   // The normal browser submit sends these as crossSellLines; recovery must

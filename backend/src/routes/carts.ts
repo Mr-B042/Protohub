@@ -1,3 +1,4 @@
+import { tidyOrderState } from "../lib/order-state.js";
 import { liteCart } from "../lib/lite-lists.js";
 import { fetchPagesTogether } from "../lib/paged-fetch.js";
 import { canSeeSilentOrders, silentHeldCartProductIds } from "../lib/product-launch.js";
@@ -720,7 +721,7 @@ router.post("/", async (req, res) => {
     email:        d.email?.trim() || null,
     address:      d.address?.trim() || null,
     city:         d.city ?? null,
-    state:        d.state ?? null,
+    state:        tidyOrderState(d.state ?? null),
     product_id:   d.productId ?? null,
     package_id:   d.packageId ?? null,
     product_name: d.productName,
