@@ -164,6 +164,16 @@ export function fundTotals(opening: number, txns: FundTxn[], actual: number | nu
  * the manager. Once it is with the owner, or locked, it is frozen; after a
  * lock, changes go through an adjustment request.
  */
+/** Money in that is really last week's balance typed in again (Bright, 2 Nov
+ *  2026: "balance brought forward", "Total income at hand"). Last week's
+ *  counted cash is already this week's opening, so it would count twice. */
+const CARRIED_BALANCE_WORDING = /\bbr[ou]ugh?t?\s*forward\b|\bcarried\s*(forward|over)\b|\bb\s*\/\s*f\b|\b(income|balance|cash|money)\s+(at|in)\s+hand\b|\bbalance\s+(from|of)\s+(the\s+)?(last|previous)\s+week\b|\b(last|previous)\s+week'?s\s+balance\b|\bopening\s+balance\b/i;
+export function carriedBalanceProblem(kind: FundKind, description: string | null | undefined): string | null {
+  if (!MONEY_IN_KINDS.includes(kind) || kind === "customer_payment") return null;
+  if (!description || !CARRIED_BALANCE_WORDING.test(description)) return null;
+  return "Last week's counted cash is already this week's opening balance. Don't log it as money in, or it is counted twice. Only log new money that came in this week.";
+}
+
 export function fundsEditable(companyStatus: string | null, weekLocked: boolean): { ok: true } | { ok: false; error: string } {
   if (weekLocked || companyStatus === "locked") return { ok: false, error: "This week is locked. Ask the owner for an adjustment instead." };
   if (companyStatus === "submitted_to_owner") return { ok: false, error: "This week is with the owner. Nothing can change until the owner returns it." };
