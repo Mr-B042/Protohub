@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  carriedBalanceProblem,
   DEFAULT_FUND_SETTINGS, customerPaymentEffect, fundTotals, fundsEditable, fundsReadiness, logisticsSplit, missingProof, equalSplit, splitProblem, scaleSplits, claimableRemittances, heldOrders, type FundTxn
 } from "./manager-funds.js";
 
@@ -154,4 +155,27 @@ test("heldOrders: cleared orders not in a wallet, grouped, newest first", () => 
   const held = heldOrders(rows, wallets, new Set(["r5"]));
   assert.deepEqual(held.map((order) => [order.orderId, order.total]), [["5598", 13000], ["5516", 12500]]);
   assert.deepEqual(held[1].rows.map((r) => r.id), ["r2", "r3"]);
+});
+
+test("last week's balance typed in as money in is refused (counted twice)", () => {
+  for (const text of [
+    "Balance brought forward from the previous week",
+    "37,000 balance brough forward from previous week",
+    "balance brought forward from the previous week",
+    "Total income at hand",
+    "cash in hand",
+    "B/F",
+    "last week's balance",
+    "opening balance"
+  ]) {
+    assert.ok(carriedBalanceProblem("company_transfer_in", text), text);
+    assert.ok(carriedBalanceProblem("other_in", text), text);
+    assert.ok(carriedBalanceProblem("owner_funding", text), text);
+  }
+  for (const text of ["weekly expense budget", "company money with manager", "Refund from packaging supplier", "", null, undefined]) {
+    assert.equal(carriedBalanceProblem("other_in", text), null, String(text));
+  }
+  // Only money in is checked; customer payments and spending are left alone.
+  assert.equal(carriedBalanceProblem("customer_payment", "balance brought forward"), null);
+  assert.equal(carriedBalanceProblem("expense", "balance brought forward"), null);
 });

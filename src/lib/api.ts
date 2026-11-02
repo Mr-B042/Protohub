@@ -4307,7 +4307,7 @@ export type ManagerFundWeek = {
   manager: { id: string; name: string } | null;
   managers: Array<{ id: string; name: string }>;
   wallet?: { id: string; name: string } | null;
-  week?: { opening: number; openingSource: string; actualClosing: number | null; varianceExplanation: string | null; notes: string | null; locked: boolean; closingSnapshot: ManagerFundTotals | null };
+  week?: { opening: number; openingSource: string; openingFromWeek?: string | null; actualClosing: number | null; varianceExplanation: string | null; notes: string | null; locked: boolean; closingSnapshot: ManagerFundTotals | null };
   companyStatus?: string; editable?: boolean; editableReason?: string | null;
   settings?: { expenseProofMin: number; remittanceProofRequired: boolean; ownerFundingReferenceRequired: boolean; otherInProofRequired: boolean };
   totals?: ManagerFundTotals; readiness?: string[];

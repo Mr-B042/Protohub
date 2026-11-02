@@ -649,7 +649,7 @@ export default function ManagerFundsTab({
       <Panel className="p-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="m-0 flex items-center gap-2 text-[15px] font-bold text-gray-900 dark:text-slate-50"><Wallet className="h-5 w-5 text-[#1F8FE0]" /> {data?.manager?.name}'s Wallet — Week Reconciliation</h2>
-          <span className="text-[12px] text-gray-500">{week?.openingSource === "carried" ? "Opening carried from last week's counted balance" : "First week: opening starts at 0"}</span>
+          <span className="text-[12px] text-gray-500">{week?.openingSource === "carried" ? `Opening = cash counted at the end of the week of ${week.openingFromWeek ? new Date(`${week.openingFromWeek}T12:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "last week"}. Don't log it again as money in.` : "First week: opening starts at 0"}</span>
         </div>
         <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4 2xl:grid-cols-7">
           {([

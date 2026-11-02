@@ -7,7 +7,7 @@ import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { addDaysToDateKey, lagosDateKey, sundayWeekStartForDateKey, weekEndFromStart } from "../lib/sales-bonus-engine.js";
 import {
-  DEFAULT_FUND_SETTINGS, FUND_CATEGORIES, KIND_LABEL, customerPaymentEffect, claimableRemittances, heldOrders, type HeldOrder, fundTotals, fundsEditable, fundsReadiness,
+  DEFAULT_FUND_SETTINGS, FUND_CATEGORIES, KIND_LABEL, carriedBalanceProblem, customerPaymentEffect, claimableRemittances, heldOrders, type HeldOrder, fundTotals, fundsEditable, fundsReadiness,
   logisticsSplit, missingProof, scaleSplits, splitProblem, type FundKind, type ProductSplit, type FundSettings, type FundTxn
 } from "../lib/manager-funds.js";
 import { notifyFunds } from "../lib/weekly-report-notifications.js";
@@ -99,23 +99,30 @@ async function ensureWallet(orgId: string, branchId: string, manager: { id: stri
   return data;
 }
 
-/** Opening = last locked week's COUNTED closing (Cash Flow's counted-opening rule); else 0. */
+/** Opening = last week's COUNTED cash, whether or not that week is locked yet
+ *  (Bright, 2 Nov 2026: the week before was still waiting to be sent, so the
+ *  new week opened from two weeks back, and the opening was saved once and
+ *  never caught up - the manager then typed last week's balance in again as
+ *  income). It follows that count until this week itself is locked; a locked
+ *  week keeps the opening it was locked with. */
 async function resolveOpening(orgId: string, branchId: string, managerId: string, weekStart: string) {
   const { data: existing, error } = await supabase.from("manager_fund_weeks").select("*")
     .eq("org_id", orgId).eq("branch_id", branchId).eq("manager_id", managerId).eq("week_start", weekStart).maybeSingle();
   if (error) throw error;
-  if (existing) return { row: existing, opening: Number(existing.opening_balance ?? 0), source: existing.opening_source as string };
+  if (existing?.locked_at) {
+    return { row: existing, opening: Number(existing.opening_balance ?? 0), source: existing.opening_source as string, fromWeek: null as string | null };
+  }
   const { data: previous, error: previousError } = await supabase.from("manager_fund_weeks")
     .select("week_start, actual_closing, closing_snapshot")
     .eq("org_id", orgId).eq("branch_id", branchId).eq("manager_id", managerId)
-    .lt("week_start", weekStart).not("locked_at", "is", null)
+    .lt("week_start", weekStart).or("actual_closing.not.is.null,locked_at.not.is.null")
     .order("week_start", { ascending: false }).limit(1).maybeSingle();
   if (previousError) throw previousError;
   if (previous) {
     const carried = previous.actual_closing ?? previous.closing_snapshot?.expected ?? 0;
-    return { row: null, opening: Number(carried), source: "carried" };
+    return { row: existing ?? null, opening: Number(carried), source: "carried", fromWeek: previous.week_start as string };
   }
-  return { row: null, opening: 0, source: "first_week" };
+  return { row: existing ?? null, opening: 0, source: "first_week", fromWeek: null as string | null };
 }
 
 async function ensureWeek(orgId: string, branchId: string, managerId: string, walletId: string, weekStart: string) {
@@ -210,6 +217,7 @@ export async function loadFundWeek(orgId: string, branchId: string, managerId: s
   return {
     settings, wallet, rows, week, totals, companyStatus: status,
     openingSource: resolved.source,
+    openingFromWeek: resolved.fromWeek,
     locked: !!week?.locked_at,
     readiness: fundsReadiness(totals, week?.variance_explanation ?? null),
     hasActivity: rows.length > 0 || resolved.opening !== 0 || !!week
@@ -298,6 +306,7 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
       week: {
         opening: fund.totals.opening,
         openingSource: fund.openingSource,
+        openingFromWeek: fund.openingFromWeek,
         actualClosing: fund.totals.actual,
         varianceExplanation: fund.week?.variance_explanation ?? null,
         notes: fund.week?.notes ?? null,
@@ -803,6 +812,8 @@ router.post("/transactions", requireRole("Manager", "Admin"), async (req, res) =
     const weekStart = sundayWeekStartForDateKey(lagosDay(body.occurredAt));
     await assertEditable(orgId, branchId, me.id, weekStart);
     if (body.kind === "expense" && !body.category) throw httpError(400, "Choose a category.");
+    const carriedProblem = carriedBalanceProblem(body.kind, body.description);
+    if (carriedProblem) throw httpError(400, carriedProblem);
     const waybill = body.kind === "expense" && body.category === "waybill" ? waybillProducts(body, body.amount) : { productId: null, productSplits: null };
     if (body.kind === "expense" && body.category === "waybill" && !waybill.productId) throw httpError(400, "Choose which product's waybills this was for.");
     const heldOrderIds = body.kind === "customer_payment" && body.heldOrderIds ? Array.from(new Set(body.heldOrderIds.map((id) => id.replace(/^#/, "")))) : null;
@@ -927,6 +938,10 @@ router.patch("/transactions/:id", requireRole("Manager", "Admin"), async (req, r
     await assertEditable(orgId, branchId, row.manager_id, row.week_start);
     if (body.occurredAt && sundayWeekStartForDateKey(lagosDay(body.occurredAt)) !== row.week_start) {
       throw httpError(400, "Keep the date inside the same week. To move it, remove it and log it in the other week.");
+    }
+    if (body.description !== undefined) {
+      const carriedProblem = carriedBalanceProblem(row.kind as FundKind, body.description);
+      if (carriedProblem) throw httpError(400, carriedProblem);
     }
     if (body.counterpartyAccountId) await assertCompanyAccount(orgId, branchId, body.counterpartyAccountId);
     const next = {
