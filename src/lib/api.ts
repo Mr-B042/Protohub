@@ -5107,6 +5107,13 @@ export type RepMonthly = {
   }>;
 };
 
+export type PageVisitRow = { userId: string; pageKey: string; pageLabel: string; visits: number; days: number; lastAt: string; today: number };
+/** Page visits (Bright, 3 Nov 2026): which pages each person opens. */
+export const pageVisitsApi = {
+  record: (key: string, label: string) => post<{ ok: boolean }>("/api/page-visits", { key, label }),
+  list: (days = 30) => get<{ since: string; today: string; days: number; users: Array<{ id: string; name: string; role: string }>; visits: PageVisitRow[] }>(`/api/page-visits?days=${days}`)
+};
+
 /** Product Trend › Monthly Performance (Owner / Admin). */
 export const productPerformanceApi = {
   monthly: (month: string) => get<ProductMonthly>(`/api/product-performance/monthly?month=${encodeURIComponent(month)}`),
