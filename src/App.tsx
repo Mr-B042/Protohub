@@ -169,7 +169,7 @@ import {
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, ordersExtraApi, productCostApi, stockApi as _stockApi,
   weeklyReportsApi, managerFundsApi, logMissApi, salesScriptApi, embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, upsellPerformanceApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, targetPeriodsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
   branchesApi, setApiSpyUserId, type ApprovedPayoutChange, type CartAssignmentPanel, type CartHandOutRules,
-  setApiPreviewReadOnly,
+  setApiPreviewReadOnly, pageVisitsApi,
   PreviewReadOnlyError, type BranchWorkspace
 } from "./lib/api";
 import { NIGERIA_STATES, canonicalOrderState, UNPLACED_ORDER_STATE } from "./lib/nigeria";
@@ -234,6 +234,7 @@ installErrorRecorder();
 import type { ReviewRepRow } from "./pages/ManagerWeeklyReviewPage";
 import { itemCountLabel } from "./lib/item-count-label";
 import type { WeeklyFinancialSummary } from "./pages/OwnerWeeklyApprovalPage";
+import { PageVisitsPanel } from "./pages/PageVisitsPanel";
 import {
   buildCompanySnapshot, buildRepWeeklySnapshot, compareSnapshots,
   FIRST_REPORT_WEEK, WEEKLY_RATE_RULE_FROM, weeklyRateRule, monthlyIncentiveForWeek, reportDueDate, reportOpensOn, runBonusCheck, wasSubmittedLate, withMissingFees, withPayoutChange, bonusWeekFor, type ManagerBonusPreview, type NamedOrderLookup, type WeeklyReportSnapshot
@@ -11610,6 +11611,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const currentRole: EditableUserRole = isSpying
     ? (spiedUser!.role)
     : isPreviewingRole ? previewRole! : realRole;
+
+  // Page visits (Bright, 3 Nov 2026): note each page someone stays on for a
+  // moment, so the Owner can see who opens what (User Management). Never while
+  // previewing a role or viewing as someone - that is not them opening it.
+  const visitPageKey = activePage === "Inventory & Logistics Operations" ? `${activePage}/${inventoryOperationsSection}` : activePage;
+  useEffect(() => {
+    if (!realManagedUser?.id || isPreviewing) return;
+    const section = activePage === "Inventory & Logistics Operations"
+      ? INVENTORY_OPERATIONS_NAV.flatMap((group) => group.items).find((item) => item.action === inventoryOperationsSection)?.label ?? null
+      : null;
+    const label = section ? `${activePage} › ${section}` : activePage;
+    const timer = window.setTimeout(() => { void pageVisitsApi.record(visitPageKey, label).catch(() => undefined); }, 1500);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visitPageKey, realManagedUser?.id, isPreviewing]);
 
   // Every role, every branch switch: the rules the rep's countdown follows.
   useEffect(() => {
@@ -94092,6 +94108,9 @@ ${waybillLineItems(w).length > 1
                   </button>
                 </div>
               </header>
+
+              {/* Page visits (Bright, 3 Nov 2026): who opens which page. */}
+              {realRole === "Owner" && !isPreviewing && <PageVisitsPanel />}
 
               {/* Preview a role without becoming a person. No account is created,
                   so nothing here can land in payroll, round-robin or a
