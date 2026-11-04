@@ -169,7 +169,7 @@ import {
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, ordersExtraApi, productCostApi, stockApi as _stockApi,
   weeklyReportsApi, managerFundsApi, logMissApi, salesScriptApi, embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, upsellPerformanceApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, targetPeriodsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
   branchesApi, setApiSpyUserId, type ApprovedPayoutChange, type CartAssignmentPanel, type CartHandOutRules,
-  setApiPreviewReadOnly, pageVisitsApi,
+  setApiPreviewReadOnly, pageVisitsApi, fineAppealsApi,
   PreviewReadOnlyError, type BranchWorkspace
 } from "./lib/api";
 import { NIGERIA_STATES, canonicalOrderState, UNPLACED_ORDER_STATE } from "./lib/nigeria";
@@ -32536,6 +32536,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           onCheckLogMiss={(kind, ref) => logMissApi.check(kind, ref)}
           onEscalateLogMiss={async (kind, ref, reason) => { await logMissApi.escalate(kind, ref, reason); showToast("Sent to your manager."); weeklyRefresh(); }}
           onLogMissChecked={() => weeklyRefresh()}
+          myFines={mine?.fines ?? []}
+          fineAppeals={mine?.fineAppeals ?? []}
+          canAppealFines={!isSpying && (!mine?.companyStatus || mine.companyStatus === "open" || mine.companyStatus === "returned_to_manager")}
+          appealClosedNote={mine?.companyStatus && mine.companyStatus !== "open" && mine.companyStatus !== "returned_to_manager" ? "This week is with the owner, so its fines can no longer be appealed." : null}
+          onAppealFine={async (penaltyId, reason) => { await fineAppealsApi.appeal(penaltyId, reason); showToast("Appeal sent to your manager. The fine is not deducted while they decide."); weeklyRefresh(); }}
           isHeadOfSales={Boolean(me?.isHeadOfSalesRep)}
           renderHeadOfSales={() => renderWeeklyHeadOfSales(false)}
           onRunBonusCheck={(orderRefs) => (live && me ? runBonusCheck({
@@ -32652,6 +32657,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           logMisses={week?.logMisses ?? []}
           logMissDisputes={week?.logMissDisputes ?? []}
           onDecideLogMiss={(id, outcome, note) => weeklyRun(() => logMissApi.decide(id, outcome, note), outcome === "cancel" ? "Charge cancelled." : "Charge kept.")}
+          fineAppeals={week?.fineAppeals ?? []}
+          onDecideFineAppeal={(id, outcome, note) => weeklyRun(() => fineAppealsApi.decide(id, outcome, note), outcome === "cancel" ? "Fine cancelled. The rep has been notified." : "Fine kept. The rep has been notified.")}
           headOfSales={weeklyHeadOfSales.review}
           renderHeadOfSales={() => renderWeeklyHeadOfSales(true)}
           funds={(week?.funds ?? []).map((item) => ({ managerName: item.managerName, totals: item.totals, readiness: item.readiness, varianceExplanation: item.varianceExplanation, returned: item.returned }))}
@@ -32680,6 +32687,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         onSaveDraftNote={async (note) => { await managerFundsApi.saveWeek({ weekStart: weeklyReportWeekStart, notes: note || null }); showToast("Draft saved."); }}
         logMissDisputes={week?.logMissDisputes ?? []}
         onDecideLogMiss={(id, outcome, note) => weeklyRun(() => logMissApi.decide(id, outcome, note), outcome === "cancel" ? "Charge cancelled. The rep has been notified." : "Charge kept. The rep has been notified.")}
+        fineAppeals={week?.fineAppeals ?? []}
+        onDecideFineAppeal={(id, outcome, note) => weeklyRun(() => fineAppealsApi.decide(id, outcome, note), outcome === "cancel" ? "Fine cancelled. The rep has been notified." : "Fine kept. The rep has been notified.")}
         renderHeadOfSales={() => renderWeeklyHeadOfSales(currentRole === "Owner")}
         headOfSalesAttention={headOfSalesBonusStatus(weeklyHeadOfSales.review)?.key === "held"}
         bonusQueries={week?.bonusQueries ?? []}

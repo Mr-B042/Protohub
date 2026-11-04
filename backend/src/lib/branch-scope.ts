@@ -54,7 +54,7 @@ const BRANCH_TABLES = new Set([
   // shilling - so one shared ledger cannot hold three. A delivery expense
   // follows the waybill it paid for and a remittance follows the order whose
   // cash came in; the rest were created in Nigeria and stay there.
-  "expenses", "remittance_transactions", "rep_penalties",
+  "expenses", "remittance_transactions", "rep_penalties", "fine_appeals",
   "payroll_runs", "pay_structures",
   "bank_accounts", "bank_account_transfers",
   "cash_opening_balances", "cash_opening_balance_sources",

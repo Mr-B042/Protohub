@@ -4208,7 +4208,7 @@ export const weeklyReportsApi = {
   mine: (weekStart: string) =>
     get<{ weekStart: string; weekEnd: string; report: WeeklyRepReport | null; companyStatus: WeeklyCompanyReportStatus; corrections: WeeklyReportCorrection[]; audit: WeeklyReportAuditEntry[]; fines: WeeklyReportFineRow[]; previousFines: WeeklyReportFineRow[];
       adjustments: WeeklyReportAdjustmentRow[]; previousAdjustments: WeeklyReportAdjustmentRow[]; bonusQueries: WeeklyBonusQuery[];
-      logMisses: WeeklyLogMissRow[]; previousLogMisses: WeeklyLogMissRow[]; logMissDisputes: LogMissDispute[]; carriedFines: number;
+      logMisses: WeeklyLogMissRow[]; previousLogMisses: WeeklyLogMissRow[]; logMissDisputes: LogMissDispute[]; fineAppeals?: FineAppeal[]; carriedFines: number;
       payoutChange?: WeeklyPayoutChange | null; gate?: WeeklySendGate; lateDeliveries?: WeeklyLateDelivery[] }>(
       `/api/weekly-reports/mine?${new URLSearchParams({ weekStart }).toString()}`
     ),
@@ -4222,7 +4222,7 @@ export const weeklyReportsApi = {
       editedAfterSubmit: Array<{ repId: string; orderId: string; editedAt: string; what: string; by: string | null }>;
       fines: WeeklyReportFineRow[]; previousFines: WeeklyReportFineRow[];
       adjustments: WeeklyReportAdjustmentRow[]; previousAdjustments: WeeklyReportAdjustmentRow[]; bonusQueries: WeeklyBonusQuery[];
-      logMisses: WeeklyLogMissRow[]; previousLogMisses: WeeklyLogMissRow[]; logMissDisputes: LogMissDispute[]; carriedFines: Record<string, number>;
+      logMisses: WeeklyLogMissRow[]; previousLogMisses: WeeklyLogMissRow[]; logMissDisputes: LogMissDispute[]; fineAppeals?: FineAppeal[]; carriedFines: Record<string, number>;
       payoutChanges?: WeeklyPayoutChange[]; gate?: WeeklySendGate;
       /** Per rep: delivered orders with no delivery fee, each with its charge / skip (leadership only). */
       missingFees?: Record<string, MissingFeeDetail>;
@@ -4363,6 +4363,17 @@ export const managerFundsApi = {
 };
 
 // ── Missed-log charges: check and dispute ────────────────────────────────────
+/** A rep's appeal against a fine (Bright, 4 Nov 2026). Missed-log charges use logMissApi. */
+export type FineAppeal = {
+  id: string; repId: string; repName?: string | null; penaltyId: string; weekStart: string; amount: number; fineType: string | null; fineLabel: string;
+  chargedByName: string | null; chargedAt: string | null; repReason: string;
+  status: "open" | "awaiting_owner" | "kept" | "cancelled"; decidedByName: string | null; decidedAt: string | null; decisionNote: string | null; createdAt: string;
+};
+export const fineAppealsApi = {
+  appeal: (penaltyId: string, reason: string) => post<{ id: string }>("/api/fine-appeals", { penaltyId, reason }),
+  decide: (id: string, outcome: "cancel" | "keep", note: string) => post<{ ok: true; status: string }>(`/api/fine-appeals/${encodeURIComponent(id)}/decide`, { outcome, note })
+};
+
 export const logMissApi = {
   check: (kind: "follow_up" | "cart_log", ref: string) =>
     post<{ verdict: "miss_confirmed" | "miss_wrong"; findings: Array<{ level: "issue" | "info" | "ok"; text: string }>; status: string; amount: number; disputeId: string | null }>("/api/log-misses/check", { kind, ref }),

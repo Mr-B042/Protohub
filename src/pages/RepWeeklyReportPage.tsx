@@ -9,9 +9,10 @@ import {
   pctText, shortDateTime, topProductsWithOthers, type WorkflowStep
 } from "../components/WeeklyReportParts";
 import { CORRECTION_SECTION_LABEL, signedMoney, withPayoutChange, type BonusCheckFinding, type WeeklyReportSnapshot } from "./weekly-report-model";
-import type { WeeklyPayoutChange, LogMissDispute, WeeklyLogMissRow, WeeklyBonusQuery, WeeklyReportCorrection, WeeklyRepReport, WeeklyCompanyReportStatus, WeeklyReportResponseInput } from "../lib/api";
+import type { FineAppeal, WeeklyPayoutChange, LogMissDispute, WeeklyLogMissRow, WeeklyBonusQuery, WeeklyReportCorrection, WeeklyRepReport, WeeklyCompanyReportStatus, WeeklyReportResponseInput } from "../lib/api";
 import { Modal } from "../components/WeeklyReportParts";
 import { MyMissedLogsPanel } from "../components/LogMissParts";
+import { MyFinesPanel } from "../components/FineAppealParts";
 import { HeadOfSalesBadge } from "../components/HeadOfSalesParts";
 import { CheckCircle2, Info, SearchCheck } from "lucide-react";
 import { currencySymbol } from "../lib/money-privacy";
@@ -29,6 +30,7 @@ export default function RepWeeklyReportPage({
   live, report, companyStatus, corrections, loading, error, canSubmitNow, beforeStart = false, dueDate, todayKey, submittedLate, productImageByKey,
   bonusQueries, onRunBonusCheck, onSendBonusQuery,
   logMisses = [], logMissDisputes = [], canDispute = true, onCheckLogMiss, onEscalateLogMiss, onLogMissChecked,
+  myFines = [], fineAppeals = [], canAppealFines = false, appealClosedNote = null, onAppealFine,
   isHeadOfSales = false, renderHeadOfSales, payoutChange = null, blockedMessage = null, opensOn,
   onSubmit, onOpenOrder, onBack
 }: {
@@ -41,6 +43,12 @@ export default function RepWeeklyReportPage({
   /** Missed follow-up / cart log charges this week, and the rep's disputes. */
   logMisses?: WeeklyLogMissRow[];
   logMissDisputes?: LogMissDispute[];
+  /** This week's fines (not under appeal) and the rep's appeals (Bright, 4 Nov 2026). */
+  myFines?: Array<{ id: string; label: string; amount: number; date: string }>;
+  fineAppeals?: FineAppeal[];
+  canAppealFines?: boolean;
+  appealClosedNote?: string | null;
+  onAppealFine?: (penaltyId: string, reason: string) => Promise<void>;
   canDispute?: boolean;
   onCheckLogMiss?: (kind: WeeklyLogMissRow["kind"], ref: string) => Promise<{ verdict: "miss_confirmed" | "miss_wrong"; findings: Array<{ level: "issue" | "info" | "ok"; text: string }>; disputeId: string | null }>;
   onEscalateLogMiss?: (kind: WeeklyLogMissRow["kind"], ref: string, reason: string) => Promise<void>;
@@ -488,6 +496,10 @@ export default function RepWeeklyReportPage({
       {onCheckLogMiss && onEscalateLogMiss && (
         <MyMissedLogsPanel misses={logMisses} disputes={logMissDisputes} canDispute={canDispute}
           onCheck={onCheckLogMiss} onEscalate={onEscalateLogMiss} onChecked={() => onLogMissChecked?.()} />
+      )}
+
+      {onAppealFine && (
+        <MyFinesPanel fines={myFines} appeals={fineAppeals} canAppeal={canAppealFines} closedNote={appealClosedNote} onAppeal={onAppealFine} />
       )}
 
       {/* ── 5 Order Details ───────────────────────────────────────── */}
