@@ -599,12 +599,27 @@ export function watchChallenge(challenge: any, teams: any[]): Promise<void> {
 }
 
 async function watchChallengeNow(challenge: any, teams: any[]) {
-  if (!["active", "paused"].includes(challenge.status)) return;
-  const detail = await buildDetail(SYSTEM_VIEWER, challenge, teams);
   const state: Record<string, any> = { ...(challenge.notify_state ?? {}) };
   const before = JSON.stringify(state);
   const ctx = ctxOf(challenge);
   const members = allMembers(teams);
+  // Announcements the Owner queued (notify_state.announcements): each sent
+  // once, whatever the challenge's status, then stamped sentAt.
+  const queued = Array.isArray(state.announcements) ? state.announcements as Array<{ id: string; title: string; message: string; sentAt?: string }> : [];
+  if (queued.some((item) => !item.sentAt)) {
+    state.announcements = [];
+    for (const item of queued) {
+      if (!item.sentAt && item.title && item.message) {
+        await notifyTeamChallenge(ctx, { kind: "announcement", repIds: members, id: String(item.id), title: String(item.title), message: String(item.message) });
+        state.announcements.push({ ...item, sentAt: new Date().toISOString() });
+      } else state.announcements.push(item);
+    }
+  }
+  if (!["active", "paused"].includes(challenge.status)) {
+    if (JSON.stringify(state) !== before) await supabase.from("team_challenges").update({ notify_state: state }).eq("id", challenge.id);
+    return;
+  }
+  const detail = await buildDetail(SYSTEM_VIEWER, challenge, teams);
   const teamById = new Map(detail.teams.map((team) => [team.id, team]));
 
   const leaderId = detail.race.leaderTeamId;

@@ -30,6 +30,7 @@ export type TeamChallengeEvent =
   | { kind: "escalated"; orderId: string; by: string; note: string }
   | { kind: "lead_changed"; repIds: string[]; leader: string; leaderPoints: number; other: string; otherPoints: number }
   | { kind: "milestone"; repIds: string[]; team: string; target: number; confirmed: boolean; first: boolean; amount: number }
+  | { kind: "announcement"; repIds: string[]; id: string; title: string; message: string }
   | { kind: "payout"; repIds: string[]; team: string; target: number; amount: number; perRep: number; paid: boolean }
   | { kind: "deadline"; repIds: string[]; which: "selling" | "delivery"; date: string; daysLeft: number; pendingVerification: number }
   | { kind: "closed"; repIds: string[]; lines: string[] }
@@ -59,6 +60,12 @@ export async function notifyTeamChallenge(ctx: Ctx, event: TeamChallengeEvent): 
         await toReps(ctx, [event.repId], { title: titles[event.status], message, kind: `team_challenge_${event.status}`, tag: tag(`entry-${event.orderId}-${event.status}`), type: event.status === "verified" ? "success" : "warning" });
         return;
       }
+      // Owner's own message (Bright, 4 Nov 2026: results + consolation prize):
+      // every member and the Owner, Admin and Manager, by push and the bell.
+      case "announcement":
+        await toReps(ctx, event.repIds, { title: event.title, message: event.message, kind: "team_challenge_announcement", tag: tag(`announcement-${event.id}`), type: "info" });
+        await toLeaders(ctx, { title: event.title, message: event.message, kind: "team_challenge_announcement", tag: tag(`announcement-${event.id}`), type: "info" });
+        return;
       case "entry_linked":
         await toReps(ctx, [event.repId], { title: `Order #${event.orderId} linked to #${event.primaryOrderId}`, message: "Same customer within the link window: the two orders are one transaction, scored once on the first order.", kind: "team_challenge_linked", tag: tag(`linked-${event.orderId}`), type: "info" });
         return;
