@@ -10,6 +10,7 @@ import { branchFundManagers, loadFundWeek } from "./manager-funds.js";
 import { disputesForWeek, logMissesForWeek } from "./log-misses.js";
 import { MISSING_FEE_TYPE, missingFeesFor } from "../lib/missing-fee-penalty.js";
 import { LATE_SEND_FINE_TYPE, lateSendsFor } from "../lib/late-send.js";
+import { appealsForWeek, heldPenaltyIds, undecidedAppealCount } from "./fine-appeals.js";
 import { NO_FEE_CHARGE_TYPE, attachDecisions, chargeReason, removeDecision, saveDecision, undecidedFor } from "../lib/review-order-decisions.js";
 import { lateDeliveriesFor } from "../lib/late-deliveries.js";
 import { QUESTION_COLUMNS, mapQuestion, notifyManagers, notifyOwner, openQuestionCount, questionsForWeek, syncAutoQuestions, type QuestionMessage } from "../lib/review-questions.js";
@@ -320,7 +321,9 @@ async function finesForWeek(orgId: string, repIds: string[] | null, weekStart: s
   if (repIds) query = query.in("rep_id", repIds);
   const { data, error } = await query;
   if (error) throw error;
-  return (data ?? []).map((row: any) => ({
+  // A fine under appeal is not deducted until it is decided (Bright, 4 Nov 2026).
+  const held = await heldPenaltyIds(orgId, (data ?? []).map((row: any) => String(row.id)));
+  return (data ?? []).filter((row: any) => !held.has(String(row.id))).map((row: any) => ({
     id: row.id,
     repId: row.rep_id,
     label: [row.type === LATE_SEND_FINE_TYPE ? "Late order send" : row.type === NO_FEE_CHARGE_TYPE ? "No delivery fee" : row.type, row.reason].filter(Boolean).join(" - ") + (row.remove_all_bonuses ? " (removes all bonuses at payroll)" : ""),
@@ -497,12 +500,13 @@ router.get("/mine", requireScopedRep, async (req, res) => {
       sendGateFor(orgId, branchId, weekStart)
     ]);
     if (bonusQueries.error) throw bonusQueries.error;
-    const [logMisses, previousLogMisses, logMissDisputes, carried, lateDeliveries] = await Promise.all([
+    const [logMisses, previousLogMisses, logMissDisputes, carried, lateDeliveries, fineAppeals] = await Promise.all([
       logMissesForWeek(orgId, [repId], weekStart),
       logMissesForWeek(orgId, [repId], addDaysToDateKey(weekStart, -7)),
       disputesForWeek(orgId, branchId, [repId], weekStart),
       carriedFinesFor(orgId, branchId, [repId], weekStart),
-      lateDeliveriesFor(orgId, branchId, weekStart, repId)
+      lateDeliveriesFor(orgId, branchId, weekStart, repId),
+      appealsForWeek(orgId, branchId, [repId], weekStart)
     ]);
     const [corrections, auditRows] = report
       ? await Promise.all([
@@ -527,6 +531,7 @@ router.get("/mine", requireScopedRep, async (req, res) => {
       logMisses,
       previousLogMisses,
       logMissDisputes,
+      fineAppeals,
       carriedFines: carried[repId] ?? 0,
       // The manager's change to this rep's payout, if any. Shown to the rep
       // with its reason, so the amount on their report is the amount they get.
@@ -866,10 +871,11 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
     if (!company || company.status === "open" || company.status === "returned_to_manager") {
       await syncAutoQuestions(orgId, branchId, weekStart, (repReports.data ?? []) as any[], payoutChanges);
     }
-    const [questions, lateDeliveries] = await Promise.all([
+    const [questions, lateDeliveries, fineAppeals] = await Promise.all([
       questionsForWeek(orgId, branchId, weekStart),
       // Delivered too late for their own week's sent report: paid in this one.
-      lateDeliveriesFor(orgId, branchId, weekStart)
+      lateDeliveriesFor(orgId, branchId, weekStart),
+      appealsForWeek(orgId, branchId, null, weekStart)
     ]);
     res.json({
       weekStart,
@@ -891,6 +897,7 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
       logMisses,
       previousLogMisses,
       logMissDisputes,
+      fineAppeals,
       carriedFines,
       // Leadership only - never sent on /mine. A list to act on, not a charge.
       missingFees,
@@ -1476,6 +1483,9 @@ router.post("/company/submit", requireRole(...REVIEWERS), async (req, res) => {
     if (unanswered.length > 0) throw httpError(400, "Answer the owner's comments before you resubmit.");
     const openQuestions = await openQuestionCount(orgId, branchId, weekStart);
     if (openQuestions > 0) throw httpError(409, `${openQuestions} question${openQuestions === 1 ? "" : "s"} on the reps' figures need${openQuestions === 1 ? "s" : ""} your answer before you submit.`);
+    // Every fine appeal of the week must be decided first (Bright, 4 Nov 2026).
+    const openAppeals = await undecidedAppealCount(orgId, branchId, weekStart);
+    if (openAppeals > 0) throw httpError(409, `${openAppeals} fine appeal${openAppeals === 1 ? " is" : "s are"} still undecided. Keep or cancel ${openAppeals === 1 ? "it" : "them"} first (a fine the owner charged waits for the owner).`);
 
     const now = new Date().toISOString();
     const { data: updated, error } = await supabase.from("company_weekly_reports")

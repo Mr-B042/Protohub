@@ -11,10 +11,11 @@ import {
 } from "../components/WeeklyReportParts";
 import { CompanyProductTable, OrdersTable, RepBonusTable, RepReviewModal, shownSnapshot, type ReviewRepRow } from "./ManagerWeeklyReviewPage";
 import { LogMissDisputesPanel } from "../components/LogMissParts";
+import { FineAppealsPanel } from "../components/FineAppealParts";
 import { OrderDecisionsModal, type DecisionKind } from "../components/OrderDecisionsModal";
 import { HeadOfSalesBadge, headOfSalesBonusStatus } from "../components/HeadOfSalesParts";
 import { bonusComponentsFull, bonusInitialFinal, buildCompanySnapshot, type CompanyWeeklySnapshot, type ManagerBonusPreview, type MonthlyIncentiveReport, type WeeklyReportSnapshot } from "./weekly-report-model";
-import type { HeadOfSalesReview, LogMissDispute, WeeklyLogMissRow, ManagerFundTotals, WeeklyBonusQuery, WeeklyCompanyReport, WeeklyReportAuditEntry, WeeklyReportCorrection } from "../lib/api";
+import type { HeadOfSalesReview, LogMissDispute, FineAppeal, WeeklyLogMissRow, ManagerFundTotals, WeeklyBonusQuery, WeeklyCompanyReport, WeeklyReportAuditEntry, WeeklyReportCorrection } from "../lib/api";
 import { currencySymbol } from "../lib/money-privacy";
 
 export type WeeklyFinancialSummary = {
@@ -45,7 +46,7 @@ type RedFlag = { severity: "high" | "medium"; title: string; detail: string; rep
 export default function OwnerWeeklyApprovalPage({
   weekStart, weekEnd, onShiftWeek, onPickWeek, canGoNext, loading, error,
   rows, company, corrections, audit, managerBonus, managerName, financial, lowRateThreshold, dueDate, bonusQueries = [],
-  funds = [], renderFunds, logMisses = [], logMissDisputes = [], onDecideLogMiss,
+  funds = [], renderFunds, logMisses = [], logMissDisputes = [], onDecideLogMiss, fineAppeals = [], onDecideFineAppeal,
   headOfSales = null, renderHeadOfSales,
   onApproveLock, onReturnToManager, onReopen, onBack, monthlyIncentive = null
 }: {
@@ -72,6 +73,8 @@ export default function OwnerWeeklyApprovalPage({
   logMisses?: WeeklyLogMissRow[];
   logMissDisputes?: LogMissDispute[];
   onDecideLogMiss?: (id: string, outcome: "cancel" | "keep", note: string) => Promise<void>;
+  fineAppeals?: FineAppeal[];
+  onDecideFineAppeal?: (id: string, outcome: "cancel" | "keep", note: string) => Promise<void>;
   /** Each manager wallet's week (Funds & Expenses). */
   funds?: Array<{ managerName: string; totals: ManagerFundTotals; readiness: string[]; varianceExplanation: string | null; returned: number }>;
   /** The Funds & Expenses tab (transactions, receipts, return, adjustments). */
@@ -513,6 +516,11 @@ export default function OwnerWeeklyApprovalPage({
               {onDecideLogMiss && (
                 <div className="border-t border-gray-100 p-3 dark:border-slate-800">
                   <LogMissDisputesPanel disputes={logMissDisputes} repName={(id) => rows.find((row) => row.repId === id)?.repName ?? "A rep"} canDecide isOwner onDecide={onDecideLogMiss} />
+                </div>
+              )}
+              {onDecideFineAppeal && fineAppeals.length > 0 && (
+                <div className="border-t border-gray-100 p-3 dark:border-slate-800">
+                  <FineAppealsPanel appeals={fineAppeals} repName={(id) => rows.find((row) => row.repId === id)?.repName ?? "A rep"} canDecide isOwner onDecide={onDecideFineAppeal} />
                 </div>
               )}
               <div className="border-t border-gray-100 pt-3 dark:border-slate-800">

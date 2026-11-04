@@ -14,13 +14,14 @@ import {
   dailyChartRows, deltaPct, downloadCsv, longDate, nf, pctText, shortDateTime, shortDay, type CorrectionDraft, type WorkflowStep
 } from "../components/WeeklyReportParts";
 import { LogMissDisputesPanel } from "../components/LogMissParts";
+import { FineAppealsPanel } from "../components/FineAppealParts";
 import { OrderDecisionsModal, undecidedCount, type DecisionKind } from "../components/OrderDecisionsModal";
 import { HeadOfSalesBadge } from "../components/HeadOfSalesParts";
 import {
   CORRECTION_SECTION_LABEL, bonusComponentsFull, bonusInitialFinal, buildCompanySnapshot, type ManagerBonusPreview, type MonthlyIncentiveReport, type SnapshotDifference, type WeeklyReportSnapshot
 } from "./weekly-report-model";
 import type {
-  LogMissDispute, ManagerFundTotals, WeeklyBonusQuery, WeeklyPayoutChange, WeeklyCompanyReport, WeeklyRepReport, WeeklyReportAuditEntry, WeeklyReportCorrection, WeeklyReportResponseInput, WeeklyReportQuestion
+  LogMissDispute, FineAppeal, ManagerFundTotals, WeeklyBonusQuery, WeeklyPayoutChange, WeeklyCompanyReport, WeeklyRepReport, WeeklyReportAuditEntry, WeeklyReportCorrection, WeeklyReportResponseInput, WeeklyReportQuestion
 } from "../lib/api";
 import { currencySymbol } from "../lib/money-privacy";
 
@@ -73,7 +74,7 @@ export default function ManagerWeeklyReviewPage({
   mode, weekStart, weekEnd, onShiftWeek, onPickWeek, canGoNext, loading, error,
   rows, company, corrections, audit, managerBonus, canAct, readOnlyReason, dueDate, onOpenHistory,
   bonusQueries = [], canResolveQueries = false, onResolveBonusQuery,
-  renderFunds, fundsPending, fundsSummary, onSaveDraftNote, initialTab, logMissDisputes = [], onDecideLogMiss,
+  renderFunds, fundsPending, fundsSummary, onSaveDraftNote, initialTab, logMissDisputes = [], onDecideLogMiss, fineAppeals = [], onDecideFineAppeal,
   renderHeadOfSales, headOfSalesAttention = false,
   onApprove, onReturn, onFlag, onSubmitToOwner, onBack, onEditManagerBonus, monthlyIncentive = null,
   onSavePayoutChange, onRemovePayoutChange, repsWaiting = false, waitingWeeks = [], onDecideOrder, onUndoOrderDecision, onRemoveLateSendFine, orderDecisionsReady = true,
@@ -108,6 +109,8 @@ export default function ManagerWeeklyReviewPage({
   bonusQueries?: WeeklyBonusQuery[];
   logMissDisputes?: LogMissDispute[];
   onDecideLogMiss?: (id: string, outcome: "cancel" | "keep", note: string) => Promise<void>;
+  fineAppeals?: FineAppeal[];
+  onDecideFineAppeal?: (id: string, outcome: "cancel" | "keep", note: string) => Promise<void>;
   /** The Funds & Expenses tab, rendered by the parent; receives the notes/submit bar. */
   renderFunds?: (footer: ReactNode) => ReactNode;
   /** The Head of Sales tab: her bonus, the week's script and who it helped. */
@@ -536,7 +539,7 @@ export default function ManagerWeeklyReviewPage({
           <button key={key} type="button" role="tab" aria-selected={topTab === key} onClick={() => setTopTab(key)}
             className={`!min-h-0 inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl px-4 py-2.5 text-[13px] font-semibold ${topTab === key ? "bg-[#1F6FEB] text-white shadow-sm" : "text-gray-600 hover:text-gray-900 dark:text-slate-300"}`}>
             <Icon className="h-4 w-4" />{label}
-            {key === "reps" && openQueries + logMissDisputes.filter((item) => item.status === "open").length > 0 && <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[11px] font-bold text-white">{openQueries + logMissDisputes.filter((item) => item.status === "open").length}</span>}
+            {key === "reps" && openQueries + logMissDisputes.filter((item) => item.status === "open").length + fineAppeals.filter((item) => item.status === "open").length > 0 && <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[11px] font-bold text-white">{openQueries + logMissDisputes.filter((item) => item.status === "open").length + fineAppeals.filter((item) => item.status === "open").length}</span>}
             {key === "headOfSales" && headOfSalesAttention && <span className="inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" aria-label="Needs a decision" />}
             {key === "funds" && (fundsPending ?? 0) > 0 && <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[11px] font-bold text-white">{fundsPending}</span>}
           </button>
@@ -775,6 +778,10 @@ export default function ManagerWeeklyReviewPage({
               {onDecideLogMiss && (
                 <LogMissDisputesPanel disputes={logMissDisputes} repName={(id) => repNameById(id)} canDecide={canResolveQueries} isOwner={!canAct && canResolveQueries}
                   onDecide={onDecideLogMiss} />
+              )}
+              {onDecideFineAppeal && (
+                <FineAppealsPanel appeals={fineAppeals} repName={(id) => repNameById(id)} canDecide={canResolveQueries} isOwner={!canAct && canResolveQueries}
+                  onDecide={onDecideFineAppeal} />
               )}
               <Panel>
                 <NumberedHeader title="Bonus Queries" subtitle="Reps who ran Check My Bonus and still need an answer." />
