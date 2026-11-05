@@ -170,7 +170,7 @@ import {
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, ordersExtraApi, productCostApi, stockApi as _stockApi,
   weeklyReportsApi, managerFundsApi, logMissApi, salesScriptApi, embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, upsellPerformanceApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, targetPeriodsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
   branchesApi, setApiSpyUserId, type ApprovedPayoutChange, type CartAssignmentPanel, type CartHandOutRules,
-  setApiPreviewReadOnly, pageVisitsApi, fineAppealsApi,
+  setApiPreviewReadOnly, pageVisitsApi, fineAppealsApi, trackingHubApi,
   PreviewReadOnlyError, type BranchWorkspace
 } from "./lib/api";
 import { NIGERIA_STATES, canonicalOrderState, UNPLACED_ORDER_STATE } from "./lib/nigeria";
@@ -11616,6 +11616,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Page visits (Bright, 3 Nov 2026): note each page someone stays on for a
   // moment, so the Owner can see who opens what (User Management). Never while
   // previewing a role or viewing as someone - that is not them opening it.
+  // Campaigns with no order for 3 days (Bright, 5 Nov 2026): a red count on
+  // Tracking Hub for the Owner (the only role that can open it). The server
+  // keeps the answer 15 minutes, so checking every 15 minutes costs little.
+  const [campaignAlertCount, setCampaignAlertCount] = useState(0);
+  useEffect(() => {
+    if (currentRole !== "Owner" || isPreviewing) { setCampaignAlertCount(0); return; }
+    let live = true;
+    const check = () => { void trackingHubApi.campaignAlerts().then((result) => { if (live) setCampaignAlertCount(result.droughts.length); }).catch(() => undefined); };
+    check();
+    const timer = window.setInterval(check, 15 * 60_000);
+    return () => { live = false; window.clearInterval(timer); };
+  }, [currentRole, isPreviewing]);
+
   const visitPageKey = activePage === "Inventory & Logistics Operations" ? `${activePage}/${inventoryOperationsSection}` : activePage;
   useEffect(() => {
     if (!realManagedUser?.id || isPreviewing) return;
@@ -76654,6 +76667,9 @@ ${waybillLineItems(w).length > 1
                 >
                   <item.icon className={`w-5 h-5 shrink-0 ${isActive ? "text-[#1F8FE0]" : "text-gray-400"}`} />
                   {!collapsed && <span className="truncate">{item.label}</span>}
+                  {item.label === "Tracking Hub" && campaignAlertCount > 0 && (collapsed
+                    ? <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-red-500" aria-label={`${campaignAlertCount} campaigns with no order for 3 days`} />
+                    : <span className="ml-auto rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white" title="Campaigns with no order for 3+ days">{campaignAlertCount}</span>)}
                 </button>
                 {showInventoryOperationsSubnav && (
                   <div className="ml-4 mt-1 mb-2 pl-3.5 border-l border-white/10 space-y-3">

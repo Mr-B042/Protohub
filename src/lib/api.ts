@@ -4728,6 +4728,14 @@ export type HubSinceStartRow = HubSinceStartRates & {
   verdict: HubVerdict2; reason: string; advice: string[];
   ads: Array<HubSinceStartRates & { adId: string; adName: string; adsetName: string; firstDay: string | null; orders: number; cpa: number | null }>;
 };
+/** Campaigns with no order for 3 days (backend lib/campaign-drought.ts). */
+export type CampaignDroughtGroup = "off" | "watch" | "adjust";
+export type CampaignDrought = {
+  campaignId: string; campaignName: string; platform: string; accountName: string; running: boolean; start: string | null;
+  spend: number; orders: number; cpa: number | null; productName: string | null;
+  group: CampaignDroughtGroup; daysWithoutOrder: number; lastOrderDay: string | null; recentSpend: number; spendSinceLastOrder: number;
+  advice: string; episodeKey: string;
+};
 export type HubSinceStart = {
   rows: HubSinceStartRow[]; ordersFrom: string; linkedShare: number | null; lastLifetimeAt: string | null;
   rules: { minDays: number; minSpendTimesTarget: number; winningBelow: number; hookWeak: number; hookStrong: number; breakEvenMinOrders: number };
@@ -4822,6 +4830,7 @@ export const trackingHubApi = {
   syncAdSpend: (period: { from: string; to: string }) => post<{ ok: boolean; accounts: number; failed: string[]; message: string }>("/api/tracking-hub/ad-spend/sync", period),
   setAdSpendAutoSync: (on: boolean) => put<{ ok: true; autoSync: boolean }>("/api/tracking-hub/ad-spend/auto-sync", { on }),
   sinceStart: (platform: string) => get<HubSinceStart>(`/api/tracking-hub/ad-spend/since-start?platform=${encodeURIComponent(platform)}`),
+  campaignAlerts: () => get<{ droughts: CampaignDrought[]; checkedAt: string }>("/api/tracking-hub/campaign-alerts"),
   setAdSpendTarget: (productId: string, targetCpa: number | null) => put<{ ok: true }>("/api/tracking-hub/ad-spend/targets", { productId, targetCpa }),
   tiktokConnections: () => get<{ connections: HubTikTokConnection[]; urlParameters: string }>("/api/tracking-hub/tiktok-connections"),
   connectTikTok: (body: { name: string; accessToken: string; advertiserIds: string }) => post<HubTikTokConnection>("/api/tracking-hub/tiktok-connections", body),

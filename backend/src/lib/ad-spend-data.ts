@@ -290,6 +290,12 @@ async function syncLifetime(orgId: string, branchId: string, opts: { targets: Re
 
 /** Since Start: every campaign judged over its whole life (lib/ad-since-start.ts). */
 export async function loadSinceStart(orgId: string, branchId: string, today: string) {
+  const { data: _inputs, ...result } = await sinceStartCore(orgId, branchId, today);
+  return result;
+}
+
+/** Since Start plus the inputs it was built from (the no-order alerts need the orders and daily spend). */
+export async function sinceStartCore(orgId: string, branchId: string, today: string) {
   const { data: lifetimeRows, error } = await supabase.from("tracking_ad_lifetime").select("*").eq("org_id", orgId).eq("branch_id", branchId).limit(20000);
   if (error) throw error;
   const lifetime = ((lifetimeRows ?? []) as any[]).map((row) => ({ ...row, campaign_start: row.campaign_start ? String(row.campaign_start).slice(0, 10) : null, first_day: row.first_day ? String(row.first_day).slice(0, 10) : null, last_day: row.last_day ? String(row.last_day).slice(0, 10) : null, spend: Number(row.spend) || 0, platform_purchases: Number(row.platform_purchases) || 0, impressions: Number(row.impressions) || 0, link_clicks: Number(row.link_clicks) || 0, video_hook: Number(row.video_hook) || 0, video_full: Number(row.video_full) || 0 })) as LifetimeRow[];
@@ -321,7 +327,7 @@ export async function loadSinceStart(orgId: string, branchId: string, today: str
   const recent = data.orders.filter((order) => order.day >= addDaysToDateKey(today, -29) && !order.otherPlatform);
   const linked = recent.filter((order) => order.campaignId).length;
   const { data: state } = await supabase.from("tracking_ad_spend_state").select("last_lifetime_at").eq("org_id", orgId).eq("branch_id", branchId).maybeSingle();
-  return { rows, ordersFrom, targets: targetList.filter((row) => row.breakEven !== null || row.own !== null || rows.some((campaign) => campaign.productId === row.productId)), linkedShare: recent.length ? linked / recent.length : null, lastLifetimeAt: state?.last_lifetime_at ?? null };
+  return { rows, ordersFrom, targets: targetList.filter((row) => row.breakEven !== null || row.own !== null || rows.some((campaign) => campaign.productId === row.productId)), linkedShare: recent.length ? linked / recent.length : null, lastLifetimeAt: state?.last_lifetime_at ?? null, data };
 }
 
 /**

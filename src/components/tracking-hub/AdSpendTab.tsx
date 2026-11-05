@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import SinceStartView from "./SinceStartView";
+import CampaignAlertsPanel from "./CampaignAlertsPanel";
 import { Bar, CartesianGrid, Cell, ComposedChart, LabelList, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   AlertTriangle, ArrowUpDown, BarChart3, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Columns3, Database, Download, Filter, Plus, RefreshCw, ShoppingCart, Trash2, Truck, Users, Wallet, X
@@ -429,6 +430,8 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
     <div className="space-y-5">
       {header}
       {tabBar}
+
+      {data.hasAccounts && <CampaignAlertsPanel focus={new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("alert")} />}
 
       {!data.hasAccounts ? (
         <Card className="flex flex-wrap items-center justify-between gap-3 border-amber-200 bg-amber-50/60 px-5 py-4 dark:border-amber-900 dark:bg-amber-950/20">

@@ -16,6 +16,8 @@ import { refreshAccount, refreshTargets } from "../lib/tracking-meta-refresh.js"
 import { AD_SPEND_VIEWS, allocate, buildReport, mappingIndex, validSplits, type AdSpendView, type PlatformChoice } from "../lib/ad-spend.js";
 import { loadAdSpendInputs, loadSinceStart, loadTikTokConnections, suggestProduct, syncAdSpend } from "../lib/ad-spend-data.js";
 import { RULES as SINCE_START_RULES, VERDICT_ORDER } from "../lib/ad-since-start.js";
+import { droughtsFor } from "../lib/campaign-drought-alerts.js";
+import { DROUGHT_RULES } from "../lib/campaign-drought.js";
 import { syncAdSpendExpenses } from "../lib/ad-spend-expenses.js";
 import { TIKTOK_URL_PARAMETERS, tiktokAdvertisers } from "../lib/tiktok-ads.js";
 import { lastSyncedAt, sortPages, syncIsStale, syncWebsitePages } from "../lib/wordpress-pages.js";
@@ -1763,6 +1765,14 @@ router.post("/ad-spend/sync", async (req, res) => {
     await hubAudit(orgId, branchId, actorOf(req), "ad_spend_synced", { type: "ad_spend" }, { from, to: today, accounts: result.accounts, ok: result.ok });
     res.json(result);
   } catch (error: any) { fail(res, error, "Couldn't read Meta's spend."); }
+});
+
+/** Campaigns with no order for 3 days (Bright, 5 Nov 2026): Ad Spend panel + sidebar count. */
+router.get("/campaign-alerts", async (req, res) => {
+  try {
+    const { droughts, checkedAt } = await droughtsFor(req.user!.orgId, branchOf(req));
+    res.json({ droughts, checkedAt, rules: DROUGHT_RULES });
+  } catch (error: any) { fail(res, error, "Could not check the campaigns."); }
 });
 
 /** Since Start: each campaign over its whole life, with a verdict by Bright's rules. */
