@@ -3,12 +3,12 @@
 // or WhatsApp the customer. The form only asked for 7-15 digits.
 //
 // Every way a customer writes the same number is fine:
-//   +23408137069653   08137069653   +2348137069653   8137069653
+//   +23408012345678   08012345678   +2348012345678   8012345678
 // They all come down to the same 10 digits after the country code and the
-// leading 0: 8137069653. That core must be exactly 10 digits and start with
+// leading 0: 8012345678. That core must be exactly 10 digits and start with
 // 7, 8 or 9 (Nigerian mobile numbers).
 
-export const PHONE_EXAMPLE = "0813 706 9653";
+export const PHONE_EXAMPLE = "0801 234 5678";
 
 /** The 10-digit number without +234 or the leading 0. */
 export function nigerianPhoneCore(value: string) {
