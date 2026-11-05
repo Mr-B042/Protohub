@@ -79,3 +79,14 @@ test("suggestions stay in the chosen state and narrow as the customer types", ()
   assert.deepEqual(areaSuggestions("Lagos", "Ikeja"), []); // already picked
   assert.deepEqual(areaSuggestions("Kano", "Ikeja"), []); // never another state's area
 });
+
+const { STATE_ADDRESS_EXAMPLE, addressExampleFor } = await load("../src/lib/ng-areas.ts");
+
+test("every state has its own address example, and it is not another state's", () => {
+  assert.deepEqual(Object.keys(STATE_ADDRESS_EXAMPLE).sort(), [...NIGERIA_STATES].sort());
+  assert.match(addressExampleFor("Kano"), /Kano/);
+  assert.match(addressExampleFor("Lagos"), /Ikeja/);
+  assert.doesNotMatch(addressExampleFor(""), /Aba Road|Rumuola/);
+  // The example itself must pass the vague-address check.
+  for (const [state, example] of Object.entries(STATE_ADDRESS_EXAMPLE)) assert.equal(vagueAddressReason(example, "", state), null, state);
+});

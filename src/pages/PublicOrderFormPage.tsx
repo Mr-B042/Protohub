@@ -5,7 +5,7 @@ import { makeCartId } from "../lib/cart-id";
 import { itemCountLabel } from "../lib/item-count-label";
 import { nigerianPhoneProblem } from "../lib/ng-phone";
 import { vagueAddressReason } from "../lib/nigeria";
-import { areaSuggestions, STATE_AREAS } from "../lib/ng-areas";
+import { addressExampleFor, areaSuggestions, STATE_AREAS } from "../lib/ng-areas";
 import { announceLandingPreviewLocked, insideLandingPreview } from "../lib/landing-preview";
 import type { ProductCurrencyCode } from "../types";
 
@@ -263,9 +263,9 @@ const sanitizePhoneDigitsInput = (value: string) => {
 };
 
 // Address that only repeats the state/city, or an email (Bright, 5 Nov 2026).
-const vagueAddressMessage = (reason: "place" | "email") => reason === "email"
+const vagueAddressMessage = (reason: "place" | "email", state?: string) => reason === "email"
   ? "This looks like an email. Please type where we should deliver: your street, area or a nearby landmark."
-  : "You already gave us your state and city. Please add your street, area or a nearby landmark so we can find you, e.g. 12 Aba Road, Rumuola, near Shoprite.";
+  : `You already gave us your state and city. Please add your house number, street and a nearby landmark so we can find you, e.g. ${addressExampleFor(state)}.`;
 
 type PendingUpsellOffer = {
   orderId: string;
@@ -1773,7 +1773,7 @@ export default function PublicOrderFormPage() {
     }
     const addressVague = vagueAddressReason(orderFormAddress, orderFormCity, orderFormState);
     if (settings.addressRequired && !orderFormAddress.trim()) nextErrors.address = "Delivery address is required.";
-    else if (addressVague) nextErrors.address = vagueAddressMessage(addressVague);
+    else if (addressVague) nextErrors.address = vagueAddressMessage(addressVague, orderFormState);
     if (settings.cityRequired && !orderFormCity.trim()) nextErrors.city = "City is required.";
     if (!orderFormState.trim()) nextErrors.state = "Please select your state.";
     if (settings.askDelivery && !orderFormDeliveryWindow.trim()) nextErrors.delivery = "Please select a delivery time.";
@@ -4927,7 +4927,7 @@ export default function PublicOrderFormPage() {
                     }}
                     onBlur={() => {
                       const reason = vagueAddressReason(orderFormAddress, orderFormCity, orderFormState);
-                      if (reason) setFieldErrors((current) => ({ ...current, address: vagueAddressMessage(reason) }));
+                      if (reason) setFieldErrors((current) => ({ ...current, address: vagueAddressMessage(reason, orderFormState) }));
                     }}
                     placeholder={`House No. & Street${settings.addressRequired ? " *" : ""}`}
                     aria-invalid={Boolean(fieldErrors.address)}
@@ -4936,7 +4936,7 @@ export default function PublicOrderFormPage() {
                   />
                   {!fieldErrors.address && (
                     <span style={{ marginTop: 6, display: "block", fontSize: 12, fontWeight: 600, color: "#6b7280", lineHeight: 1.35 }}>
-                      Your full delivery address, with a nearby landmark. E.g. 12 Aba Road, Rumuola, near Shoprite.
+                      Your full delivery address, with a nearby landmark. E.g. {addressExampleFor(orderFormState)}.
                     </span>
                   )}
                   {fieldErrors.address && (
