@@ -3,7 +3,7 @@ import { cartsApi, embedSettingsApi, productsApi, publicOrdersApi } from "../lib
 import { browserSupabaseClient } from "../lib/realtime";
 import { makeCartId } from "../lib/cart-id";
 import { itemCountLabel } from "../lib/item-count-label";
-import { nigerianPhoneProblem, PHONE_EXAMPLE } from "../lib/ng-phone";
+import { nigerianPhoneProblem } from "../lib/ng-phone";
 import { vagueAddressReason } from "../lib/nigeria";
 import { areaSuggestions, STATE_AREAS } from "../lib/ng-areas";
 import { announceLandingPreviewLocked, insideLandingPreview } from "../lib/landing-preview";
@@ -4734,7 +4734,7 @@ export default function PublicOrderFormPage() {
                         const problem = nigerianPhoneProblem(orderFormPhone);
                         if (problem) setFieldErrors((current) => ({ ...current, phone: problem }));
                       }}
-                      placeholder={`Phone * e.g. ${PHONE_EXAMPLE.replace(/\s/g, "")}`}
+                      placeholder="Phone Number *"
                       inputMode="tel"
                       enterKeyHint="next"
                       pattern="[0-9\\s\\-]{7,15}"
@@ -4771,7 +4771,7 @@ export default function PublicOrderFormPage() {
                           const problem = orderFormWhatsapp.trim() ? nigerianPhoneProblem(orderFormWhatsapp) : null;
                           if (problem) setFieldErrors((current) => ({ ...current, whatsapp: problem }));
                         }}
-                        placeholder={`Your WhatsApp Number${settings.requireWhatsapp ? " *" : ""}`}
+                        placeholder={`WhatsApp No.${settings.requireWhatsapp ? " *" : ""}`}
                         inputMode="tel"
                         enterKeyHint="next"
                         pattern="[0-9]{7,15}"
@@ -4866,7 +4866,7 @@ export default function PublicOrderFormPage() {
                       setOrderFormCity(event.target.value);
                       clearFieldError("city");
                     }}
-                    placeholder={`Your Area / Town${settings.cityRequired ? " *" : ""}`}
+                    placeholder={`Your City / Area${settings.cityRequired ? " *" : ""}`}
                     aria-invalid={Boolean(fieldErrors.city)}
                     aria-describedby={fieldErrors.city ? "public-order-error-city" : undefined}
                     style={inputErrorStyle("city")}
@@ -4929,11 +4929,16 @@ export default function PublicOrderFormPage() {
                       const reason = vagueAddressReason(orderFormAddress, orderFormCity, orderFormState);
                       if (reason) setFieldErrors((current) => ({ ...current, address: vagueAddressMessage(reason) }));
                     }}
-                    placeholder={`Street, house number or landmark${settings.addressRequired ? " *" : ""}`}
+                    placeholder={`House No. & Street${settings.addressRequired ? " *" : ""}`}
                     aria-invalid={Boolean(fieldErrors.address)}
                     aria-describedby={fieldErrors.address ? "public-order-error-address" : undefined}
                     style={inputErrorStyle("address")}
                   />
+                  {!fieldErrors.address && (
+                    <span style={{ marginTop: 6, display: "block", fontSize: 12, fontWeight: 600, color: "#6b7280", lineHeight: 1.35 }}>
+                      Your full delivery address, with a nearby landmark. E.g. 12 Aba Road, Rumuola, near Shoprite.
+                    </span>
+                  )}
                   {fieldErrors.address && (
                     <span id="public-order-error-address" style={{ marginTop: 6, display: "block", fontSize: 12, fontWeight: 700, color: "#dc2626" }}>
                       {fieldErrors.address}
