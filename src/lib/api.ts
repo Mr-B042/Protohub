@@ -4723,6 +4723,8 @@ export type HubVerdict2 = "winning" | "keep" | "learning" | "turn_off" | "check_
 export type HubSinceStartRates = { spend: number; impressions: number; linkClicks: number; platformPurchases: number; hookRate: number | null; holdRate: number | null; ctr: number | null; cpm: number | null };
 export type HubSinceStartRow = HubSinceStartRates & {
   campaignId: string; campaignName: string; platform: "meta" | "tiktok"; accountId: string; accountName: string; status: string | null; running: boolean;
+  /** "live" = asked Meta just now (an ad delivering); "saved" = Meta did not answer, last saved status. */
+  runningSource?: "live" | "saved";
   start: string | null; days: number; ordersCountedFrom: string | null; productId: string | null; productName: string | null; products: number;
   orders: number; delivered: number; cpa: number | null; cpdo: number | null; target: number | null; targetSource: "worked_out" | "set_by_you" | "mixed" | null;
   verdict: HubVerdict2; reason: string; advice: string[];

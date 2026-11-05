@@ -134,7 +134,7 @@ export default function SinceStartView({ platform, refreshKey, onToast }: { plat
           to <input type="date" value={startTo} onChange={(event) => setStartTo(event.target.value)} className="h-10 rounded-lg border border-gray-200 bg-white px-2 text-[13px] dark:border-slate-700 dark:bg-slate-900" />
         </label>
         <select value={band} onChange={(event) => setBand(event.target.value)} className={`${selectCls} w-[140px]`}>{DAY_BANDS.map((row) => <option key={row.key} value={row.key}>{row.key ? `Running ${row.label}` : "Any length"}</option>)}</select>
-        <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)} className={`${selectCls} w-[150px]`}><option value="running">Running now</option><option value="off">Switched off</option><option value="">Running or off</option></select>
+        <select value={status} title="Running now = at least one ad delivering right now, checked live with Meta" onChange={(event) => setStatus(event.target.value as typeof status)} className={`${selectCls} w-[150px]`}><option value="running">Running now</option><option value="off">Switched off</option><option value="">Running or off</option></select>
         <select value={productId} onChange={(event) => setProductId(event.target.value)} className={`${selectCls} w-[160px]`}><option value="">All Products</option>{productOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>
         <button type="button" onClick={() => setTargetsOpen(true)} className={`${smallButton} ml-auto !h-10`}><Target className="h-4 w-4" /> Targets</button>
       </div>
@@ -174,7 +174,7 @@ export default function SinceStartView({ platform, refreshKey, onToast }: { plat
                         <PlatformIcon platform={row.platform} size="sm" />
                         <span className="min-w-0">
                           <span className="block truncate text-[13px] font-semibold text-gray-900 dark:text-slate-100">{row.campaignName || row.campaignId}</span>
-                          <span className="block truncate text-[11.5px] text-gray-500">{row.accountName} • {row.productName ?? "No product"}{row.products > 1 ? ` +${row.products - 1}` : ""}{row.running ? "" : " • off"}</span>
+                          <span className="block truncate text-[11.5px] text-gray-500">{row.accountName} • {row.productName ?? "No product"}{row.products > 1 ? ` +${row.products - 1}` : ""}{row.running ? (row.runningSource === "saved" ? " • not checked live" : "") : " • off"}</span>
                         </span>
                       </span>
                     </td>

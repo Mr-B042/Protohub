@@ -5,8 +5,6 @@ import { getOrgPushBranding } from "./push-branding.js";
 import { sendPushToUser } from "./push.js";
 import { lagosDateKey } from "./sales-bonus-engine.js";
 import { sinceStartCore } from "./ad-spend-data.js";
-import { deliveringCampaigns } from "./meta-graph.js";
-import { refreshTargets } from "./tracking-meta-refresh.js";
 import { TIKTOK_PREFIX } from "./ad-spend.js";
 import { campaignDroughts, DROUGHT_RULES, type Drought, type DroughtGroup } from "./campaign-drought.js";
 
@@ -40,10 +38,11 @@ export async function droughtsFor(orgId: string, branchId: string, opts: { fresh
   }
   // ⚠️ NOT the saved campaign status (Bright, 5 Nov 2026: "some ... has already
   // been turned off"). Meta keeps a campaign "ACTIVE" when its ad sets or ads
-  // are paused: 40 campaigns said ACTIVE, most had not spent in weeks. So every
-  // dry campaign is checked live with Meta first (its account's ACTIVE ads)
-  // and kept only when at least one of its ads is delivering now. No answer from Meta = left out (never
-  // guessed), and counted as unchecked.
+  // are paused. Since Start now asks Meta live (runningSource "live"): only
+  // those answers count here. An account Meta did not answer is left out
+  // (never guessed) and counted as unchecked. TikTok has no live check yet:
+  // kept only when it spent today.
+  const rowOf = new Map(core.rows.map((row) => [row.campaignId, row]));
   const candidates = campaignDroughts({
     today, lastOrderDay, spendByDay,
     campaigns: core.rows.map((row) => ({
@@ -51,27 +50,13 @@ export async function droughtsFor(orgId: string, branchId: string, opts: { fresh
       running: true, start: row.start, spend: row.spend, orders: row.orders, cpa: row.cpa, productName: row.productName
     }))
   });
-  const accountOf = new Map(core.rows.map((row) => [row.campaignId, String(row.accountId ?? "").replace(/^act_/, "")]));
-  const tokenOf = new Map(refreshTargets(core.data.basics).map((target) => [String(target.account).replace(/^act_/, ""), target.token]));
-  const byAccount = new Map<string, string[]>();
-  for (const drought of candidates) {
-    if (drought.platform !== "meta" || drought.campaignId.startsWith(TIKTOK_PREFIX)) continue;
-    const account = accountOf.get(drought.campaignId) ?? "";
-    byAccount.set(account, [...(byAccount.get(account) ?? []), drought.campaignId]);
-  }
-  const on = new Set<string>();
   let unchecked = 0;
-  for (const [account, ids] of byAccount) {
-    const token = tokenOf.get(account);
-    if (!token) { unchecked += ids.length; continue; }
-    const result = await deliveringCampaigns(account, token).catch(() => ({ ok: false as const, message: "no answer" }));
-    if (!result.ok) { unchecked += ids.length; logger.warn("campaign live check failed", { orgId, account, message: result.message }); continue; }
-    for (const id of ids) if (result.ids.has(id)) on.add(id);
-  }
-  // TikTok has no live check here yet: kept only when it spent today.
-  const droughts = candidates.filter((drought) => drought.platform === "meta" && !drought.campaignId.startsWith(TIKTOK_PREFIX)
-    ? on.has(drought.campaignId)
-    : (spendByDay.get(drought.campaignId)?.get(today) ?? 0) > 0);
+  const droughts = candidates.filter((drought) => {
+    const row = rowOf.get(drought.campaignId);
+    if (drought.platform !== "meta" || drought.campaignId.startsWith(TIKTOK_PREFIX)) return (spendByDay.get(drought.campaignId)?.get(today) ?? 0) > 0;
+    if (row?.runningSource !== "live") { unchecked += 1; return false; }
+    return row.running;
+  });
   cache.set(key, { at: Date.now(), droughts, unchecked });
   return { droughts, unchecked, checkedAt: new Date().toISOString() };
 }
