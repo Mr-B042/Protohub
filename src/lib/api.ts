@@ -887,7 +887,7 @@ export type PdaAssignment = {
   deliveryFee: number; feeStatus: string;
   amountCollected?: number | null; paymentMethod?: string | null; proofType?: string | null;
   order?: {
-    id: string; customer: string; phone: string; address?: string | null; state?: string | null;
+    id: string; customer: string; phone: string; address?: string | null; city?: string | null; state?: string | null;
     productName?: string | null; quantity?: number | null; amount: number;
   } | null;
 };

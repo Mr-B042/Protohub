@@ -23053,7 +23053,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         customer: row.order.customer,
         fee: row.fee,
         amount: row.order.amount,
-        address: row.order.address || row.order.location || "No address captured",
+        address: [row.order.address, row.order.city, row.order.state].map((part) => (part ?? "").trim()).filter(Boolean).join(", ") || row.order.location || "No address captured",
         date: orderDeliveredKey(row.order) || orderCreatedKey(row.order),
         status: row.order.status ?? "New",
         record: row.order
@@ -58841,7 +58841,7 @@ ${waybillLineItems(w).length > 1
                     <p className="m-0 text-xs text-gray-500">
                       {row.order?.productName ?? "Product"}{row.order?.quantity ? ` × ${row.order.quantity}` : ""}
                     </p>
-                    <p className="m-0 text-xs text-gray-500">{[row.order?.address, row.order?.state].filter(Boolean).join(", ")}</p>
+                    <p className="m-0 text-xs text-gray-500">{[row.order?.address, row.order?.city, row.order?.state].filter(Boolean).join(", ")}</p>
                   </div>
                   <span className="shrink-0 rounded-full bg-gray-100 px-2.5 py-1 text-[10px] font-black text-gray-600">{row.deliveryStatus}</span>
                 </div>

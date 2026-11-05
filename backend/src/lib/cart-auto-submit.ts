@@ -14,6 +14,7 @@
 import { randomUUID } from "node:crypto";
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
+import { nigerianPhoneForSave } from "./ng-phone.js";
 import { sendOrderNewCustomerWhatsApp, sendOrderNewRepWhatsApp, sendOrderUpsellWhatsApp } from "./whatsapp.js";
 import { productLaunch } from "./product-launch.js";
 import { metaIdsFromFormContext, resolveMetaTrackingConfig, recordMetaCapiEvent, sendMetaCapiPurchase, fbclidSeenAt } from "./meta-capi.js";
@@ -194,7 +195,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
   // 4. Build order payload
   const capturePayload = (cart.capture_payload ?? {}) as Record<string, any>;
   const formContext = (capturePayload.formContext ?? {}) as Record<string, any>;
-  const customerPhone = cart.phone ?? capturePayload.phone ?? null;
+  const customerPhone = nigerianPhoneForSave(cart.phone ?? capturePayload.phone ?? null);
   const customerAddress = cart.address ?? capturePayload.address ?? null;
   const customerCity = cart.city ?? capturePayload.city ?? null;
   const customerState = tidyOrderState(cart.state ?? capturePayload.state ?? null);
@@ -222,7 +223,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     source_cart_id:   cartId,
     customer:         cart.customer,
     phone:            customerPhone,
-    whatsapp:         cart.whatsapp ?? null,
+    whatsapp:         nigerianPhoneForSave(cart.whatsapp ?? null),
     address:          customerAddress,
     city:             customerCity,
     state:            customerState,
