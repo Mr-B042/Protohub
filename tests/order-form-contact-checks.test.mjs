@@ -12,7 +12,7 @@ const { nigerianPhoneProblem, nigerianPhoneCore } = await load("../src/lib/ng-ph
 const { vagueAddressReason } = await load("../src/lib/nigeria.ts");
 
 test("every way of writing a full Nigerian number is accepted", () => {
-  for (const value of ["+23408137069653", "08137069653", "+2348137069653", "8137069653", "0813 706 9653", "002348137069653", "0703-111-2222", "09012345678"]) {
+  for (const value of ["+23408012345678", "08012345678", "+2348012345678", "8012345678", "0801 234 5678", "002348012345678", "0703-111-2222", "09012345678"]) {
     assert.equal(nigerianPhoneProblem(value), null, value);
     assert.equal(nigerianPhoneCore(value).length, 10, value);
   }
@@ -21,8 +21,8 @@ test("every way of writing a full Nigerian number is accepted", () => {
 test("a missing or extra digit is refused (order 5914: 0803546892)", () => {
   assert.match(nigerianPhoneProblem("0803546892"), /too short/);
   assert.match(nigerianPhoneProblem("+234803546892"), /too short/);
-  assert.match(nigerianPhoneProblem("081370696531"), /too long/);
-  assert.match(nigerianPhoneProblem("0513 706 9653"), /check this number/);
+  assert.match(nigerianPhoneProblem("080123456781"), /too long/);
+  assert.match(nigerianPhoneProblem("0501 234 5678"), /check this number/);
   assert.equal(nigerianPhoneProblem(""), null); // empty is the "required" message's job
 });
 

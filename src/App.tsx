@@ -96285,7 +96285,7 @@ ${waybillLineItems(w).length > 1
                           <DraftTextarea as="input"
                             type="tel"
                             className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#25D366]/30"
-                            placeholder="e.g. 08137069653"
+                            placeholder="e.g. 08012345678"
                             value={waTestPhone}
                             onCommit={(value) => setWaTestPhone(value)}
                           />
