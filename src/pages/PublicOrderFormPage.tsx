@@ -5,6 +5,7 @@ import { makeCartId } from "../lib/cart-id";
 import { itemCountLabel } from "../lib/item-count-label";
 import { nigerianPhoneProblem, PHONE_EXAMPLE } from "../lib/ng-phone";
 import { vagueAddressReason } from "../lib/nigeria";
+import { areaSuggestions, STATE_AREAS } from "../lib/ng-areas";
 import { announceLandingPreviewLocked, insideLandingPreview } from "../lib/landing-preview";
 import type { ProductCurrencyCode } from "../types";
 
@@ -245,9 +246,9 @@ const PUBLIC_ORDER_VALIDATION_ORDER: PublicOrderFieldKey[] = [
   "name",
   "phone",
   "whatsapp",
-  "address",
-  "city",
   "state",
+  "city",
+  "address",
   "delivery",
   "confirmation",
   "commitment"
@@ -1400,6 +1401,7 @@ export default function PublicOrderFormPage() {
   const [orderFormWhatsapp, setOrderFormWhatsapp] = useState("");
   const [orderFormEmail, setOrderFormEmail] = useState("");
   const [orderFormAddress, setOrderFormAddress] = useState("");
+  const [showAllAreas, setShowAllAreas] = useState(false);
   const [orderFormCity, setOrderFormCity] = useState("");
   const [orderFormState, setOrderFormState] = useState("");
   const [orderFormPackageId, setOrderFormPackageId] = useState("");
@@ -4732,7 +4734,7 @@ export default function PublicOrderFormPage() {
                         const problem = nigerianPhoneProblem(orderFormPhone);
                         if (problem) setFieldErrors((current) => ({ ...current, phone: problem }));
                       }}
-                      placeholder={`Your Phone Number * e.g. ${PHONE_EXAMPLE}`}
+                      placeholder={`Phone * e.g. ${PHONE_EXAMPLE.replace(/\s/g, "")}`}
                       inputMode="tel"
                       enterKeyHint="next"
                       pattern="[0-9\\s\\-]{7,15}"
@@ -4825,60 +4827,6 @@ export default function PublicOrderFormPage() {
                 )}
 
                 <label className="field-full">
-                  <input
-                    ref={setFieldRef("address") as any}
-                    type="text"
-                    name="street-address"
-                    autoComplete="shipping street-address"
-                    autoCapitalize="words"
-                    enterKeyHint="next"
-                    value={orderFormAddress}
-                    onChange={(event) => {
-                      setOrderFormAddress(event.target.value);
-                      clearFieldError("address");
-                    }}
-                    onBlur={() => {
-                      const reason = vagueAddressReason(orderFormAddress, orderFormCity, orderFormState);
-                      if (reason) setFieldErrors((current) => ({ ...current, address: vagueAddressMessage(reason) }));
-                    }}
-                    placeholder={`Your Address${settings.addressRequired ? " *" : ""}`}
-                    aria-invalid={Boolean(fieldErrors.address)}
-                    aria-describedby={fieldErrors.address ? "public-order-error-address" : undefined}
-                    style={inputErrorStyle("address")}
-                  />
-                  {fieldErrors.address && (
-                    <span id="public-order-error-address" style={{ marginTop: 6, display: "block", fontSize: 12, fontWeight: 700, color: "#dc2626" }}>
-                      {fieldErrors.address}
-                    </span>
-                  )}
-                </label>
-
-                <label className="field-full">
-                  <input
-                    ref={setFieldRef("city") as any}
-                    type="text"
-                    name="address-level2"
-                    autoComplete="shipping address-level2"
-                    autoCapitalize="words"
-                    enterKeyHint="next"
-                    value={orderFormCity}
-                    onChange={(event) => {
-                      setOrderFormCity(event.target.value);
-                      clearFieldError("city");
-                    }}
-                    placeholder={`Your City${settings.cityRequired ? " *" : ""}`}
-                    aria-invalid={Boolean(fieldErrors.city)}
-                    aria-describedby={fieldErrors.city ? "public-order-error-city" : undefined}
-                    style={inputErrorStyle("city")}
-                  />
-                  {fieldErrors.city && (
-                    <span id="public-order-error-city" style={{ marginTop: 6, display: "block", fontSize: 12, fontWeight: 700, color: "#dc2626" }}>
-                      {fieldErrors.city}
-                    </span>
-                  )}
-                </label>
-
-                <label className="field-full">
                   <select
                     ref={setFieldRef("state") as any}
                     name="address-level1"
@@ -4887,6 +4835,7 @@ export default function PublicOrderFormPage() {
                     value={orderFormState}
                     onChange={(event) => {
                       setOrderFormState(event.target.value);
+                      setShowAllAreas(false);
                       clearFieldError("state");
                     }}
                     aria-invalid={Boolean(fieldErrors.state)}
@@ -4904,6 +4853,94 @@ export default function PublicOrderFormPage() {
                     </span>
                   )}
                 </label>
+                <label className="field-full">
+                  <input
+                    ref={setFieldRef("city") as any}
+                    type="text"
+                    name="address-level2"
+                    autoComplete="shipping address-level2"
+                    autoCapitalize="words"
+                    enterKeyHint="next"
+                    value={orderFormCity}
+                    onChange={(event) => {
+                      setOrderFormCity(event.target.value);
+                      clearFieldError("city");
+                    }}
+                    placeholder={`Your Area / Town${settings.cityRequired ? " *" : ""}`}
+                    aria-invalid={Boolean(fieldErrors.city)}
+                    aria-describedby={fieldErrors.city ? "public-order-error-city" : undefined}
+                    style={inputErrorStyle("city")}
+                  />
+                  {orderFormState && STATE_AREAS[orderFormState] && (() => {
+                    // Area chips for the chosen state (Bright, 5 Nov 2026): tap one, or type any place.
+                    const typed = orderFormCity.trim();
+                    const shown = !typed && showAllAreas ? STATE_AREAS[orderFormState] : areaSuggestions(orderFormState, typed, 8);
+                    if (shown.length === 0) return null;
+                    const more = !typed && !showAllAreas && STATE_AREAS[orderFormState].length > shown.length;
+                    return (
+                      <div style={{ marginTop: 8 }}>
+                        <span style={{ display: "block", marginBottom: 6, fontSize: 11.5, fontWeight: 700, color: "#6b7280" }}>
+                          {typed ? `Areas in ${orderFormState} - tap yours` : `Popular areas in ${orderFormState} - tap yours or type it`}
+                        </span>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                          {shown.map((area) => (
+                            <button key={area} type="button"
+                              onClick={() => {
+                                setOrderFormCity(area);
+                                clearFieldError("city");
+                                const next = fieldRefs.current.address as HTMLInputElement | null;
+                                window.setTimeout(() => next?.focus?.(), 0);
+                              }}
+                              style={{ minHeight: 0, padding: "6px 11px", borderRadius: 999, border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", fontSize: 12.5, fontWeight: 700, lineHeight: 1.2, cursor: "pointer" }}>
+                              {area}
+                            </button>
+                          ))}
+                          {more && (
+                            <button type="button" onClick={() => setShowAllAreas(true)}
+                              style={{ minHeight: 0, padding: "6px 11px", borderRadius: 999, border: "1px dashed #cbd5e1", background: "#fff", color: "#475569", fontSize: 12.5, fontWeight: 700, lineHeight: 1.2, cursor: "pointer" }}>
+                              More areas
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  {fieldErrors.city && (
+                    <span id="public-order-error-city" style={{ marginTop: 6, display: "block", fontSize: 12, fontWeight: 700, color: "#dc2626" }}>
+                      {fieldErrors.city}
+                    </span>
+                  )}
+                </label>
+
+                <label className="field-full">
+                  <input
+                    ref={setFieldRef("address") as any}
+                    type="text"
+                    name="street-address"
+                    autoComplete="shipping street-address"
+                    autoCapitalize="words"
+                    enterKeyHint="next"
+                    value={orderFormAddress}
+                    onChange={(event) => {
+                      setOrderFormAddress(event.target.value);
+                      clearFieldError("address");
+                    }}
+                    onBlur={() => {
+                      const reason = vagueAddressReason(orderFormAddress, orderFormCity, orderFormState);
+                      if (reason) setFieldErrors((current) => ({ ...current, address: vagueAddressMessage(reason) }));
+                    }}
+                    placeholder={`Street, house number or landmark${settings.addressRequired ? " *" : ""}`}
+                    aria-invalid={Boolean(fieldErrors.address)}
+                    aria-describedby={fieldErrors.address ? "public-order-error-address" : undefined}
+                    style={inputErrorStyle("address")}
+                  />
+                  {fieldErrors.address && (
+                    <span id="public-order-error-address" style={{ marginTop: 6, display: "block", fontSize: 12, fontWeight: 700, color: "#dc2626" }}>
+                      {fieldErrors.address}
+                    </span>
+                  )}
+                </label>
+
               </div>
 
               <div style={{ marginTop: 16, marginBottom: 8, fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", color: "#111827" }}>
