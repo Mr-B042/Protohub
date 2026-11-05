@@ -70,6 +70,13 @@ export type SinceStartInput = {
   /** product id -> { cpa, source } */
   targets: Map<string, { cpa: number; source: "worked_out" | "set_by_you" }>;
   products: Map<string, { name: string }>; accountNames: Map<string, string>;
+  /**
+   * Live from Meta (Bright, 5 Nov 2026): campaigns with an ACTIVE ad right now,
+   * and the ad accounts that answered. A campaign's own status stays "ACTIVE"
+   * with every ad set paused, so for an account that answered this decides
+   * "running"; the saved status is only a fallback.
+   */
+  live?: { delivering: Set<string>; accounts: Set<string> };
 };
 
 /** One row per campaign (with its ads), judged since it started. */
@@ -95,7 +102,8 @@ export function sinceStart(input: SinceStartInput) {
     // Start = the campaign's own start date when sane, else its first day of spend.
     const start = first.campaign_start && first.campaign_start > "2015-01-01" ? first.campaign_start : firstSpend;
     const lastSpend = ads.map((row) => row.last_day).filter(Boolean).sort().pop() ?? null;
-    const running = (first.campaign_status ?? "").toUpperCase() === "ACTIVE";
+    const liveKnown = first.platform === "meta" && Boolean(input.live?.accounts.has(String(first.account_id ?? "").replace(/^act_/, "")));
+    const running = liveKnown ? input.live!.delivering.has(campaignId) : (first.campaign_status ?? "").toUpperCase() === "ACTIVE";
     const end = running || !lastSpend ? input.today : lastSpend;
     const days = start ? Math.max(1, daysBetween(start, end < start ? start : end)) : 0;
     // Product: each ad's spend follows the same rules as the Ad Spend tab; the biggest share names the campaign.
@@ -127,7 +135,7 @@ export function sinceStart(input: SinceStartInput) {
     }).sort((a, b) => b.spend - a.spend);
     return {
       campaignId, campaignName: first.campaign_name, platform: first.platform, accountId: first.account_id, accountName: input.accountNames.get(first.account_id) ?? first.account_id,
-      status: first.campaign_status, running, start, days, ordersCountedFrom: since !== start ? since : null,
+      status: first.campaign_status, running, runningSource: liveKnown ? "live" as const : "saved" as const, start, days, ordersCountedFrom: since !== start ? since : null,
       productId: productSpend.size ? productId : null, productName, products: productSpend.size,
       ...m, orders: orders.length, delivered, cpa: orders.length ? m.spend / orders.length : null, cpdo: delivered ? m.spend / delivered : null,
       target, targetSource,

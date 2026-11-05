@@ -5,7 +5,7 @@ import { dayOfIso, endIso, journeyCounts, loadBasics, startIso, type Basics } fr
 import { refreshAccount, refreshTargets } from "./tracking-meta-refresh.js";
 import { TIKTOK_PREFIX, linkEvidence, nameKey, tiktokOrderIds, type AccountInfo, type AdPlatform, type SpendInsight, type SpendMapping, type SpendOrder } from "./ad-spend.js";
 import { tiktokAdLifetime, tiktokAdSpend, tiktokCampaignStarts } from "./tiktok-ads.js";
-import { adLifetime, campaignsByIds } from "./meta-graph.js";
+import { adLifetime, campaignsByIds, deliveringCampaigns } from "./meta-graph.js";
 import { breakEvenCpa, sinceStart, type LifetimeRow } from "./ad-since-start.js";
 import { mappingIndex } from "./ad-spend.js";
 
@@ -322,7 +322,16 @@ export async function sinceStartCore(orgId: string, branchId: string, today: str
     return { productId: product.id, name: product.name, breakEven: be.cpa, deliveryRate: be.deliveryRate, margin: be.margin, basedOn: be.orders, own: own ? Number(own.target_cpa) : null, ownBy: own?.updated_by_name ?? null };
   });
   const accountNames = new Map(Array.from(data.accounts.values()).map((row) => [row.accountId, row.name]));
-  const rows = sinceStart({ today, ordersFrom, lifetime, orders: data.orders, mappings: mappingIndex(data.mappings), evidence: data.evidence, targets, products, accountNames });
+  // Running = an ad delivering right now, asked live per ad account (one call each).
+  const live = { delivering: new Set<string>(), accounts: new Set<string>() };
+  const lifetimeAccounts = new Set(lifetime.filter((row) => row.platform === "meta").map((row) => String(row.account_id ?? "").replace(/^act_/, "")));
+  await Promise.all(refreshTargets(data.basics).filter((target) => lifetimeAccounts.has(String(target.account).replace(/^act_/, ""))).map(async (target) => {
+    const result = await deliveringCampaigns(target.account, target.token).catch(() => ({ ok: false as const, message: "no answer" }));
+    if (!result.ok) return;
+    live.accounts.add(String(target.account).replace(/^act_/, ""));
+    for (const id of result.ids) live.delivering.add(id);
+  }));
+  const rows = sinceStart({ today, ordersFrom, lifetime, orders: data.orders, mappings: mappingIndex(data.mappings), evidence: data.evidence, targets, products, accountNames, live });
   // How many Meta-side orders carry their campaign (orders without one can't be counted on a campaign).
   const recent = data.orders.filter((order) => order.day >= addDaysToDateKey(today, -29) && !order.otherPlatform);
   const linked = recent.filter((order) => order.campaignId).length;

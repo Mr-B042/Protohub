@@ -57,3 +57,20 @@ test("a campaign is judged from its own start, with its product's target", () =>
   assert.equal(Math.round(row.hookRate! * 10) / 10, 28);
   assert.equal(row.ads[0].adName, "Video 1");
 });
+
+test("running = an ad delivering now (live from Meta), not the campaign's own status", () => {
+  const ad = (over: Partial<LifetimeRow>): LifetimeRow => ({ platform: "meta", account_id: "act_111", campaign_id: "c1", campaign_name: "Shelf Main", campaign_status: "ACTIVE", campaign_start: "2026-10-01", adset_id: "s1", adset_name: "Lagos", ad_id: "a1", ad_name: "Video 1", first_day: "2026-10-01", last_day: "2026-10-08", spend: 40000, impressions: 100000, link_clicks: 1500, video_hook: 22000, video_full: 5000, platform_purchases: 6, ...over });
+  const input = {
+    today: "2026-10-08", ordersFrom: "2026-06-01",
+    lifetime: [ad({}), ad({ campaign_id: "c2", ad_id: "b1" }), ad({ campaign_id: "c3", ad_id: "z1", account_id: "222" })],
+    orders: [], mappings: new Map(), evidence: new Map(), targets: new Map(), products: new Map(), accountNames: new Map()
+  };
+  const rows = sinceStart({ ...input, live: { delivering: new Set(["c2"]), accounts: new Set(["111"]) } });
+  const of = (id: string) => rows.find((row) => row.campaignId === id)!;
+  assert.equal(of("c1").running, false); // "ACTIVE" but no ad delivering: paused underneath
+  assert.equal(of("c1").runningSource, "live");
+  assert.equal(of("c2").running, true);
+  // Account 222 did not answer: falls back to the saved status, and says so.
+  assert.equal(of("c3").running, true);
+  assert.equal(of("c3").runningSource, "saved");
+});
