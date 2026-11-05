@@ -36,6 +36,8 @@ export const TIKTOK_PREFIX = "tt:";
 export type SpendInsight = {
   platform?: AdPlatform;
   day: string; spend: number; ad_account_id: string;
+  /** Meta link clicks / impressions (null before 5 Nov 2026 and for TikTok). */
+  linkClicks?: number | null; impressions?: number | null;
   campaign_id: string; campaign_name: string; adset_id: string; adset_name: string; ad_id: string; ad_name: string;
 };
 const TIKTOK_ID = /^\d{8,22}$/;
@@ -72,6 +74,7 @@ export type AccountInfo = { accountId: string; name: string; businessKey: string
 export type SpendPiece = {
   platform: AdPlatform;
   day: string; spend: number; productId: string | null; source: MappingSource;
+  linkClicks?: number | null; impressions?: number | null;
   accountId: string; businessKey: string; campaignId: string; campaignName: string; adsetId: string; adsetName: string; adId: string; adName: string;
 };
 
@@ -141,8 +144,9 @@ export function allocate(insights: SpendInsight[], index: Map<string, Split[]>, 
       campaignId: row.campaign_id, campaignName: row.campaign_name, adsetId: row.adset_id, adsetName: row.adset_name, adId: row.ad_id, adName: row.ad_name
     };
     const { splits, source } = resolveSplits(row, index, evidence);
-    if (!splits.length) { pieces.push({ ...base, spend, productId: null, source: null }); continue; }
-    for (const split of splits) pieces.push({ ...base, spend: (spend * split.share) / 100, productId: split.productId, source });
+    const part = (value: number | null | undefined, share: number) => (value === null || value === undefined ? null : (value * share) / 100);
+    if (!splits.length) { pieces.push({ ...base, spend, productId: null, source: null, linkClicks: part(row.linkClicks, 100), impressions: part(row.impressions, 100) }); continue; }
+    for (const split of splits) pieces.push({ ...base, spend: (spend * split.share) / 100, productId: split.productId, source, linkClicks: part(row.linkClicks, split.share), impressions: part(row.impressions, split.share) });
   }
   return pieces;
 }

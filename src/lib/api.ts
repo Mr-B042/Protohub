@@ -5128,8 +5128,28 @@ export const pageVisitsApi = {
 /** Product Trend › Monthly Performance (Owner / Admin). */
 export const productPerformanceApi = {
   monthly: (month: string) => get<ProductMonthly>(`/api/product-performance/monthly?month=${encodeURIComponent(month)}`),
-  reps: (month: string) => get<RepMonthly>(`/api/product-performance/reps?month=${encodeURIComponent(month)}`)
+  reps: (month: string) => get<RepMonthly>(`/api/product-performance/reps?month=${encodeURIComponent(month)}`),
+  weekly: (week: string) => get<ProductWeekly>(`/api/product-performance/weekly?week=${encodeURIComponent(week)}`)
 };
+
+/** Product Trend › Weekly Check-up (backend lib/product-weekly.ts). */
+export type WeeklyVerdict = "strong" | "steady" | "weak" | "new" | "small";
+export type WeekFigures = {
+  week: string; orders: number; delivered: number; rate: number | null; revenue: number; productCost: number; deliveryFees: number;
+  adSpend: number; profit: number; carts: number; formRate: number | null; costPerOrder: number | null; cpc: number | null;
+  linkClicks: number | null; ctr: number | null; clicksPerOrder: number | null; aov: number | null; marginPerDelivered: number | null;
+  upsellRate: number | null; failed: number; open: number;
+};
+export type WeeklyDriver = { key: "orders" | "rate" | "margin" | "adcost"; label: string; impact: number; headline: string; details: string[]; fix: string | null; praise: string | null };
+export type ProductWeek = {
+  id: string; name: string; image: string | null; active: boolean; targetCpa: number | null;
+  week: WeekFigures; usual: WeekFigures | null; baselineWeeks: number; verdict: WeeklyVerdict; summary: string;
+  drivers: WeeklyDriver[]; fixes: string[]; wins: string[];
+  stockOuts: Array<{ state: string; daysOut: number; ordersWhileOut: number; noHub?: boolean }>;
+  failReasons: Array<{ reason: string; count: number }>;
+  history: Array<{ week: string; profit: number; orders: number; rate: number | null }>;
+};
+export type ProductWeekly = { week: string; weekEnd: string; today: string; thisWeek: string; ageDays: number; recentWeeks: string[]; clicksSince: string; products: ProductWeek[] };
 
 export const stockAllocationsApi = {
   list: async () => {

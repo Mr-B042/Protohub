@@ -42,7 +42,8 @@ export async function refreshAccount(orgId: string, branchId: string, target: Re
     const insert = await supabase.from("tracking_meta_ad_insights").insert(result.rows.slice(i, i + 500).map((row) => ({
       org_id: orgId, branch_id: branchId, data_source_id: target.sourceId, connection_id: target.connectionId, ad_account_id: account, day: row.day,
       campaign_id: row.campaignId, campaign_name: row.campaignName, adset_id: row.adsetId, adset_name: row.adsetName, ad_id: row.adId, ad_name: row.adName,
-      purchases: row.purchases, purchase_value: row.purchaseValue, spend: row.spend
+      purchases: row.purchases, purchase_value: row.purchaseValue, spend: row.spend,
+      link_clicks: row.linkClicks, impressions: row.impressions
     })));
     if (insert.error) throw insert.error;
   }

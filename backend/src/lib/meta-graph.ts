@@ -125,7 +125,7 @@ export async function datasetQuality(pixelId: string, token: string): Promise<Re
   return Object.keys(scores).length ? scores : null;
 }
 
-export type AdDay = CampaignDay & { adsetId: string; adsetName: string; adId: string; adName: string };
+export type AdDay = CampaignDay & { adsetId: string; adsetName: string; adId: string; adName: string; linkClicks: number; impressions: number };
 
 /** Purchases Meta attributes to each AD per day (Reconciliation views). */
 export async function adPurchases(adAccountId: string, token: string, since: string, until: string): Promise<{ ok: true; rows: AdDay[] } | { ok: false; message: string }> {
@@ -134,7 +134,7 @@ export async function adPurchases(adAccountId: string, token: string, since: str
   let path = `${account}/insights`;
   let params: Record<string, string> = {
     level: "ad", time_increment: "1", limit: "500",
-    fields: "campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,spend,actions,action_values,date_start",
+    fields: "campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,spend,actions,action_values,date_start,inline_link_clicks,impressions",
     time_range: JSON.stringify({ since, until })
   };
   for (let page = 0; page < 40; page += 1) {
@@ -144,7 +144,9 @@ export async function adPurchases(adAccountId: string, token: string, since: str
       rows.push({
         day: row.date_start, campaignId: String(row.campaign_id), campaignName: String(row.campaign_name ?? ""),
         adsetId: String(row.adset_id ?? ""), adsetName: String(row.adset_name ?? ""), adId: String(row.ad_id), adName: String(row.ad_name ?? ""),
-        purchases: pickAction(row.actions), purchaseValue: pickAction(row.action_values), spend: Number(row.spend) || 0
+        purchases: pickAction(row.actions), purchaseValue: pickAction(row.action_values), spend: Number(row.spend) || 0,
+        // CPC on the Weekly Check-up (Bright, 5 Nov 2026).
+        linkClicks: Number(row.inline_link_clicks) || 0, impressions: Number(row.impressions) || 0
       });
     }
     const next = result.data.paging?.next;

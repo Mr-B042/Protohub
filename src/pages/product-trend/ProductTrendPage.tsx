@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import {
   ArrowUpDown, BarChart3, Bookmark, Boxes, CalendarDays, CirclePercent, Columns3, Download, Ellipsis, Grid3x3, LineChart as LineChartIcon, Loader2,
-  MapPin, Package, RotateCcw, Search, Star, TrendingUp, Truck, UserRound, X, CalendarCheck
+  MapPin, Package, RotateCcw, Search, Star, TrendingUp, Truck, UserRound, X, CalendarCheck, Stethoscope
 } from "lucide-react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { productMediaApi, type ProductMedia } from "../../lib/api";
@@ -17,6 +17,7 @@ import { AgentPerformanceTab, TrendsOverTimeTab } from "./TabsAgentsTime";
 import { StockRecommendationTab } from "./TabStock";
 import { WorstProducts } from "./WorstProducts";
 import { MonthlyPerformanceTab } from "./TabMonthly";
+import { WeeklyCheckupTab } from "./TabWeekly";
 import { exportExcel, exportPdf, type ReportInput } from "./reports";
 import type { TabCtx, TransferRequest, TrendModel } from "./tab-context";
 
@@ -52,7 +53,7 @@ export type ProductTrendPageProps = {
   userId: string | null;
 };
 
-type TabKey = "trend" | "states" | "heatmap" | "agents" | "time" | "stock" | "monthly";
+type TabKey = "trend" | "states" | "heatmap" | "agents" | "time" | "stock" | "monthly" | "weekly";
 const TABS: Array<{ key: TabKey; label: string; Icon: typeof BarChart3 }> = [
   { key: "trend", label: "Product Trend", Icon: BarChart3 },
   { key: "states", label: "State Breakdown", Icon: MapPin },
@@ -60,7 +61,8 @@ const TABS: Array<{ key: TabKey; label: string; Icon: typeof BarChart3 }> = [
   { key: "agents", label: "Agent Performance", Icon: UserRound },
   { key: "time", label: "Trends Over Time", Icon: LineChartIcon },
   { key: "stock", label: "Stock Recommendation", Icon: Boxes },
-  { key: "monthly", label: "Monthly Performance", Icon: CalendarCheck }
+  { key: "monthly", label: "Monthly Performance", Icon: CalendarCheck },
+  { key: "weekly", label: "Weekly Check-up", Icon: Stethoscope }
 ];
 const SUBTITLE: Record<TabKey, string> = {
   trend: "See your best performing products and the states driving the most orders and deliveries. Use real data to plan stock, focus on high-demand states and make smarter decisions.",
@@ -69,7 +71,8 @@ const SUBTITLE: Record<TabKey, string> = {
   agents: "See your best performing products and the states driving the most orders and deliveries. Use real data to plan stock, focus on high-demand states and make smarter decisions.",
   time: "See how your products, states and agents perform over time. Track trends, compare periods and forecast future demand.",
   stock: "See your best performing products and the states driving the most orders and deliveries. Use real data to plan stock, focus on high-demand states and make smarter decisions.",
-  monthly: "How each product did month by month after its ads, and what to do with it next month."
+  monthly: "How each product did month by month after its ads, and what to do with it next month.",
+  weekly: "Why each product had a good or bad week - ads, delivery, stock or money per order - and what to fix first."
 };
 
 const STATUSES = ["New", "Confirmed", "In Process", "Dispatched", "Postponed", "Delivered", "Failed", "Cancelled"];
@@ -262,10 +265,10 @@ export default function ProductTrendPage(props: ProductTrendPageProps) {
   const tabBar = (
     <div className="flex flex-col gap-2 rounded-xl border border-gray-200 bg-white p-1 shadow-sm dark:border-slate-800 xl:flex-row xl:items-center">
     <nav className="no-scrollbar flex min-w-0 flex-1 gap-1 overflow-x-auto" role="tablist" aria-label="Product Trend views">
-      {TABS.filter(({ key }) => key !== "monthly" || canSeeProfit).map(({ key, label, Icon }) => (
+      {TABS.filter(({ key }) => (key !== "monthly" && key !== "weekly") || canSeeProfit).map(({ key, label, Icon }) => (
         <button key={key} type="button" role="tab" aria-selected={tab === key} onClick={() => setTab(key)}
           className={`!min-h-0 inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-2 text-[12.5px] font-semibold transition-colors ${tab === key ? "bg-[#1F8FE0] text-white shadow-sm" : "text-gray-700 hover:bg-gray-50 dark:text-slate-300 dark:hover:bg-slate-800"}`}>
-          <Icon className="h-4 w-4" />{label}{key === "monthly" && <span className={`rounded px-1 text-[9.5px] font-extrabold ${tab === key ? "bg-white text-[#1F8FE0]" : "bg-[#1F8FE0] text-white"}`}>NEW</span>}
+          <Icon className="h-4 w-4" />{label}{key === "weekly" && <span className={`rounded px-1 text-[9.5px] font-extrabold ${tab === key ? "bg-white text-[#1F8FE0]" : "bg-[#1F8FE0] text-white"}`}>NEW</span>}
         </button>
       ))}
     </nav>
@@ -292,7 +295,7 @@ export default function ProductTrendPage(props: ProductTrendPageProps) {
             <p className="m-0 mt-0.5 max-w-4xl text-[13px] text-gray-500 dark:text-slate-400">{SUBTITLE[tab]}</p>
           </div>
         </div>
-        {tab !== "monthly" && <div className="flex shrink-0 flex-wrap items-center gap-2 lg:flex-nowrap">
+        {tab !== "monthly" && tab !== "weekly" && <div className="flex shrink-0 flex-wrap items-center gap-2 lg:flex-nowrap">
           <span className="inline-flex h-10 items-center gap-2 whitespace-nowrap rounded-lg border border-gray-200 bg-white px-3 text-[13px] font-medium text-gray-800 dark:border-slate-700 dark:text-slate-100">
             <CalendarDays className="h-4 w-4 text-gray-500" />{rangeLabel}
             {!isDefaultRange && (
@@ -346,7 +349,7 @@ export default function ProductTrendPage(props: ProductTrendPageProps) {
 
       {tabBar}
 
-      {tab === "monthly" ? <MonthlyPerformanceTab money={money} imageOf={imageOf} onShowStates={() => setTab("states")} /> : <>
+      {tab === "weekly" ? <WeeklyCheckupTab money={money} imageOf={imageOf} /> : tab === "monthly" ? <MonthlyPerformanceTab money={money} imageOf={imageOf} onShowStates={() => setTab("states")} /> : <>
       {error && (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-100">
           <span>Could not load the orders: {error}</span>

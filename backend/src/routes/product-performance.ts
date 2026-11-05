@@ -11,6 +11,10 @@ import { salariedFixed } from "../lib/salary-spread.js";
 import { lateSendsFor } from "../lib/late-send.js";
 import { LATE_SEND_FROM, lagosDateOf } from "../lib/late-send-rules.js";
 import { addDaysToDateKey, sundayWeekStartForDateKey } from "../lib/sales-bonus-engine.js";
+import { judgeProductWeek, stockAt, topFailReasons, weekFigures, type StockChange, type StockOut, type WeeklyAdDay, type WeeklyClickDay, type WeeklyOrder } from "../lib/product-weekly.js";
+import { loadAdSpendInputs } from "../lib/ad-spend-data.js";
+import { allocate, mappingIndex } from "../lib/ad-spend.js";
+import { normalizeState } from "../lib/agent-coverage.js";
 
 /**
  * Product Trend › Monthly Performance (Bright, 2 Nov 2026). Owner / Admin
@@ -263,6 +267,158 @@ router.get("/reps", requireRole("Owner", "Admin"), async (req, res) => {
   } catch (error: any) {
     console.error("[product-performance/reps]", error?.message ?? error);
     res.status(500).json({ error: error?.message ?? "Could not load the sales reps." });
+  }
+});
+
+// ── Weekly Check-up (Bright, 5 Nov 2026) ─────────────────────────────────────
+// Why each product's week went well or badly, in naira, and what to fix.
+// Rules and maths: lib/product-weekly.ts.
+
+const weeklyCache = new Map<string, { at: number; body: unknown }>();
+const WEEKLY_CACHE_MS = 10 * 60_000;
+/** Meta clicks are saved from this day (migration 321). */
+const CLICKS_SINCE = "2026-11-05";
+const dayEndMs = (day: string) => Date.parse(`${addDaysToDateKey(day, 1)}T00:00:00+01:00`) - 1;
+
+router.get("/weekly", requireRole("Owner", "Admin"), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const branchId = req.user!.branchId;
+    if (!branchId) { res.status(400).json({ error: "Open a branch first." }); return; }
+    const nowMs = Date.now();
+    const today = lagosDateKey(new Date(nowMs).toISOString());
+    const thisWeek = sundayWeekStartForDateKey(today);
+    const askedRaw = typeof req.query.week === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.week) ? sundayWeekStartForDateKey(req.query.week) : "";
+    // No week asked: the last full week.
+    const week = askedRaw && askedRaw <= thisWeek ? askedRaw : addDaysToDateKey(thisWeek, -7);
+    const weekEnd = addDaysToDateKey(week, 6);
+    const cacheKey = `${orgId}:${branchId}:${week}:${scopeOf(req).role}`;
+    const hit = weeklyCache.get(cacheKey);
+    if (hit && nowMs - hit.at < WEEKLY_CACHE_MS) { res.json(hit.body); return; }
+
+    const weeks = [28, 21, 14, 7, 0].map((back) => addDaysToDateKey(week, -back));
+    const from = weeks[0];
+    // Like for like: every week counted this many days after it ended.
+    const ageDays = Math.max(0, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${weekEnd}T00:00:00Z`)) / 86_400_000));
+    const cutoffOf = (start: string) => { const c = addDaysToDateKey(addDaysToDateKey(start, 6), ageDays); return c > today ? today : c; };
+
+    const orderRows = await pagedRows((a, b) => {
+      // `any`: this many columns makes the client's typed select too deep for tsc.
+      let query: any = supabase.from("orders")
+        .select("id, created_at, product_id, status, delivered_date, amount, cogs_snapshot, logistics_cost, state, upsell_from_qty, upsell_to_qty, call_outcome, review_hold")
+        .eq("org_id", orgId).eq("branch_id", branchId).gte("created_at", startIso(from)).lte("created_at", endIso(weekEnd));
+      query = hideSilentOrders(query, scopeOf(req).role);
+      return query.order("id").range(a, b);
+    });
+    const orders: WeeklyOrder[] = [];
+    for (const row of orderRows) {
+      if (row.review_hold === true || !row.product_id) continue;
+      const placed = lagosDateKey(row.created_at);
+      const fromQty = Number(row.upsell_from_qty) || 0, toQty = Number(row.upsell_to_qty) || 0;
+      orders.push({
+        productId: String(row.product_id), week: sundayWeekStartForDateKey(placed), placedAt: Date.parse(row.created_at),
+        status: String(row.status ?? ""), deliveredDate: row.delivered_date ? String(row.delivered_date).slice(0, 10) : null,
+        amount: Number(row.amount) || 0, productCost: Number(row.cogs_snapshot) || 0, deliveryFee: Number(row.logistics_cost) || 0,
+        state: row.state ? normalizeState(row.state) : null, upsold: toQty > fromQty && fromQty > 0,
+        failReason: row.call_outcome ? String(row.call_outcome) : null
+      });
+    }
+
+    const expenseRows = await pagedRows((a, b) => supabase.from("expenses").select("id, product_id, date, amount")
+      .eq("org_id", orgId).eq("branch_id", branchId).eq("category", "Ad Spend").gte("date", from).lte("date", weekEnd).order("id").range(a, b));
+    const ads: WeeklyAdDay[] = expenseRows.filter((row) => row.product_id).map((row) => ({ productId: String(row.product_id), day: String(row.date).slice(0, 10), spend: Number(row.amount) || 0 }));
+
+    // Clicks follow spend to products the same way Ad Spend does (Meta only).
+    let clicks: WeeklyClickDay[] = [];
+    if (weekEnd >= CLICKS_SINCE) {
+      const data = await loadAdSpendInputs(orgId, branchId, from, weekEnd);
+      clicks = allocate(data.insights, mappingIndex(data.mappings), data.evidence, data.accounts)
+        .filter((piece) => piece.platform === "meta" && piece.productId)
+        .map((piece) => ({ productId: piece.productId!, day: piece.day, spend: piece.spend, linkClicks: piece.linkClicks ?? null, impressions: piece.impressions ?? null }));
+    }
+
+    const cartRows = await pagedRows((a, b) => supabase.from("abandoned_carts").select("id, product_id, created_at, merged_into")
+      .eq("org_id", orgId).eq("branch_id", branchId).gte("created_at", startIso(from)).lte("created_at", endIso(weekEnd)).order("id").range(a, b));
+    const carts = new Map<string, number>();
+    for (const row of cartRows) {
+      if (row.merged_into || !row.product_id) continue;
+      const key = `${row.product_id}:${sundayWeekStartForDateKey(lagosDateKey(row.created_at))}`;
+      carts.set(key, (carts.get(key) ?? 0) + 1);
+    }
+
+    // Stock as it stood during the week: today's hub stock walked back through the change log.
+    const [productsRes, targetsRes, locationsRes, stockRes] = await Promise.all([
+      supabase.from("products").select("id, name, active, image_url").eq("org_id", orgId),
+      supabase.from("tracking_ad_spend_targets").select("product_id, target_cpa").eq("org_id", orgId).eq("branch_id", branchId),
+      supabase.from("agent_locations").select("id, state, active").eq("org_id", orgId).eq("branch_id", branchId),
+      supabase.from("agent_location_stock").select("agent_location_id, product_id, quantity").eq("org_id", orgId).eq("branch_id", branchId).limit(20000)
+    ]);
+    for (const result of [productsRes, targetsRes, locationsRes, stockRes]) if (result.error) throw result.error;
+    const auditRows = await pagedRows((a, b) => supabase.from("agent_stock_audit").select("id, agent_location_id, product_id, old_quantity, new_quantity, changed_at")
+      .eq("org_id", orgId).eq("branch_id", branchId).gte("changed_at", startIso(week)).not("agent_location_id", "is", null).order("id").range(a, b));
+    const hubState = new Map<string, string>();
+    for (const row of (locationsRes.data ?? []) as any[]) if (row.active !== false) hubState.set(String(row.id), normalizeState(row.state));
+    const current = new Map<string, number>();
+    for (const row of (stockRes.data ?? []) as any[]) current.set(`${row.agent_location_id}:${row.product_id}`, Number(row.quantity) || 0);
+    const changes = new Map<string, StockChange[]>();
+    for (const row of auditRows) {
+      const key = `${row.agent_location_id}:${row.product_id}`;
+      const list = changes.get(key) ?? [];
+      list.push({ at: Date.parse(row.changed_at), old: Number(row.old_quantity) || 0, next: Number(row.new_quantity) || 0 });
+      changes.set(key, list);
+    }
+    for (const list of changes.values()) list.sort((x, y) => x.at - y.at);
+
+    const stockOutsFor = (productId: string, weekOrders: WeeklyOrder[]): StockOut[] => {
+      const hubs = [...new Set([...current.keys(), ...changes.keys()])].filter((key) => key.endsWith(`:${productId}`) && hubState.has(key.split(":")[0]));
+      if (hubs.length === 0) return []; // never stocked by hubs (a combo): nothing to say
+      const byState = new Map<string, string[]>();
+      for (const key of hubs) { const state = hubState.get(key.split(":")[0])!; byState.set(state, [...(byState.get(state) ?? []), key]); }
+      const qty = (state: string, at: number) => (byState.get(state) ?? []).reduce((sum, key) => sum + stockAt(current.get(key) ?? 0, changes.get(key) ?? [], at), 0);
+      const states = new Set<string>([...byState.keys(), ...weekOrders.map((order) => order.state).filter((s): s is string => Boolean(s))]);
+      const out: StockOut[] = [];
+      for (const state of states) {
+        let daysOut = 0;
+        for (let i = 0; i < 7; i += 1) {
+          const day = addDaysToDateKey(week, i);
+          if (day > today) break;
+          if (qty(state, Math.min(dayEndMs(day), nowMs)) <= 0) daysOut += 1;
+        }
+        const ordersWhileOut = weekOrders.filter((order) => order.state === state && qty(state, order.placedAt) <= 0).length;
+        // A state with no hub for it and no orders is not news.
+        if (!byState.has(state) && ordersWhileOut === 0) continue;
+        if (daysOut > 0 || ordersWhileOut > 0) out.push({ state, daysOut, ordersWhileOut, noHub: !byState.has(state) });
+      }
+      return out.sort((x, y) => y.ordersWhileOut - x.ordersWhileOut || y.daysOut - x.daysOut).slice(0, 6);
+    };
+
+    const target = new Map(((targetsRes.data ?? []) as any[]).map((row) => [String(row.product_id), Number(row.target_cpa) || null]));
+    const seen = new Set<string>([...orders.map((o) => o.productId), ...ads.map((a) => a.productId)]);
+    const products = ((productsRes.data ?? []) as any[]).filter((product) => seen.has(String(product.id))).map((product) => {
+      const id = String(product.id);
+      const own = orders.filter((order) => order.productId === id);
+      const ownAds = ads.filter((row) => row.productId === id);
+      const ownClicks = clicks.filter((row) => row.productId === id);
+      const figures = weeks.map((start) => weekFigures({
+        week: start, weekEnd: addDaysToDateKey(start, 6), cutoff: cutoffOf(start),
+        orders: own.filter((order) => order.week === start), ads: ownAds, clicks: ownClicks, carts: carts.get(`${id}:${start}`) ?? 0
+      }));
+      const weekOrders = own.filter((order) => order.week === week);
+      const judged = judgeProductWeek({
+        week: figures[4], previous: figures.slice(0, 4), targetCpa: target.get(id) ?? null,
+        stockOuts: stockOutsFor(id, weekOrders), failReasons: topFailReasons(weekOrders), ageDays
+      });
+      return { id, name: String(product.name ?? "Product"), image: product.image_url ?? null, active: product.active !== false, targetCpa: target.get(id) ?? null, ...judged };
+    }).filter((product) => product.week.orders > 0 || product.week.adSpend > 0 || (product.usual?.orders ?? 0) > 0)
+      .sort((a, b) => (b.week.orders - a.week.orders) || (b.week.adSpend - a.week.adSpend));
+
+    const recentWeeks = Array.from({ length: 12 }, (_, i) => addDaysToDateKey(thisWeek, -7 * i));
+    const body = { week, weekEnd, today, thisWeek, ageDays, recentWeeks, clicksSince: CLICKS_SINCE, products };
+    weeklyCache.set(cacheKey, { at: nowMs, body });
+    res.json(body);
+  } catch (error: any) {
+    console.error("[product-performance weekly]", error?.message ?? error);
+    res.status(500).json({ error: error?.message ?? "Could not load the weekly check-up." });
   }
 });
 
