@@ -1,3 +1,4 @@
+import { nigerianPhoneForSave } from "../lib/ng-phone.js";
 import { Router } from "express";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import rateLimit from "express-rate-limit";
@@ -153,6 +154,9 @@ router.post("/", captureRateLimit, async (req, res) => {
     return;
   }
   const d = parsed.data;
+  // Saved as 080... whichever way the customer wrote it (lib/ng-phone.ts).
+  d.phone = nigerianPhoneForSave(d.phone);
+  if (d.whatsapp) d.whatsapp = nigerianPhoneForSave(d.whatsapp);
 
   // Derive org_id from the product. If the product doesn't exist, drop the
   // request — we won't accept orphan carts.
@@ -235,7 +239,7 @@ router.post("/", captureRateLimit, async (req, res) => {
       .select("id")
       .eq("org_id", product.org_id)
       .eq("product_id", d.productId)
-      .or(`phone.eq.${d.phone.trim()},phone.eq.0${n.slice(-10)},phone.eq.${n},phone.eq.234${n.slice(-10)}`)
+      .or(`phone.eq.${d.phone.trim()},phone.eq.0${n.slice(-10)},phone.eq.${n},phone.eq.${n.slice(-10)},phone.eq.234${n.slice(-10)}`)
       .gte("created_at", recentWindow)
       .order("created_at", { ascending: false })
       .limit(1)
@@ -321,7 +325,7 @@ router.post("/", captureRateLimit, async (req, res) => {
         .not("status", "eq", "Converted")
         .is("merged_into", null)
         .lt("created_at", (data as any).created_at)  // only absorb OLDER carts → no ping-pong
-        .or(`phone.eq.${d.phone.trim()},phone.eq.0${digits.slice(-10)},phone.eq.${digits},phone.eq.234${digits.slice(-10)}`)
+        .or(`phone.eq.${d.phone.trim()},phone.eq.0${digits.slice(-10)},phone.eq.${digits},phone.eq.${digits.slice(-10)},phone.eq.234${digits.slice(-10)}`)
         .gte("last_activity", window7d)
         .limit(10);
       if (dupes && dupes.length) {
@@ -379,7 +383,7 @@ router.post("/", captureRateLimit, async (req, res) => {
         .neq("id", d.id)
         .not("status", "eq", "Converted")
         .is("merged_into", null)
-        .or(`phone.eq.${d.phone!.trim()},phone.eq.0${n.slice(-10)},phone.eq.${n},phone.eq.234${n.slice(-10)}`)
+        .or(`phone.eq.${d.phone!.trim()},phone.eq.0${n.slice(-10)},phone.eq.${n},phone.eq.${n.slice(-10)},phone.eq.234${n.slice(-10)}`)
         .gte("last_activity", window7d)
         .order("last_activity", { ascending: false })
         .limit(1)

@@ -10,6 +10,7 @@
 //
 // Org context derives from the package's product (same pattern as public-carts).
 
+import { nigerianPhoneForSave } from "../lib/ng-phone.js";
 import { Router, type Request } from "express";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import rateLimit from "express-rate-limit";
@@ -738,6 +739,9 @@ router.post("/", submitRateLimit, async (req, res) => {
     return;
   }
   const d = parsed.data;
+  // Saved as 080... whichever way the customer wrote it (lib/ng-phone.ts).
+  d.phone = nigerianPhoneForSave(d.phone);
+  if (d.whatsapp) d.whatsapp = nigerianPhoneForSave(d.whatsapp);
   const requestedPackageSet = String(d.packageSet ?? "").trim().replace(/\s+/g, " ").slice(0, 80);
 
   // 1. Resolve package → product → org

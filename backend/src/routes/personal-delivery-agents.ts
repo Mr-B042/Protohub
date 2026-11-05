@@ -3297,7 +3297,7 @@ router.get("/my/orders", requireAgentPortal, async (req, res) => {
     const orderIds = [...new Set((assignments ?? []).map((row: any) => row.order_id))];
     const { data: orders } = orderIds.length
       ? await supabase.from("orders")
-          .select("id, customer, phone, address, state, product_name, package_name, amount, quantity, status").neq("launch_stage", silentFilterFor(scopeOf(req).role))
+          .select("id, customer, phone, address, city, state, product_name, package_name, amount, quantity, status").neq("launch_stage", silentFilterFor(scopeOf(req).role))
           .limit(REPORT_ROW_CEILING)
           .eq("org_id", orgId).in("id", orderIds)
       : { data: [] as any[] };
@@ -3311,7 +3311,7 @@ router.get("/my/orders", requireAgentPortal, async (req, res) => {
           // Only what the agent needs to do the job. No cost, no margin.
           order: order ? {
             id: order.id, customer: order.customer, phone: order.phone,
-            address: order.address, state: order.state,
+            address: order.address, city: order.city, state: order.state,
             productName: order.package_name || order.product_name,
             quantity: order.quantity, amount: Number(order.amount ?? 0)
           } : null
