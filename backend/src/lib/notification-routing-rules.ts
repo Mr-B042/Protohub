@@ -9,11 +9,12 @@ export const ROUTABLE_ROLES = [
 export type AlertKey =
   | "order_new" | "order_confirmed" | "order_delivered" | "order_cancelled" | "order_failed"
   | "order_rescheduled" | "order_assigned" | "order_recovered" | "order_follow_up" | "order_late_send"
-  | "cart_new" | "cart_assigned";
+  | "cart_new" | "cart_assigned"
+  | "campaign_no_orders";
 
 export type AlertRoute = { roles: string[]; rep: boolean; push: boolean };
 
-type AlertDef = { label: string; group: "Orders" | "Follow-ups" | "Abandoned carts"; hint: string; repApplies: boolean; defaults: AlertRoute };
+type AlertDef = { label: string; group: "Orders" | "Follow-ups" | "Abandoned carts" | "Ads"; hint: string; repApplies: boolean; defaults: AlertRoute };
 
 export const ALERTS: Record<AlertKey, AlertDef> = {
   order_new:         { group: "Orders", label: "New order", hint: "A new order comes in.", repApplies: true, defaults: { roles: ["Owner", "Admin"], rep: true, push: true } },
@@ -27,6 +28,7 @@ export const ALERTS: Record<AlertKey, AlertDef> = {
   order_late_send:   { group: "Orders", label: "Order not sent out in 15 min", hint: "A rep left an order in New past 15 working minutes (from 10am, 11am on Mondays).", repApplies: true, defaults: { roles: ["Owner", "Admin", "Manager"], rep: false, push: true } },
   order_follow_up:   { group: "Follow-ups", label: "Follow-up due", hint: "A scheduled call or follow-up is due.", repApplies: true, defaults: { roles: ["Owner", "Admin"], rep: true, push: true } },
   cart_new:          { group: "Abandoned carts", label: "New abandoned cart", hint: "A customer left the order form without finishing.", repApplies: false, defaults: { roles: ["Owner", "Admin"], rep: false, push: true } },
+  campaign_no_orders: { group: "Ads", label: "Campaign with no order for 3 days", hint: "A running campaign spent money but brought no order for 3 days (Turn off / Watch / Check, by its cost per order since it started).", repApplies: false, defaults: { roles: ["Owner"], rep: false, push: true } },
   cart_assigned:     { group: "Abandoned carts", label: "Cart assigned", hint: "A cart was given to a rep to call.", repApplies: true, defaults: { roles: ["Owner", "Admin", "Manager"], rep: true, push: true } },
 };
 

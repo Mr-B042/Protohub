@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Activity, Database, FileText, Globe, Link2, Monitor, RefreshCw, Settings as SettingsIcon, TrendingUp } from "lucide-react";
 import { PRESETS, type HubTab, type Range } from "../components/tracking-hub/HubParts";
 import OverviewTab from "../components/tracking-hub/OverviewTab";
@@ -31,7 +31,17 @@ const TABS: Array<{ key: HubTab; label: string; icon: typeof Monitor }> = [
 ];
 
 export default function TrackingHubPage({ onToast, renderMetaDefaults, onOpenOrder }: { onToast: (message: string) => void; renderMetaDefaults?: () => ReactNode; onOpenOrder?: (orderId: string) => void }) {
-  const [tab, setTab] = useState<HubTab>("overview");
+  // An alert can open a tab: #/dashboard/admin/tracking-hub?tab=adspend (Bright, 5 Nov 2026).
+  const tabFromLink = (): HubTab | null => {
+    const asked = new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("tab");
+    return TABS.some((item) => item.key === asked) ? asked as HubTab : null;
+  };
+  const [tab, setTab] = useState<HubTab>(() => tabFromLink() ?? "overview");
+  useEffect(() => {
+    const onHash = () => { const asked = tabFromLink(); if (asked) setTab(asked); };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
   const [range, setRange] = useState<Range>(PRESETS[0].range());
   const [creatingLink, setCreatingLink] = useState(0);
   const [ledgerFilter, setLedgerFilter] = useState<{ status?: string; orderIds?: string[] }>({});

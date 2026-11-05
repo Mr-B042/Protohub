@@ -3,6 +3,7 @@ import publicTrackingRoutes from "./routes/public-tracking.js";
 import { runMetaDeliveredEvents } from "./lib/meta-capi-delivered.js";
 import { runTrackingAlerts } from "./lib/tracking-alerts.js";
 import { runAdSpendAutoSync } from "./lib/ad-spend-data.js";
+import { runCampaignDroughtAlerts } from "./lib/campaign-drought-alerts.js";
 import "./lib/load-env.js";
 import express from "express";
 import compression from "compression";
@@ -764,6 +765,18 @@ cron.schedule("13,43 * * * *", async () => {
     logger.error("cron: ad spend sync crashed", { error: (e as Error).message });
   }
 });
+
+// ── Campaigns with no order for 3 days (Bright, 5 Nov 2026) ──
+// After the :13 ad spend sync, four times a day (Lagos): one alert per
+// campaign per dry spell (lib/campaign-drought-alerts.ts).
+cron.schedule("20 9,13,17,20 * * *", async () => {
+  try {
+    const { sent } = await runCampaignDroughtAlerts();
+    if (sent) logger.info("cron: campaign no-order alerts", { sent });
+  } catch (e) {
+    logger.error("cron: campaign no-order alerts crashed", { error: (e as Error).message });
+  }
+}, { timezone: "Africa/Lagos" });
 
 // ── SMS retry / deferred queue — every 10 minutes ────────
 cron.schedule("*/10 * * * *", async () => {
