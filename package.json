@@ -18,6 +18,7 @@
     "mock:products": "node mock-api/products-server.mjs",
     "test:products:curl": "bash scripts/test-product-api.sh",
     "test:weekly-dialogs": "node --test tests/weekly-modal.test.mjs tests/manager-funds-edit.test.mjs",
+    "test:send-out-timer": "node --test tests/late-send-clock.test.mjs",
     "test:performance": "node --test tests/bootstrap-resource.test.mjs tests/workspace-loading.test.mjs",
     "test:public-form:smoke": "playwright test tests/public-form.smoke.spec.ts",
     "release:public-form": "npm run lint:hooks && npm run build && npm --prefix backend run build && npm run test:public-form:smoke",

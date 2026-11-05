@@ -131,6 +131,7 @@ import {
   Tag
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { SendOutTimer } from "./components/SendOutTimer";
 import { OrderSourceLogo } from "./components/OrderSourceLogo";
 import { LandingPagePreview, useProductLandingPages } from "./components/LandingPagePreview";
 import { periodBounds } from "./lib/period-bounds";
@@ -16955,6 +16956,25 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         </button>
       </div>
     );
+  };
+
+  // Send-out timer (Bright, 5 Nov 2026): New orders a Sales Rep holds must
+  // leave New in 15 working minutes (late-send fine, #830). Same orders the
+  // backend times: not Silent Test, not held for review.
+  const sendOutTimerRepIds = new Set(salesRepUsers.map((user) => String(user.id)));
+  const renderSendOutTimer = (order: TrackedOrder, variant: "card" | "inline" = "card", wrapClass = "") => {
+    if ((order.status ?? "New") !== "New" || order.reviewHold || order.launchStage === "silent") return null;
+    const repId = order.assignedRepId ? String(order.assignedRepId) : "";
+    const ownAsRep = currentRole === "Sales Rep" && repId !== "" && repId === String(currentManagedUser?.id ?? authUser?.id ?? "");
+    if (!repId || !(ownAsRep || sendOutTimerRepIds.has(repId))) return null;
+    const timer = (
+      <SendOutTimer variant={variant} input={{
+        placedAt: order.originalCreatedAt ?? (order as any).original_created_at ?? order.createdAt ?? null,
+        assignedAt: order.assignedAt ?? null,
+        revealedAt: order.revealedAt ?? null
+      }} />
+    );
+    return wrapClass ? <div className={wrapClass}>{timer}</div> : timer;
   };
 
   const quantityForOrder = (order: TrackedOrder) => {
@@ -48292,6 +48312,7 @@ ${waybillLineItems(w).length > 1
                     })
                   : null}
 
+                {renderSendOutTimer(order)}
                 {renderStaleOrderFlag(order)}
 
                 <div className="mt-4 flex flex-wrap gap-2">
@@ -48427,6 +48448,7 @@ ${waybillLineItems(w).length > 1
                   </td>
                   <td className="px-4 py-4 text-center">
                     {renderOrderStatusSummary(order, "center")}
+                    {renderSendOutTimer(order, "inline", "mt-1")}
                     <div className={`text-[10px] font-medium mt-1 uppercase tracking-tight ${orderFaintTextClass}`}>{order.response ?? "Awaiting confirmation"}</div>
                   </td>
                   <td className={`px-4 py-4 text-center font-medium ${orderBodyTextClass}`}>
@@ -79208,6 +79230,7 @@ ${waybillLineItems(w).length > 1
                               })
                             : null}
 
+                          {renderSendOutTimer(order)}
                           {renderStaleOrderFlag(order)}
 
                           {scheduleMarker && (
@@ -79402,6 +79425,7 @@ ${waybillLineItems(w).length > 1
                               </td>
                               <td className="px-3 py-3.5 align-top">
                                 {renderOrderStatusSummary(order)}
+                                {renderSendOutTimer(order, "inline", "mt-1.5")}
                                 {responseTime.label !== "-" && (
                                   <span className={`mt-2 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${responseTime.cls}`}>
                                     <Clock className="mr-1 h-3 w-3" /> {responseTime.label}
@@ -103630,6 +103654,7 @@ ${waybillLineItems(w).length > 1
 	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Status</p>
 	                      <div className="mt-0.5">
 	                        {renderOrderStatusSummary(selectedOrder)}
+	                        {renderSendOutTimer(selectedOrder, "inline", "mt-1.5")}
 	                      </div>
 	                    </div>
 	                      <div>
