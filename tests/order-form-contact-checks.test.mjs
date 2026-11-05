@@ -58,3 +58,24 @@ test("real areas, streets and landmarks pass, even one word", () => {
   ];
   for (const [address, city, state] of fine) assert.equal(vagueAddressReason(address, city, state), null, address);
 });
+
+const { STATE_AREAS, areaSuggestions } = await load("../src/lib/ng-areas.ts");
+const { NIGERIA_STATES } = await load("../src/lib/nigeria.ts");
+
+test("every state (and FCT Abuja) has its own area list, no strays", () => {
+  assert.deepEqual(Object.keys(STATE_AREAS).sort(), [...NIGERIA_STATES].sort());
+  for (const [state, areas] of Object.entries(STATE_AREAS)) {
+    assert.ok(areas.length >= 8, state);
+    assert.equal(new Set(areas.map((a) => a.toLowerCase())).size, areas.length, `${state} has a repeat`);
+  }
+});
+
+test("suggestions stay in the chosen state and narrow as the customer types", () => {
+  assert.deepEqual(areaSuggestions("Lagos", "", 3), ["Ikeja", "Ikorodu", "Surulere"]);
+  assert.ok(areaSuggestions("Lagos", "lek").includes("Lekki"));
+  assert.ok(areaSuggestions("Lagos", "lek").every((area) => STATE_AREAS.Lagos.includes(area)));
+  assert.deepEqual(areaSuggestions("Rivers", "rumu").slice(0, 2), ["Rumuokoro", "Rumuola"]);
+  assert.ok(areaSuggestions("Lagos", "island").includes("Lagos Island")); // a word inside the name
+  assert.deepEqual(areaSuggestions("Lagos", "Ikeja"), []); // already picked
+  assert.deepEqual(areaSuggestions("Kano", "Ikeja"), []); // never another state's area
+});
