@@ -64,3 +64,51 @@ export function areaSuggestions(state: string, typed: string, limit = 8): string
   const contains = areas.filter((area) => !starts.includes(area) && fold(area).includes(query));
   return [...starts, ...contains].slice(0, limit);
 }
+
+// ── An address example from the customer's own state (Bright, 5 Nov 2026) ──
+// "e.g. 12 Aba Road, Rumuola" means nothing to someone in Kano. Each state
+// gets an example on a well-known road with a landmark, shown under the
+// street box and in the "please add more" message.
+export const STATE_ADDRESS_EXAMPLE: Record<string, string> = {
+  "Lagos": "12 Allen Avenue, Ikeja, near Ikeja City Mall",
+  "FCT Abuja": "12 Aminu Kano Crescent, Wuse 2, near Banex Plaza",
+  "Rivers": "12 Aba Road, Rumuola, near Rumuola Junction",
+  "Oyo": "12 Ring Road, Ibadan, near Challenge",
+  "Delta": "12 Nnebisi Road, Asaba, near Ogbeogonogo Market",
+  "Edo": "12 Sapele Road, Benin City, near Ring Road",
+  "Anambra": "12 Zik Avenue, Awka, near Eke Awka Market",
+  "Ogun": "12 Oke-Ilewo Road, Abeokuta, near Panseke",
+  "Akwa Ibom": "12 Oron Road, Uyo, near Ibom Plaza",
+  "Imo": "12 Wetheral Road, Owerri, near Ikenegbu",
+  "Enugu": "12 Ogui Road, Enugu, near Ogbete Market",
+  "Abia": "12 Faulks Road, Aba, near Ariaria Market",
+  "Cross River": "12 Marian Road, Calabar, near Watt Market",
+  "Kaduna": "12 Ahmadu Bello Way, Kaduna, near Central Market",
+  "Kwara": "12 Unity Road, Ilorin, near Challenge",
+  "Osun": "12 Gbongan Road, Osogbo, near Olaiya Junction",
+  "Plateau": "12 Ahmadu Bello Way, Jos, near Terminus Market",
+  "Kano": "12 Murtala Mohammed Way, Kano, near Sabon Gari Market",
+  "Ondo": "12 Oyemekun Road, Akure, near Oja Oba",
+  "Bayelsa": "12 Mbiama-Yenagoa Road, Yenagoa, near Tombia Roundabout",
+  "Ekiti": "12 New Iyin Road, Ado-Ekiti, near Fajuyi Park",
+  "Ebonyi": "12 Ogoja Road, Abakaliki, near Abakpa Market",
+  "Kogi": "12 IBB Way, Lokoja, near Ganaja Junction",
+  "Niger": "12 Bosso Road, Minna, near Bosso Market",
+  "Benue": "12 Old Otukpo Road, Makurdi, near Wurukum Market",
+  "Adamawa": "12 Atiku Abubakar Road, Jimeta, near Jimeta Market",
+  "Nasarawa": "12 Jos Road, Lafia, near Lafia Main Market",
+  "Taraba": "12 Hammaruwa Way, Jalingo, near Jalingo Main Market",
+  "Borno": "12 Baga Road, Maiduguri, near Monday Market",
+  "Bauchi": "12 Murtala Mohammed Way, Bauchi, near Wunti Market",
+  "Katsina": "12 IBB Way, Katsina, near Central Market",
+  "Kebbi": "12 Ahmadu Bello Way, Birnin Kebbi, near Central Market",
+  "Gombe": "12 Biu Road, Gombe, near Gombe Main Market",
+  "Sokoto": "12 Sultan Abubakar Road, Sokoto, near Central Market",
+  "Yobe": "12 Potiskum Road, Damaturu, near Damaturu Market",
+  "Zamfara": "12 Sokoto Road, Gusau, near Gusau Central Market",
+  "Jigawa": "12 Kiyawa Road, Dutse, near Dutse Market"
+};
+
+/** The example for a state; a neutral one before a state is picked. */
+export const addressExampleFor = (state?: string | null) =>
+  STATE_ADDRESS_EXAMPLE[String(state ?? "")] ?? "12 Main Road, your area, near a place everyone knows";
