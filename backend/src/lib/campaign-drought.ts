@@ -6,7 +6,8 @@
  * Bright's rules:
  *  - "Order" = a Protohub order that came from the campaign (the Ad Spend /
  *    Since Start count), not Meta's purchases.
- *  - A campaign counts when it is ON, spent in the last 3 days, and has had no
+ *  - A campaign counts when it is ON (checked LIVE with Meta in
+ *    campaign-drought-alerts.ts: at least one ad delivering), spent in the last 3 days, and has had no
  *    order for 3 days (the last order 3+ days ago, or none since it started 3+
  *    days ago).
  *  - Cost per order SINCE IT STARTED decides the group:

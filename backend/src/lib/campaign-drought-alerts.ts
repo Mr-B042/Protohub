@@ -5,6 +5,9 @@ import { getOrgPushBranding } from "./push-branding.js";
 import { sendPushToUser } from "./push.js";
 import { lagosDateKey } from "./sales-bonus-engine.js";
 import { sinceStartCore } from "./ad-spend-data.js";
+import { deliveringCampaigns } from "./meta-graph.js";
+import { refreshTargets } from "./tracking-meta-refresh.js";
+import { TIKTOK_PREFIX } from "./ad-spend.js";
 import { campaignDroughts, DROUGHT_RULES, type Drought, type DroughtGroup } from "./campaign-drought.js";
 
 // Campaigns with no order for 3 days (Bright, 5 Nov 2026): worked out from
@@ -12,14 +15,15 @@ import { campaignDroughts, DROUGHT_RULES, type Drought, type DroughtGroup } from
 // and sent as alerts (routing key campaign_no_orders). Rules: campaign-drought.ts.
 
 export const DROUGHT_ALERT_TYPE = "campaign_no_orders";
-const CACHE_MS = 15 * 60_000;
-const cache = new Map<string, { at: number; droughts: Drought[] }>();
+// Short: a campaign switched off in Meta must drop off the list quickly.
+const CACHE_MS = 5 * 60_000;
+const cache = new Map<string, { at: number; droughts: Drought[]; unchecked: number }>();
 
 /** The dry campaigns of a branch, kept 15 minutes (Since Start reads months of orders). */
 export async function droughtsFor(orgId: string, branchId: string, opts: { fresh?: boolean } = {}) {
   const key = `${orgId}|${branchId}`;
   const hit = cache.get(key);
-  if (!opts.fresh && hit && Date.now() - hit.at < CACHE_MS) return { droughts: hit.droughts, checkedAt: new Date(hit.at).toISOString() };
+  if (!opts.fresh && hit && Date.now() - hit.at < CACHE_MS) return { droughts: hit.droughts, unchecked: hit.unchecked, checkedAt: new Date(hit.at).toISOString() };
   const today = lagosDateKey(new Date().toISOString());
   const core = await sinceStartCore(orgId, branchId, today);
   const lastOrderDay = new Map<string, string>();
@@ -34,15 +38,42 @@ export async function droughtsFor(orgId: string, branchId: string, opts: { fresh
     days.set(row.day, (days.get(row.day) ?? 0) + (Number(row.spend) || 0));
     spendByDay.set(row.campaign_id, days);
   }
-  const droughts = campaignDroughts({
+  // ⚠️ NOT the saved campaign status (Bright, 5 Nov 2026: "some ... has already
+  // been turned off"). Meta keeps a campaign "ACTIVE" when its ad sets or ads
+  // are paused: 40 campaigns said ACTIVE, most had not spent in weeks. So every
+  // dry campaign is checked live with Meta first (its account's ACTIVE ads)
+  // and kept only when at least one of its ads is delivering now. No answer from Meta = left out (never
+  // guessed), and counted as unchecked.
+  const candidates = campaignDroughts({
     today, lastOrderDay, spendByDay,
     campaigns: core.rows.map((row) => ({
       campaignId: row.campaignId, campaignName: row.campaignName, platform: row.platform, accountName: row.accountName,
-      running: row.running, start: row.start, spend: row.spend, orders: row.orders, cpa: row.cpa, productName: row.productName
+      running: true, start: row.start, spend: row.spend, orders: row.orders, cpa: row.cpa, productName: row.productName
     }))
   });
-  cache.set(key, { at: Date.now(), droughts });
-  return { droughts, checkedAt: new Date().toISOString() };
+  const accountOf = new Map(core.rows.map((row) => [row.campaignId, String(row.accountId ?? "").replace(/^act_/, "")]));
+  const tokenOf = new Map(refreshTargets(core.data.basics).map((target) => [String(target.account).replace(/^act_/, ""), target.token]));
+  const byAccount = new Map<string, string[]>();
+  for (const drought of candidates) {
+    if (drought.platform !== "meta" || drought.campaignId.startsWith(TIKTOK_PREFIX)) continue;
+    const account = accountOf.get(drought.campaignId) ?? "";
+    byAccount.set(account, [...(byAccount.get(account) ?? []), drought.campaignId]);
+  }
+  const on = new Set<string>();
+  let unchecked = 0;
+  for (const [account, ids] of byAccount) {
+    const token = tokenOf.get(account);
+    if (!token) { unchecked += ids.length; continue; }
+    const result = await deliveringCampaigns(account, token).catch(() => ({ ok: false as const, message: "no answer" }));
+    if (!result.ok) { unchecked += ids.length; logger.warn("campaign live check failed", { orgId, account, message: result.message }); continue; }
+    for (const id of ids) if (result.ids.has(id)) on.add(id);
+  }
+  // TikTok has no live check here yet: kept only when it spent today.
+  const droughts = candidates.filter((drought) => drought.platform === "meta" && !drought.campaignId.startsWith(TIKTOK_PREFIX)
+    ? on.has(drought.campaignId)
+    : (spendByDay.get(drought.campaignId)?.get(today) ?? 0) > 0);
+  cache.set(key, { at: Date.now(), droughts, unchecked });
+  return { droughts, unchecked, checkedAt: new Date().toISOString() };
 }
 
 const linkFor = (drought: Drought) => `/dashboard/admin/tracking-hub?tab=adspend&alert=${encodeURIComponent(drought.episodeKey)}`;

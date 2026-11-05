@@ -1770,8 +1770,8 @@ router.post("/ad-spend/sync", async (req, res) => {
 /** Campaigns with no order for 3 days (Bright, 5 Nov 2026): Ad Spend panel + sidebar count. */
 router.get("/campaign-alerts", async (req, res) => {
   try {
-    const { droughts, checkedAt } = await droughtsFor(req.user!.orgId, branchOf(req));
-    res.json({ droughts, checkedAt, rules: DROUGHT_RULES });
+    const { droughts, unchecked, checkedAt } = await droughtsFor(req.user!.orgId, branchOf(req), { fresh: req.query.fresh === "1" });
+    res.json({ droughts, unchecked, checkedAt, rules: DROUGHT_RULES });
   } catch (error: any) { fail(res, error, "Could not check the campaigns."); }
 });
 

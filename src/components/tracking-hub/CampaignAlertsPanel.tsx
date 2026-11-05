@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertOctagon, ChevronDown, Eye, Wrench } from "lucide-react";
+import { AlertOctagon, ChevronDown, Eye, Loader2, RefreshCw, Wrench } from "lucide-react";
 import { trackingHubApi, type CampaignDrought, type CampaignDroughtGroup } from "../../lib/api";
 
 /**
@@ -18,21 +18,42 @@ const money = (value: number) => `₦${Math.round(value).toLocaleString("en-NG")
 
 export default function CampaignAlertsPanel({ focus }: { focus?: string | null }) {
   const [droughts, setDroughts] = useState<CampaignDrought[] | null>(null);
+  const [meta, setMeta] = useState<{ checkedAt: string; unchecked: number } | null>(null);
   const [open, setOpen] = useState(true);
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     let live = true;
-    trackingHubApi.campaignAlerts()
-      .then((result) => { if (live) setDroughts(result.droughts); })
-      .catch((err: Error) => { if (live) setError(err.message || "Could not check the campaigns."); });
+    setBusy(true);
+    trackingHubApi.campaignAlerts(tick > 0)
+      .then((result) => { if (live) { setDroughts(result.droughts); setMeta({ checkedAt: result.checkedAt, unchecked: result.unchecked ?? 0 }); setError(""); } })
+      .catch((err: Error) => { if (live) setError(err.message || "Could not check the campaigns."); })
+      .finally(() => { if (live) setBusy(false); });
     return () => { live = false; };
-  }, []);
+  }, [tick]);
+
+  // Live with Meta: only campaigns with an ad delivering right now (Bright, 5 Nov 2026).
+  const footer = meta && (
+    <div className="flex flex-wrap items-center justify-between gap-2 text-[11.5px] text-gray-500 dark:text-slate-400">
+      <span>Checked live with Meta at {new Date(meta.checkedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Africa/Lagos" })}: only campaigns with an ad delivering right now are listed.{meta.unchecked > 0 ? ` ${meta.unchecked} could not be checked with Meta, so they are left out.` : ""}</span>
+      <button type="button" onClick={() => setTick((n) => n + 1)} disabled={busy}
+        className="!min-h-0 inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1 font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200">
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}Check again
+      </button>
+    </div>
+  );
 
   if (error) return <p className="m-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-[13px] text-rose-800">Could not check campaigns for missing orders: {error}</p>;
   if (!droughts) return null;
   if (droughts.length === 0) {
-    return <p className="m-0 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-2.5 text-[13px] font-semibold text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200">Every running campaign has had an order in the last 3 days.</p>;
+    return (
+      <div className="space-y-1.5 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-2.5 dark:border-emerald-500/30 dark:bg-emerald-500/10">
+        <p className="m-0 text-[13px] font-semibold text-emerald-800 dark:text-emerald-200">Every campaign delivering right now has had an order in the last 3 days.</p>
+        {footer}
+      </div>
+    );
   }
   return (
     <section className="rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -50,6 +71,7 @@ export default function CampaignAlertsPanel({ focus }: { focus?: string | null }
           <ChevronDown className={`h-4 w-4 text-gray-400 transition-transform ${open ? "rotate-180" : ""}`} />
         </span>
       </button>
+      {open && <div className="px-5 pb-2">{footer}</div>}
       {open && (
         <div className="grid grid-cols-1 gap-3 px-5 pb-5 lg:grid-cols-3">
           {ORDER.map((group) => {
