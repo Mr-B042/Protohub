@@ -266,3 +266,41 @@ const byLengthStates = (): string[] => [...NIGERIA_STATES].sort((a, b) => b.leng
 
 /** Filter label for orders whose state could not be read at all (none saved, city unclear, or unknown text). */
 export const UNPLACED_ORDER_STATE = "State not given";
+
+// ── "Your address" that only repeats the state or city (Bright, 5 Nov 2026) ─
+// Order 5914's address was "Port Harcourt" with city "River", state Rivers: a
+// rider cannot find anyone with that. Customers often type the place they
+// already picked. Ask for the street, area or a landmark - but ONLY when every
+// word is a state, the city they typed, or a known city. Real orders show
+// one-word addresses that are areas ("Rumoimoi", "Wimpy", "Ikenegbu", "Fajuyi")
+// and they were delivered, so a word count would turn away good customers.
+const PLACE_FILLER = new Set([
+  "state", "ste", "nigeria", "naija", "lga", "lgea", "city", "town", "fct", "abuja", "federal", "capital",
+  "territory", "local", "government", "area", "council", "in", "of", "the", "and", "at", "river"
+]);
+const STATE_WORDS = new Set(NIGERIA_STATES.flatMap((name) => name.toLowerCase().split(/\s+/)));
+
+/**
+ * Why this address is not enough to find the customer, or null when it is.
+ * "place": only names the state/city; "email": an email typed in the box.
+ */
+export function vagueAddressReason(address?: string | null, city?: string | null, state?: string | null): "place" | "email" | null {
+  const text = String(address ?? "").normalize("NFKC").trim();
+  if (!text) return null;
+  if (/\S+@\S+\.\S+/.test(text)) return "email";
+  if (/\d/.test(text)) return null; // a house or plot number is real detail
+  const words = (value?: string | null) => String(value ?? "").normalize("NFKC").toLowerCase().split(/[^a-z]+/).filter(Boolean);
+  const own = new Set([...words(city), ...words(state)]);
+  const typed = words(text);
+  const known = (word: string) => PLACE_FILLER.has(word) || STATE_WORDS.has(word) || own.has(word) || word in CITY_STATE;
+  for (let i = 0; i < typed.length; i += 1) {
+    if (known(typed[i])) continue;
+    // Two-word names: "Port Harcourt", "Ado Ekiti", "Benin City", "Ile Ife".
+    const pair = typed[i] + (typed[i + 1] ?? "");
+    const pairBefore = (typed[i - 1] ?? "") + typed[i];
+    if (pair in CITY_STATE || squash(city ?? "") === pair) { i += 1; continue; }
+    if (pairBefore in CITY_STATE || squash(city ?? "") === pairBefore) continue;
+    return null;
+  }
+  return "place";
+}

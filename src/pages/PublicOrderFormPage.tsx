@@ -3,6 +3,8 @@ import { cartsApi, embedSettingsApi, productsApi, publicOrdersApi } from "../lib
 import { browserSupabaseClient } from "../lib/realtime";
 import { makeCartId } from "../lib/cart-id";
 import { itemCountLabel } from "../lib/item-count-label";
+import { nigerianPhoneProblem, PHONE_EXAMPLE } from "../lib/ng-phone";
+import { vagueAddressReason } from "../lib/nigeria";
 import { announceLandingPreviewLocked, insideLandingPreview } from "../lib/landing-preview";
 import type { ProductCurrencyCode } from "../types";
 
@@ -258,6 +260,11 @@ const sanitizePhoneDigitsInput = (value: string) => {
   // sent to a dead WhatsApp number. Only triggers on the exact 12-digit malformed shape.
   return digits.length === 12 && /^\d0[789]\d{9}$/.test(digits) ? digits.slice(1) : digits;
 };
+
+// Address that only repeats the state/city, or an email (Bright, 5 Nov 2026).
+const vagueAddressMessage = (reason: "place" | "email") => reason === "email"
+  ? "This looks like an email. Please type where we should deliver: your street, area or a nearby landmark."
+  : "You already gave us your state and city. Please add your street, area or a nearby landmark so we can find you, e.g. 12 Aba Road, Rumuola, near Shoprite.";
 
 type PendingUpsellOffer = {
   orderId: string;
@@ -1640,14 +1647,15 @@ export default function PublicOrderFormPage() {
   const guidedCheckout = settings.publicFormMode === "guided_checkout";
   const phoneDigits = orderFormPhone.replace(/\D/g, "");
   const whatsappDigits = sanitizePhoneDigitsInput(orderFormWhatsapp);
-  const phoneValid = phoneDigits.length >= 7 && phoneDigits.length <= 15;
-  const whatsappValid = !orderFormWhatsapp.trim() || (whatsappDigits.length >= 7 && whatsappDigits.length <= 15);
+  const phoneValid = phoneDigits.length > 0 && !nigerianPhoneProblem(orderFormPhone);
+  const whatsappValid = !orderFormWhatsapp.trim() || !nigerianPhoneProblem(orderFormWhatsapp);
   const contactStepComplete = !!orderFormName.trim()
     && phoneValid
     && (!settings.showWhatsapp || !settings.requireWhatsapp || !!whatsappDigits)
     && whatsappValid;
   const deliveryStepComplete = !!orderFormState.trim()
     && (!settings.addressRequired || !!orderFormAddress.trim())
+    && !vagueAddressReason(orderFormAddress, orderFormCity, orderFormState)
     && (!settings.cityRequired || !!orderFormCity.trim())
     && (!settings.askDelivery || !!orderFormDeliveryWindow.trim())
     && (!settings.requireConfirmation || orderFormConfirmed)
@@ -1748,21 +1756,22 @@ export default function PublicOrderFormPage() {
   };
 
   const buildSubmitValidationErrors = (): Partial<Record<PublicOrderFieldKey, string>> => {
-    const phoneDigits = orderFormPhone.replace(/\D/g, "");
     const whatsappDigits = sanitizePhoneDigitsInput(orderFormWhatsapp);
     const nextErrors: Partial<Record<PublicOrderFieldKey, string>> = {};
     if (!orderFormName.trim()) nextErrors.name = "Customer name is required.";
     if (!orderFormPhone.trim()) {
       nextErrors.phone = "Phone number is required.";
-    } else if (phoneDigits.length < 7 || phoneDigits.length > 15) {
-      nextErrors.phone = "Please enter a valid phone number.";
+    } else if (nigerianPhoneProblem(orderFormPhone)) {
+      nextErrors.phone = nigerianPhoneProblem(orderFormPhone)!;
     }
     if (settings.showWhatsapp && settings.requireWhatsapp && !whatsappDigits) {
       nextErrors.whatsapp = "WhatsApp number is required.";
-    } else if (orderFormWhatsapp.trim() && (whatsappDigits.length < 7 || whatsappDigits.length > 15)) {
-      nextErrors.whatsapp = "Please enter a valid WhatsApp number.";
+    } else if (orderFormWhatsapp.trim() && nigerianPhoneProblem(orderFormWhatsapp)) {
+      nextErrors.whatsapp = nigerianPhoneProblem(orderFormWhatsapp)!;
     }
+    const addressVague = vagueAddressReason(orderFormAddress, orderFormCity, orderFormState);
     if (settings.addressRequired && !orderFormAddress.trim()) nextErrors.address = "Delivery address is required.";
+    else if (addressVague) nextErrors.address = vagueAddressMessage(addressVague);
     if (settings.cityRequired && !orderFormCity.trim()) nextErrors.city = "City is required.";
     if (!orderFormState.trim()) nextErrors.state = "Please select your state.";
     if (settings.askDelivery && !orderFormDeliveryWindow.trim()) nextErrors.delivery = "Please select a delivery time.";
@@ -3331,7 +3340,8 @@ export default function PublicOrderFormPage() {
           );
           break;
         case "address":
-          trackSubmitBlocked("submit_blocked_missing_address", "Delivery address is required.");
+          // Same event (its type list is a database check); the message tells them apart.
+          trackSubmitBlocked("submit_blocked_missing_address", orderFormAddress.trim() ? "Address only named the state or city." : "Delivery address is required.");
           break;
         case "city":
           trackSubmitBlocked("submit_blocked_missing_city", "City is required.");
@@ -4718,7 +4728,11 @@ export default function PublicOrderFormPage() {
                         setOrderFormPhone(sanitizePhoneDigitsInput(event.target.value));
                         clearFieldError("phone");
                       }}
-                      placeholder="Your Phone Number *"
+                      onBlur={() => {
+                        const problem = nigerianPhoneProblem(orderFormPhone);
+                        if (problem) setFieldErrors((current) => ({ ...current, phone: problem }));
+                      }}
+                      placeholder={`Your Phone Number * e.g. ${PHONE_EXAMPLE}`}
                       inputMode="tel"
                       enterKeyHint="next"
                       pattern="[0-9\\s\\-]{7,15}"
@@ -4750,6 +4764,10 @@ export default function PublicOrderFormPage() {
                         onChange={(event) => {
                           setOrderFormWhatsapp(sanitizePhoneDigitsInput(event.target.value));
                           clearFieldError("whatsapp");
+                        }}
+                        onBlur={() => {
+                          const problem = orderFormWhatsapp.trim() ? nigerianPhoneProblem(orderFormWhatsapp) : null;
+                          if (problem) setFieldErrors((current) => ({ ...current, whatsapp: problem }));
                         }}
                         placeholder={`Your WhatsApp Number${settings.requireWhatsapp ? " *" : ""}`}
                         inputMode="tel"
@@ -4818,6 +4836,10 @@ export default function PublicOrderFormPage() {
                     onChange={(event) => {
                       setOrderFormAddress(event.target.value);
                       clearFieldError("address");
+                    }}
+                    onBlur={() => {
+                      const reason = vagueAddressReason(orderFormAddress, orderFormCity, orderFormState);
+                      if (reason) setFieldErrors((current) => ({ ...current, address: vagueAddressMessage(reason) }));
                     }}
                     placeholder={`Your Address${settings.addressRequired ? " *" : ""}`}
                     aria-invalid={Boolean(fieldErrors.address)}
