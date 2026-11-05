@@ -4830,7 +4830,7 @@ export const trackingHubApi = {
   syncAdSpend: (period: { from: string; to: string }) => post<{ ok: boolean; accounts: number; failed: string[]; message: string }>("/api/tracking-hub/ad-spend/sync", period),
   setAdSpendAutoSync: (on: boolean) => put<{ ok: true; autoSync: boolean }>("/api/tracking-hub/ad-spend/auto-sync", { on }),
   sinceStart: (platform: string) => get<HubSinceStart>(`/api/tracking-hub/ad-spend/since-start?platform=${encodeURIComponent(platform)}`),
-  campaignAlerts: () => get<{ droughts: CampaignDrought[]; checkedAt: string }>("/api/tracking-hub/campaign-alerts"),
+  campaignAlerts: (fresh = false) => get<{ droughts: CampaignDrought[]; unchecked: number; checkedAt: string }>(`/api/tracking-hub/campaign-alerts${fresh ? "?fresh=1" : ""}`),
   setAdSpendTarget: (productId: string, targetCpa: number | null) => put<{ ok: true }>("/api/tracking-hub/ad-spend/targets", { productId, targetCpa }),
   tiktokConnections: () => get<{ connections: HubTikTokConnection[]; urlParameters: string }>("/api/tracking-hub/tiktok-connections"),
   connectTikTok: (body: { name: string; accessToken: string; advertiserIds: string }) => post<HubTikTokConnection>("/api/tracking-hub/tiktok-connections", body),

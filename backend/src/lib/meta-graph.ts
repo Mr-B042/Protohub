@@ -168,6 +168,31 @@ export async function campaignInfo(adAccountId: string, token: string) {
   return { ok: true as const, rows: result.data.data ?? [] };
 }
 
+/**
+ * Which campaigns of an ad account are delivering RIGHT NOW (Bright, 5 Nov
+ * 2026): the campaigns of its ACTIVE ads. An ad is only ACTIVE when its ad set
+ * and campaign are on too, while a campaign stays "ACTIVE" at its own level
+ * with every ad set paused. One cheap call per account (asking each campaign
+ * for its ads made Meta answer 500).
+ */
+export async function deliveringCampaigns(adAccountId: string, token: string): Promise<{ ok: true; ids: Set<string> } | { ok: false; message: string }> {
+  const account = adAccountId.startsWith("act_") ? adAccountId : `act_${adAccountId}`;
+  const ids = new Set<string>();
+  let path = `${account}/ads`;
+  let params: Record<string, string> = { fields: "campaign_id", effective_status: JSON.stringify(["ACTIVE"]), limit: "500" };
+  for (let page = 0; page < 20; page += 1) {
+    const result = await graphGet<{ data?: Array<{ campaign_id?: string }>; paging?: { next?: string } }>(path, token, params);
+    if (!result.ok) return { ok: false, message: result.message };
+    for (const ad of result.data.data ?? []) if (ad.campaign_id) ids.add(String(ad.campaign_id));
+    const next = result.data.paging?.next;
+    if (!next) break;
+    const nextUrl = new URL(next);
+    path = nextUrl.pathname.replace(/^\/v[\d.]+\//, "");
+    params = Object.fromEntries(Array.from(nextUrl.searchParams.entries()).filter(([key]) => key !== "access_token"));
+  }
+  return { ok: true, ids };
+}
+
 /** Details for just these campaigns (50 per request), instead of every campaign the account ever had. */
 export async function campaignsByIds(ids: string[], token: string) {
   const rows: Array<{ id: string; name?: string; objective?: string; effective_status?: string; start_time?: string; stop_time?: string }> = [];
