@@ -454,6 +454,34 @@ export function repTodayDraft(day: RepDay): string {
   ].join("\n");
 }
 
+export type MyOrders = {
+  leadership: boolean;
+  role: string;
+  /** Orders in New, held ones left out. */
+  orders: Array<{ id: string; product: string | null; customer: string | null }>;
+  /** Held for review as possible repeat orders (ids). */
+  held: string[];
+  followUps: number;
+};
+
+/**
+ * /myorders. A held repeat order is not New work (Bright, 6 Nov 2026: "we
+ * have only one new order, why 3" - #5906 and #5903, one phone ordering
+ * twice, were counted). The app's New list, /today and /late leave held
+ * orders out; so does this. Leadership get them on a line of their own.
+ */
+export function myOrdersDraft(input: MyOrders): string {
+  const customerOk = seesCustomer(input.role);
+  const held = input.leadership ? input.held : [];
+  return [
+    `<b>${input.leadership ? "New orders (everyone)" : "Your New orders"}: ${input.orders.length}</b>`,
+    ...input.orders.slice(0, 10).map((row) => `• #${tgEscape(row.id)} ${tgEscape(row.product ?? "")}${customerOk && row.customer ? ` – ${tgEscape(row.customer)}` : ""}`),
+    ...(input.orders.length > 10 ? [`…and ${input.orders.length - 10} more`] : []),
+    ...(held.length ? [`⏸ Held for review, not counted (possible repeat orders): ${held.slice(0, 5).map((id) => `#${tgEscape(id)}`).join(", ")}${held.length > 5 ? ` and ${held.length - 5} more` : ""}. See Manager Dashboard → Needs Attention.`] : []),
+    `Follow-ups due by end of today: ${input.followUps}`
+  ].join("\n");
+}
+
 export function announcementDraft(text: string, fromName: string): Draft {
   return {
     title: "Announcement",
