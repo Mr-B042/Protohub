@@ -18,33 +18,46 @@ test("the three groups by cost per order since start", () => {
   assert.equal(groupFor(null), "off");
 });
 
-test("only running campaigns that spent and had no order for 3 days", () => {
+test("only running campaigns that spent and had no order for 3 whole days", () => {
   const spend = new Map([
     ["a", days([["2026-11-04", 5_000], ["2026-11-05", 3_000]])],
     ["b", days([["2026-11-05", 4_000]])],
     ["c", days([["2026-11-05", 4_000]])],
     ["d", days([["2026-10-30", 4_000]])],
-    ["e", days([["2026-11-03", 2_000], ["2026-11-05", 2_000]])],
+    ["e", days([["2026-11-02", 2_000], ["2026-11-05", 2_000]])],
     ["f", days([["2026-11-05", 2_000]])]
   ]);
-  const lastOrderDay = new Map([["a", "2026-11-02"], ["b", "2026-11-03"], ["c", "2026-11-01"], ["d", "2026-10-20"], ["f", "2026-10-25"]]);
+  const lastOrderDay = new Map([["a", "2026-11-01"], ["b", "2026-11-02"], ["c", "2026-11-01"], ["d", "2026-10-20"], ["f", "2026-10-25"]]);
   const result = campaignDroughts({
     today: TODAY, lastOrderDay, spendByDay: spend,
     campaigns: [
-      campaign("a", 5_000),                       // last order 2nd: 3 days -> adjust
-      campaign("b", 9_000),                       // last order 3rd: only 2 days -> not yet
+      campaign("a", 5_000),                       // last order 1st: 2nd, 3rd, 4th = 3 whole days -> adjust
+      campaign("b", 9_000),                       // last order 2nd: only the 3rd and 4th -> not yet
       campaign("c", 7_000, { running: false }),   // switched off -> skip
-      campaign("d", 9_000),                       // no spend in the last 3 days -> skip
-      campaign("e", null, { start: "2026-11-03" }),// no order ever, 3 days old -> off
+      campaign("d", 9_000),                       // no spend lately -> skip
+      campaign("e", null, { start: "2026-11-02" }),// no order ever, 3 whole days -> off
       campaign("f", 7_000)                        // watch
     ]
   });
-  assert.deepEqual(result.map((row) => `${row.campaignId}:${row.group}:${row.daysWithoutOrder}`), ["e:off:3", "f:watch:11", "a:adjust:3"]);
+  assert.deepEqual(result.map((row) => `${row.campaignId}:${row.group}:${row.daysWithoutOrder}`), ["e:off:3", "f:watch:10", "a:adjust:3"]);
   const a = result.find((row) => row.campaignId === "a")!;
   assert.equal(a.spendSinceLastOrder, 8_000);
-  assert.equal(a.episodeKey, "a:2026-11-02");
+  assert.equal(a.todaySpend, 3_000);
+  assert.equal(a.episodeKey, "a:after-2026-11-01");
   assert.match(a.advice, /has been worth it/);
-  assert.match(result[0].advice, /no order yet\. Turn it off/);
+  assert.match(result[0].advice, /no order in 3 full days\. Turn it off/);
+});
+
+test("today is never counted as a day without an order (13 Oct Edge Brusher, 6 Nov 2026)", () => {
+  const input = (today: string) => campaignDroughts({
+    today, lastOrderDay: new Map([["eb", "2026-11-03"]]),
+    spendByDay: new Map([["eb", days([["2026-11-04", 2_756], ["2026-11-05", 2_860], ["2026-11-06", 1_640], ["2026-11-07", 900]])]]),
+    campaigns: [campaign("eb", 5_364, { start: "2026-10-19", spend: 85_823, orders: 16 })]
+  });
+  assert.equal(input("2026-11-06").length, 0); // the 4th and 5th: 2 whole days, as Ads Manager shows
+  const next = input("2026-11-07");
+  assert.equal(next[0].daysWithoutOrder, 3);
+  assert.equal(next[0].todaySpend, 900);
 });
 
 test("a never-ordered campaign counts from its first day of spend, not the day its ad was made (6 Nov 2026)", () => {
@@ -63,9 +76,9 @@ test("a never-ordered campaign counts from its first day of spend, not the day i
   });
   assert.deepEqual(result.map((row) => row.campaignId).sort(), ["edge", "old"]);
   const old = result.find((row) => row.campaignId === "old")!;
-  assert.equal(old.daysWithoutOrder, 6);
+  assert.equal(old.daysWithoutOrder, 5);
   assert.equal(old.spend, 3_000); // the daily rows add up to more than the older lifetime figure
-  assert.equal(result.find((row) => row.campaignId === "edge")!.daysWithoutOrder, 36);
+  assert.equal(result.find((row) => row.campaignId === "edge")!.daysWithoutOrder, 35);
 });
 
 test("cost per order uses the larger, fresher spend", () => {
