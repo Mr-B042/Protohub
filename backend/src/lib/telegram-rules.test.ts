@@ -175,3 +175,11 @@ test("no role gets company information it should not have (6 Nov 2026)", () => {
   const text = orderDraft("order_failed", { ...order, callOutcome: "Customer said call 0803 123 4567" }, "Inventory Manager & Logistics Operations").text;
   assert.doesNotMatch(text, /Bola|39,500|0802|0803|Reason/);
 });
+
+test("every order status has a ready-made automation, each trigger once", () => {
+  const triggers = DEFAULT_AUTOMATIONS.map((row) => row.trigger);
+  for (const trigger of ["order_new", "order_assigned", "order_confirmed", "order_delivered", "order_failed", "order_cancelled", "order_rescheduled", "cart_assigned"]) assert.ok(triggers.includes(trigger as any), trigger);
+  assert.equal(new Set(triggers).size, triggers.length);
+  // Ready-made recipients are allowed ones (none would be stripped on save).
+  for (const row of DEFAULT_AUTOMATIONS) assert.deepEqual(cleanRecipients(row.trigger, row.recipients).roles, row.recipients.roles, row.trigger);
+});

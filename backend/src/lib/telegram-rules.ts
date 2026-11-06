@@ -97,6 +97,11 @@ export const DEFAULT_AUTOMATIONS: DefaultAutomation[] = [
   // A reassigned order reached its new rep only if someone made this by hand.
   { trigger: "order_assigned", name: "Order Assigned Alert", enabled: true, recipients: { roles: [], assignedRep: true, userIds: [] }, settings: {} },
   { trigger: "cart_assigned", name: "Cart Assigned Alert", enabled: true, recipients: { roles: [], assignedRep: true, userIds: [] }, settings: {} },
+  // Every order status has one ready-made (Bright, 6 Nov 2026: "create them").
+  { trigger: "order_confirmed", name: "Order Confirmed Alert", enabled: true, recipients: { roles: ["Inventory Manager & Logistics Operations"], assignedRep: false, userIds: [] }, settings: {} },
+  { trigger: "order_delivered", name: "Order Delivered Alert", enabled: true, recipients: { roles: [], assignedRep: true, userIds: [] }, settings: {} },
+  { trigger: "order_cancelled", name: "Order Cancelled Alert", enabled: true, recipients: { roles: ["Inventory Manager & Logistics Operations"], assignedRep: true, userIds: [] }, settings: {} },
+  { trigger: "order_rescheduled", name: "Order Rescheduled Alert", enabled: true, recipients: { roles: ["Inventory Manager & Logistics Operations"], assignedRep: true, userIds: [] }, settings: {} },
   { trigger: "send_out_soon", name: "Follow-up Reminder", enabled: true, recipients: { roles: [], assignedRep: true, userIds: [] }, settings: { minutesBefore: 5 } },
   { trigger: "follow_up_due", name: "Follow-up Due", enabled: true, recipients: { roles: [], assignedRep: true, userIds: [] }, settings: {} },
   { trigger: "order_failed", name: "Failed Delivery Alert", enabled: true, recipients: { roles: ["Inventory Manager & Logistics Operations"], assignedRep: false, userIds: [] }, settings: {} },

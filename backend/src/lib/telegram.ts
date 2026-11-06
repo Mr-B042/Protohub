@@ -121,11 +121,13 @@ export async function ensureDefaultAutomations(orgId: string) {
   if (error) throw error;
   const have = new Set(((data ?? []) as any[]).map((row) => String(row.trigger)));
   const missing = DEFAULT_AUTOMATIONS.filter((row) => !have.has(row.trigger));
-  if (missing.length) {
-    const insert = await supabase.from("telegram_automations").insert(missing.map((row) => ({
+  // One at a time: two page loads at once both try, and the database lets
+  // only one ready-made per trigger in (migration 327); the other is skipped.
+  for (const row of missing) {
+    const insert = await supabase.from("telegram_automations").insert({
       org_id: orgId, trigger: row.trigger, name: row.name, enabled: row.enabled, recipients: row.recipients, settings: row.settings, built_in: true
-    })));
-    if (insert.error) throw insert.error;
+    });
+    if (insert.error && (insert.error as any).code !== "23505") throw insert.error;
   }
   automationCache.delete(orgId);
 }
