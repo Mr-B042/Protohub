@@ -31,6 +31,14 @@ export type TriggerKey =
 
 /** Reports carry company-wide figures: leadership only (Bright, 6 Nov 2026). */
 export const LEADERSHIP_ROLES = ["Owner", "Admin", "Manager"];
+/**
+ * Reps only ever hear about their OWN orders and carts (Bright, 6 Nov 2026:
+ * "each sales rep sees their own specific orders, not general info"). They
+ * cannot be named by role or by hand on an automation; they get its message
+ * only as "the order's own rep".
+ */
+export const REP_ROLES = ["Sales Rep", "Recovery Rep", "Sales Closer"];
+export const isRepRole = (role: string | null | undefined) => REP_ROLES.includes(String(role ?? ""));
 /** The weekly late & fines note: each sales rep gets their own. */
 const REP_NOTE_ROLES = ["Sales Rep"];
 
@@ -109,7 +117,7 @@ const clampInt = (value: unknown, min: number, max: number, fallback: number) =>
 export function allowedRoles(trigger: TriggerKey): readonly string[] {
   if (trigger === "daily_report" || trigger === "weekly_report") return LEADERSHIP_ROLES;
   if (trigger === "weekly_rep_note") return REP_NOTE_ROLES;
-  return TELEGRAM_ROLES;
+  return TELEGRAM_ROLES.filter((role) => !isRepRole(role));
 }
 
 /** May this person get what this automation sends? (Checked again at send time.) */
@@ -450,7 +458,6 @@ export const FORWARD_GROUPS: Array<{ key: string; label: string; hint: string; k
   { key: "late_send", label: "Orders not sent out in 15 min", hint: "A rep left an order in New past 15 working minutes.", kinds: ["order_late_send"] },
   { key: "carts", label: "New abandoned carts", hint: "A customer left the order form without finishing (carts given to a rep are an Automation).", kinds: ["abandoned_cart_new"] },
   { key: "ads", label: "Campaigns with no order", hint: "A running campaign brought no order for 3 full days.", kinds: ["campaign_no_orders"] },
-  { key: "deliveries", label: "Scheduled delivery reminders", hint: "Deliveries due today and reminders on scheduled orders.", kinds: ["scheduled_delivery_reminder"] },
   { key: "other", label: "Everything else", hint: "Weekly reports, fines and appeals, challenges, bug reports and other phone alerts.", kinds: ["*"] }
 ];
 
@@ -464,6 +471,24 @@ export function forwardDedupeKey(kind: string | undefined, tag: string | undefin
   const match = String(tag ?? "").match(/^order-(.+)-([A-Za-z]+)$/);
   if (match && isTriggerKey(k)) return `${k}:${match[1]}:${match[2]}:${day}`;
   return tag ? `app_alert:${tag}` : null;
+}
+
+/** Phone alerts about company-wide matters: never copied to a rep. */
+const NOT_FOR_REPS = new Set(["abandoned_cart_new", "campaign_no_orders", "low_stock"]);
+
+/**
+ * May this phone alert be copied to this person's Telegram? A rep gets only
+ * alerts about themselves: an alert about an order must be about one of
+ * theirs (orderId returned for that check); company-wide ones never.
+ */
+export function forwardCheck(role: string, kind: string | undefined, tag: string | undefined): { allowed: false } | { allowed: true; ownOrderId?: string } {
+  if (!isRepRole(role)) return { allowed: true };
+  if (NOT_FOR_REPS.has(String(kind ?? ""))) return { allowed: false };
+  const t = String(tag ?? "");
+  const orderTag = t.match(/^order-(.+)-([A-Za-z]+)$/) ?? t.match(/^late-send-(.+)$/);
+  if (orderTag) return { allowed: true, ownOrderId: orderTag[1] };
+  if (String(kind ?? "").startsWith("order_")) return { allowed: false }; // an order alert we cannot tie to an order
+  return { allowed: true };
 }
 
 /** Is this phone-alert kind switched on for Telegram? */
