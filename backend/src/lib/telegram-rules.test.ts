@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   AUTOMATION_KINDS, DEFAULT_AUTOMATIONS, buildKeyboard, cleanCommandSettings, cleanRecipients, cleanSettings, kindForwarded,
   orderDraft, previewOf, recipientLabel, repTodayDraft, reportDraft, successRate, triggerLabel, type OrderInfo,
-  cartDraft, forwardCheck, forwardDedupeKey, isQuietTime, repWeekNoteDraft, roleMayReceive
+  cartDraft, forwardCheck, forwardDedupeKey, isQuietTime, lateTodayDraft, lagosClock, repWeekNoteDraft, roleMayReceive
 } from "./telegram-rules.js";
 
 const order: OrderInfo = {
@@ -182,4 +182,21 @@ test("every order status has a ready-made automation, each trigger once", () => 
   assert.equal(new Set(triggers).size, triggers.length);
   // Ready-made recipients are allowed ones (none would be stripped on save).
   for (const row of DEFAULT_AUTOMATIONS) assert.deepEqual(cleanRecipients(row.trigger, row.recipients).roles, row.recipients.roles, row.trigger);
+});
+
+test("/late shows today's late send-outs, not only what is still New (#5932, 6 Nov 2026)", () => {
+  const at = (hm: string) => Date.parse(`2026-11-06T${hm}:00+01:00`);
+  assert.equal(lagosClock(at("10:56")), "10:56am");
+  const text = lateTodayDraft({
+    label: "Fri 6 Nov", nowMs: at("19:00"),
+    sentLate: [{ orderId: "5932", product: "Edge Brusher Max", repName: "Esther", limitMs: at("10:56"), sentMs: at("11:03"), took: 23 }],
+    stillNew: []
+  });
+  assert.match(text, /Sent out after the 15 minutes: <b>1<\/b>/);
+  assert.match(text, /#5932 Edge Brusher Max \(Esther\) – took 23 min · limit 10:56am, sent out 11:03am/);
+  assert.match(text, /Nothing is sitting in New past the limit right now/);
+  const waiting = lateTodayDraft({ label: "x", nowMs: at("19:00"), sentLate: [], stillNew: [{ orderId: "5950", product: "Rack", repName: null, limitMs: at("14:15"), waited: 31 }, { orderId: "5900", product: "Shelf", repName: null, limitMs: Date.parse("2026-11-05T11:04:00+01:00"), waited: 400 }] });
+  assert.match(waiting, /#5900 Shelf – waiting 400 min · limit was Thu 5 Nov 11:04am/);
+  assert.match(waiting, /Sent out after the 15 minutes: <b>0<\/b>/);
+  assert.match(waiting, /Still New, past the limit right now: <b>2<\/b>[\s\S]*#5950 Rack – waiting 31 min · limit was 2:15pm/);
 });

@@ -19,7 +19,7 @@ import {
 import {
   COMMANDS, DEFAULT_AUTOMATIONS, FORWARD_GROUPS, LEADERSHIP_ROLES, TRIGGERS, buildKeyboard, cartDraft, cleanCommandSettings, cleanQuiet,
   cleanRecipients, cleanSettings, followUpDraft, forwardDedupeKey, forwardedDraft, isQuietTime, kindForwarded, lowStockDraft, naira, orderDraft,
-  previewOf, repTodayDraft, repWeekNoteDraft, reportDraft, roleMayReceive, seesCustomer, seesRevenue, sendOutSoonDraft, forwardCheck, isRepRole,
+  previewOf, repTodayDraft, repWeekNoteDraft, reportDraft, roleMayReceive, seesCustomer, seesRevenue, sendOutSoonDraft, forwardCheck, isRepRole, lateTodayDraft,
   type AutomationSettings, type BusinessReport, type CartInfo, type CommandKey, type Draft, type LowStockItem, type OrderInfo,
   type QuietHours, type Recipients, type RepDay, type TriggerKey
 } from "./telegram-rules.js";
@@ -1049,20 +1049,39 @@ async function commandAnswer(orgId: string, bot: BotRow, person: Person, command
   }
   if (command === "late") {
     if (!leadership && person.role !== "Sales Rep") return { text: "This is for leadership and sales reps." };
-    let query = inMyBranches(supabase.from("orders").select("id, product_name, assigned_rep_id, created_at, original_created_at, assigned_at, revealed_at, review_hold").eq("org_id", orgId).eq("status", "New").not("assigned_rep_id", "is", null).neq("launch_stage", "silent")).limit(500);
-    if (!leadership) query = query.eq("assigned_rep_id", person.userId);
-    const { data, error } = await query;
-    if (error) throw error;
+    // Today's late send-outs AND what is still late in New right now: the
+    // same orders the fine counts (Sales Reps only, from the order's arrival).
+    const today = lagosToday();
+    const columns = "id, product_name, assigned_rep_id, created_at, original_created_at, assigned_at, revealed_at, sent_out_at, review_hold";
+    let sentQuery = inMyBranches(supabase.from("orders").select(columns).eq("org_id", orgId).not("assigned_rep_id", "is", null).neq("launch_stage", "silent")
+      .gte("sent_out_at", dayStartIso(today)).lte("sent_out_at", dayEndIso(today))).limit(2000);
+    let newQuery = inMyBranches(supabase.from("orders").select(columns).eq("org_id", orgId).eq("status", "New").not("assigned_rep_id", "is", null).neq("launch_stage", "silent")).limit(500);
+    if (!leadership) { sentQuery = sentQuery.eq("assigned_rep_id", person.userId); newQuery = newQuery.eq("assigned_rep_id", person.userId); }
+    const [sent, waiting] = await Promise.all([sentQuery, newQuery]);
+    if (sent.error) throw sent.error;
+    if (waiting.error) throw waiting.error;
     const now = Date.now();
     const people = await peopleOf(orgId);
-    const late = ((data ?? []) as any[]).filter((row) => row.review_hold !== true).map((row) => {
+    const timed = (row: any) => {
+      if (people.get(String(row.assigned_rep_id))?.role !== "Sales Rep") return null; // only Sales Reps are timed
       const arrived = arrivedAtMs(row);
       if (!Number.isFinite(arrived) || arrived < Date.parse(`${LATE_SEND_FROM}T00:00:00+01:00`)) return null;
-      const { deadlineMs } = lateSendWindow(arrived);
-      return now > deadlineMs ? { row, by: workingMinutesBetween(deadlineMs, now) } : null;
-    }).filter(Boolean) as Array<{ row: any; by: number }>;
-    if (!late.length) return { text: "✅ No order is past the 15-minute send-out limit." };
-    return { text: [`<b>Past the 15-minute limit: ${late.length}</b>`, ...late.sort((a, b) => b.by - a.by).slice(0, 12).map(({ row, by }) => `• #${tgEscape(row.id)} ${tgEscape(row.product_name ?? "")} – ${by} min late${leadership ? ` (${tgEscape(people.get(String(row.assigned_rep_id))?.name ?? "")})` : ""}`)].join("\n") };
+      return lateSendWindow(arrived);
+    };
+    const repName = (row: any) => leadership ? people.get(String(row.assigned_rep_id))?.name ?? null : null;
+    const sentLate = ((sent.data ?? []) as any[]).flatMap((row) => {
+      const window = timed(row);
+      const sentMs = Date.parse(row.sent_out_at);
+      if (!window || !(sentMs > window.deadlineMs)) return [];
+      return [{ orderId: String(row.id), product: row.product_name ?? null, repName: repName(row), limitMs: window.deadlineMs, sentMs, took: workingMinutesBetween(window.startMs, sentMs) }];
+    });
+    const stillNew = ((waiting.data ?? []) as any[]).filter((row) => row.review_hold !== true).flatMap((row) => {
+      const window = timed(row);
+      if (!window || !(now > window.deadlineMs)) return [];
+      return [{ orderId: String(row.id), product: row.product_name ?? null, repName: repName(row), limitMs: window.deadlineMs, waited: workingMinutesBetween(window.startMs, now) }];
+    });
+    const label = new Date(`${today}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+    return { text: lateTodayDraft({ label, sentLate, stillNew }) };
   }
   if (command === "stock") {
     if (!leadership && !["Inventory Manager", "Inventory Manager & Logistics Operations"].includes(person.role)) return { text: "Stock is for leadership and inventory staff." };
