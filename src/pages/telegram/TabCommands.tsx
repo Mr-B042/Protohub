@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Eye, Loader2, Lock, Phone, TerminalSquare } from "lucide-react";
 import { telegramApi } from "../../lib/api";
-import { Card, CardHead, TgLogo, Toggle } from "./tg-ui";
+import { Card, CardHead, TgLogo, Toggle, roleShort } from "./tg-ui";
 
 type Data = Awaited<ReturnType<typeof telegramApi.commands>>;
 
@@ -11,6 +11,14 @@ const EXAMPLES: Record<string, string> = {
   myorders: "/myorders",
   today: "/today",
   late: "/late",
+  fines: "/fines or /fines last",
+  week: "/week",
+  lastweek: "/lastweek",
+  compare: "/compare, or /compare full for last week vs the week before",
+  reps: "/reps or /reps last",
+  upsells: "/upsells or /upsells last",
+  products: "/products or /products last",
+  trend: "/trend",
   stock: "/stock edge",
   stop: "/stop"
 };
@@ -20,6 +28,8 @@ export default function TabCommands({ onToast, botConnected }: { onToast: (messa
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  // Each person's "/" menu shows only the commands their role can use.
+  const [previewRole, setPreviewRole] = useState("Owner");
 
   useEffect(() => { telegramApi.commands().then(setData).catch((err: Error) => setError(err.message)); }, []);
 
@@ -74,11 +84,18 @@ export default function TabCommands({ onToast, botConnected }: { onToast: (messa
           </ul>
         </Card>
         <Card className="p-5">
-          <div className="flex items-center gap-2"><TerminalSquare className="h-4 w-4 text-gray-500" /><b className="text-[15px] text-gray-900 dark:text-slate-50">What staff see when they type "/"</b></div>
+          <div className="flex flex-wrap items-center gap-2">
+            <TerminalSquare className="h-4 w-4 text-gray-500" /><b className="text-[15px] text-gray-900 dark:text-slate-50">What staff see when they type "/"</b>
+            <select value={previewRole} onChange={(event) => setPreviewRole(event.target.value)} aria-label="Show the menu for this role"
+              className="ml-auto rounded-lg border border-gray-200 bg-white px-2 py-1 text-[13px] text-gray-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+              {(data.commands.find((row) => row.key === "start")?.roles ?? ["Owner"]).map((role) => <option key={role} value={role}>{roleShort(role)}</option>)}
+            </select>
+          </div>
+          <p className="m-0 mt-1 text-[12.5px] text-gray-500">Each person's menu only shows the commands their role can use.</p>
           <div className="mt-3 rounded-2xl bg-[#DCEBF7] p-3 dark:bg-slate-800">
             <div className="mb-2 flex items-center gap-2 text-[13px] font-semibold text-gray-800 dark:text-slate-100"><TgLogo size={22} />{data.username ? `@${data.username}` : "Your bot"}</div>
             <ul className="m-0 list-none space-y-1 rounded-xl bg-white p-2 p-0 text-[13px] dark:bg-slate-900">
-              {data.commands.filter((row) => row.key !== "start" && row.enabled).map((row) => (
+              {data.commands.filter((row) => row.key !== "start" && row.enabled && (!row.roles || row.roles.includes(previewRole))).map((row) => (
                 <li key={row.key} className="flex gap-2 px-3 py-1.5"><b className="text-sky-700">/{row.key}</b><span className="truncate text-gray-500">{row.description}</span></li>
               ))}
             </ul>

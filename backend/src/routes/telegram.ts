@@ -7,7 +7,7 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 import { addDaysToDateKey, lagosDateKey } from "../lib/sales-bonus-engine.js";
 import { looksLikeBotToken, tgWebhookInfo } from "../lib/telegram-api.js";
 import {
-  COMMANDS, FORWARD_GROUPS, PERFORMANCE_GROUPS, TELEGRAM_ROLES, TRIGGERS, TRIGGER_KEYS, allowedRoles, announcementDraft, cleanCommandSettings, cleanQuiet,
+  COMMANDS, FORWARD_GROUPS, PERFORMANCE_GROUPS, TELEGRAM_ROLES, TRIGGERS, TRIGGER_KEYS, allowedRoles, announcementDraft, cleanCommandSettings, cleanQuiet, commandAllowed,
   cleanRecipients, cleanSettings, groupOf, isTriggerKey, recipientLabel, successRate, triggerLabel, type CommandKey
 } from "../lib/telegram-rules.js";
 import {
@@ -354,8 +354,12 @@ router.get("/commands", owner, async (req, res) => {
     res.json({
       username: bot?.username ?? null,
       repliesThisWeek: replies,
-      commands: [{ key: "start", description: "Connect this chat to a Protohub account (always on)", who: "Everyone", enabled: true, locked: true },
-        ...COMMANDS.map((command) => ({ ...command, enabled: enabled[command.key], locked: command.key === "help" || command.key === "stop" }))]
+      // roles: who may use it; each person's "/" menu shows only theirs.
+      commands: [{ key: "start", description: "Connect this chat to a Protohub account (always on)", who: "Everyone", enabled: true, locked: true, roles: [...TELEGRAM_ROLES] },
+        ...COMMANDS.map((command) => ({
+          ...command, enabled: enabled[command.key], locked: command.key === "help" || command.key === "stop",
+          roles: TELEGRAM_ROLES.filter((role) => commandAllowed(role, command.key))
+        }))]
     });
   } catch (error) { fail(res, error, "Could not load commands."); }
 });
