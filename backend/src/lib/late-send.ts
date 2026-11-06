@@ -5,6 +5,7 @@ import { getOrgPushBranding } from "./push-branding.js";
 import { sendPushToUser } from "./push.js";
 import { weekEndFromStart, addDaysToDateKey } from "./sales-bonus-engine.js";
 import { LATE_SEND_FROM, LATE_SEND_MINUTES, lagosDateOf, lateSendWindow, minutesLate, workingMinutesBetween } from "./late-send-rules.js";
+import { alertSeesCustomer } from "./alert-privacy.js";
 
 // ── Order not sent out within 15 working minutes (Bright, 23 Oct 2026) ─────
 // Rules (hours, Monday 11am, what "sent" means): late-send-rules.ts.
@@ -105,16 +106,17 @@ export async function runLateSendAlerts(nowMs = Date.now()) {
       const deadline = lateSendWindow(arrivedAtMs(order)).deadlineMs;
       const name = repName.get(repId) ?? "A sales rep";
       const title = `Order #${order.id} not sent out in ${LATE_SEND_MINUTES} min`;
-      const message = `${name} has not moved this order from New. ${order.customer ?? ""}${order.product_name ? ` · ${order.product_name}` : ""} · ${minutesLate(deadline, null, nowMs)} min late`;
+      // The customer's name only for roles that may see customers (Bright, 6 Nov 2026).
+      const messageFor = (role: string) => `${name} has not moved this order from New. ${alertSeesCustomer(role) ? order.customer ?? "" : ""}${order.product_name ? `${alertSeesCustomer(role) && order.customer ? " · " : ""}${order.product_name}` : ""} · ${minutesLate(deadline, null, nowMs)} min late`;
       const link = (role: string) => role === "Sales Rep" ? `/dashboard/sales-rep/orders/${order.id}` : `/dashboard/admin/orders/${order.id}`;
       const { error: insertError } = await supabase.from("system_notifications").insert([...recipients.entries()].map(([recipientId, role]) => ({
-        org_id: orgId, recipient_id: recipientId, type: LATE_SEND_ALERT_TYPE, title, message, link: link(role), order_id: String(order.id), read: false
+        org_id: orgId, recipient_id: recipientId, type: LATE_SEND_ALERT_TYPE, title, message: messageFor(role), link: link(role), order_id: String(order.id), read: false
       })));
       if (insertError) { logger.warn("late-send alert insert failed", { orgId, orderId: order.id, error: insertError.message }); continue; }
       sent += 1;
       if (push) await Promise.all([...recipients.entries()].map(([recipientId, role]) =>
         sendPushToUser(orgId, recipientId, {
-          title, body: message, kind: LATE_SEND_ALERT_TYPE, url: link(role), tag: `late-send-${order.id}`,
+          title, body: messageFor(role), kind: LATE_SEND_ALERT_TYPE, url: link(role), tag: `late-send-${order.id}`,
           brandName: branding.brandName, brandLogo: branding.brandLogo
         }).catch((pushError) => logger.warn("late-send push failed", { orgId, orderId: order.id, error: String(pushError) }))
       ));

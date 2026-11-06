@@ -4,6 +4,7 @@ import { logger } from "./logger.js";
 import { getOrgPushBranding } from "./push-branding.js";
 import { sendPushToUser } from "./push.js";
 import { telegramFollowUpDue } from "./telegram.js";
+import { alertSeesCustomer } from "./alert-privacy.js";
 import { dueIsoMoment, sendAssignedRepFollowUpReminderSms, withinReminderWindow } from "./sms.js";
 import { followUpReminderKey, sameFollowUpReminder } from "./follow-up-reminder-key.js";
 
@@ -187,6 +188,9 @@ async function notifyRecipients(
     read: boolean;
   }> = [];
   const pushQueue: Array<{ recipientId: string; role: string }> = [];
+  // The follow-up text carries the customer and the amount: a role that may not
+  // see them gets the product and the time only (Bright, 6 Nov 2026).
+  const messageFor = (role: string) => alertSeesCustomer(role) ? message : `${orderDisplayName(order)} · follow-up due ${fallbackScheduledLabel}`;
 
   for (const [recipientId, role] of recipients.entries()) {
     const exists = await reminderAlreadyNotified(orgId, recipientId, order.id, title, reminderKey);
@@ -196,7 +200,7 @@ async function notifyRecipients(
       recipient_id: recipientId,
       type: ORDER_FOLLOW_UP_TYPE,
       title,
-      message,
+      message: messageFor(role),
       link: orderLinkForRole(role, order.id),
       order_id: order.id,
       read: false
@@ -234,7 +238,7 @@ async function notifyRecipients(
     pushQueue.map(({ recipientId, role }) =>
       sendPushToUser(orgId, recipientId, {
         title,
-        body: message,
+        body: messageFor(role),
         kind: ORDER_FOLLOW_UP_TYPE,
         url: orderLinkForRole(role, order.id),
         tag,
