@@ -46,3 +46,33 @@ test("only running campaigns that spent and had no order for 3 days", () => {
   assert.match(a.advice, /has been worth it/);
   assert.match(result[0].advice, /no order yet\. Turn it off/);
 });
+
+test("a never-ordered campaign counts from its first day of spend, not the day its ad was made (6 Nov 2026)", () => {
+  const spendByDay = new Map([
+    ["new", days([["2026-11-05", 4_871]])],                                       // made 18 Oct, first spent today
+    ["old", days([["2026-10-31", 1_000], ["2026-11-05", 2_000]])],                 // first spent 31 Oct
+    ["edge", days([["2026-10-28", 1_000], ["2026-11-05", 2_000]])]                 // spend from where the data begins
+  ]);
+  const result = campaignDroughts({
+    today: TODAY, lastOrderDay: new Map(), spendByDay, spendFrom: "2026-10-28",
+    campaigns: [
+      campaign("new", null, { start: "2026-10-18", spend: 3_172 }),
+      campaign("old", null, { start: "2026-10-18", spend: 2_500 }),
+      campaign("edge", null, { start: "2026-10-01", spend: 40_000 })
+    ]
+  });
+  assert.deepEqual(result.map((row) => row.campaignId).sort(), ["edge", "old"]);
+  const old = result.find((row) => row.campaignId === "old")!;
+  assert.equal(old.daysWithoutOrder, 6);
+  assert.equal(old.spend, 3_000); // the daily rows add up to more than the older lifetime figure
+  assert.equal(result.find((row) => row.campaignId === "edge")!.daysWithoutOrder, 36);
+});
+
+test("cost per order uses the larger, fresher spend", () => {
+  const result = campaignDroughts({
+    today: TODAY, lastOrderDay: new Map([["a", "2026-11-01"]]), spendByDay: new Map([["a", days([["2026-10-20", 60_000], ["2026-11-05", 10_000]])]]),
+    campaigns: [campaign("a", 3_000, { start: "2026-10-20", spend: 60_000, orders: 20 })]
+  });
+  assert.equal(result[0].spend, 70_000);
+  assert.equal(result[0].cpa, 3_500);
+});

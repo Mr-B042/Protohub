@@ -43,8 +43,9 @@ export async function droughtsFor(orgId: string, branchId: string, opts: { fresh
   // (never guessed) and counted as unchecked. TikTok has no live check yet:
   // kept only when it spent today.
   const rowOf = new Map(core.rows.map((row) => [row.campaignId, row]));
+  const spendFrom = core.data.insights.map((row) => row.day).sort()[0];
   const candidates = campaignDroughts({
-    today, lastOrderDay, spendByDay,
+    today, lastOrderDay, spendByDay, spendFrom,
     campaigns: core.rows.map((row) => ({
       campaignId: row.campaignId, campaignName: row.campaignName, platform: row.platform, accountName: row.accountName,
       running: true, start: row.start, spend: row.spend, orders: row.orders, cpa: row.cpa, productName: row.productName
@@ -96,7 +97,7 @@ export async function runCampaignDroughtAlerts() {
       const rows = fresh.flatMap((drought) => [...recipients.keys()].map((recipientId) => ({
         org_id: orgId, branch_id: branchId, recipient_id: recipientId, type: DROUGHT_ALERT_TYPE, read: false, link: linkFor(drought),
         title: `${GROUP_WORD[drought.group]}: ${drought.campaignName} - no order in ${drought.daysWithoutOrder} days`,
-        message: drought.spendSinceLastOrder >= 1 ? `${drought.advice} ₦${Math.round(drought.spendSinceLastOrder).toLocaleString("en-NG")} spent since the last order.` : drought.advice
+        message: drought.lastOrderDay && drought.spendSinceLastOrder >= 1 ? `${drought.advice} ₦${Math.round(drought.spendSinceLastOrder).toLocaleString("en-NG")} spent since the last order.` : drought.advice
       })));
       const insert = await supabase.from("system_notifications").insert(rows);
       if (insert.error) throw insert.error;
