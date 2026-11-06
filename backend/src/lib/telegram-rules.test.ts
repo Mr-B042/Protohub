@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AUTOMATION_KINDS, DEFAULT_AUTOMATIONS, buildKeyboard, cleanCommandSettings, cleanRecipients, cleanSettings, kindForwarded,
-  orderDraft, previewOf, recipientLabel, repTodayDraft, reportDraft, successRate, triggerLabel, type OrderInfo
+  orderDraft, previewOf, recipientLabel, repTodayDraft, reportDraft, successRate, triggerLabel, type OrderInfo,
+  cartDraft, forwardDedupeKey, isQuietTime, repWeekNoteDraft, roleMayReceive
 } from "./telegram-rules.js";
 
 const order: OrderInfo = {
@@ -82,4 +83,61 @@ test("numbers", () => {
   assert.equal(successRate(0, 0), null);
   assert.equal(successRate(246, 2), 99.2);
   assert.equal(previewOf("✅ <b>Hi &amp; bye</b>\nline"), "✅ Hi & bye line");
+});
+
+test("gaps fixed (6 Nov 2026): reassigned orders and carts reach the rep out of the box", () => {
+  const triggers = DEFAULT_AUTOMATIONS.map((row) => row.trigger);
+  for (const trigger of ["order_assigned", "cart_assigned", "weekly_rep_note"]) assert.ok(triggers.includes(trigger as any), trigger);
+  assert.equal(DEFAULT_AUTOMATIONS.find((row) => row.trigger === "cart_assigned")!.recipients.assignedRep, true);
+});
+
+test("reports are leadership only, whatever is saved", () => {
+  assert.deepEqual(cleanRecipients("daily_report", { roles: ["Owner", "Sales Rep", "Manager", "Inventory Manager"] }).roles, ["Owner", "Manager"]);
+  assert.deepEqual(cleanRecipients("weekly_rep_note", { roles: ["Owner", "Sales Rep"] }).roles, ["Sales Rep"]);
+  assert.equal(roleMayReceive("weekly_report", "Sales Rep"), false);
+  assert.equal(roleMayReceive("order_new", "Sales Rep"), true);
+});
+
+test("a forwarded order alert and the matching automation share one key (no double message)", () => {
+  // Automation: `${trigger}:${orderId}:${status}:${day}` (telegramOrderEvent); phone alert tag: order-<id>-<status>.
+  assert.equal(forwardDedupeKey("order_delivered", "order-PH-18401-Delivered", "2026-11-06"), "order_delivered:PH-18401:Delivered:2026-11-06");
+  assert.equal(forwardDedupeKey("campaign_no_orders", "camp-1", "2026-11-06"), "app_alert:camp-1");
+  assert.equal(forwardDedupeKey("weekly_report_question", undefined, "2026-11-06"), null);
+});
+
+test("abandoned cart phone alerts use their real kind names", () => {
+  assert.equal(kindForwarded("abandoned_cart_new", new Set(["carts"])), true);
+  assert.equal(kindForwarded("abandoned_cart_assigned", new Set(["carts", "other"])), false); // an automation now
+  assert.equal(kindForwarded("telegram_notice", new Set(["other"])), false);
+});
+
+test("held orders are marked; carts keep customer details from inventory staff", () => {
+  assert.match(orderDraft("order_new", { ...order, held: true }, "Owner").text, /Held for review/);
+  assert.doesNotMatch(orderDraft("order_new", order, "Owner").text, /Held for review/);
+  const cart = { id: "C1", customer: "Ngozi", productName: "Edge Brusher Max", packageName: null, amount: 18_000, city: "Wuse", state: "FCT Abuja", repName: "Ada Rep" };
+  assert.match(cartDraft(cart, "Sales Rep").text, /CART GIVEN TO YOU[\s\S]*₦18,000[\s\S]*Ngozi/);
+  const inv = cartDraft(cart, "Inventory Manager");
+  assert.doesNotMatch(inv.text, /Ngozi|18,000/);
+  assert.deepEqual(inv.keyboard[0].map((b) => b.text), ["👁 View Cart"]);
+});
+
+test("quiet hours: 9pm to 7am Lagos by default", () => {
+  const quiet = { on: true, from: 21, to: 7 };
+  assert.equal(isQuietTime(Date.parse("2026-11-06T22:30:00+01:00"), quiet), true);
+  assert.equal(isQuietTime(Date.parse("2026-11-07T06:59:00+01:00"), quiet), true);
+  assert.equal(isQuietTime(Date.parse("2026-11-07T07:00:00+01:00"), quiet), false);
+  assert.equal(isQuietTime(Date.parse("2026-11-06T13:00:00+01:00"), quiet), false);
+  assert.equal(isQuietTime(Date.parse("2026-11-06T22:30:00+01:00"), { ...quiet, on: false }), false);
+});
+
+test("the weekly late & fines note", () => {
+  assert.match(repWeekNoteDraft({ label: "Sun 1 Nov – Sat 7 Nov", lateSendOuts: 0, lateExamples: [], fines: [] }).text, /No late send-outs and no fines/);
+  const text = repWeekNoteDraft({ label: "x", lateSendOuts: 2, lateExamples: [{ orderId: "5937", minutesLate: 12 }], fines: [{ amount: 500, reason: "Late send" }, { amount: 1000, reason: "Missed log" }] }).text;
+  assert.match(text, /sent out late \(past 15 min\): <b>2<\/b>/);
+  assert.match(text, /Fines: <b>2<\/b> · ₦1,500/);
+  assert.match(text, /appeal it in Protohub/);
+});
+
+test("a recovery rep's /today has no bonus line", () => {
+  assert.doesNotMatch(repTodayDraft({ label: "x", ordersIn: 1, sentOut: 0, sentLate: 0, delivered: 0, stillNew: 1, lateNow: 0 }), /bonus/i);
 });

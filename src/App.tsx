@@ -77250,6 +77250,10 @@ ${waybillLineItems(w).length > 1
           className={`app-main-scroll flex-1 min-h-0 overscroll-y-contain overflow-y-auto px-4 pt-16 pb-2 sm:pb-3 lg:overflow-visible lg:overscroll-auto lg:px-8 lg:pb-8 lg:pt-[5.5rem] ${isSpying && repGoldHonorActive ? "!pt-[8.75rem] sm:!pt-[6.25rem] lg:!pt-[7.75rem]" : isSpying ? "!pt-[6.25rem] lg:!pt-[7.75rem]" : repGoldHonorActive ? "!pt-28 sm:!pt-16 lg:!pt-[5.5rem]" : ""}`}
         >
           <div className="flex flex-col gap-4 sm:gap-6 pb-4 sm:pb-6 lg:pb-8">
+          {/* Telegram reminder until a staff member connects (the Owner connects from the Telegram Bot page). */}
+          {!isSpying && currentRole !== "Owner" && currentRole !== "Delivery Agent" && currentRole !== "Viewer" && activePage !== "Notifications" && (
+            <TelegramConnectCard onToast={showToast} nudge />
+          )}
           {activePage === "Dashboard" ? (
             <>
               <div className="dashboard-sticky lg:sticky lg:top-[5.5rem] lg:z-20 -mx-4 px-4 lg:-mx-8 lg:px-8 pt-1 pb-4 flex flex-col gap-4 bg-white border-b border-gray-100">

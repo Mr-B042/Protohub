@@ -5,12 +5,20 @@ import { TgLogo } from "../pages/telegram/tg-ui";
 
 type Me = Awaited<ReturnType<typeof telegramApi.me>>;
 
+const NUDGE_KEY = () => `tg-nudge-hidden:${new Date().toISOString().slice(0, 10)}`;
+const nudgeHiddenToday = () => { try { return window.localStorage.getItem(NUDGE_KEY()) === "1"; } catch { return false; } };
+
 /**
  * "Get your alerts on Telegram" on the Notifications page (Bright, 6 Nov 2026:
  * all staff can link). Shows only once the Owner has connected a bot.
+ *
+ * nudge: the reminder at the top of a staff member's pages until they connect
+ * (Bright, 6 Nov 2026: staff only saw the button on Notifications). Shows only
+ * while not connected; "Not now" hides it for the rest of the day.
  */
-export default function TelegramConnectCard({ onToast }: { onToast: (message: string) => void }) {
+export default function TelegramConnectCard({ onToast, nudge = false }: { onToast: (message: string) => void; nudge?: boolean }) {
   const [me, setMe] = useState<Me | null>(null);
+  const [hidden, setHidden] = useState(() => nudge && nudgeHiddenToday());
   const [busy, setBusy] = useState(false);
   const [waiting, setWaiting] = useState(false);
   const timer = useRef<number | null>(null);
@@ -37,6 +45,7 @@ export default function TelegramConnectCard({ onToast }: { onToast: (message: st
 
   if (!me?.bot?.connected) return null;
   const linked = me.link.linked;
+  if (nudge && (hidden || (linked && !waiting))) return null;
 
   const connect = async () => {
     setBusy(true);
@@ -63,6 +72,10 @@ export default function TelegramConnectCard({ onToast }: { onToast: (message: st
             : waiting ? "Telegram opened: tap Start there. This updates by itself." : "New orders, reminders and updates arrive instantly in Telegram. Tap Connect, then Start."}
         </span>
       </div>
+      {nudge && !linked && !waiting && (
+        <button type="button" onClick={() => { try { window.localStorage.setItem(NUDGE_KEY(), "1"); } catch { /* private mode */ } setHidden(true); }}
+          className="!min-h-0 rounded-xl px-3 py-2 text-[13px] font-semibold text-gray-500 hover:bg-white/70">Not now</button>
+      )}
       {linked
         ? <button type="button" disabled={busy} onClick={disconnect} className="!min-h-0 rounded-xl border border-gray-200 bg-white px-4 py-2 text-[13.5px] font-semibold text-gray-700 hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">Disconnect</button>
         : <button type="button" disabled={busy} onClick={connect} className="!min-h-0 inline-flex items-center gap-2 rounded-xl bg-[#1F8FE0] px-4 py-2 text-[13.5px] font-semibold text-white hover:bg-[#1A7FCB]">

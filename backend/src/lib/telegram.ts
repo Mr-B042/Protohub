@@ -10,15 +10,18 @@ import { resolvePublicApiBaseUrl } from "./push-branding.js";
 import { arrivedAtMs } from "./late-send.js";
 import { LATE_SEND_FROM, lateSendWindow, workingMinutesBetween } from "./late-send-rules.js";
 import { addDaysToDateKey, lagosDateKey, sundayWeekStartForDateKey } from "./sales-bonus-engine.js";
+import { tidyOrderState } from "./order-state.js";
+import { sendPushToUser } from "./push.js";
 import {
   tgAnswerCallback, tgDeleteWebhook, tgEscape, tgGetMe, tgSendMessage, tgSetCommands, tgSetWebhook, tgWebhookInfo,
   type TgUpdate
 } from "./telegram-api.js";
 import {
-  COMMANDS, DEFAULT_AUTOMATIONS, FORWARD_GROUPS, TRIGGERS, buildKeyboard, cleanCommandSettings, cleanRecipients, cleanSettings,
-  followUpDraft, forwardedDraft, kindForwarded, lowStockDraft, naira, orderDraft, previewOf, repTodayDraft, reportDraft, seesCustomer, seesRevenue,
-  sendOutSoonDraft, type AutomationSettings, type BusinessReport, type CommandKey, type Draft, type LowStockItem, type OrderInfo,
-  type Recipients, type RepDay, type TriggerKey
+  COMMANDS, DEFAULT_AUTOMATIONS, FORWARD_GROUPS, LEADERSHIP_ROLES, TRIGGERS, buildKeyboard, cartDraft, cleanCommandSettings, cleanQuiet,
+  cleanRecipients, cleanSettings, followUpDraft, forwardDedupeKey, forwardedDraft, isQuietTime, kindForwarded, lowStockDraft, naira, orderDraft,
+  previewOf, repTodayDraft, repWeekNoteDraft, reportDraft, roleMayReceive, seesCustomer, seesRevenue, sendOutSoonDraft,
+  type AutomationSettings, type BusinessReport, type CartInfo, type CommandKey, type Draft, type LowStockItem, type OrderInfo,
+  type QuietHours, type Recipients, type RepDay, type TriggerKey
 } from "./telegram-rules.js";
 
 // ── Bot row ─────────────────────────────────────────────────────────────────
@@ -29,6 +32,11 @@ export type BotSettings = {
   forward?: string[];
   /** Low-stock items already announced: key -> usable count and Lagos day. */
   lowStock?: Record<string, { u: number; d: string }>;
+  /** Night messages arrive without a sound. */
+  quiet?: Partial<QuietHours>;
+  /** Webhook checks failed in a row, and when the Owner was last told. */
+  healthFails?: number;
+  healthAlertAt?: string | null;
 };
 
 export type BotRow = {
@@ -153,13 +161,65 @@ async function peopleOf(orgId: string): Promise<Map<string, Person>> {
   return people;
 }
 
-async function recipientsOf(orgId: string, recipients: Recipients, assignedRepId: string | null): Promise<Person[]> {
+// ── Branches: a person only hears about the branches they work in ──────────
+// The Owner covers every branch. Everyone else is limited to their
+// branch_memberships (an account with none cannot use the app at all).
+const branchCache = new Map<string, { at: number; byUser: Map<string, Set<string>> }>();
+
+async function branchesOf(orgId: string): Promise<Map<string, Set<string>>> {
+  const hit = branchCache.get(orgId);
+  if (hit && Date.now() - hit.at < 5 * 60_000) return hit.byUser;
+  const people = await peopleOf(orgId);
+  const ids = [...people.keys()];
+  const byUser = new Map<string, Set<string>>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await supabase.from("branch_memberships").select("user_id, branch_id").in("user_id", ids.slice(i, i + 200));
+    if (error) throw error;
+    for (const row of (data ?? []) as any[]) {
+      const set = byUser.get(String(row.user_id)) ?? new Set<string>();
+      set.add(String(row.branch_id));
+      byUser.set(String(row.user_id), set);
+    }
+  }
+  branchCache.set(orgId, { at: Date.now(), byUser });
+  return byUser;
+}
+
+/** null = every branch (the Owner); otherwise the branch ids this person works in. */
+async function branchIdsFor(orgId: string, person: Person): Promise<string[] | null> {
+  if (person.role === "Owner") return null;
+  return [...((await branchesOf(orgId)).get(person.userId) ?? new Set<string>())];
+}
+
+async function inBranch(orgId: string, person: Person, branchId: string | null | undefined) {
+  if (!branchId || person.role === "Owner") return true;
+  return (await branchesOf(orgId)).get(person.userId)?.has(branchId) ?? false;
+}
+
+async function recipientsOf(orgId: string, recipients: Recipients, assignedRepId: string | null, branchId?: string | null): Promise<Person[]> {
   const people = await peopleOf(orgId);
   const out = new Map<string, Person>();
   for (const person of people.values()) if (recipients.roles.includes(person.role)) out.set(person.userId, person);
   for (const id of recipients.userIds) { const person = people.get(id); if (person) out.set(id, person); }
+  // Branch: everyone named by role or by hand must work in the event's branch.
+  for (const [id, person] of out) if (!(await inBranch(orgId, person, branchId))) out.delete(id);
+  // The order's own rep always hears about their order.
   if (recipients.assignedRep && assignedRepId) { const person = people.get(assignedRepId); if (person) out.set(assignedRepId, person); }
   return [...out.values()];
+}
+
+// ── Telling the Owner (in the app and by phone alert; Telegram may be the thing that broke) ──
+
+async function noticeOwners(orgId: string, title: string, message: string, type: "info" | "needs_attention") {
+  const owners = [...(await peopleOf(orgId)).values()].filter((person) => person.role === "Owner");
+  if (!owners.length) return;
+  const link = "/dashboard/admin/telegram-bot?tab=staff";
+  const { error } = await supabase.from("system_notifications").insert(owners.map((owner) => ({
+    org_id: orgId, recipient_id: owner.userId, type, title, message, link, read: false
+  })));
+  if (error) logger.warn("telegram notice insert failed", { orgId, error: error.message });
+  // kind telegram_notice is never copied back into Telegram.
+  await Promise.all(owners.map((owner) => sendPushToUser(orgId, owner.userId, { title, body: message, kind: "telegram_notice", url: link, tag: `telegram-notice-${title}` }).catch(() => null)));
 }
 
 // ── Sending ─────────────────────────────────────────────────────────────────
@@ -172,37 +232,98 @@ export type SendOutcome = "sent" | "failed" | "duplicate";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const quietOf = (bot: BotRow) => cleanQuiet(bot.settings.quiet);
+
+/** One attempt at Telegram, with the fallbacks that never need a person. */
+async function deliver(bot: BotRow, chatId: string, text: string, keyboard: ReturnType<typeof buildKeyboard>) {
+  const silent = isQuietTime(Date.now(), quietOf(bot));
+  let result = await tgSendMessage(bot.token, chatId, text, keyboard, silent);
+  if (!result.ok && result.retryAfter) {
+    await sleep(Math.min(5, result.retryAfter) * 1000);
+    result = await tgSendMessage(bot.token, chatId, text, keyboard, silent);
+  }
+  // A link Telegram will not take (a local address) must not stop the message.
+  if (!result.ok && /button|url/i.test(result.error) && keyboard.length) {
+    result = await tgSendMessage(bot.token, chatId, text, undefined, silent);
+  }
+  return result;
+}
+
+/** Network trouble, Telegram busy or down: worth trying again. A refusal is not. */
+const worthRetrying = (code: number | undefined) => code === undefined || code === 429 || code >= 500;
+
+async function afterSend(orgId: string, logId: string, person: Person, result: Awaited<ReturnType<typeof deliver>>, attempts: number): Promise<SendOutcome> {
+  if (result.ok) {
+    await supabase.from("telegram_messages").update({ status: "sent", sent_at: new Date().toISOString(), telegram_message_id: result.result.message_id, attempts, error: null, retryable: false }).eq("id", logId);
+    return "sent";
+  }
+  const blocked = result.code === 403;
+  await supabase.from("telegram_messages").update({
+    status: "failed", attempts, retryable: !blocked && worthRetrying(result.code) && attempts < 3,
+    error: blocked ? "They blocked the bot or deleted the chat. They need to connect again." : result.error.slice(0, 300)
+  }).eq("id", logId);
+  // A blocked chat can never be reached again: show them as not connected, and tell the Owner.
+  if (blocked) {
+    const wasLinked = (await linksFor(orgId, true)).has(person.userId);
+    await unlinkUser(orgId, person.userId).catch(() => {});
+    if (wasLinked) await noticeOwners(orgId, `${person.name} stopped the Telegram bot`, `${person.name} blocked the Protohub bot or deleted the chat, so they are disconnected and get no Telegram alerts until they connect again.`, "needs_attention").catch(() => null);
+  }
+  return "failed";
+}
+
 export async function sendLogged(input: SendInput): Promise<SendOutcome> {
+  const keyboard = buildKeyboard(input.draft.keyboard, appBase());
   const { data: logRow, error: logError } = await supabase.from("telegram_messages").insert({
     org_id: input.orgId, automation_id: input.automationId ?? null, trigger: input.trigger, user_id: input.person.userId,
     chat_id: input.chatId, order_id: input.orderId ?? null, dedupe_key: input.dedupeKey ?? null, batch_id: input.batchId ?? null,
-    title: input.draft.title.slice(0, 200), preview: previewOf(input.draft.text), status: "sending"
+    title: input.draft.title.slice(0, 200), preview: previewOf(input.draft.text), status: "sending",
+    // Kept so a message that did not go through can be sent again exactly.
+    payload: { text: input.draft.text, keyboard }
   }).select("id").single();
   if (logError) {
     if ((logError as any).code === "23505") return "duplicate";
     throw logError;
   }
-  const keyboard = buildKeyboard(input.draft.keyboard, appBase());
-  let result = await tgSendMessage(input.bot.token, input.chatId, input.draft.text, keyboard);
-  if (!result.ok && result.retryAfter) {
-    await sleep(Math.min(5, result.retryAfter) * 1000);
-    result = await tgSendMessage(input.bot.token, input.chatId, input.draft.text, keyboard);
+  const result = await deliver(input.bot, input.chatId, input.draft.text, keyboard);
+  return afterSend(input.orgId, String((logRow as any).id), input.person, result, 1);
+}
+
+/**
+ * Every 5 minutes: send again what did not go through. "sending" for over 10
+ * minutes = the server stopped mid-send; failed for a passing reason = try
+ * again, up to 3 times, within 6 hours (an old reminder is no use).
+ */
+export async function runRetries(nowMs = Date.now()) {
+  let resent = 0;
+  const { data, error } = await supabase.from("telegram_messages")
+    .select("id, org_id, user_id, chat_id, payload, attempts, status, created_at, retryable")
+    .or(`and(status.eq.sending,created_at.lt.${new Date(nowMs - 10 * 60_000).toISOString()}),and(status.eq.failed,retryable.eq.true)`)
+    .gte("created_at", new Date(nowMs - 6 * 3_600_000).toISOString())
+    .order("created_at", { ascending: true }).limit(200);
+  if (error) throw error;
+  for (const row of (data ?? []) as any[]) {
+    const bot = await getBot(String(row.org_id));
+    const person = (await peopleOf(String(row.org_id))).get(String(row.user_id));
+    const payload = row.payload as { text?: string; keyboard?: ReturnType<typeof buildKeyboard> } | null;
+    if (!bot || bot.status !== "connected" || !person || !payload?.text || !row.chat_id) {
+      await supabase.from("telegram_messages").update({ status: "failed", retryable: false, error: "Could not be sent again (bot or person no longer connected)." }).eq("id", row.id);
+      continue;
+    }
+    const attempts = Number(row.attempts ?? 1) + 1;
+    await supabase.from("telegram_messages").update({ status: "sending", attempts }).eq("id", row.id);
+    const outcome = await afterSend(String(row.org_id), String(row.id), person, await deliver(bot, String(row.chat_id), payload.text, payload.keyboard ?? []), attempts);
+    if (outcome === "sent") resent += 1;
   }
-  // A link Telegram will not take (a local address) must not stop the message.
-  if (!result.ok && /button|url/i.test(result.error) && keyboard.length) {
-    result = await tgSendMessage(input.bot.token, input.chatId, input.draft.text);
-  }
-  if (result.ok) {
-    await supabase.from("telegram_messages").update({ status: "sent", sent_at: new Date().toISOString(), telegram_message_id: result.result.message_id }).eq("id", (logRow as any).id);
-    return "sent";
-  }
-  const blocked = result.code === 403;
-  await supabase.from("telegram_messages").update({
-    status: "failed", error: blocked ? "They blocked the bot or deleted the chat. They need to connect again." : result.error.slice(0, 300)
-  }).eq("id", (logRow as any).id);
-  // A blocked chat can never be reached again: show them as not connected.
-  if (blocked) await unlinkUser(input.orgId, input.person.userId).catch(() => {});
-  return "failed";
+  // Older than 6 hours and still not through: stop trying, say so.
+  await supabase.from("telegram_messages").update({ status: "failed", retryable: false, error: "Not delivered: Telegram could not be reached for 6 hours." })
+    .or("status.eq.sending,and(status.eq.failed,retryable.eq.true)").lt("created_at", new Date(nowMs - 6 * 3_600_000).toISOString());
+  return { resent };
+}
+
+/** Once a day: message records older than 90 days, used or expired connect codes older than 7. */
+export async function runTelegramCleanup(nowMs = Date.now()) {
+  await supabase.from("telegram_messages").delete().lt("created_at", new Date(nowMs - 90 * 86_400_000).toISOString());
+  await supabase.from("telegram_link_codes").delete().lt("created_at", new Date(nowMs - 7 * 86_400_000).toISOString());
 }
 
 type TriggerContext = {
@@ -212,7 +333,9 @@ type TriggerContext = {
   dedupeBase?: string | null;
   /** Owner-only event (a Silent Test order). */
   ownerOnly?: boolean;
-  draftFor: (person: Person) => Draft | null;
+  /** The branch the event belongs to (null = organisation-wide). */
+  branchId?: string | null;
+  draftFor: (person: Person) => Draft | null | Promise<Draft | null>;
 };
 
 /** Send one event to everyone its enabled automations name (linked people only). */
@@ -226,12 +349,14 @@ export async function runTrigger(orgId: string, trigger: TriggerKey, ctx: Trigge
   let sent = 0;
   const done = new Set<string>();
   for (const automation of automations) {
-    for (const person of await recipientsOf(orgId, automation.recipients, ctx.assignedRepId ?? null)) {
+    for (const person of await recipientsOf(orgId, automation.recipients, ctx.assignedRepId ?? null, ctx.branchId)) {
       if (done.has(person.userId)) continue;
       if (ctx.ownerOnly && person.role !== "Owner") continue;
+      // e.g. reports are leadership only, whatever an older setting says.
+      if (!roleMayReceive(trigger, person.role) && !(ctx.assignedRepId === person.userId && automation.recipients.assignedRep)) continue;
       const link = links.get(person.userId);
       if (!link) continue;
-      const draft = ctx.draftFor(person);
+      const draft = await ctx.draftFor(person);
       if (!draft) continue;
       done.add(person.userId);
       const outcome = await sendLogged({
@@ -246,9 +371,9 @@ export async function runTrigger(orgId: string, trigger: TriggerKey, ctx: Trigge
 
 // ── Order events ────────────────────────────────────────────────────────────
 
-const ORDER_SELECT = "id, customer, phone, product_name, package_name, quantity, amount, city, state, status, assigned_rep_id, call_outcome, launch_stage";
+const ORDER_SELECT = "id, customer, phone, product_name, package_name, quantity, amount, city, state, status, assigned_rep_id, call_outcome, launch_stage, review_hold, branch_id";
 
-async function orderInfo(orgId: string, orderId: string): Promise<(OrderInfo & { assignedRepId: string | null; silent: boolean }) | null> {
+async function orderInfo(orgId: string, orderId: string): Promise<(OrderInfo & { assignedRepId: string | null; silent: boolean; branchId: string | null }) | null> {
   const { data, error } = await supabase.from("orders").select(ORDER_SELECT).eq("org_id", orgId).eq("id", orderId).maybeSingle();
   if (error || !data) return null;
   const row = data as any;
@@ -259,7 +384,9 @@ async function orderInfo(orgId: string, orderId: string): Promise<(OrderInfo & {
     city: row.city ?? null, state: row.state ?? null, status: row.status ?? null, callOutcome: row.call_outcome ?? null,
     repName: row.assigned_rep_id ? people.get(String(row.assigned_rep_id))?.name ?? null : null,
     assignedRepId: row.assigned_rep_id ? String(row.assigned_rep_id) : null,
-    silent: row.launch_stage === "silent"
+    silent: row.launch_stage === "silent",
+    held: row.review_hold === true,
+    branchId: row.branch_id ? String(row.branch_id) : null
   };
 }
 
@@ -279,7 +406,7 @@ export async function telegramOrderEvent(orgId: string, orderId: string, status:
     const order = await orderInfo(orgId, orderId);
     if (!order) return;
     await runTrigger(orgId, trigger, {
-      assignedRepId: order.assignedRepId, orderId: order.id, ownerOnly: order.silent,
+      assignedRepId: order.assignedRepId, orderId: order.id, ownerOnly: order.silent, branchId: order.branchId,
       // New/assigned once per order; later status changes once per day.
       dedupeBase: trigger === "order_new" ? order.id : `${order.id}:${status}:${lagosDateKey()}`,
       draftFor: (person) => orderDraft(trigger, order, person.role)
@@ -294,8 +421,11 @@ export async function telegramFollowUpDue(orgId: string, order: { id: string; as
   try {
     const bot = await getBot(orgId);
     if (!bot || bot.status !== "connected") return;
+    if (!(await automationsFor(orgId)).some((row) => row.trigger === "follow_up_due" && row.enabled)) return;
+    // launch-safe: only the branch of an order the follow-up job already picked (it skips Silent Test orders).
+    const { data: row } = await supabase.from("orders").select("branch_id").eq("org_id", orgId).eq("id", order.id).maybeSingle();
     await runTrigger(orgId, "follow_up_due", {
-      assignedRepId: order.assigned_rep_id ?? null, orderId: order.id, dedupeBase: tag,
+      assignedRepId: order.assigned_rep_id ?? null, orderId: order.id, dedupeBase: tag, branchId: (row as any)?.branch_id ?? null,
       draftFor: (person) => followUpDraft(order.id, title, message, person.role)
     });
   } catch (error) {
@@ -317,10 +447,34 @@ export async function forwardPushToTelegram(orgId: string, userId: string, paylo
     await sendLogged({
       orgId, bot, trigger: "app_alert", person, chatId: link.chat_id,
       draft: forwardedDraft(payload.title, payload.body, payload.url),
-      dedupeKey: payload.tag ? `app_alert:${payload.tag}` : null
+      // An order alert shares its key with the matching automation: one message, not two.
+      dedupeKey: forwardDedupeKey(payload.kind, payload.tag, lagosDateKey())
     });
   } catch (error) {
     logger.warn("telegram forward failed", { orgId, error: String((error as Error)?.message ?? error) });
+  }
+}
+
+/** A cart was handed to a rep (cart-notifications.ts notifyCartAssignedToRep). Never throws. */
+export async function telegramCartAssigned(orgId: string, cartId: string, repId: string) {
+  try {
+    const bot = await getBot(orgId);
+    if (!bot || bot.status !== "connected") return;
+    if (!(await automationsFor(orgId)).some((row) => row.trigger === "cart_assigned" && row.enabled)) return;
+    const { data, error } = await supabase.from("abandoned_carts").select("id, customer, product_name, package_name, amount, city, state, branch_id").eq("org_id", orgId).eq("id", cartId).maybeSingle();
+    if (error || !data) return;
+    const row = data as any;
+    const cart: CartInfo = {
+      id: String(row.id), customer: row.customer ?? null, productName: row.product_name ?? null, packageName: row.package_name ?? null,
+      amount: row.amount == null ? null : Number(row.amount), city: row.city ?? null, state: row.state ?? null,
+      repName: (await peopleOf(orgId)).get(repId)?.name ?? null
+    };
+    await runTrigger(orgId, "cart_assigned", {
+      assignedRepId: repId, dedupeBase: `${cart.id}:${repId}`, branchId: row.branch_id ?? null,
+      draftFor: (person) => cartDraft(cart, person.role)
+    });
+  } catch (error) {
+    logger.warn("telegram cart assigned failed", { orgId, cartId, error: String((error as Error)?.message ?? error) });
   }
 }
 
@@ -409,7 +563,20 @@ export async function checkBotHealth(orgId: string) {
   health[day] = { ok: today.ok + (ok ? 1 : 0), total: today.total + 1 };
   const keep = addDaysToDateKey(day, -8);
   for (const key of Object.keys(health)) if (key < keep) delete health[key];
-  await supabase.from("telegram_bots").update({ health, last_health_at: new Date().toISOString(), last_error: lastError }).eq("org_id", orgId);
+  // Broken for an hour (4 checks in a row): tell the Owner once; and once more when it works again.
+  const fails = ok ? 0 : (bot.settings.healthFails ?? 0) + 1;
+  let healthAlertAt = bot.settings.healthAlertAt ?? null;
+  if (fails >= 4 && !healthAlertAt) {
+    healthAlertAt = new Date().toISOString();
+    await noticeOwners(orgId, "The Telegram bot is not working", `For the last hour Protohub could not reach the Telegram bot (${lastError ?? "no answer"}). Staff are not getting Telegram alerts. Open Telegram Bot → Bot Configuration → Check now.`, "needs_attention").catch(() => null);
+  } else if (ok && healthAlertAt) {
+    healthAlertAt = null;
+    await noticeOwners(orgId, "The Telegram bot is working again", "Protohub can reach the Telegram bot again. Alerts are going out.", "info").catch(() => null);
+  }
+  await supabase.from("telegram_bots").update({
+    health, last_health_at: new Date().toISOString(), last_error: lastError,
+    settings: { ...bot.settings, healthFails: fails, healthAlertAt }
+  }).eq("org_id", orgId);
   forgetBot(orgId);
   return { ok, info: info.ok ? info.result : null };
 }
@@ -476,7 +643,10 @@ export async function runSendOutSoon(nowMs = Date.now()) {
 
 // ── Job: low stock at a hub ─────────────────────────────────────────────────
 
-export async function lowStockItems(orgId: string, threshold: number): Promise<Array<LowStockItem & { key: string }>> {
+/** One spelling per state, so a hub typed "Asaba Delta", "Ibadan" or "Kwara State" meets its state's orders. */
+const stateKey = (value: unknown) => String(tidyOrderState(String(value ?? "")) ?? "").trim().toLowerCase();
+
+export async function lowStockItems(orgId: string, threshold: number, onlySelling = true): Promise<Array<LowStockItem & { key: string; branchId: string | null }>> {
   const [agentsRes, productsRes] = await Promise.all([
     supabase.from("agents").select("id, name, status").eq("org_id", orgId).eq("status", "Active"),
     supabase.from("products").select("id, name, active").eq("org_id", orgId)
@@ -487,7 +657,7 @@ export async function lowStockItems(orgId: string, threshold: number): Promise<A
   const productName = new Map(((productsRes.data ?? []) as any[]).filter((row) => row.active !== false).map((row) => [String(row.id), String(row.name ?? "Product")]));
   if (!agentName.size) return [];
   const { data: locations, error } = await supabase.from("agent_locations")
-    .select("id, agent_id, name, state, active, stock:agent_location_stock(product_id, quantity, defective, missing)")
+    .select("id, agent_id, name, state, active, branch_id, stock:agent_location_stock(product_id, quantity, defective, missing)")
     .in("agent_id", [...agentName.keys()]).eq("active", true);
   if (error) throw error;
   // Only what a hub has been selling: a product it never carries is not "low".
@@ -496,16 +666,16 @@ export async function lowStockItems(orgId: string, threshold: number): Promise<A
   const { data: recent, error: recentError } = await supabase.from("orders").select("product_id, state")
     .eq("org_id", orgId).gte("created_at", since).limit(20000);
   if (recentError) throw recentError;
-  const sold = new Set(((recent ?? []) as any[]).map((row) => `${row.product_id}::${String(row.state ?? "").trim().toLowerCase()}`));
-  const out: Array<LowStockItem & { key: string }> = [];
+  const sold = new Set(((recent ?? []) as any[]).map((row) => `${row.product_id}::${stateKey(row.state)}`));
+  const out: Array<LowStockItem & { key: string; branchId: string | null }> = [];
   for (const location of (locations ?? []) as any[]) {
-    const state = String(location.state ?? "").trim();
+    const state = String(tidyOrderState(String(location.state ?? "")) ?? "").trim();
     for (const stock of location.stock ?? []) {
       const name = productName.get(String(stock.product_id));
-      if (!name || !sold.has(`${stock.product_id}::${state.toLowerCase()}`)) continue;
+      if (!name || (onlySelling && !sold.has(`${stock.product_id}::${stateKey(location.state)}`))) continue;
       const usable = Math.max(0, Number(stock.quantity ?? 0) - Number(stock.defective ?? 0) - Number(stock.missing ?? 0));
       if (usable > threshold) continue;
-      out.push({ key: `${location.id}:${stock.product_id}`, productName: name, hubName: `${agentName.get(String(location.agent_id))}${location.name ? ` (${location.name})` : ""}`, state, usable });
+      out.push({ key: `${location.id}:${stock.product_id}`, productName: name, hubName: `${agentName.get(String(location.agent_id))}${location.name ? ` (${location.name})` : ""}`, state, usable, branchId: location.branch_id ? String(location.branch_id) : null });
     }
   }
   return out.sort((a, b) => a.usable - b.usable);
@@ -533,15 +703,23 @@ export async function runLowStock() {
       });
       let toldSomeone = 0;
       for (const rule of rules) {
-        const mine = fresh.filter((item) => item.usable <= (rule.settings.threshold ?? 5));
-        if (!mine.length) continue;
         const threshold = rule.settings.threshold ?? 5;
-        const draft: Draft = mine.length === 1 ? lowStockDraft(mine[0], threshold) : {
-          title: `Low stock: ${mine.length} items at or below ${threshold}`,
-          text: [`📦 <b>LOW STOCK · ${mine.length} items</b>`, ...mine.slice(0, 15).map((item) => `• ${tgEscape(item.productName)} – ${tgEscape(item.state)}, ${tgEscape(item.hubName)}: <b>${item.usable}</b> left`), ...(mine.length > 15 ? [`…and ${mine.length - 15} more`] : [])].join("\n"),
-          keyboard: [[{ text: "📋 Open Inventory", path: "/dashboard/admin/inventory" }]]
-        };
-        toldSomeone += await runTrigger(orgId, "low_stock", { dedupeBase: `${rule.id}:${today}:${mine.map((item) => `${item.key}=${item.usable}`).join(",")}`.slice(0, 400), draftFor: () => draft }, rule);
+        const forRule = fresh.filter((item) => item.usable <= threshold);
+        if (!forRule.length) continue;
+        toldSomeone += await runTrigger(orgId, "low_stock", {
+          dedupeBase: `${rule.id}:${today}:${forRule.map((item) => `${item.key}=${item.usable}`).join(",")}`.slice(0, 400),
+          // Each person only hears about hubs in the branches they work in.
+          draftFor: async (person) => {
+            const branches = await branchIdsFor(orgId, person);
+            const mine = branches === null ? forRule : forRule.filter((item) => !item.branchId || branches.includes(item.branchId));
+            if (!mine.length) return null;
+            return mine.length === 1 ? lowStockDraft(mine[0], threshold) : {
+              title: `Low stock: ${mine.length} items at or below ${threshold}`,
+              text: [`📦 <b>LOW STOCK · ${mine.length} items</b>`, ...mine.slice(0, 15).map((item) => `• ${tgEscape(item.productName)} – ${tgEscape(item.state)}, ${tgEscape(item.hubName)}: <b>${item.usable}</b> left`), ...(mine.length > 15 ? [`…and ${mine.length - 15} more`] : [])].join("\n"),
+              keyboard: [[{ text: "📋 Open Inventory", path: "/dashboard/admin/inventory" }]]
+            };
+          }
+        }, rule);
       }
       sent += toldSomeone;
       // Nobody linked yet: keep it news, so whoever links later is still told.
@@ -561,15 +739,20 @@ const dayStartIso = (day: string) => new Date(`${day}T00:00:00+01:00`).toISOStri
 const dayEndIso = (day: string) => new Date(`${day}T23:59:59.999+01:00`).toISOString();
 const shortDay = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
 
-export async function businessReport(orgId: string, from: string, to: string): Promise<BusinessReport> {
+const NO_BRANCH = "00000000-0000-0000-0000-000000000000";
+
+/** Business figures for [from, to]; branchIds null = every branch (the Owner), else only those branches. */
+export async function businessReport(orgId: string, from: string, to: string, branchIds: string[] | null = null): Promise<BusinessReport> {
+  // (any: the query builder's types are too deep to pass through a helper.)
+  const scope = (query: any): any => branchIds === null ? query : query.in("branch_id", branchIds.length ? branchIds : [NO_BRANCH]);
   const [placed, delivered, statusChanges, sentOut, stillNew, meta, tiktok] = await Promise.all([
-    supabase.from("orders").select("id, product_name, review_hold, launch_stage").eq("org_id", orgId).gte("created_at", dayStartIso(from)).lte("created_at", dayEndIso(to)).limit(20000),
-    supabase.from("orders").select("id, amount").eq("org_id", orgId).eq("status", "Delivered").gte("delivered_date", from).lte("delivered_date", to).neq("launch_stage", "silent").limit(20000),
-    supabase.from("order_audit").select("order_id, to_status").eq("org_id", orgId).in("to_status", ["Failed", "Cancelled"]).gte("created_at", dayStartIso(from)).lte("created_at", dayEndIso(to)).limit(20000),
-    supabase.from("orders").select("id, created_at, original_created_at, assigned_at, revealed_at, sent_out_at, assigned_rep_id").eq("org_id", orgId).gte("sent_out_at", dayStartIso(from)).lte("sent_out_at", dayEndIso(to)).not("assigned_rep_id", "is", null).limit(20000),
-    supabase.from("orders").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "New").neq("launch_stage", "silent").or("review_hold.is.null,review_hold.eq.false"),
-    supabase.from("tracking_meta_ad_insights").select("spend").eq("org_id", orgId).gte("day", from).lte("day", to).limit(50000),
-    supabase.from("tracking_tiktok_ad_insights").select("spend").eq("org_id", orgId).gte("day", from).lte("day", to).limit(50000)
+    scope(supabase.from("orders").select("id, product_name, review_hold, launch_stage").eq("org_id", orgId).gte("created_at", dayStartIso(from)).lte("created_at", dayEndIso(to))).limit(20000),
+    scope(supabase.from("orders").select("id, amount").eq("org_id", orgId).eq("status", "Delivered").gte("delivered_date", from).lte("delivered_date", to).neq("launch_stage", "silent")).limit(20000),
+    scope(supabase.from("order_audit").select("order_id, to_status").eq("org_id", orgId).in("to_status", ["Failed", "Cancelled"]).gte("created_at", dayStartIso(from)).lte("created_at", dayEndIso(to))).limit(20000),
+    scope(supabase.from("orders").select("id, created_at, original_created_at, assigned_at, revealed_at, sent_out_at, assigned_rep_id").eq("org_id", orgId).gte("sent_out_at", dayStartIso(from)).lte("sent_out_at", dayEndIso(to)).not("assigned_rep_id", "is", null)).limit(20000),
+    scope(supabase.from("orders").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "New").neq("launch_stage", "silent").or("review_hold.is.null,review_hold.eq.false")),
+    scope(supabase.from("tracking_meta_ad_insights").select("spend").eq("org_id", orgId).gte("day", from).lte("day", to)).limit(50000),
+    scope(supabase.from("tracking_tiktok_ad_insights").select("spend").eq("org_id", orgId).gte("day", from).lte("day", to)).limit(50000)
   ]);
   for (const result of [placed, delivered, statusChanges, sentOut, stillNew]) if (result.error) throw result.error;
   const people = await peopleOf(orgId);
@@ -599,14 +782,49 @@ export async function businessReport(orgId: string, from: string, to: string): P
   };
 }
 
-export async function sendReport(orgId: string, rule: AutomationRow, kind: "daily_report" | "weekly_report", force = false) {
+const reportRange = (kind: "daily_report" | "weekly_report" | "weekly_rep_note") => {
   const today = lagosDateKey();
   const from = kind === "daily_report" ? addDaysToDateKey(today, -1) : addDaysToDateKey(sundayWeekStartForDateKey(today), -7);
-  const to = kind === "daily_report" ? from : addDaysToDateKey(from, 6);
-  const report = await businessReport(orgId, from, to);
+  return { from, to: kind === "daily_report" ? from : addDaysToDateKey(from, 6) };
+};
+
+export async function sendReport(orgId: string, rule: AutomationRow, kind: "daily_report" | "weekly_report", force = false) {
+  const { from, to } = reportRange(kind);
+  // One report per branch set: the Owner sees every branch, others their own.
+  const reports = new Map<string, Promise<BusinessReport>>();
   return runTrigger(orgId, kind, {
     dedupeBase: force ? null : `${rule.id}:${from}`,
-    draftFor: (person) => reportDraft(kind, report, person.role)
+    draftFor: async (person) => {
+      if (!LEADERSHIP_ROLES.includes(person.role)) return null;
+      const branches = await branchIdsFor(orgId, person);
+      const key = branches === null ? "all" : [...branches].sort().join(",");
+      if (!reports.has(key)) reports.set(key, businessReport(orgId, from, to, branches));
+      return reportDraft(kind, await reports.get(key)!, person.role);
+    }
+  }, rule);
+}
+
+/** Monday's note to each sales rep: their own late send-outs and fines last week. */
+export async function sendRepWeekNotes(orgId: string, rule: AutomationRow, force = false) {
+  const { from, to } = reportRange("weekly_rep_note");
+  const { lateSendsFor } = await import("./late-send.js");
+  const late = await lateSendsFor(orgId, from).catch(() => ({} as Awaited<ReturnType<typeof lateSendsFor>>));
+  const { data: fines, error } = await supabase.from("rep_penalties").select("rep_id, amount, reason, week_start, created_at")
+    .eq("org_id", orgId).or(`week_start.eq.${from},and(week_start.is.null,created_at.gte.${dayStartIso(from)},created_at.lte.${dayEndIso(to)})`).limit(5000);
+  if (error) throw error;
+  const label = `${shortDay(from)} – ${shortDay(to)}`;
+  return runTrigger(orgId, "weekly_rep_note", {
+    dedupeBase: force ? null : `${rule.id}:${from}`,
+    draftFor: (person) => {
+      if (person.role !== "Sales Rep") return null;
+      const mine = late[person.userId]?.orders ?? [];
+      return repWeekNoteDraft({
+        label,
+        lateSendOuts: mine.length,
+        lateExamples: [...mine].sort((a, b) => b.minutesLate - a.minutesLate).map((row) => ({ orderId: row.orderId, minutesLate: row.minutesLate })),
+        fines: ((fines ?? []) as any[]).filter((row) => String(row.rep_id) === person.userId).map((row) => ({ amount: Number(row.amount) || 0, reason: String(row.reason ?? "") }))
+      });
+    }
   }, rule);
 }
 
@@ -617,10 +835,12 @@ export async function runReports(nowMs = Date.now()) {
   let sent = 0;
   for (const orgId of await connectedBots()) {
     try {
-      for (const rule of (await automationsFor(orgId)).filter((row) => row.enabled && (row.trigger === "daily_report" || row.trigger === "weekly_report"))) {
+      for (const rule of (await automationsFor(orgId)).filter((row) => row.enabled && (row.trigger === "daily_report" || row.trigger === "weekly_report" || row.trigger === "weekly_rep_note"))) {
         if ((rule.settings.hour ?? 9) !== hour) continue;
-        if (rule.trigger === "weekly_report" && (rule.settings.weekday ?? 1) !== weekday) continue;
-        sent += await sendReport(orgId, rule, rule.trigger as "daily_report" | "weekly_report");
+        if (rule.trigger !== "daily_report" && (rule.settings.weekday ?? 1) !== weekday) continue;
+        sent += rule.trigger === "weekly_rep_note"
+          ? await sendRepWeekNotes(orgId, rule)
+          : await sendReport(orgId, rule, rule.trigger as "daily_report" | "weekly_report");
       }
     } catch (error) {
       logger.warn("telegram reports failed", { orgId, error: String((error as Error)?.message ?? error) });
@@ -661,6 +881,15 @@ export async function sampleDraft(orgId: string, trigger: TriggerKey, role: stri
     const items = await lowStockItems(orgId, 5);
     return lowStockDraft(items[0] ?? { productName: "Edge Brusher Max", hubName: "Sample hub", state: "Lagos", usable: 3 }, 5);
   }
+  if (trigger === "weekly_rep_note") {
+    const { from, to } = reportRange("weekly_rep_note");
+    return repWeekNoteDraft({ label: `${shortDay(from)} – ${shortDay(to)} (sample)`, lateSendOuts: 2, lateExamples: [{ orderId: "SAMPLE-1", minutesLate: 12 }, { orderId: "SAMPLE-2", minutesLate: 4 }], fines: [{ amount: 500, reason: "Order not sent out in 15 min (sample)" }] });
+  }
+  if (trigger === "cart_assigned") {
+    const { data: cart } = await supabase.from("abandoned_carts").select("id, customer, product_name, package_name, amount, city, state").eq("org_id", orgId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    const row = cart as any;
+    return cartDraft({ id: row?.id ?? "SAMPLE", customer: row?.customer ?? "Sample Customer", productName: row?.product_name ?? "5-in-1 Corner Racks", packageName: row?.package_name ?? null, amount: row?.amount ?? 39_500, city: row?.city ?? "Ikeja", state: row?.state ?? "Lagos", repName: "Sample Rep" }, role);
+  }
   const { data } = await supabase.from("orders").select("id").eq("org_id", orgId).neq("launch_stage", "silent").order("created_at", { ascending: false }).limit(1);
   const order = data?.[0] ? await orderInfo(orgId, String((data[0] as any).id)) : null;
   const info: OrderInfo = order ?? { id: "SAMPLE", customer: "Sample Customer", phone: null, productName: "5-in-1 Corner Racks", packageName: null, quantity: 1, amount: 39_500, city: "Ikeja", state: "Lagos", status: "New", repName: "Sample Rep", callOutcome: null };
@@ -692,6 +921,9 @@ async function linkFromCode(orgId: string, bot: BotRow, code: string, chatId: nu
   }
   const person = (await peopleOf(orgId)).get(String(row.user_id));
   if (!person) { await reply(orgId, bot, chatId, "This Protohub account is no longer active."); return; }
+  // Claim the code first: two taps on the same link cannot both connect.
+  const { data: claimed } = await supabase.from("telegram_link_codes").update({ used_at: new Date().toISOString() }).eq("code", code).is("used_at", null).select("code");
+  if (!claimed?.length) { await reply(orgId, bot, chatId, `This connect link was already used. ${CONNECT_HINT}`); return; }
   // One chat, one person: the same phone linked to someone else moves here.
   await supabase.from("telegram_links").delete().eq("org_id", orgId).eq("chat_id", String(chatId)).neq("user_id", person.userId);
   const upsert = await supabase.from("telegram_links").upsert({
@@ -700,15 +932,19 @@ async function linkFromCode(orgId: string, bot: BotRow, code: string, chatId: nu
     linked_at: new Date().toISOString()
   }, { onConflict: "user_id" });
   if (upsert.error) throw upsert.error;
-  await supabase.from("telegram_link_codes").update({ used_at: new Date().toISOString() }).eq("code", code);
   linkCache.delete(orgId);
   await reply(orgId, bot, chatId, `✅ <b>Connected.</b> Hi ${tgEscape(person.name)}, your Protohub alerts will come here.\nType /help to see what you can ask me.`, person, undefined, `${person.name} connected Telegram`);
+  // Tell the Owner who is behind this chat: a link sent to the wrong person shows at once.
+  if (person.role !== "Owner") {
+    const who = [from?.first_name, from?.last_name].filter(Boolean).join(" ") || "no name";
+    await noticeOwners(orgId, `${person.name} connected Telegram`, `${person.name} (${person.role}) now gets Protohub alerts on the Telegram account "${who}"${from?.username ? ` (@${from.username})` : ""}. If that is not them, disconnect it in Telegram Bot → Staff & Recipients.`, "info").catch(() => null);
+  }
 }
 
 function lagosToday() { return lagosDateKey(); }
 
 /** A sales rep's own day so far, and their bonus this week as the Bonuses screen shows it. */
-async function repDay(orgId: string, repId: string): Promise<RepDay> {
+async function repDay(orgId: string, repId: string, withBonus = true): Promise<RepDay> {
   const today = lagosToday();
   const start = dayStartIso(today);
   const end = dayEndIso(today);
@@ -726,8 +962,8 @@ async function repDay(orgId: string, repId: string): Promise<RepDay> {
   };
   const sentRows = (sent.data ?? []) as any[];
   const newRows = ((stillNew.data ?? []) as any[]).filter((row) => row.review_hold !== true);
-  let bonus: RepDay["bonus"] = null;
-  try {
+  let bonus: RepDay["bonus"] = withBonus ? null : undefined;
+  if (withBonus) try {
     // Same source as the rep's Bonuses screen ("Bonus earned", /api/bonus-coach/me).
     const [{ getRepBonusCoach }, { currentSalesBonusWeekStart }] = await Promise.all([import("./bonus-coach.js"), import("./sales-bonus-engine.js")]);
     const coach = await getRepBonusCoach(orgId, repId, currentSalesBonusWeekStart());
@@ -752,6 +988,9 @@ async function commandAnswer(orgId: string, bot: BotRow, person: Person, command
   if (!enabled[command]) return { text: "That command is switched off." };
   const leadership = ["Owner", "Admin", "Manager"].includes(person.role);
   const repRole = ["Sales Rep", "Recovery Rep", "Sales Closer"].includes(person.role);
+  // Leadership other than the Owner only sees the branches they work in.
+  const branches = await branchIdsFor(orgId, person);
+  const inMyBranches = (query: any): any => branches === null || !leadership ? query : query.in("branch_id", branches.length ? branches : [NO_BRANCH]);
   if (command === "help") {
     return { text: ["<b>What you can ask me</b>", ...COMMANDS.filter((row) => enabled[row.key]).map((row) => `/${row.key} – ${tgEscape(row.description)}`)].join("\n") };
   }
@@ -761,13 +1000,13 @@ async function commandAnswer(orgId: string, bot: BotRow, person: Person, command
   }
   if (command === "myorders") {
     if (!leadership && !repRole) return { text: "This is for sales staff." };
-    let query = supabase.from("orders").select("id, customer, product_name, assigned_rep_id").eq("org_id", orgId).eq("status", "New").neq("launch_stage", "silent").order("created_at", { ascending: false }).limit(200);
+    let query = inMyBranches(supabase.from("orders").select("id, customer, product_name, assigned_rep_id").eq("org_id", orgId).eq("status", "New").neq("launch_stage", "silent")).order("created_at", { ascending: false }).limit(200);
     if (!leadership) query = query.eq("assigned_rep_id", person.userId);
     const { data, error } = await query;
     if (error) throw error;
     const rows = (data ?? []) as any[];
     const end = new Date(`${lagosToday()}T23:59:59+01:00`).toISOString();
-    let follow = supabase.from("orders").select("id", { count: "exact", head: true }).eq("org_id", orgId).lte("next_follow_up_at", end).not("status", "in", "(Delivered,Cancelled)").neq("launch_stage", "silent");
+    let follow = inMyBranches(supabase.from("orders").select("id", { count: "exact", head: true }).eq("org_id", orgId).lte("next_follow_up_at", end).not("status", "in", "(Delivered,Cancelled)").neq("launch_stage", "silent"));
     if (!leadership) follow = follow.eq("assigned_rep_id", person.userId);
     const followUps = await follow;
     const lines = [
@@ -782,8 +1021,10 @@ async function commandAnswer(orgId: string, bot: BotRow, person: Person, command
     // Bright, 6 Nov 2026: revenue is strictly for the Owner, Admins and
     // Managers; a sales rep sees their own day and their own bonus instead.
     if (person.role === "Sales Rep") return { text: repTodayDraft(await repDay(orgId, person.userId)), keyboard: [[{ text: "Open my Bonuses", path: "/dashboard/sales-rep" }]] };
-    if (!leadership) return { text: "Today's numbers are for leadership and sales reps." };
-    const report = await businessReport(orgId, lagosToday(), lagosToday());
+    // Recovery Reps and Sales Closers: their own day (their pay is not the sales bonus).
+    if (person.role === "Recovery Rep" || person.role === "Sales Closer") return { text: repTodayDraft(await repDay(orgId, person.userId, false)) };
+    if (!leadership) return { text: "Today's numbers are for leadership and sales staff." };
+    const report = await businessReport(orgId, lagosToday(), lagosToday(), branches);
     const revenue = seesRevenue(person.role);
     return { text: [
       `<b>Today so far · ${tgEscape(report.label)}</b>`,
@@ -795,7 +1036,7 @@ async function commandAnswer(orgId: string, bot: BotRow, person: Person, command
   }
   if (command === "late") {
     if (!leadership && person.role !== "Sales Rep") return { text: "This is for leadership and sales reps." };
-    let query = supabase.from("orders").select("id, product_name, assigned_rep_id, created_at, original_created_at, assigned_at, revealed_at, review_hold").eq("org_id", orgId).eq("status", "New").not("assigned_rep_id", "is", null).neq("launch_stage", "silent").limit(500);
+    let query = inMyBranches(supabase.from("orders").select("id, product_name, assigned_rep_id, created_at, original_created_at, assigned_at, revealed_at, review_hold").eq("org_id", orgId).eq("status", "New").not("assigned_rep_id", "is", null).neq("launch_stage", "silent")).limit(500);
     if (!leadership) query = query.eq("assigned_rep_id", person.userId);
     const { data, error } = await query;
     if (error) throw error;
@@ -814,7 +1055,7 @@ async function commandAnswer(orgId: string, bot: BotRow, person: Person, command
     if (!leadership && !["Inventory Manager", "Inventory Manager & Logistics Operations"].includes(person.role)) return { text: "Stock is for leadership and inventory staff." };
     const q = args.trim().toLowerCase();
     if (!q) return { text: "Type part of a product name, e.g. /stock edge" };
-    const items = (await lowStockItems(orgId, 1_000_000)).filter((item) => item.productName.toLowerCase().includes(q));
+    const items = (await lowStockItems(orgId, 1_000_000, false)).filter((item) => item.productName.toLowerCase().includes(q) && (branches === null || !item.branchId || branches.includes(item.branchId)));
     if (!items.length) return { text: `No hub stock found for "${tgEscape(q)}".` };
     return { text: [`<b>Usable stock: ${tgEscape(items[0].productName)}</b>`, ...items.slice(0, 20).map((item) => `• ${tgEscape(item.state)} – ${tgEscape(item.hubName)}: <b>${item.usable}</b>`)].join("\n") };
   }
@@ -869,6 +1110,15 @@ export async function handleUpdate(orgId: string, update: TgUpdate) {
       if (!allowed || !order.phone) { await tgAnswerCallback(bot.token, callback.id, "You cannot see this customer's number."); return; }
       await tgAnswerCallback(bot.token, callback.id);
       await reply(orgId, bot, callback.message.chat.id, `📞 <b>${tgEscape(order.customer ?? "Customer")}</b> (#${tgEscape(order.id)})\nTap to call: ${tgEscape(order.phone)}`, person, undefined, `Customer number sent #${order.id}`);
+      return;
+    }
+    if (action === "callcart" && orderId) {
+      const { data } = await supabase.from("abandoned_carts").select("id, customer, phone, assigned_rep_id").eq("org_id", orgId).eq("id", orderId).maybeSingle();
+      const cart = data as any;
+      const allowed = cart && seesCustomer(person.role) && (!["Sales Rep", "Recovery Rep", "Sales Closer"].includes(person.role) || String(cart.assigned_rep_id) === person.userId);
+      if (!allowed || !cart.phone) { await tgAnswerCallback(bot.token, callback.id, "You cannot see this customer's number."); return; }
+      await tgAnswerCallback(bot.token, callback.id);
+      await reply(orgId, bot, callback.message.chat.id, `📞 <b>${tgEscape(cart.customer ?? "Customer")}</b> (cart)\nTap to call: ${tgEscape(cart.phone)}`, person, undefined, "Cart customer number sent");
       return;
     }
     await tgAnswerCallback(bot.token, callback.id);

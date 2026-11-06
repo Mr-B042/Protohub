@@ -23,6 +23,7 @@ import { purchasePixelFor } from "./tracking-click-pixel.js";
 import { orderAdIds } from "./tracking-hub.js";
 import { sendTikTokSale } from "./tracking-tiktok.js";
 import { assignOrderRep } from "./order-assignment.js";
+import { telegramOrderEvent } from "./telegram.js";
 import { notifyOutageRecoveredOrder } from "./order-notifications.js";
 import { buildPackageComponentSnapshot } from "./order-inventory.js";
 import { AUTO_SUBMIT_GIVES_UP_MS } from "./cart-assignment.js";
@@ -363,6 +364,9 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
   const silentTest = order?.launch_stage === "silent";
   const quietCustomer = silentTest && !(await productLaunch(product.id)).settings.silentCustomerMessages;
   if (!quietCustomer) void sendOrderNewCustomerWhatsApp(orgId, orderForWa).catch(() => {});
+  // Telegram's new-order alert: this path never went through notifyOrderEvent,
+  // so auto-submitted carts reached no rep on Telegram (Bright, 6 Nov 2026).
+  if (order?.id) void telegramOrderEvent(orgId, String(order.id), "New");
   // Look up the assigned rep's phone for the rep-alert WhatsApp
   if (assignedRepId && !silentTest) {
     const { data: repUser } = await supabase.from("users").select("name, phone").eq("id", assignedRepId).maybeSingle();

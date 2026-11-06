@@ -20,6 +20,7 @@ export function settingsText(row: Pick<TelegramAutomation, "trigger" | "settings
   if (row.trigger === "low_stock") return `Usable stock at or below ${s.threshold ?? 5} at a hub`;
   if (row.trigger === "daily_report") return `Every day at ${hourText(s.hour)}, for yesterday`;
   if (row.trigger === "weekly_report") return `${WEEKDAYS[s.weekday ?? 1]}s at ${hourText(s.hour)}, for last week`;
+  if (row.trigger === "weekly_rep_note") return `${WEEKDAYS[s.weekday ?? 1]}s at ${hourText(s.hour)}: each rep gets only their own`;
   return null;
 }
 
@@ -46,6 +47,11 @@ export function AutomationEditor({ editing, triggers, roles, staff, onClose, onS
 
   useEffect(() => { if (!editing && def && !name) setName(defaultName(def)); }, [trigger]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Switching to a report keeps only the roles it may go to.
+  useEffect(() => {
+    if (!def?.roles) return;
+    setRecipients((current) => ({ ...current, roles: current.roles.filter((role) => def.roles!.includes(role)) }));
+  }, [trigger]); // eslint-disable-line react-hooks/exhaustive-deps
   const toggleRole = (role: string) => setRecipients((current) => ({ ...current, roles: current.roles.includes(role) ? current.roles.filter((r) => r !== role) : [...current.roles, role] }));
   const save = async () => {
     setSaving(true);
@@ -109,7 +115,8 @@ export function AutomationEditor({ editing, triggers, roles, staff, onClose, onS
               </label>
             )}
             <div className="mt-2 flex flex-wrap gap-2">
-              {roles.map((role) => {
+              {/* Reports are for leadership only; the weekly note goes to each rep about themselves. */}
+              {roles.filter((role) => !def?.roles || def.roles.includes(role)).map((role) => {
                 const on = recipients.roles.includes(role);
                 return <button key={role} type="button" onClick={() => toggleRole(role)} className={`!min-h-0 rounded-full border px-3 py-1.5 text-[13px] font-semibold ${on ? "border-[#1F8FE0] bg-[#1F8FE0]/10 text-[#1F6FC4]" : "border-gray-200 text-gray-600 dark:border-slate-700 dark:text-slate-300"}`}>{on ? "✓ " : ""}{roleShort(role)}</button>;
               })}
@@ -117,7 +124,7 @@ export function AutomationEditor({ editing, triggers, roles, staff, onClose, onS
             <div className="mt-3 flex gap-2">
               <select aria-label="Add a person" value={person} onChange={(event) => setPerson(event.target.value)} className="h-10 flex-1 rounded-xl border border-gray-200 bg-white px-3 text-[13px] dark:border-slate-700 dark:bg-slate-900">
                 <option value="">Add a specific person…</option>
-                {staff.filter((row) => !recipients.userIds.includes(row.id)).map((row) => <option key={row.id} value={row.id}>{row.name} ({roleShort(row.role)}){row.linked ? "" : " – not connected"}</option>)}
+                {staff.filter((row) => !recipients.userIds.includes(row.id) && (!def?.roles || def.roles.includes(row.role))).map((row) => <option key={row.id} value={row.id}>{row.name} ({roleShort(row.role)}){row.linked ? "" : " – not connected"}</option>)}
               </select>
               <button type="button" className={btn.ghost} disabled={!person} onClick={() => { setRecipients({ ...recipients, userIds: [...recipients.userIds, person] }); setPerson(""); }}>Add</button>
             </div>
@@ -150,7 +157,8 @@ export function AutomationEditor({ editing, triggers, roles, staff, onClose, onS
 
 function defaultName(def: TelegramTrigger) {
   const names: Record<string, string> = {
-    order_new: "New Order Alert", order_assigned: "Order Assigned Alert", send_out_soon: "Follow-up Reminder", follow_up_due: "Follow-up Due",
+    order_new: "New Order Alert", order_assigned: "Order Assigned Alert", cart_assigned: "Cart Assigned Alert", weekly_rep_note: "Weekly Late & Fines Note",
+    send_out_soon: "Follow-up Reminder", follow_up_due: "Follow-up Due",
     order_confirmed: "Order Confirmed Alert", order_delivered: "Order Delivered Alert", order_failed: "Failed Delivery Alert",
     order_cancelled: "Order Cancelled Alert", order_rescheduled: "Rescheduled Delivery Alert", low_stock: "Low Stock Alert",
     daily_report: "Daily Sales Report", weekly_report: "Weekly Sales Report"
