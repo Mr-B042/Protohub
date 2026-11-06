@@ -31,14 +31,14 @@ test("running it again changes nothing (no double charge)", () => {
   assert.equal(snapshotWithApprovedMisses(once, ["m-5432", "m-5615", "m-5383"]), once);
 });
 
-test("only the misses named, only follow-ups; other fines and cart logs stay as they were", () => {
+test("only the misses named are approved; other fines and an unnamed cart-log day stay as they were", () => {
   const snapshot = delight();
   snapshot.fines = [{ id: "pen-1", date: "2026-10-27", amount: 500, label: "Late order send - Order #5600" }];
   snapshot.totals.fines = 500;
   snapshot.totals.finalBonus = 2500;
-  snapshot.logMisses.push({ ref: "cart|d|2026-10-29", kind: "cart_log", missDate: "2026-10-29", amount: 1000, status: "pending", orderId: "" });
+  snapshot.logMisses.push({ ref: "rep-d|2026-10-29", kind: "cart_log", missDate: "2026-10-29", amount: 1000, status: "pending", orderId: "" });
   snapshot.totals.pendingLogMisses = 1150;
-  const next = snapshotWithApprovedMisses(snapshot, ["m-5432", "cart|d|2026-10-29"]);
+  const next = snapshotWithApprovedMisses(snapshot, ["m-5432"]);
   assert.deepEqual(next.fines.map((fine: any) => [fine.id, fine.amount]), [["pen-1", 500], ["logmiss:follow_up|2026-10-28", 50]]);
   assert.equal(next.fines[1].label, "Missed follow-up logs 28 Oct: 1 order");
   assert.equal(next.totals.fines, 550);
@@ -55,4 +55,19 @@ test("fines bigger than the bonus carry the rest to next week", () => {
   const next = snapshotWithApprovedMisses(snapshot, ["m-5432", "m-5615", "m-5383"]);
   assert.equal(next.totals.finalBonus, 0);
   assert.equal(next.totals.unpaidFines, 50);
+});
+
+test("use auto (6 Nov 2026): an approved cart-log day comes off too, as the report's own cart line", () => {
+  const snapshot = delight();
+  snapshot.logMisses.push({ ref: "rep-d|2026-10-29", kind: "cart_log", missDate: "2026-10-29", amount: 1000, status: "pending", cartsMissed: 2 } as any);
+  snapshot.totals.pendingLogMisses = 1150;
+  const next = snapshotWithApprovedMisses(snapshot, ["rep-d|2026-10-29", "m-5432", "m-5615", "m-5383"]);
+  assert.deepEqual(next.fines.map((fine: any) => [fine.label, fine.amount]), [
+    ["Missed follow-up logs 28 Oct: 3 orders", 150],
+    ["Missed cart logs 29 Oct: 2 carts", 1000]
+  ]);
+  assert.equal(next.totals.fines, 1150);
+  assert.equal(next.totals.logMissFines, 1150);
+  assert.equal(next.totals.pendingLogMisses, 0);
+  assert.equal(next.totals.finalBonus, 1850);
 });
