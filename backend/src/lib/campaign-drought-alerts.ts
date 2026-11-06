@@ -7,6 +7,7 @@ import { lagosDateKey } from "./sales-bonus-engine.js";
 import { sinceStartCore } from "./ad-spend-data.js";
 import { TIKTOK_PREFIX } from "./ad-spend.js";
 import { campaignDroughts, DROUGHT_RULES, type Drought, type DroughtGroup } from "./campaign-drought.js";
+import { alertSeesAdSpend } from "./alert-privacy.js";
 
 // Campaigns with no order for 3 days (Bright, 5 Nov 2026): worked out from
 // Since Start, shown on Tracking Hub › Ad Spend with a count on the sidebar,
@@ -92,7 +93,10 @@ export async function runCampaignDroughtAlerts() {
       const done = new Set(((told ?? []) as any[]).map((row) => String(row.link)));
       const fresh = droughts.filter((drought) => !done.has(linkFor(drought)));
       if (fresh.length === 0) continue;
-      const { recipients, push } = await alertRecipients(orgId, DROUGHT_ALERT_TYPE);
+      const routed = await alertRecipients(orgId, DROUGHT_ALERT_TYPE);
+      // Ad spend in every line: only roles that may see it, whatever Alert routing says (Bright, 6 Nov 2026).
+      const recipients = new Map([...routed.recipients].filter(([, role]) => alertSeesAdSpend(role)));
+      const push = routed.push;
       if (recipients.size === 0) continue;
       const rows = fresh.flatMap((drought) => [...recipients.keys()].map((recipientId) => ({
         org_id: orgId, branch_id: branchId, recipient_id: recipientId, type: DROUGHT_ALERT_TYPE, read: false, link: linkFor(drought),

@@ -4,6 +4,7 @@ import { sendPushToUsers } from "./push.js";
 import { supabase } from "./supabase.js";
 import { alertRecipients } from "./notification-routing.js";
 import { telegramCartAssigned } from "./telegram.js";
+import { alertSeesCustomer } from "./alert-privacy.js";
 
 type AbandonedCartAlertContext = {
   id: string;
@@ -43,11 +44,13 @@ export async function notifyNewAbandonedCart(orgId: string, cart: AbandonedCartA
     if (!recipientIds.length) return;
 
     const title = `New Abandoned Cart #${cart.id}`;
-    const message = [
+    const fullMessage = [
       cart.phone?.trim() ? `${cart.customer} (${cart.phone.trim()})` : cart.customer,
       cartDisplayName(cart),
       formatCartMoney(cart.amount, cart.currency)
     ].filter(Boolean).join(" · ");
+    // No customer, phone number or amount for a role that may not see them (Bright, 6 Nov 2026).
+    const messageFor = (recipientId: string) => alertSeesCustomer(recipients.get(recipientId)) ? fullMessage : cartDisplayName(cart);
     const link = `/dashboard/admin/abandoned-carts/${cart.id}`;
 
     const rows = recipientIds.map((recipientId) => ({
@@ -55,7 +58,7 @@ export async function notifyNewAbandonedCart(orgId: string, cart: AbandonedCartA
       recipient_id: recipientId,
       type: "info",
       title,
-      message,
+      message: messageFor(recipientId),
       link,
       read: false
     }));
@@ -66,15 +69,15 @@ export async function notifyNewAbandonedCart(orgId: string, cart: AbandonedCartA
     }
 
     const branding = await getOrgPushBranding(orgId);
-    if (push) await sendPushToUsers(orgId, recipientIds, {
+    if (push) await Promise.all(recipientIds.map((recipientId) => sendPushToUsers(orgId, [recipientId], {
       title,
-      body: message,
+      body: messageFor(recipientId),
       kind: "abandoned_cart_new",
       url: link,
       tag: `abandoned-cart-${cart.id}`,
       brandName: branding.brandName,
       brandLogo: branding.brandLogo
-    });
+    }).catch((err) => console.warn("[cart-notifications] push error:", err))));
 
     await sendInternalAbandonedCartEmail(orgId, cart);
   } catch (err) {
@@ -109,11 +112,12 @@ export async function notifyCartAssignedToRep(
     if (recipients.size === 0) return;
 
     const title = `Cart assigned to ${cart.assignedRepName || "a sales rep"}`;
-    const message = [
+    const fullMessage = [
       cart.phone?.trim() ? `${cart.customer} (${cart.phone.trim()})` : cart.customer,
       cartDisplayName(cart),
       formatCartMoney(cart.amount, cart.currency)
     ].filter(Boolean).join(" · ") + " — call within 10 minutes.";
+    const messageFor = (role: string) => alertSeesCustomer(role) ? fullMessage : `${cartDisplayName(cart)} — call within 10 minutes.`;
 
     const linkFor = (role: string) =>
       role === "Sales Rep"
@@ -125,7 +129,7 @@ export async function notifyCartAssignedToRep(
       recipient_id: recipientId,
       type: "info",
       title,
-      message,
+      message: messageFor(role),
       link: linkFor(role),
       read: false
     }));
@@ -136,7 +140,7 @@ export async function notifyCartAssignedToRep(
     if (push) await Promise.all([...recipients.entries()].map(([recipientId, role]) =>
       sendPushToUsers(orgId, [recipientId], {
         title,
-        body: message,
+        body: messageFor(role),
         kind: "abandoned_cart_assigned",
         url: linkFor(role),
         tag: `abandoned-cart-assigned-${cart.id}`,

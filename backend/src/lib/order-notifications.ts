@@ -3,6 +3,7 @@ import { alertRecipients, type AlertKey } from "./notification-routing.js";
 import { getOrgPushBranding } from "./push-branding.js";
 import { sendPushToUser } from "./push.js";
 import { telegramOrderEvent } from "./telegram.js";
+import { alertSeesCustomer } from "./alert-privacy.js";
 import { LAUNCH_STAGE_LABEL, orderLaunchStage, ownerRecipients, type LaunchStage } from "./product-launch.js";
 
 type OrderContext = {
@@ -73,6 +74,11 @@ const orderPushSummary = (order: OrderContext) => [
   orderDisplayName(order)
 ].filter(Boolean).join(" · ");
 
+// A role that may not see customers (inventory/logistics, marketers…) gets the
+// product only: no customer, phone number or amount (Bright, 6 Nov 2026).
+const summaryFor = (role: string, order: OrderContext) => alertSeesCustomer(role) ? orderNotificationSummary(order) : orderDisplayName(order);
+const pushSummaryFor = (role: string, order: OrderContext) => alertSeesCustomer(role) ? orderPushSummary(order) : orderDisplayName(order);
+
 // Type + title per status. WHO gets each alert lives in notification-routing.ts
 // (defaults + the Owner's Settings → Alert routing); recipientRoles/includeRep
 // below are no longer read.
@@ -109,7 +115,6 @@ export async function notifyOrderEvent(orgId: string, order: OrderContext, toSta
     if (recipients.size === 0) return;
 
     const title = `${silent ? `${LAUNCH_STAGE_LABEL.silent} · ` : ""}${config.title} #${order.id}`;
-    const body = orderNotificationSummary(order);
     const branding = await getOrgPushBranding(orgId);
 
     const rows = [...recipients.entries()].map(([recipientId, role]) => ({
@@ -117,7 +122,7 @@ export async function notifyOrderEvent(orgId: string, order: OrderContext, toSta
       recipient_id: recipientId,
       type:         config.type,
       title,
-      message:      body,
+      message:      summaryFor(role, order),
       link:         orderLinkForRole(role, order.id),
       order_id:     order.id,
       read:         false,
@@ -131,7 +136,7 @@ export async function notifyOrderEvent(orgId: string, order: OrderContext, toSta
       [...recipients.entries()].map(([recipientId, role]) =>
         sendPushToUser(orgId, recipientId, {
           title,
-          body: orderPushSummary(order),
+          body: pushSummaryFor(role, order),
           kind: config.type,
           url: orderLinkForRole(role, order.id),
           tag: `order-${order.id}-${toStatus}`,
@@ -163,7 +168,7 @@ export async function notifyOutageRecoveredOrder(orgId: string, order: OrderCont
     if (recipients.size === 0) return;
 
     const title = `${silent ? `${LAUNCH_STAGE_LABEL.silent} · ` : ""}⚡ Recovered Order #${order.id}`;
-    const body = `${orderNotificationSummary(order)} — came in during a system outage. Please verify with the customer before dispatch.`;
+    const bodyFor = (role: string) => `${summaryFor(role, order)} — came in during a system outage. Please verify with the customer before dispatch.`;
     const branding = await getOrgPushBranding(orgId);
 
     const rows = [...recipients.entries()].map(([recipientId, role]) => ({
@@ -171,7 +176,7 @@ export async function notifyOutageRecoveredOrder(orgId: string, order: OrderCont
       recipient_id: recipientId,
       type:         "order_new",
       title,
-      message:      body,
+      message:      bodyFor(role),
       link:         orderLinkForRole(role, order.id),
       order_id:     order.id,
       read:         false,
@@ -185,7 +190,7 @@ export async function notifyOutageRecoveredOrder(orgId: string, order: OrderCont
           title,
           // Short form for the phone; the stored row above keeps the full
           // explanation for the in-app list, which has room for it.
-          body: `${orderPushSummary(order)} — verify before dispatch`,
+          body: `${pushSummaryFor(role, order)} — verify before dispatch`,
           kind: "order_new",
           url: orderLinkForRole(role, order.id),
           tag: `order-${order.id}-outage-recovered`,

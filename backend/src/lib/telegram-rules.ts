@@ -3,21 +3,20 @@
 // so it can be tested; lib/telegram.ts does the sending.
 
 import { tgEscape, type TgButton, type TgKeyboard } from "./telegram-api.js";
+import { alertSeesAdSpend, alertSeesCustomer } from "./alert-privacy.js";
 
 export const TELEGRAM_ROLES = [
   "Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep", "Sales Closer",
   "Inventory Manager", "Inventory Manager & Logistics Operations", "Marketer"
 ] as const;
 
-/** Roles that may see a customer's name, phone and the order amount. */
-const CUSTOMER_ROLES = new Set(["Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep", "Sales Closer"]);
+// Customer details and ad spend: the same lists as the app's own alerts (alert-privacy.ts).
 /** Revenue is strictly for the Owner, Admins and Managers (Bright, 6 Nov 2026). */
 const REVENUE_ROLES = new Set(["Owner", "Admin", "Manager"]);
-/** Ad spend and cost per order: the Owner and Admins. */
-const BUSINESS_MONEY_ROLES = new Set(["Owner", "Admin"]);
-export const seesCustomer = (role: string | null | undefined) => CUSTOMER_ROLES.has(String(role ?? ""));
+export const seesCustomer = alertSeesCustomer;
 export const seesRevenue = (role: string | null | undefined) => REVENUE_ROLES.has(String(role ?? ""));
-export const seesBusinessMoney = (role: string | null | undefined) => BUSINESS_MONEY_ROLES.has(String(role ?? ""));
+/** Ad spend and cost per order: the Owner and Admins. */
+export const seesBusinessMoney = alertSeesAdSpend;
 
 /** Short names on chips: the design says "Logistics", "Inventory". */
 export const ROLE_SHORT: Record<string, string> = {
