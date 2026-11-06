@@ -57,8 +57,12 @@ export const tgDeleteWebhook = (token: string) => tgCall<boolean>(token, "delete
 
 export const tgWebhookInfo = (token: string) => tgCall<TgWebhookInfo>(token, "getWebhookInfo");
 
-export const tgSetCommands = (token: string, commands: Array<{ command: string; description: string }>) =>
-  tgCall<boolean>(token, "setMyCommands", { commands });
+/** The "/" menu; with a chat id, the menu for that one chat (each person sees only what their role can use). */
+export const tgSetCommands = (token: string, commands: Array<{ command: string; description: string }>, chatId?: string | number) =>
+  tgCall<boolean>(token, "setMyCommands", { commands, ...(chatId !== undefined ? { scope: { type: "chat", chat_id: chatId } } : {}) });
+
+export const tgDeleteCommands = (token: string, chatId: string | number) =>
+  tgCall<boolean>(token, "deleteMyCommands", { scope: { type: "chat", chat_id: chatId } });
 
 /** silent: arrives without a sound (quiet hours); it is still there to read. */
 export function tgSendMessage(token: string, chatId: string | number, text: string, keyboard?: TgKeyboard, silent = false) {

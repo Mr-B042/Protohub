@@ -3,7 +3,7 @@
 // telegram-api.ts. Every message is logged in telegram_messages; a dedupe key
 // there (unique per person) stops a reminder going out twice.
 
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { resolvePublicApiBaseUrl } from "./push-branding.js";
@@ -13,16 +13,18 @@ import { addDaysToDateKey, lagosDateKey, sundayWeekStartForDateKey } from "./sal
 import { tidyOrderState } from "./order-state.js";
 import { sendPushToUser } from "./push.js";
 import {
-  tgAnswerCallback, tgDeleteWebhook, tgEscape, tgGetMe, tgSendMessage, tgSetCommands, tgSetWebhook, tgWebhookInfo,
+  tgAnswerCallback, tgDeleteCommands, tgDeleteWebhook, tgEscape, tgGetMe, tgSendMessage, tgSetCommands, tgSetWebhook, tgWebhookInfo,
   type TgUpdate
 } from "./telegram-api.js";
 import {
   COMMANDS, DEFAULT_AUTOMATIONS, FORWARD_GROUPS, LEADERSHIP_ROLES, TRIGGERS, buildKeyboard, cartDraft, cleanCommandSettings, cleanQuiet,
-  cleanRecipients, cleanSettings, followUpDraft, forwardDedupeKey, forwardedDraft, isQuietTime, kindForwarded, lowStockDraft, naira, orderDraft,
+  cleanRecipients, cleanSettings, commandAllowed, commandDeniedText, commandsFor, followUpDraft, forwardDedupeKey, forwardedDraft, isQuietTime,
+  kindForwarded, lowStockDraft, naira, orderDraft,
   previewOf, repTodayDraft, repWeekNoteDraft, reportDraft, roleMayReceive, seesCustomer, seesRevenue, sendOutSoonDraft, forwardCheck, isRepRole, lateTodayDraft,
   type AutomationSettings, type BusinessReport, type CartInfo, type CommandKey, type Draft, type LowStockItem, type OrderInfo,
   type QuietHours, type Recipients, type RepDay, type TriggerKey
 } from "./telegram-rules.js";
+import { insightAnswer } from "./telegram-insights.js";
 
 // ── Bot row ─────────────────────────────────────────────────────────────────
 
@@ -37,6 +39,8 @@ export type BotSettings = {
   /** Webhook checks failed in a row, and when the Owner was last told. */
   healthFails?: number;
   healthAlertAt?: string | null;
+  /** What the "/" menus were last set to (commands, switches, each linked chat's role). */
+  menuKey?: string;
 };
 
 export type BotRow = {
@@ -103,9 +107,13 @@ export async function createLinkCode(orgId: string, userId: string, createdBy: s
 }
 
 export async function unlinkUser(orgId: string, userId: string) {
+  const link = (await linksFor(orgId, true)).get(userId);
   const { error } = await supabase.from("telegram_links").delete().eq("org_id", orgId).eq("user_id", userId);
   if (error) throw error;
   linkCache.delete(orgId);
+  // Their own "/" menu goes too (a chat that blocked the bot cannot be changed: ignored).
+  const bot = link ? await getBot(orgId) : null;
+  if (bot && link) await tgDeleteCommands(bot.token, link.chat_id);
 }
 
 // ── Automations ─────────────────────────────────────────────────────────────
@@ -544,12 +552,43 @@ export async function saveBotSettings(orgId: string, patch: BotSettings) {
   return settings;
 }
 
-/** The "/" menu Telegram shows: only switched-on commands. */
+const menuOf = (commands: typeof COMMANDS) => commands.map((command) => ({ command: command.key, description: command.description }));
+
+/** What every "/" menu should be now, and one key for it: a new command, a switch, a new link or a role change all change the key. */
+async function menuPlan(orgId: string, bot: BotRow) {
+  const enabled = cleanCommandSettings(bot.settings.commands);
+  const people = await peopleOf(orgId);
+  // role "" = the account was switched off: its chat loses its menu.
+  const chats = [...(await linksFor(orgId, true)).values()]
+    .map((link) => ({ chatId: link.chat_id, role: people.get(link.user_id)?.role ?? "" }))
+    .sort((a, b) => a.chatId.localeCompare(b.chatId));
+  const key = createHash("sha1").update(JSON.stringify({ commands: COMMANDS.map((command) => [command.key, command.description]), enabled, chats })).digest("hex").slice(0, 16);
+  return { enabled, chats, key };
+}
+
+/**
+ * The "/" menus Telegram shows (Bright, 6 Nov 2026: the new commands are
+ * strictly for leadership). A chat not linked to anyone sees only /help;
+ * each linked person gets their own menu with what their role can use.
+ */
 export async function pushCommandMenu(orgId: string) {
   const bot = await getBot(orgId, true);
   if (!bot) return;
-  const enabled = cleanCommandSettings(bot.settings.commands);
-  await tgSetCommands(bot.token, COMMANDS.filter((command) => enabled[command.key]).map((command) => ({ command: command.key, description: command.description })));
+  const plan = await menuPlan(orgId, bot);
+  await tgSetCommands(bot.token, menuOf(COMMANDS.filter((command) => command.key === "help")));
+  for (let i = 0; i < plan.chats.length; i += 5) {
+    await Promise.all(plan.chats.slice(i, i + 5).map((chat) => chat.role
+      ? tgSetCommands(bot.token, menuOf(commandsFor(chat.role, plan.enabled)), chat.chatId)
+      : tgDeleteCommands(bot.token, chat.chatId)));
+  }
+  await saveBotSettings(orgId, { menuKey: plan.key });
+}
+
+/** Every 15 minutes: the menus follow a deploy with new commands, or a role change, without anyone pressing anything. */
+async function syncCommandMenus(orgId: string) {
+  const bot = await getBot(orgId, true);
+  if (!bot) return;
+  if ((await menuPlan(orgId, bot)).key !== bot.settings.menuKey) await pushCommandMenu(orgId);
 }
 
 /** Webhook check (every 15 min): Telegram can reach us and has no fresh error. */
@@ -608,7 +647,10 @@ async function connectedBots() {
 }
 
 export async function runBotHealthChecks() {
-  for (const orgId of await connectedBots()) await checkBotHealth(orgId).catch((error) => logger.warn("telegram health failed", { orgId, error: String(error?.message ?? error) }));
+  for (const orgId of await connectedBots()) {
+    await checkBotHealth(orgId).catch((error) => logger.warn("telegram health failed", { orgId, error: String(error?.message ?? error) }));
+    await syncCommandMenus(orgId).catch((error) => logger.warn("telegram menu sync failed", { orgId, error: String(error?.message ?? error) }));
+  }
 }
 
 // ── Job: "5 minutes left" before the 15-minute send-out limit ──────────────
@@ -946,6 +988,8 @@ async function linkFromCode(orgId: string, bot: BotRow, code: string, chatId: nu
   }, { onConflict: "user_id" });
   if (upsert.error) throw upsert.error;
   linkCache.delete(orgId);
+  // Their own "/" menu straight away (the 15-minute sync then records it).
+  await tgSetCommands(bot.token, menuOf(commandsFor(person.role, cleanCommandSettings(bot.settings.commands))), chatId);
   await reply(orgId, bot, chatId, `✅ <b>Connected.</b> Hi ${tgEscape(person.name)}, your Protohub alerts will come here.\nType /help to see what you can ask me.`, person, undefined, `${person.name} connected Telegram`);
   // Tell the Owner who is behind this chat: a link sent to the wrong person shows at once.
   if (person.role !== "Owner") {
@@ -999,14 +1043,21 @@ async function repDay(orgId: string, repId: string, withBonus = true): Promise<R
 async function commandAnswer(orgId: string, bot: BotRow, person: Person, command: CommandKey, args: string): Promise<{ text: string; keyboard?: Draft["keyboard"] }> {
   const enabled = cleanCommandSettings(bot.settings.commands);
   if (!enabled[command]) return { text: "That command is switched off." };
+  if (!commandAllowed(person.role, command)) return { text: commandDeniedText(command) };
   const leadership = ["Owner", "Admin", "Manager"].includes(person.role);
   const repRole = ["Sales Rep", "Recovery Rep", "Sales Closer"].includes(person.role);
   // Leadership other than the Owner only sees the branches they work in.
   const branches = await branchIdsFor(orgId, person);
   const inMyBranches = (query: any): any => branches === null || !leadership ? query : query.in("branch_id", branches.length ? branches : [NO_BRANCH]);
   if (command === "help") {
-    return { text: ["<b>What you can ask me</b>", ...COMMANDS.filter((row) => enabled[row.key]).map((row) => `/${row.key} – ${tgEscape(row.description)}`)].join("\n") };
+    // Only what this person can use.
+    return { text: ["<b>What you can ask me</b>", ...commandsFor(person.role, enabled).map((row) => `/${row.key} – ${tgEscape(row.description)}`)].join("\n") };
   }
+  // This week, last week, side by side, reps, upsells, products, trends; fines (Bright, 6 Nov 2026).
+  const insight = await insightAnswer({
+    orgId, person, branches, people: await peopleOf(orgId), memberships: await branchesOf(orgId), businessReport
+  }, command, args);
+  if (insight) return insight;
   if (command === "stop") {
     await unlinkUser(orgId, person.userId);
     return { text: "Stopped. Protohub will not message this chat. Connect again any time from Protohub → Notifications." };

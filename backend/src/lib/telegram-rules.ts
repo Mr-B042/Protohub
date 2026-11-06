@@ -492,13 +492,28 @@ export function previewOf(text: string) {
 
 // ── Commands people can type to the bot ─────────────────────────────────────
 
-export type CommandKey = "help" | "myorders" | "today" | "late" | "stock" | "stop";
+export type CommandKey =
+  | "help" | "myorders" | "today" | "late" | "fines"
+  | "week" | "lastweek" | "compare" | "reps" | "upsells" | "products" | "trend"
+  | "stock" | "stop";
+
+const LEADERSHIP_ONLY = "Owner, Admins and Managers only";
 
 export const COMMANDS: Array<{ key: CommandKey; description: string; who: string }> = [
   { key: "help", description: "What this bot can do", who: "Everyone" },
   { key: "myorders", description: "My New orders and follow-ups due today", who: "Sales reps (all orders for leadership)" },
   { key: "today", description: "Today's numbers so far", who: "Leadership (with revenue); sales reps see their own day and bonus" },
   { key: "late", description: "Orders past the 15-minute send-out limit", who: "Leadership (reps see their own)" },
+  // Bright, 6 Nov 2026: more commands for leadership, strictly; fines are
+  // the one a sales rep may use too, and then only for their own.
+  { key: "fines", description: "Fines this week (add 'last' for last week)", who: "Leadership (every rep); sales staff see only their own" },
+  { key: "week", description: "This week so far: orders, delivered, rate, fines", who: LEADERSHIP_ONLY },
+  { key: "lastweek", description: "Last week's numbers", who: LEADERSHIP_ONLY },
+  { key: "compare", description: "This week vs last week, side by side", who: LEADERSHIP_ONLY },
+  { key: "reps", description: "Best sales reps (add 'last' for last week)", who: LEADERSHIP_ONLY },
+  { key: "upsells", description: "Best at upselling and cross-selling", who: LEADERSHIP_ONLY },
+  { key: "products", description: "Best products (add 'last' for last week)", who: LEADERSHIP_ONLY },
+  { key: "trend", description: "Product trends: last week vs the usual week", who: LEADERSHIP_ONLY },
   { key: "stock", description: "Usable stock by hub, e.g. /stock edge", who: "Leadership and inventory staff" },
   { key: "stop", description: "Stop Protohub messages to this chat", who: "Everyone" }
 ];
@@ -506,6 +521,34 @@ export const COMMANDS: Array<{ key: CommandKey; description: string; who: string
 export function cleanCommandSettings(raw: unknown): Record<CommandKey, boolean> {
   const r = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
   return Object.fromEntries(COMMANDS.map(({ key }) => [key, key === "help" || key === "stop" ? true : r[key] !== false])) as Record<CommandKey, boolean>;
+}
+
+/** May this role use the command at all? The menu, /help and the answer all follow this one list. */
+export function commandAllowed(role: string, key: CommandKey): boolean {
+  const leadership = LEADERSHIP_ROLES.includes(role);
+  switch (key) {
+    case "help":
+    case "stop": return true;
+    case "myorders":
+    case "today":
+    case "fines": return leadership || isRepRole(role);
+    case "late": return leadership || role === "Sales Rep";
+    case "stock": return leadership || INVENTORY_ROLES.includes(role);
+    default: return leadership;
+  }
+}
+
+/** The answer when someone types a command that is not for them. */
+export function commandDeniedText(key: CommandKey) {
+  if (key === "late") return "This is for leadership and sales reps.";
+  if (key === "stock") return "Stock is for leadership and inventory staff.";
+  if (key === "myorders" || key === "today" || key === "fines") return "This is for leadership and sales staff.";
+  return "This is for the Owner, Admins and Managers.";
+}
+
+/** The "/" menu one person sees: switched on AND allowed for their role. */
+export function commandsFor(role: string, enabled: Record<CommandKey, boolean>) {
+  return COMMANDS.filter((command) => enabled[command.key] && commandAllowed(role, command.key));
 }
 
 // ── App alerts that can also go to Telegram ─────────────────────────────────
