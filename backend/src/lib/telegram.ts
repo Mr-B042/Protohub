@@ -16,9 +16,9 @@ import {
 } from "./telegram-api.js";
 import {
   COMMANDS, DEFAULT_AUTOMATIONS, FORWARD_GROUPS, TRIGGERS, buildKeyboard, cleanCommandSettings, cleanRecipients, cleanSettings,
-  followUpDraft, forwardedDraft, kindForwarded, lowStockDraft, naira, orderDraft, previewOf, reportDraft, seesBusinessMoney, seesCustomer,
+  followUpDraft, forwardedDraft, kindForwarded, lowStockDraft, naira, orderDraft, previewOf, repTodayDraft, reportDraft, seesCustomer, seesRevenue,
   sendOutSoonDraft, type AutomationSettings, type BusinessReport, type CommandKey, type Draft, type LowStockItem, type OrderInfo,
-  type Recipients, type TriggerKey
+  type Recipients, type RepDay, type TriggerKey
 } from "./telegram-rules.js";
 
 // ── Bot row ─────────────────────────────────────────────────────────────────
@@ -707,6 +707,46 @@ async function linkFromCode(orgId: string, bot: BotRow, code: string, chatId: nu
 
 function lagosToday() { return lagosDateKey(); }
 
+/** A sales rep's own day so far, and their bonus this week as the Bonuses screen shows it. */
+async function repDay(orgId: string, repId: string): Promise<RepDay> {
+  const today = lagosToday();
+  const start = dayStartIso(today);
+  const end = dayEndIso(today);
+  const [given, sent, delivered, stillNew] = await Promise.all([
+    supabase.from("orders").select("id, review_hold").eq("org_id", orgId).eq("assigned_rep_id", repId).neq("launch_stage", "silent").gte("created_at", start).lte("created_at", end).limit(2000),
+    supabase.from("orders").select("id, created_at, original_created_at, assigned_at, revealed_at, sent_out_at").eq("org_id", orgId).eq("assigned_rep_id", repId).neq("launch_stage", "silent").gte("sent_out_at", start).lte("sent_out_at", end).limit(2000),
+    supabase.from("orders").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("assigned_rep_id", repId).eq("status", "Delivered").eq("delivered_date", today).neq("launch_stage", "silent"),
+    supabase.from("orders").select("id, created_at, original_created_at, assigned_at, revealed_at, review_hold").eq("org_id", orgId).eq("assigned_rep_id", repId).eq("status", "New").neq("launch_stage", "silent").limit(2000)
+  ]);
+  for (const result of [given, sent, delivered, stillNew]) if (result.error) throw result.error;
+  const deadlineOf = (row: any) => {
+    const arrived = arrivedAtMs(row);
+    if (!Number.isFinite(arrived) || arrived < Date.parse(`${LATE_SEND_FROM}T00:00:00+01:00`)) return null;
+    return lateSendWindow(arrived).deadlineMs;
+  };
+  const sentRows = (sent.data ?? []) as any[];
+  const newRows = ((stillNew.data ?? []) as any[]).filter((row) => row.review_hold !== true);
+  let bonus: RepDay["bonus"] = null;
+  try {
+    // Same source as the rep's Bonuses screen ("Bonus earned", /api/bonus-coach/me).
+    const [{ getRepBonusCoach }, { currentSalesBonusWeekStart }] = await Promise.all([import("./bonus-coach.js"), import("./sales-bonus-engine.js")]);
+    const coach = await getRepBonusCoach(orgId, repId, currentSalesBonusWeekStart());
+    bonus = { earned: coach.snapshot.currentBonusEarned, deliveredCount: coach.snapshot.deliveredCount };
+  } catch (error) {
+    logger.warn("telegram /today bonus failed", { orgId, error: String((error as Error)?.message ?? error) });
+  }
+  return {
+    label: new Date(`${today}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }),
+    ordersIn: ((given.data ?? []) as any[]).filter((row) => row.review_hold !== true).length,
+    sentOut: sentRows.length,
+    sentLate: sentRows.filter((row) => { const deadline = deadlineOf(row); return deadline != null && Date.parse(row.sent_out_at) > deadline; }).length,
+    delivered: delivered.count ?? 0,
+    stillNew: newRows.length,
+    lateNow: newRows.filter((row) => { const deadline = deadlineOf(row); return deadline != null && Date.now() > deadline; }).length,
+    bonus
+  };
+}
+
 async function commandAnswer(orgId: string, bot: BotRow, person: Person, command: CommandKey, args: string): Promise<{ text: string; keyboard?: Draft["keyboard"] }> {
   const enabled = cleanCommandSettings(bot.settings.commands);
   if (!enabled[command]) return { text: "That command is switched off." };
@@ -739,13 +779,16 @@ async function commandAnswer(orgId: string, bot: BotRow, person: Person, command
     return { text: lines.join("\n"), keyboard: [[{ text: "Open Orders", path: person.role === "Sales Rep" ? "/dashboard/sales-rep" : "/dashboard/admin/orders" }]] };
   }
   if (command === "today") {
-    if (!leadership) return { text: "Today's numbers are for the Owner, Admins and Managers." };
+    // Bright, 6 Nov 2026: revenue is strictly for the Owner, Admins and
+    // Managers; a sales rep sees their own day and their own bonus instead.
+    if (person.role === "Sales Rep") return { text: repTodayDraft(await repDay(orgId, person.userId)), keyboard: [[{ text: "Open my Bonuses", path: "/dashboard/sales-rep" }]] };
+    if (!leadership) return { text: "Today's numbers are for leadership and sales reps." };
     const report = await businessReport(orgId, lagosToday(), lagosToday());
-    const money = seesBusinessMoney(person.role);
+    const revenue = seesRevenue(person.role);
     return { text: [
       `<b>Today so far · ${tgEscape(report.label)}</b>`,
       `Orders in: <b>${report.ordersIn}</b>`,
-      `Delivered: <b>${report.delivered}</b>${money ? ` · ${naira(report.deliveredRevenue)}` : ""}`,
+      `Delivered: <b>${report.delivered}</b>${revenue ? ` · ${naira(report.deliveredRevenue)}` : ""}`,
       `Failed: ${report.failed} · Cancelled: ${report.cancelled}`,
       `Sent out late: ${report.lateSendOuts} · Still New: ${report.stillNew}`
     ].join("\n") };
