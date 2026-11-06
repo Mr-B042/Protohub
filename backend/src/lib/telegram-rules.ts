@@ -368,6 +368,48 @@ export function repWeekNoteDraft(note: RepWeekNote): Draft {
   };
 }
 
+/** "10:56am" in Lagos time. */
+export const lagosClock = (ms: number) => new Date(ms).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Africa/Lagos" }).replace(/\s/g, "").toLowerCase();
+/** "10:56am" today, "Thu 5 Nov 10:56am" on another day (Lagos). */
+export const lagosWhen = (ms: number, nowMs: number) => {
+  const day = (value: number) => new Date(value + 3_600_000).toISOString().slice(0, 10);
+  if (day(ms) === day(nowMs)) return lagosClock(ms);
+  return `${new Date(ms).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "Africa/Lagos" })} ${lagosClock(ms)}`;
+};
+
+export type LateToday = {
+  label: string;
+  nowMs?: number;
+  /** Moved out of New today, after the 15-minute limit. took = working minutes, as the order list chip shows it. */
+  sentLate: Array<{ orderId: string; product: string | null; repName: string | null; limitMs: number; sentMs: number; took: number }>;
+  /** Still in New right now, past the limit. waited = working minutes so far. */
+  stillNew: Array<{ orderId: string; product: string | null; repName: string | null; limitMs: number; waited: number }>;
+};
+
+/**
+ * /late (Bright, 6 Nov 2026: "not accurate, one order today passed the 15
+ * mins"). It only listed orders STILL in New, so an order sent out late
+ * earlier in the day read as "no order is past the limit" while /today
+ * counted it. Now it shows both, the same orders the fine counts.
+ */
+export function lateTodayDraft(day: LateToday): string {
+  const now = day.nowMs ?? Date.now();
+  const who = (repName: string | null) => repName ? ` (${tgEscape(repName)})` : "";
+  const lines = [
+    `<b>Late send-outs today · ${tgEscape(day.label)}</b>`,
+    `Sent out after the 15 minutes: <b>${day.sentLate.length}</b>`,
+    ...day.sentLate.sort((a, b) => b.took - a.took).slice(0, 12).map((row) =>
+      `• #${tgEscape(row.orderId)} ${tgEscape(row.product ?? "")}${who(row.repName)} – took ${row.took} min · limit ${lagosWhen(row.limitMs, now)}, sent out ${lagosClock(row.sentMs)}`),
+    ``,
+    day.stillNew.length
+      ? `⚠️ Still New, past the limit right now: <b>${day.stillNew.length}</b>`
+      : `✅ Nothing is sitting in New past the limit right now.`,
+    ...day.stillNew.sort((a, b) => b.waited - a.waited).slice(0, 12).map((row) =>
+      `• #${tgEscape(row.orderId)} ${tgEscape(row.product ?? "")}${who(row.repName)} – waiting ${row.waited} min · limit was ${lagosWhen(row.limitMs, now)}`)
+  ];
+  return lines.join("\n");
+}
+
 export type QuietHours = { on: boolean; from: number; to: number };
 export const DEFAULT_QUIET: QuietHours = { on: true, from: 21, to: 7 };
 
