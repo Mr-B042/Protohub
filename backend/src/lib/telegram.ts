@@ -20,7 +20,7 @@ import {
   COMMANDS, DEFAULT_AUTOMATIONS, FORWARD_GROUPS, LEADERSHIP_ROLES, TRIGGERS, buildKeyboard, cartDraft, cleanCommandSettings, cleanQuiet,
   cleanRecipients, cleanSettings, commandAllowed, commandDeniedText, commandsFor, followUpDraft, forwardDedupeKey, forwardedDraft, isQuietTime,
   kindForwarded, lowStockDraft, naira, orderDraft,
-  previewOf, repTodayDraft, repWeekNoteDraft, reportDraft, roleMayReceive, seesCustomer, seesRevenue, sendOutSoonDraft, forwardCheck, isRepRole, lateTodayDraft,
+  myOrdersDraft, previewOf, repTodayDraft, repWeekNoteDraft, reportDraft, roleMayReceive, seesCustomer, seesRevenue, sendOutSoonDraft, forwardCheck, isRepRole, lateTodayDraft,
   type AutomationSettings, type BusinessReport, type CartInfo, type CommandKey, type Draft, type LowStockItem, type OrderInfo,
   type QuietHours, type Recipients, type RepDay, type TriggerKey
 } from "./telegram-rules.js";
@@ -1064,7 +1064,7 @@ async function commandAnswer(orgId: string, bot: BotRow, person: Person, command
   }
   if (command === "myorders") {
     if (!leadership && !repRole) return { text: "This is for sales staff." };
-    let query = inMyBranches(supabase.from("orders").select("id, customer, product_name, assigned_rep_id").eq("org_id", orgId).eq("status", "New").neq("launch_stage", "silent")).order("created_at", { ascending: false }).limit(200);
+    let query = inMyBranches(supabase.from("orders").select("id, customer, product_name, assigned_rep_id, review_hold").eq("org_id", orgId).eq("status", "New").neq("launch_stage", "silent")).order("created_at", { ascending: false }).limit(200);
     if (!leadership) query = query.eq("assigned_rep_id", person.userId);
     const { data, error } = await query;
     if (error) throw error;
@@ -1073,13 +1073,14 @@ async function commandAnswer(orgId: string, bot: BotRow, person: Person, command
     let follow = inMyBranches(supabase.from("orders").select("id", { count: "exact", head: true }).eq("org_id", orgId).lte("next_follow_up_at", end).not("status", "in", "(Delivered,Cancelled)").neq("launch_stage", "silent"));
     if (!leadership) follow = follow.eq("assigned_rep_id", person.userId);
     const followUps = await follow;
-    const lines = [
-      `<b>${leadership ? "New orders (everyone)" : "Your New orders"}: ${rows.length}</b>`,
-      ...rows.slice(0, 10).map((row) => `• #${tgEscape(row.id)} ${tgEscape(row.product_name ?? "")}${seesCustomer(person.role) && row.customer ? ` – ${tgEscape(row.customer)}` : ""}`),
-      ...(rows.length > 10 ? [`…and ${rows.length - 10} more`] : []),
-      `Follow-ups due by end of today: ${followUps.count ?? 0}`
-    ];
-    return { text: lines.join("\n"), keyboard: [[{ text: "Open Orders", path: person.role === "Sales Rep" ? "/dashboard/sales-rep" : "/dashboard/admin/orders" }]] };
+    const text = myOrdersDraft({
+      leadership,
+      role: person.role,
+      orders: rows.filter((row) => row.review_hold !== true).map((row) => ({ id: String(row.id), product: row.product_name ?? null, customer: row.customer ?? null })),
+      held: rows.filter((row) => row.review_hold === true).map((row) => String(row.id)),
+      followUps: followUps.count ?? 0
+    });
+    return { text, keyboard: [[{ text: "Open Orders", path: person.role === "Sales Rep" ? "/dashboard/sales-rep" : "/dashboard/admin/orders" }]] };
   }
   if (command === "today") {
     // Bright, 6 Nov 2026: revenue is strictly for the Owner, Admins and

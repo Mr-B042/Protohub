@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   AUTOMATION_KINDS, DEFAULT_AUTOMATIONS, buildKeyboard, cleanCommandSettings, cleanRecipients, cleanSettings, kindForwarded,
   orderDraft, previewOf, recipientLabel, repTodayDraft, reportDraft, successRate, triggerLabel, type OrderInfo,
-  cartDraft, forwardCheck, forwardDedupeKey, isQuietTime, lateTodayDraft, lagosClock, repWeekNoteDraft, roleMayReceive
+  cartDraft, forwardCheck, forwardDedupeKey, isQuietTime, lateTodayDraft, lagosClock, myOrdersDraft, repWeekNoteDraft, roleMayReceive
 } from "./telegram-rules.js";
 
 const order: OrderInfo = {
@@ -199,4 +199,22 @@ test("/late shows today's late send-outs, not only what is still New (#5932, 6 N
   assert.match(waiting, /#5900 Shelf – waiting 400 min · limit was Thu 5 Nov 11:04am/);
   assert.match(waiting, /Sent out after the 15 minutes: <b>0<\/b>/);
   assert.match(waiting, /Still New, past the limit right now: <b>2<\/b>[\s\S]*#5950 Rack – waiting 31 min · limit was 2:15pm/);
+});
+
+test("/myorders leaves held repeat orders out of the New count (#5942 New; #5906 and #5903 held, 6 Nov 2026)", () => {
+  const input = {
+    leadership: true, role: "Owner",
+    orders: [{ id: "5942", product: "Home Cleaning Tools", customer: "Sani Abdulkadir" }],
+    held: ["5906", "5903"],
+    followUps: 4
+  };
+  const owner = myOrdersDraft(input);
+  assert.match(owner, /New orders \(everyone\): 1<\/b>/);
+  assert.match(owner, /• #5942 Home Cleaning Tools – Sani Abdulkadir/);
+  assert.doesNotMatch(owner, /• #5906|• #5903/);
+  assert.match(owner, /Held for review, not counted \(possible repeat orders\): #5906, #5903/);
+  // A rep never gets the held line (held orders are leadership's decision).
+  const rep = myOrdersDraft({ ...input, leadership: false, role: "Sales Rep" });
+  assert.match(rep, /Your New orders: 1<\/b>/);
+  assert.doesNotMatch(rep, /Held/);
 });
