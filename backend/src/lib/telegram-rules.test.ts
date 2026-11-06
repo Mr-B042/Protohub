@@ -155,5 +155,23 @@ test("a sales rep only ever gets their own orders (6 Nov 2026)", () => {
   assert.deepEqual(forwardCheck("Sales Rep", "abandoned_cart_new", "abandoned-cart-9"), { allowed: false });
   assert.deepEqual(forwardCheck("Sales Rep", "order_confirmed", undefined), { allowed: false });
   assert.deepEqual(forwardCheck("Sales Rep", "weekly_report_question", "wr-1"), { allowed: true });
-  assert.deepEqual(forwardCheck("Manager", "campaign_no_orders", "camp-1"), { allowed: true });
+  assert.deepEqual(forwardCheck("Owner", "campaign_no_orders", "camp-1"), { allowed: true });
+});
+
+test("no role gets company information it should not have (6 Nov 2026)", () => {
+  // Sales alerts: leadership only; delivery and stock: leadership + inventory/logistics; Marketer: never.
+  assert.deepEqual(cleanRecipients("order_new", { roles: ["Owner", "Manager", "Inventory Manager & Logistics Operations", "Marketer"] }).roles, ["Owner", "Manager"]);
+  assert.deepEqual(cleanRecipients("order_failed", { roles: ["Inventory Manager & Logistics Operations", "Marketer"] }).roles, ["Inventory Manager & Logistics Operations"]);
+  assert.deepEqual(cleanRecipients("low_stock", { roles: ["Inventory Manager", "Marketer", "Admin"] }).roles, ["Inventory Manager", "Admin"]);
+  assert.equal(roleMayReceive("cart_assigned", "Inventory Manager & Logistics Operations"), false);
+  assert.equal(roleMayReceive("follow_up_due", "Marketer"), false);
+  // Copied phone alerts: customer/amount alerts never to logistics; ad spend only to Owner/Admin.
+  assert.deepEqual(forwardCheck("Inventory Manager & Logistics Operations", "order_failed", "order-1-Failed"), { allowed: false });
+  assert.deepEqual(forwardCheck("Marketer", "abandoned_cart_new", "abandoned-cart-1"), { allowed: false });
+  assert.deepEqual(forwardCheck("Manager", "campaign_no_orders", "camp-1"), { allowed: false });
+  assert.deepEqual(forwardCheck("Admin", "campaign_no_orders", "camp-1"), { allowed: true });
+  assert.deepEqual(forwardCheck("Inventory Manager & Logistics Operations", "agent_stock_drift", "drift-1"), { allowed: true });
+  // What logistics does get about a failed delivery: no customer, no amount, no reason note.
+  const text = orderDraft("order_failed", { ...order, callOutcome: "Customer said call 0803 123 4567" }, "Inventory Manager & Logistics Operations").text;
+  assert.doesNotMatch(text, /Bola|39,500|0802|0803|Reason/);
 });
