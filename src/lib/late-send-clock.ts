@@ -127,3 +127,27 @@ export function lagosTimeText(ms: number, nowMs: number) {
   const weekday = new Date(ms).toLocaleDateString("en-US", { weekday: "short", timeZone: "Africa/Lagos" });
   return `${weekday} ${time}`;
 }
+
+// ── Quick / Late response on the order list (Bright, 6 Nov 2026) ───────────
+// The clock under an order's status only counted up from when it came in, even
+// after the rep had acted. The response is when the order first left "New"
+// (orders.sent_out_at, migration 323 - the moment the fine reads from the
+// history). Quick = by the 15-working-minute deadline, Late = after it, exactly
+// as the fine judges it (backend minutesLate: any time past the deadline).
+
+export type ResponseResult = { state: "quick" | "late"; workingMs: number; sentMs: number; deadlineMs: number };
+
+/** How fast the order left New, or null when that is not known. */
+export function responseResult(order: SendOutTimerInput & { sentOutAt?: string | null }): ResponseResult | null {
+  const sent = Date.parse(String(order.sentOutAt ?? ""));
+  const arrived = arrivedAtMs(order);
+  // Sent before it reached this rep (moved to them later): not their response.
+  if (!Number.isFinite(sent) || !Number.isFinite(arrived) || sent < arrived) return null;
+  const { startMs, deadlineMs } = lateSendWindow(arrived);
+  return { state: sent <= deadlineMs ? "quick" : "late", workingMs: workingMsBetween(startMs, sent), sentMs: sent, deadlineMs };
+}
+
+/** "6 min", "1 hr 5 min", "under 1 min" (working time). */
+export function responseTimeText(workingMs: number) {
+  return workingMs < 60_000 ? "under 1 min" : minutesText(workingMs);
+}
