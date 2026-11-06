@@ -10,6 +10,7 @@ const load = async (path) => {
 };
 const { nigerianPhoneProblem, nigerianPhoneCore } = await load("../src/lib/ng-phone.ts");
 const { vagueAddressReason } = await load("../src/lib/nigeria.ts");
+const { KNOWN_AREA_NAMES } = await load("../src/lib/ng-areas.ts");
 
 test("every way of writing a full Nigerian number is accepted", () => {
   for (const value of ["+23408012345678", "08012345678", "+2348012345678", "8012345678", "0801 234 5678", "002348012345678", "0703-111-2222", "09012345678"]) {
@@ -43,20 +44,33 @@ test("an address that only repeats the state or city is sent back", () => {
   assert.equal(vagueAddressReason("Joavigna@gmail.com", "Abuja", "FCT Abuja"), "email");
 });
 
-test("real areas, streets and landmarks pass, even one word", () => {
-  const fine = [
+test("one name or a known area alone is sent back for more (order 5918)", () => {
+  const short = [
+    ["Elebu", "Ibadan", "Oyo"],
     ["Wimpy", "Port Harcourt", "Rivers"],
     ["Rumoimoi", "Porthacourt", "Rivers"],
     ["Yankaba", "Kano", "Kano"],
     ["Kwali Abuja", "Abuja", "FCT Abuja"],
     ["Otolo Nnewi", "Nnewi", "Anambra"],
+    ["Iyana Ipaja", "Alimosho", "Lagos"],
+    ["Elebu, Ibadan Oyo State", "Ibadan", "Oyo"]
+  ];
+  for (const [address, city, state] of short) assert.equal(vagueAddressReason(address, city, state, KNOWN_AREA_NAMES), "short", address);
+});
+
+test("real streets and landmarks pass, even without a number", () => {
+  const fine = [
     ["Delta Mall, Effurun", "Warri", "Delta"],
+    ["Opposite First Bank Elebu", "Ibadan", "Oyo"],
+    ["Elebu Market Road", "Ibadan", "Oyo"],
+    ["Agodi Gate", "Ibadan", "Oyo"],
+    ["Mrs Ade provisions Elebu", "Ibadan", "Oyo"],
     ["Paul University Awka", "Anambra", "Anambra"],
     ["12 Lagos", "Lagos", "Lagos"],
     ["Lagos Street", "Calabar", "Cross River"],
     ["", "Lagos", "Lagos"]
   ];
-  for (const [address, city, state] of fine) assert.equal(vagueAddressReason(address, city, state), null, address);
+  for (const [address, city, state] of fine) assert.equal(vagueAddressReason(address, city, state, KNOWN_AREA_NAMES), null, address);
 });
 
 const { STATE_AREAS, areaSuggestions } = await load("../src/lib/ng-areas.ts");

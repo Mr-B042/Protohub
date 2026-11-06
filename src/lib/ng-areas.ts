@@ -55,6 +55,9 @@ const fold = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "");
  * start with it first, then names that contain it. Nothing when the box
  * already holds one of the areas exactly.
  */
+/** Every area name above, for the address check (nigeria.ts vagueAddressReason). */
+export const KNOWN_AREA_NAMES: readonly string[] = Object.values(STATE_AREAS).flat();
+
 export function areaSuggestions(state: string, typed: string, limit = 8): string[] {
   const areas = STATE_AREAS[state] ?? [];
   const query = fold(typed);

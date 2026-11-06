@@ -270,21 +270,39 @@ export const UNPLACED_ORDER_STATE = "State not given";
 // ── "Your address" that only repeats the state or city (Bright, 5 Nov 2026) ─
 // Order 5914's address was "Port Harcourt" with city "River", state Rivers: a
 // rider cannot find anyone with that. Customers often type the place they
-// already picked. Ask for the street, area or a landmark - but ONLY when every
-// word is a state, the city they typed, or a known city. Real orders show
-// one-word addresses that are areas ("Rumoimoi", "Wimpy", "Ikenegbu", "Fajuyi")
-// and they were delivered, so a word count would turn away good customers.
+// already picked. Ask for the street, area or a landmark when every word is a
+// state, the city they typed, or a known city ("place").
+//
+// Order 5918 (5 Nov 2026): address "Elebu", area Ibadan, Oyo. One area name is
+// not a house a rider can find, and the form now asks for the area in its own
+// box. Bright chose to ask for more whenever the address is ONE name, or is
+// just a known area, with no number and no street/landmark word ("short").
+// About 8% of orders had one-word addresses, most still delivered, but the
+// rider had to call around to find them.
 const PLACE_FILLER = new Set([
   "state", "ste", "nigeria", "naija", "lga", "lgea", "city", "town", "fct", "abuja", "federal", "capital",
   "territory", "local", "government", "area", "council", "in", "of", "the", "and", "at", "river"
 ]);
 const STATE_WORDS = new Set(NIGERIA_STATES.flatMap((name) => name.toLowerCase().split(/\s+/)));
 
+// A word like these means the customer gave a street or a landmark.
+const DETAIL_WORDS = new Set([
+  "street", "st", "road", "rd", "avenue", "ave", "close", "crescent", "cres", "lane", "way", "drive", "boulevard",
+  "estate", "junction", "jn", "roundabout", "bridge", "bus", "stop", "busstop", "park", "garage", "plaza", "mall",
+  "market", "shop", "shopping", "complex", "school", "college", "university", "polytechnic", "poly", "church",
+  "mosque", "hospital", "clinic", "hotel", "station", "filling", "bank", "office", "barracks", "camp", "quarters",
+  "house", "flat", "block", "plot", "opposite", "opp", "behind", "beside", "near", "after", "before",
+  "off", "along", "inside", "phase", "zone", "layout", "extension", "gate", "compound", "villa", "apartment",
+  "tollgate", "toll", "airport", "dr"
+]);
+
 /**
  * Why this address is not enough to find the customer, or null when it is.
- * "place": only names the state/city; "email": an email typed in the box.
+ * "place": only names the state/city; "short": one name or a known area only;
+ * "email": an email typed in the box. `knownAreas`: area names (ng-areas
+ * KNOWN_AREA_NAMES) so a two-word area alone ("Iyana Ipaja") counts as short.
  */
-export function vagueAddressReason(address?: string | null, city?: string | null, state?: string | null): "place" | "email" | null {
+export function vagueAddressReason(address?: string | null, city?: string | null, state?: string | null, knownAreas?: readonly string[]): "place" | "short" | "email" | null {
   const text = String(address ?? "").normalize("NFKC").trim();
   if (!text) return null;
   if (/\S+@\S+\.\S+/.test(text)) return "email";
@@ -293,6 +311,7 @@ export function vagueAddressReason(address?: string | null, city?: string | null
   const own = new Set([...words(city), ...words(state)]);
   const typed = words(text);
   const known = (word: string) => PLACE_FILLER.has(word) || STATE_WORDS.has(word) || own.has(word) || word in CITY_STATE;
+  const rest: string[] = [];
   for (let i = 0; i < typed.length; i += 1) {
     if (known(typed[i])) continue;
     // Two-word names: "Port Harcourt", "Ado Ekiti", "Benin City", "Ile Ife".
@@ -300,7 +319,10 @@ export function vagueAddressReason(address?: string | null, city?: string | null
     const pairBefore = (typed[i - 1] ?? "") + typed[i];
     if (pair in CITY_STATE || squash(city ?? "") === pair) { i += 1; continue; }
     if (pairBefore in CITY_STATE || squash(city ?? "") === pairBefore) continue;
-    return null;
+    rest.push(typed[i]);
   }
-  return "place";
+  if (rest.length === 0) return "place";
+  if (typed.some((word) => DETAIL_WORDS.has(word))) return null;
+  if (rest.length === 1 || (knownAreas ?? []).some((area) => squash(area) === rest.join(""))) return "short";
+  return null;
 }
