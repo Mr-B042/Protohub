@@ -114,10 +114,24 @@ const clampInt = (value: unknown, min: number, max: number, fallback: number) =>
 };
 
 /** Who an automation may name at all (reports: leadership; the rep note: sales reps). */
+/** Inventory and logistics: delivery and stock matters only, never customers or money. */
+const INVENTORY_ROLES = ["Inventory Manager", "Inventory Manager & Logistics Operations"];
+/** Sales matters (orders coming in, carts, follow-ups): leadership only (reps get their own as the order's rep). */
+const SALES_TRIGGERS = new Set<TriggerKey>(["order_new", "order_assigned", "cart_assigned", "send_out_soon", "follow_up_due"]);
+/** What happens to an order on its way to the customer: leadership and inventory/logistics. */
+const DELIVERY_TRIGGERS = new Set<TriggerKey>(["order_confirmed", "order_delivered", "order_failed", "order_cancelled", "order_rescheduled"]);
+
+/**
+ * Who an automation may name at all (Bright, 6 Nov 2026: no role leaks company
+ * information). A Marketer is never named: in the app they only see the orders
+ * of their own ads.
+ */
 export function allowedRoles(trigger: TriggerKey): readonly string[] {
   if (trigger === "daily_report" || trigger === "weekly_report") return LEADERSHIP_ROLES;
   if (trigger === "weekly_rep_note") return REP_NOTE_ROLES;
-  return TELEGRAM_ROLES.filter((role) => !isRepRole(role));
+  if (SALES_TRIGGERS.has(trigger)) return LEADERSHIP_ROLES;
+  if (DELIVERY_TRIGGERS.has(trigger) || trigger === "low_stock") return [...LEADERSHIP_ROLES, ...INVENTORY_ROLES];
+  return LEADERSHIP_ROLES;
 }
 
 /** May this person get what this automation sends? (Checked again at send time.) */
@@ -482,6 +496,11 @@ const NOT_FOR_REPS = new Set(["abandoned_cart_new", "campaign_no_orders", "low_s
  * theirs (orderId returned for that check); company-wide ones never.
  */
 export function forwardCheck(role: string, kind: string | undefined, tag: string | undefined): { allowed: false } | { allowed: true; ownOrderId?: string } {
+  const k = String(kind ?? "");
+  // Campaign alerts carry ad spend: the Owner and Admins only.
+  if (k === "campaign_no_orders" && !seesBusinessMoney(role)) return { allowed: false };
+  // Order and cart alerts carry the customer and the amount: never to a role that may not see them.
+  if (!seesCustomer(role) && (k.startsWith("order_") || k.startsWith("abandoned_cart"))) return { allowed: false };
   if (!isRepRole(role)) return { allowed: true };
   if (NOT_FOR_REPS.has(String(kind ?? ""))) return { allowed: false };
   const t = String(tag ?? "");
