@@ -132,7 +132,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { SendOutTimer } from "./components/SendOutTimer";
-import { LATE_SEND_MINUTES, responseResult, responseTimeText } from "./lib/late-send-clock";
+import { LATE_SEND_MINUTES, responseResult, responseTimeText, sentOutTimeText } from "./lib/late-send-clock";
 import { OrderSourceLogo } from "./components/OrderSourceLogo";
 import { LandingPagePreview, useProductLandingPages } from "./components/LandingPagePreview";
 import { periodBounds } from "./lib/period-bounds";
@@ -6288,18 +6288,20 @@ const timeSinceCreated = (order: TrackedOrder): string => {
 
 // The chip under an order's status (Bright, 6 Nov 2026: "what is this
 // Response?"). It used to count up from when the order came in, even after the
-// rep had acted. Now: Quick / Late once the order has left New (the late-send
-// rule's 15 working minutes), and "Waiting" while it is still New.
+// rep had acted. Now: when it was sent out of New and how long that took, green
+// inside the late-send rule's 15 working minutes, red after; "Waiting" while New.
 const responseTimeColor = (order: TrackedOrder, status: string): { label: string; cls: string; title: string } => {
   const response = responseResult({
     placedAt: order.originalCreatedAt ?? (order as any).original_created_at ?? order.createdAt ?? null,
     assignedAt: order.assignedAt ?? null, revealedAt: order.revealedAt ?? null, sentOutAt: order.sentOutAt ?? null
   });
+  // The time it was sent out, not just a word (Bright, 6 Nov 2026); green = in time, red = late.
   if (response && status !== "New") {
     const taken = responseTimeText(response.workingMs);
+    const label = `Sent out ${sentOutTimeText(response.sentMs, Date.now())} · in ${taken}`;
     return response.state === "quick"
-      ? { label: `Quick · ${taken}`, cls: "text-emerald-700 bg-emerald-50", title: `Sent out of New ${taken} after it reached the rep, inside the ${LATE_SEND_MINUTES} minutes. Only working hours count.` }
-      : { label: `Late · ${taken}`, cls: "text-rose-700 bg-rose-50", title: `Sent out of New ${taken} after it reached the rep, past the ${LATE_SEND_MINUTES} minutes. Only working hours count.` };
+      ? { label, cls: "text-emerald-700 bg-emerald-50", title: `On time: sent out of New ${taken} after it reached the rep, inside the ${LATE_SEND_MINUTES} minutes. Only working hours count.` }
+      : { label, cls: "text-rose-700 bg-rose-50", title: `Late: sent out of New ${taken} after it reached the rep, past the ${LATE_SEND_MINUTES} minutes. Only working hours count.` };
   }
   if (status !== "New") return { label: "-", cls: "text-gray-300", title: "" };
   const created = new Date(order.createdAt ?? order.date);

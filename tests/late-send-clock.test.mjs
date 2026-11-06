@@ -5,7 +5,7 @@ import ts from "typescript";
 
 const source = await readFile(new URL("../src/lib/late-send-clock.ts", import.meta.url), "utf8");
 const { outputText } = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.ESNext } });
-const { sendOutTimer, lateSendWindow, minutesText, lagosTimeText, responseResult, responseTimeText } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+const { sendOutTimer, lateSendWindow, minutesText, lagosTimeText, responseResult, responseTimeText, sentOutTimeText } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
 
 const lagos = (iso) => Date.parse(`${iso}+01:00`);
 
@@ -76,4 +76,9 @@ test("Quick / Late response: same deadline as the fine (6 Nov 2026)", () => {
   // Reassigned after it was sent out: not this rep's response.
   assert.equal(responseResult({ placedAt: iso("2026-11-05T10:00:00"), assignedAt: iso("2026-11-05T12:00:00"), sentOutAt: iso("2026-11-05T10:05:00") }), null);
   assert.equal(responseResult({ placedAt: iso("2026-11-05T10:00:00") }), null);
+});
+
+test("the sent-out time reads like the order date column", () => {
+  assert.equal(sentOutTimeText(lagos("2026-11-06T12:47:00"), lagos("2026-11-06T15:00:00")), "12:47 pm");
+  assert.equal(sentOutTimeText(lagos("2026-11-05T09:05:00"), lagos("2026-11-06T15:00:00")), "5 Nov, 9:05 am");
 });

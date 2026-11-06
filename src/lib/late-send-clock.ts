@@ -151,3 +151,11 @@ export function responseResult(order: SendOutTimerInput & { sentOutAt?: string |
 export function responseTimeText(workingMs: number) {
   return workingMs < 60_000 ? "under 1 min" : minutesText(workingMs);
 }
+
+/** "12:47 pm" today, "5 Nov, 12:47 pm" on another day (Lagos), like the order date column. */
+export function sentOutTimeText(ms: number, nowMs: number) {
+  const day = (value: number) => new Date(value + LAGOS_OFFSET_MS).toISOString().slice(0, 10);
+  const time = new Date(ms).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Africa/Lagos" }).toLowerCase();
+  if (day(ms) === day(nowMs)) return time;
+  return `${new Date(ms).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Africa/Lagos" })}, ${time}`;
+}
