@@ -2,6 +2,7 @@ import { supabase } from "./supabase.js";
 import { alertRecipients, type AlertKey } from "./notification-routing.js";
 import { getOrgPushBranding } from "./push-branding.js";
 import { sendPushToUser } from "./push.js";
+import { telegramOrderEvent } from "./telegram.js";
 import { LAUNCH_STAGE_LABEL, orderLaunchStage, ownerRecipients, type LaunchStage } from "./product-launch.js";
 
 type OrderContext = {
@@ -92,6 +93,8 @@ const STATUS_CONFIG: Record<string, { type: string; title: string; recipientRole
 export async function notifyOrderEvent(orgId: string, order: OrderContext, toStatus: string) {
   const config = STATUS_CONFIG[toStatus];
   if (!config) return; // Postponed and other untracked statuses — no notification
+  // Telegram has its own recipients (Telegram Automation Center), not Alert routing.
+  void telegramOrderEvent(orgId, order.id, toStatus);
 
   try {
     // A Silent Test order (Product Launch) is the Owner's alone: no rep, Admin
@@ -150,6 +153,8 @@ export async function notifyOrderEvent(orgId: string, order: OrderContext, toSta
  * the order link. In-app notification + push. Never throws.
  */
 export async function notifyOutageRecoveredOrder(orgId: string, order: OrderContext) {
+  // Still a new order for its rep on Telegram (sent once per order).
+  void telegramOrderEvent(orgId, order.id, "New");
   try {
     const silent = (order.launchStage ?? await orderLaunchStage(orgId, order.id)) === "silent";
     const { recipients, push } = silent

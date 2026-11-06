@@ -257,6 +257,7 @@ import {
   setActiveCurrency, setMoneyHiddenGlobal, shortMoney, subscribeMoneyHidden
 , currencySymbol } from "./lib/money-privacy";
 import { lazyPage } from "./lib/lazy-page";
+import TelegramConnectCard from "./components/TelegramConnectCard";
 import type { ProductsStockPage as ProductsStockPageType } from "./components/products-stock/ProductsStockPage";
 
 // ── Pages loaded on demand (30 Oct 2026, see lib/lazy-page.tsx) ──
@@ -275,6 +276,7 @@ const UpsellPerformancePage = lazyPage(() => import("./pages/UpsellPerformancePa
 const RepProductPerformancePage = lazyPage(() => import("./pages/RepProductPerformancePage"));
 const RepWeeklyReportPage = lazyPage(() => import("./pages/RepWeeklyReportPage"));
 const TrackingHubPage = lazyPage(() => import("./pages/TrackingHubPage"));
+const TelegramCenterPage = lazyPage(() => import("./pages/telegram/TelegramCenterPage"));
 const ReportBugPage = lazyPage(() => import("./pages/ReportBugPage"));
 const MyReportsPage = lazyPage(() => import("./pages/MyReportsPage"));
 const IssueManagementPage = lazyPage(() => import("./pages/IssueManagementPage"));
@@ -331,7 +333,7 @@ type CurrencyCode = "NGN" | "GHS" | "KES" | "ZMW" | "XOF" | "XAF" | "TZS" | "MWK
 // currency no product can be priced in.
 type ProductCurrencyCode = CurrencyCode;
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "addBranch" | "cartAssignmentRules" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addExtraItems" | "addFreeGift" | "salesBonusFullReport" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | "pdaPortalCredentials" | null;
-type ActivePage = "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Team Challenges" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Product Trend" | "Product Launch" | "Ad Tracking" | "Tracking Hub" | "Marketing" | "Marketing Performance" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers" | "Weekly Reports" | "Report a Bug" | "My Reports" | "Issue Management";
+type ActivePage = "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Team Challenges" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Product Trend" | "Product Launch" | "Ad Tracking" | "Tracking Hub" | "Marketing" | "Marketing Performance" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Telegram Bot" | "Sales Closer Workspace" | "Sales Closers" | "Weekly Reports" | "Report a Bug" | "My Reports" | "Issue Management";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type PendingSalesExpansionAction =
@@ -2968,7 +2970,7 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
     "Dashboard", "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting", "Product Trend", "Product Launch",
-    "Tracking Hub", "Ad Tracking", "Marketing", "Marketing Performance", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp", "Weekly Reports"
+    "Tracking Hub", "Ad Tracking", "Marketing", "Marketing Performance", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp", "Telegram Bot", "Weekly Reports"
   ],
   "Admin": [
     "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
@@ -3087,6 +3089,7 @@ const dashboardHashByPage: Record<ActivePage, string> = {
   "Finance & Accounting": "#/dashboard/admin/reports",
   "Ad Tracking": "#/dashboard/admin/utm-tracking",
   "Tracking Hub": "#/dashboard/admin/tracking-hub",
+  "Telegram Bot": "#/dashboard/admin/telegram-bot",
   Marketing: "#/dashboard/admin/marketing",
   "Marketing Performance": "#/dashboard/admin/marketing-performance",
   "Product Trend": "#/dashboard/admin/product-trend",
@@ -28795,6 +28798,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       "finance-and-accounting": "Finance & Accounting",
       "utm-tracking": "Ad Tracking",
       "tracking-hub": "Tracking Hub",
+      "telegram-bot": "Telegram Bot",
       "ad-tracking": "Ad Tracking",
       marketing: "Marketing",
       "marketing-performance": "Marketing Performance",
@@ -38258,6 +38262,7 @@ ${waybillLineItems(w).length > 1
       "Finance & Accounting": "#/dashboard/admin/reports",
       "Ad Tracking": "#/dashboard/admin/utm-tracking",
       "Tracking Hub": "#/dashboard/admin/tracking-hub",
+      "Telegram Bot": "#/dashboard/admin/telegram-bot",
       Marketing: "#/dashboard/admin/marketing",
   "Marketing Performance": "#/dashboard/admin/marketing-performance",
   "Product Trend": "#/dashboard/admin/product-trend",
@@ -38362,7 +38367,7 @@ ${waybillLineItems(w).length > 1
       return;
     }
 
-    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory & Logistics Operations" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Head of Sales Rep" || label === "Sales Closers" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Tracking Hub" || label === "Marketing" || label === "Marketing Performance" || label === "Product Trend" || label === "Product Launch" || label === "Weekly Reports" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp" || label === "Report a Bug" || label === "My Reports" || label === "Issue Management") {
+    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory & Logistics Operations" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Head of Sales Rep" || label === "Sales Closers" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Tracking Hub" || label === "Marketing" || label === "Marketing Performance" || label === "Product Trend" || label === "Product Launch" || label === "Weekly Reports" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp" || label === "Telegram Bot" || label === "Report a Bug" || label === "My Reports" || label === "Issue Management") {
       if (label === "Inventory & Logistics Operations") {
         setInventoryOperationsSection("dashboard");
       }
@@ -91823,6 +91828,12 @@ ${waybillLineItems(w).length > 1
               : <div className="mx-auto max-w-[640px] rounded-2xl border border-gray-200 bg-white p-8 text-center text-[13px] text-gray-600">Issue Management is for the Owner and Admins. Your own reports are in <b>My Reports</b>.</div>
           ) : activePage === "Weekly Reports" ? (
             renderWeeklyReportsArea("sidebar")
+          ) : activePage === "Telegram Bot" ? (
+            // Telegram Automation Center (Bright, 6 Nov 2026): Owner only - it
+            // holds the bot token. currentRole, so "view as" lands on a note.
+            currentRole === "Owner"
+              ? <TelegramCenterPage onToast={showToast} meId={currentManagedUser?.id ?? null} myName={currentManagedUser?.name ?? "Owner"} />
+              : <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center text-sm text-gray-500">The Telegram Automation Center is for the Owner. You can connect your own Telegram from Notifications.</section>
           ) : activePage === "Tracking Hub" ? (
             // Tracking Hub (2 Oct 2026): Owner only - it holds the Meta tokens.
             // Gated on currentRole so "view as" a staff member lands on a note.
@@ -95939,6 +95950,8 @@ ${waybillLineItems(w).length > 1
                 <h1 className="text-2xl font-bold text-[#1F8FE0]">Notifications</h1>
                 <p className="text-sm font-medium text-gray-500">Stay updated on orders, status changes, and important activities</p>
               </header>
+              {/* Telegram (Bright, 6 Nov 2026): every staff member can link their own. */}
+              <TelegramConnectCard onToast={showToast} />
 
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={3} rows={4} />}

@@ -5134,6 +5134,56 @@ export type RepMonthly = {
 export type PageVisitRow = { userId: string; pageKey: string; pageLabel: string; visits: number; days: number; lastAt: string; today: number };
 export type PageVisitDayRow = { userId: string; pageKey: string; pageLabel: string; day: string; visits: number; firstAt: string; lastAt: string };
 /** Page visits (Bright, 3 Nov 2026): which pages each person opens. */
+// ── Telegram Automation Center (Bright, 6 Nov 2026) ─────────────────────────
+export type TelegramBotInfo = {
+  connected: boolean; name: string | null; username: string | null; connectedAt: string; lastError: string | null;
+  lastHealthAt: string | null; lastUpdateAt: string | null; webhookActive: boolean; uptime: number | null; tokenHint: string;
+};
+export type TelegramRecipients = { roles: string[]; assignedRep: boolean; userIds: string[] };
+export type TelegramAutomationSettings = { minutesBefore?: number; threshold?: number; hour?: number; weekday?: number };
+export type TelegramAutomation = {
+  id: string; trigger: string; name: string; enabled: boolean; builtIn: boolean; recipients: TelegramRecipients; settings: TelegramAutomationSettings;
+  triggerLabel: string; recipientLabel: string; group: string; description: string; updatedAt: string;
+};
+export type TelegramTrigger = { key: string; label: string; description: string; settings: Array<"minutesBefore" | "threshold" | "hour" | "weekday">; repApplies: boolean; group: string };
+export type TelegramStaff = { id: string; name: string; role: string; linked: boolean; telegramUsername: string | null; telegramName: string | null; linkedAt: string | null };
+export type TelegramOverview = {
+  bot: TelegramBotInfo | null; period: string;
+  kpis: { connectedStaff: number; connectedStaffNew: number; messagesToday: number; messagesYesterday: number; successRate: number | null; successRateBefore: number | null; activeAutomations: number; totalAutomations: number; failed: number; failedBefore: number };
+  performance: Array<{ key: string; label: string; sent: number; failed: number; rate: number | null }>;
+  recent: Array<{ id: string; trigger: string; status: string; title: string | null; createdAt: string; orderId: string | null; recipient: string | null }>;
+  staff: TelegramStaff[];
+  automations: TelegramAutomation[];
+};
+export type TelegramLogRow = { id: string; trigger: string; status: string; title: string | null; preview: string | null; error: string | null; orderId: string | null; createdAt: string; recipient: string | null; role: string | null };
+
+export const telegramApi = {
+  me: () => get<{ bot: { connected: boolean; username: string | null; name: string | null } | null; link: { linked: boolean; telegramUsername?: string | null; telegramName?: string | null; linkedAt?: string } }>("/api/telegram/me"),
+  linkMe: () => post<{ url: string; expiresAt: string }>("/api/telegram/me/link", {}),
+  unlinkMe: () => del<{ ok: boolean }>("/api/telegram/me/link"),
+  overview: (period: string) => get<TelegramOverview>(`/api/telegram/overview?period=${encodeURIComponent(period)}`),
+  bot: () => get<{ bot: TelegramBotInfo | null; webhookUrl: string | null; webhook: { url: string; pending: number; lastErrorAt: string | null; lastErrorMessage: string | null } | null; appUrl: string | null }>("/api/telegram/bot"),
+  connect: (token: string) => post<{ bot: TelegramBotInfo }>("/api/telegram/bot", { token }),
+  disconnect: () => del<{ ok: boolean }>("/api/telegram/bot"),
+  check: () => post<{ ok: boolean; bot: TelegramBotInfo | null }>("/api/telegram/bot/check", {}),
+  test: () => post<{ sent: number; failed: number; notLinked: number }>("/api/telegram/bot/test", {}),
+  automations: () => get<{ automations: TelegramAutomation[]; triggers: TelegramTrigger[]; roles: string[] }>("/api/telegram/automations"),
+  createAutomation: (body: { trigger: string; name: string; enabled?: boolean; recipients: TelegramRecipients; settings: TelegramAutomationSettings }) => post<{ automation: TelegramAutomation }>("/api/telegram/automations", body),
+  updateAutomation: (id: string, body: Partial<{ name: string; enabled: boolean; recipients: TelegramRecipients; settings: TelegramAutomationSettings }>) => patch<{ automation: TelegramAutomation }>(`/api/telegram/automations/${id}`, body),
+  deleteAutomation: (id: string) => del<{ ok: boolean }>(`/api/telegram/automations/${id}`),
+  testAutomation: (id: string) => post<{ sent: number }>(`/api/telegram/automations/${id}/test`, {}),
+  staff: () => get<{ bot: { username: string | null } | null; staff: Array<TelegramStaff & { week: { sent: number; failed: number; last: string | null } }> }>("/api/telegram/staff"),
+  linkStaff: (userId: string) => post<{ url: string; expiresAt: string }>(`/api/telegram/staff/${userId}/link`, {}),
+  unlinkStaff: (userId: string) => del<{ ok: boolean }>(`/api/telegram/staff/${userId}/link`),
+  alerts: () => get<{ groups: Array<{ key: string; label: string; hint: string; enabled: boolean }> }>("/api/telegram/alerts"),
+  saveAlerts: (groups: string[]) => patch<{ ok: boolean; forward: string[] }>("/api/telegram/alerts", { groups }),
+  commands: () => get<{ username: string | null; repliesThisWeek: number; commands: Array<{ key: string; description: string; who: string; enabled: boolean; locked: boolean }> }>("/api/telegram/commands"),
+  saveCommands: (commands: Record<string, boolean>) => patch<{ ok: boolean; commands: Record<string, boolean> }>("/api/telegram/commands", { commands }),
+  announce: (body: { text: string; everyone?: boolean; roles?: string[]; userIds?: string[] }) => post<{ sent: number; failed: number; notLinked: number; batchId: string }>("/api/telegram/announce", body),
+  announcements: () => get<{ announcements: Array<{ batchId: string; preview: string; createdAt: string; sent: number; failed: number }> }>("/api/telegram/announcements"),
+  logs: (period: string, trigger = "all", status = "all") => get<{ totals: { sent: number; failed: number; rate: number | null; people: number }; byDay: Array<{ day: string; sent: number; failed: number }>; byTrigger: Array<{ trigger: string; sent: number; failed: number }>; rows: TelegramLogRow[]; total: number }>(`/api/telegram/logs?period=${period}&trigger=${trigger}&status=${status}`)
+};
+
 export const pageVisitsApi = {
   record: (key: string, label: string) => post<{ ok: boolean }>("/api/page-visits", { key, label }),
   list: (days = 30) => get<{ since: string; today: string; days: number; users: Array<{ id: string; name: string; role: string }>; visits: PageVisitRow[]; daily?: PageVisitDayRow[] }>(`/api/page-visits?days=${days}`)

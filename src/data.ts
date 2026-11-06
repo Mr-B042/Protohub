@@ -40,7 +40,8 @@ import {
   Bug,
   ClipboardList,
   ShieldAlert,
-  Rocket
+  Rocket,
+  Send
 } from "lucide-react";
 
 export const navItems = [
@@ -62,6 +63,8 @@ export const navItems = [
   { label: "Abandoned Carts", icon: ShoppingCart },
   { label: "Customers", icon: ReceiptText },
   { label: "WhatsApp", icon: MessageCircle },
+  // Telegram Automation Center (6 Nov 2026): Owner only.
+  { label: "Telegram Bot", icon: Send },
   { label: "Notifications", icon: Bell },
   { label: "Deliveries", icon: PackageCheck },
   { label: "Inventory & Logistics Operations", icon: Boxes },

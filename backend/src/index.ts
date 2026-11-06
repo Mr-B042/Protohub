@@ -69,6 +69,8 @@ import weeklyReportRoutes from "./routes/weekly-reports.js";
 import stockAllocationRoutes from "./routes/stock-allocations.js";
 import productPerformanceRoutes from "./routes/product-performance.js";
 import pageVisitRoutes from "./routes/page-visits.js";
+import telegramRoutes, { telegramWebhookRouter } from "./routes/telegram.js";
+import { runBotHealthChecks, runLowStock, runReports, runSendOutSoon } from "./lib/telegram.js";
 import fineAppealRoutes from "./routes/fine-appeals.js";
 import orderReceiptRoutes from "./routes/order-receipts.js";
 import notificationRoutingRoutes from "./routes/notification-routing.js";
@@ -376,6 +378,9 @@ app.use("/api/weekly-reports", weeklyReportRoutes);
 app.use("/api/stock-allocations", stockAllocationRoutes);
 app.use("/api/product-performance", productPerformanceRoutes);
 app.use("/api/page-visits", pageVisitRoutes);
+// Telegram calls the webhook without a login (secret header); mounted first.
+app.use("/api/telegram/webhook", telegramWebhookRouter);
+app.use("/api/telegram", telegramRoutes);
 app.use("/api/fine-appeals", fineAppealRoutes);
 app.use("/api/order-receipts", orderReceiptRoutes);
 app.use("/api/notification-routing", notificationRoutingRoutes);
@@ -763,6 +768,42 @@ cron.schedule("13,43 * * * *", async () => {
     await runAdSpendAutoSync();
   } catch (e) {
     logger.error("cron: ad spend sync crashed", { error: (e as Error).message });
+  }
+});
+
+// ── Telegram Automation Center (Bright, 6 Nov 2026) ──
+// "5 min left" before the 15-minute send-out limit: every minute in working
+// hours (the rule's own clock decides; Monday's 11am start included).
+cron.schedule("* 10-17 * * 1-6", async () => {
+  try {
+    const { sent } = await runSendOutSoon();
+    if (sent) logger.info("cron: telegram send-out reminders", { sent });
+  } catch (e) {
+    logger.error("cron: telegram send-out reminders crashed", { error: (e as Error).message });
+  }
+}, { timezone: "Africa/Lagos" });
+// Low stock at a hub: every 30 minutes through the working day.
+cron.schedule("5,35 8-19 * * *", async () => {
+  try {
+    const { sent } = await runLowStock();
+    if (sent) logger.info("cron: telegram low stock", { sent });
+  } catch (e) {
+    logger.error("cron: telegram low stock crashed", { error: (e as Error).message });
+  }
+}, { timezone: "Africa/Lagos" });
+// Daily / weekly reports at each automation's own hour (Lagos).
+cron.schedule("0 * * * *", async () => {
+  try {
+    const { sent } = await runReports();
+    if (sent) logger.info("cron: telegram reports", { sent });
+  } catch (e) {
+    logger.error("cron: telegram reports crashed", { error: (e as Error).message });
+  }
+});
+// Webhook check: the Overview's "Uptime" and "Webhook" come from this.
+cron.schedule("*/15 * * * *", async () => {
+  try { await runBotHealthChecks(); } catch (e) {
+    logger.error("cron: telegram health crashed", { error: (e as Error).message });
   }
 });
 

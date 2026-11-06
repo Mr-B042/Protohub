@@ -448,6 +448,10 @@ export async function sendNativePushToDevices(
  * Send push notification to a specific user across web + native registrations.
  */
 export async function sendPushToUser(orgId: string, userId: string, payload: PushPayload): Promise<PushDeliveryStats> {
+  // Copy to Telegram when the Owner switched this alert on there (Telegram
+  // Automation Center → Notifications & Alerts). Loaded lazily: telegram.ts
+  // reaches push.ts through late-send.ts.
+  void import("./telegram.js").then((telegram) => telegram.forwardPushToTelegram(orgId, userId, payload)).catch(() => {});
   const [webRows, nativeRows] = await Promise.all([
     isPushConfigured()
       ? supabase

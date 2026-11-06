@@ -3,6 +3,7 @@ import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { getOrgPushBranding } from "./push-branding.js";
 import { sendPushToUser } from "./push.js";
+import { telegramFollowUpDue } from "./telegram.js";
 import { dueIsoMoment, sendAssignedRepFollowUpReminderSms, withinReminderWindow } from "./sms.js";
 import { followUpReminderKey, sameFollowUpReminder } from "./follow-up-reminder-key.js";
 
@@ -169,6 +170,8 @@ async function notifyRecipients(
   fallbackScheduledLabel: string,
   fallbackNoteText?: string
 ) {
+  // Telegram has its own recipients; the tag keeps it to one message per reminder.
+  void telegramFollowUpDue(orgId, order, title, message, tag);
   const { recipients, push } = await buildRecipients(orgId, order.assigned_rep_id);
   if (recipients.size === 0) return;
 
