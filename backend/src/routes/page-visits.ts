@@ -38,7 +38,7 @@ router.get("/", requireRole("Owner"), async (req, res) => {
     const since = addDaysToDateKey(today, -(days - 1));
     const rows: any[] = [];
     for (let page = 0; page < 50; page += 1) {
-      const { data, error } = await supabase.from("page_visit_days").select("user_id, page_key, page_label, day, visits, last_at")
+      const { data, error } = await supabase.from("page_visit_days").select("user_id, page_key, page_label, day, visits, first_at, last_at")
         .eq("org_id", req.user!.orgId).gte("day", since).order("day", { ascending: false }).order("user_id").order("page_key")
         .range(page * 1000, page * 1000 + 999);
       if (error) throw error;
@@ -61,7 +61,13 @@ router.get("/", requireRole("Owner"), async (req, res) => {
     res.json({
       since, today, days,
       users: (users ?? []).map((user: any) => ({ id: String(user.id), name: String(user.name ?? "User"), role: String(user.role ?? "") })),
-      visits: [...summary.values()].sort((a, b) => b.lastAt.localeCompare(a.lastAt))
+      visits: [...summary.values()].sort((a, b) => b.lastAt.localeCompare(a.lastAt)),
+      // Each person, page and day on its own (Bright, 6 Nov 2026: "what about
+      // yesterday?" - the totals hid which day the visits were on).
+      daily: rows.map((row) => ({
+        userId: String(row.user_id), pageKey: String(row.page_key), pageLabel: String(row.page_label), day: String(row.day).slice(0, 10),
+        visits: Number(row.visits) || 0, firstAt: String(row.first_at), lastAt: String(row.last_at)
+      })).sort((a, b) => b.day.localeCompare(a.day) || b.lastAt.localeCompare(a.lastAt))
     });
   } catch (error: any) {
     console.error("[page-visits]", error?.message ?? error);
