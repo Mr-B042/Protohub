@@ -1399,6 +1399,10 @@ type TrackedOrder = {
   assignedAt?: string;
   /** When it first left "New" (migration 323): the rep's response. */
   sentOutAt?: string;
+  /** The status it first moved to from New (migration 324). */
+  sentOutStatus?: string;
+  /** First time it was copied / sent to the WhatsApp group (migration 324). */
+  groupSentAt?: string;
   scheduledDate?: string;
   scheduledAt?: string;
   deliveredDate?: string;
@@ -6288,20 +6292,25 @@ const timeSinceCreated = (order: TrackedOrder): string => {
 
 // The chip under an order's status (Bright, 6 Nov 2026: "what is this
 // Response?"). It used to count up from when the order came in, even after the
-// rep had acted. Now: when it was sent out of New and how long that took, green
-// inside the late-send rule's 15 working minutes, red after; "Waiting" while New.
+// rep had acted. Now: when the rep confirmed it (first move out of New) and how
+// long that took, green inside the late-send rule's 15 working minutes, red
+// after; "Responded" when that first move was not a confirmation; "Waiting"
+// while New. The WhatsApp group time is extra (groupSentChip).
+const CONFIRMING_STATUSES = new Set(["Confirmed", "In Process", "Dispatched", "Delivered"]);
 const responseTimeColor = (order: TrackedOrder, status: string): { label: string; cls: string; title: string } => {
   const response = responseResult({
     placedAt: order.originalCreatedAt ?? (order as any).original_created_at ?? order.createdAt ?? null,
     assignedAt: order.assignedAt ?? null, revealedAt: order.revealedAt ?? null, sentOutAt: order.sentOutAt ?? null
   });
-  // The time it was sent out, not just a word (Bright, 6 Nov 2026); green = in time, red = late.
+  // The time, not just a word (Bright, 6 Nov 2026); green = in time, red = late.
   if (response && status !== "New") {
     const taken = responseTimeText(response.workingMs);
-    const label = `Sent out ${sentOutTimeText(response.sentMs, Date.now())} · in ${taken}`;
+    const word = CONFIRMING_STATUSES.has(order.sentOutStatus ?? "") ? "Confirmed" : "Responded";
+    const label = `${word} ${sentOutTimeText(response.sentMs, Date.now())} · in ${taken}`;
+    const moved = order.sentOutStatus ? `moved from New to ${order.sentOutStatus}` : "moved out of New";
     return response.state === "quick"
-      ? { label, cls: "text-emerald-700 bg-emerald-50", title: `On time: sent out of New ${taken} after it reached the rep, inside the ${LATE_SEND_MINUTES} minutes. Only working hours count.` }
-      : { label, cls: "text-rose-700 bg-rose-50", title: `Late: sent out of New ${taken} after it reached the rep, past the ${LATE_SEND_MINUTES} minutes. Only working hours count.` };
+      ? { label, cls: "text-emerald-700 bg-emerald-50", title: `On time: ${moved} ${taken} after it reached the rep, inside the ${LATE_SEND_MINUTES} minutes. Only working hours count.` }
+      : { label, cls: "text-rose-700 bg-rose-50", title: `Late: ${moved} ${taken} after it reached the rep, past the ${LATE_SEND_MINUTES} minutes. Only working hours count.` };
   }
   if (status !== "New") return { label: "-", cls: "text-gray-300", title: "" };
   const created = new Date(order.createdAt ?? order.date);
@@ -6316,6 +6325,12 @@ const responseTimeColor = (order: TrackedOrder, status: string): { label: string
   if (hours <= 4) return { label, cls: "text-gray-500 bg-gray-100", title };
   if (hours < 24) return { label, cls: "text-amber-700 bg-amber-50", title };
   return { label, cls: "text-red-600 bg-red-50", title };
+};
+
+/** "Sent to group 12:52 pm", only when it happened: not every order goes to a group. */
+const groupSentText = (order: TrackedOrder) => {
+  const at = Date.parse(String(order.groupSentAt ?? ""));
+  return Number.isFinite(at) ? `Sent to group ${sentOutTimeText(at, Date.now())}` : null;
 };
 
 const parseExpenseDateKey = (value: string) => {
@@ -7321,6 +7336,8 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
     launchStage: normalizeLaunchStage(value?.launchStage ?? value?.launch_stage),
     revealedAt: value?.revealedAt ?? value?.revealed_at ?? undefined,
     sentOutAt: value?.sentOutAt ?? value?.sent_out_at ?? undefined,
+    sentOutStatus: value?.sentOutStatus ?? value?.sent_out_status ?? undefined,
+    groupSentAt: value?.groupSentAt ?? value?.group_sent_at ?? undefined,
     reviewReason: value?.reviewReason ?? value?.review_reason ?? undefined,
     outageRecovered: value?.outageRecovered ?? value?.outage_recovered ?? false,
     remittanceReason: value?.remittanceReason ?? value?.remittance_reason ?? undefined,
@@ -40997,6 +41014,18 @@ ${waybillLineItems(w).length > 1
     }
   };
 
+  // Copy to WhatsApp group, and note the first time it was done (shown beside the confirmed time).
+  const copyOrderForGroup = (order: TrackedOrder) => {
+    void copyText(formatOrderForWhatsAppDispatch(order), `${order.id} WhatsApp group copy`);
+    if (order.groupSentAt) return;
+    ordersApi.groupCopied(order.id)
+      .then((result) => {
+        if (!result?.groupSentAt) return;
+        setTrackedOrders((value) => value.map((item) => item.id === order.id ? { ...item, groupSentAt: result.groupSentAt ?? undefined } : item));
+      })
+      .catch(() => {});
+  };
+
   const hydrateTrackedOrderFromApi = (raw: any) => {
     const normalized = normalizeTrackedOrder(raw);
     setTrackedOrders((value) => value.map((order) => order.id === normalized.id ? { ...order, ...normalized } : order));
@@ -48422,7 +48451,7 @@ ${waybillLineItems(w).length > 1
                   <button
                     type="button"
                     className={`!min-h-0 col-span-2 inline-flex items-center justify-center gap-2 rounded-2xl px-3 py-3 text-center text-sm font-black leading-5 transition-colors ${orderSecondaryButtonClass}`}
-                    onClick={() => copyText(formatOrderForWhatsAppDispatch(order), `${order.id} WhatsApp group copy`)}
+                    onClick={() => copyOrderForGroup(order)}
                   >
                     <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
                   </button>
@@ -48622,7 +48651,7 @@ ${waybillLineItems(w).length > 1
               </button>
               <button
                 className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-800 shadow-[0_14px_30px_rgba(16,185,129,0.12)] transition-colors hover:bg-emerald-100 dark:border-emerald-400/25 dark:bg-emerald-500/12 dark:text-emerald-100 dark:hover:bg-emerald-500/18"
-                onClick={() => copyText(formatOrderForWhatsAppDispatch(order), `${order.id} WhatsApp group copy`)}
+                onClick={() => copyOrderForGroup(order)}
               >
                 <Copy className="h-4 w-4" /> Copy Order To WhatsApp Group
               </button>
@@ -79304,6 +79333,11 @@ ${waybillLineItems(w).length > 1
                                 </span>
                               )}
                             </div>
+                            {groupSentText(order) && (
+                              <span className="flex items-center justify-end text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                                <MessageCircle className="mr-1 h-3.5 w-3.5" /> {groupSentText(order)}
+                              </span>
+                            )}
                           </div>
 
                           {orderWorkspacePage === "Follow-up Queue" && latestAttempt && (
@@ -79469,8 +79503,13 @@ ${waybillLineItems(w).length > 1
                                 {renderOrderStatusSummary(order)}
                                 {sendOutInline}
                                 {responseTime.label !== "-" && !sendOutInline && (
-                                  <span title={responseTime.title || undefined} className={`mt-2 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${responseTime.cls}`}>
+                                  <span title={responseTime.title || undefined} className={`mt-2 inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold ${responseTime.cls}`}>
                                     <Clock className="mr-1 h-3 w-3" /> {responseTime.label}
+                                  </span>
+                                )}
+                                {groupSentText(order) && (
+                                  <span className="mt-1 flex items-center text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                                    <MessageCircle className="mr-1 h-3 w-3" /> {groupSentText(order)}
                                   </span>
                                 )}
                                 {order.reviewHold && (
@@ -103436,7 +103475,7 @@ ${waybillLineItems(w).length > 1
                       </button>
                       <button
                         className="!min-h-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors shrink-0"
-                        onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
+                        onClick={() => copyOrderForGroup(selectedOrder)}
                       >
                         <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
                       </button>
@@ -103493,7 +103532,7 @@ ${waybillLineItems(w).length > 1
 	                        </button>
 	                        <button
 	                          className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors"
-	                          onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
+	                          onClick={() => copyOrderForGroup(selectedOrder)}
 	                        >
 	                          <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
 	                        </button>
@@ -103586,7 +103625,7 @@ ${waybillLineItems(w).length > 1
                             <button
                               type="button"
                               className={`!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-bold transition-colors ${orderSecondaryButtonClass}`}
-                              onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
+                              onClick={() => copyOrderForGroup(selectedOrder)}
                             >
                               <Copy className="w-3.5 h-3.5" /> Copy Order To WhatsApp Group
                             </button>
@@ -104562,7 +104601,7 @@ ${waybillLineItems(w).length > 1
 		                          </button>
 		                          <button
 		                            className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors"
-		                            onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
+		                            onClick={() => copyOrderForGroup(selectedOrder)}
 		                          >
 		                            <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
 		                          </button>
