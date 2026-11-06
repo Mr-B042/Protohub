@@ -11,9 +11,12 @@ export const TELEGRAM_ROLES = [
 
 /** Roles that may see a customer's name, phone and the order amount. */
 const CUSTOMER_ROLES = new Set(["Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep", "Sales Closer"]);
-/** Roles that see business money (revenue, ad spend) in reports. */
+/** Revenue is strictly for the Owner, Admins and Managers (Bright, 6 Nov 2026). */
+const REVENUE_ROLES = new Set(["Owner", "Admin", "Manager"]);
+/** Ad spend and cost per order: the Owner and Admins. */
 const BUSINESS_MONEY_ROLES = new Set(["Owner", "Admin"]);
 export const seesCustomer = (role: string | null | undefined) => CUSTOMER_ROLES.has(String(role ?? ""));
+export const seesRevenue = (role: string | null | undefined) => REVENUE_ROLES.has(String(role ?? ""));
 export const seesBusinessMoney = (role: string | null | undefined) => BUSINESS_MONEY_ROLES.has(String(role ?? ""));
 
 /** Short names on chips: the design says "Logistics", "Inventory". */
@@ -243,6 +246,7 @@ export type BusinessReport = {
 };
 
 export function reportDraft(kind: "daily_report" | "weekly_report", report: BusinessReport, role: string): Draft {
+  const revenue = seesRevenue(role);
   const money = seesBusinessMoney(role);
   const head = kind === "daily_report" ? "Daily report" : "Weekly report";
   const lines = [
@@ -250,13 +254,40 @@ export function reportDraft(kind: "daily_report" | "weekly_report", report: Busi
     ``,
     `Orders in: <b>${report.ordersIn}</b>`,
     ...report.topProducts.slice(0, 3).map((row) => `  • ${tgEscape(row.name)}: ${row.orders}`),
-    `Delivered: <b>${report.delivered}</b>${money ? ` · ${naira(report.deliveredRevenue)}` : ""}`,
+    `Delivered: <b>${report.delivered}</b>${revenue ? ` · ${naira(report.deliveredRevenue)}` : ""}`,
     `Failed: ${report.failed} · Cancelled: ${report.cancelled}`,
     `Sent out late (past 15 min): ${report.lateSendOuts}`,
     `Still New right now: ${report.stillNew}`,
     ...(money && report.adSpend != null ? [`Ad spend: ${naira(report.adSpend)}${report.ordersIn ? ` · ${naira(report.adSpend / report.ordersIn)} per order` : ""}`] : [])
   ];
   return { title: `${head} sent – ${report.label}`, text: lines.join("\n"), keyboard: [[{ text: "📈 Open Dashboard", path: "/dashboard" }]] };
+}
+
+export type RepDay = {
+  label: string;
+  ordersIn: number;
+  sentOut: number;
+  sentLate: number;
+  delivered: number;
+  stillNew: number;
+  lateNow: number;
+  /** The Bonuses screen's "Bonus earned" this week; null when it could not be worked out. */
+  bonus: { earned: number; deliveredCount: number } | null;
+};
+
+/** /today for a sales rep: their own day and their own bonus, never revenue. */
+export function repTodayDraft(day: RepDay): string {
+  return [
+    `<b>Your day so far · ${tgEscape(day.label)}</b>`,
+    `Orders given to you today: <b>${day.ordersIn}</b>`,
+    `Sent out of New: ${day.sentOut}${day.sentLate ? ` (${day.sentLate} late)` : ""}`,
+    `Delivered today: <b>${day.delivered}</b>`,
+    `Still New: ${day.stillNew}${day.lateNow ? ` (${day.lateNow} past the 15 min)` : ""}`,
+    ``,
+    day.bonus
+      ? `💰 Your bonus this week: <b>${naira(day.bonus.earned)}</b> (from ${day.bonus.deliveredCount} delivered order${day.bonus.deliveredCount === 1 ? "" : "s"})`
+      : `💰 Your bonus this week: open Bonuses in Protohub to see it.`
+  ].join("\n");
 }
 
 export function announcementDraft(text: string, fromName: string): Draft {
@@ -302,7 +333,7 @@ export type CommandKey = "help" | "myorders" | "today" | "late" | "stock" | "sto
 export const COMMANDS: Array<{ key: CommandKey; description: string; who: string }> = [
   { key: "help", description: "What this bot can do", who: "Everyone" },
   { key: "myorders", description: "My New orders and follow-ups due today", who: "Sales reps (all orders for leadership)" },
-  { key: "today", description: "Today's numbers so far", who: "Owner, Admin, Manager" },
+  { key: "today", description: "Today's numbers so far", who: "Leadership (with revenue); sales reps see their own day and bonus" },
   { key: "late", description: "Orders past the 15-minute send-out limit", who: "Leadership (reps see their own)" },
   { key: "stock", description: "Usable stock by hub, e.g. /stock edge", who: "Leadership and inventory staff" },
   { key: "stop", description: "Stop Protohub messages to this chat", who: "Everyone" }
