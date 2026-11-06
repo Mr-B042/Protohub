@@ -34,7 +34,7 @@ export type LateSendOrder = {
  * was (re)assigned, and when it was revealed (Product Launch: a Silent Test
  * order only reaches its rep at the switch to Soft Launch).
  */
-function arrivedAtMs(order: any) {
+export function arrivedAtMs(order: any) {
   const placed = Date.parse(order.original_created_at ?? order.created_at);
   const assigned = order.assigned_at ? Date.parse(order.assigned_at) : NaN;
   const revealed = order.revealed_at ? Date.parse(order.revealed_at) : NaN;

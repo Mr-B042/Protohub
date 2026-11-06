@@ -11,7 +11,7 @@ export type OrgBrandingRecord = {
   rawLogoUrl: string;
 };
 
-function resolvePublicApiBaseUrl(): string | undefined {
+export function resolvePublicApiBaseUrl(): string | undefined {
   const explicit = process.env.PUBLIC_API_URL?.trim() || process.env.VITE_API_URL?.trim();
   if (explicit) return explicit.replace(/\/+$/, "");
 
