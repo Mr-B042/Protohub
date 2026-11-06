@@ -219,6 +219,24 @@ function canDispatchWhatsAppOrder(role: string, userId: string, order: { assigne
   return order.assigned_rep_id === userId;
 }
 
+/**
+ * First time an order went to the WhatsApp group (Bright, 6 Nov 2026: extra
+ * information beside the confirmed time; migration 324). Only the first time,
+ * and only while the order is open: updated_at is read as a closure time in
+ * places, and this update moves it.
+ */
+async function markGroupSent(orgId: string, orderId: string): Promise<string | null> {
+  const { data, error } = await supabase.from("orders").update({ group_sent_at: new Date().toISOString() })
+    .eq("org_id", orgId).eq("id", orderId).is("group_sent_at", null)
+    .not("status", "in", "(Delivered,Cancelled,Failed)")
+    .select("group_sent_at");
+  if (error) throw error;
+  if (data?.length) return String((data[0] as any).group_sent_at);
+  // launch-safe: callers loaded this order through loadWhatsAppDispatchOrder (Silent Test hidden); only its group time is read.
+  const { data: row } = await supabase.from("orders").select("group_sent_at").eq("org_id", orgId).eq("id", orderId).maybeSingle();
+  return (row as any)?.group_sent_at ? String((row as any).group_sent_at) : null;
+}
+
 async function loadUserWhatsAppAccount(orgId: string, userId: string) {
   const { data, error } = await supabase
     .from("whatsapp_user_accounts")
@@ -1392,6 +1410,7 @@ router.post("/:id/whatsapp-dispatch", requireRole("Owner", "Admin", "Manager", "
         provider_status: result.providerStatus,
         sent_at: new Date().toISOString()
       });
+      await markGroupSent(req.user!.orgId, String(order.id)).catch(() => null);
       await supabase
         .from("whatsapp_user_destinations")
         .update({ last_used_at: new Date().toISOString() })
@@ -1408,6 +1427,22 @@ router.post("/:id/whatsapp-dispatch", requireRole("Owner", "Admin", "Manager", "
     }
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : "Could not dispatch order to WhatsApp." });
+  }
+});
+
+// ── POST /api/orders/:id/group-copied ─────────────────────
+// "Copy to WhatsApp group" only copies text on the rep's device; this notes
+// when it was first done.
+router.post("/:id/group-copied", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
+  try {
+    const order = await loadWhatsAppDispatchOrder(req.user!.orgId, String(req.params.id), scopeOf(req).role);
+    if (!canDispatchWhatsAppOrder(req.user!.role, req.user!.id, order)) {
+      res.status(403).json({ error: "You can only send orders assigned to you." });
+      return;
+    }
+    res.json({ groupSentAt: await markGroupSent(req.user!.orgId, String(order.id)) });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : "Could not note the WhatsApp group send." });
   }
 });
 

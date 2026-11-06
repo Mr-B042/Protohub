@@ -1981,6 +1981,8 @@ export const ordersApi = {
   },
   create: (body: unknown) => post<any>("/api/orders", body),
   updateStatus: (id: string, body: unknown) => patch<any>(`/api/orders/${id}/status`, body),
+  /** "Copy to WhatsApp group" tapped: notes the first time (migration 324). */
+  groupCopied: (id: string) => post<{ groupSentAt: string | null }>(`/api/orders/${id}/group-copied`, {}),
   changeDate: (id: string, body: { createdAt: string; reason: string }) => patch<any>(`/api/orders/${id}/date`, body),
   update: (id: string, body: unknown) => patch<any>(`/api/orders/${id}`, body),
   reviewRemittanceVariance: (id: string, body: { action: "approve" | "reject"; note?: string }) =>
