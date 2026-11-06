@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   AUTOMATION_KINDS, DEFAULT_AUTOMATIONS, buildKeyboard, cleanCommandSettings, cleanRecipients, cleanSettings, kindForwarded,
   orderDraft, previewOf, recipientLabel, repTodayDraft, reportDraft, successRate, triggerLabel, type OrderInfo,
-  cartDraft, forwardDedupeKey, isQuietTime, repWeekNoteDraft, roleMayReceive
+  cartDraft, forwardCheck, forwardDedupeKey, isQuietTime, repWeekNoteDraft, roleMayReceive
 } from "./telegram-rules.js";
 
 const order: OrderInfo = {
@@ -95,7 +95,8 @@ test("reports are leadership only, whatever is saved", () => {
   assert.deepEqual(cleanRecipients("daily_report", { roles: ["Owner", "Sales Rep", "Manager", "Inventory Manager"] }).roles, ["Owner", "Manager"]);
   assert.deepEqual(cleanRecipients("weekly_rep_note", { roles: ["Owner", "Sales Rep"] }).roles, ["Sales Rep"]);
   assert.equal(roleMayReceive("weekly_report", "Sales Rep"), false);
-  assert.equal(roleMayReceive("order_new", "Sales Rep"), true);
+  assert.equal(roleMayReceive("order_new", "Manager"), true);
+  assert.equal(roleMayReceive("order_new", "Sales Rep"), false); // only as the order's own rep
 });
 
 test("a forwarded order alert and the matching automation share one key (no double message)", () => {
@@ -140,4 +141,19 @@ test("the weekly late & fines note", () => {
 
 test("a recovery rep's /today has no bonus line", () => {
   assert.doesNotMatch(repTodayDraft({ label: "x", ordersIn: 1, sentOut: 0, sentLate: 0, delivered: 0, stillNew: 1, lateNow: 0 }), /bonus/i);
+});
+
+test("a sales rep only ever gets their own orders (6 Nov 2026)", () => {
+  // Reps cannot be picked by role on order automations: only as the order's own rep.
+  assert.deepEqual(cleanRecipients("order_delivered", { roles: ["Sales Rep", "Manager", "Recovery Rep", "Sales Closer"], assignedRep: true }), { roles: ["Manager"], assignedRep: true, userIds: [] });
+  assert.equal(roleMayReceive("low_stock", "Sales Rep"), false);
+  assert.equal(roleMayReceive("weekly_rep_note", "Sales Rep"), true);
+  // Copied phone alerts: about one of their orders (checked), or about themselves.
+  assert.deepEqual(forwardCheck("Sales Rep", "order_delivered", "order-PH-1-Delivered"), { allowed: true, ownOrderId: "PH-1" });
+  assert.deepEqual(forwardCheck("Sales Rep", "order_late_send", "late-send-5937"), { allowed: true, ownOrderId: "5937" });
+  assert.deepEqual(forwardCheck("Sales Rep", "campaign_no_orders", "camp-1"), { allowed: false });
+  assert.deepEqual(forwardCheck("Sales Rep", "abandoned_cart_new", "abandoned-cart-9"), { allowed: false });
+  assert.deepEqual(forwardCheck("Sales Rep", "order_confirmed", undefined), { allowed: false });
+  assert.deepEqual(forwardCheck("Sales Rep", "weekly_report_question", "wr-1"), { allowed: true });
+  assert.deepEqual(forwardCheck("Manager", "campaign_no_orders", "camp-1"), { allowed: true });
 });

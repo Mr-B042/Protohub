@@ -138,7 +138,7 @@ export function AutomationEditor({ editing, triggers, roles, staff, onClose, onS
                 ))}
               </div>
             )}
-            <p className="m-0 mt-2 text-[12px] text-gray-500">Only people who connected their Telegram get messages. Inventory and logistics staff never see customer names, numbers or amounts.</p>
+            <p className="m-0 mt-2 text-[12px] text-gray-500">Only people who connected their Telegram get messages. {def?.repApplies ? "Sales reps, recovery reps and closers only ever get their own orders: tick \u201cThe order's own rep\u201d. " : ""}Inventory and logistics staff never see customer names, numbers or amounts.</p>
           </div>
           <label className="flex items-center justify-between rounded-xl bg-gray-50 px-3.5 py-3 dark:bg-slate-800/60">
             <span className="text-[14px] font-semibold text-gray-800 dark:text-slate-200">On</span>

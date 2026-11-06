@@ -19,7 +19,7 @@ import {
 import {
   COMMANDS, DEFAULT_AUTOMATIONS, FORWARD_GROUPS, LEADERSHIP_ROLES, TRIGGERS, buildKeyboard, cartDraft, cleanCommandSettings, cleanQuiet,
   cleanRecipients, cleanSettings, followUpDraft, forwardDedupeKey, forwardedDraft, isQuietTime, kindForwarded, lowStockDraft, naira, orderDraft,
-  previewOf, repTodayDraft, repWeekNoteDraft, reportDraft, roleMayReceive, seesCustomer, seesRevenue, sendOutSoonDraft,
+  previewOf, repTodayDraft, repWeekNoteDraft, reportDraft, roleMayReceive, seesCustomer, seesRevenue, sendOutSoonDraft, forwardCheck, isRepRole,
   type AutomationSettings, type BusinessReport, type CartInfo, type CommandKey, type Draft, type LowStockItem, type OrderInfo,
   type QuietHours, type Recipients, type RepDay, type TriggerKey
 } from "./telegram-rules.js";
@@ -352,8 +352,11 @@ export async function runTrigger(orgId: string, trigger: TriggerKey, ctx: Trigge
     for (const person of await recipientsOf(orgId, automation.recipients, ctx.assignedRepId ?? null, ctx.branchId)) {
       if (done.has(person.userId)) continue;
       if (ctx.ownerOnly && person.role !== "Owner") continue;
-      // e.g. reports are leadership only, whatever an older setting says.
-      if (!roleMayReceive(trigger, person.role) && !(ctx.assignedRepId === person.userId && automation.recipients.assignedRep)) continue;
+      // Reports are leadership only; a rep only ever gets their OWN order or cart
+      // (as "the order's own rep"), whatever an older setting says.
+      const ownEvent = ctx.assignedRepId === person.userId && automation.recipients.assignedRep;
+      if (!roleMayReceive(trigger, person.role) && !ownEvent) continue;
+      if (isRepRole(person.role) && trigger !== "weekly_rep_note" && !ownEvent) continue;
       const link = links.get(person.userId);
       if (!link) continue;
       const draft = await ctx.draftFor(person);
@@ -444,6 +447,14 @@ export async function forwardPushToTelegram(orgId: string, userId: string, paylo
     if (!link) return;
     const person = (await peopleOf(orgId)).get(userId);
     if (!person) return;
+    // A rep only gets alerts about their own orders, never company-wide ones.
+    const check = forwardCheck(person.role, payload.kind, payload.tag);
+    if (!check.allowed) return;
+    if (check.ownOrderId) {
+      // launch-safe: only who the order belongs to is read, to decide; nothing of it is shown.
+      const { data: own } = await supabase.from("orders").select("assigned_rep_id").eq("org_id", orgId).eq("id", check.ownOrderId).maybeSingle();
+      if (String((own as any)?.assigned_rep_id ?? "") !== person.userId) return;
+    }
     await sendLogged({
       orgId, bot, trigger: "app_alert", person, chatId: link.chat_id,
       draft: forwardedDraft(payload.title, payload.body, payload.url),
