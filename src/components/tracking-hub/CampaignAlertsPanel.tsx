@@ -50,7 +50,7 @@ export default function CampaignAlertsPanel({ focus }: { focus?: string | null }
   if (droughts.length === 0) {
     return (
       <div className="space-y-1.5 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-2.5 dark:border-emerald-500/30 dark:bg-emerald-500/10">
-        <p className="m-0 text-[13px] font-semibold text-emerald-800 dark:text-emerald-200">Every campaign delivering right now has had an order in the last 3 days.</p>
+        <p className="m-0 text-[13px] font-semibold text-emerald-800 dark:text-emerald-200">Every campaign delivering right now has had an order in the last 3 full days.</p>
         {footer}
       </div>
     );
@@ -61,7 +61,7 @@ export default function CampaignAlertsPanel({ focus }: { focus?: string | null }
         className="!min-h-0 flex w-full flex-wrap items-center justify-between gap-2 px-5 py-3.5 text-left">
         <span className="flex items-center gap-2">
           <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-rose-500 px-2 text-[12px] font-extrabold text-white">{droughts.length}</span>
-          <b className="text-[15px] text-gray-900 dark:text-slate-50">Campaign{droughts.length === 1 ? "" : "s"} with no order for 3+ days</b>
+          <b className="text-[15px] text-gray-900 dark:text-slate-50">Campaign{droughts.length === 1 ? "" : "s"} with no order for 3+ full days</b>
         </span>
         <span className="flex items-center gap-3 text-[12.5px] font-bold">
           {ORDER.map((group) => {
@@ -88,10 +88,12 @@ export default function CampaignAlertsPanel({ focus }: { focus?: string | null }
                       <b className="block break-words text-[13px] text-gray-900 dark:text-slate-50">{row.campaignName}</b>
                       <span className="block text-[11.5px] text-gray-500 dark:text-slate-400">{row.accountName}{row.productName ? ` · ${row.productName}` : ""}{row.platform === "tiktok" ? " · TikTok" : ""}</span>
                       <span className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 font-semibold text-gray-800 dark:text-slate-200">
-                        <span className="text-rose-600">No order: {row.daysWithoutOrder} days</span>
-                        <span>{money(row.spendSinceLastOrder)} spent since</span>
+                        <span className="text-rose-600">No order: {row.daysWithoutOrder} full day{row.daysWithoutOrder === 1 ? "" : "s"}</span>
+                        <span>{money(row.spendSinceLastOrder)} spent since {row.lastOrderDay ? "the last order" : "it started"}</span>
                         <span>{row.cpa === null ? "No order yet" : `${money(row.cpa)} per order since start`}</span>
                       </span>
+                      {/* Ads Manager's day rows stop at yesterday: say what of this is today (Bright, 6 Nov 2026). */}
+                      {(row.todaySpend ?? 0) >= 1 && <span className="mt-0.5 block text-[11.5px] text-gray-500 dark:text-slate-400">Includes today's {money(row.todaySpend ?? 0)} so far. Full days only: today is not counted as a day without an order.</span>}
                       <span className="mt-1 block text-gray-600 dark:text-slate-400">{row.advice}</span>
                     </li>
                   ))}

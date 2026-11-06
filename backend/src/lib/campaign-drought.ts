@@ -7,9 +7,9 @@
  *  - "Order" = a Protohub order that came from the campaign (the Ad Spend /
  *    Since Start count), not Meta's purchases.
  *  - A campaign counts when it is ON (checked LIVE with Meta in
- *    campaign-drought-alerts.ts: at least one ad delivering), spent in the last 3 days, and has had no
- *    order for 3 days (the last order 3+ days ago, or none since it started 3+
- *    days ago).
+ *    campaign-drought-alerts.ts: at least one ad delivering), spent recently,
+ *    and has had no order for 3 WHOLE days (today never counts: it is not
+ *    over, and Ads Manager's day rows only show whole days - 6 Nov 2026).
  *  - Cost per order SINCE IT STARTED decides the group:
  *      under ₦6,500    -> Check and adjust (it has been worth it)
  *      ₦6,500 - 7,500  -> Watch
@@ -36,6 +36,8 @@ export type Drought = DroughtCampaign & {
   /** Spent in the last 3 days / since the last order. */
   recentSpend: number;
   spendSinceLastOrder: number;
+  /** Today's spend so far, inside spendSinceLastOrder and spend. */
+  todaySpend: number;
   advice: string;
   /** Same campaign, same dry spell: one alert only. */
   episodeKey: string;
@@ -63,7 +65,8 @@ export function campaignDroughts(input: {
   /** First day spendByDay covers: spend seen only after it is a real first day. */
   spendFrom?: string;
 }): Drought[] {
-  const recentFrom = addDays(input.today, -(DROUGHT_RULES.days - 1));
+  // Spent in the 3 whole days or today.
+  const recentFrom = addDays(input.today, -DROUGHT_RULES.days);
   const out: Drought[] = [];
   for (const campaign of input.campaigns) {
     if (!campaign.running) continue;
@@ -80,9 +83,11 @@ export function campaignDroughts(input: {
     const firstSpent = spentDays[0] ?? null;
     const realFirstSpent = firstSpent && (!input.spendFrom || firstSpent > input.spendFrom) ? firstSpent : null;
     const started = realFirstSpent && (!campaign.start || realFirstSpent > campaign.start) ? realFirstSpent : campaign.start;
-    // Last order on the 2nd, today the 5th: the 3rd, 4th and 5th had none = 3 days.
-    // Never an order: its first day counts too.
-    const daysWithoutOrder = last ? daysBetween(last, input.today) : started ? daysBetween(started, input.today) + 1 : 0;
+    // WHOLE days only (Bright, 6 Nov 2026): last order on the 3rd, today the
+    // 6th -> the 4th and 5th = 2 days; Ads Manager shows the same two empty
+    // rows. Counting the 6th at 9am called it "3 days" a day early.
+    // Never an order: whole days from its first day of spend.
+    const daysWithoutOrder = last ? daysBetween(last, input.today) - 1 : started ? daysBetween(started, input.today) : 0;
     if (daysWithoutOrder < DROUGHT_RULES.days) continue;
     const spendSinceLastOrder = [...days.entries()].filter(([day]) => !last || day > last).reduce((sum, [, spend]) => sum + spend, 0);
     // Lifetime spend is refreshed less often than the daily rows: never show
@@ -91,17 +96,20 @@ export function campaignDroughts(input: {
     const spend = Math.max(campaign.spend, dailySinceStart);
     const cpa = campaign.orders > 0 ? spend / campaign.orders : null;
     const group = groupFor(cpa);
-    const dry = `${daysWithoutOrder} day${daysWithoutOrder === 1 ? "" : "s"}`;
+    const todaySpend = days.get(input.today) ?? 0;
+    const dry = `${daysWithoutOrder} full day${daysWithoutOrder === 1 ? "" : "s"}`;
     const advice = cpa === null
-      ? `${naira(spend)} spent since it started ${dry} ago and no order yet. Turn it off.`
+      ? `${naira(spend)} spent since it started and no order in ${dry}. Turn it off.`
       : group === "off"
         ? `${naira(cpa)} per order since it started (over ${naira(DROUGHT_RULES.offAbove)}) and no order for ${dry}. Turn it off.`
         : group === "watch"
           ? `${naira(cpa)} per order since it started, close to the ${naira(DROUGHT_RULES.offAbove)} limit, and no order for ${dry}. Watch it: turn it off if no order comes tomorrow.`
           : `${naira(cpa)} per order since it started, so it has been worth it, but no order for ${dry}. Check it before turning it off: ad approved and delivering, budget, the form link, and refresh the picture/video.`;
     out.push({
-      ...campaign, spend, cpa, group, daysWithoutOrder, lastOrderDay: last, recentSpend, spendSinceLastOrder, advice,
-      episodeKey: `${campaign.campaignId}:${last ?? `start-${started ?? ""}`}`
+      ...campaign, spend, cpa, group, daysWithoutOrder, lastOrderDay: last, recentSpend, spendSinceLastOrder, todaySpend, advice,
+      // "after-": the 6 Nov alerts went out a day early under the old count;
+      // a new key lets the real alert go out once 3 whole days have passed.
+      episodeKey: `${campaign.campaignId}:${last ? `after-${last}` : `start-${started ?? ""}`}`
     });
   }
   return out.sort((a, b) => DROUGHT_ORDER.indexOf(a.group) - DROUGHT_ORDER.indexOf(b.group) || b.spendSinceLastOrder - a.spendSinceLastOrder);

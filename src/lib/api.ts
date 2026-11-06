@@ -4736,7 +4736,7 @@ export type CampaignDrought = {
   campaignId: string; campaignName: string; platform: string; accountName: string; running: boolean; start: string | null;
   spend: number; orders: number; cpa: number | null; productName: string | null;
   group: CampaignDroughtGroup; daysWithoutOrder: number; lastOrderDay: string | null; recentSpend: number; spendSinceLastOrder: number;
-  advice: string; episodeKey: string;
+  todaySpend?: number; advice: string; episodeKey: string;
 };
 export type HubSinceStart = {
   rows: HubSinceStartRow[]; ordersFrom: string; linkedShare: number | null; lastLifetimeAt: string | null;
