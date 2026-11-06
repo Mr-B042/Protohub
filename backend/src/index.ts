@@ -27,7 +27,7 @@ import { startWhatsAppRuntime } from "./lib/whatsapp-runtime.js";
 import { runAsSingleton } from "./lib/runtime-lease.js";
 import { runCartAutoSubmit } from "./lib/cart-auto-submit.js";
 import { runCartAutoAssign } from "./lib/cart-assignment.js";
-import { approvePendingFollowUpMissesAllOrgs, runFollowUpCloseAllOrgs } from "./lib/follow-up-kpi.js";
+import { approvePendingLogMissesAllOrgs, runFollowUpCloseAllOrgs } from "./lib/follow-up-kpi.js";
 import { syncRecoveryNextActionReminders } from "./lib/recovery-next-action-reminders.js";
 import { runAgentStockDriftCheck } from "./lib/agent-stock-drift-check.js";
 import { runDailyTargetSnapshots } from "./lib/target-snapshots.js";
@@ -553,9 +553,10 @@ cron.schedule("0 21 * * *", async () => {
   try { await runFollowUpCloseAllOrgs(); }
   catch (e) { logger.error("cron: follow-up KPI close crashed", { error: (e as Error).message }); }
 });
-// And once a minute after start-up, so misses still waiting are approved
-// before their week's report is locked, not at the next 10pm.
-setTimeout(() => { void approvePendingFollowUpMissesAllOrgs(); }, 60_000);
+// And once a minute after start-up, so misses still waiting (follow-ups and,
+// since "use auto", missed cart logs) are approved before their week's report
+// is locked, not at the next 10pm.
+setTimeout(() => { void approvePendingLogMissesAllOrgs(); }, 60_000);
 }
 
 // ── Target period daily snapshot — 22:30 UTC (23:30 Lagos) ──

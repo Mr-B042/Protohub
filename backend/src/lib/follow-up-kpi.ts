@@ -2,7 +2,7 @@ import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { classifyFollowUpOutcome } from "./follow-up-outcomes.js";
 import { REPORT_ROW_CEILING } from "./query-limits.js";
-import { snapshotWithApprovedMisses } from "./missed-log-snapshot.js";
+import { AUTO_APPROVED_BY, approvePendingCartLogMisses, reflectApprovedMisses } from "./missed-log-approval.js";
 
 // Orders in these raw statuses are the daily follow-up obligation set (mirrors the
 // Follow-up Queue page). Delivered / Cancelled / Failed are terminal — no obligation.
@@ -397,10 +397,7 @@ async function recordFollowUpMisses(orgId: string, dateKey?: string): Promise<{ 
 // missed follow-up ever came off a weekly report (the report only takes off
 // approved misses). Now each one is approved as soon as it is recorded. A rep
 // who thinks one is wrong still disputes it (rep → manager → Owner, who can
-// cancel an approved miss). Missed CART logs (₦500 a cart) still wait for the
-// Owner: only follow-up misses were asked for.
-
-export const AUTO_APPROVED_BY = "Automatic (approved when recorded)";
+// cancel an approved miss). Missed cart logs: lib/missed-log-approval.ts.
 
 export type FollowUpMissRow = {
   id: string; rep_id: string | null; rep_name: string | null; order_id: string; miss_date: string; amount: number; branch_id: string | null;
@@ -446,13 +443,6 @@ export async function approveFollowUpMiss(orgId: string, miss: FollowUpMissRow, 
 }
 
 const MISS_COLUMNS = "id, rep_id, rep_name, order_id, miss_date, amount, branch_id";
-const SENT_REPORT_STATUSES = ["submitted", "manager_approved", "returned"];
-const weekSundayOf = (dateKey: string) => {
-  const d = new Date(`${dateKey}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - d.getUTCDay());
-  return d.toISOString().slice(0, 10);
-};
-
 /**
  * Approve every pending miss of people whose job is follow-ups and who are
  * still active (the misses list clears the rest as waived), then put them in
@@ -476,44 +466,19 @@ export async function approvePendingFollowUpMisses(orgId: string): Promise<{ app
     if (!miss.rep_id || !responsible.has(miss.rep_id)) continue;
     if (await approveFollowUpMiss(orgId, miss, AUTO_APPROVED_BY)) approved.push(miss);
   }
-  await reflectApprovedMisses(orgId, approved);
+  await reflectApprovedFollowUpMisses(orgId, approved);
   return { approved: approved.length };
 }
 
-/**
- * A miss approved after its week's report was sent goes into that report's
- * saved figures, as a fine appeal does (routes/fine-appeals.ts). A report the
- * Owner has approved and locked is never changed; a draft is rebuilt when sent.
- */
-export async function reflectApprovedMisses(orgId: string, misses: FollowUpMissRow[]): Promise<void> {
-  const groups = new Map<string, { repId: string; weekStart: string; branchId: string | null; refs: string[] }>();
-  for (const miss of misses) {
-    if (!miss.rep_id) continue;
-    const weekStart = weekSundayOf(String(miss.miss_date).slice(0, 10));
-    const key = `${miss.rep_id}|${weekStart}|${miss.branch_id ?? ""}`;
-    const group = groups.get(key) ?? { repId: miss.rep_id, weekStart, branchId: miss.branch_id, refs: [] };
-    group.refs.push(String(miss.id));
-    groups.set(key, group);
-  }
-  for (const group of groups.values()) {
-    let query = supabase.from("rep_weekly_reports").select("id, status, snapshot")
-      .eq("org_id", orgId).eq("rep_id", group.repId).eq("week_start", group.weekStart);
-    if (group.branchId) query = query.eq("branch_id", group.branchId);
-    const { data: reports, error } = await query;
-    if (error) throw error;
-    for (const report of (reports ?? []) as Array<{ id: string; status: string; snapshot: unknown }>) {
-      if (!SENT_REPORT_STATUSES.includes(String(report.status))) continue;
-      const next = snapshotWithApprovedMisses(report.snapshot, group.refs);
-      if (next === report.snapshot) continue;
-      const { error: updateError } = await supabase.from("rep_weekly_reports")
-        .update({ snapshot: next, updated_at: new Date().toISOString() }).eq("id", report.id);
-      if (updateError) throw updateError;
-    }
-  }
+/** Put approved follow-up misses into any weekly report already sent for their week. */
+export function reflectApprovedFollowUpMisses(orgId: string, misses: FollowUpMissRow[]) {
+  return reflectApprovedMisses(orgId, misses.map((miss) => ({
+    repId: miss.rep_id, missDate: String(miss.miss_date).slice(0, 10), branchId: miss.branch_id, ref: String(miss.id)
+  })));
 }
 
-/** Right after a deploy: approve whatever is still waiting (the nightly close does it every night after). */
-export async function approvePendingFollowUpMissesAllOrgs(): Promise<void> {
+/** Right after a deploy: approve whatever is still waiting, follow-ups and cart logs (the nightly close does it every night after). */
+export async function approvePendingLogMissesAllOrgs(): Promise<void> {
   const { data: orgs } = await supabase.from("organizations").select("id");
   for (const org of (orgs ?? []) as Array<{ id: string }>) {
     try {
@@ -521,6 +486,12 @@ export async function approvePendingFollowUpMissesAllOrgs(): Promise<void> {
       if (approved > 0) logger.info("follow-up misses approved", { orgId: org.id, approved });
     } catch (e) {
       logger.error("follow-up miss approval crashed", { orgId: org.id, error: (e as Error).message });
+    }
+    try {
+      const { approved, held } = await approvePendingCartLogMisses(org.id);
+      if (approved > 0 || held > 0) logger.info("cart-log misses approved", { orgId: org.id, approved, heldForOwner: held });
+    } catch (e) {
+      logger.error("cart-log miss approval crashed", { orgId: org.id, error: (e as Error).message });
     }
   }
 }
@@ -532,6 +503,12 @@ export async function runFollowUpCloseAllOrgs(dateKey?: string): Promise<void> {
       await runFollowUpClose(org.id, dateKey);
     } catch (e) {
       logger.error("follow-up close crashed", { orgId: org.id, error: (e as Error).message });
+    }
+    // Cart-log days close at Lagos midnight: approve the ones already closed.
+    try {
+      await approvePendingCartLogMisses(org.id);
+    } catch (e) {
+      logger.error("cart-log miss approval crashed", { orgId: org.id, error: (e as Error).message });
     }
   }
 }

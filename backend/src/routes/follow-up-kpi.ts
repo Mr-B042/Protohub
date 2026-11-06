@@ -3,7 +3,7 @@ import { supabase } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { isFrontlineRepRole } from "../lib/roles.js";
-import { FOLLOW_UP_KPI_START_DATE, approveFollowUpMiss, getFollowUpBoard, getFollowUpGrid, lagosHourNow, logFollowUpEntry, reflectApprovedMisses, runFollowUpClose } from "../lib/follow-up-kpi.js";
+import { FOLLOW_UP_KPI_START_DATE, approveFollowUpMiss, getFollowUpBoard, getFollowUpGrid, lagosHourNow, logFollowUpEntry, reflectApprovedFollowUpMisses, runFollowUpClose } from "../lib/follow-up-kpi.js";
 import { sendUnreachableFollowUpSms } from "../lib/sms.js";
 import { FOLLOW_UP_ROLES } from "../lib/follow-up-kpi.js";
 import { silentFilterFor } from "../lib/product-launch.js";
@@ -184,7 +184,7 @@ router.post("/misses/:id/approve", requireRole("Owner", "Admin"), async (req, re
     // and a report already sent for that week takes the charge too.
     const done = await approveFollowUpMiss(req.user!.orgId, miss, req.user!.name);
     if (!done) { res.status(409).json({ error: "Already decided." }); return; }
-    await reflectApprovedMisses(req.user!.orgId, [miss]);
+    await reflectApprovedFollowUpMisses(req.user!.orgId, [miss]);
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not approve." });
     return;
