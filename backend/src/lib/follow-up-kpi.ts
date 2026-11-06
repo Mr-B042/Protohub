@@ -2,6 +2,7 @@ import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { classifyFollowUpOutcome } from "./follow-up-outcomes.js";
 import { REPORT_ROW_CEILING } from "./query-limits.js";
+import { snapshotWithApprovedMisses } from "./missed-log-snapshot.js";
 
 // Orders in these raw statuses are the daily follow-up obligation set (mirrors the
 // Follow-up Queue page). Delivered / Cancelled / Failed are terminal — no obligation.
@@ -350,9 +351,16 @@ export async function getFollowUpBoard(orgId: string, repId?: string | null, dat
   return computeBoard(orgId, dateKey ?? lagosDateKey(new Date()), repId ?? undefined);
 }
 
-// Nightly close: record one PENDING miss per due-but-unattended obligation. Never
-// clobbers a miss that's already been reviewed for the same order/day. Sundays skip.
-export async function runFollowUpClose(orgId: string, dateKey?: string): Promise<{ recorded: number }> {
+// Nightly close: record one miss per due-but-unattended obligation, then approve
+// it (below). Never clobbers a miss that's already been reviewed for the same
+// order/day. Sundays skip.
+export async function runFollowUpClose(orgId: string, dateKey?: string): Promise<{ recorded: number; approved: number }> {
+  const { recorded } = await recordFollowUpMisses(orgId, dateKey);
+  const { approved } = await approvePendingFollowUpMisses(orgId);
+  return { recorded, approved };
+}
+
+async function recordFollowUpMisses(orgId: string, dateKey?: string): Promise<{ recorded: number }> {
   const key = dateKey ?? lagosDateKey(new Date());
   if (!isWorkingDay(key)) return { recorded: 0 };
   if (key < FOLLOW_UP_KPI_START_DATE) return { recorded: 0 }; // before go-live → never charged
@@ -382,6 +390,139 @@ export async function runFollowUpClose(orgId: string, dateKey?: string): Promise
     return { recorded: 0 };
   }
   return { recorded: rows.length };
+}
+
+// ── Approval (Bright, 6 Nov 2026: "always approve so it enters the weekly report") ──
+// Every miss used to wait for the Owner's Approve. None ever was approved, so no
+// missed follow-up ever came off a weekly report (the report only takes off
+// approved misses). Now each one is approved as soon as it is recorded. A rep
+// who thinks one is wrong still disputes it (rep → manager → Owner, who can
+// cancel an approved miss). Missed CART logs (₦500 a cart) still wait for the
+// Owner: only follow-up misses were asked for.
+
+export const AUTO_APPROVED_BY = "Automatic (approved when recorded)";
+
+export type FollowUpMissRow = {
+  id: string; rep_id: string | null; rep_name: string | null; order_id: string; miss_date: string; amount: number; branch_id: string | null;
+};
+
+/** Approve one pending miss. Claimed first, so two runs (or two clicks) never charge it twice. */
+export async function approveFollowUpMiss(orgId: string, miss: FollowUpMissRow, approvedBy: string): Promise<boolean> {
+  const { data: claimed, error } = await supabase
+    .from("follow_up_misses")
+    .update({ state: "approved", reviewed_by: approvedBy, reviewed_at: new Date().toISOString() })
+    .eq("id", miss.id)
+    .eq("org_id", orgId)
+    .eq("state", "pending")
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  if (!claimed) return false;
+  // The ₦50 charge itself (the existing payroll/bonus deduction path), in the payroll month of the miss.
+  const { data: penalty, error: penaltyError } = await supabase
+    .from("rep_penalties")
+    .insert({
+      org_id: orgId,
+      rep_id: miss.rep_id,
+      rep_name: miss.rep_name ?? "Sales rep",
+      type: "follow_up_miss",
+      amount: miss.amount,
+      remove_all_bonuses: false,
+      period: String(miss.miss_date).slice(0, 7),
+      order_id: miss.order_id,
+      reason: `Missed follow-up on ${miss.miss_date} (order ${miss.order_id})`,
+      by_name: approvedBy
+    })
+    .select("id")
+    .single();
+  if (penaltyError) {
+    // Put it back: an approved miss without its charge would never come off anything.
+    await supabase.from("follow_up_misses").update({ state: "pending", reviewed_by: null, reviewed_at: null }).eq("id", miss.id);
+    throw penaltyError;
+  }
+  const { error: linkError } = await supabase.from("follow_up_misses").update({ penalty_id: penalty.id }).eq("id", miss.id);
+  if (linkError) throw linkError;
+  return true;
+}
+
+const MISS_COLUMNS = "id, rep_id, rep_name, order_id, miss_date, amount, branch_id";
+const SENT_REPORT_STATUSES = ["submitted", "manager_approved", "returned"];
+const weekSundayOf = (dateKey: string) => {
+  const d = new Date(`${dateKey}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - d.getUTCDay());
+  return d.toISOString().slice(0, 10);
+};
+
+/**
+ * Approve every pending miss of people whose job is follow-ups and who are
+ * still active (the misses list clears the rest as waived), then put them in
+ * any weekly report already sent for their week.
+ */
+export async function approvePendingFollowUpMisses(orgId: string): Promise<{ approved: number }> {
+  const { data, error } = await supabase
+    .from("follow_up_misses")
+    .select(MISS_COLUMNS)
+    .eq("org_id", orgId)
+    .eq("state", "pending")
+    .gte("miss_date", FOLLOW_UP_KPI_START_DATE)
+    .order("miss_date", { ascending: true })
+    .limit(5000);
+  if (error) throw error;
+  const rows = (data ?? []) as FollowUpMissRow[];
+  if (rows.length === 0) return { approved: 0 };
+  const responsible = await activeRepIdsFor(orgId, Array.from(new Set(rows.map((row) => row.rep_id).filter(Boolean))) as string[]);
+  const approved: FollowUpMissRow[] = [];
+  for (const miss of rows) {
+    if (!miss.rep_id || !responsible.has(miss.rep_id)) continue;
+    if (await approveFollowUpMiss(orgId, miss, AUTO_APPROVED_BY)) approved.push(miss);
+  }
+  await reflectApprovedMisses(orgId, approved);
+  return { approved: approved.length };
+}
+
+/**
+ * A miss approved after its week's report was sent goes into that report's
+ * saved figures, as a fine appeal does (routes/fine-appeals.ts). A report the
+ * Owner has approved and locked is never changed; a draft is rebuilt when sent.
+ */
+export async function reflectApprovedMisses(orgId: string, misses: FollowUpMissRow[]): Promise<void> {
+  const groups = new Map<string, { repId: string; weekStart: string; branchId: string | null; refs: string[] }>();
+  for (const miss of misses) {
+    if (!miss.rep_id) continue;
+    const weekStart = weekSundayOf(String(miss.miss_date).slice(0, 10));
+    const key = `${miss.rep_id}|${weekStart}|${miss.branch_id ?? ""}`;
+    const group = groups.get(key) ?? { repId: miss.rep_id, weekStart, branchId: miss.branch_id, refs: [] };
+    group.refs.push(String(miss.id));
+    groups.set(key, group);
+  }
+  for (const group of groups.values()) {
+    let query = supabase.from("rep_weekly_reports").select("id, status, snapshot")
+      .eq("org_id", orgId).eq("rep_id", group.repId).eq("week_start", group.weekStart);
+    if (group.branchId) query = query.eq("branch_id", group.branchId);
+    const { data: reports, error } = await query;
+    if (error) throw error;
+    for (const report of (reports ?? []) as Array<{ id: string; status: string; snapshot: unknown }>) {
+      if (!SENT_REPORT_STATUSES.includes(String(report.status))) continue;
+      const next = snapshotWithApprovedMisses(report.snapshot, group.refs);
+      if (next === report.snapshot) continue;
+      const { error: updateError } = await supabase.from("rep_weekly_reports")
+        .update({ snapshot: next, updated_at: new Date().toISOString() }).eq("id", report.id);
+      if (updateError) throw updateError;
+    }
+  }
+}
+
+/** Right after a deploy: approve whatever is still waiting (the nightly close does it every night after). */
+export async function approvePendingFollowUpMissesAllOrgs(): Promise<void> {
+  const { data: orgs } = await supabase.from("organizations").select("id");
+  for (const org of (orgs ?? []) as Array<{ id: string }>) {
+    try {
+      const { approved } = await approvePendingFollowUpMisses(org.id);
+      if (approved > 0) logger.info("follow-up misses approved", { orgId: org.id, approved });
+    } catch (e) {
+      logger.error("follow-up miss approval crashed", { orgId: org.id, error: (e as Error).message });
+    }
+  }
 }
 
 export async function runFollowUpCloseAllOrgs(dateKey?: string): Promise<void> {

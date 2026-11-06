@@ -3,7 +3,7 @@ import { supabase } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { isFrontlineRepRole } from "../lib/roles.js";
-import { FOLLOW_UP_KPI_START_DATE, getFollowUpBoard, getFollowUpGrid, lagosHourNow, logFollowUpEntry, runFollowUpClose } from "../lib/follow-up-kpi.js";
+import { FOLLOW_UP_KPI_START_DATE, approveFollowUpMiss, getFollowUpBoard, getFollowUpGrid, lagosHourNow, logFollowUpEntry, reflectApprovedMisses, runFollowUpClose } from "../lib/follow-up-kpi.js";
 import { sendUnreachableFollowUpSms } from "../lib/sms.js";
 import { FOLLOW_UP_ROLES } from "../lib/follow-up-kpi.js";
 import { silentFilterFor } from "../lib/product-launch.js";
@@ -179,31 +179,21 @@ router.post("/misses/:id/approve", requireRole("Owner", "Admin"), async (req, re
   if (miss.state !== "pending") { res.status(409).json({ error: `Already ${miss.state}.` }); return; }
   if (!miss.rep_id) { res.status(400).json({ error: "Miss has no rep to charge." }); return; }
 
-  const period = String(miss.miss_date).slice(0, 7); // YYYY-MM → payroll month
-  const { data: penalty, error: penErr } = await supabase
-    .from("rep_penalties")
-    .insert({
-      org_id: req.user!.orgId,
-      rep_id: miss.rep_id,
-      rep_name: miss.rep_name,
-      type: "follow_up_miss",
-      amount: miss.amount,
-      remove_all_bonuses: false,
-      period,
-      order_id: miss.order_id,
-      reason: `Missed follow-up on ${miss.miss_date} (order ${miss.order_id})`,
-      by_name: req.user!.name
-    })
-    .select("id")
-    .single();
-  if (penErr) { res.status(500).json({ error: penErr.message }); return; }
-
+  try {
+    // Same path as the automatic approval (lib/follow-up-kpi.ts): claimed first,
+    // and a report already sent for that week takes the charge too.
+    const done = await approveFollowUpMiss(req.user!.orgId, miss, req.user!.name);
+    if (!done) { res.status(409).json({ error: "Already decided." }); return; }
+    await reflectApprovedMisses(req.user!.orgId, [miss]);
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not approve." });
+    return;
+  }
   const { data: updated, error: updErr } = await supabase
     .from("follow_up_misses")
-    .update({ state: "approved", penalty_id: penalty.id, reviewed_by: req.user!.name, reviewed_at: new Date().toISOString() })
+    .select("*")
     .eq("id", miss.id)
     .eq("org_id", req.user!.orgId)
-    .select()
     .single();
   if (updErr) { res.status(500).json({ error: updErr.message }); return; }
   res.json(updated);
