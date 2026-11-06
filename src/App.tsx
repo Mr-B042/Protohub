@@ -132,6 +132,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { SendOutTimer } from "./components/SendOutTimer";
+import { LATE_SEND_MINUTES, responseResult, responseTimeText } from "./lib/late-send-clock";
 import { OrderSourceLogo } from "./components/OrderSourceLogo";
 import { LandingPagePreview, useProductLandingPages } from "./components/LandingPagePreview";
 import { periodBounds } from "./lib/period-bounds";
@@ -1396,6 +1397,8 @@ type TrackedOrder = {
   updatedAt?: string;
   /** When the order was assigned/claimed (migration 186). Undefined = assigned before this was tracked. */
   assignedAt?: string;
+  /** When it first left "New" (migration 323): the rep's response. */
+  sentOutAt?: string;
   scheduledDate?: string;
   scheduledAt?: string;
   deliveredDate?: string;
@@ -6283,19 +6286,34 @@ const timeSinceCreated = (order: TrackedOrder): string => {
   return `${days}d`;
 };
 
-const responseTimeColor = (order: TrackedOrder, status: string): { label: string; cls: string } => {
-  const terminal = status === "Delivered" || status === "Cancelled";
+// The chip under an order's status (Bright, 6 Nov 2026: "what is this
+// Response?"). It used to count up from when the order came in, even after the
+// rep had acted. Now: Quick / Late once the order has left New (the late-send
+// rule's 15 working minutes), and "Waiting" while it is still New.
+const responseTimeColor = (order: TrackedOrder, status: string): { label: string; cls: string; title: string } => {
+  const response = responseResult({
+    placedAt: order.originalCreatedAt ?? (order as any).original_created_at ?? order.createdAt ?? null,
+    assignedAt: order.assignedAt ?? null, revealedAt: order.revealedAt ?? null, sentOutAt: order.sentOutAt ?? null
+  });
+  if (response && status !== "New") {
+    const taken = responseTimeText(response.workingMs);
+    return response.state === "quick"
+      ? { label: `Quick · ${taken}`, cls: "text-emerald-700 bg-emerald-50", title: `Sent out of New ${taken} after it reached the rep, inside the ${LATE_SEND_MINUTES} minutes. Only working hours count.` }
+      : { label: `Late · ${taken}`, cls: "text-rose-700 bg-rose-50", title: `Sent out of New ${taken} after it reached the rep, past the ${LATE_SEND_MINUTES} minutes. Only working hours count.` };
+  }
+  if (status !== "New") return { label: "-", cls: "text-gray-300", title: "" };
   const created = new Date(order.createdAt ?? order.date);
-  if (Number.isNaN(created.getTime())) return { label: "-", cls: "text-gray-400" };
-  if (terminal) return { label: "-", cls: "text-gray-300" };
+  if (Number.isNaN(created.getTime())) return { label: "-", cls: "text-gray-400", title: "" };
   const diffMs = Date.now() - created.getTime();
   const mins = Math.max(0, Math.floor(diffMs / 60_000));
   const hours = mins / 60;
-  const label = mins < 60 ? `${mins}m` : hours < 24 ? `${hours.toFixed(1)}h` : `${Math.floor(hours / 24)}d`;
-  if (mins < 60) return { label, cls: "text-emerald-600 bg-emerald-50" };
-  if (hours <= 4) return { label, cls: "text-gray-500 bg-gray-100" };
-  if (hours < 24) return { label, cls: "text-amber-700 bg-amber-50" };
-  return { label, cls: "text-red-600 bg-red-50" };
+  const age = mins < 60 ? `${mins}m` : hours < 24 ? `${hours.toFixed(1)}h` : `${Math.floor(hours / 24)}d`;
+  const label = `Waiting ${age}`;
+  const title = `Came in ${age} ago and is still New.`;
+  if (mins < 60) return { label, cls: "text-emerald-600 bg-emerald-50", title };
+  if (hours <= 4) return { label, cls: "text-gray-500 bg-gray-100", title };
+  if (hours < 24) return { label, cls: "text-amber-700 bg-amber-50", title };
+  return { label, cls: "text-red-600 bg-red-50", title };
 };
 
 const parseExpenseDateKey = (value: string) => {
@@ -7300,6 +7318,7 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
     reviewHold: value?.reviewHold ?? value?.review_hold ?? false,
     launchStage: normalizeLaunchStage(value?.launchStage ?? value?.launch_stage),
     revealedAt: value?.revealedAt ?? value?.revealed_at ?? undefined,
+    sentOutAt: value?.sentOutAt ?? value?.sent_out_at ?? undefined,
     reviewReason: value?.reviewReason ?? value?.review_reason ?? undefined,
     outageRecovered: value?.outageRecovered ?? value?.outage_recovered ?? false,
     remittanceReason: value?.remittanceReason ?? value?.remittance_reason ?? undefined,
@@ -79155,6 +79174,8 @@ ${waybillLineItems(w).length > 1
                       const scheduleMarker = orderScheduleMarkerForOrder(order);
                       const latestAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[order.id] ?? []);
                       const rt = (() => { void responseTick; return responseTimeColor(order, status); })();
+                      // The send-out countdown already tells a New order's time: no second clock beside it.
+                      const sendOutCard = renderSendOutTimer(order);
                       const callOutcome = (order.callOutcome ?? "").trim();
                       const sourceIcon = (
                         <OrderSourceLogo
@@ -79246,7 +79267,7 @@ ${waybillLineItems(w).length > 1
                               })
                             : null}
 
-                          {renderSendOutTimer(order)}
+                          {sendOutCard}
                           {renderStaleOrderFlag(order)}
 
                           {scheduleMarker && (
@@ -79275,9 +79296,11 @@ ${waybillLineItems(w).length > 1
                                 <CalendarDays className="h-4 w-4 shrink-0 text-slate-400 dark:text-slate-500" />
                                 <span className="min-w-0 break-words">{formatOrderCreatedAt(order)}</span>
                               </span>
-                              <span className={`inline-flex items-center justify-center rounded-2xl px-3 py-2 text-xs font-black shadow-sm ${rt.cls}`}>
-                                <Clock className="mr-1.5 h-3.5 w-3.5" /> {rt.label}
-                              </span>
+                              {!sendOutCard && (
+                                <span title={rt.title || undefined} className={`inline-flex items-center justify-center rounded-2xl px-3 py-2 text-xs font-black shadow-sm ${rt.cls}`}>
+                                  <Clock className="mr-1.5 h-3.5 w-3.5" /> {rt.label}
+                                </span>
+                              )}
                             </div>
                           </div>
 
@@ -79393,6 +79416,7 @@ ${waybillLineItems(w).length > 1
                             void responseTick;
                             return responseTimeColor(order, status);
                           })();
+                          const sendOutInline = renderSendOutTimer(order, "inline", "mt-1.5");
                           return (
                             <tr key={order.id} className={`group hover:bg-gray-50 dark:hover:bg-[#16212c]/80 transition-colors ${selectedOrderIds.has(order.id) ? "bg-blue-50 dark:bg-sky-950/40" : ""}`}>
                               {canUseAdminOrderActions && (
@@ -79441,9 +79465,9 @@ ${waybillLineItems(w).length > 1
                               </td>
                               <td className="px-3 py-3.5 align-top">
                                 {renderOrderStatusSummary(order)}
-                                {renderSendOutTimer(order, "inline", "mt-1.5")}
-                                {responseTime.label !== "-" && (
-                                  <span className={`mt-2 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${responseTime.cls}`}>
+                                {sendOutInline}
+                                {responseTime.label !== "-" && !sendOutInline && (
+                                  <span title={responseTime.title || undefined} className={`mt-2 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${responseTime.cls}`}>
                                     <Clock className="mr-1 h-3 w-3" /> {responseTime.label}
                                   </span>
                                 )}

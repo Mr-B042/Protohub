@@ -5,7 +5,7 @@ import ts from "typescript";
 
 const source = await readFile(new URL("../src/lib/late-send-clock.ts", import.meta.url), "utf8");
 const { outputText } = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.ESNext } });
-const { sendOutTimer, lateSendWindow, minutesText, lagosTimeText } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+const { sendOutTimer, lateSendWindow, minutesText, lagosTimeText, responseResult, responseTimeText } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
 
 const lagos = (iso) => Date.parse(`${iso}+01:00`);
 
@@ -54,4 +54,26 @@ test("orders before the rule started have no timer", () => {
 test("matches the backend window for a Saturday 5:20pm order", () => {
   const { deadlineMs } = lateSendWindow(lagos("2026-11-07T17:20:00"));
   assert.equal(deadlineMs, lagos("2026-11-09T11:05:00")); // 10 min Sat, Sunday closed, 5 min Monday from 11
+});
+
+test("Quick / Late response: same deadline as the fine (6 Nov 2026)", () => {
+  const iso = (value) => new Date(lagos(value)).toISOString();
+  // Thu 10:15 order, sent 10:21 -> quick in 6 min.
+  const quick = responseResult({ placedAt: iso("2026-11-05T10:15:00"), sentOutAt: iso("2026-11-05T10:21:00") });
+  assert.equal(quick.state, "quick");
+  assert.equal(responseTimeText(quick.workingMs), "6 min");
+  // Exactly on the deadline is still quick; one second past is late (backend minutesLate).
+  assert.equal(responseResult({ placedAt: iso("2026-11-05T10:15:00"), sentOutAt: iso("2026-11-05T10:30:00") }).state, "quick");
+  const late = responseResult({ placedAt: iso("2026-11-05T10:15:00"), sentOutAt: iso("2026-11-05T10:57:00") });
+  assert.equal(late.state, "late");
+  assert.equal(responseTimeText(late.workingMs), "42 min");
+  // 5:25pm order sent 10:05am next day: 5 + 5 working minutes = quick.
+  const night = responseResult({ placedAt: iso("2026-11-05T17:25:00"), sentOutAt: iso("2026-11-06T10:05:00") });
+  assert.equal(night.state, "quick");
+  assert.equal(responseTimeText(night.workingMs), "10 min");
+  // Sent at 11pm, before the clock starts next morning.
+  assert.equal(responseTimeText(responseResult({ placedAt: iso("2026-11-05T22:00:00"), sentOutAt: iso("2026-11-05T23:00:00") }).workingMs), "under 1 min");
+  // Reassigned after it was sent out: not this rep's response.
+  assert.equal(responseResult({ placedAt: iso("2026-11-05T10:00:00"), assignedAt: iso("2026-11-05T12:00:00"), sentOutAt: iso("2026-11-05T10:05:00") }), null);
+  assert.equal(responseResult({ placedAt: iso("2026-11-05T10:00:00") }), null);
 });
