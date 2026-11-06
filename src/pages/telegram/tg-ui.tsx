@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Bell, BarChart3, Box, CheckCircle2, Clock, Megaphone, MessageSquare, Send, ShoppingCart, Truck, XCircle, type LucideIcon } from "lucide-react";
+import { Bell, BarChart3, Box, CheckCircle2, ClipboardList, Clock, Megaphone, MessageSquare, Send, ShoppingCart, Truck, UserCheck, XCircle, type LucideIcon } from "lucide-react";
 
 /** Shared pieces of the Telegram Automation Center (Bright, 6 Nov 2026). */
 
@@ -30,7 +30,9 @@ export const roleShort = (role: string) => ROLE_SHORT[role] ?? role;
 type Look = { Icon: LucideIcon; tint: string; icon: string };
 const LOOKS: Record<string, Look> = {
   order_new: { Icon: ShoppingCart, tint: "bg-emerald-50 dark:bg-emerald-500/10", icon: "text-emerald-600" },
-  order_assigned: { Icon: ShoppingCart, tint: "bg-emerald-50 dark:bg-emerald-500/10", icon: "text-emerald-600" },
+  order_assigned: { Icon: UserCheck, tint: "bg-emerald-50 dark:bg-emerald-500/10", icon: "text-emerald-600" },
+  cart_assigned: { Icon: ShoppingCart, tint: "bg-orange-50 dark:bg-orange-500/10", icon: "text-orange-600" },
+  weekly_rep_note: { Icon: ClipboardList, tint: "bg-amber-50 dark:bg-amber-500/10", icon: "text-amber-700" },
   send_out_soon: { Icon: Clock, tint: "bg-amber-50 dark:bg-amber-500/10", icon: "text-amber-600" },
   follow_up_due: { Icon: Clock, tint: "bg-amber-50 dark:bg-amber-500/10", icon: "text-amber-600" },
   order_failed: { Icon: XCircle, tint: "bg-rose-50 dark:bg-rose-500/10", icon: "text-rose-600" },
@@ -57,7 +59,8 @@ export const GROUP_LOOK: Record<string, Look> = {
 };
 
 export const TRIGGER_NAME: Record<string, string> = {
-  order_new: "New order", order_assigned: "Order assigned", send_out_soon: "Follow-up reminder", follow_up_due: "Follow-up due",
+  order_new: "New order", order_assigned: "Order assigned", cart_assigned: "Cart assigned", weekly_rep_note: "Weekly late & fines note",
+  send_out_soon: "Follow-up reminder", follow_up_due: "Follow-up due",
   order_confirmed: "Order confirmed", order_delivered: "Order delivered", order_failed: "Delivery failed", order_cancelled: "Order cancelled",
   order_rescheduled: "Order rescheduled", low_stock: "Low stock", daily_report: "Daily report", weekly_report: "Weekly report",
   announcement: "Announcement", command: "Bot reply", test: "Test / sample", app_alert: "App alert"

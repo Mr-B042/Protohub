@@ -60,12 +60,14 @@ export const tgWebhookInfo = (token: string) => tgCall<TgWebhookInfo>(token, "ge
 export const tgSetCommands = (token: string, commands: Array<{ command: string; description: string }>) =>
   tgCall<boolean>(token, "setMyCommands", { commands });
 
-export function tgSendMessage(token: string, chatId: string | number, text: string, keyboard?: TgKeyboard) {
+/** silent: arrives without a sound (quiet hours); it is still there to read. */
+export function tgSendMessage(token: string, chatId: string | number, text: string, keyboard?: TgKeyboard, silent = false) {
   return tgCall<TgMessage>(token, "sendMessage", {
     chat_id: chatId,
     text,
     parse_mode: "HTML",
     disable_web_page_preview: true,
+    ...(silent ? { disable_notification: true } : {}),
     ...(keyboard && keyboard.length ? { reply_markup: { inline_keyboard: keyboard } } : {})
   });
 }

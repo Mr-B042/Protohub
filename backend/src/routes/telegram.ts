@@ -7,7 +7,7 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 import { addDaysToDateKey, lagosDateKey } from "../lib/sales-bonus-engine.js";
 import { looksLikeBotToken, tgWebhookInfo } from "../lib/telegram-api.js";
 import {
-  COMMANDS, FORWARD_GROUPS, PERFORMANCE_GROUPS, TELEGRAM_ROLES, TRIGGERS, TRIGGER_KEYS, announcementDraft, cleanCommandSettings,
+  COMMANDS, FORWARD_GROUPS, PERFORMANCE_GROUPS, TELEGRAM_ROLES, TRIGGERS, TRIGGER_KEYS, allowedRoles, announcementDraft, cleanCommandSettings, cleanQuiet,
   cleanRecipients, cleanSettings, groupOf, isTriggerKey, recipientLabel, successRate, triggerLabel, type CommandKey
 } from "../lib/telegram-rules.js";
 import {
@@ -169,7 +169,8 @@ router.get("/bot", owner, async (req, res) => {
       bot: botOut(bot),
       webhookUrl: webhookUrlFor(req.user!.orgId),
       webhook: info && info.ok ? { url: info.result.url, pending: info.result.pending_update_count, lastErrorAt: info.result.last_error_date ? new Date(info.result.last_error_date * 1000).toISOString() : null, lastErrorMessage: info.result.last_error_message ?? null } : null,
-      appUrl: process.env.FRONTEND_URL?.split(",")[0]?.trim() || null
+      appUrl: process.env.FRONTEND_URL?.split(",")[0]?.trim() || null,
+      quiet: cleanQuiet(bot?.settings.quiet)
     });
   } catch (error) { fail(res, error, "Could not load the bot."); }
 });
@@ -182,6 +183,15 @@ router.post("/bot", owner, async (req, res) => {
 
 router.delete("/bot", owner, async (req, res) => {
   try { await disconnectBot(req.user!.orgId); res.json({ ok: true }); } catch (error) { fail(res, error, "Could not disconnect the bot."); }
+});
+
+/** Quiet hours: night messages arrive without a sound. */
+router.patch("/bot/settings", owner, async (req, res) => {
+  try {
+    const quiet = cleanQuiet(req.body?.quiet);
+    await saveBotSettings(req.user!.orgId, { quiet });
+    res.json({ ok: true, quiet });
+  } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Could not save." }); }
 });
 
 router.post("/bot/check", owner, async (req, res) => {
@@ -216,7 +226,7 @@ router.get("/automations", owner, async (req, res) => {
     if (await getBot(req.user!.orgId)) await ensureDefaultAutomations(req.user!.orgId);
     res.json({
       automations: (await automationsFor(req.user!.orgId, true)).map(automationOut),
-      triggers: TRIGGER_KEYS.map((key) => ({ key, label: TRIGGERS[key].label, description: TRIGGERS[key].description, settings: TRIGGERS[key].settings, repApplies: TRIGGERS[key].repApplies, group: TRIGGERS[key].group })),
+      triggers: TRIGGER_KEYS.map((key) => ({ key, label: TRIGGERS[key].label, description: TRIGGERS[key].description, settings: TRIGGERS[key].settings, repApplies: TRIGGERS[key].repApplies, group: TRIGGERS[key].group, roles: allowedRoles(key) })),
       roles: TELEGRAM_ROLES
     });
   } catch (error) { fail(res, error, "Could not load automations."); }

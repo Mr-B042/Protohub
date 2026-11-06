@@ -5145,7 +5145,8 @@ export type TelegramAutomation = {
   id: string; trigger: string; name: string; enabled: boolean; builtIn: boolean; recipients: TelegramRecipients; settings: TelegramAutomationSettings;
   triggerLabel: string; recipientLabel: string; group: string; description: string; updatedAt: string;
 };
-export type TelegramTrigger = { key: string; label: string; description: string; settings: Array<"minutesBefore" | "threshold" | "hour" | "weekday">; repApplies: boolean; group: string };
+export type TelegramTrigger = { key: string; label: string; description: string; settings: Array<"minutesBefore" | "threshold" | "hour" | "weekday">; repApplies: boolean; group: string; roles?: string[] };
+export type TelegramQuiet = { on: boolean; from: number; to: number };
 export type TelegramStaff = { id: string; name: string; role: string; linked: boolean; telegramUsername: string | null; telegramName: string | null; linkedAt: string | null };
 export type TelegramOverview = {
   bot: TelegramBotInfo | null; period: string;
@@ -5162,7 +5163,8 @@ export const telegramApi = {
   linkMe: () => post<{ url: string; expiresAt: string }>("/api/telegram/me/link", {}),
   unlinkMe: () => del<{ ok: boolean }>("/api/telegram/me/link"),
   overview: (period: string) => get<TelegramOverview>(`/api/telegram/overview?period=${encodeURIComponent(period)}`),
-  bot: () => get<{ bot: TelegramBotInfo | null; webhookUrl: string | null; webhook: { url: string; pending: number; lastErrorAt: string | null; lastErrorMessage: string | null } | null; appUrl: string | null }>("/api/telegram/bot"),
+  bot: () => get<{ bot: TelegramBotInfo | null; webhookUrl: string | null; webhook: { url: string; pending: number; lastErrorAt: string | null; lastErrorMessage: string | null } | null; appUrl: string | null; quiet: TelegramQuiet }>("/api/telegram/bot"),
+  saveQuiet: (quiet: TelegramQuiet) => patch<{ ok: boolean; quiet: TelegramQuiet }>("/api/telegram/bot/settings", { quiet }),
   connect: (token: string) => post<{ bot: TelegramBotInfo }>("/api/telegram/bot", { token }),
   disconnect: () => del<{ ok: boolean }>("/api/telegram/bot"),
   check: () => post<{ ok: boolean; bot: TelegramBotInfo | null }>("/api/telegram/bot/check", {}),

@@ -27,7 +27,12 @@ export const ROLE_SHORT: Record<string, string> = {
 
 export type TriggerKey =
   | "order_new" | "order_assigned" | "order_confirmed" | "order_delivered" | "order_failed" | "order_cancelled" | "order_rescheduled"
-  | "send_out_soon" | "follow_up_due" | "low_stock" | "daily_report" | "weekly_report";
+  | "cart_assigned" | "send_out_soon" | "follow_up_due" | "low_stock" | "daily_report" | "weekly_report" | "weekly_rep_note";
+
+/** Reports carry company-wide figures: leadership only (Bright, 6 Nov 2026). */
+export const LEADERSHIP_ROLES = ["Owner", "Admin", "Manager"];
+/** The weekly late & fines note: each sales rep gets their own. */
+const REP_NOTE_ROLES = ["Sales Rep"];
 
 /** Message kinds that are not automations but still go in the log. */
 export type OtherKind = "announcement" | "app_alert" | "test" | "command";
@@ -56,7 +61,8 @@ type TriggerDef = {
 
 export const TRIGGERS: Record<TriggerKey, TriggerDef> = {
   order_new: { label: "Order Created", description: "A new order comes in.", group: "new_orders", settings: [], repApplies: true },
-  order_assigned: { label: "Order Assigned", description: "An order is given to a rep.", group: "new_orders", settings: [], repApplies: true },
+  order_assigned: { label: "Order Assigned", description: "An order is given (or moved) to a rep.", group: "new_orders", settings: [], repApplies: true },
+  cart_assigned: { label: "Cart Assigned", description: "An abandoned cart is given to a rep to call.", group: "new_orders", settings: [], repApplies: true },
   send_out_soon: { label: "Deadline Near", description: "A New order has only a few working minutes left before the 15-minute send-out limit.", group: "follow_ups", settings: ["minutesBefore"], repApplies: true },
   follow_up_due: { label: "Follow-up Due", description: "A scheduled call or follow-up on an order is due.", group: "follow_ups", settings: [], repApplies: true },
   order_confirmed: { label: "Order Confirmed", description: "An order moves to Confirmed.", group: "delivery", settings: [], repApplies: true },
@@ -66,7 +72,8 @@ export const TRIGGERS: Record<TriggerKey, TriggerDef> = {
   order_rescheduled: { label: "Order Rescheduled", description: "A delivery date is moved.", group: "delivery", settings: [], repApplies: true },
   low_stock: { label: "Stock ≤ {threshold}", description: "A hub's usable stock of a product it has been selling drops to the limit or below.", group: "stock", settings: ["threshold"], repApplies: false },
   daily_report: { label: "Scheduled (Daily)", description: "Yesterday's business summary, every morning.", group: "reports", settings: ["hour"], repApplies: false },
-  weekly_report: { label: "Scheduled (Weekly)", description: "Last week's business summary, once a week.", group: "reports", settings: ["weekday", "hour"], repApplies: false }
+  weekly_report: { label: "Scheduled (Weekly)", description: "Last week's business summary, once a week.", group: "reports", settings: ["weekday", "hour"], repApplies: false },
+  weekly_rep_note: { label: "Scheduled (Weekly, each rep)", description: "Each sales rep's own late send-outs and fines last week.", group: "reports", settings: ["weekday", "hour"], repApplies: false }
 };
 
 export const TRIGGER_KEYS = Object.keys(TRIGGERS) as TriggerKey[];
@@ -80,12 +87,16 @@ export type DefaultAutomation = { trigger: TriggerKey; name: string; enabled: bo
 /** The automations every organisation starts with (built in: can be paused, not deleted). */
 export const DEFAULT_AUTOMATIONS: DefaultAutomation[] = [
   { trigger: "order_new", name: "New Order Alert", enabled: true, recipients: { roles: [], assignedRep: true, userIds: [] }, settings: {} },
+  // A reassigned order reached its new rep only if someone made this by hand.
+  { trigger: "order_assigned", name: "Order Assigned Alert", enabled: true, recipients: { roles: [], assignedRep: true, userIds: [] }, settings: {} },
+  { trigger: "cart_assigned", name: "Cart Assigned Alert", enabled: true, recipients: { roles: [], assignedRep: true, userIds: [] }, settings: {} },
   { trigger: "send_out_soon", name: "Follow-up Reminder", enabled: true, recipients: { roles: [], assignedRep: true, userIds: [] }, settings: { minutesBefore: 5 } },
   { trigger: "follow_up_due", name: "Follow-up Due", enabled: true, recipients: { roles: [], assignedRep: true, userIds: [] }, settings: {} },
   { trigger: "order_failed", name: "Failed Delivery Alert", enabled: true, recipients: { roles: ["Inventory Manager & Logistics Operations"], assignedRep: false, userIds: [] }, settings: {} },
   { trigger: "low_stock", name: "Low Stock Alert", enabled: true, recipients: { roles: ["Inventory Manager", "Inventory Manager & Logistics Operations"], assignedRep: false, userIds: [] }, settings: { threshold: 5 } },
   { trigger: "daily_report", name: "Daily Sales Report", enabled: true, recipients: { roles: ["Owner"], assignedRep: false, userIds: [] }, settings: { hour: 9 } },
-  { trigger: "weekly_report", name: "Weekly Sales Report", enabled: true, recipients: { roles: ["Owner"], assignedRep: false, userIds: [] }, settings: { weekday: 1, hour: 9 } }
+  { trigger: "weekly_report", name: "Weekly Sales Report", enabled: true, recipients: { roles: ["Owner"], assignedRep: false, userIds: [] }, settings: { weekday: 1, hour: 9 } },
+  { trigger: "weekly_rep_note", name: "Weekly Late & Fines Note", enabled: true, recipients: { roles: ["Sales Rep"], assignedRep: false, userIds: [] }, settings: { weekday: 1, hour: 9 } }
 ];
 
 const ROLE_SET = new Set<string>(TELEGRAM_ROLES);
@@ -94,10 +105,23 @@ const clampInt = (value: unknown, min: number, max: number, fallback: number) =>
   return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
 };
 
+/** Who an automation may name at all (reports: leadership; the rep note: sales reps). */
+export function allowedRoles(trigger: TriggerKey): readonly string[] {
+  if (trigger === "daily_report" || trigger === "weekly_report") return LEADERSHIP_ROLES;
+  if (trigger === "weekly_rep_note") return REP_NOTE_ROLES;
+  return TELEGRAM_ROLES;
+}
+
+/** May this person get what this automation sends? (Checked again at send time.) */
+export function roleMayReceive(trigger: string, role: string) {
+  return isTriggerKey(trigger) ? allowedRoles(trigger).includes(role) : true;
+}
+
 export function cleanRecipients(trigger: TriggerKey, raw: unknown): Recipients {
   const r = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+  const allowed = new Set(allowedRoles(trigger));
   return {
-    roles: Array.isArray(r.roles) ? [...new Set(r.roles.filter((x): x is string => typeof x === "string" && ROLE_SET.has(x)))] : [],
+    roles: Array.isArray(r.roles) ? [...new Set(r.roles.filter((x): x is string => typeof x === "string" && ROLE_SET.has(x) && allowed.has(x)))] : [],
     assignedRep: TRIGGERS[trigger].repApplies && r.assignedRep === true,
     userIds: Array.isArray(r.userIds) ? [...new Set(r.userIds.filter((x): x is string => typeof x === "string" && /^[0-9a-f-]{36}$/i.test(x)))].slice(0, 100) : []
   };
@@ -138,6 +162,8 @@ export type OrderInfo = {
   id: string; customer: string | null; phone: string | null; productName: string | null; packageName: string | null;
   quantity: number | null; amount: number | null; city: string | null; state: string | null; status: string | null;
   repName: string | null; callOutcome: string | null;
+  /** Held for review (possible repeat order). */
+  held?: boolean;
 };
 
 export type Draft = { title: string; text: string; keyboard: KeyboardSpec };
@@ -170,6 +196,7 @@ export function orderDraft(trigger: TriggerKey, order: OrderInfo, role: string):
   const customerOk = seesCustomer(role);
   const lines = [
     `${head.icon} <b>${head.title}</b>`,
+    ...(order.held ? [`⚠️ <b>Held for review</b>: possibly a repeat order from this number. Check it before calling.`] : []),
     `Order ID: #${tgEscape(order.id)}`,
     `Product: ${tgEscape(productLine(order))}${order.quantity && order.quantity > 1 ? ` × ${order.quantity}` : ""}`,
     ...(customerOk && order.amount != null ? [`Amount: ${naira(order.amount)}`] : []),
@@ -263,6 +290,73 @@ export function reportDraft(kind: "daily_report" | "weekly_report", report: Busi
   return { title: `${head} sent – ${report.label}`, text: lines.join("\n"), keyboard: [[{ text: "📈 Open Dashboard", path: "/dashboard" }]] };
 }
 
+export type CartInfo = { id: string; customer: string | null; productName: string | null; packageName: string | null; amount: number | null; city: string | null; state: string | null; repName: string | null };
+
+/** A cart given to a rep to call. */
+export function cartDraft(cart: CartInfo, role: string): Draft {
+  const customerOk = seesCustomer(role);
+  const product = [cart.productName, cart.packageName && cart.packageName !== cart.productName ? cart.packageName : null].filter(Boolean).join(" · ");
+  const place = [cart.city, cart.state].filter(Boolean).join(", ");
+  return {
+    title: `Cart assigned${cart.repName ? ` to ${cart.repName}` : ""}`,
+    text: [
+      `🛒 <b>CART GIVEN TO ${cart.repName && role !== "Sales Rep" ? tgEscape(cart.repName.toUpperCase()) : "YOU"}</b>`,
+      `Product: ${tgEscape(product || "Cart")}`,
+      ...(customerOk && cart.amount != null ? [`Value: ${naira(cart.amount)}`] : []),
+      ...(customerOk && cart.customer ? [`Customer: ${tgEscape(cart.customer)}`] : []),
+      ...(place ? [`Location: ${tgEscape(place)}`] : []),
+      `Call within 10 minutes.`
+    ].join("\n"),
+    keyboard: [[
+      ...(customerOk ? [{ text: "📞 Call Customer", callback: `callcart:${cart.id}` }] : []),
+      { text: "👁 View Cart", path: role === "Sales Rep" ? "/dashboard/sales-rep/abandoned-carts" : `/dashboard/admin/abandoned-carts/${cart.id}` }
+    ]]
+  };
+}
+
+export type RepWeekNote = {
+  label: string;
+  lateSendOuts: number;
+  lateExamples: Array<{ orderId: string; minutesLate: number }>;
+  fines: Array<{ amount: number; reason: string }>;
+};
+
+/** Monday's note to each rep: their own late send-outs and fines last week. */
+export function repWeekNoteDraft(note: RepWeekNote): Draft {
+  const total = note.fines.reduce((sum, fine) => sum + (Number(fine.amount) || 0), 0);
+  const clean = note.lateSendOuts === 0 && note.fines.length === 0;
+  return {
+    title: `Weekly late & fines note – ${note.label}`,
+    text: clean
+      ? `✅ <b>Last week · ${tgEscape(note.label)}</b>\nNo late send-outs and no fines. Well done.`
+      : [
+          `📋 <b>Last week · ${tgEscape(note.label)}</b>`,
+          `Orders sent out late (past 15 min): <b>${note.lateSendOuts}</b>`,
+          ...note.lateExamples.slice(0, 5).map((row) => `  • #${tgEscape(row.orderId)}: ${row.minutesLate} min late`),
+          `Fines: <b>${note.fines.length}</b>${note.fines.length ? ` · ${naira(total)}` : ""}`,
+          ...note.fines.slice(0, 5).map((fine) => `  • ${naira(fine.amount)} – ${tgEscape(String(fine.reason ?? "").split("\n")[0].slice(0, 90))}`),
+          ``,
+          `If a fine is wrong, appeal it in Protohub.`
+        ].join("\n"),
+    keyboard: [[{ text: "Open my Bonuses", path: "/dashboard/sales-rep" }]]
+  };
+}
+
+export type QuietHours = { on: boolean; from: number; to: number };
+export const DEFAULT_QUIET: QuietHours = { on: true, from: 21, to: 7 };
+
+export function cleanQuiet(raw: unknown): QuietHours {
+  const r = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+  return { on: typeof r.on === "boolean" ? r.on : DEFAULT_QUIET.on, from: clampInt(r.from, 0, 23, DEFAULT_QUIET.from), to: clampInt(r.to, 0, 23, DEFAULT_QUIET.to) };
+}
+
+/** Inside quiet hours (Lagos), messages arrive without a sound. */
+export function isQuietTime(nowMs: number, quiet: QuietHours) {
+  if (!quiet.on || quiet.from === quiet.to) return false;
+  const hour = new Date(nowMs + 60 * 60_000).getUTCHours();
+  return quiet.from < quiet.to ? hour >= quiet.from && hour < quiet.to : hour >= quiet.from || hour < quiet.to;
+}
+
 export type RepDay = {
   label: string;
   ordersIn: number;
@@ -271,8 +365,8 @@ export type RepDay = {
   delivered: number;
   stillNew: number;
   lateNow: number;
-  /** The Bonuses screen's "Bonus earned" this week; null when it could not be worked out. */
-  bonus: { earned: number; deliveredCount: number } | null;
+  /** The Bonuses screen's "Bonus earned" this week; null = could not be worked out, undefined = no bonus line (not a sales rep). */
+  bonus?: { earned: number; deliveredCount: number } | null;
 };
 
 /** /today for a sales rep: their own day and their own bonus, never revenue. */
@@ -283,10 +377,12 @@ export function repTodayDraft(day: RepDay): string {
     `Sent out of New: ${day.sentOut}${day.sentLate ? ` (${day.sentLate} late)` : ""}`,
     `Delivered today: <b>${day.delivered}</b>`,
     `Still New: ${day.stillNew}${day.lateNow ? ` (${day.lateNow} past the 15 min)` : ""}`,
-    ``,
-    day.bonus
-      ? `💰 Your bonus this week: <b>${naira(day.bonus.earned)}</b> (from ${day.bonus.deliveredCount} delivered order${day.bonus.deliveredCount === 1 ? "" : "s"})`
-      : `💰 Your bonus this week: open Bonuses in Protohub to see it.`
+    ...(day.bonus === undefined ? [] : [
+      ``,
+      day.bonus
+        ? `💰 Your bonus this week: <b>${naira(day.bonus.earned)}</b> (from ${day.bonus.deliveredCount} delivered order${day.bonus.deliveredCount === 1 ? "" : "s"})`
+        : `💰 Your bonus this week: open Bonuses in Protohub to see it.`
+    ])
   ].join("\n");
 }
 
@@ -347,16 +443,28 @@ export function cleanCommandSettings(raw: unknown): Record<CommandKey, boolean> 
 // ── App alerts that can also go to Telegram ─────────────────────────────────
 
 /** Phone-alert kinds the Automations tab already covers: never forwarded twice. */
-export const AUTOMATION_KINDS = new Set(["order_new", "order_assigned", "order_failed", "order_follow_up", "low_stock", "test_push"]);
+export const AUTOMATION_KINDS = new Set(["order_new", "order_assigned", "order_failed", "order_follow_up", "low_stock", "abandoned_cart_assigned", "test_push", "telegram_notice"]);
 
 export const FORWARD_GROUPS: Array<{ key: string; label: string; hint: string; kinds: string[] }> = [
-  { key: "orders", label: "Order updates", hint: "Confirmed, delivered, cancelled, rescheduled and recovered orders.", kinds: ["order_confirmed", "order_delivered", "order_cancelled", "order_rescheduled", "order_recovered"] },
+  { key: "orders", label: "Order updates", hint: "Confirmed, delivered, cancelled and rescheduled orders.", kinds: ["order_confirmed", "order_delivered", "order_cancelled", "order_rescheduled"] },
   { key: "late_send", label: "Orders not sent out in 15 min", hint: "A rep left an order in New past 15 working minutes.", kinds: ["order_late_send"] },
-  { key: "carts", label: "Abandoned carts", hint: "New abandoned carts and carts given to a rep to call.", kinds: ["cart_new", "cart_assigned"] },
+  { key: "carts", label: "New abandoned carts", hint: "A customer left the order form without finishing (carts given to a rep are an Automation).", kinds: ["abandoned_cart_new"] },
   { key: "ads", label: "Campaigns with no order", hint: "A running campaign brought no order for 3 full days.", kinds: ["campaign_no_orders"] },
   { key: "deliveries", label: "Scheduled delivery reminders", hint: "Deliveries due today and reminders on scheduled orders.", kinds: ["scheduled_delivery_reminder"] },
   { key: "other", label: "Everything else", hint: "Weekly reports, fines and appeals, challenges, bug reports and other phone alerts.", kinds: ["*"] }
 ];
+
+/**
+ * An order alert copied from the phone shares its "send once" key with the
+ * matching automation, so the same person never gets it twice (an "Order
+ * Delivered" automation and "Order updates" switched on together).
+ */
+export function forwardDedupeKey(kind: string | undefined, tag: string | undefined, day: string): string | null {
+  const k = String(kind ?? "");
+  const match = String(tag ?? "").match(/^order-(.+)-([A-Za-z]+)$/);
+  if (match && isTriggerKey(k)) return `${k}:${match[1]}:${match[2]}:${day}`;
+  return tag ? `app_alert:${tag}` : null;
+}
 
 /** Is this phone-alert kind switched on for Telegram? */
 export function kindForwarded(kind: string | undefined, enabledGroups: Set<string>) {

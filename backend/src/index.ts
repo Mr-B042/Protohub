@@ -70,7 +70,7 @@ import stockAllocationRoutes from "./routes/stock-allocations.js";
 import productPerformanceRoutes from "./routes/product-performance.js";
 import pageVisitRoutes from "./routes/page-visits.js";
 import telegramRoutes, { telegramWebhookRouter } from "./routes/telegram.js";
-import { runBotHealthChecks, runLowStock, runReports, runSendOutSoon } from "./lib/telegram.js";
+import { runBotHealthChecks, runLowStock, runReports, runRetries, runSendOutSoon, runTelegramCleanup } from "./lib/telegram.js";
 import fineAppealRoutes from "./routes/fine-appeals.js";
 import orderReceiptRoutes from "./routes/order-receipts.js";
 import notificationRoutingRoutes from "./routes/notification-routing.js";
@@ -800,6 +800,21 @@ cron.schedule("0 * * * *", async () => {
     logger.error("cron: telegram reports crashed", { error: (e as Error).message });
   }
 });
+// Send again what did not go through (server restarted mid-send, Telegram busy).
+cron.schedule("*/5 * * * *", async () => {
+  try {
+    const { resent } = await runRetries();
+    if (resent) logger.info("cron: telegram retries", { resent });
+  } catch (e) {
+    logger.error("cron: telegram retries crashed", { error: (e as Error).message });
+  }
+});
+// Message records older than 90 days, old connect codes.
+cron.schedule("40 3 * * *", async () => {
+  try { await runTelegramCleanup(); } catch (e) {
+    logger.error("cron: telegram cleanup crashed", { error: (e as Error).message });
+  }
+}, { timezone: "Africa/Lagos" });
 // Webhook check: the Overview's "Uptime" and "Webhook" come from this.
 cron.schedule("*/15 * * * *", async () => {
   try { await runBotHealthChecks(); } catch (e) {

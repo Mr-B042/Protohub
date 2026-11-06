@@ -1,7 +1,41 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, ExternalLink, Eye, EyeOff, KeyRound, Loader2, RefreshCw, Send, ShieldCheck, Unplug } from "lucide-react";
-import { telegramApi } from "../../lib/api";
-import { Card, CardHead, TgLogo, btn, dateTime, pct, sinceText } from "./tg-ui";
+import { CheckCircle2, ExternalLink, Eye, EyeOff, KeyRound, Loader2, Moon, RefreshCw, Send, ShieldCheck, Unplug } from "lucide-react";
+import { telegramApi, type TelegramQuiet } from "../../lib/api";
+import { Card, CardHead, HOURS, TgLogo, Toggle, btn, dateTime, pct, sinceText } from "./tg-ui";
+
+/** Quiet hours: night messages arrive without a sound, still there in the morning. */
+function QuietHoursCard({ initial, onToast }: { initial: TelegramQuiet; onToast: (message: string) => void }) {
+  const [quiet, setQuiet] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  const save = async (next: TelegramQuiet) => {
+    const before = quiet;
+    setQuiet(next);
+    setSaving(true);
+    try { await telegramApi.saveQuiet(next); onToast(next.on ? "Quiet hours saved." : "Quiet hours off: every message makes a sound."); } catch (err) { setQuiet(before); onToast((err as Error).message || "Could not save."); } finally { setSaving(false); }
+  };
+  const select = "h-10 rounded-xl border border-gray-200 bg-white px-3 text-[13.5px] dark:border-slate-700 dark:bg-slate-900";
+  return (
+    <Card className="p-5">
+      <div className="flex items-center gap-3">
+        <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-indigo-50"><Moon className="h-5 w-5 text-indigo-600" /></span>
+        <div className="min-w-0 flex-1">
+          <b className="block text-[15px] text-gray-900 dark:text-slate-50">Quiet hours</b>
+          <span className="text-[13px] text-gray-500">Messages in these hours arrive without a sound. Nothing is lost: they are there in the morning.</span>
+        </div>
+        <Toggle on={quiet.on} disabled={saving} label="Quiet hours on or off" onChange={(on) => save({ ...quiet, on })} />
+      </div>
+      {quiet.on && (
+        <div className="mt-4 flex flex-wrap items-center gap-2 text-[13.5px] text-gray-700 dark:text-slate-300">
+          From
+          <select aria-label="Quiet from" className={select} value={quiet.from} disabled={saving} onChange={(event) => save({ ...quiet, from: Number(event.target.value) })}>{HOURS.map((row) => <option key={row.value} value={row.value}>{row.label}</option>)}</select>
+          to
+          <select aria-label="Quiet until" className={select} value={quiet.to} disabled={saving} onChange={(event) => save({ ...quiet, to: Number(event.target.value) })}>{HOURS.map((row) => <option key={row.value} value={row.value}>{row.label}</option>)}</select>
+          <span className="text-gray-500">(Lagos time)</span>
+        </div>
+      )}
+    </Card>
+  );
+}
 
 type BotData = Awaited<ReturnType<typeof telegramApi.bot>>;
 
@@ -126,6 +160,8 @@ export default function TabBotConfig({ onToast, onChanged }: { onToast: (message
         </div>
         {replacing && <div className="mt-4 border-t border-gray-100 pt-4 dark:border-slate-800">{tokenForm}<p className="m-0 mt-2 text-[12.5px] text-gray-500">Same bot, new token: staff stay connected. A different bot: everyone connects again.</p></div>}
       </Card>
+      <div className="space-y-4">
+      <QuietHoursCard initial={data.quiet ?? { on: true, from: 21, to: 7 }} onToast={onToast} />
       <Card className="p-5">
         <b className="text-[16px] text-gray-900 dark:text-slate-50">How it works</b>
         <ul className="m-0 mt-3 list-disc space-y-2 pl-5 text-[13.5px] text-gray-700 dark:text-slate-300">
@@ -136,6 +172,7 @@ export default function TabBotConfig({ onToast, onChanged }: { onToast: (message
         </ul>
         <p className="m-0 mt-4 break-all rounded-xl bg-gray-50 px-3.5 py-3 text-[12px] text-gray-500 dark:bg-slate-800/60">Webhook address: {data.webhookUrl ?? "not available"}</p>
       </Card>
+      </div>
     </div>
   );
 }

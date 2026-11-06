@@ -3,6 +3,7 @@ import { getOrgPushBranding } from "./push-branding.js";
 import { sendPushToUsers } from "./push.js";
 import { supabase } from "./supabase.js";
 import { alertRecipients } from "./notification-routing.js";
+import { telegramCartAssigned } from "./telegram.js";
 
 type AbandonedCartAlertContext = {
   id: string;
@@ -101,6 +102,8 @@ export async function notifyCartAssignedToRep(
   orgId: string,
   cart: AbandonedCartAlertContext & { assignedRepId: string; assignedRepName: string }
 ) {
+  // Telegram has its own recipients (Telegram Automation Center → Cart Assigned Alert).
+  void telegramCartAssigned(orgId, cart.id, cart.assignedRepId);
   try {
     const { recipients, push } = await alertRecipients(orgId, "cart_assigned", cart.assignedRepId);
     if (recipients.size === 0) return;
