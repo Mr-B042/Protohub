@@ -5,7 +5,7 @@ import { makeCartId } from "../lib/cart-id";
 import { itemCountLabel } from "../lib/item-count-label";
 import { nigerianPhoneProblem } from "../lib/ng-phone";
 import { vagueAddressReason } from "../lib/nigeria";
-import { addressExampleFor, areaSuggestions, STATE_AREAS } from "../lib/ng-areas";
+import { addressExampleFor, areaSuggestions, KNOWN_AREA_NAMES, STATE_AREAS } from "../lib/ng-areas";
 import { announceLandingPreviewLocked, insideLandingPreview } from "../lib/landing-preview";
 import type { ProductCurrencyCode } from "../types";
 
@@ -262,10 +262,13 @@ const sanitizePhoneDigitsInput = (value: string) => {
   return digits.length === 12 && /^\d0[789]\d{9}$/.test(digits) ? digits.slice(1) : digits;
 };
 
-// Address that only repeats the state/city, or an email (Bright, 5 Nov 2026).
-const vagueAddressMessage = (reason: "place" | "email", state?: string) => reason === "email"
+// Address that only repeats the state/city, only names an area, or is an
+// email (Bright, 5 Nov 2026).
+const vagueAddressMessage = (reason: "place" | "short" | "email", state?: string) => reason === "email"
   ? "This looks like an email. Please type where we should deliver: your street, area or a nearby landmark."
-  : `You already gave us your state and city. Please add your house number, street and a nearby landmark so we can find you, e.g. ${addressExampleFor(state)}.`;
+  : reason === "short"
+    ? `Please add a little more so we can find you: your house number and street, or a nearby landmark, e.g. ${addressExampleFor(state)}.`
+    : `You already gave us your state and city. Please add your house number, street and a nearby landmark so we can find you, e.g. ${addressExampleFor(state)}.`;
 
 type PendingUpsellOffer = {
   orderId: string;
@@ -1657,7 +1660,7 @@ export default function PublicOrderFormPage() {
     && whatsappValid;
   const deliveryStepComplete = !!orderFormState.trim()
     && (!settings.addressRequired || !!orderFormAddress.trim())
-    && !vagueAddressReason(orderFormAddress, orderFormCity, orderFormState)
+    && !vagueAddressReason(orderFormAddress, orderFormCity, orderFormState, KNOWN_AREA_NAMES)
     && (!settings.cityRequired || !!orderFormCity.trim())
     && (!settings.askDelivery || !!orderFormDeliveryWindow.trim())
     && (!settings.requireConfirmation || orderFormConfirmed)
@@ -1771,7 +1774,7 @@ export default function PublicOrderFormPage() {
     } else if (orderFormWhatsapp.trim() && nigerianPhoneProblem(orderFormWhatsapp)) {
       nextErrors.whatsapp = nigerianPhoneProblem(orderFormWhatsapp)!;
     }
-    const addressVague = vagueAddressReason(orderFormAddress, orderFormCity, orderFormState);
+    const addressVague = vagueAddressReason(orderFormAddress, orderFormCity, orderFormState, KNOWN_AREA_NAMES);
     if (settings.addressRequired && !orderFormAddress.trim()) nextErrors.address = "Delivery address is required.";
     else if (addressVague) nextErrors.address = vagueAddressMessage(addressVague, orderFormState);
     if (settings.cityRequired && !orderFormCity.trim()) nextErrors.city = "City is required.";
@@ -3343,7 +3346,9 @@ export default function PublicOrderFormPage() {
           break;
         case "address":
           // Same event (its type list is a database check); the message tells them apart.
-          trackSubmitBlocked("submit_blocked_missing_address", orderFormAddress.trim() ? "Address only named the state or city." : "Delivery address is required.");
+          trackSubmitBlocked("submit_blocked_missing_address", !orderFormAddress.trim()
+            ? "Delivery address is required."
+            : vagueAddressReason(orderFormAddress, orderFormCity, orderFormState, KNOWN_AREA_NAMES) === "short" ? "Address was only one name or area." : "Address only named the state or city.");
           break;
         case "city":
           trackSubmitBlocked("submit_blocked_missing_city", "City is required.");
@@ -4926,7 +4931,7 @@ export default function PublicOrderFormPage() {
                       clearFieldError("address");
                     }}
                     onBlur={() => {
-                      const reason = vagueAddressReason(orderFormAddress, orderFormCity, orderFormState);
+                      const reason = vagueAddressReason(orderFormAddress, orderFormCity, orderFormState, KNOWN_AREA_NAMES);
                       if (reason) setFieldErrors((current) => ({ ...current, address: vagueAddressMessage(reason, orderFormState) }));
                     }}
                     placeholder={`House No. & Street${settings.addressRequired ? " *" : ""}`}
