@@ -69,7 +69,7 @@ async function finesBetween(ctx: InsightContext, from: string, to: string, repId
     repId: String(row.rep_id),
     repName: ctx.people.get(String(row.rep_id))?.name ?? String(row.rep_name ?? "Former rep"),
     amount: Number(row.amount ?? 0),
-    label: [row.type === LATE_SEND_FINE_TYPE ? "Late order send" : row.type === NO_FEE_CHARGE_TYPE ? "No delivery fee" : row.type, row.reason].filter(Boolean).join(" - ")
+    label: [row.type === LATE_SEND_FINE_TYPE ? "Late order send" : row.type === NO_FEE_CHARGE_TYPE ? "No delivery fee" : row.type === "waybill_follow_up_miss" ? "Waybill follow-up missed" : row.type, row.reason].filter(Boolean).join(" - ")
       + (row.remove_all_bonuses ? " (removes all bonuses at payroll)" : ""),
     date: lagosDateKey(String(row.created_at)),
     held: held.has(String(row.id))

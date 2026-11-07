@@ -26,7 +26,8 @@ export const ROLE_SHORT: Record<string, string> = {
 
 export type TriggerKey =
   | "order_new" | "order_assigned" | "order_confirmed" | "order_delivered" | "order_failed" | "order_cancelled" | "order_rescheduled"
-  | "cart_assigned" | "send_out_soon" | "follow_up_due" | "low_stock" | "daily_report" | "weekly_report" | "weekly_rep_note";
+  | "cart_assigned" | "send_out_soon" | "follow_up_due" | "low_stock" | "daily_report" | "weekly_report" | "weekly_rep_note"
+  | "waybill_follow_up_due" | "waybill_follow_up_missed";
 
 /** Reports carry company-wide figures: leadership only (Bright, 6 Nov 2026). */
 export const LEADERSHIP_ROLES = ["Owner", "Admin", "Manager"];
@@ -80,7 +81,10 @@ export const TRIGGERS: Record<TriggerKey, TriggerDef> = {
   low_stock: { label: "Stock ≤ {threshold}", description: "A hub's usable stock of a product it has been selling drops to the limit or below.", group: "stock", settings: ["threshold"], repApplies: false },
   daily_report: { label: "Scheduled (Daily)", description: "Yesterday's business summary, every morning.", group: "reports", settings: ["hour"], repApplies: false },
   weekly_report: { label: "Scheduled (Weekly)", description: "Last week's business summary, once a week.", group: "reports", settings: ["weekday", "hour"], repApplies: false },
-  weekly_rep_note: { label: "Scheduled (Weekly, each rep)", description: "Each sales rep's own late send-outs and fines last week.", group: "reports", settings: ["weekday", "hour"], repApplies: false }
+  weekly_rep_note: { label: "Scheduled (Weekly, each rep)", description: "Each sales rep's own late send-outs and fines last week.", group: "reports", settings: ["weekday", "hour"], repApplies: false },
+  // Waybill Follow-Up Center (Bright, 7 Nov 2026).
+  waybill_follow_up_due: { label: "Waybill Follow-Up Due", description: "Ten minutes before each waybill follow-up session (8, 10, 12, 2 and 4 PM) while waybills are waiting for the agent.", group: "delivery", settings: [], repApplies: false },
+  waybill_follow_up_missed: { label: "Waybill Follow-Up Missed", description: "Waybills were not followed up in a session (₦500 each, charged automatically).", group: "delivery", settings: [], repApplies: false }
 };
 
 export const TRIGGER_KEYS = Object.keys(TRIGGERS) as TriggerKey[];
@@ -108,7 +112,9 @@ export const DEFAULT_AUTOMATIONS: DefaultAutomation[] = [
   { trigger: "low_stock", name: "Low Stock Alert", enabled: true, recipients: { roles: ["Inventory Manager", "Inventory Manager & Logistics Operations"], assignedRep: false, userIds: [] }, settings: { threshold: 5 } },
   { trigger: "daily_report", name: "Daily Sales Report", enabled: true, recipients: { roles: ["Owner"], assignedRep: false, userIds: [] }, settings: { hour: 9 } },
   { trigger: "weekly_report", name: "Weekly Sales Report", enabled: true, recipients: { roles: ["Owner"], assignedRep: false, userIds: [] }, settings: { weekday: 1, hour: 9 } },
-  { trigger: "weekly_rep_note", name: "Weekly Late & Fines Note", enabled: true, recipients: { roles: ["Sales Rep"], assignedRep: false, userIds: [] }, settings: { weekday: 1, hour: 9 } }
+  { trigger: "weekly_rep_note", name: "Weekly Late & Fines Note", enabled: true, recipients: { roles: ["Sales Rep"], assignedRep: false, userIds: [] }, settings: { weekday: 1, hour: 9 } },
+  { trigger: "waybill_follow_up_due", name: "Waybill Follow-Up Reminder", enabled: true, recipients: { roles: ["Inventory Manager & Logistics Operations"], assignedRep: false, userIds: [] }, settings: {} },
+  { trigger: "waybill_follow_up_missed", name: "Waybill Follow-Up Missed", enabled: true, recipients: { roles: ["Owner", "Inventory Manager & Logistics Operations"], assignedRep: false, userIds: [] }, settings: {} }
 ];
 
 const ROLE_SET = new Set<string>(TELEGRAM_ROLES);
@@ -134,7 +140,7 @@ export function allowedRoles(trigger: TriggerKey): readonly string[] {
   if (trigger === "daily_report" || trigger === "weekly_report") return LEADERSHIP_ROLES;
   if (trigger === "weekly_rep_note") return REP_NOTE_ROLES;
   if (SALES_TRIGGERS.has(trigger)) return LEADERSHIP_ROLES;
-  if (DELIVERY_TRIGGERS.has(trigger) || trigger === "low_stock") return [...LEADERSHIP_ROLES, ...INVENTORY_ROLES];
+  if (DELIVERY_TRIGGERS.has(trigger) || trigger === "low_stock" || trigger === "waybill_follow_up_due" || trigger === "waybill_follow_up_missed") return [...LEADERSHIP_ROLES, ...INVENTORY_ROLES];
   return LEADERSHIP_ROLES;
 }
 
@@ -480,6 +486,45 @@ export function myOrdersDraft(input: MyOrders): string {
     ...(held.length ? [`⏸ Held for review, not counted (possible repeat orders): ${held.slice(0, 5).map((id) => `#${tgEscape(id)}`).join(", ")}${held.length > 5 ? ` and ${held.length - 5} more` : ""}. See Manager Dashboard → Needs Attention.`] : []),
     `Follow-ups due by end of today: ${input.followUps}`
   ].join("\n");
+}
+
+// ── Waybill Follow-Up Center (Bright, 7 Nov 2026) ───────────────────────────
+
+const WAYBILL_PATH = "/dashboard/admin/inventory-logistics-operations/waybill-follow-up";
+export type WaybillLine = { id: string; place: string; agent: string };
+
+/** Ten minutes before a session: what is owed and until when. */
+export function waybillDueDraft(input: { label: string; timeLabel: string; opens: string; closes: string; waybills: WaybillLine[]; amount: number; charged: boolean }): Draft {
+  return {
+    title: `Waybill follow-ups due at ${input.timeLabel}`,
+    text: [
+      `⏰ <b>Waybill follow-ups · ${tgEscape(input.label)} (${tgEscape(input.timeLabel)})</b>`,
+      `${input.waybills.length} waybill${input.waybills.length === 1 ? " is" : "s are"} still waiting for the agent. Log each one between ${tgEscape(input.opens)} and ${tgEscape(input.closes)}.`,
+      ...input.waybills.slice(0, 12).map((row) => `• ${tgEscape(row.id)} – ${tgEscape(row.place || "?")}, ${tgEscape(row.agent)}`),
+      ...(input.waybills.length > 12 ? [`…and ${input.waybills.length - 12} more`] : []),
+      input.charged ? `Each waybill not followed up costs ${naira(input.amount)}.` : `Practice days: nothing is charged yet.`
+    ].join("\n"),
+    keyboard: [[{ text: "Open Follow-Up Center", path: WAYBILL_PATH }]]
+  };
+}
+
+/** After a session closed with waybills not followed up. */
+export function waybillMissedDraft(input: { timeLabel: string; dayLabel: string; waybills: WaybillLine[]; amount: number; charged: boolean; responsibleName: string | null; forResponsible: boolean }): Draft {
+  const total = input.amount * input.waybills.length;
+  const who = input.forResponsible ? "you" : input.responsibleName ?? "nobody (no one is set as responsible)";
+  return {
+    title: `Waybill follow-ups missed at ${input.timeLabel}`,
+    text: [
+      `❌ <b>Missed at ${tgEscape(input.timeLabel)} · ${tgEscape(input.dayLabel)}</b>`,
+      `${input.waybills.length} waybill${input.waybills.length === 1 ? " was" : "s were"} not followed up:`,
+      ...input.waybills.slice(0, 12).map((row) => `• ${tgEscape(row.id)} – ${tgEscape(row.place || "?")}, ${tgEscape(row.agent)}`),
+      ...(input.waybills.length > 12 ? [`…and ${input.waybills.length - 12} more`] : []),
+      input.charged
+        ? `Charged: <b>${naira(total)}</b> (${naira(input.amount)} each) to ${tgEscape(who)}.`
+        : `Not charged: ${tgEscape(input.responsibleName ? "practice days" : "nobody is set as responsible in Reports & Settings")}.`
+    ].join("\n"),
+    keyboard: [[{ text: "Open Follow-Up Center", path: WAYBILL_PATH }]]
+  };
 }
 
 export function announcementDraft(text: string, fromName: string): Draft {

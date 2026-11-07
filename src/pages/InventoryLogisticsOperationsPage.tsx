@@ -45,6 +45,8 @@ export type InventoryOperationsAction =
   | "transfers"
   | "dispatch"
   | "waybills"
+  // Waybill Follow-Up Center (Bright, 7 Nov 2026): rendered by App in place of this page.
+  | "waybill-follow-up"
   | "shipments"
   | "receiving"
   | "carriers"

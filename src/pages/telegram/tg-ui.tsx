@@ -41,6 +41,8 @@ const LOOKS: Record<string, Look> = {
   order_delivered: { Icon: Truck, tint: "bg-emerald-50 dark:bg-emerald-500/10", icon: "text-emerald-600" },
   order_rescheduled: { Icon: Truck, tint: "bg-sky-50 dark:bg-sky-500/10", icon: "text-sky-600" },
   low_stock: { Icon: Box, tint: "bg-violet-50 dark:bg-violet-500/10", icon: "text-violet-600" },
+  waybill_follow_up_due: { Icon: Clock, tint: "bg-violet-50 dark:bg-violet-500/10", icon: "text-violet-600" },
+  waybill_follow_up_missed: { Icon: XCircle, tint: "bg-rose-50 dark:bg-rose-500/10", icon: "text-rose-600" },
   daily_report: { Icon: CheckCircle2, tint: "bg-emerald-50 dark:bg-emerald-500/10", icon: "text-emerald-600" },
   weekly_report: { Icon: BarChart3, tint: "bg-indigo-50 dark:bg-indigo-500/10", icon: "text-indigo-600" },
   announcement: { Icon: Megaphone, tint: "bg-fuchsia-50 dark:bg-fuchsia-500/10", icon: "text-fuchsia-600" },
@@ -63,6 +65,7 @@ export const TRIGGER_NAME: Record<string, string> = {
   send_out_soon: "Follow-up reminder", follow_up_due: "Follow-up due",
   order_confirmed: "Order confirmed", order_delivered: "Order delivered", order_failed: "Delivery failed", order_cancelled: "Order cancelled",
   order_rescheduled: "Order rescheduled", low_stock: "Low stock", daily_report: "Daily report", weekly_report: "Weekly report",
+  waybill_follow_up_due: "Waybill follow-up due", waybill_follow_up_missed: "Waybill follow-up missed",
   announcement: "Announcement", command: "Bot reply", test: "Test / sample", app_alert: "App alert"
 };
 
