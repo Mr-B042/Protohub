@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  bestAt, changeText, compareDraft, finesLeaderDraft, finesRepDraft, fineTotals, productsDraft, rangeLabel, rankReps, repsDraft,
+  ESTIMATED_FINE, bestAt, changeText, compareDraft, finesLeaderDraft, finesRepDraft, fineTotals, productsDraft, rangeLabel, rankReps, repsDraft,
   shortNaira, trendDraft, upsellsDraft, wantsLastWeek, weekDraft, weekPeriods,
   type CompareSide, type FineItem, type RepRow, type TrendRow, type UpsellRow
 } from "./telegram-insights-rules.js";
@@ -109,8 +109,8 @@ test("/fines: a fine under appeal is shown apart and not added to the total", ()
   const period = weekPeriods("2026-11-06").thisWeek;
   assert.deepEqual(fineTotals(fines), { count: 2, amount: 2_500, heldCount: 1, heldAmount: 1_000 });
   const leader = finesLeaderDraft({ heading: "Fines · this week so far", period, fines, logs: { approved: 1_200, pending: 400 }, previous: { label: "Last week", fines: [] } }).text;
-  assert.match(leader, /Fines: <b>2<\/b> · <b>₦2,500<\/b>/);
-  assert.match(leader, /• Esther: 1 · ₦2,000\n• Chelsea: 1 · ₦500/);
+  assert.match(leader, /Fines charged: <b>2<\/b> · <b>₦2,500<\/b>/);
+  assert.match(leader, /• Esther: 1 fine · ₦2,000\n• Chelsea: 1 fine · ₦500/);
   assert.match(leader, /Under appeal \(not taken off yet\): 1 · ₦1,000/);
   assert.match(leader, /Missed logs: ₦1,200 approved · ₦400 waiting for approval/);
   const mine = finesRepDraft({ heading: "Your fines · this week so far", period, fines: fines.filter((fine) => fine.repId === "a"), logs: null, previous: null }).text;
@@ -158,4 +158,25 @@ test("the new commands are strictly for the Owner, Admins and Managers; /fines i
   assert.equal(commandsFor("Owner", enabled).length, COMMANDS.length);
   // A switched-off command leaves every menu.
   assert.ok(!commandsFor("Owner", cleanCommandSettings({ trend: false })).some((row) => row.key === "trend"));
+});
+
+test("/fines: late send-outs and no-fee orders still to decide show per rep at ₦1,000 each (7 Nov 2026)", () => {
+  assert.equal(ESTIMATED_FINE, 1_000);
+  const period = weekPeriods("2026-11-07").thisWeek;
+  const fines: FineItem[] = [
+    { repId: "a", repName: "Chelsea", amount: 500, label: "Late order send - Order #5932", date: "2026-11-03", held: false },
+    { repId: "b", repName: "Esther", amount: 2_000, label: "No delivery fee - Order #5900", date: "2026-11-05", held: false }
+  ];
+  const text = finesLeaderDraft({
+    heading: "Fines · this week so far", period, fines, logs: null, previous: null,
+    waiting: [
+      { repId: "a", repName: "Chelsea", lateSends: 2, noFee: 1 },
+      { repId: "c", repName: "Delight", lateSends: 3, noFee: 0 }
+    ]
+  }).text;
+  assert.match(text, /⏳ Waiting for a decision: <b>6 orders<\/b> · about <b>₦6,000<\/b> \(₦1,000 each until charged or skipped\)/);
+  // Most money first: what is charged plus the estimate.
+  assert.match(text, /• Chelsea: 1 fine · ₦500 \+ ≈₦3,000 waiting \(2 late send-outs, 1 no delivery fee\)\n• Delight: ≈₦3,000 waiting \(3 late send-outs\)\n• Esther: 1 fine · ₦2,000/);
+  // Nothing waiting: no waiting line.
+  assert.doesNotMatch(finesLeaderDraft({ heading: "Fines · last week", period, fines, logs: null, previous: null, waiting: [] }).text, /Waiting for a decision/);
 });
