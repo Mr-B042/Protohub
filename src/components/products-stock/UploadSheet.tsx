@@ -74,6 +74,20 @@ export function UploadSheet({ products, initialProductId, initialMode, initialLa
   const [reviewForm, setReviewForm] = useState<ReviewFormValue>(emptyReviewForm);
   const [amounts, setAmounts] = useState<ReviewAmounts | null>(null);
   const [consentFile, setConsentFile] = useState<File | null>(null);
+  // A written review's WhatsApp screenshot with the customer's number (Bright, 7 Nov 2026).
+  const [screenshot, setScreenshot] = useState<{ file: File; preview: string; sent: boolean } | null>(null);
+  const pickScreenshot = (file: File) => setScreenshot((current) => {
+    if (current) URL.revokeObjectURL(current.preview);
+    return { file, preview: URL.createObjectURL(file), sent: false };
+  });
+  const removeScreenshot = () => setScreenshot((current) => { if (current) URL.revokeObjectURL(current.preview); return null; });
+  // A chat screenshot added with the big buttons by mistake: move it into the WhatsApp screenshot box.
+  const moveToScreenshot = (id: string) => {
+    const item = picked.find((entry) => entry.id === id);
+    if (!item?.file || !item.preview) return;
+    setPicked((current) => current.filter((entry) => entry.id !== id));
+    setScreenshot((current) => { if (current) URL.revokeObjectURL(current.preview); return { file: item.file!, preview: item.preview!, sent: false }; });
+  };
   const [draftId, setDraftId] = useState<string | null>(null);
   const [reviewSent, setReviewSent] = useState(false);
   const [reviewError, setReviewError] = useState("");
@@ -130,7 +144,7 @@ export function UploadSheet({ products, initialProductId, initialMode, initialLa
   const product = products.find((entry) => entry.id === productId);
   const allDone = picked.length > 0 && picked.every((item) => item.state === "done" || item.problem);
 
-  const sendFile = async (item: Picked, opts: { productId: string; label: ProductMediaLabel; caption: string; batchId?: string; reviewId?: string; reviewPart?: "content" | "consent" }, signal: AbortSignal) => {
+  const sendFile = async (item: Picked, opts: { productId: string; label: ProductMediaLabel; caption: string; batchId?: string; reviewId?: string; reviewPart?: "content" | "consent" | "proof" }, signal: AbortSignal) => {
     if (!item.file) throw new Error("Nothing to send.");
     const maxPhotoBytes = (limits?.maxImageMb ?? 10) * 1024 * 1024;
     const kind = item.kind!;
@@ -150,7 +164,7 @@ export function UploadSheet({ products, initialProductId, initialMode, initialLa
     photos: picked.filter((item) => item.kind === "image" && !item.problem && (!isReview || item.file)).length,
     videos: picked.filter((item) => item.kind === "video" && !item.problem && (!isReview || item.file)).length
   }), [picked, isReview]);
-  const reviewProblemText = isReview ? reviewFormProblem(reviewForm, counts) : null;
+  const reviewProblemText = isReview ? reviewFormProblem(reviewForm, counts, !!screenshot) : null;
 
   /** A customer review: start it, send its files into it, then send it for approval. */
   const sendReview = async () => {
@@ -184,6 +198,14 @@ export function UploadSheet({ products, initialProductId, initialMode, initialLa
           patchPicked(item.id, { state: "failed", message: error?.message ?? "Could not send this file." });
           if (abort.current.signal.aborted) break;
         }
+      }
+      // The written review's WhatsApp screenshot: sent once, kept private on the server.
+      if (screenshot && !screenshot.sent && !abort.current.signal.aborted) {
+        const shot: Picked = { id: "screenshot", file: screenshot.file, url: null, name: screenshot.file.name, kind: "image", problem: null, preview: null, state: "sending", progress: 0, message: "" };
+        try {
+          await sendFile(shot, { productId: reviewProductId, label: "customer_review", caption: "", reviewId: reviewId!, reviewPart: "proof" }, abort.current.signal);
+          setScreenshot((current) => (current ? { ...current, sent: true } : current));
+        } catch (error: any) { failed += 1; setReviewError(`WhatsApp screenshot: ${error?.message ?? "could not be sent"}`); }
       }
       if (consentFile && !abort.current.signal.aborted) {
         const proof: Picked = { id: "consent", file: consentFile, url: null, name: consentFile.name, kind: "image", problem: null, preview: null, state: "sending", progress: 0, message: "" };
@@ -321,6 +343,11 @@ export function UploadSheet({ products, initialProductId, initialMode, initialLa
             </div>
           </div>
         )}
+        {isReview && (
+          <p className="m-0 -mt-1 text-[12px] font-semibold text-gray-500 dark:text-slate-400">
+            Above: the customer's own photos or videos of the product. Their WhatsApp chat goes in the WhatsApp screenshot box below.
+          </p>
+        )}
         <input ref={filesInput} type="file" accept={ACCEPT_ATTR} multiple hidden onChange={(event) => { addFiles(event.target.files); event.target.value = ""; }} />
         <input ref={photoInput} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" hidden onChange={(event) => { addFiles(event.target.files); event.target.value = ""; }} />
         <input ref={videoInput} type="file" accept="video/mp4,video/quicktime,video/webm" capture="environment" hidden onChange={(event) => { addFiles(event.target.files); event.target.value = ""; }} />
@@ -352,6 +379,10 @@ export function UploadSheet({ products, initialProductId, initialMode, initialLa
                 {item.state === "done" ? <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-500" />
                   : item.state === "failed" || item.problem ? <XCircle className="h-5 w-5 shrink-0 text-rose-500" />
                   : item.state === "sending" ? <Loader2 className="h-5 w-5 shrink-0 animate-spin text-[#1F8FE0]" /> : null}
+                {isReview && item.kind === "image" && item.file && item.state === "ready" && !item.problem && !sending && !draftId && (
+                  <button type="button" onClick={() => moveToScreenshot(item.id)}
+                    className="!min-h-0 shrink-0 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11.5px] font-bold text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">This is the WhatsApp chat</button>
+                )}
                 {(item.state === "ready" || item.state === "failed" || item.problem) && !sending && (
                   <button type="button" aria-label="Remove" onClick={() => removePicked(item.id)} className="!min-h-0 rounded-lg p-2 text-gray-400 hover:bg-gray-200 dark:hover:bg-slate-800"><Trash2 className="h-4 w-4" /></button>
                 )}
@@ -375,7 +406,8 @@ export function UploadSheet({ products, initialProductId, initialMode, initialLa
           <>
             <CustomerReviewFields value={reviewForm} onChange={(patch) => { setReviewForm((current) => ({ ...current, ...patch })); setReviewError(""); }}
               amounts={amounts} counts={counts} disabled={sending || reviewSent || !!draftId}
-              consentName={consentFile?.name ?? null} onPickConsent={(file) => setConsentFile(file)} onRemoveConsent={() => setConsentFile(null)} />
+              consentName={consentFile?.name ?? null} onPickConsent={(file) => setConsentFile(file)} onRemoveConsent={() => setConsentFile(null)}
+              screenshot={screenshot ? { name: screenshot.file.name, preview: screenshot.preview } : null} onPickScreenshot={pickScreenshot} onRemoveScreenshot={removeScreenshot} />
             {(reviewError || (reviewProblemText && !reviewSent && reviewForm.order)) && (
               <p className={`m-0 text-[12.5px] font-semibold ${reviewError ? "text-rose-600" : "text-gray-500 dark:text-slate-400"}`}>{reviewError || reviewProblemText}</p>
             )}

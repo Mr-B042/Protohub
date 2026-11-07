@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle, BadgeCheck, CheckCircle2, ClipboardCheck, Clock, Film, Image as ImageIcon, Loader2, Lock, Megaphone, MessageSquareQuote,
+  AlertTriangle, BadgeCheck, CheckCircle2, ClipboardCheck, Clock, Film, Image as ImageIcon, Loader2, Lock, Megaphone, MessageCircle, MessageSquareQuote,
   Plus, RefreshCw, Search, Settings2, Star, Wallet, XCircle
 } from "lucide-react";
 import { customerReviewsApi, type CustomerReview, type ReviewAmounts, type ReviewDetail, type ReviewLevel, type ReviewList, type ReviewStatus } from "../../lib/api";
@@ -15,6 +15,12 @@ import { Sheet, cardShell } from "./shared";
 
 const naira = (amount: number) => `${amount < 0 ? "-" : ""}₦${Math.abs(Math.round(amount)).toLocaleString("en-NG")}`;
 const shortDay = (value: string | null) => (value ? new Date(value.length === 10 ? `${value}T12:00:00Z` : value).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: value.length === 10 ? "UTC" : "Africa/Lagos" }) : "—");
+/** A Nigerian mobile as WhatsApp shows an unsaved contact: 08031234567 -> +234 803 123 4567. */
+const whatsappForm = (phone: string) => {
+  const digits = phone.replace(/\D/g, "");
+  const local = /^0[789]\d{9}$/.test(digits) ? digits.slice(1) : /^234[789]\d{9}$/.test(digits) ? digits.slice(3) : null;
+  return local ? `+234 ${local.slice(0, 3)} ${local.slice(3, 6)} ${local.slice(6)}` : null;
+};
 const when = (iso: string) => new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Africa/Lagos" });
 
 const LEVEL_TEXT: Record<ReviewLevel, string> = { written: "Written", photo: "Photo", video: "Video", premium: "Premium video" };
@@ -59,8 +65,9 @@ function levelOf(review: CustomerReview): string {
 }
 
 function ReviewCard({ review, amounts, onOpen }: { review: CustomerReview; amounts: ReviewAmounts | null; onOpen: () => void }) {
-  const cover = review.files.find((file) => file.part !== "consent" && file.thumbUrl);
-  const hasVideo = review.files.some((file) => file.part !== "consent" && file.kind === "video");
+  // Only the customer's own photos and videos make the picture: never a screenshot with their number.
+  const cover = review.files.find((file) => file.part === "content" && file.thumbUrl);
+  const hasVideo = review.files.some((file) => file.part === "content" && file.kind === "video");
   const look = STATUS_LOOK[review.status];
   return (
     <button type="button" onClick={onOpen} className={`${cardShell} !min-h-0 flex w-full gap-3 p-3 text-left transition-colors hover:border-[#1F8FE0]/50`}>
@@ -152,8 +159,11 @@ function ReviewSheet({ reviewId, writable, onClose, onChanged, onToast }: {
 
   const review = detail?.review;
   const canDecide = !!detail?.canApprove && writable && review?.status === "pending";
-  const content = review?.files.filter((file) => file.part !== "consent") ?? [];
+  const content = review?.files.filter((file) => file.part === "content") ?? [];
   const proof = review?.files.filter((file) => file.part === "consent") ?? [];
+  // A written review's WhatsApp screenshot with the customer's number (Bright, 7 Nov 2026).
+  const screenshots = review?.files.filter((file) => file.part === "proof") ?? [];
+  const missingScreenshot = review?.type === "written" && !review.legacy && screenshots.length === 0;
   const hasVideo = content.some((file) => file.kind === "video");
   const premiumOption = detail?.options.find((option) => option.level === "premium");
   const chosen = detail?.options.find((option) => option.level === level) ?? null;
@@ -242,6 +252,27 @@ function ReviewSheet({ reviewId, writable, onClose, onChanged, onToast }: {
             </p>
             {review.complaint && <p className="m-0 mt-2 flex items-start gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[13px] text-amber-800 dark:bg-amber-500/10 dark:text-amber-200"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />Problem mentioned: {review.complaint}</p>}
           </section>
+
+          {(screenshots.length > 0 || missingScreenshot) && (
+            <section className={section}>
+              <p className={head}><MessageCircle className="h-4 w-4" />WhatsApp screenshot</p>
+              {missingScreenshot ? (
+                <p className="m-0 rounded-lg bg-rose-50 px-2.5 py-1.5 text-[13px] font-semibold text-rose-700 dark:bg-rose-500/10 dark:text-rose-200">No WhatsApp screenshot. A written review needs one showing the customer's phone number: ask the rep to fix it.</p>
+              ) : (
+                <div className="flex flex-wrap items-start gap-3">
+                  {screenshots.map((file) => (
+                    <a key={file.id} href={file.url ?? undefined} target="_blank" rel="noreferrer" className="block w-40 shrink-0 overflow-hidden rounded-xl border border-gray-200 bg-gray-50 dark:border-slate-700 dark:bg-slate-800">
+                      <img src={file.thumbUrl ?? file.url ?? undefined} alt="WhatsApp screenshot" className="max-h-72 w-full object-contain" />
+                    </a>
+                  ))}
+                  <p className="m-0 min-w-[200px] flex-1 text-[13px] text-gray-800 dark:text-slate-200">
+                    Check the number in the screenshot is the customer's{review.phone ? <>: <b className="whitespace-nowrap">{review.phone}</b>{whatsappForm(review.phone) ? <> (on WhatsApp: <b className="whitespace-nowrap">{whatsappForm(review.phone)}</b>)</> : null}</> : "."}
+                    <span className="mt-1 block text-[12px] text-gray-500 dark:text-slate-400">Tap the screenshot to see it full size. It stays private: it is never shared or used in ads.</span>
+                  </p>
+                </div>
+              )}
+            </section>
+          )}
 
           <section className={section}>
             <p className={head}><ClipboardCheck className="h-4 w-4" />Permission and order</p>
