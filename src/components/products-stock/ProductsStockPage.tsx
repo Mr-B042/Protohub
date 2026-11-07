@@ -18,6 +18,7 @@ import { SettingsTab } from "./SettingsTab";
 import { MenuItem, PopoverMenu, Sheet, categoryTone, cardShell, useProductsStockData, type CatalogProduct } from "./shared";
 import { DateRangeButton, StockOverviewTab, csvDownload, useDateRange, type StockRow } from "./StockOverviewTab";
 import { UploadSheet } from "./UploadSheet";
+import { SubmitReviewWizard } from "./SubmitReviewWizard";
 
 // ── Products & Stock (Bright's designs, 17 Oct 2026) ────────────────────────
 // Seven tabs laid out exactly as the supplied designs: Products, Stock
@@ -121,7 +122,10 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
   const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
   const [tabMenuOpen, setTabMenuOpen] = useState(false);
   const [bulkCategoryOpen, setBulkCategoryOpen] = useState(false);
-  const [upload, setUpload] = useState<{ productId?: string; mode: UploadMode; label?: "customer_review" } | null>(null);
+  const [upload, setUpload] = useState<{ productId?: string; mode: UploadMode } | null>(null);
+  // Submit Customer Review (Bright's design, 7 Nov 2026), with any photos picked in Upload media.
+  const [reviewWizard, setReviewWizard] = useState<{ files: File[] } | null>(null);
+  const [reviewsRefresh, setReviewsRefresh] = useState(0);
   const [viewer, setViewer] = useState<{ productName: string; items: GalleryItem[]; index: number } | null>(null);
   const [details, setDetails] = useState<string>("");
   const [rejecting, setRejecting] = useState<{ items: ProductMedia[]; mode: "reject" | "changes" } | null>(null);
@@ -263,7 +267,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
     let live = true;
     customerReviewsApi.count().then((result) => { if (live) setReviewsWaiting(result.waiting); }).catch(() => undefined);
     return () => { live = false; };
-  }, [showMoney, tab, upload]);
+  }, [showMoney, tab, upload, reviewWizard]);
   const recent = useMemo(() => media
     .filter((item) => item.status !== "uploading" && (canApprove ? item.reviewedBy !== item.uploadedBy || item.status !== "approved" : item.uploadedBy === currentUserId))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5), [media, canApprove, currentUserId]);
@@ -351,10 +355,16 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
     try { const result = await productMediaApi.bulk(ids, action, extra); applyBulk(result.done); showToast(`${result.done.length} file${result.done.length === 1 ? "" : "s"} updated${result.skipped.length ? `, ${result.skipped.length} skipped` : ""}.`); }
     catch (error: any) { showToast(error?.message ?? "Could not change the files."); }
   };
-  const startUpload = (mode: UploadMode, productId?: string, label?: "customer_review") => {
+  const startUpload = (mode: UploadMode, productId?: string) => {
     if (!writable) { readOnly(); return; }
     if (!canSend) { showToast(data.repUploadsEnabled ? "Your role cannot add photos or videos." : "Sending media is switched off for now."); return; }
-    setUpload({ mode, productId, label });
+    setUpload({ mode, productId });
+  };
+  const openReviewWizard = (files: File[] = []) => {
+    if (!writable) { readOnly(); return; }
+    if (!canSend) { showToast("Your role cannot send customer reviews."); return; }
+    setUpload(null);
+    setReviewWizard({ files });
   };
   const openCrossSell = (productId: string) => { props.onCrossSell(productId); setCrossSellOpen(true); };
 
@@ -654,7 +664,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
               onBulk={libraryBulk} onUpdate={updateMedia} onSetCover={setCover} onToast={showToast}
               onThumbnail={async (item, dataUrl) => { const { media: done } = await productMediaApi.setThumbnail(item.id, dataUrl); replaceMedia(done); showToast("Thumbnail changed."); }} />
           )}
-          {tab === "reviews" && showMoney && <ReviewsTab writable={writable} onToast={showToast} onSend={canSend ? () => startUpload("files", undefined, "customer_review") : undefined} />}
+          {tab === "reviews" && showMoney && <ReviewsTab writable={writable} onToast={showToast} refreshKey={reviewsRefresh} onSend={canSend ? () => openReviewWizard() : undefined} />}
           {tab === "approvals" && (
             <ApprovalQueue media={media} products={libraryProducts} canApprove={canApprove} currentUserId={currentUserId}
               onApprove={approve} onApproveMany={approveMany} onReject={(items) => { if (items.length) setRejecting({ items, mode: "reject" }); }}
@@ -698,11 +708,18 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
       )}
 
       {upload && (
-        <UploadSheet products={catalogue.map((product) => ({ id: product.id, name: product.name }))} initialProductId={upload.productId} initialMode={upload.mode} initialLabel={upload.label}
+        <UploadSheet products={catalogue.map((product) => ({ id: product.id, name: product.name }))} initialProductId={upload.productId} initialMode={upload.mode}
+          onCustomerReview={showMoney ? (files) => openReviewWizard(files) : undefined}
           canApprove={canApprove || settings?.requireApproval === false}
           limits={settings ? { maxImageMb: settings.maxImageMb, maxVideoMb: settings.maxVideoMb, imageTypes: settings.allowedImageTypes, videoTypes: settings.allowedVideoTypes } : null}
           onClose={() => setUpload(null)} onToast={showToast}
           onUploaded={(added) => setMedia((current) => [...added, ...current.filter((item) => !added.some((entry) => entry.id === item.id))])} />
+      )}
+      {reviewWizard && (
+        <SubmitReviewWizard initialFiles={reviewWizard.files} imageOf={coverOf}
+          limits={settings ? { maxImageMb: settings.maxImageMb, maxVideoMb: settings.maxVideoMb, imageTypes: settings.allowedImageTypes, videoTypes: settings.allowedVideoTypes } : null}
+          onClose={() => setReviewWizard(null)}
+          onSubmitted={(message) => { setReviewWizard(null); showToast(message); setReviewsRefresh((value) => value + 1); setTab("reviews"); }} />
       )}
       {viewer && (
         <MediaViewer productName={viewer.productName} items={viewer.items} startIndex={viewer.index} onClose={() => setViewer(null)}

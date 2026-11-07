@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Camera, CheckCircle2, ImagePlus, Link2, Loader2, ShieldCheck, Trash2, Video, XCircle } from "lucide-react";
-import { customerReviewsApi, productMediaApi, type ProductMedia, type ProductMediaLabel, type ReviewAmounts } from "../../lib/api";
+import { productMediaApi, type ProductMedia, type ProductMediaLabel } from "../../lib/api";
 import {
   ACCEPT_ATTR, PHOTO_MAX_BYTES, fileProblem, formatBytes, kindOfFile, mimeOf, shrinkPhoto, uploadWithProgress, videoCover
 } from "../../lib/media-upload";
 import { MEDIA_LABEL_OPTIONS, Sheet } from "./shared";
-import { CustomerReviewFields, effectiveReviewType, emptyReviewForm, reviewFormProblem, type ReviewFormValue } from "./CustomerReviewFields";
 
 type Picked = {
   id: string;
@@ -46,20 +45,20 @@ function limitProblem(file: File, limits: Limits): string | null {
   return null;
 }
 
-export function UploadSheet({ products, initialProductId, initialMode, initialLabel, canApprove, limits = null, onClose, onUploaded, onToast }: {
+export function UploadSheet({ products, initialProductId, initialMode, canApprove, limits = null, onClose, onUploaded, onToast, onCustomerReview }: {
   products: Array<{ id: string; name: string }>;
   initialProductId?: string;
   initialMode?: "files" | "photo" | "video";
-  /** "customer_review" when opened from the Customer Reviews tab. */
-  initialLabel?: ProductMediaLabel;
   canApprove: boolean;
+  /** "Customer review" opens the Submit Customer Review window (Bright's design, 7 Nov 2026), taking the photos and videos picked here. */
+  onCustomerReview?: (files: File[]) => void;
   limits?: Limits;
   onClose: () => void;
   onUploaded: (media: ProductMedia[]) => void;
   onToast: (message: string) => void;
 }) {
   const [productId, setProductId] = useState(initialProductId ?? "");
-  const [label, setLabel] = useState<ProductMediaLabel>(initialLabel ?? "product_in_use");
+  const [label, setLabel] = useState<ProductMediaLabel>("product_in_use");
   const [caption, setCaption] = useState("");
   const [picked, setPicked] = useState<Picked[]>([]);
   const [sending, setSending] = useState(false);
@@ -69,36 +68,6 @@ export function UploadSheet({ products, initialProductId, initialMode, initialLa
   const [linksOpen, setLinksOpen] = useState(false);
   const [linkText, setLinkText] = useState("");
   const abort = useRef<AbortController | null>(null);
-  // Customer review (Bright, 7 Nov 2026): linked to a delivered order, decided in the Customer Reviews tab.
-  const isReview = label === "customer_review";
-  const [reviewForm, setReviewForm] = useState<ReviewFormValue>(emptyReviewForm);
-  const [amounts, setAmounts] = useState<ReviewAmounts | null>(null);
-  const [consentFile, setConsentFile] = useState<File | null>(null);
-  // A written review's WhatsApp screenshot with the customer's number (Bright, 7 Nov 2026).
-  const [screenshot, setScreenshot] = useState<{ file: File; preview: string; sent: boolean } | null>(null);
-  const pickScreenshot = (file: File) => setScreenshot((current) => {
-    if (current) URL.revokeObjectURL(current.preview);
-    return { file, preview: URL.createObjectURL(file), sent: false };
-  });
-  const removeScreenshot = () => setScreenshot((current) => { if (current) URL.revokeObjectURL(current.preview); return null; });
-  // A chat screenshot added with the big buttons by mistake: move it into the WhatsApp screenshot box.
-  const moveToScreenshot = (id: string) => {
-    const item = picked.find((entry) => entry.id === id);
-    if (!item?.file || !item.preview) return;
-    setPicked((current) => current.filter((entry) => entry.id !== id));
-    setScreenshot((current) => { if (current) URL.revokeObjectURL(current.preview); return { file: item.file!, preview: item.preview!, sent: false }; });
-  };
-  const [draftId, setDraftId] = useState<string | null>(null);
-  const [reviewSent, setReviewSent] = useState(false);
-  const [reviewError, setReviewError] = useState("");
-  useEffect(() => {
-    if (!isReview || amounts) return;
-    customerReviewsApi.settings().then((result) => setAmounts(result.amounts)).catch(() => undefined);
-  }, [isReview, amounts]);
-  // The review's product is the order's product.
-  useEffect(() => {
-    if (isReview && reviewForm.order?.productId) setProductId(reviewForm.order.productId);
-  }, [isReview, reviewForm.order]);
 
   // Opening from "Take a photo" / "Record a video" goes straight to the camera.
   useEffect(() => {
@@ -144,98 +113,7 @@ export function UploadSheet({ products, initialProductId, initialMode, initialLa
   const product = products.find((entry) => entry.id === productId);
   const allDone = picked.length > 0 && picked.every((item) => item.state === "done" || item.problem);
 
-  const sendFile = async (item: Picked, opts: { productId: string; label: ProductMediaLabel; caption: string; batchId?: string; reviewId?: string; reviewPart?: "content" | "consent" | "proof" }, signal: AbortSignal) => {
-    if (!item.file) throw new Error("Nothing to send.");
-    const maxPhotoBytes = (limits?.maxImageMb ?? 10) * 1024 * 1024;
-    const kind = item.kind!;
-    const body = kind === "image" ? await shrinkPhoto(item.file) : item.file;
-    if (kind === "image" && body.size > Math.min(PHOTO_MAX_BYTES, maxPhotoBytes)) throw new Error(`Photos must be ${limits?.maxImageMb ?? 10} MB or smaller.`);
-    const mime = kind === "image" && body !== item.file ? "image/jpeg" : mimeOf(item.file, kind);
-    const cover = kind === "video" ? await videoCover(item.file) : {};
-    const started = await productMediaApi.startUpload({ ...opts, mime, size: body.size, name: item.name });
-    patchPicked(item.id, { message: "Sending..." });
-    await uploadWithProgress(started.signedUrl, body, mime, (fraction) => patchPicked(item.id, { progress: fraction }), signal);
-    patchPicked(item.id, { progress: 1, message: "Checking the file..." });
-    return (await productMediaApi.complete(started.id, cover)).media;
-  };
-
-  // A review counts only files from the phone (links are off for reviews).
-  const counts = useMemo(() => ({
-    photos: picked.filter((item) => item.kind === "image" && !item.problem && (!isReview || item.file)).length,
-    videos: picked.filter((item) => item.kind === "video" && !item.problem && (!isReview || item.file)).length
-  }), [picked, isReview]);
-  const reviewProblemText = isReview ? reviewFormProblem(reviewForm, counts, !!screenshot) : null;
-
-  /** A customer review: start it, send its files into it, then send it for approval. */
-  const sendReview = async () => {
-    if (reviewProblemText) { setReviewError(reviewProblemText); return; }
-    setSending(true);
-    setReviewError("");
-    abort.current = new AbortController();
-    try {
-      const order = reviewForm.order!;
-      let reviewId = draftId;
-      let reviewProductId = productId;
-      if (!reviewId) {
-        const started = await customerReviewsApi.start({
-          orderId: order.id, type: effectiveReviewType(reviewForm, counts), text: reviewForm.text.trim(), rating: reviewForm.rating,
-          channel: reviewForm.channel, receivedOn: reviewForm.receivedOn, complaint: reviewForm.complaint.trim(),
-          genuine: reviewForm.genuine, marketing: reviewForm.marketing
-        });
-        reviewId = started.review.id;
-        reviewProductId = started.review.productId ?? productId;
-        setDraftId(reviewId);
-      }
-      let failed = 0;
-      for (const item of picked.filter((entry) => !entry.problem && entry.state !== "done" && entry.file)) {
-        if (abort.current.signal.aborted) break;
-        patchPicked(item.id, { state: "sending", progress: 0, message: "Preparing..." });
-        try {
-          await sendFile(item, { productId: reviewProductId, label: "customer_review", caption: "", reviewId: reviewId!, reviewPart: "content" }, abort.current.signal);
-          patchPicked(item.id, { state: "done", message: "Sent with the review" });
-        } catch (error: any) {
-          failed += 1;
-          patchPicked(item.id, { state: "failed", message: error?.message ?? "Could not send this file." });
-          if (abort.current.signal.aborted) break;
-        }
-      }
-      // The written review's WhatsApp screenshot: sent once, kept private on the server.
-      if (screenshot && !screenshot.sent && !abort.current.signal.aborted) {
-        const shot: Picked = { id: "screenshot", file: screenshot.file, url: null, name: screenshot.file.name, kind: "image", problem: null, preview: null, state: "sending", progress: 0, message: "" };
-        try {
-          await sendFile(shot, { productId: reviewProductId, label: "customer_review", caption: "", reviewId: reviewId!, reviewPart: "proof" }, abort.current.signal);
-          setScreenshot((current) => (current ? { ...current, sent: true } : current));
-        } catch (error: any) { failed += 1; setReviewError(`WhatsApp screenshot: ${error?.message ?? "could not be sent"}`); }
-      }
-      if (consentFile && !abort.current.signal.aborted) {
-        const proof: Picked = { id: "consent", file: consentFile, url: null, name: consentFile.name, kind: "image", problem: null, preview: null, state: "sending", progress: 0, message: "" };
-        try { await sendFile(proof, { productId: reviewProductId, label: "customer_review", caption: "", reviewId: reviewId!, reviewPart: "consent" }, abort.current.signal); setConsentFile(null); }
-        catch (error: any) { failed += 1; setReviewError(`Proof of permission: ${error?.message ?? "could not be sent"}`); }
-      }
-      if (failed > 0 || abort.current.signal.aborted) {
-        if (!abort.current.signal.aborted) setReviewError((current) => current || "Some files did not go. Remove them or press Send again.");
-        return;
-      }
-      const sent = await customerReviewsApi.submit(reviewId!);
-      setReviewSent(true);
-      onToast(`Review sent for approval. Bonus if approved: ₦${Math.round(sent.bonusIfApproved).toLocaleString("en-NG")}.`);
-      onUploaded([]);
-    } catch (error: any) {
-      setReviewError(error?.message ?? "Could not send the review.");
-    } finally {
-      setSending(false);
-    }
-  };
-
-  /** Closing before the review was sent throws the unsent review away. */
-  const close = () => {
-    if (sending) return;
-    if (draftId && !reviewSent) void customerReviewsApi.discard(draftId).catch(() => undefined);
-    onClose();
-  };
-
   const send = async () => {
-    if (isReview) { await sendReview(); return; }
     if (!productId) { onToast("Choose the product first."); return; }
     if (sendable.length === 0) return;
     setSending(true);
@@ -243,6 +121,7 @@ export function UploadSheet({ products, initialProductId, initialMode, initialLa
     const finished: ProductMedia[] = [];
     // Files sent together are one submission in the Approval Queue.
     const batchId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : undefined;
+    const maxPhotoBytes = (limits?.maxImageMb ?? 10) * 1024 * 1024;
     const lastLinkId = [...sendable].reverse().find((item) => item.url)?.id;
     // One at a time: steadier on a phone connection than several at once.
     for (const item of sendable) {
@@ -257,9 +136,19 @@ export function UploadSheet({ products, initialProductId, initialMode, initialLa
           patchPicked(item.id, { state: "done", progress: 1, message: done.media.status === "approved" ? "In the gallery" : "Waiting for approval" });
           continue;
         }
-        const media = await sendFile(item, { productId, label, caption, batchId }, abort.current.signal);
-        finished.push(media);
-        patchPicked(item.id, { state: "done", message: media.status === "approved" ? "In the gallery" : "Waiting for approval" });
+        if (!item.file) throw new Error("Nothing to send.");
+        const kind = item.kind!;
+        const body = kind === "image" ? await shrinkPhoto(item.file) : item.file;
+        if (kind === "image" && body.size > Math.min(PHOTO_MAX_BYTES, maxPhotoBytes)) throw new Error(`Photos must be ${limits?.maxImageMb ?? 10} MB or smaller.`);
+        const mime = kind === "image" && body !== item.file ? "image/jpeg" : mimeOf(item.file, kind);
+        const cover = kind === "video" ? await videoCover(item.file) : {};
+        const started = await productMediaApi.startUpload({ productId, mime, size: body.size, name: item.name, label, caption, batchId });
+        patchPicked(item.id, { message: "Sending..." });
+        await uploadWithProgress(started.signedUrl, body, mime, (fraction) => patchPicked(item.id, { progress: fraction }), abort.current.signal);
+        patchPicked(item.id, { progress: 1, message: "Checking the file..." });
+        const done = await productMediaApi.complete(started.id, cover);
+        finished.push(done.media);
+        patchPicked(item.id, { state: "done", message: done.media.status === "approved" ? "In the gallery" : "Waiting for approval" });
       } catch (error: any) {
         patchPicked(item.id, { state: "failed", message: error?.message ?? "Could not send this file." });
         if (abort.current.signal.aborted) break;
@@ -274,25 +163,21 @@ export function UploadSheet({ products, initialProductId, initialMode, initialLa
     }
   };
 
+  const counts = useMemo(() => ({
+    photos: picked.filter((item) => item.kind === "image" && !item.problem).length,
+    videos: picked.filter((item) => item.kind === "video" && !item.problem).length
+  }), [picked]);
+
   return (
-    <Sheet title="Upload media" subtitle={isReview ? "A customer's review of a delivered order. A manager approves it before it counts." : canApprove ? "Added straight to the product gallery." : "An Owner, Admin or Manager checks each file before others can see it."}
-      onClose={close}
+    <Sheet title="Upload media" subtitle={canApprove ? "Added straight to the product gallery." : "An Owner, Admin or Manager checks each file before others can see it."}
+      onClose={() => { if (!sending) onClose(); }}
       footer={
         <div className="flex items-center gap-2">
-          {(isReview ? reviewSent : allDone) ? (
+          {allDone ? (
             <button type="button" onClick={onClose} className="!min-h-0 flex-1 rounded-xl bg-[#1F8FE0] px-4 py-3 text-sm font-black text-white">Done</button>
-          ) : isReview ? (
-            <>
-              <button type="button" onClick={() => (sending ? abort.current?.abort() : close())}
-                className="!min-h-0 rounded-xl border border-gray-200 px-4 py-3 text-sm font-bold text-gray-700 dark:border-slate-600 dark:text-slate-200">{sending ? "Stop" : "Cancel"}</button>
-              <button type="button" disabled={sending || !!reviewProblemText} onClick={send}
-                className="!min-h-0 inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#1F8FE0] px-4 py-3 text-sm font-black text-white disabled:opacity-50">
-                {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}Send review for approval
-              </button>
-            </>
           ) : (
             <>
-              <button type="button" onClick={() => (sending ? abort.current?.abort() : close())}
+              <button type="button" onClick={() => (sending ? abort.current?.abort() : onClose())}
                 className="!min-h-0 rounded-xl border border-gray-200 px-4 py-3 text-sm font-bold text-gray-700 dark:border-slate-600 dark:text-slate-200">{sending ? "Stop" : "Cancel"}</button>
               <button type="button" disabled={sending || sendable.length === 0 || !productId} onClick={send}
                 className="!min-h-0 inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#1F8FE0] px-4 py-3 text-sm font-black text-white disabled:opacity-50">
@@ -306,12 +191,11 @@ export function UploadSheet({ products, initialProductId, initialMode, initialLa
       <div className="space-y-4">
         <label className="block">
           <span className="mb-1.5 block text-xs font-black text-gray-700 dark:text-slate-200">Product</span>
-          <select value={productId} onChange={(event) => setProductId(event.target.value)} disabled={sending || isReview || !!draftId}
+          <select value={productId} onChange={(event) => setProductId(event.target.value)} disabled={sending}
             className="h-12 w-full rounded-xl border border-gray-200 bg-white px-3 text-[15px] font-semibold text-gray-800 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100">
             <option value="">Choose a product</option>
             {products.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
           </select>
-          {isReview && <span className="mt-1 block text-[11.5px] font-semibold text-gray-500 dark:text-slate-400">For a customer review, the product comes from the order you choose below.</span>}
         </label>
 
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -325,12 +209,12 @@ export function UploadSheet({ products, initialProductId, initialMode, initialLa
               {option.icon}{option.label}
             </button>
           ))}
-          <button type="button" disabled={sending || isReview} onClick={() => setLinksOpen((open) => !open)} aria-expanded={linksOpen}
+          <button type="button" disabled={sending} onClick={() => setLinksOpen((open) => !open)} aria-expanded={linksOpen}
             className={`!min-h-0 flex flex-col items-center justify-center gap-1.5 rounded-2xl border-2 border-dashed px-2 py-4 text-[13px] font-black active:scale-[0.98] disabled:opacity-50 ${linksOpen ? "border-[#1F8FE0] bg-blue-100 text-[#1F8FE0] dark:bg-blue-500/20" : "border-blue-200 bg-blue-50/60 text-[#1F8FE0] dark:border-blue-500/30 dark:bg-blue-500/10"}`}>
             <Link2 className="h-6 w-6" />Links
           </button>
         </div>
-        {linksOpen && !isReview && (
+        {linksOpen && (
           <div className="space-y-2 rounded-2xl border border-blue-100 bg-blue-50/40 p-3 dark:border-blue-500/20 dark:bg-blue-500/5">
             <span className="block text-xs font-black text-gray-700 dark:text-slate-200">Paste picture links</span>
             <textarea value={linkText} onChange={(event) => setLinkText(event.target.value)} rows={5} autoFocus
@@ -342,11 +226,6 @@ export function UploadSheet({ products, initialProductId, initialMode, initialLa
                 className="!min-h-0 rounded-xl bg-[#1F8FE0] px-4 py-2 text-[13px] font-black text-white disabled:opacity-50">Add links</button>
             </div>
           </div>
-        )}
-        {isReview && (
-          <p className="m-0 -mt-1 text-[12px] font-semibold text-gray-500 dark:text-slate-400">
-            Above: the customer's own photos or videos of the product. Their WhatsApp chat goes in the WhatsApp screenshot box below.
-          </p>
         )}
         <input ref={filesInput} type="file" accept={ACCEPT_ATTR} multiple hidden onChange={(event) => { addFiles(event.target.files); event.target.value = ""; }} />
         <input ref={photoInput} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" hidden onChange={(event) => { addFiles(event.target.files); event.target.value = ""; }} />
@@ -379,10 +258,6 @@ export function UploadSheet({ products, initialProductId, initialMode, initialLa
                 {item.state === "done" ? <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-500" />
                   : item.state === "failed" || item.problem ? <XCircle className="h-5 w-5 shrink-0 text-rose-500" />
                   : item.state === "sending" ? <Loader2 className="h-5 w-5 shrink-0 animate-spin text-[#1F8FE0]" /> : null}
-                {isReview && item.kind === "image" && item.file && item.state === "ready" && !item.problem && !sending && !draftId && (
-                  <button type="button" onClick={() => moveToScreenshot(item.id)}
-                    className="!min-h-0 shrink-0 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11.5px] font-bold text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">This is the WhatsApp chat</button>
-                )}
                 {(item.state === "ready" || item.state === "failed" || item.problem) && !sending && (
                   <button type="button" aria-label="Remove" onClick={() => removePicked(item.id)} className="!min-h-0 rounded-lg p-2 text-gray-400 hover:bg-gray-200 dark:hover:bg-slate-800"><Trash2 className="h-4 w-4" /></button>
                 )}
@@ -395,31 +270,22 @@ export function UploadSheet({ products, initialProductId, initialMode, initialLa
           <span className="mb-1.5 block text-xs font-black text-gray-700 dark:text-slate-200">What does it show?</span>
           <div className="flex flex-wrap gap-1.5">
             {MEDIA_LABEL_OPTIONS.map((option) => (
-              <button key={option.value} type="button" disabled={sending || (!!draftId && option.value !== "customer_review")} onClick={() => setLabel(option.value)}
+              <button key={option.value} type="button" disabled={sending}
+                onClick={() => (option.value === "customer_review" && onCustomerReview
+                  ? onCustomerReview(picked.filter((item) => item.file && item.kind && !item.problem && item.state !== "done").map((item) => item.file!))
+                  : setLabel(option.value))}
                 className={`!min-h-0 rounded-full border px-3 py-2 text-[13px] font-bold transition-colors ${label === option.value ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-600 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-300"}`}>
                 {option.text}
               </button>
             ))}
           </div>
         </div>
-        {isReview && (
-          <>
-            <CustomerReviewFields value={reviewForm} onChange={(patch) => { setReviewForm((current) => ({ ...current, ...patch })); setReviewError(""); }}
-              amounts={amounts} counts={counts} disabled={sending || reviewSent || !!draftId}
-              consentName={consentFile?.name ?? null} onPickConsent={(file) => setConsentFile(file)} onRemoveConsent={() => setConsentFile(null)}
-              screenshot={screenshot ? { name: screenshot.file.name, preview: screenshot.preview } : null} onPickScreenshot={pickScreenshot} onRemoveScreenshot={removeScreenshot} />
-            {(reviewError || (reviewProblemText && !reviewSent && reviewForm.order)) && (
-              <p className={`m-0 text-[12.5px] font-semibold ${reviewError ? "text-rose-600" : "text-gray-500 dark:text-slate-400"}`}>{reviewError || reviewProblemText}</p>
-            )}
-            {reviewSent && <p className="m-0 rounded-xl bg-emerald-50 px-3 py-2 text-[13px] font-semibold text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-200">Sent. Follow it in Products &amp; Stock › Customer Reviews.</p>}
-          </>
-        )}
-        {!isReview && <label className="block">
+        <label className="block">
           <span className="mb-1.5 block text-xs font-black text-gray-700 dark:text-slate-200">Note <span className="font-semibold text-gray-400">(optional)</span></span>
           <textarea value={caption} onChange={(event) => setCaption(event.target.value.slice(0, 300))} rows={2} disabled={sending}
             placeholder="e.g. Shows how it fits in a small bathroom corner"
             className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-[15px] text-gray-800 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100" />
-        </label>}
+        </label>
 
         <p className="m-0 flex items-start gap-2 rounded-xl bg-emerald-50 px-3 py-2.5 text-xs font-semibold leading-relaxed text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-200">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />

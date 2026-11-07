@@ -249,6 +249,7 @@ function ReviewSheet({ reviewId, writable, onClose, onChanged, onToast }: {
             {review.text ? <p className="m-0 text-[14.5px] italic text-gray-900 dark:text-slate-100">“{review.text}”</p> : <p className="m-0 text-[13px] text-gray-500">No words written down.</p>}
             <p className="m-0 mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px] text-gray-500 dark:text-slate-400">
               <Stars value={review.rating} /><span>Came by {review.channelText}</span><span>on {shortDay(review.receivedOn)}</span>
+              {review.mediaShowsText && <span>Shows: {review.mediaShowsText}</span>}
             </p>
             {review.complaint && <p className="m-0 mt-2 flex items-start gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[13px] text-amber-800 dark:bg-amber-500/10 dark:text-amber-200"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />Problem mentioned: {review.complaint}</p>}
           </section>
@@ -332,7 +333,7 @@ function ReviewSheet({ reviewId, writable, onClose, onChanged, onToast }: {
   );
 }
 
-export function ReviewsTab({ writable, onToast, onSend }: { writable: boolean; onToast: (message: string) => void; onSend?: () => void }) {
+export function ReviewsTab({ writable, onToast, onSend, refreshKey = 0 }: { writable: boolean; onToast: (message: string) => void; onSend?: () => void; refreshKey?: number }) {
   const [data, setData] = useState<ReviewList | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -349,7 +350,7 @@ export function ReviewsTab({ writable, onToast, onSend }: { writable: boolean; o
     catch (err) { setError((err as Error).message || "Could not load the customer reviews."); }
     finally { setLoading(false); }
   }, []);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); }, [load, refreshKey]);
   useEffect(() => { customerReviewsApi.settings().then((result) => setCanEditAmounts(result.canEdit)).catch(() => undefined); }, []);
 
   // Approvers start on the waiting ones; reps on everything they sent.

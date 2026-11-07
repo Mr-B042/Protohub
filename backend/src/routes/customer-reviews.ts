@@ -43,6 +43,9 @@ const requireApprover = (req: Request) => {
 const ORDER_COLUMNS = "id, customer, phone, product_name, product_id, delivered_date, assigned_rep_id, status, branch_id";
 const FILE_COLUMNS = "id, review_id, review_part, kind, status, original_name, width, height, duration_seconds, holding_path, holding_thumb_path, public_path, public_thumb_path, url, thumb_url, fingerprint, product_id, org_id, mime, uploaded_by, uploaded_by_name, created_at";
 const CHANNEL_TEXT: Record<string, string> = { whatsapp: "WhatsApp", call: "Phone call", sms: "SMS", in_person: "In person", other: "Other" };
+/** What a photo or video review shows (migration 331), the gallery's own words. */
+const MEDIA_SHOWS = ["product_in_use", "unboxing", "size", "packaging", "other"] as const;
+const SHOWS_TEXT: Record<string, string> = { product_in_use: "Product in use", unboxing: "Unboxing", size: "Size / measurements", packaging: "Packaging", other: "Other" };
 
 const chunk = <T,>(list: T[], size = 150) => Array.from({ length: Math.ceil(list.length / size) }, (_, index) => list.slice(index * size, index * size + size));
 const dayOf = (value: unknown) => (value ? String(value).slice(0, 10) : null);
@@ -111,6 +114,7 @@ function mapReview(row: any, ctx: { orders: Map<string, any>; files: Map<string,
     levelAmount: Number(row.level_amount ?? 0),
     text: row.review_text ?? "", rating: row.rating ?? null, channel: row.channel, channelText: CHANNEL_TEXT[row.channel] ?? "Other",
     receivedOn: dayOf(row.received_on), complaint: row.complaint ?? "",
+    mediaShows: row.media_shows ?? null, mediaShowsText: row.media_shows ? SHOWS_TEXT[row.media_shows] ?? "Other" : null,
     genuine: row.genuine_confirmed, marketingOk: row.marketing_ok === true, marketingWithdrawnAt: row.marketing_withdrawn_at ?? null,
     reviewedByName: row.reviewed_by_name ?? null, reviewedAt: row.reviewed_at ?? null,
     decisionReason: row.decision_reason ?? null, decisionReasonText: row.decision_reason ? (REJECT_REASONS as Record<string, string>)[row.decision_reason] ?? "Other" : null,
@@ -218,7 +222,9 @@ const CreateSchema = z.object({
   receivedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   complaint: z.string().max(1000).default(""),
   genuine: z.boolean(),
-  marketing: z.boolean().default(false)
+  marketing: z.boolean().default(false),
+  // "What does the photo show?" for a photo or video review.
+  mediaShows: z.enum(MEDIA_SHOWS).nullable().optional()
 });
 
 router.post("/", async (req, res) => {
@@ -253,7 +259,8 @@ router.post("/", async (req, res) => {
       org_id: orgId, branch_id: order.branch_id, order_id: order.id, product_id: order.product_id ?? null,
       rep_id: repId, rep_name: rep?.name ?? "", submitted_by: req.user!.id, submitted_by_name: req.user!.name ?? "", submitted_by_role: role,
       status: "draft", review_type: body.type, review_text: body.text.trim(), rating: body.rating ?? null, channel: body.channel,
-      received_on: body.receivedOn ?? lagosDay(Date.now()), complaint: body.complaint.trim(), genuine_confirmed: true, marketing_ok: body.marketing
+      received_on: body.receivedOn ?? lagosDay(Date.now()), complaint: body.complaint.trim(), genuine_confirmed: true, marketing_ok: body.marketing,
+      media_shows: body.type === "written" ? null : body.mediaShows ?? null
     }).select("*").single();
     if (error) throw error;
     res.status(201).json({ review: { id: created.id, productId: created.product_id, status: created.status } });
