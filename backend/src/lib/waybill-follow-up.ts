@@ -48,8 +48,9 @@ type WaybillRow = {
   id: string; status: string; created_at: string; closed_at: string | null; to_location: string | null;
   to_agent_id: string | null; agent_id: string | null; to_agent_location_id: string | null;
   product_name: string | null; quantity: number | null; carrier: string | null; tracking_number: string | null; branch_id: string | null;
+  dispatched_date: string | null;
 };
-const WAYBILL_COLUMNS = "id, status, created_at, closed_at, to_location, to_agent_id, agent_id, to_agent_location_id, product_name, quantity, carrier, tracking_number, branch_id";
+const WAYBILL_COLUMNS = "id, status, created_at, closed_at, to_location, to_agent_id, agent_id, to_agent_location_id, product_name, quantity, carrier, tracking_number, branch_id, dispatched_date";
 
 /** Still In Transit, or left In Transit since `sinceDay` (they may still owe that day's early sessions). */
 async function waybillsSince(orgId: string, sinceDay: string): Promise<WaybillRow[]> {
@@ -130,6 +131,9 @@ const loggedBySession = (logs: LogRecord[], dateKey: string) => {
 
 export type ActiveRow = {
   id: string; productName: string; quantity: number; carrier: string | null; createdAt: string; ageDays: number;
+  dispatchedDate: string | null;
+  /** Today's logs that counted for a session: the log form's own progress list. */
+  todayLogs: Array<{ sessionKey: SessionKey; at: string }>;
   agentName: string; agentPhone: string | null; state: string; city: string;
   lastLog: { at: string; channels: string[]; response: string; note: string } | null;
   status: ReturnType<typeof waybillState>; noNewsStreak: number; followUpsToday: number;
@@ -164,6 +168,8 @@ function activeRows(rows: WaybillRow[], places: Map<string, Place>, logs: LogRec
     return {
       id: String(row.id), productName: String(row.product_name ?? ""), quantity: Number(row.quantity ?? 0), carrier: row.carrier ?? null,
       createdAt: row.created_at, ageDays: Math.max(0, Math.floor((nowMs - createdMs) / 86_400_000)),
+      dispatchedDate: row.dispatched_date ? String(row.dispatched_date).slice(0, 10) : null,
+      todayLogs: own.filter((log) => log.session_date === today && log.session_key).map((log) => ({ sessionKey: log.session_key as SessionKey, at: log.logged_at })),
       agentName: place?.agentName ?? "No agent", agentPhone: place?.agentPhone ?? null, state: place?.state ?? "", city: place?.city ?? "",
       lastLog: last ? { at: last.logged_at, channels: last.channels, response: last.response, note: last.response_note } : null,
       status: waybillState({ lastResponse: last?.response ?? null, createdMs, nowMs, overdueAfterDays: settings.overdueAfterDays }),
@@ -301,7 +307,7 @@ export async function historyFor(orgId: string, from: string, to: string, waybil
 
 // ── Logging a follow-up ─────────────────────────────────────────────────────
 
-const EVIDENCE_MIME: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
+const EVIDENCE_MIME: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "application/pdf": "pdf" };
 
 export class FollowUpError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -330,9 +336,9 @@ export async function addLogs(orgId: string, user: { id: string; name: string | 
   if (input.evidence && typeof input.evidence.dataUrl === "string" && input.evidence.dataUrl) {
     const match = input.evidence.dataUrl.match(/^data:([a-z]+\/[a-z0-9.+-]+);base64,([\s\S]+)$/i);
     const ext = match ? EVIDENCE_MIME[match[1].toLowerCase()] : undefined;
-    if (!match || !ext) throw new FollowUpError(400, "Attach a photo (PNG, JPG or WEBP).");
+    if (!match || !ext) throw new FollowUpError(400, "Attach a screenshot or call log (PNG, JPG or PDF).");
     const buffer = Buffer.from(match[2], "base64");
-    if (buffer.length > 10 * 1024 * 1024) throw new FollowUpError(413, "That photo is over 10MB.");
+    if (buffer.length > 5 * 1024 * 1024) throw new FollowUpError(413, "That file is over 5MB.");
     evidencePath = `${orgId}/${lagosDay(nowMs)}/${randomUUID()}.${ext}`;
     const { error: uploadError } = await supabase.storage.from(EVIDENCE_BUCKET).upload(evidencePath, buffer, { contentType: match[1].toLowerCase(), upsert: false });
     if (uploadError) throw uploadError;
@@ -343,7 +349,7 @@ export async function addLogs(orgId: string, user: { id: string; name: string | 
     org_id: orgId, branch_id: found.get(id)?.branch_id ?? null, waybill_id: id, batch_id: batchId,
     session_date: lagosDay(nowMs), session_key: sessionKey,
     channels: [...new Set(input.channels as string[])], response: String(input.response),
-    response_note: String(input.responseNote ?? "").trim().slice(0, 1000), next_action: String(input.nextAction ?? "").trim().slice(0, 300),
+    response_note: String(input.responseNote ?? "").trim().slice(0, 500), next_action: String(input.nextAction ?? "").trim().slice(0, 300),
     evidence_path: evidencePath, logged_by: user.id, logged_by_name: user.name ?? "", logged_at: loggedAt
   }));
   const { error: insertError } = await supabase.from("waybill_follow_up_logs").insert(rows);

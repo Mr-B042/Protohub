@@ -60,12 +60,14 @@ test("schedule states: upcoming, open, completed, missed, nothing due, day off",
   assert.equal(sessionStatus({ ...base, workingDay: false, nowMs: at(DAY, "12:20"), dueIds: ["A"], loggedIds: new Set() }).status, "off");
 });
 
-test("a log needs a channel and what the agent said; 'Other' needs the words", () => {
-  const ok = { waybillIds: ["WB-1"], channels: ["call"], response: "no_answer", responseNote: "" };
+test("a log needs a channel, what the agent said and the notes (required, up to 500)", () => {
+  const ok = { waybillIds: ["WB-1"], channels: ["call"], response: "no_answer", responseNote: "Called twice, not picked" };
   assert.equal(logProblem(ok), null);
   assert.match(logProblem({ ...ok, channels: [] })!, /WhatsApp group, phone call, or both/);
   assert.match(logProblem({ ...ok, response: "made_up" })!, /what the agent said/);
-  assert.match(logProblem({ ...ok, response: "other" })!, /Write what the agent said/);
+  assert.match(logProblem({ ...ok, responseNote: "" })!, /Write the follow-up notes/);
+  assert.match(logProblem({ ...ok, response: "other", responseNote: "" })!, /Write what the agent said/);
+  assert.match(logProblem({ ...ok, responseNote: "x".repeat(501) })!, /under 500/);
   assert.match(logProblem({ ...ok, waybillIds: [] })!, /at least one waybill/);
 });
 
