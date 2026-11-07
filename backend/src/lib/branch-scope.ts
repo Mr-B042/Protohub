@@ -37,6 +37,8 @@ const BRANCH_TABLES = new Set([
   "waybill_records", "stock_count_sessions", "stock_count_entries",
   "inventory_valuation_snapshots", "inventory_valuation_snapshot_lines",
   "state_replenishment_notes",
+  // Waybill Follow-Up Center (migration 328): each row carries its waybill's branch.
+  "waybill_follow_up_logs", "waybill_follow_up_misses",
 
   // Team Challenges (migration 287): every row carries a non-null branch_id.
   "team_challenges", "team_challenge_teams", "team_challenge_entries", "team_challenge_payouts", "team_challenge_log",

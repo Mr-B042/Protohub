@@ -3,7 +3,8 @@ import test from "node:test";
 import {
   AUTOMATION_KINDS, DEFAULT_AUTOMATIONS, buildKeyboard, cleanCommandSettings, cleanRecipients, cleanSettings, kindForwarded,
   orderDraft, previewOf, recipientLabel, repTodayDraft, reportDraft, successRate, triggerLabel, type OrderInfo,
-  cartDraft, forwardCheck, forwardDedupeKey, isQuietTime, lateTodayDraft, lagosClock, myOrdersDraft, repWeekNoteDraft, roleMayReceive
+  cartDraft, forwardCheck, forwardDedupeKey, isQuietTime, lateTodayDraft, lagosClock, myOrdersDraft, repWeekNoteDraft, roleMayReceive,
+  allowedRoles, waybillDueDraft, waybillMissedDraft
 } from "./telegram-rules.js";
 
 const order: OrderInfo = {
@@ -217,4 +218,22 @@ test("/myorders leaves held repeat orders out of the New count (#5942 New; #5906
   const rep = myOrdersDraft({ ...input, leadership: false, role: "Sales Rep" });
   assert.match(rep, /Your New orders: 1<\/b>/);
   assert.doesNotMatch(rep, /Held/);
+});
+
+test("waybill follow-ups (7 Nov 2026): leadership and inventory staff only; the person charged reads 'you'", () => {
+  for (const trigger of ["waybill_follow_up_due", "waybill_follow_up_missed"] as const) {
+    assert.ok(allowedRoles(trigger).includes("Inventory Manager & Logistics Operations"));
+    assert.ok(!allowedRoles(trigger).includes("Sales Rep"));
+    assert.ok(DEFAULT_AUTOMATIONS.some((row) => row.trigger === trigger));
+  }
+  const waybills = [{ id: "WB-5928", place: "Kano", agent: "Kano Agent" }, { id: "WB-5930", place: "Rivers", agent: "Rivers Agent" }];
+  const due = waybillDueDraft({ label: "Morning 2", timeLabel: "10:00 AM", opens: "9:45am", closes: "10:15am", waybills, amount: 500, charged: true });
+  assert.match(due.text, /2 waybills are still waiting for the agent\. Log each one between 9:45am and 10:15am\./);
+  assert.match(due.text, /• WB-5928 – Kano, Kano Agent/);
+  assert.match(due.text, /Each waybill not followed up costs ₦500\./);
+  assert.match(waybillDueDraft({ label: "Morning 1", timeLabel: "8:00 AM", opens: "7:45am", closes: "8:15am", waybills, amount: 500, charged: false }).text, /Practice days: nothing is charged yet\./);
+  const missed = { timeLabel: "10:00 AM", dayLabel: "Mon 9 Nov", waybills, amount: 500, charged: true, responsibleName: "Chinedu" };
+  assert.match(waybillMissedDraft({ ...missed, forResponsible: true }).text, /Charged: <b>₦1,000<\/b> \(₦500 each\) to you\./);
+  assert.match(waybillMissedDraft({ ...missed, forResponsible: false }).text, /to Chinedu\./);
+  assert.match(waybillMissedDraft({ ...missed, charged: false, responsibleName: null, forResponsible: false }).text, /Not charged: nobody is set as responsible/);
 });

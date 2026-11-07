@@ -70,6 +70,8 @@ import stockAllocationRoutes from "./routes/stock-allocations.js";
 import productPerformanceRoutes from "./routes/product-performance.js";
 import pageVisitRoutes from "./routes/page-visits.js";
 import telegramRoutes, { telegramWebhookRouter } from "./routes/telegram.js";
+import waybillFollowUpRoutes from "./routes/waybill-follow-ups.js";
+import { runWaybillFollowUpJob } from "./lib/waybill-follow-up.js";
 import { runBotHealthChecks, runLowStock, runReports, runRetries, runSendOutSoon, runTelegramCleanup } from "./lib/telegram.js";
 import fineAppealRoutes from "./routes/fine-appeals.js";
 import orderReceiptRoutes from "./routes/order-receipts.js";
@@ -381,6 +383,7 @@ app.use("/api/page-visits", pageVisitRoutes);
 // Telegram calls the webhook without a login (secret header); mounted first.
 app.use("/api/telegram/webhook", telegramWebhookRouter);
 app.use("/api/telegram", telegramRoutes);
+app.use("/api/waybill-follow-ups", waybillFollowUpRoutes);
 app.use("/api/fine-appeals", fineAppealRoutes);
 app.use("/api/order-receipts", orderReceiptRoutes);
 app.use("/api/notification-routing", notificationRoutingRoutes);
@@ -824,6 +827,13 @@ cron.schedule("40 3 * * *", async () => {
 cron.schedule("*/15 * * * *", async () => {
   try { await runBotHealthChecks(); } catch (e) {
     logger.error("cron: telegram health crashed", { error: (e as Error).message });
+  }
+});
+// Waybill Follow-Up Center (Bright, 7 Nov 2026): reminders ten minutes
+// before each session, and the ₦500 charges as each session closes.
+cron.schedule("*/5 * * * *", async () => {
+  try { await runWaybillFollowUpJob(); } catch (e) {
+    logger.error("cron: waybill follow-ups crashed", { error: (e as Error).message });
   }
 });
 

@@ -20,7 +20,7 @@ import {
   COMMANDS, DEFAULT_AUTOMATIONS, FORWARD_GROUPS, LEADERSHIP_ROLES, TRIGGERS, buildKeyboard, cartDraft, cleanCommandSettings, cleanQuiet,
   cleanRecipients, cleanSettings, commandAllowed, commandDeniedText, commandsFor, followUpDraft, forwardDedupeKey, forwardedDraft, isQuietTime,
   kindForwarded, lowStockDraft, naira, orderDraft,
-  myOrdersDraft, previewOf, repTodayDraft, repWeekNoteDraft, reportDraft, roleMayReceive, seesCustomer, seesRevenue, sendOutSoonDraft, forwardCheck, isRepRole, lateTodayDraft,
+  myOrdersDraft, previewOf, repTodayDraft, repWeekNoteDraft, reportDraft, waybillDueDraft, waybillMissedDraft, lagosClock, type WaybillLine, roleMayReceive, seesCustomer, seesRevenue, sendOutSoonDraft, forwardCheck, isRepRole, lateTodayDraft,
   type AutomationSettings, type BusinessReport, type CartInfo, type CommandKey, type Draft, type LowStockItem, type OrderInfo,
   type QuietHours, type Recipients, type RepDay, type TriggerKey
 } from "./telegram-rules.js";
@@ -902,6 +902,35 @@ export async function runReports(nowMs = Date.now()) {
     }
   }
   return { sent };
+}
+
+// ── Waybill Follow-Up Center (Bright, 7 Nov 2026) ───────────────────────────
+
+/** Ten minutes before a session: to whoever the "Waybill Follow-Up Due" automation names (once per session). */
+export async function telegramWaybillReminder(orgId: string, input: {
+  dateKey: string; sessionKey: string; label: string; timeLabel: string; openMs: number; closeMs: number; waybills: WaybillLine[]; amount: number; charged: boolean;
+}) {
+  return runTrigger(orgId, "waybill_follow_up_due", {
+    dedupeBase: `${input.dateKey}:${input.sessionKey}`,
+    draftFor: () => waybillDueDraft({
+      label: input.label, timeLabel: input.timeLabel, opens: lagosClock(input.openMs), closes: lagosClock(input.closeMs),
+      waybills: input.waybills, amount: input.amount, charged: input.charged
+    })
+  });
+}
+
+/** A session closed with waybills not followed up: who missed, and the charge. */
+export async function telegramWaybillMissed(orgId: string, input: {
+  dateKey: string; sessionKey: string; timeLabel: string; dayLabel: string; waybills: WaybillLine[]; amount: number; charged: boolean;
+  responsibleUserId: string | null; responsibleName: string | null;
+}) {
+  return runTrigger(orgId, "waybill_follow_up_missed", {
+    dedupeBase: `${input.dateKey}:${input.sessionKey}`,
+    draftFor: (person) => waybillMissedDraft({
+      timeLabel: input.timeLabel, dayLabel: input.dayLabel, waybills: input.waybills, amount: input.amount, charged: input.charged,
+      responsibleName: input.responsibleName, forResponsible: person.userId === input.responsibleUserId
+    })
+  });
 }
 
 // ── Announcements and samples ───────────────────────────────────────────────

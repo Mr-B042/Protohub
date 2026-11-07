@@ -263,6 +263,7 @@ import type { ProductsStockPage as ProductsStockPageType } from "./components/pr
 // ── Pages loaded on demand (30 Oct 2026, see lib/lazy-page.tsx) ──
 const ManagerProductChallenges = lazyPage(() => import("./components/ManagerProductChallenges").then((m) => ({ default: m.ManagerProductChallenges })));
 const InventoryLogisticsOperationsPage = lazyPage(() => import("./pages/InventoryLogisticsOperationsPage").then((m) => ({ default: m.InventoryLogisticsOperationsPage })));
+const WaybillFollowUpCenter = lazyPage(() => import("./pages/waybill-follow-up/WaybillFollowUpCenter"));
 const SalesCloserWorkspacePage = lazyPage(() => import("./pages/SalesCloserWorkspacePage").then((m) => ({ default: m.SalesCloserWorkspacePage })));
 // Generic component: keep its own type (the wrapper would lose the <P>).
 const ProductsStockPage = lazyPage(() => import("./components/products-stock/ProductsStockPage").then((m) => ({ default: m.ProductsStockPage }))) as unknown as typeof ProductsStockPageType;
@@ -523,6 +524,8 @@ const INVENTORY_OPERATIONS_NAV: InventoryOperationsNavGroup[] = [
   { label: "Movements & Logistics", items: [
     { action: "dispatch", label: "Dispatch Queue", icon: Clock },
     { action: "waybills", label: "Waybills", icon: FileText },
+    // Follow-ups until the agent's receipt is confirmed (Bright, 7 Nov 2026).
+    { action: "waybill-follow-up", label: "Waybill Follow-Up Center", icon: History, tag: "New" },
     { action: "shipments", label: "Shipments / In Transit", icon: Truck },
     { action: "receiving", label: "Receiving Confirmations", icon: PackageCheck },
     { action: "transfers", label: "Transfers", icon: ArrowLeftRight },
@@ -29287,6 +29290,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if ((section === "manager-overview" || section === "manager-dashboard") && parts[3] === "team-challenges") {
         setManagerDashboardTab("Team Challenges");
       }
+      // A waybill follow-up alert (and a reload) lands on the Follow-Up Center (Bright, 7 Nov 2026).
+      if (section === "inventory-logistics-operations" && parts[3] === "waybill-follow-up") {
+        setInventoryOperationsSection("waybill-follow-up");
+      }
       if (section === "orders" && parts[3] !== "new" && (!parts[4] || !["edit", "edit-customer", "reassign", "send-to-agent", "delete", "change-status", "add-cross-sell", "add-free-gift", "manual-bonus"].includes(parts[4])) && modal && ["editOrderItems", "editOrderCustomer", "reassignOrder", "sendToAgent", "deleteOrder", "changeOrderStatus", "addCrossSell", "addFreeGift", "manualBonus"].includes(modal)) {
         setModal(null);
       }
@@ -47613,6 +47620,12 @@ ${waybillLineItems(w).length > 1
       case "stock-agents":
       case "delivered-reconciliation":
         openInventoryOperationsRoute(action);
+        return;
+      case "waybill-follow-up":
+        setActivePage("Inventory & Logistics Operations");
+        setModal(null);
+        syncHashRoute("#/dashboard/admin/inventory-logistics-operations/waybill-follow-up");
+        window.scrollTo({ top: 0, behavior: "smooth" });
         return;
       case "movements":
         openInventoryHistoryRoute();
@@ -99295,6 +99308,8 @@ ${waybillLineItems(w).length > 1
               )}
 
             </div>
+          ) : activePage === "Inventory & Logistics Operations" && inventoryOperationsSection === "waybill-follow-up" ? (
+            <WaybillFollowUpCenter currentRole={currentRole} onToast={showToast} onOpenWaybills={() => handleInventoryOperationsAction("waybills")} />
           ) : activePage === "Inventory & Logistics Operations" ? (
             <InventoryLogisticsOperationsPage
               section={inventoryOperationsSection}

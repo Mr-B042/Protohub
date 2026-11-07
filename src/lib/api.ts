@@ -5145,6 +5145,69 @@ export type TelegramAutomation = {
   id: string; trigger: string; name: string; enabled: boolean; builtIn: boolean; recipients: TelegramRecipients; settings: TelegramAutomationSettings;
   triggerLabel: string; recipientLabel: string; group: string; description: string; updatedAt: string;
 };
+// ── Waybill Follow-Up Center (Bright, 7 Nov 2026) ─────────────────────────
+export type WfSessionKey = "m1" | "m2" | "a1" | "a2" | "ev";
+export type WfSessionStatus = "off" | "upcoming" | "open" | "completed" | "missed" | "nothing_due";
+export type WfWaybillStatus = "verify" | "overdue" | "in_transit" | "pending";
+export type WfResponseOption = { key: string; label: string; short: string; tone: "green" | "amber" | "blue" | "red" | "slate"; useful: boolean };
+export type WfActiveRow = {
+  id: string; productName: string; quantity: number; carrier: string | null; createdAt: string; ageDays: number;
+  agentName: string; agentPhone: string | null; state: string; city: string;
+  lastLog: { at: string; channels: string[]; response: string; note: string } | null;
+  status: WfWaybillStatus; noNewsStreak: number; followUpsToday: number;
+};
+export type WfLog = {
+  id: string; waybillId: string; at: string; sessionKey: WfSessionKey | null; sessionLabel: string | null; channels: string[];
+  response: string; responseNote: string; nextAction: string; loggedByName: string; hasEvidence: boolean; batchId: string | null;
+  agentName: string; state: string;
+};
+export type WfSession = {
+  key: WfSessionKey; label: string; timeLabel: string; openAt: string; dueAt: string; closeAt: string;
+  status: WfSessionStatus; owed: number; logged: number; missing: number; completedAt: string | null;
+};
+export type WfSettings = {
+  responsibleUserId: string | null; amount: number; graceMinutes: number; workingDays: number[]; chargesFrom: string; overdueAfterDays: number;
+};
+export type WfDashboard = {
+  date: string; today: string; nowMs: number; workingDay: boolean;
+  settings: WfSettings & { responsibleName: string | null };
+  cards: { activeWaybills: number; dueNow: number; completedToday: number; compliance: number | null; missed: number; missedAmount: number; pendingResponses: number; receivedToday: number };
+  sessions: WfSession[];
+  next: { key: WfSessionKey; label: string; timeLabel: string; dueAt: string; closeAt: string; open: boolean } | null;
+  waybills: WfActiveRow[];
+  recentLogs: WfLog[];
+  accountability: { missed: number; amountEach: number; total: number };
+  week: { complianceRate: number | null; totalSessions: number; missedSessions: number };
+  options: { responses: WfResponseOption[]; channels: Array<{ key: string; label: string }>; nextActions: string[] };
+};
+export type WfMiss = {
+  id: string; waybillId: string; sessionDate: string; sessionKey: WfSessionKey; sessionLabel: string | null; timeLabel: string; amount: number;
+  state: "charged" | "disputed" | "cancelled" | "not_charged"; responsibleUserId: string | null; responsibleName: string;
+  disputeReason: string | null; decidedByName: string | null; decidedAt: string | null; decisionNote: string | null; agentName: string; placeState: string;
+};
+export type WfReport = {
+  weekStart: string; weekEnd: string;
+  days: Array<{ date: string; workingDay: boolean; sessions: number; missedSessions: number; owed: number; logged: number; compliance: number | null; missed: number; charged: number }>;
+  kpis: { compliance: number | null; missedFollowUps: number; missedSessions: number; charged: number; withoutUpdates: number; responseRate: number | null; overdue: number; received: number; averageDaysToReceive: number | null; logs: number };
+};
+
+export const waybillFollowUpApi = {
+  dashboard: (date?: string) => get<WfDashboard>(`/api/waybill-follow-ups/dashboard${date ? `?date=${encodeURIComponent(date)}` : ""}`),
+  waybills: () => get<{ waybills: WfActiveRow[]; currentSession: { key: WfSessionKey; label: string } | null }>("/api/waybill-follow-ups/waybills"),
+  history: (params: { from?: string; to?: string; waybill?: string }) =>
+    get<{ logs: WfLog[] }>(`/api/waybill-follow-ups/history?${new URLSearchParams(Object.entries(params).filter(([, value]) => value) as Array<[string, string]>).toString()}`),
+  log: (body: { waybillIds: string[]; channels: string[]; response: string; responseNote?: string; nextAction?: string; evidence?: { dataUrl: string } | null }) =>
+    post<{ logged: number; sessionKey: WfSessionKey | null; sessionLabel: string | null }>("/api/waybill-follow-ups/logs", body),
+  evidence: (logId: string) => get<{ url: string }>(`/api/waybill-follow-ups/logs/${encodeURIComponent(logId)}/evidence`),
+  misses: (params: { from?: string; to?: string } = {}) =>
+    get<{ misses: WfMiss[]; viewerId: string }>(`/api/waybill-follow-ups/misses?${new URLSearchParams(Object.entries(params).filter(([, value]) => value) as Array<[string, string]>).toString()}`),
+  dispute: (id: string, reason: string) => post<{ ok: boolean }>(`/api/waybill-follow-ups/misses/${encodeURIComponent(id)}/dispute`, { reason }),
+  decide: (id: string, decision: "keep" | "cancel", note = "") => post<{ ok: boolean }>(`/api/waybill-follow-ups/misses/${encodeURIComponent(id)}/decide`, { decision, note }),
+  report: (weekStart?: string) => get<WfReport>(`/api/waybill-follow-ups/report${weekStart ? `?weekStart=${encodeURIComponent(weekStart)}` : ""}`),
+  settings: () => get<{ settings: WfSettings; responsible: { id: string; name: string } | null; people: Array<{ id: string; name: string; role: string }> }>("/api/waybill-follow-ups/settings"),
+  saveSettings: (body: Partial<WfSettings>) => patch<{ settings: WfSettings }>("/api/waybill-follow-ups/settings", body)
+};
+
 export type TelegramTrigger = { key: string; label: string; description: string; settings: Array<"minutesBefore" | "threshold" | "hour" | "weekday">; repApplies: boolean; group: string; roles?: string[] };
 export type TelegramQuiet = { on: boolean; from: number; to: number };
 export type TelegramStaff = { id: string; name: string; role: string; linked: boolean; telegramUsername: string | null; telegramName: string | null; linkedAt: string | null };
