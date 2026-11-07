@@ -258,6 +258,8 @@ export type WeeklyReportSnapshot = {
     fines: number;
     /** Bonus corrections from answered bonus queries, paid in this week. */
     adjustments?: number;
+    /** Customer review bonus: reviews approved this week (from 7 Nov 2026). Inside finalBonus. */
+    reviewBonus?: number;
     /** Approved missed-log fines for this week (already inside `fines`). */
     logMissFines?: number;
     /** Missed-log charges still waiting for the Owner: shown, NOT deducted. */
@@ -301,6 +303,8 @@ export type WeeklyReportSnapshot = {
   };
   fines: WeeklyReportFine[];
   adjustments?: WeeklyReportFine[];
+  /** One line per approved customer review paid this week (missing on older reports). */
+  reviewBonuses?: WeeklyReportFine[];
   /** The manager's change to the final payout, when there is one (see withPayoutChange). */
   payoutChangeDetail?: SnapshotPayoutChange;
   /** Delivered orders with no delivery fee, leadership screens only (see withMissingFees). */
@@ -557,7 +561,7 @@ export function bonusInitialFinal(snap: WeeklyReportSnapshot) {
   const t = snap.totals;
   const full = bonusComponentsFull(snap);
   const before = full.base + full.upsell + full.crossSell;
-  const adjustments = Math.max(0, t.adjustments ?? 0);
+  const adjustments = Math.max(0, t.adjustments ?? 0) + Math.max(0, t.reviewBonus ?? 0);
   const change = t.payoutChange ?? 0;
   const delivery = Math.max(0, t.deliveryBonus ?? 0);
   const initial = Math.round(before + delivery + adjustments + Math.max(0, change));
@@ -640,6 +644,8 @@ export function buildRepWeeklySnapshot(input: {
   fines: WeeklyReportFine[];
   /** Corrections paid in this week (answered bonus queries). Added on top. */
   adjustments?: WeeklyReportFine[];
+  /** Customer review bonus lines paid in this week (reviews approved in it). Added on top. */
+  reviewBonuses?: WeeklyReportFine[];
   /** Missed-log charges of the week. Only approved ones are deducted. */
   logMisses?: WeeklyLogMiss[];
   /** Fines left over from last week (frozen on last week's report). */
@@ -771,6 +777,10 @@ export function buildRepWeeklySnapshot(input: {
   const bonusBeforeRateCut = beforeRateCut ? Math.round(beforeRateCut.base + beforeRateCut.upsell + beforeRateCut.crossSell) : null;
   const adjustments = input.adjustments ?? [];
   const adjustmentTotal = Math.round(adjustments.reduce((sum, item) => sum + Math.max(0, item.amount), 0));
+  // Approved customer reviews (Bright, 7 Nov 2026): not cut by the delivery-rate rule.
+  const reviewBonuses = input.reviewBonuses ?? [];
+  const reviewBonusTotal = Math.round(reviewBonuses.reduce((sum, item) => sum + item.amount, 0));
+  const extraOnTop = adjustmentTotal + reviewBonusTotal;
 
   return {
     version: WEEKLY_REPORT_SNAPSHOT_VERSION,
@@ -790,13 +800,14 @@ export function buildRepWeeklySnapshot(input: {
       ...(deliveryBonus ? { deliveryBonus: deliveryBonusAmount } : {}),
       fines: Math.round(fineTotal),
       adjustments: adjustmentTotal,
+      ...(reviewBonuses.length ? { reviewBonus: reviewBonusTotal } : {}),
       logMissFines: Math.round(logMissFineTotal),
       pendingLogMisses: Math.round(pendingLogMissTotal),
       carriedFines,
       // Last week's leftover comes off first; whatever this week cannot
       // cover carries on (Bright, 1 Oct 2026).
-      finalBonus: Math.max(0, earned + adjustmentTotal - Math.round(fineTotal) - carriedFines),
-      unpaidFines: Math.max(0, Math.round(fineTotal) + carriedFines - earned - adjustmentTotal),
+      finalBonus: Math.max(0, earned + extraOnTop - Math.round(fineTotal) - carriedFines),
+      unpaidFines: Math.max(0, Math.round(fineTotal) + carriedFines - earned - extraOnTop),
       ...(bonusBeforeRateCut !== null ? {
         bonusBeforeRateCut,
         baseBeforeRateCut: Math.round(beforeRateCut!.base),
@@ -821,6 +832,7 @@ export function buildRepWeeklySnapshot(input: {
     expansion,
     fines: allFines,
     adjustments,
+    ...(reviewBonuses.length ? { reviewBonuses } : {}),
     logMisses,
     orders,
     orderIds: orders.map((order) => order.id)
@@ -839,6 +851,7 @@ export const SNAPSHOT_CHECKS: Array<{ key: keyof WeeklyReportSnapshot["totals"];
   { key: "baseBonus", label: "Base bonus", money: true },
   { key: "fines", label: "Fines / deductions", money: true },
   { key: "adjustments", label: "Bonus corrections", money: true },
+  { key: "reviewBonus", label: "Customer review bonus", money: true },
   { key: "carriedFines", label: "Fines carried from last week", money: true },
   { key: "finalBonus", label: "Final bonus payable", money: true }
 ];

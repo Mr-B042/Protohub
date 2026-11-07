@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle, ArrowDown, ArrowRight, ArrowUp, BellRing, BookOpen, Boxes, Camera, Check, CheckSquare, ChevronDown, CircleX, Database, Download, Filter, FolderOpen,
-  Gift, Image as ImageIcon, LayoutGrid, LayoutTemplate, List, Package, Plus, Search, Settings, Square, Tag, Upload, Video, Wallet, X
+  Gift, Image as ImageIcon, LayoutGrid, LayoutTemplate, List, MessageSquareQuote, Package, Plus, Search, Settings, Square, Tag, Upload, Video, Wallet, X
 } from "lucide-react";
-import { productMediaApi, type CatalogSettings, type ProductMedia, type ProductMediaUsage } from "../../lib/api";
+import { customerReviewsApi, productMediaApi, type CatalogSettings, type ProductMedia, type ProductMediaUsage } from "../../lib/api";
 import { ApprovalQueue } from "./ApprovalQueue";
 import { BundlesTab, type OfferProduct } from "./BundlesTab";
 import type { StockHub } from "./OfferDetailsSheet";
@@ -13,6 +13,7 @@ import { MediaGuideSheet, MediaRail, RejectSheet, type UploadMode } from "./Medi
 import { MediaViewer, galleryItemsFor, type GalleryItem } from "./MediaViewer";
 import { ProductCard, ProductRow, menuIcons, type CardActions, type ProductView } from "./ProductCard";
 import { ProductDetailsSheet } from "./ProductDetailsSheet";
+import { ReviewsTab } from "./ReviewsTab";
 import { SettingsTab } from "./SettingsTab";
 import { MenuItem, PopoverMenu, Sheet, categoryTone, cardShell, useProductsStockData, type CatalogProduct } from "./shared";
 import { DateRangeButton, StockOverviewTab, csvDownload, useDateRange, type StockRow } from "./StockOverviewTab";
@@ -25,7 +26,7 @@ import { UploadSheet } from "./UploadSheet";
 // The old page's cross-sell helper ("What can I sell to this customer?") is
 // kept whole: every Cross-sell button opens it.
 
-type TabKey = "products" | "stock" | "library" | "approvals" | "categories" | "bundles" | "settings";
+type TabKey = "products" | "stock" | "library" | "approvals" | "reviews" | "categories" | "bundles" | "settings";
 type StockFilter = "all" | "in" | "low" | "out";
 type MediaFilter = "any" | "photos" | "videos" | "none" | "pending";
 type SortKey = "best" | "orders" | "name" | "price" | "stock";
@@ -41,6 +42,7 @@ const HEADER: Record<TabKey, { tag?: string; text: string }> = {
   stock: { tag: "Stock Overview", text: "Get a real-time view of your inventory, availability, movement and stock health across all products." },
   library: { tag: "Media Library", text: "Manage product images and videos used in sales, marketing and by your sales reps." },
   approvals: { text: "Review and approve media files submitted by sales reps or team members before they become available." },
+  reviews: { tag: "Customer Reviews", text: "Customers' reviews of delivered orders, the bonus each one earns, and which ones can be used for marketing." },
   categories: { text: "Organize your products into categories to manage stock, media and sales easily." },
   bundles: { text: "Create and manage product bundles, multi-pack offers and free gift combinations." },
   settings: { text: "Configure settings for product catalogue, stock management, media, approvals and offers." }
@@ -119,7 +121,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
   const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
   const [tabMenuOpen, setTabMenuOpen] = useState(false);
   const [bulkCategoryOpen, setBulkCategoryOpen] = useState(false);
-  const [upload, setUpload] = useState<{ productId?: string; mode: UploadMode } | null>(null);
+  const [upload, setUpload] = useState<{ productId?: string; mode: UploadMode; label?: "customer_review" } | null>(null);
   const [viewer, setViewer] = useState<{ productName: string; items: GalleryItem[]; index: number } | null>(null);
   const [details, setDetails] = useState<string>("");
   const [rejecting, setRejecting] = useState<{ items: ProductMedia[]; mode: "reject" | "changes" } | null>(null);
@@ -254,6 +256,14 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
     : { text: `${weekChange >= 0 ? "+" : ""}${weekChange}% from last week`, tone: weekChange >= 0 ? "up" as const : "down" as const };
 
   const pendingForMe = media.filter((item) => item.status === "pending" && (canApprove || item.uploadedBy === currentUserId)).length;
+  // Customer reviews waiting (the tab's badge): approvers count everyone's, reps their own.
+  const [reviewsWaiting, setReviewsWaiting] = useState(0);
+  useEffect(() => {
+    if (!showMoney) return;
+    let live = true;
+    customerReviewsApi.count().then((result) => { if (live) setReviewsWaiting(result.waiting); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [showMoney, tab, upload]);
   const recent = useMemo(() => media
     .filter((item) => item.status !== "uploading" && (canApprove ? item.reviewedBy !== item.uploadedBy || item.status !== "approved" : item.uploadedBy === currentUserId))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5), [media, canApprove, currentUserId]);
@@ -341,10 +351,10 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
     try { const result = await productMediaApi.bulk(ids, action, extra); applyBulk(result.done); showToast(`${result.done.length} file${result.done.length === 1 ? "" : "s"} updated${result.skipped.length ? `, ${result.skipped.length} skipped` : ""}.`); }
     catch (error: any) { showToast(error?.message ?? "Could not change the files."); }
   };
-  const startUpload = (mode: UploadMode, productId?: string) => {
+  const startUpload = (mode: UploadMode, productId?: string, label?: "customer_review") => {
     if (!writable) { readOnly(); return; }
     if (!canSend) { showToast(data.repUploadsEnabled ? "Your role cannot add photos or videos." : "Sending media is switched off for now."); return; }
-    setUpload({ mode, productId });
+    setUpload({ mode, productId, label });
   };
   const openCrossSell = (productId: string) => { props.onCrossSell(productId); setCrossSellOpen(true); };
 
@@ -423,11 +433,13 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
     { key: "stock", label: "Stock Overview", icon: <Boxes className="h-4 w-4" /> },
     { key: "library", label: "Media Library", icon: <ImageIcon className="h-4 w-4" /> },
     { key: "approvals", label: canApprove ? "Approval Queue" : "My Submissions", icon: <BellRing className="h-4 w-4" />, badge: pendingForMe },
+    { key: "reviews", label: "Customer Reviews", icon: <MessageSquareQuote className="h-4 w-4" />, badge: reviewsWaiting },
     { key: "categories", label: "Categories", icon: <FolderOpen className="h-4 w-4" /> },
     { key: "bundles", label: "Bundles & Offers", icon: <Gift className="h-4 w-4" /> },
     { key: "settings", label: "Settings", icon: <Settings className="h-4 w-4" /> }
   ];
-  const visibleTabs = tabs.filter((item) => (viewerIsManager || !MANAGER_TABS.includes(item.key)) && (showMoney || item.key !== "bundles"));
+  // Customer Reviews show customers and pay: never for the logistics role (no money, no customers).
+  const visibleTabs = tabs.filter((item) => (viewerIsManager || !MANAGER_TABS.includes(item.key)) && (showMoney || (item.key !== "bundles" && item.key !== "reviews")));
   const activeFilterCount = Number(mediaFilter !== "any") + Number(sort !== "best");
   const header = HEADER[tab];
   const outlineButton = "!min-h-0 inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-[13.5px] font-bold text-gray-800 shadow-sm hover:bg-gray-50 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100";
@@ -642,6 +654,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
               onBulk={libraryBulk} onUpdate={updateMedia} onSetCover={setCover} onToast={showToast}
               onThumbnail={async (item, dataUrl) => { const { media: done } = await productMediaApi.setThumbnail(item.id, dataUrl); replaceMedia(done); showToast("Thumbnail changed."); }} />
           )}
+          {tab === "reviews" && showMoney && <ReviewsTab writable={writable} onToast={showToast} onSend={canSend ? () => startUpload("files", undefined, "customer_review") : undefined} />}
           {tab === "approvals" && (
             <ApprovalQueue media={media} products={libraryProducts} canApprove={canApprove} currentUserId={currentUserId}
               onApprove={approve} onApproveMany={approveMany} onReject={(items) => { if (items.length) setRejecting({ items, mode: "reject" }); }}
@@ -685,7 +698,7 @@ export function ProductsStockPage<P extends CatalogProduct>(props: ProductsStock
       )}
 
       {upload && (
-        <UploadSheet products={catalogue.map((product) => ({ id: product.id, name: product.name }))} initialProductId={upload.productId} initialMode={upload.mode}
+        <UploadSheet products={catalogue.map((product) => ({ id: product.id, name: product.name }))} initialProductId={upload.productId} initialMode={upload.mode} initialLabel={upload.label}
           canApprove={canApprove || settings?.requireApproval === false}
           limits={settings ? { maxImageMb: settings.maxImageMb, maxVideoMb: settings.maxVideoMb, imageTypes: settings.allowedImageTypes, videoTypes: settings.allowedVideoTypes } : null}
           onClose={() => setUpload(null)} onToast={showToast}

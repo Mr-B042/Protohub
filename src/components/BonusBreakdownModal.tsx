@@ -96,6 +96,7 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder, 
   const cutItems = info.items.filter((item) => item.label.includes("paid at half"));
   const otherTaken = info.items.filter((item) => !item.label.includes("paid at half"));
   const adjustments = Math.max(0, Math.round(t.adjustments ?? 0));
+  const reviewBonus = Math.round(t.reviewBonus ?? 0);
   const added = Math.max(0, Math.round(t.payoutChange ?? 0));
   const change = snap.payoutChangeDetail;
   const changeNote = change ? `${change.changedByName ? `By ${change.changedByName}` : "By the manager"}${change.reason ? `: "${change.reason}"` : ""}` : undefined;
@@ -241,6 +242,8 @@ export function BonusBreakdownModal({ snap, repName, sym, onClose, lookupOrder, 
             <Step total label="Bonus earned (section 2)" value={money(paid.total)} />
             {(t.deliveryBonus ?? 0) > 0 ? <Step plus label="Weekly delivery bonus" value={`+${money(Math.round(t.deliveryBonus ?? 0))}`} note={`This week's own delivered orders paid ${snap.deliveryBonus?.topProduct ? `₦400 × ${snap.deliveryBonus.topProduct.paidOrders} (${snap.deliveryBonus.topProduct.name})${snap.deliveryBonus.mainOrders ? ` and ₦300 × ${snap.deliveryBonus.mainOrders}` : ""}` : `₦300 × ${snap.deliveryBonus?.mainOrders ?? 0}`} instead of the usual base: this is the difference.`} /> : null}
             {adjustments > 0 ? <Step plus label="Corrections paid this week (answered bonus queries)" value={`+${money(adjustments)}`} /> : null}
+            {reviewBonus !== 0 ? <Step plus={reviewBonus > 0} minus={reviewBonus < 0} label="Customer reviews approved this week" value={`${reviewBonus < 0 ? "-" : "+"}${money(Math.abs(reviewBonus))}`}
+              note={(snap.reviewBonuses ?? []).map((item) => item.label).join("; ") || undefined} /> : null}
             {added > 0 ? <Step plus label="Added by the manager" value={`+${money(added)}`} note={changeNote} /> : null}
             {otherTaken.map((item) => <Step key={item.label} minus label={item.label} value={`-${money(item.amount)}`} note={item.label === "Taken off by the manager" ? changeNote : undefined} />)}
             <Step total last label="Final pay" value={money(Math.round(t.finalBonus))} />

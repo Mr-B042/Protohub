@@ -39,6 +39,8 @@ const BRANCH_TABLES = new Set([
   "state_replenishment_notes",
   // Waybill Follow-Up Center (migration 328): each row carries its waybill's branch.
   "waybill_follow_up_logs", "waybill_follow_up_misses",
+  // Customer Reviews (migration 329): each row carries its order's branch.
+  "customer_reviews", "customer_review_incentives", "customer_review_events",
 
   // Team Challenges (migration 287): every row carries a non-null branch_id.
   "team_challenges", "team_challenge_teams", "team_challenge_entries", "team_challenge_payouts", "team_challenge_log",
