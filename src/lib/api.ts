@@ -5021,6 +5021,7 @@ export type ReviewType = "written" | "photo" | "video";
 export type ReviewLevel = "written" | "photo" | "video" | "premium";
 export type ReviewChannel = "whatsapp" | "call" | "sms" | "in_person" | "other";
 export type ReviewStatus = "pending" | "approved" | "rejected" | "changes_requested";
+export type ReviewMediaShows = "product_in_use" | "unboxing" | "size" | "packaging" | "other";
 export type ReviewAmounts = { written: number; photo: number; video: number; premium: number };
 export type ReviewFile = {
   /** content = the customer's photo or video; consent = proof of marketing OK; proof = WhatsApp screenshot with their number. */
@@ -5032,6 +5033,8 @@ export type CustomerReview = {
   repId: string | null; repName: string; submittedById: string | null; submittedByName: string;
   status: ReviewStatus; type: ReviewType; approvedLevel: ReviewLevel | null; levelAmount: number;
   text: string; rating: number | null; channel: ReviewChannel; channelText: string; receivedOn: string | null; complaint: string;
+  /** "What does the photo show?" for a photo or video review. */
+  mediaShows: ReviewMediaShows | null; mediaShowsText: string | null;
   genuine: boolean | null; marketingOk: boolean; marketingWithdrawnAt: string | null;
   reviewedByName: string | null; reviewedAt: string | null; decisionReason: string | null; decisionReasonText: string | null; decisionNote: string | null;
   legacy: boolean; submittedAt: string | null; createdAt: string;
@@ -5063,7 +5066,8 @@ export const customerReviewsApi = {
   count: () => get<{ waiting: number }>("/api/customer-reviews/count"),
   detail: (id: string) => get<ReviewDetail>(`/api/customer-reviews/${id}`),
   orders: (q: string) => get<{ orders: ReviewOrderChoice[] }>(`/api/customer-reviews/orders?q=${encodeURIComponent(q)}`),
-  start: (body: { orderId: string; type: ReviewType; text: string; rating: number | null; channel: ReviewChannel; receivedOn: string; complaint: string; genuine: boolean; marketing: boolean }) =>
+  start: (body: { orderId: string; type: ReviewType; text: string; rating: number | null; channel: ReviewChannel; receivedOn: string; complaint: string; genuine: boolean; marketing: boolean;
+    mediaShows?: ReviewMediaShows | null }) =>
     post<{ review: { id: string; productId: string | null; status: string } }>("/api/customer-reviews", body),
   submit: (id: string) => post<{ review: { id: string; status: string }; bonusIfApproved: number }>(`/api/customer-reviews/${id}/submit`, {}),
   discard: (id: string) => del<{ ok: boolean }>(`/api/customer-reviews/${id}`),
