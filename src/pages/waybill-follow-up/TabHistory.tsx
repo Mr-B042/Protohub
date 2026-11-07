@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Image as ImageIcon, Loader2, Search } from "lucide-react";
+import { Loader2, Paperclip, Search } from "lucide-react";
 import { waybillFollowUpApi, type WfLog, type WfResponseOption } from "../../lib/api";
 import { Card, ChannelIcon, Pill, ResponsePill, lagosDateTime } from "./wf-ui";
 
@@ -26,8 +26,8 @@ export default function TabHistory({ options, waybill, onToast }: { options: WfR
     return () => { live = false; window.clearTimeout(timer); };
   }, [from, to, search]);
 
-  const openPhoto = async (id: string) => {
-    try { window.open((await waybillFollowUpApi.evidence(id)).url, "_blank", "noopener"); } catch (err) { onToast((err as Error).message || "Could not open the photo."); }
+  const openEvidence = async (id: string) => {
+    try { window.open((await waybillFollowUpApi.evidence(id)).url, "_blank", "noopener"); } catch (err) { onToast((err as Error).message || "Could not open the file."); }
   };
 
   const field = "rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[13px] dark:border-slate-700 dark:bg-slate-900";
@@ -67,7 +67,7 @@ export default function TabHistory({ options, waybill, onToast }: { options: WfR
                   <td className="max-w-[160px] px-3 py-2.5 text-gray-700 dark:text-slate-300">{log.nextAction || "—"}</td>
                   <td className="px-3 py-2.5">{log.sessionLabel ? <Pill tone="purple">{log.sessionLabel}</Pill> : <Pill tone="slate">Between sessions</Pill>}</td>
                   <td className="px-3 py-2.5 text-gray-700 dark:text-slate-300">{log.loggedByName || "—"}</td>
-                  <td className="px-3 py-2.5">{log.hasEvidence && <button type="button" onClick={() => openPhoto(log.id)} className="!min-h-0 inline-flex items-center gap-1 text-[12.5px] font-semibold text-[#5B3FD9] hover:underline"><ImageIcon className="h-3.5 w-3.5" />Photo</button>}</td>
+                  <td className="px-3 py-2.5">{log.hasEvidence && <button type="button" onClick={() => openEvidence(log.id)} className="!min-h-0 inline-flex items-center gap-1 text-[12.5px] font-semibold text-[#5B3FD9] hover:underline"><Paperclip className="h-3.5 w-3.5" />Evidence</button>}</td>
                 </tr>
               ))}
             </tbody>

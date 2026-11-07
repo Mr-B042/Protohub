@@ -175,19 +175,24 @@ export const CHANNELS = [
 export type ChannelKey = (typeof CHANNELS)[number]["key"];
 export const isChannelKey = (value: unknown): value is ChannelKey => CHANNELS.some((row) => row.key === value);
 
-export const NEXT_ACTIONS = ["Call again", "Contact the carrier", "Escalate to the Operations Manager", "Await confirmation"] as const;
+export const NEXT_ACTIONS = ["Await receipt confirmation", "Call again", "Contact the carrier", "Escalate to the Operations Manager"] as const;
+
+export const NOTE_MAX = 500;
 
 /**
- * A log is only valid with a channel and what the agent said (Bright's rule:
- * clicking Save is not enough; no reply is logged as "no response", never an
- * invented answer). Returns the problem, or null.
+ * A log is only valid with a channel, what the agent said and the follow-up
+ * notes (Bright's rule: clicking Save is not enough; no reply is logged as
+ * "no response", never an invented answer; his form marks the notes as
+ * required, up to 500 letters). Returns the problem, or null.
  */
 export function logProblem(input: { waybillIds: unknown; channels: unknown; response: unknown; responseNote: unknown }): string | null {
   if (!Array.isArray(input.waybillIds) || input.waybillIds.length === 0) return "Choose at least one waybill.";
   if (input.waybillIds.length > 100) return "Up to 100 waybills in one log.";
   if (!Array.isArray(input.channels) || input.channels.length === 0 || !input.channels.every(isChannelKey)) return "Tick how you reached the agent: WhatsApp group, phone call, or both.";
   if (!isResponseKey(input.response)) return "Choose what the agent said.";
-  if (input.response === "other" && String(input.responseNote ?? "").trim().length < 3) return "Write what the agent said.";
+  const note = String(input.responseNote ?? "").trim();
+  if (note.length < 3) return input.response === "other" ? "Write what the agent said." : "Write the follow-up notes: what was said and what happens next.";
+  if (note.length > NOTE_MAX) return `Keep the notes under ${NOTE_MAX} characters.`;
   return null;
 }
 

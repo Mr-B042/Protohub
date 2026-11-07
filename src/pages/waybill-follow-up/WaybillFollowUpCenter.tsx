@@ -11,18 +11,6 @@ import { Card, IconTile, btn, longDate, type WfTab } from "./wf-ui";
 
 const lagosToday = () => new Date(Date.now() + 60 * 60_000).toISOString().slice(0, 10);
 
-/** The session a log made right now counts for (the server decides again on save). */
-function sessionNow(nowMs: number, data: WfDashboard | null) {
-  if (!data) return null;
-  const today = new Date(nowMs + 60 * 60_000).toISOString().slice(0, 10);
-  if (!data.settings.workingDays.includes(new Date(`${today}T12:00:00Z`).getUTCDay())) return null;
-  const minute = Math.floor(((nowMs + 60 * 60_000) % 86_400_000) / 60_000);
-  const grace = data.settings.graceMinutes;
-  const fixed = [["Morning 1", 480], ["Morning 2", 600], ["Afternoon 1", 720], ["Afternoon 2", 840]] as const;
-  for (const [label, at] of fixed) if (minute >= at - grace && minute <= at + grace) return label;
-  return minute >= 960 - grace && minute <= 1020 ? "Evening" : null;
-}
-
 const TABS: Array<{ key: WfTab; label: string; Icon: typeof Home }> = [
   { key: "dashboard", label: "Follow-Up Dashboard", Icon: Home },
   { key: "waybills", label: "Active Waybills", Icon: ClipboardList },
@@ -122,7 +110,7 @@ export default function WaybillFollowUpCenter({ currentRole, onToast, onOpenWayb
       {tab === "reports" && <TabReports canEdit={currentRole === "Owner" || currentRole === "Admin"} onToast={onToast} onSaved={() => void load(true)} />}
 
       {logFor && data && (
-        <LogFollowUpModal waybills={data.waybills} preselected={logFor} options={data.options} sessionLabel={sessionNow(Date.now(), data)}
+        <LogFollowUpModal waybills={data.waybills} preselected={logFor} options={data.options} graceMinutes={data.settings.graceMinutes} workingDays={data.settings.workingDays}
           onClose={() => setLogFor(null)} onSaved={(message) => { setLogFor(null); onToast(message); void load(true); }} />
       )}
     </div>

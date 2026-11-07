@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { MessageCircle, Phone } from "lucide-react";
+import { Phone } from "lucide-react";
+import { WhatsAppIcon } from "../../components/WhatsAppIcon";
 import type { WfResponseOption, WfWaybillStatus } from "../../lib/api";
 
 /** Shared pieces of the Waybill Follow-Up Center (Bright, 7 Nov 2026). */
@@ -45,10 +46,10 @@ export function ResponsePill({ response, note, options }: { response: string | n
   return <Pill tone={option?.tone ?? "slate"} className="max-w-[180px] truncate">{text}</Pill>;
 }
 
-/** WhatsApp (green chat bubble) or phone (blue); both = the phone, as the stronger contact. */
+/** WhatsApp (the green WhatsApp mark) or phone (blue); both = the phone, as the stronger contact. */
 export function ChannelIcon({ channels, size = 16, callTone = "text-sky-600" }: { channels: string[]; size?: number; callTone?: string }) {
   if (channels.includes("call")) return <Phone className={callTone} style={{ width: size, height: size }} aria-label="Phone call" />;
-  return <MessageCircle className="text-emerald-600" style={{ width: size, height: size }} aria-label="WhatsApp" />;
+  return <WhatsAppIcon className="text-[#1FAF52]" style={{ width: size, height: size }} aria-label="WhatsApp" />;
 }
 
 export function Initials({ name }: { name: string }) {

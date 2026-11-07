@@ -5152,6 +5152,8 @@ export type WfWaybillStatus = "verify" | "overdue" | "in_transit" | "pending";
 export type WfResponseOption = { key: string; label: string; short: string; tone: "green" | "amber" | "blue" | "red" | "slate"; useful: boolean };
 export type WfActiveRow = {
   id: string; productName: string; quantity: number; carrier: string | null; createdAt: string; ageDays: number;
+  dispatchedDate: string | null;
+  todayLogs: Array<{ sessionKey: WfSessionKey; at: string }>;
   agentName: string; agentPhone: string | null; state: string; city: string;
   lastLog: { at: string; channels: string[]; response: string; note: string } | null;
   status: WfWaybillStatus; noNewsStreak: number; followUpsToday: number;
