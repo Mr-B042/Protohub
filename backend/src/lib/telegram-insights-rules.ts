@@ -103,6 +103,8 @@ export type TopRep = { name: string; orders: number; delivered: number };
 
 export function weekDraft(input: {
   heading: string; period: Period; report: BusinessReport; fines: FineTotals; topRep: TopRep | null; live: boolean;
+  /** Late send-outs and no-fee orders still to charge or skip (counted at ESTIMATED_FINE). */
+  waitingOrders?: number;
 }, role: string): Reply {
   const { report, fines } = input;
   const revenue = seesRevenue(role);
@@ -119,6 +121,7 @@ export function weekDraft(input: {
     `Sent out late (past 15 min): ${report.lateSendOuts}`,
     ...(input.live ? [`Still New right now: ${report.stillNew}`] : []),
     `Fines: ${fines.count} · ${naira(fines.amount)}${fines.heldCount ? ` (${fines.heldCount} more under appeal, ${naira(fines.heldAmount)})` : ""}`,
+    ...(input.waitingOrders ? [waitingLine(input.waitingOrders)] : []),
     ...(money && report.adSpend != null ? [`Ad spend: ${naira(report.adSpend)}${report.ordersIn ? ` · ${naira(report.adSpend / report.ordersIn)} per order` : ""}`] : []),
     ...(input.topRep ? [``, `🏆 Most delivered: <b>${tgEscape(input.topRep.name)}</b> – ${input.topRep.delivered} of ${input.topRep.orders} orders`] : []),
     ``,
@@ -201,7 +204,11 @@ export function compareDraft(input: {
 
 // ── /reps: best sales reps ──────────────────────────────────────────────────
 
-export type RepRow = { repId: string; name: string; orders: number; delivered: number; lateSends: number; finesAmount: number };
+export type RepRow = {
+  repId: string; name: string; orders: number; delivered: number; lateSends: number; finesAmount: number;
+  /** Late send-outs and no-fee orders still to charge or skip (counted at ESTIMATED_FINE). */
+  waitingOrders?: number;
+};
 /** Fewer orders than this: listed, not ranked. */
 export const MIN_ORDERS_TO_RANK = 5;
 /** Best delivery rate needs this many orders, or one lucky order wins it. */
@@ -223,7 +230,8 @@ export function repsDraft(input: { heading: string; period: Period; rows: RepRow
   const { ranked, unranked, bestRate } = rankReps(input.rows);
   const extras = (row: RepRow) => [
     row.lateSends ? plural(row.lateSends, "late send") : "",
-    row.finesAmount ? `${naira(row.finesAmount)} fines` : ""
+    row.finesAmount ? `${naira(row.finesAmount)} fines` : "",
+    row.waitingOrders ? `≈${naira(row.waitingOrders * ESTIMATED_FINE)} waiting` : ""
   ].filter(Boolean).map((text) => ` · ${text}`).join("");
   const line = (row: RepRow, place: string) =>
     `${place} ${tgEscape(row.name)} – ${row.delivered} of ${row.orders} delivered (${pct0(percentOf(row.delivered, row.orders))})${extras(row)}`;
@@ -320,8 +328,19 @@ const logsLine = (logs: MissedLogs | null) => {
  * yet, so they count at an estimate (Bright, 7 Nov 2026: "any fines that
  * don't have [an amount] should use 1000 as estimated fine").
  */
-export type WaitingRow = { repId: string; repName: string; lateSends: number; noFee: number };
+export type WaitingItem = {
+  kind: "late_send" | "missing_fee"; orderId: string;
+  /** Late send-out: working minutes past the 15-minute limit; stillNew = not sent out yet. */
+  minutesLate?: number; stillNew?: boolean;
+  /** No delivery fee: the day it was delivered. */
+  deliveredDate?: string;
+};
+export type WaitingRow = { repId: string; repName: string; lateSends: number; noFee: number; items?: WaitingItem[] };
 export const ESTIMATED_FINE = 1_000;
+/** "⏳ Waiting for a decision: 9 orders · about ₦9,000 (₦1,000 each until charged or skipped)". */
+function waitingLine(orders: number) {
+  return `⏳ Waiting for a decision: <b>${plural(orders, "order")}</b> · about <b>${naira(orders * ESTIMATED_FINE)}</b> (${naira(ESTIMATED_FINE)} each until charged or skipped)`;
+}
 const waitingCount = (row: WaitingRow) => row.lateSends + row.noFee;
 const waitingWhat = (row: WaitingRow) => [
   row.lateSends ? plural(row.lateSends, "late send-out") : "",
@@ -360,7 +379,7 @@ export function finesLeaderDraft(input: {
     tgEscape(input.period.label),
     ``,
     totals.count ? `Fines charged: <b>${totals.count}</b> · <b>${naira(totals.amount)}</b>` : `No fines charged yet.`,
-    ...(waitingOrders ? [`⏳ Waiting for a decision: <b>${plural(waitingOrders, "order")}</b> · about <b>${naira(waitingOrders * ESTIMATED_FINE)}</b> (${naira(ESTIMATED_FINE)} each until charged or skipped)`] : []),
+    ...(waitingOrders ? [waitingLine(waitingOrders)] : []),
     ...(byRep.size ? [``, ...[...byRep.values()].sort((a, b) => (b.amount + estimate(b)) - (a.amount + estimate(a)) || a.name.localeCompare(b.name)).map(repLine)] : []),
     ...(totals.heldCount ? [`Under appeal (not taken off yet): ${totals.heldCount} · ${naira(totals.heldAmount)}`] : []),
     ...logsLine(input.logs),
@@ -372,16 +391,29 @@ export function finesLeaderDraft(input: {
 /** A rep: only their own fines. */
 export function finesRepDraft(input: {
   heading: string; period: Period; fines: FineItem[]; logs: MissedLogs | null; previous: { label: string; fines: FineItem[] } | null;
+  /** Their own late send-outs and no-fee orders still to charge or skip (Bright, 7 Nov 2026: reps see theirs too). */
+  waiting?: WaitingItem[];
 }): Reply {
   const kept = input.fines.filter((fine) => !fine.held);
   const held = input.fines.filter((fine) => fine.held);
+  const waiting = input.waiting ?? [];
   const previous = input.previous ? fineTotals(input.previous.fines) : null;
   const item = (fine: FineItem) => `• ${naira(fine.amount)} – ${tgEscape(fine.label.split("\n")[0].slice(0, 120))} · ${shortDay(fine.date)}`;
+  const waitingItem = (row: WaitingItem) => row.kind === "late_send"
+    ? `• #${tgEscape(row.orderId)} ${row.stillNew ? "still in New" : "sent out late"}${row.minutesLate ? `, ${row.minutesLate} min past the 15-minute limit` : ""}`
+    : `• #${tgEscape(row.orderId)} delivered${row.deliveredDate ? ` ${shortDay(row.deliveredDate)}` : ""} with no delivery fee`;
   const lines = [
     `⚖️ <b>${tgEscape(input.heading)}</b>`,
     tgEscape(input.period.label),
     ``,
-    ...(kept.length ? [...kept.map(item), `Total: <b>${naira(fineSums(kept).amount)}</b>`] : [`✅ No fines.`]),
+    ...(kept.length ? [...kept.map(item), `Total: <b>${naira(fineSums(kept).amount)}</b>`] : [waiting.length ? `No fines charged yet.` : `✅ No fines.`]),
+    ...(waiting.length ? [
+      ``,
+      `⏳ Not charged yet: leadership will charge or skip each one. Until then each counts as about ${naira(ESTIMATED_FINE)}.`,
+      ...waiting.slice(0, 15).map(waitingItem),
+      ...(waiting.length > 15 ? [`…and ${waiting.length - 15} more`] : []),
+      `About <b>${naira(waiting.length * ESTIMATED_FINE)}</b> if all are charged.`
+    ] : []),
     ...(held.length ? [``, `Under appeal (not taken off while your appeal is open):`, ...held.map(item)] : []),
     ...logsLine(input.logs),
     ...(previous && input.previous ? [``, `${tgEscape(input.previous.label)}: ${plural(previous.count, "fine")} · ${naira(previous.amount)}`] : []),

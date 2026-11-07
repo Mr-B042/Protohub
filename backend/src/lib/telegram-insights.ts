@@ -16,7 +16,7 @@ import { LEADERSHIP_ROLES, commandDeniedText, seesBusinessMoney, type BusinessRe
 import {
   compareDraft, finesLeaderDraft, finesRepDraft, fineTotals, productsDraft, rankReps, rangeLabel, repsDraft, trendDraft, upsellsDraft,
   wantsLastWeek, weekDraft, weekPeriods,
-  type FineItem, type MissedLogs, type Period, type ProductRow, type Reply, type RepRow, type TrendRow, type UpsellRow, type WaitingRow
+  type FineItem, type MissedLogs, type Period, type ProductRow, type Reply, type RepRow, type TrendRow, type UpsellRow, type WaitingItem, type WaitingRow
 } from "./telegram-insights-rules.js";
 
 type Person = { userId: string; role: string; name: string };
@@ -95,16 +95,25 @@ async function missedLogs(ctx: InsightContext, weekStart: string, repId: string 
  * nobody has charged or skipped yet (the "SENT LATE 2 waiting" / "FEE
  * MISSING 1 waiting" chips). Same lists and decisions as the review page.
  */
-async function waitingDecisions(ctx: InsightContext, weekStart: string): Promise<WaitingRow[]> {
+async function waitingDecisions(ctx: InsightContext, weekStart: string, onlyRepId: string | null = null): Promise<WaitingRow[]> {
   const [missingFees, lateSends] = await Promise.all([missingFeesFor(ctx.orgId, weekStart), lateSendsFor(ctx.orgId, weekStart)]);
   if (!(await attachDecisions(ctx.orgId, missingFees, lateSends))) return [];
   const rows: WaitingRow[] = [];
   for (const repId of new Set([...Object.keys(missingFees), ...Object.keys(lateSends)])) {
-    if (!repInScope(ctx, repId)) continue;
-    const waiting = undecidedFor(repId, missingFees, lateSends);
-    const lateCount = waiting.filter((item) => item.kind === "late_send").length;
-    const noFee = waiting.filter((item) => item.kind === "missing_fee").length;
-    if (lateCount + noFee > 0) rows.push({ repId, repName: ctx.people.get(repId)?.name ?? "Former rep", lateSends: lateCount, noFee });
+    // A rep asking about their own: just theirs. Leadership: the reps of their branches.
+    if (onlyRepId ? repId !== onlyRepId : !repInScope(ctx, repId)) continue;
+    const late = new Map((lateSends[repId]?.orders ?? []).map((order) => [order.orderId, order]));
+    const fees = new Map((missingFees[repId]?.orders ?? []).map((order) => [order.orderId, order]));
+    const items: WaitingItem[] = undecidedFor(repId, missingFees, lateSends).map((item) => {
+      if (item.kind === "late_send") {
+        const order = late.get(item.orderId);
+        return { kind: "late_send", orderId: item.orderId, minutesLate: order?.workingMinutesLate, stillNew: order ? !order.sentAt : undefined };
+      }
+      return { kind: "missing_fee", orderId: item.orderId, deliveredDate: fees.get(item.orderId)?.deliveredDate };
+    });
+    const lateCount = items.filter((item) => item.kind === "late_send").length;
+    const noFee = items.length - lateCount;
+    if (items.length) rows.push({ repId, repName: ctx.people.get(repId)?.name ?? "Former rep", lateSends: lateCount, noFee, items });
   }
   return rows;
 }
@@ -276,13 +285,15 @@ async function trendRows(ctx: InsightContext, today: string): Promise<{ rows: Tr
 export const INSIGHT_COMMANDS: CommandKey[] = ["fines", "week", "lastweek", "compare", "reps", "upsells", "products", "trend"];
 
 async function weekReply(ctx: InsightContext, period: Period, heading: string, live: boolean): Promise<Reply> {
-  const [report, fines] = await Promise.all([
+  const [report, fines, waiting] = await Promise.all([
     ctx.businessReport(ctx.orgId, period.from, period.to, ctx.branches),
-    finesBetween(ctx, period.from, period.to, null)
+    finesBetween(ctx, period.from, period.to, null),
+    waitingDecisions(ctx, period.from)
   ]);
   const reps = await repRows(ctx, period, fines);
   const top = rankReps(reps).ranked[0] ?? null;
-  return weekDraft({ heading, period, report, fines: fineTotals(fines), topRep: top && top.delivered > 0 ? { name: top.name, orders: top.orders, delivered: top.delivered } : null, live }, ctx.person.role);
+  const waitingOrders = waiting.reduce((sum, row) => sum + row.lateSends + row.noFee, 0);
+  return weekDraft({ heading, period, report, fines: fineTotals(fines), topRep: top && top.delivered > 0 ? { name: top.name, orders: top.orders, delivered: top.delivered } : null, live, waitingOrders }, ctx.person.role);
 }
 
 /** The answer to one of the leadership commands (and /fines), or null for any other command. */
@@ -321,8 +332,10 @@ export async function insightAnswer(ctx: InsightContext, command: CommandKey, ar
   }
 
   if (command === "reps") {
-    const fines = await finesBetween(ctx, period.from, period.to, null);
-    return repsDraft({ heading: `Sales reps · ${when}`, period, rows: await repRows(ctx, period, fines) });
+    const [fines, waiting] = await Promise.all([finesBetween(ctx, period.from, period.to, null), waitingDecisions(ctx, period.from)]);
+    const waitingBy = new Map(waiting.map((row) => [row.repId, row.lateSends + row.noFee]));
+    const rows = (await repRows(ctx, period, fines)).map((row) => ({ ...row, waitingOrders: waitingBy.get(row.repId) ?? 0 }));
+    return repsDraft({ heading: `Sales reps · ${when}`, period, rows });
   }
 
   if (command === "upsells") {
@@ -346,11 +359,11 @@ export async function insightAnswer(ctx: InsightContext, command: CommandKey, ar
     finesBetween(ctx, period.from, period.to, own),
     finesBetween(ctx, previousPeriod.from, previousPeriod.to, own),
     missedLogs(ctx, period.from, own),
-    // Leadership's list to decide (the app never shows it to reps).
-    leadership ? waitingDecisions(ctx, period.from) : Promise.resolve([] as WaitingRow[])
+    // Still to charge or skip: leadership see every rep's, a rep only their own (Bright, 7 Nov 2026).
+    waitingDecisions(ctx, period.from, own)
   ]);
   const input = { period, fines, logs, previous: { label: last ? "The week before" : "Last week", fines: previousFines } };
   return leadership
     ? finesLeaderDraft({ heading: `Fines · ${when}`, ...input, waiting })
-    : finesRepDraft({ heading: `Your fines · ${when}`, ...input });
+    : finesRepDraft({ heading: `Your fines · ${when}`, ...input, waiting: waiting.flatMap((row) => row.items ?? []) });
 }
