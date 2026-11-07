@@ -203,7 +203,10 @@ const UploadSchema = z.object({
   // A customer review's files (Customer Reviews, migration 329): the review
   // must be the sender's own, still being put together.
   reviewId: z.string().uuid().optional(),
-  reviewPart: z.enum(["content", "consent"]).optional()
+  // content = the customer's product photo or video; consent = proof of
+  // marketing permission; proof = the WhatsApp screenshot with the customer's
+  // number that a written review needs (migration 330). Only content is ever public.
+  reviewPart: z.enum(["content", "consent", "proof"]).optional()
 });
 router.post("/uploads", async (req, res) => {
   try {

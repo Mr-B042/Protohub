@@ -24,6 +24,7 @@ export const REJECT_REASONS = {
   unusable_video: "Video can't be used",
   unverified_customer: "Customer can't be confirmed",
   wrong_order: "Wrong order",
+  wrong_number: "Number in the screenshot isn't the customer's",
   fabricated: "Looks made up",
   missing_info: "Missing information",
   other: "Other"
@@ -99,15 +100,23 @@ export function reviewProblem(input: NewReviewInput, context: { today: string; d
   return null;
 }
 
-/** Files a review needs before it can be sent: a photo needs a photo, a video a video. */
+/**
+ * Files a review needs before it can be sent: a photo needs a photo, a video
+ * a video, and a written review a WhatsApp screenshot showing the customer's
+ * phone number (Bright, 7 Nov 2026), because typed words alone prove nothing.
+ * Only "content" files are product photos or videos; the WhatsApp screenshot
+ * ("proof") and the marketing permission ("consent") never count as one.
+ */
 export function filesProblem(type: ReviewType, files: Array<{ kind: string; status: string; part: string | null }>): string | null {
-  const content = files.filter((file) => file.part !== "consent");
-  if (content.some((file) => file.status === "uploading")) return "Some files are still being sent. Wait for them to finish.";
-  const ready = content.filter((file) => file.status === "pending");
-  if (type === "photo" && !ready.some((file) => file.kind === "image")) return "A photo review needs at least one photo.";
-  if (type === "video" && !ready.some((file) => file.kind === "video")) return "A video review needs at least one video.";
+  if (files.some((file) => file.status === "uploading")) return "Some files are still being sent. Wait for them to finish.";
+  const ready = files.filter((file) => file.status === "pending");
+  const content = ready.filter((file) => (file.part ?? "content") === "content");
+  if (type === "written" && !ready.some((file) => file.part === "proof" && file.kind === "image")) return WRITTEN_NEEDS_SCREENSHOT;
+  if (type === "photo" && !content.some((file) => file.kind === "image")) return "A photo review needs at least one photo.";
+  if (type === "video" && !content.some((file) => file.kind === "video")) return "A video review needs at least one video.";
   return null;
 }
+export const WRITTEN_NEEDS_SCREENSHOT = "A written review needs a WhatsApp screenshot that shows the customer's phone number.";
 
 /** The levels an approver can approve this review at: never above what its files show. */
 export function levelsFor(type: ReviewType, hasVideo: boolean, hasPhoto: boolean): ReviewLevel[] {

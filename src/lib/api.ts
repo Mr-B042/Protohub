@@ -5023,7 +5023,8 @@ export type ReviewChannel = "whatsapp" | "call" | "sms" | "in_person" | "other";
 export type ReviewStatus = "pending" | "approved" | "rejected" | "changes_requested";
 export type ReviewAmounts = { written: number; photo: number; video: number; premium: number };
 export type ReviewFile = {
-  id: string; kind: "image" | "video"; part: "content" | "consent"; status: string; name: string;
+  /** content = the customer's photo or video; consent = proof of marketing OK; proof = WhatsApp screenshot with their number. */
+  id: string; kind: "image" | "video"; part: "content" | "consent" | "proof"; status: string; name: string;
   width: number | null; height: number | null; durationSeconds: number | null; url: string | null; thumbUrl: string | null; isPublic: boolean;
 };
 export type CustomerReview = {
@@ -5078,7 +5079,7 @@ export const customerReviewsApi = {
 export const productMediaApi = {
   list: () => get<{ media: ProductMedia[]; canApprove: boolean; canSend: boolean; repUploadsEnabled: boolean; settings: CatalogSettings }>("/api/product-media"),
   startUpload: (body: { productId: string; mime: string; size: number; name: string; label: ProductMediaLabel; caption: string; tags?: string[]; batchId?: string;
-    reviewId?: string; reviewPart?: "content" | "consent" }) =>
+    reviewId?: string; reviewPart?: "content" | "consent" | "proof" }) =>
     post<{ id: string; signedUrl: string }>("/api/product-media/uploads", body),
   complete: (id: string, body: { posterDataUrl?: string; durationSeconds?: number }) => post<{ media: ProductMedia }>(`/api/product-media/${id}/complete`, body),
   importUrl: (body: { productId: string; url: string; label: ProductMediaLabel; caption: string; batchId?: string; notifyNow?: boolean }) =>

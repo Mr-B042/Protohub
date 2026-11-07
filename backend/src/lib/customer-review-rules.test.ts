@@ -30,11 +30,20 @@ test("a review needs the order, the type, the customer's words for written, and 
 });
 
 test("files: a photo review needs a photo, a video review a video; consent proof does not count", () => {
-  assert.equal(filesProblem("written", []), null);
+  assert.equal(filesProblem("written", [{ kind: "image", status: "pending", part: "proof" }]), null);
   assert.match(filesProblem("photo", [{ kind: "image", status: "pending", part: "consent" }])!, /at least one photo/);
   assert.equal(filesProblem("photo", [{ kind: "image", status: "pending", part: "content" }]), null);
   assert.match(filesProblem("video", [{ kind: "image", status: "pending", part: "content" }])!, /at least one video/);
   assert.match(filesProblem("photo", [{ kind: "image", status: "uploading", part: "content" }])!, /still being sent/);
+});
+
+test("a written review needs a WhatsApp screenshot (proof); the screenshot is never a product photo", () => {
+  assert.match(filesProblem("written", [])!, /WhatsApp screenshot that shows the customer's phone number/);
+  // A product photo alone does not back a written review, and the permission screenshot does not either.
+  assert.match(filesProblem("written", [{ kind: "image", status: "pending", part: "content" }])!, /WhatsApp screenshot/);
+  assert.match(filesProblem("written", [{ kind: "image", status: "pending", part: "consent" }])!, /WhatsApp screenshot/);
+  // The WhatsApp screenshot does not make a photo review.
+  assert.match(filesProblem("photo", [{ kind: "image", status: "pending", part: "proof" }])!, /at least one photo/);
 });
 
 test("an approver can only pick levels the files show; premium needs a video", () => {

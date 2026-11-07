@@ -7,7 +7,7 @@ import { canApproveMedia, canSendMedia } from "../lib/media-safety.js";
 import { HOLD, PUBLIC, approveRow, approverRecipients, holdingPreviews, notify, removeFiles } from "./product-media.js";
 import {
   LEVEL_LABEL, REJECT_REASONS, REVIEW_CHANNELS, REVIEW_LEVELS, REVIEW_TYPES, amountFor, cleanAmounts, filesProblem, isRejectReason,
-  lagosDay, levelRank, levelsFor, reviewProblem, topUp, weekStartOf, type ReviewLevel, type ReviewType
+  WRITTEN_NEEDS_SCREENSHOT, lagosDay, levelRank, levelsFor, reviewProblem, topUp, weekStartOf, type ReviewLevel, type ReviewType
 } from "../lib/customer-review-rules.js";
 import { readAmounts, saveAmounts } from "../lib/customer-reviews.js";
 import { silentFilterFor } from "../lib/product-launch.js";
@@ -390,7 +390,8 @@ async function detailFor(req: Request, row: any) {
     for (const file of galleryOnly ?? []) duplicates.push({ fileName: file.original_name ?? "", reviewId: null, orderId: null, status: `gallery: ${file.status}` });
   }
 
-  const contentFiles = review.files.filter((file: any) => file.part !== "consent");
+  // Levels come from the customer's own photos and videos only, never from a screenshot.
+  const contentFiles = review.files.filter((file: any) => file.part === "content");
   const levels = levelsFor(row.review_type, contentFiles.some((file: any) => file.kind === "video"), contentFiles.some((file: any) => file.kind === "image"));
   const approvedOthers = all.filter((item: any) => item.id !== row.id && item.status === "approved" && !item.legacy_touchpoint_id).map((item: any) => Number(item.level_amount ?? 0));
   const paidForOrder = ledger.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
@@ -443,7 +444,11 @@ async function placeFiles(req: Request, row: any) {
   let failed = 0;
   for (const file of files ?? []) {
     try {
-      if (row.marketing_ok && file.review_part !== "consent") await approveRow(file, req);
+      // Only the customer's product photos and videos can go public. The
+      // WhatsApp screenshot (it shows their number) and the permission proof never do.
+      // Approved as only a written review, its pictures are not product photos
+      // (often a chat sent the wrong way): they never go public either.
+      if (row.marketing_ok && row.approved_level !== "written" && (file.review_part ?? "content") === "content") await approveRow(file, req);
       else await supabase.from("product_media").update({ status: "private", reviewed_by: req.user!.id, reviewed_by_name: req.user!.name ?? "", reviewed_at: new Date().toISOString() }).eq("id", file.id);
     } catch (error: any) {
       failed += 1;
@@ -463,7 +468,11 @@ router.post("/:id/approve", async (req, res) => {
     const level = String(req.body?.level ?? row.review_type) as ReviewLevel;
     if (!REVIEW_LEVELS.includes(level)) throw fail(400, "Choose what to approve it as.");
     const { data: files } = await supabase.from("product_media").select("kind, review_part").eq("review_id", row.id);
-    const content = (files ?? []).filter((file: any) => file.review_part !== "consent");
+    const content = (files ?? []).filter((file: any) => (file.review_part ?? "content") === "content");
+    // A written review stands on the customer's WhatsApp screenshot (Bright, 7 Nov 2026).
+    if (row.review_type === "written" && !(files ?? []).some((file: any) => file.review_part === "proof" && file.kind === "image")) {
+      throw fail(422, `${WRITTEN_NEEDS_SCREENSHOT} Ask the rep to fix it.`);
+    }
     if (!levelsFor(row.review_type, content.some((file: any) => file.kind === "video"), content.some((file: any) => file.kind === "image")).includes(level)) {
       throw fail(422, level === "premium" ? "Only a review with a video can be Premium." : "That level needs a photo or video this review does not have.");
     }
@@ -483,7 +492,7 @@ router.post("/:id/premium", async (req, res) => {
     requireApprover(req);
     const row = await loadReview(req);
     if (row.status !== "approved") throw fail(409, "Approve the review first.");
-    const { data: videos } = await supabase.from("product_media").select("id").eq("review_id", row.id).eq("kind", "video").neq("review_part", "consent").limit(1);
+    const { data: videos } = await supabase.from("product_media").select("id").eq("review_id", row.id).eq("kind", "video").eq("review_part", "content").limit(1);
     if (!videos?.length) throw fail(422, "Only a review with a video can be Premium.");
     const result = await approveInDatabase(req, row, "premium", String(req.body?.note ?? "").trim().slice(0, 500));
     const fresh = await loadReview(req);
@@ -529,9 +538,11 @@ router.post("/:id/marketing", async (req, res) => {
     const ok = req.body?.ok === true;
     const row = await loadReview(req);
     if (row.status !== "approved" || row.legacy_touchpoint_id) throw fail(409, "Only an approved review can change this.");
-    const { data: files } = await supabase.from("product_media").select("*").eq("review_id", row.id).neq("review_part", "consent");
+    // Marketing only ever moves the customer's product photos and videos.
+    const { data: files } = await supabase.from("product_media").select("*").eq("review_id", row.id).eq("review_part", "content");
     if (ok) {
-      for (const file of files ?? []) if (file.status === "private" && file.holding_path) await approveRow(file, req);
+      // A review approved as written has no product photo to publish: its words are what marketing may use.
+      if (row.approved_level !== "written") for (const file of files ?? []) if (file.status === "private" && file.holding_path) await approveRow(file, req);
     } else {
       for (const file of files ?? []) {
         if (file.status !== "approved" || !file.public_path) continue;

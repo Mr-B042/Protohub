@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2, Loader2, Search, ShieldCheck, Star, X } from "lucide-react";
+import { CheckCircle2, Loader2, MessageCircle, Search, ShieldCheck, Star, X } from "lucide-react";
 import { customerReviewsApi, type ReviewAmounts, type ReviewChannel, type ReviewLevel, type ReviewOrderChoice, type ReviewType } from "../../lib/api";
 
 /**
@@ -37,18 +37,20 @@ export function effectiveReviewType(value: ReviewFormValue, counts: { photos: nu
 }
 
 /** The first thing stopping the review being sent, or null. */
-export function reviewFormProblem(value: ReviewFormValue, counts: { photos: number; videos: number }): string | null {
+export function reviewFormProblem(value: ReviewFormValue, counts: { photos: number; videos: number }, hasScreenshot: boolean): string | null {
   if (!value.order) return "Choose the delivered order this review is for.";
   if (value.order.waiting) return "This order already has a review waiting for approval.";
   const type = effectiveReviewType(value, counts);
   if (type === "written" && value.text.trim().length < 5) return "Write what the customer said, in their words.";
+  // Typed words alone prove nothing (Bright, 7 Nov 2026).
+  if (type === "written" && !hasScreenshot) return "Add a WhatsApp screenshot that shows the customer's phone number.";
   if (type === "photo" && counts.photos === 0) return "Add the customer's photo.";
   if (type === "video" && counts.videos === 0) return "Add the customer's video.";
   if (!value.genuine) return "Tick that the customer confirmed this is their real experience.";
   return null;
 }
 
-export function CustomerReviewFields({ value, onChange, amounts, counts, disabled, consentName, onPickConsent, onRemoveConsent }: {
+export function CustomerReviewFields({ value, onChange, amounts, counts, disabled, consentName, onPickConsent, onRemoveConsent, screenshot, onPickScreenshot, onRemoveScreenshot }: {
   value: ReviewFormValue;
   onChange: (patch: Partial<ReviewFormValue>) => void;
   amounts: ReviewAmounts | null;
@@ -57,12 +59,17 @@ export function CustomerReviewFields({ value, onChange, amounts, counts, disable
   consentName: string | null;
   onPickConsent: (file: File) => void;
   onRemoveConsent: () => void;
+  /** The WhatsApp screenshot a written review needs: its name and a preview. */
+  screenshot: { name: string; preview: string } | null;
+  onPickScreenshot: (file: File) => void;
+  onRemoveScreenshot: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ReviewOrderChoice[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const consentInput = useRef<HTMLInputElement | null>(null);
+  const screenshotInput = useRef<HTMLInputElement | null>(null);
 
   // Search the delivered orders (a rep sees only their own), a moment after typing stops.
   useEffect(() => {
@@ -143,7 +150,10 @@ export function CustomerReviewFields({ value, onChange, amounts, counts, disable
             </button>
           ))}
         </div>
-        <span className="mt-1 block text-[11.5px] text-gray-500 dark:text-slate-400">A manager can make a strong video Premium ({amounts ? naira(amounts.premium) : "…"}). Paid once per order, at the highest level approved.</span>
+        <span className="mt-1 block text-[11.5px] text-gray-500 dark:text-slate-400">
+          {type === "written" ? "A written review needs a WhatsApp screenshot that shows the customer's phone number. " : ""}
+          A manager can make a strong video Premium ({amounts ? naira(amounts.premium) : "…"}). Paid once per order, at the highest level approved.
+        </span>
       </div>
 
       <label className="block">
@@ -151,6 +161,32 @@ export function CustomerReviewFields({ value, onChange, amounts, counts, disable
         <textarea value={value.text} onChange={(event) => onChange({ text: event.target.value.slice(0, 2000) })} rows={3} disabled={disabled}
           placeholder="Their own words, good or bad. Never write a review for them." className={field} />
       </label>
+
+      {(type === "written" || screenshot) && (
+        <div>
+          <span className={label}>WhatsApp screenshot {type === "written" ? <span className="text-rose-500">*</span> : <span className="font-semibold text-gray-400">(optional for a {type})</span>}</span>
+          {screenshot ? (
+            <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-white p-2 dark:border-emerald-500/30 dark:bg-slate-950">
+              <img src={screenshot.preview} alt="" className="h-16 w-12 shrink-0 rounded-lg object-cover" />
+              <span className="min-w-0 flex-1 text-[12.5px]">
+                <b className="block truncate text-gray-900 dark:text-slate-100">{screenshot.name}</b>
+                <span className="block text-gray-500 dark:text-slate-400">The manager checks the number in it is the customer's{order?.phone ? ` (${order.phone})` : ""}.</span>
+              </span>
+              {!disabled && <button type="button" aria-label="Remove screenshot" onClick={onRemoveScreenshot} className="!min-h-0 rounded-lg p-2 text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-800"><X className="h-4 w-4" /></button>}
+            </div>
+          ) : (
+            <button type="button" disabled={disabled} onClick={() => screenshotInput.current?.click()}
+              className="!min-h-0 flex w-full items-center gap-3 rounded-xl border-2 border-dashed border-emerald-300 bg-emerald-50/60 px-3 py-3 text-left disabled:opacity-50 dark:border-emerald-500/40 dark:bg-emerald-500/10">
+              <MessageCircle className="h-6 w-6 shrink-0 text-emerald-600" />
+              <span className="text-[12.5px] text-gray-700 dark:text-slate-200">
+                <b className="block text-[13.5px] text-emerald-700 dark:text-emerald-300">Add the WhatsApp screenshot</b>
+                The customer's message, with their phone number showing at the top of the chat.
+              </span>
+            </button>
+          )}
+          <input ref={screenshotInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) onPickScreenshot(file); }} />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div>
