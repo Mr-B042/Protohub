@@ -3297,9 +3297,13 @@ const makeSku = (name: string) => {
 // unchanged; this file now consumes the same helpers everything else does.
 
 const formatProductMoney = (amount: number, code: ProductCurrencyCode) => {
-  const formatted = new Intl.NumberFormat(productCurrencies[code].locale, {
+  // An order sent without its money (the Logistics role gets no amount or
+  // currency - inventory-operations-access.ts) must never take a whole page
+  // down: Scheduled Deliveries crashed on it (7 Nov 2026).
+  const config = productCurrencies[code] ?? productCurrencies.NGN;
+  const formatted = new Intl.NumberFormat(config.locale, {
     style: "currency",
-    currency: productCurrencies[code].currency,
+    currency: config.currency,
     maximumFractionDigits: 0
   }).format(amount || 0);
   return spaceNaira(isMoneyHidden() ? maskFormattedMoney(formatted) : formatted);
@@ -81970,7 +81974,7 @@ ${waybillLineItems(w).length > 1
                                 <div className="font-medium text-gray-900">{order.productName}</div>
                                 <div className="text-xs text-gray-400">{order.packageName}{quantityForOrder(order) > 1 ? ` · ${quantityForOrder(order)} units` : ""}</div>
                               </td>
-                              <td className="px-4 py-4 text-right font-bold text-gray-900 whitespace-nowrap">{formatProductMoney(order.amount, order.currency)}</td>
+                              <td className="px-4 py-4 text-right font-bold text-gray-900 whitespace-nowrap">{typeof order.amount === "number" && order.currency ? formatProductMoney(order.amount, order.currency) : "-"}</td>
                               <td className="px-4 py-4 whitespace-nowrap">{renderDeliveryFeeCell(order)}</td>
                               <td className="px-4 py-4">
                                 <div className="text-sm text-gray-900">{[order.city, order.state].filter(Boolean).join(", ") || "-"}</div>
