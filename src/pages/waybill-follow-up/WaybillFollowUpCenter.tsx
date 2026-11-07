@@ -7,6 +7,7 @@ import TabHistory from "./TabHistory";
 import TabMisses from "./TabMisses";
 import TabReports from "./TabReports";
 import WaybillTable from "./WaybillTable";
+import { SessionTimer, useLiveNow } from "./Timers";
 import { Card, IconTile, btn, longDate, type WfTab } from "./wf-ui";
 
 const lagosToday = () => new Date(Date.now() + 60 * 60_000).toISOString().slice(0, 10);
@@ -31,8 +32,9 @@ export default function WaybillFollowUpCenter({ currentRole, onToast, onOpenWayb
   const [data, setData] = useState<WfDashboard | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [nowMs, setNowMs] = useState(Date.now());
+  const nowMs = useLiveNow(data?.nowMs);
   const [logFor, setLogFor] = useState<string[] | null>(null);
+  const [informing, setInforming] = useState<Set<string>>(new Set());
   const [historyWaybill, setHistoryWaybill] = useState("");
   const dateInput = useRef<HTMLInputElement | null>(null);
 
@@ -48,14 +50,28 @@ export default function WaybillFollowUpCenter({ currentRole, onToast, onOpenWayb
     }
   }, [date]);
   useEffect(() => { void load(); }, [load]);
-  // The countdown moves every 30 seconds; the numbers refresh every minute.
+  // The timers tick every second (useLiveNow); the numbers refresh every minute.
   useEffect(() => {
-    const tick = window.setInterval(() => setNowMs(Date.now()), 30_000);
     const refresh = window.setInterval(() => { void load(true); }, 60_000);
-    return () => { window.clearInterval(tick); window.clearInterval(refresh); };
+    return () => window.clearInterval(refresh);
   }, [load]);
 
   const openHistory = (waybillId = "") => { setHistoryWaybill(waybillId); setTab("history"); };
+  // "I've informed the agent's group" (Bright, 7 Nov 2026): the server keeps the time.
+  const inform = async (ids: string[]) => {
+    setInforming((current) => new Set([...current, ...ids]));
+    try {
+      const result = await waybillFollowUpApi.inform(ids);
+      onToast(result.late.length
+        ? `Ticked, but late for ${result.late.join(", ")}: the late notice is charged.`
+        : `Agent's group told for ${ids.length === 1 ? ids[0] : `${ids.length} waybills`}. On time.`);
+      await load(true);
+    } catch (err) {
+      onToast((err as Error).message || "Could not save the tick.");
+    } finally {
+      setInforming((current) => new Set([...current].filter((id) => !ids.includes(id))));
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -66,6 +82,7 @@ export default function WaybillFollowUpCenter({ currentRole, onToast, onOpenWayb
           <p className="m-0 text-[15px] text-gray-600 dark:text-slate-400">Track, follow up and ensure all waybills are received on time.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {data && <SessionTimer sessions={data.sessions} nowMs={nowMs} isToday={data.date === data.today} workingDay={data.workingDay} />}
           <span className="relative">
             <button type="button" onClick={() => dateInput.current?.showPicker?.()} className={`${btn.ghost} min-w-[200px] justify-between`}>
               <span className="inline-flex items-center gap-2"><CalendarDays className="h-4 w-4" />{longDate(date)}</span><ChevronDown className="h-4 w-4" />
@@ -92,7 +109,7 @@ export default function WaybillFollowUpCenter({ currentRole, onToast, onOpenWayb
       {error && <p className="m-0 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[13px] text-rose-800">{error}</p>}
       {!data && !error && <p className="m-0 flex items-center gap-2 text-[13px] text-gray-500"><Loader2 className="h-4 w-4 animate-spin" />Loading…</p>}
 
-      {data && tab === "dashboard" && <TabDashboard data={data} nowMs={nowMs} onLog={(ids) => setLogFor(ids)} onHistory={openHistory} onOpenWaybills={onOpenWaybills} />}
+      {data && tab === "dashboard" && <TabDashboard data={data} nowMs={nowMs} onLog={(ids) => setLogFor(ids)} onHistory={openHistory} onOpenWaybills={onOpenWaybills} onInform={inform} informing={informing} />}
       {data && tab === "waybills" && (
         <Card className="overflow-hidden">
           <div className="flex items-start gap-3 px-5 pt-4">
@@ -102,7 +119,8 @@ export default function WaybillFollowUpCenter({ currentRole, onToast, onOpenWayb
               <p className="m-0 text-[13px] text-gray-600 dark:text-slate-400">Every waybill still In Transit. It leaves this list when it is marked Received. Tick several to log one call or WhatsApp message for all of them.</p>
             </div>
           </div>
-          <WaybillTable rows={data.waybills} options={data.options.responses} pageSize={20} onLog={(ids) => setLogFor(ids)} onHistory={openHistory} onOpenWaybills={onOpenWaybills} />
+          <WaybillTable rows={data.waybills} options={data.options.responses} pageSize={20} onLog={(ids) => setLogFor(ids)} onHistory={openHistory} onOpenWaybills={onOpenWaybills}
+            nowMs={nowMs} onInform={inform} informing={informing} />
         </Card>
       )}
       {data && tab === "history" && <TabHistory options={data.options.responses} waybill={historyWaybill} onToast={onToast} />}

@@ -101,8 +101,8 @@ export default function TabReports({ canEdit, onToast, onSaved }: { canEdit: boo
       <Card className="p-5">
         <h3 className="m-0 text-[18px] font-bold text-gray-900 dark:text-slate-50">Settings</h3>
         <p className="m-0 text-[13px] text-gray-600 dark:text-slate-400">
-          Five sessions a working day: 8:00, 10:00, 12:00 and 2:00 (each from the grace minutes before to the grace minutes after), and once from 4 to 5 PM.
-          A waybill is owed from the first session after it is created until it is marked Received.
+          The day a waybill is made, tick that the agent's group was told within the minutes set below (8:00 AM the next working day when it is made after 5 PM, before 8 AM or on a day off).
+          From the next working day it is followed up five times a day until it is marked Received: 8:00, 10:00, 12:00 and 2:00 (each from the grace minutes before to the grace minutes after) and once by 5 PM (from the grace minutes before 4).
           {canEdit ? "" : " Only the Owner or an Admin can change these."}
         </p>
         {!settings ? <p className="m-0 mt-3 flex items-center gap-2 text-[13px] text-gray-500"><Loader2 className="h-4 w-4 animate-spin" />Loading…</p> : (
@@ -123,6 +123,13 @@ export default function TabReports({ canEdit, onToast, onSaved }: { canEdit: boo
             <label className="block text-[12.5px] font-semibold text-gray-700 dark:text-slate-300">Charges start on
               <input type="date" disabled={!canEdit} value={settings.chargesFrom} onChange={(event) => setSettings({ ...settings, chargesFrom: event.target.value })} className={field} />
               <span className="mt-1 block text-[12px] font-normal text-gray-500">Before this day, missed follow-ups show on the schedule and report, but nothing is charged.</span>
+            </label>
+            <label className="block text-[12.5px] font-semibold text-gray-700 dark:text-slate-300">Tell the agent's group within (minutes)
+              <input type="number" min={15} max={240} step={5} disabled={!canEdit} value={settings.noticeMinutes} onChange={(event) => setSettings({ ...settings, noticeMinutes: Number(event.target.value) || 60 })} className={field} />
+              <span className="mt-1 block text-[12px] font-normal text-gray-500">From when the waybill is made. Ticked late or not at all costs the amount below.</span>
+            </label>
+            <label className="block text-[12.5px] font-semibold text-gray-700 dark:text-slate-300">Charge for a late notice, per waybill (₦)
+              <input type="number" min={0} step={50} disabled={!canEdit} value={settings.noticeAmount} onChange={(event) => setSettings({ ...settings, noticeAmount: Number(event.target.value) || 0 })} className={field} />
             </label>
             <label className="block text-[12.5px] font-semibold text-gray-700 dark:text-slate-300">Overdue after (days on the road)
               <input type="number" min={1} max={30} disabled={!canEdit} value={settings.overdueAfterDays} onChange={(event) => setSettings({ ...settings, overdueAfterDays: Number(event.target.value) || 1 })} className={field} />

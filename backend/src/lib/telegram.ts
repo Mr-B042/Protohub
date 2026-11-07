@@ -20,7 +20,7 @@ import {
   COMMANDS, DEFAULT_AUTOMATIONS, FORWARD_GROUPS, LEADERSHIP_ROLES, TRIGGERS, buildKeyboard, cartDraft, cleanCommandSettings, cleanQuiet,
   cleanRecipients, cleanSettings, commandAllowed, commandDeniedText, commandsFor, followUpDraft, forwardDedupeKey, forwardedDraft, isQuietTime,
   kindForwarded, lowStockDraft, naira, orderDraft,
-  myOrdersDraft, previewOf, repTodayDraft, repWeekNoteDraft, reportDraft, waybillDueDraft, waybillMissedDraft, lagosClock, type WaybillLine, roleMayReceive, seesCustomer, seesRevenue, sendOutSoonDraft, forwardCheck, isRepRole, lateTodayDraft,
+  myOrdersDraft, previewOf, repTodayDraft, repWeekNoteDraft, reportDraft, waybillDueDraft, waybillMissedDraft, waybillNoticeSoonDraft, waybillNoticeLateDraft, lagosClock, type WaybillLine, roleMayReceive, seesCustomer, seesRevenue, sendOutSoonDraft, forwardCheck, isRepRole, lateTodayDraft,
   type AutomationSettings, type BusinessReport, type CartInfo, type CommandKey, type Draft, type LowStockItem, type OrderInfo,
   type QuietHours, type Recipients, type RepDay, type TriggerKey
 } from "./telegram-rules.js";
@@ -124,11 +124,12 @@ export type AutomationRow = {
 };
 const automationCache = new Map<string, { at: number; rows: AutomationRow[] }>();
 
-export async function ensureDefaultAutomations(orgId: string) {
+/** Make the ready-made automations that are missing (only these triggers when `only` is given). Paused ones exist, so they stay paused. */
+export async function ensureDefaultAutomations(orgId: string, only?: readonly string[]) {
   const { data, error } = await supabase.from("telegram_automations").select("trigger").eq("org_id", orgId).eq("built_in", true);
   if (error) throw error;
   const have = new Set(((data ?? []) as any[]).map((row) => String(row.trigger)));
-  const missing = DEFAULT_AUTOMATIONS.filter((row) => !have.has(row.trigger));
+  const missing = DEFAULT_AUTOMATIONS.filter((row) => !have.has(row.trigger) && (!only || only.includes(row.trigger)));
   // One at a time: two page loads at once both try, and the database lets
   // only one ready-made per trigger in (migration 327); the other is skipped.
   for (const row of missing) {
@@ -928,6 +929,30 @@ export async function telegramWaybillMissed(orgId: string, input: {
     dedupeBase: `${input.dateKey}:${input.sessionKey}`,
     draftFor: (person) => waybillMissedDraft({
       timeLabel: input.timeLabel, dayLabel: input.dayLabel, waybills: input.waybills, amount: input.amount, charged: input.charged,
+      responsibleName: input.responsibleName, forResponsible: person.userId === input.responsibleUserId
+    })
+  });
+}
+
+/** 15 minutes or less to tell a new waybill's agent's group: once per waybill. */
+export async function telegramWaybillNoticeSoon(orgId: string, input: { waybill: WaybillLine; dueMs: number; nowMs: number; amount: number; charged: boolean }) {
+  return runTrigger(orgId, "waybill_notice_due", {
+    dedupeBase: `notice-soon:${input.waybill.id}`,
+    draftFor: () => waybillNoticeSoonDraft({
+      waybill: input.waybill, minutesLeft: Math.max(1, Math.ceil((input.dueMs - input.nowMs) / 60_000)), due: lagosClock(input.dueMs),
+      amount: input.amount, charged: input.charged
+    })
+  });
+}
+
+/** New waybills whose agent's group was not told in time: who, and the charge. */
+export async function telegramWaybillNoticeLate(orgId: string, input: {
+  waybills: WaybillLine[]; amount: number; minutes: number; charged: boolean; responsibleUserId: string | null; responsibleName: string | null; dedupeKey: string;
+}) {
+  return runTrigger(orgId, "waybill_notice_late", {
+    dedupeBase: `notice-late:${input.dedupeKey}`,
+    draftFor: (person) => waybillNoticeLateDraft({
+      waybills: input.waybills, minutes: input.minutes, amount: input.amount, charged: input.charged,
       responsibleName: input.responsibleName, forResponsible: person.userId === input.responsibleUserId
     })
   });

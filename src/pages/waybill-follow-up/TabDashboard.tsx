@@ -1,7 +1,8 @@
 import { BarChart3, CalendarDays, CheckCircle2, CircleDot, Clock, ClipboardList, MessageSquareMore, RotateCw, ShieldAlert, Target, Truck, XCircle } from "lucide-react";
 import type { WfDashboard, WfSession } from "../../lib/api";
 import WaybillTable from "./WaybillTable";
-import { Card, ChannelIcon, IconTile, Pill, lagosTime, naira, shortDate, untilText } from "./wf-ui";
+import { NoticePanel, clockText } from "./Timers";
+import { Card, ChannelIcon, IconTile, Pill, lagosTime, naira, shortDate } from "./wf-ui";
 
 type Props = {
   data: WfDashboard;
@@ -9,6 +10,8 @@ type Props = {
   onLog: (ids: string[]) => void;
   onHistory: (waybillId?: string) => void;
   onOpenWaybills: () => void;
+  onInform: (ids: string[]) => void;
+  informing: Set<string>;
 };
 
 function Kpi({ icon, iconLook, label, value, pill }: { icon: React.ReactNode; iconLook: string; label: string; value: string | number; pill: React.ReactNode }) {
@@ -39,8 +42,8 @@ function SessionBox({ session, isNext, nowMs }: { session: WfSession; isNext: bo
         : <Clock className={`h-6 w-6 ${session.status === "open" || isNext ? "text-[#5B3FD9]" : "text-gray-500"}`} />;
   const line = session.status === "completed" ? <><span className="block text-emerald-700 dark:text-emerald-300">Completed</span><span className="block text-[11.5px] text-emerald-700 dark:text-emerald-300">{lagosTime(session.completedAt)}</span></>
     : session.status === "missed" ? <><span className="block text-rose-600">Missed</span><span className="block text-[11.5px] text-rose-600">{session.missing} waybill{session.missing === 1 ? "" : "s"}</span></>
-      : session.status === "open" ? <span className="block font-semibold text-[#5B3FD9]">Due now · {session.logged}/{session.owed}<span className="block text-[11.5px] font-medium">closes in {untilText(closeMs - nowMs)}</span></span>
-        : isNext ? <span className="block font-semibold text-[#5B3FD9]">Due in {untilText(dueMs - nowMs)}</span>
+      : session.status === "open" ? <span className="block font-semibold text-[#5B3FD9]">Due now · {session.logged}/{session.owed}<span className="block font-mono text-[12px] font-bold tabular-nums">closes in {clockText(closeMs - nowMs)}</span></span>
+        : isNext ? <span className="block font-semibold text-[#5B3FD9]">Due in <span className="font-mono tabular-nums">{clockText(dueMs - nowMs)}</span></span>
           : <span className="block text-gray-500">{SESSION_WORD[session.status]}</span>;
   return (
     <div className={`relative z-[1] flex min-w-[124px] flex-1 flex-col items-center rounded-xl border px-2 py-3 text-center ${look}`}>
@@ -70,7 +73,7 @@ function Ring({ done, total }: { done: number; total: number }) {
 }
 
 /** The Follow-Up Dashboard, built to Bright's design (7 Nov 2026). */
-export default function TabDashboard({ data, nowMs, onLog, onHistory, onOpenWaybills }: Props) {
+export default function TabDashboard({ data, nowMs, onLog, onHistory, onOpenWaybills, onInform, informing }: Props) {
   const isToday = data.date === data.today;
   const nextKey = isToday && data.next && !data.next.open ? data.next.key : null;
   const workingSessions = data.sessions.filter((session) => session.status !== "off");
@@ -79,6 +82,10 @@ export default function TabDashboard({ data, nowMs, onLog, onHistory, onOpenWayb
 
   return (
     <div className="space-y-4">
+      {isToday && (
+        <NoticePanel rows={data.waybills} nowMs={nowMs} minutes={data.settings.noticeMinutes} amount={data.settings.noticeAmount}
+          charged={data.today >= data.settings.chargesFrom} busyIds={informing} onInform={onInform} />
+      )}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <Kpi icon={<Truck className="h-5 w-5" />} iconLook="bg-sky-50 text-sky-600 dark:bg-sky-500/10" label="Active Waybills" value={data.cards.activeWaybills} pill={<Pill tone="blue">Awaiting receipt</Pill>} />
         <Kpi icon={<Clock className="h-5 w-5" />} iconLook="bg-amber-50 text-amber-600 dark:bg-amber-500/10" label="Follow-Ups Due" value={data.cards.dueNow} pill={<Pill tone="amber">{data.next?.open ? "Action required now" : data.next ? `Next at ${data.next.timeLabel}` : "Nothing due"}</Pill>} />
@@ -101,7 +108,7 @@ export default function TabDashboard({ data, nowMs, onLog, onHistory, onOpenWayb
             {isToday && data.next && (
               <span className="inline-flex items-center gap-2 rounded-xl bg-[#EEEBFC] px-3 py-2 text-[13px] font-semibold text-[#5B3FD9] dark:bg-violet-500/15 dark:text-violet-200">
                 <Clock className="h-4 w-4" />
-                {data.next.open ? `Now: ${data.next.timeLabel} (closes in ${untilText(Date.parse(data.next.closeAt) - nowMs)})` : `Next: ${data.next.timeLabel} (In ${untilText(Date.parse(data.next.dueAt) - nowMs)})`}
+                {data.next.open ? <>Now: {data.next.timeLabel} (closes in <span className="font-mono tabular-nums">{clockText(Date.parse(data.next.closeAt) - nowMs)}</span>)</> : <>Next: {data.next.timeLabel} (in <span className="font-mono tabular-nums">{clockText(Date.parse(data.next.dueAt) - nowMs)}</span>)</>}
               </span>
             )}
           </div>
@@ -142,7 +149,8 @@ export default function TabDashboard({ data, nowMs, onLog, onHistory, onOpenWayb
               <p className="m-0 text-[13px] text-gray-600 dark:text-slate-400">Waybills awaiting receipt and follow-up.</p>
             </div>
           </div>
-          <WaybillTable rows={data.waybills} options={data.options.responses} pageSize={5} onLog={onLog} onHistory={(id) => onHistory(id)} onOpenWaybills={onOpenWaybills} />
+          <WaybillTable rows={data.waybills} options={data.options.responses} pageSize={5} onLog={onLog} onHistory={(id) => onHistory(id)} onOpenWaybills={onOpenWaybills}
+            nowMs={nowMs} onInform={onInform} informing={informing} />
         </Card>
 
         <Card className="p-5">

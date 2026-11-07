@@ -4,7 +4,7 @@ import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { addDays, cleanSettings, lagosDay } from "../lib/waybill-follow-up-rules.js";
 import {
-  FollowUpError, RESPONSIBLE_ROLES, activeWaybills, addLogs, dashboardFor, decideMiss, disputeMiss, evidenceUrl, historyFor,
+  FollowUpError, RESPONSIBLE_ROLES, activeWaybills, addLogs, dashboardFor, decideMiss, disputeMiss, evidenceUrl, historyFor, informAgent,
   missesBetween, responsibleFor, settingsFor, weekReport
 } from "../lib/waybill-follow-up.js";
 
@@ -54,6 +54,13 @@ router.post("/logs", requireRole(...VIEW), async (req, res) => {
       nextAction: body.nextAction, evidence: body.evidence ?? null
     }));
   } catch (error) { fail(res, error, "Could not save the follow-up."); }
+});
+
+// "I've informed the agent's group" for new waybills (Bright, 7 Nov 2026): timed by the server.
+router.post("/notices", requireRole(...VIEW), async (req, res) => {
+  try {
+    res.status(201).json(await informAgent(req.user!.orgId, { id: req.user!.id, name: req.user!.name ?? null }, req.body?.waybillIds));
+  } catch (error) { fail(res, error, "Could not save the tick."); }
 });
 
 router.get("/logs/:id/evidence", requireRole(...VIEW), async (req, res) => {
@@ -125,6 +132,7 @@ router.patch("/settings", requireRole("Owner", "Admin"), async (req, res) => {
     const { error } = await supabase.from("waybill_follow_up_settings").upsert({
       org_id: orgId, responsible_user_id: next.responsibleUserId, amount: next.amount, grace_minutes: next.graceMinutes,
       working_days: next.workingDays, charges_from: next.chargesFrom, overdue_after_days: next.overdueAfterDays,
+      notice_minutes: next.noticeMinutes, notice_amount: next.noticeAmount,
       updated_by_name: req.user!.name ?? null, updated_at: new Date().toISOString()
     }, { onConflict: "org_id" });
     if (error) throw error;
