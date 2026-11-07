@@ -4209,7 +4209,9 @@ export type WeeklyReportQuestion = {
 export const weeklyReportsApi = {
   mine: (weekStart: string) =>
     get<{ weekStart: string; weekEnd: string; report: WeeklyRepReport | null; companyStatus: WeeklyCompanyReportStatus; corrections: WeeklyReportCorrection[]; audit: WeeklyReportAuditEntry[]; fines: WeeklyReportFineRow[]; previousFines: WeeklyReportFineRow[];
-      adjustments: WeeklyReportAdjustmentRow[]; previousAdjustments: WeeklyReportAdjustmentRow[]; bonusQueries: WeeklyBonusQuery[];
+      adjustments: WeeklyReportAdjustmentRow[]; previousAdjustments: WeeklyReportAdjustmentRow[];
+      /** Customer review bonus lines (reviews approved in the week). Missing before the backend has them. */
+      reviewBonuses?: WeeklyReportAdjustmentRow[]; previousReviewBonuses?: WeeklyReportAdjustmentRow[]; bonusQueries: WeeklyBonusQuery[];
       logMisses: WeeklyLogMissRow[]; previousLogMisses: WeeklyLogMissRow[]; logMissDisputes: LogMissDispute[]; fineAppeals?: FineAppeal[]; carriedFines: number;
       payoutChange?: WeeklyPayoutChange | null; gate?: WeeklySendGate; lateDeliveries?: WeeklyLateDelivery[] }>(
       `/api/weekly-reports/mine?${new URLSearchParams({ weekStart }).toString()}`
@@ -4223,7 +4225,9 @@ export const weeklyReportsApi = {
       corrections: WeeklyReportCorrection[]; audit: WeeklyReportAuditEntry[]; expectedRepIds: string[];
       editedAfterSubmit: Array<{ repId: string; orderId: string; editedAt: string; what: string; by: string | null }>;
       fines: WeeklyReportFineRow[]; previousFines: WeeklyReportFineRow[];
-      adjustments: WeeklyReportAdjustmentRow[]; previousAdjustments: WeeklyReportAdjustmentRow[]; bonusQueries: WeeklyBonusQuery[];
+      adjustments: WeeklyReportAdjustmentRow[]; previousAdjustments: WeeklyReportAdjustmentRow[];
+      /** Customer review bonus lines (reviews approved in the week). Missing before the backend has them. */
+      reviewBonuses?: WeeklyReportAdjustmentRow[]; previousReviewBonuses?: WeeklyReportAdjustmentRow[]; bonusQueries: WeeklyBonusQuery[];
       logMisses: WeeklyLogMissRow[]; previousLogMisses: WeeklyLogMissRow[]; logMissDisputes: LogMissDispute[]; fineAppeals?: FineAppeal[]; carriedFines: Record<string, number>;
       payoutChanges?: WeeklyPayoutChange[]; gate?: WeeklySendGate;
       /** Per rep: delivered orders with no delivery fee, each with its charge / skip (leadership only). */
@@ -4998,6 +5002,8 @@ export type ProductMedia = {
   url: string | null; thumbUrl: string | null; isCover: boolean; displayOrder: number;
   uploadedBy: string | null; uploadedByName: string; uploadedByRole: string;
   reviewedBy: string | null; reviewedByName: string | null; reviewedAt: string | null; rejectReason: string | null; createdAt: string;
+  /** Set when the file belongs to a customer review (decided in the Customer Reviews tab). */
+  reviewId?: string | null;
 };
 export type ProductCategory = { id: string; name: string; color: string; icon: string; description: string; active: boolean; displayOrder: number; createdAt: string };
 export type CatalogSettings = {
@@ -5010,9 +5016,69 @@ export type CatalogSettings = {
 };
 export type MediaEvent = { id: string; action: string; detail: string; actorName: string; productId: string | null; mediaId: string | null; createdAt: string };
 export type StockMovementRow = { id: string; productId: string; productName: string; type: string; qty: number; byName: string; note: string; from: string | null; to: string | null; createdAt: string };
+// ── Customer Reviews (Bright, 7 Nov 2026) ─────────────────
+export type ReviewType = "written" | "photo" | "video";
+export type ReviewLevel = "written" | "photo" | "video" | "premium";
+export type ReviewChannel = "whatsapp" | "call" | "sms" | "in_person" | "other";
+export type ReviewStatus = "pending" | "approved" | "rejected" | "changes_requested";
+export type ReviewAmounts = { written: number; photo: number; video: number; premium: number };
+export type ReviewFile = {
+  id: string; kind: "image" | "video"; part: "content" | "consent"; status: string; name: string;
+  width: number | null; height: number | null; durationSeconds: number | null; url: string | null; thumbUrl: string | null; isPublic: boolean;
+};
+export type CustomerReview = {
+  id: string; orderId: string; productId: string | null; productName: string; customer: string; phone: string; deliveredOn: string | null; orderStatus: string | null;
+  repId: string | null; repName: string; submittedById: string | null; submittedByName: string;
+  status: ReviewStatus; type: ReviewType; approvedLevel: ReviewLevel | null; levelAmount: number;
+  text: string; rating: number | null; channel: ReviewChannel; channelText: string; receivedOn: string | null; complaint: string;
+  genuine: boolean | null; marketingOk: boolean; marketingWithdrawnAt: string | null;
+  reviewedByName: string | null; reviewedAt: string | null; decisionReason: string | null; decisionReasonText: string | null; decisionNote: string | null;
+  legacy: boolean; submittedAt: string | null; createdAt: string;
+  files: ReviewFile[];
+  bonus: { paidForReview: number; paidForOrder: number };
+};
+export type ReviewOrderChoice = {
+  id: string; customer: string; phone: string; productName: string; productId: string | null; deliveredOn: string | null;
+  repId: string | null; repName: string; waiting: boolean; approvedLevel: ReviewLevel | null; paid: number;
+};
+export type ReviewDetail = {
+  review: CustomerReview;
+  others: CustomerReview[];
+  ledger: Array<{ id: string; reviewId: string | null; level: ReviewLevel; levelText: string; amount: number; levelTotal: number; payWeekStart: string; repName: string; approvedByName: string; createdAt: string }>;
+  duplicates: Array<{ fileName: string; reviewId: string | null; orderId: string | null; status: string }>;
+  options: Array<{ level: ReviewLevel; label: string; amount: number; adds: number }>;
+  events: Array<{ action: string; from: string | null; to: string | null; amount: number; note: string; actorName: string; at: string }>;
+  canApprove: boolean;
+  reasons: Record<string, string>;
+  credited?: number;
+  warning?: string | null;
+};
+export type ReviewList = {
+  reviews: CustomerReview[]; canApprove: boolean; amounts: ReviewAmounts;
+  summary: { waiting: number; approvedThisWeek: number; bonusThisWeek: number; bonusTotal: number; forMarketing: number; thisWeek: string };
+};
+export const customerReviewsApi = {
+  list: () => get<ReviewList>("/api/customer-reviews"),
+  count: () => get<{ waiting: number }>("/api/customer-reviews/count"),
+  detail: (id: string) => get<ReviewDetail>(`/api/customer-reviews/${id}`),
+  orders: (q: string) => get<{ orders: ReviewOrderChoice[] }>(`/api/customer-reviews/orders?q=${encodeURIComponent(q)}`),
+  start: (body: { orderId: string; type: ReviewType; text: string; rating: number | null; channel: ReviewChannel; receivedOn: string; complaint: string; genuine: boolean; marketing: boolean }) =>
+    post<{ review: { id: string; productId: string | null; status: string } }>("/api/customer-reviews", body),
+  submit: (id: string) => post<{ review: { id: string; status: string }; bonusIfApproved: number }>(`/api/customer-reviews/${id}/submit`, {}),
+  discard: (id: string) => del<{ ok: boolean }>(`/api/customer-reviews/${id}`),
+  approve: (id: string, level: ReviewLevel, note: string) => post<ReviewDetail>(`/api/customer-reviews/${id}/approve`, { level, note }),
+  premium: (id: string) => post<ReviewDetail>(`/api/customer-reviews/${id}/premium`, {}),
+  reject: (id: string, reason: string, note: string) => post<ReviewDetail>(`/api/customer-reviews/${id}/reject`, { reason, note }),
+  requestChanges: (id: string, note: string) => post<ReviewDetail>(`/api/customer-reviews/${id}/request-changes`, { note }),
+  setMarketing: (id: string, ok: boolean) => post<ReviewDetail>(`/api/customer-reviews/${id}/marketing`, { ok }),
+  settings: () => get<{ amounts: ReviewAmounts; canEdit: boolean; reasons: Record<string, string> }>("/api/customer-reviews/settings"),
+  saveSettings: (amounts: ReviewAmounts) => put<{ amounts: ReviewAmounts }>("/api/customer-reviews/settings", { amounts })
+};
+
 export const productMediaApi = {
   list: () => get<{ media: ProductMedia[]; canApprove: boolean; canSend: boolean; repUploadsEnabled: boolean; settings: CatalogSettings }>("/api/product-media"),
-  startUpload: (body: { productId: string; mime: string; size: number; name: string; label: ProductMediaLabel; caption: string; tags?: string[]; batchId?: string }) =>
+  startUpload: (body: { productId: string; mime: string; size: number; name: string; label: ProductMediaLabel; caption: string; tags?: string[]; batchId?: string;
+    reviewId?: string; reviewPart?: "content" | "consent" }) =>
     post<{ id: string; signedUrl: string }>("/api/product-media/uploads", body),
   complete: (id: string, body: { posterDataUrl?: string; durationSeconds?: number }) => post<{ media: ProductMedia }>(`/api/product-media/${id}/complete`, body),
   importUrl: (body: { productId: string; url: string; label: ProductMediaLabel; caption: string; batchId?: string; notifyNow?: boolean }) =>

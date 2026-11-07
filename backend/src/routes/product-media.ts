@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { Router, type Request, type Response } from "express";
 import sharp from "sharp";
@@ -32,8 +32,8 @@ import {
 const router = Router();
 router.use(requireAuth);
 
-const HOLD = "product-media-holding";
-const PUBLIC = "product-media";
+export const HOLD = "product-media-holding";
+export const PUBLIC = "product-media";
 const PREVIEW_SECONDS = 60 * 60;
 const LINK = "#/dashboard/sales-rep/products";
 const IMAGE_MAX_EDGE = 1600;
@@ -102,19 +102,19 @@ async function logEvent(orgId: string, branchId: string | null, actor: Request |
   if (error) console.warn("[product-media] event insert failed:", error.message);
 }
 
-async function approverRecipients(orgId: string) {
+export async function approverRecipients(orgId: string) {
   const { data } = await supabase.from("users").select("id, role")
     .eq("org_id", orgId).eq("active", true).eq("is_demo", false).in("role", MEDIA_APPROVER_ROLES);
   return (data ?? []).map((user: any) => ({ id: String(user.id), role: String(user.role) }));
 }
-async function notify(orgId: string, branchId: string | null, recipients: Array<{ id: string; role: string }>, title: string, message: string, tag: string) {
+export async function notify(orgId: string, branchId: string | null, recipients: Array<{ id: string; role: string }>, title: string, message: string, tag: string) {
   try {
     if (!branchId || recipients.length === 0) return;
     await deliver(orgId, branchId, recipients, { title: title.slice(0, 120), message: message.slice(0, 240), kind: "product_media", tag, link: LINK });
   } catch (error: any) { console.warn("[product-media] alert failed:", error?.message); }
 }
 
-async function removeFiles(bucket: string, paths: Array<string | null | undefined>) {
+export async function removeFiles(bucket: string, paths: Array<string | null | undefined>) {
   const list = paths.filter(Boolean) as string[];
   if (list.length === 0) return;
   const { error } = await supabase.storage.from(bucket).remove(list);
@@ -138,15 +138,17 @@ function mapRow(row: any, previews: Map<string, string>) {
     url: approved ? row.url : previews.get(row.holding_path) ?? null,
     thumbUrl: approved ? row.thumb_url : previews.get(row.holding_thumb_path) ?? null,
     isCover: row.is_cover === true, displayOrder: Number(row.display_order ?? 0),
+    reviewId: row.review_id ?? null,
     uploadedBy: row.uploaded_by, uploadedByName: row.uploaded_by_name ?? "", uploadedByRole: row.uploaded_by_role ?? "",
     reviewedBy: row.reviewed_by ?? null, reviewedByName: row.reviewed_by_name ?? null, reviewedAt: row.reviewed_at ?? null, rejectReason: row.reject_reason ?? null,
     createdAt: row.created_at
   };
 }
 
-/** Short-lived links so the sender and approvers can see a file still in holding. */
-async function holdingPreviews(rows: any[]) {
-  const paths = rows.filter((row) => row.status === "pending").flatMap((row) => [row.holding_path, row.holding_thumb_path]).filter(Boolean);
+/** Short-lived links so the sender and approvers can see a file still in holding
+ *  (waiting, or an approved customer review kept private). */
+export async function holdingPreviews(rows: any[]) {
+  const paths = rows.filter((row) => row.status === "pending" || row.status === "private").flatMap((row) => [row.holding_path, row.holding_thumb_path]).filter(Boolean);
   const previews = new Map<string, string>();
   if (paths.length === 0) return previews;
   const { data } = await supabase.storage.from(HOLD).createSignedUrls(paths, PREVIEW_SECONDS);
@@ -168,7 +170,8 @@ router.get("/", async (req, res) => {
       .order("display_order").order("created_at", { ascending: false }).limit(5000);
     if (approved.error) throw approved.error;
     const since = new Date(Date.now() - 30 * 86400000).toISOString();
-    let review = supabase.from("product_media").select("*").eq("org_id", orgId).in("status", ["pending", ...REVIEWED])
+    // A customer review's files are decided in the Customer Reviews tab, not here.
+    let review = supabase.from("product_media").select("*").eq("org_id", orgId).in("status", ["pending", ...REVIEWED]).is("review_id", null)
       .order("created_at", { ascending: false }).limit(800);
     review = approver ? review.or(`status.eq.pending,created_at.gte.${since}`) : review.eq("uploaded_by", req.user!.id);
     const reviewRows = await review;
@@ -196,7 +199,11 @@ const UploadSchema = z.object({
   label: z.enum(MEDIA_LABELS).default("other"),
   caption: z.string().max(300).optional(),
   tags: z.array(z.string().max(40)).max(12).optional(),
-  batchId: z.string().uuid().optional()
+  batchId: z.string().uuid().optional(),
+  // A customer review's files (Customer Reviews, migration 329): the review
+  // must be the sender's own, still being put together.
+  reviewId: z.string().uuid().optional(),
+  reviewPart: z.enum(["content", "consent"]).optional()
 });
 router.post("/uploads", async (req, res) => {
   try {
@@ -217,7 +224,16 @@ router.post("/uploads", async (req, res) => {
     const maxBytes = (kind === "image" ? settings.maxImageMb : settings.maxVideoMb) * 1024 * 1024;
     if (body.size > maxBytes) throw fail(413, kind === "image" ? `Photos must be ${settings.maxImageMb} MB or smaller.` : `Videos must be ${settings.maxVideoMb} MB or smaller.`);
 
-    const { data: product, error: productError } = await supabase.from("products").select("id, branch_id").eq("org_id", orgId).eq("id", body.productId).maybeSingle();
+    let productIdToUse = body.productId;
+    if (body.reviewId) {
+      const { data: draft, error: draftError } = await supabase.from("customer_reviews").select("id, product_id, status, submitted_by")
+        .eq("org_id", orgId).eq("id", body.reviewId).maybeSingle();
+      if (draftError) throw draftError;
+      if (!draft || draft.submitted_by !== req.user!.id || draft.status !== "draft") throw fail(404, "That review was not found. Start it again.");
+      if (!draft.product_id) throw fail(422, "This order has no product on it, so its review can't hold files.");
+      productIdToUse = String(draft.product_id);
+    }
+    const { data: product, error: productError } = await supabase.from("products").select("id, branch_id").eq("org_id", orgId).eq("id", productIdToUse).maybeSingle();
     if (productError) throw productError;
     if (!product) throw fail(404, "That product was not found.");
 
@@ -231,7 +247,8 @@ router.post("/uploads", async (req, res) => {
     const hourAgo = new Date(Date.now() - 3600000).toISOString();
     const [{ count: lastHour }, { count: waiting }] = await Promise.all([
       supabase.from("product_media").select("id", { count: "exact", head: true }).eq("uploaded_by", req.user!.id).gte("created_at", hourAgo),
-      supabase.from("product_media").select("id", { count: "exact", head: true }).eq("uploaded_by", req.user!.id).eq("status", "pending")
+      // Review files wait inside their review (one review waiting per order), so they don't fill this limit.
+      supabase.from("product_media").select("id", { count: "exact", head: true }).eq("uploaded_by", req.user!.id).eq("status", "pending").is("review_id", null)
     ]);
     if ((lastHour ?? 0) >= UPLOADS_PER_HOUR) throw fail(429, `You can add up to ${UPLOADS_PER_HOUR} files an hour. Try again a little later.`);
     if (!approver && (waiting ?? 0) >= MAX_PENDING_PER_PERSON) throw fail(429, `You already have ${MAX_PENDING_PER_PERSON} files waiting for approval. Wait for those to be reviewed first.`);
@@ -240,7 +257,8 @@ router.post("/uploads", async (req, res) => {
     const holdingPath = `${orgId}/${id}/original`;
     const { error: insertError } = await supabase.from("product_media").insert({
       id, org_id: orgId, branch_id: product.branch_id ?? branchOf(req), product_id: product.id, kind, status: "uploading",
-      label: body.label, caption: (body.caption ?? "").trim().slice(0, 300), tags: cleanTags(body.tags), batch_id: body.batchId ?? null,
+      label: body.reviewId ? "customer_review" : body.label, caption: (body.caption ?? "").trim().slice(0, 300), tags: cleanTags(body.tags), batch_id: body.batchId ?? null,
+      review_id: body.reviewId ?? null, review_part: body.reviewId ? body.reviewPart ?? "content" : null,
       original_name: cleanFileName(body.name), mime, size_bytes: body.size, holding_path: holdingPath,
       uploaded_by: req.user!.id, uploaded_by_name: req.user!.name ?? "", uploaded_by_role: role
     });
@@ -293,7 +311,7 @@ async function cleanImage(input: Buffer, edge: number, quality: number) {
   return { data, width: info.width, height: info.height };
 }
 
-async function approveRow(row: any, reviewer: Request | null) {
+export async function approveRow(row: any, reviewer: Request | null) {
   const ext = row.kind === "image" ? "webp" : extensionOf(row.mime as RealMediaType) ?? "mp4";
   const publicPath = `${row.org_id}/${row.product_id}/${row.id}.${ext}`;
   const publicThumb = row.holding_thumb_path ? `${row.org_id}/${row.product_id}/${row.id}-thumb.webp` : null;
@@ -346,10 +364,14 @@ router.post("/:id/complete", async (req, res) => {
     if (total > maxBytes) throw fail(413, kind === "image" ? `Photos must be ${settings.maxImageMb} MB or smaller.` : `Videos must be ${settings.maxVideoMb} MB or smaller.`);
 
     const patch: Record<string, unknown> = { mime: realType, size_bytes: total, scan: scanRecord(realType, total, maxBytes, kind === "image") };
+    // The same file sent again shows up in the Customer Reviews checks: a
+    // photo's own bytes, or a video's start and size (videos are too big to read).
+    patch.fingerprint = createHash("sha256").update(head).update(String(total)).digest("hex");
     if (kind === "image") {
       const { data: blob, error } = await supabase.storage.from(HOLD).download(row.holding_path);
       if (error || !blob) throw fail(422, "The file did not arrive. Try sending it again.");
       const original = Buffer.from(await blob.arrayBuffer());
+      patch.fingerprint = createHash("sha256").update(original).digest("hex");
       const main = await cleanImage(original, IMAGE_MAX_EDGE, 82).catch(() => { throw fail(422, "This photo could not be opened, so it was refused and deleted."); });
       const thumb = await cleanImage(main.data, THUMB_EDGE, 72);
       const mainPath = `${orgId}/${row.id}/main.webp`;
@@ -373,7 +395,8 @@ router.post("/:id/complete", async (req, res) => {
       if (parsed.data.durationSeconds !== undefined) patch.duration_seconds = Math.round(parsed.data.durationSeconds * 10) / 10;
     }
 
-    const goesStraightIn = canApproveMedia(roleOf(req)) || !settings.requireApproval;
+    // A customer review's files wait for the review's own approval, whoever sent them.
+    const goesStraightIn = !row.review_id && (canApproveMedia(roleOf(req)) || !settings.requireApproval);
     const { data: checked, error: updateError } = await supabase.from("product_media").update({ ...patch, status: "pending" }).eq("id", row.id).select("*").single();
     if (updateError) throw updateError;
     await logEvent(orgId, checked.branch_id, req, { action: "uploaded", mediaId: row.id, productId: row.product_id, detail: row.original_name });
@@ -382,7 +405,7 @@ router.post("/:id/complete", async (req, res) => {
       res.json({ media: mapRow(done, new Map()) });
       return;
     }
-    if (settings.notifyApprovers) {
+    if (settings.notifyApprovers && !row.review_id) {
       const { data: product } = await supabase.from("products").select("name").eq("id", row.product_id).maybeSingle();
       await notify(orgId, checked.branch_id ?? branchOf(req), (await approverRecipients(orgId)).filter((user) => user.id !== req.user!.id),
         `New ${kind === "image" ? "photo" : "video"} to approve`, `${req.user!.name ?? "A team member"} sent a ${kind === "image" ? "photo" : "video"} for ${product?.name ?? "a product"}.`, `media-${row.batch_id ?? row.id}`);
@@ -470,7 +493,8 @@ router.post("/import-url", async (req, res) => {
     const hourAgo = new Date(Date.now() - 3600000).toISOString();
     const [{ count: lastHour }, { count: waiting }] = await Promise.all([
       supabase.from("product_media").select("id", { count: "exact", head: true }).eq("uploaded_by", req.user!.id).gte("created_at", hourAgo),
-      supabase.from("product_media").select("id", { count: "exact", head: true }).eq("uploaded_by", req.user!.id).eq("status", "pending")
+      // Review files wait inside their review (one review waiting per order), so they don't fill this limit.
+      supabase.from("product_media").select("id", { count: "exact", head: true }).eq("uploaded_by", req.user!.id).eq("status", "pending").is("review_id", null)
     ]);
     if ((lastHour ?? 0) >= UPLOADS_PER_HOUR) throw fail(429, `You can add up to ${UPLOADS_PER_HOUR} files an hour. Try again a little later.`);
     if (!approver && (waiting ?? 0) >= MAX_PENDING_PER_PERSON) throw fail(429, `You already have ${MAX_PENDING_PER_PERSON} files waiting for approval. Wait for those to be reviewed first.`);
@@ -534,7 +558,10 @@ async function tellSender(req: Request, row: any, title: string, message: string
   await notify(orgOf(req), row.branch_id, [{ id: row.uploaded_by, role: row.uploaded_by_role }], title, message, `media-${row.id}`);
 }
 
+const REVIEW_FILE = "This file belongs to a customer review. Decide it in the Customer Reviews tab.";
+
 async function approveOne(req: Request, row: any) {
+  if (row.review_id) throw fail(409, REVIEW_FILE);
   if (row.status !== "pending") throw fail(409, "This file is no longer waiting for approval.");
   const done = await approveRow(row, req);
   await logEvent(orgOf(req), row.branch_id, req, { action: "approved", mediaId: row.id, productId: row.product_id, detail: row.original_name });
@@ -543,6 +570,7 @@ async function approveOne(req: Request, row: any) {
 }
 
 async function declineOne(req: Request, row: any, reason: string, status: "rejected" | "changes_requested") {
+  if (row.review_id) throw fail(409, REVIEW_FILE);
   if (row.status !== "pending") throw fail(409, "This file is no longer waiting for approval.");
   await removeFiles(HOLD, [row.holding_path, row.holding_thumb_path]);
   const { data: done, error } = await supabase.from("product_media").update({
@@ -557,6 +585,8 @@ async function declineOne(req: Request, row: any, reason: string, status: "rejec
 }
 
 async function deleteOne(req: Request, row: any) {
+  // A review's file leaves the gallery by withdrawing marketing permission on the review.
+  if (row.review_id) throw fail(409, REVIEW_FILE);
   await removeFiles(HOLD, [row.holding_path, row.holding_thumb_path]);
   await removeFiles(PUBLIC, [row.public_path, row.public_thumb_path]);
   const { error } = await supabase.from("product_media").delete().eq("id", row.id);
@@ -594,6 +624,7 @@ router.post("/:id/rescan", async (req, res) => {
   try {
     requireApprover(req, "check files");
     const row = await loadRow(req);
+    if (row.review_id) throw fail(409, REVIEW_FILE);
     if (row.status !== "pending" || !row.holding_path) throw fail(409, "Only files waiting for approval can be checked again.");
     const settings = await readSettings(orgOf(req), row.branch_id);
     const { head, total } = await readHoldingStart(row.holding_path);

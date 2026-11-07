@@ -966,6 +966,7 @@ export default function ManagerWeeklyReviewPage({
           { label: "Upsell bonus", value: t?.upsellBonus ?? 0 },
           { label: "Cross-sell bonus", value: t?.crossSellBonus ?? 0 },
           ...((t?.adjustments ?? 0) !== 0 ? [{ label: "Bonus corrections", value: Math.abs(t?.adjustments ?? 0), minus: (t?.adjustments ?? 0) < 0 }] : []),
+          ...((t?.reviewBonus ?? 0) !== 0 ? [{ label: "Customer review bonus", value: Math.abs(t?.reviewBonus ?? 0), minus: (t?.reviewBonus ?? 0) < 0 }] : []),
           ...(takenOff > 0 ? [{ label: "Fines taken off", value: takenOff, minus: true }] : []),
           ...(change !== 0 ? [{ label: change < 0 ? "Taken off by manager" : "Added by manager", value: Math.abs(change), minus: change < 0 }] : [])
         ];
@@ -1164,7 +1165,7 @@ export function RepBonusTable({ snaps, sym }: { snaps: WeeklyReportSnapshot[]; s
       <table className="w-full !min-w-[640px] text-left text-[12px]">
         <thead className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-slate-400 [&_th]:[color:inherit]">
           <tr className="bg-gray-50 dark:bg-slate-800/60 [&>th]:bg-transparent [&>th]:[color:inherit]">
-            {["Sales Rep", "Delivered (bonus)", `Base (${sym})`, `Cross-Sell (${sym})`, `Upsell (${sym})`, `Corrections (${sym})`, `Fines (${sym})`, `Final (${sym})`].map((h) => <th key={h} className="px-3 py-2.5 font-bold">{h}</th>)}
+            {["Sales Rep", "Delivered (bonus)", `Base (${sym})`, `Cross-Sell (${sym})`, `Upsell (${sym})`, `Corrections (${sym})`, `Reviews (${sym})`, `Fines (${sym})`, `Final (${sym})`].map((h) => <th key={h} className="px-3 py-2.5 font-bold">{h}</th>)}
           </tr>
         </thead>
         <tbody>
@@ -1176,6 +1177,7 @@ export function RepBonusTable({ snaps, sym }: { snaps: WeeklyReportSnapshot[]; s
               <td className="px-3 py-2.5">{nf(snap.totals.crossSellBonus)}</td>
               <td className="px-3 py-2.5">{nf(snap.totals.upsellBonus)}</td>
               <td className="px-3 py-2.5">{(snap.totals.adjustments ?? 0) > 0 ? `+${nf(snap.totals.adjustments ?? 0)}` : "0"}</td>
+              <td className="px-3 py-2.5">{(snap.totals.reviewBonus ?? 0) !== 0 ? `${(snap.totals.reviewBonus ?? 0) < 0 ? "-" : "+"}${nf(Math.abs(snap.totals.reviewBonus ?? 0))}` : "0"}</td>
               <td className="px-3 py-2.5">{snap.totals.fines > 0 ? `-${nf(snap.totals.fines)}` : "0"}</td>
               <td className="px-3 py-2.5 font-bold">{nf(snap.totals.finalBonus)}</td>
             </tr>
@@ -1187,6 +1189,7 @@ export function RepBonusTable({ snaps, sym }: { snaps: WeeklyReportSnapshot[]; s
             <td className="px-3 py-2.5">{nf(sum((snap) => snap.totals.crossSellBonus))}</td>
             <td className="px-3 py-2.5">{nf(sum((snap) => snap.totals.upsellBonus))}</td>
             <td className="px-3 py-2.5">{nf(sum((snap) => snap.totals.adjustments ?? 0))}</td>
+            <td className="px-3 py-2.5">{nf(sum((snap) => snap.totals.reviewBonus ?? 0))}</td>
             <td className="px-3 py-2.5">{nf(sum((snap) => snap.totals.fines))}</td>
             <td className="px-3 py-2.5">{nf(sum((snap) => snap.totals.finalBonus))}</td>
           </tr>

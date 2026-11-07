@@ -355,6 +355,12 @@ export default function RepWeeklyReportPage({
                         <td className="px-3 py-2 text-right text-emerald-700 dark:text-emerald-300">+{nf(totals?.adjustments ?? 0)}</td>
                       </tr>
                     )}
+                    {(totals?.reviewBonus ?? 0) !== 0 && (
+                      <tr className="border-t border-gray-100 dark:border-slate-800">
+                        <td className="px-3 py-2">Customer review bonus{snap?.reviewBonuses?.length ? <span className="block text-[11px] text-gray-500">{snap.reviewBonuses.map((item) => item.label).join("; ")}</span> : null}</td>
+                        <td className="px-3 py-2 text-right text-emerald-700 dark:text-emerald-300">{(totals?.reviewBonus ?? 0) < 0 ? "-" : "+"}{nf(Math.abs(totals?.reviewBonus ?? 0))}</td>
+                      </tr>
+                    )}
                     <tr className="border-t border-gray-100 dark:border-slate-800">
                       <td className="px-3 py-2">Fines / Deductions{snap?.fines?.length ? <span className="block text-[11px] text-gray-500">{snap.fines.map((fine) => fine.label).join("; ")}</span> : null}</td>
                       <td className="px-3 py-2 text-right">{nf(totals?.fines ?? 0)}</td>

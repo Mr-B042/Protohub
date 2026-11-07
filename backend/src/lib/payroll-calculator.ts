@@ -1,5 +1,6 @@
 import { supabase } from "./supabase.js";
 import { calculateSalesBonusPayroll } from "./sales-bonus-engine.js";
+import { reviewBonusByRepForMonth } from "./customer-reviews.js";
 import { approvedPayoutChanges } from "./weekly-payout-changes.js";
 import { REPORT_ROW_CEILING } from "./query-limits.js";
 
@@ -494,6 +495,11 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
     approvedChangeByRep.set(change.repId, (approvedChangeByRep.get(change.repId) ?? 0) + change.amount);
   }
 
+  // Customer review bonus (migration 329): paid in the weekly report of the
+  // week a review was approved, so it counts in the month that week ends in,
+  // like the payout changes above. Each amount is in exactly one month.
+  const reviewBonusByRep = await reviewBonusByRepForMonth(orgId, bounds.periodStartDate.slice(0, 7));
+
   const rows: PayrollEntry[] = users
     .map((user): PayrollEntry | null => {
       const structure = structures.find((entry) => entry.user_id === user.id);
@@ -529,7 +535,8 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
       const systemBonus = engineRuleBonus + legacyOrderBonus + adjustedTierBonus;
       // Never below nothing: a change cannot take more than the bonus there is.
       const approvedPayoutChange = Math.max(-systemBonus, approvedChangeByRep.get(user.id) ?? 0);
-      const autoBonus = systemBonus + approvedPayoutChange;
+      const customerReviewBonus = reviewBonusByRep.get(user.id) ?? 0;
+      const autoBonus = systemBonus + approvedPayoutChange + customerReviewBonus;
       const deductions = penalties
         .filter((penalty) => penalty.rep_id === user.id)
         .reduce((sum, penalty) => sum + Number(penalty.amount ?? 0), 0);
@@ -549,6 +556,8 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
           combinedSalesBonus: engineRuleBonus + legacyOrderBonus,
           // Owner-approved changes from the weekly reports, already inside autoBonus.
           approvedPayoutChange,
+          // Approved customer reviews, already inside autoBonus.
+          customerReviewBonus,
           bonusBeforeApprovedPayoutChange: systemBonus,
           legacyPerformanceTierBeforeCompliance: Number(tierBonus ?? 0),
           legacyPerformanceTierAfterCompliance: adjustedTierBonus,

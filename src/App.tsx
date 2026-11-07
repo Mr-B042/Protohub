@@ -26425,7 +26425,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     previousAdjustments: Array<{ id: string; repId: string; label: string; amount: number }> = [],
     logMisses: WeeklyLogMissRow[] = [],
     previousLogMisses: WeeklyLogMissRow[] = [],
-    carriedFines = 0
+    carriedFines = 0,
+    // Customer review bonus lines (Bright, 7 Nov 2026), paid in the week of approval.
+    reviewBonuses: Array<{ id: string; repId: string; label: string; amount: number }> = [],
+    previousReviewBonuses: Array<{ id: string; repId: string; label: string; amount: number }> = []
   ): WeeklyReportSnapshot | null => {
     if (!weeklyBonusMaps || weeklyBonusMaps.weekStart !== weekStart) return null;
     const settlementByOrderId = { ...newEngineBonusSettlementByOrderId, ...weeklyBonusMaps.settlement };
@@ -26435,7 +26438,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // server names them, and this week's report pays them.
     const lateSource = weeklyWeek?.weekStart === weekStart ? weeklyWeek.lateDeliveries : weeklyMine?.weekStart === weekStart ? weeklyMine.lateDeliveries : undefined;
     const lateById = new Map((lateSource ?? []).filter((item) => item.repId === rep.id).map((item) => [item.orderId, item]));
-    const one = (start: string, weekFines: typeof fines, weekAdjustments: typeof adjustments, weekMisses: WeeklyLogMissRow[], carried: number, previous: WeeklyReportSnapshot["previous"], monthlyIncentive: ReturnType<typeof weeklyIncentiveFor> = null) => {
+    const one = (start: string, weekFines: typeof fines, weekAdjustments: typeof adjustments, weekMisses: WeeklyLogMissRow[], carried: number, previous: WeeklyReportSnapshot["previous"], monthlyIncentive: ReturnType<typeof weeklyIncentiveFor> = null, weekReviewBonuses: typeof reviewBonuses = []) => {
       const end = windowShiftDay(start, 6);
       // Product Launch test orders stay out of the rate (Bright, 1 Nov 2026); they are still paid when delivered.
       const outsideRate = (order: TrackedOrder) => outsideDeliveryRate(order, (productId) => products.find((product) => product.id === productId)?.launchSettings);
@@ -26507,19 +26510,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         },
         fines: weekFines.filter((fine) => fine.repId === rep.id).map((fine) => ({ id: fine.id, label: fine.label, amount: fine.amount, date: fine.date })),
         adjustments: weekAdjustments.filter((item) => item.repId === rep.id).map((item) => ({ id: item.id, label: item.label, amount: item.amount, date: start })),
+        reviewBonuses: weekReviewBonuses.filter((item) => item.repId === rep.id).map((item) => ({ id: item.id, label: item.label, amount: item.amount, date: start })),
         logMisses: weekMisses.filter((item) => item.repId === rep.id),
         carriedFines: carried,
         previous,
         monthlyIncentive
       });
     };
-    const before = one(windowShiftDay(weekStart, -7), previousFines, previousAdjustments, previousLogMisses, 0, null);
+    const before = one(windowShiftDay(weekStart, -7), previousFines, previousAdjustments, previousLogMisses, 0, null, null, previousReviewBonuses);
     return one(weekStart, fines, adjustments, logMisses, carriedFines, {
       orders: before.totals.orders,
       delivered: before.totals.delivered,
       deliveryRate: before.totals.deliveryRate,
       finalBonus: before.totals.finalBonus
-    }, weeklyIncentiveFor(weekStart, (line) => line.kind === "rep" && line.personId === rep.id));
+    }, weeklyIncentiveFor(weekStart, (line) => line.kind === "rep" && line.personId === rep.id), reviewBonuses);
   };
 
   /** The Funds & Expenses tab for the manager (her wallet) or the owner (any wallet). */
@@ -26659,7 +26663,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       for (const report of pending) {
         weeklyReworkTriedRef.current.add(report.id);
         const name = users.find((user) => user.id === report.repId)?.name ?? "Sales rep";
-        const live = buildWeeklyRepSnapshot({ id: report.repId, name }, weeklyReportWeekStart, week.fines ?? [], week.previousFines ?? [], week.adjustments ?? [], week.previousAdjustments ?? [], week.logMisses ?? [], week.previousLogMisses ?? [], week.carriedFines?.[report.repId] ?? 0);
+        const live = buildWeeklyRepSnapshot({ id: report.repId, name }, weeklyReportWeekStart, week.fines ?? [], week.previousFines ?? [], week.adjustments ?? [], week.previousAdjustments ?? [], week.logMisses ?? [], week.previousLogMisses ?? [], week.carriedFines?.[report.repId] ?? 0, week.reviewBonuses ?? [], week.previousReviewBonuses ?? []);
         if (!live || (ladderWeek ? !(live.upgradeLadder === "highest_step" && live.deliveryBonusRule === 2) : live.totals.bonusBeforeRateCut == null)) continue;
         // Safety: the rule changes money, never the order counts. If the counts
         // differ from what the rep sent (orders still loading, or edited since),
@@ -32599,7 +32603,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
       const me = currentManagedUser;
       const mine = weeklyMine && weeklyMine.weekStart === weeklyReportWeekStart ? weeklyMine : null;
-      const live = me && mine ? buildWeeklyRepSnapshot({ id: me.id, name: me.name }, weeklyReportWeekStart, mine.fines ?? [], mine.previousFines ?? [], mine.adjustments ?? [], mine.previousAdjustments ?? [], mine.logMisses ?? [], mine.previousLogMisses ?? [], mine.carriedFines ?? 0) : null;
+      const live = me && mine ? buildWeeklyRepSnapshot({ id: me.id, name: me.name }, weeklyReportWeekStart, mine.fines ?? [], mine.previousFines ?? [], mine.adjustments ?? [], mine.previousAdjustments ?? [], mine.logMisses ?? [], mine.previousLogMisses ?? [], mine.carriedFines ?? 0, mine.reviewBonuses ?? [], mine.previousReviewBonuses ?? []) : null;
       return (
         <RepWeeklyReportPage
           {...weekProps}
@@ -32657,7 +32661,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const repIds = Array.from(new Set([...(week?.expectedRepIds ?? []), ...(week?.repReports ?? []).map((report) => report.repId)]));
     const reviewRows: ReviewRepRow[] = week ? repIds.map((repId) => {
       const report = week.repReports.find((item) => item.repId === repId) ?? null;
-      const live = buildWeeklyRepSnapshot({ id: repId, name: repName(repId) }, weeklyReportWeekStart, week.fines ?? [], week.previousFines ?? [], week.adjustments ?? [], week.previousAdjustments ?? [], week.logMisses ?? [], week.previousLogMisses ?? [], week.carriedFines?.[repId] ?? 0);
+      const live = buildWeeklyRepSnapshot({ id: repId, name: repName(repId) }, weeklyReportWeekStart, week.fines ?? [], week.previousFines ?? [], week.adjustments ?? [], week.previousAdjustments ?? [], week.logMisses ?? [], week.previousLogMisses ?? [], week.carriedFines?.[repId] ?? 0, week.reviewBonuses ?? [], week.previousReviewBonuses ?? []);
       const frozen = report && report.status !== "draft" && report.snapshot ? report.snapshot as WeeklyReportSnapshot : null;
       // The manager's change to this rep's payout. Compared first, laid on
       // after: the change is not a figure the system worked out, so it must

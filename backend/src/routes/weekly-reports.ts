@@ -29,6 +29,7 @@ import { FIRST_REPORT_WEEK,
   type CompanyReportStatus,
   type RepReportStatus
 } from "../lib/weekly-report-workflow.js";
+import { reviewBonusesForWeek } from "../lib/customer-reviews.js";
 
 // Weekly Report approvals (Bright, 1 Oct 2026). See migration 269 and
 // lib/weekly-report-workflow.ts for the rules.
@@ -500,13 +501,16 @@ router.get("/mine", requireScopedRep, async (req, res) => {
       sendGateFor(orgId, branchId, weekStart)
     ]);
     if (bonusQueries.error) throw bonusQueries.error;
-    const [logMisses, previousLogMisses, logMissDisputes, carried, lateDeliveries, fineAppeals] = await Promise.all([
+    const [logMisses, previousLogMisses, logMissDisputes, carried, lateDeliveries, fineAppeals, reviewBonuses, previousReviewBonuses] = await Promise.all([
       logMissesForWeek(orgId, [repId], weekStart),
       logMissesForWeek(orgId, [repId], addDaysToDateKey(weekStart, -7)),
       disputesForWeek(orgId, branchId, [repId], weekStart),
       carriedFinesFor(orgId, branchId, [repId], weekStart),
       lateDeliveriesFor(orgId, branchId, weekStart, repId),
-      appealsForWeek(orgId, branchId, [repId], weekStart)
+      appealsForWeek(orgId, branchId, [repId], weekStart),
+      // Customer review bonus, paid in the week the review was approved (migration 329).
+      reviewBonusesForWeek(orgId, branchId, [repId], weekStart),
+      reviewBonusesForWeek(orgId, branchId, [repId], addDaysToDateKey(weekStart, -7))
     ]);
     const [corrections, auditRows] = report
       ? await Promise.all([
@@ -527,6 +531,8 @@ router.get("/mine", requireScopedRep, async (req, res) => {
       previousFines,
       adjustments,
       previousAdjustments,
+      reviewBonuses,
+      previousReviewBonuses,
       bonusQueries: (bonusQueries.data ?? []).map(mapBonusQuery),
       logMisses,
       previousLogMisses,
@@ -871,11 +877,13 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
     if (!company || company.status === "open" || company.status === "returned_to_manager") {
       await syncAutoQuestions(orgId, branchId, weekStart, (repReports.data ?? []) as any[], payoutChanges);
     }
-    const [questions, lateDeliveries, fineAppeals] = await Promise.all([
+    const [questions, lateDeliveries, fineAppeals, reviewBonuses, previousReviewBonuses] = await Promise.all([
       questionsForWeek(orgId, branchId, weekStart),
       // Delivered too late for their own week's sent report: paid in this one.
       lateDeliveriesFor(orgId, branchId, weekStart),
-      appealsForWeek(orgId, branchId, null, weekStart)
+      appealsForWeek(orgId, branchId, null, weekStart),
+      reviewBonusesForWeek(orgId, branchId, null, weekStart),
+      reviewBonusesForWeek(orgId, branchId, null, addDaysToDateKey(weekStart, -7))
     ]);
     res.json({
       weekStart,
@@ -890,6 +898,8 @@ router.get("/week", requireRole(...LEADERSHIP), async (req, res) => {
       previousFines,
       adjustments,
       previousAdjustments,
+      reviewBonuses,
+      previousReviewBonuses,
       bonusQueries: (bonusQueries.data ?? []).map(mapBonusQuery),
       payoutChanges,
       gate,
