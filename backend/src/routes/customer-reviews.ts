@@ -7,7 +7,7 @@ import { canApproveMedia, canSendMedia } from "../lib/media-safety.js";
 import { HOLD, PUBLIC, approveRow, approverRecipients, holdingPreviews, notify, removeFiles } from "./product-media.js";
 import {
   LEVEL_LABEL, REJECT_REASONS, REVIEW_CHANNELS, REVIEW_LEVELS, REVIEW_TYPES, amountFor, cleanAmounts, filesProblem, isRejectReason,
-  WRITTEN_NEEDS_SCREENSHOT, lagosDay, levelRank, levelsFor, reviewProblem, topUp, weekStartOf, type ReviewLevel, type ReviewType
+  NEEDS_SCREENSHOT, lagosDay, levelRank, levelsFor, reviewProblem, topUp, weekStartOf, type ReviewLevel, type ReviewType
 } from "../lib/customer-review-rules.js";
 import { readAmounts, saveAmounts } from "../lib/customer-reviews.js";
 import { silentFilterFor } from "../lib/product-launch.js";
@@ -469,9 +469,9 @@ router.post("/:id/approve", async (req, res) => {
     if (!REVIEW_LEVELS.includes(level)) throw fail(400, "Choose what to approve it as.");
     const { data: files } = await supabase.from("product_media").select("kind, review_part").eq("review_id", row.id);
     const content = (files ?? []).filter((file: any) => (file.review_part ?? "content") === "content");
-    // A written review stands on the customer's WhatsApp screenshot (Bright, 7 Nov 2026).
-    if (row.review_type === "written" && !(files ?? []).some((file: any) => file.review_part === "proof" && file.kind === "image")) {
-      throw fail(422, `${WRITTEN_NEEDS_SCREENSHOT} Ask the rep to fix it.`);
+    // Every review stands on the customer's WhatsApp screenshot (Bright, 7 Nov 2026).
+    if (!(files ?? []).some((file: any) => file.review_part === "proof" && file.kind === "image")) {
+      throw fail(422, `${NEEDS_SCREENSHOT} Ask the rep to fix it.`);
     }
     if (!levelsFor(row.review_type, content.some((file: any) => file.kind === "video"), content.some((file: any) => file.kind === "image")).includes(level)) {
       throw fail(422, level === "premium" ? "Only a review with a video can be Premium." : "That level needs a photo or video this review does not have.");

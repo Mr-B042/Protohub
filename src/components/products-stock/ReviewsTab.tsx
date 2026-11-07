@@ -163,7 +163,7 @@ function ReviewSheet({ reviewId, writable, onClose, onChanged, onToast }: {
   const proof = review?.files.filter((file) => file.part === "consent") ?? [];
   // A written review's WhatsApp screenshot with the customer's number (Bright, 7 Nov 2026).
   const screenshots = review?.files.filter((file) => file.part === "proof") ?? [];
-  const missingScreenshot = review?.type === "written" && !review.legacy && screenshots.length === 0;
+  const missingScreenshot = !!review && !review.legacy && screenshots.length === 0;
   const hasVideo = content.some((file) => file.kind === "video");
   const premiumOption = detail?.options.find((option) => option.level === "premium");
   const chosen = detail?.options.find((option) => option.level === level) ?? null;
@@ -257,7 +257,7 @@ function ReviewSheet({ reviewId, writable, onClose, onChanged, onToast }: {
             <section className={section}>
               <p className={head}><MessageCircle className="h-4 w-4" />WhatsApp screenshot</p>
               {missingScreenshot ? (
-                <p className="m-0 rounded-lg bg-rose-50 px-2.5 py-1.5 text-[13px] font-semibold text-rose-700 dark:bg-rose-500/10 dark:text-rose-200">No WhatsApp screenshot. A written review needs one showing the customer's phone number: ask the rep to fix it.</p>
+                <p className="m-0 rounded-lg bg-rose-50 px-2.5 py-1.5 text-[13px] font-semibold text-rose-700 dark:bg-rose-500/10 dark:text-rose-200">No WhatsApp screenshot. Every review needs one showing the customer's phone number: ask the rep to fix it.</p>
               ) : (
                 <div className="flex flex-wrap items-start gap-3">
                   {screenshots.map((file) => (

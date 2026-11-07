@@ -102,8 +102,10 @@ export function reviewProblem(input: NewReviewInput, context: { today: string; d
 
 /**
  * Files a review needs before it can be sent: a photo needs a photo, a video
- * a video, and a written review a WhatsApp screenshot showing the customer's
- * phone number (Bright, 7 Nov 2026), because typed words alone prove nothing.
+ * a video, and EVERY review a WhatsApp screenshot showing the customer's
+ * phone number (Bright, 7 Nov 2026: first for written reviews, because typed
+ * words alone prove nothing; then for photos and videos too, because a saved
+ * picture does not prove it came from the customer).
  * Only "content" files are product photos or videos; the WhatsApp screenshot
  * ("proof") and the marketing permission ("consent") never count as one.
  */
@@ -111,12 +113,12 @@ export function filesProblem(type: ReviewType, files: Array<{ kind: string; stat
   if (files.some((file) => file.status === "uploading")) return "Some files are still being sent. Wait for them to finish.";
   const ready = files.filter((file) => file.status === "pending");
   const content = ready.filter((file) => (file.part ?? "content") === "content");
-  if (type === "written" && !ready.some((file) => file.part === "proof" && file.kind === "image")) return WRITTEN_NEEDS_SCREENSHOT;
   if (type === "photo" && !content.some((file) => file.kind === "image")) return "A photo review needs at least one photo.";
   if (type === "video" && !content.some((file) => file.kind === "video")) return "A video review needs at least one video.";
+  if (!ready.some((file) => file.part === "proof" && file.kind === "image")) return NEEDS_SCREENSHOT;
   return null;
 }
-export const WRITTEN_NEEDS_SCREENSHOT = "A written review needs a WhatsApp screenshot that shows the customer's phone number.";
+export const NEEDS_SCREENSHOT = "Every review needs a WhatsApp screenshot that shows the customer's phone number.";
 
 /** The levels an approver can approve this review at: never above what its files show. */
 export function levelsFor(type: ReviewType, hasVideo: boolean, hasPhoto: boolean): ReviewLevel[] {
