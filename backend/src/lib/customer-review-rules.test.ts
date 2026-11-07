@@ -32,13 +32,17 @@ test("a review needs the order, the type, the customer's words for written, and 
 test("files: a photo review needs a photo, a video review a video; consent proof does not count", () => {
   assert.equal(filesProblem("written", [{ kind: "image", status: "pending", part: "proof" }]), null);
   assert.match(filesProblem("photo", [{ kind: "image", status: "pending", part: "consent" }])!, /at least one photo/);
-  assert.equal(filesProblem("photo", [{ kind: "image", status: "pending", part: "content" }]), null);
+  assert.equal(filesProblem("photo", [{ kind: "image", status: "pending", part: "content" }, { kind: "image", status: "pending", part: "proof" }]), null);
   assert.match(filesProblem("video", [{ kind: "image", status: "pending", part: "content" }])!, /at least one video/);
   assert.match(filesProblem("photo", [{ kind: "image", status: "uploading", part: "content" }])!, /still being sent/);
 });
 
-test("a written review needs a WhatsApp screenshot (proof); the screenshot is never a product photo", () => {
+test("every review needs a WhatsApp screenshot (proof); the screenshot is never a product photo", () => {
   assert.match(filesProblem("written", [])!, /WhatsApp screenshot that shows the customer's phone number/);
+  // Photos and videos too (Bright, 7 Nov 2026): a saved picture doesn't prove it came from the customer.
+  assert.match(filesProblem("photo", [{ kind: "image", status: "pending", part: "content" }])!, /WhatsApp screenshot/);
+  assert.match(filesProblem("video", [{ kind: "video", status: "pending", part: "content" }])!, /WhatsApp screenshot/);
+  assert.equal(filesProblem("video", [{ kind: "video", status: "pending", part: "content" }, { kind: "image", status: "pending", part: "proof" }]), null);
   // A product photo alone does not back a written review, and the permission screenshot does not either.
   assert.match(filesProblem("written", [{ kind: "image", status: "pending", part: "content" }])!, /WhatsApp screenshot/);
   assert.match(filesProblem("written", [{ kind: "image", status: "pending", part: "consent" }])!, /WhatsApp screenshot/);
