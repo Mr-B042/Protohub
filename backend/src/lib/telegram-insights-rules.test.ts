@@ -180,3 +180,29 @@ test("/fines: late send-outs and no-fee orders still to decide show per rep at �
   // Nothing waiting: no waiting line.
   assert.doesNotMatch(finesLeaderDraft({ heading: "Fines · last week", period, fines, logs: null, previous: null, waiting: [] }).text, /Waiting for a decision/);
 });
+
+test("YES (7 Nov 2026): /week and /reps count what still waits for a decision; a rep sees their own", () => {
+  const period = weekPeriods("2026-11-07").thisWeek;
+  const week = weekDraft({ heading: "This week so far", period, report: report(), fines: fineTotals([]), topRep: null, live: true, waitingOrders: 9 }, "Manager").text;
+  assert.match(week, /Fines: 0 · ₦0\n⏳ Waiting for a decision: <b>9 orders<\/b> · about <b>₦9,000<\/b>/);
+  assert.doesNotMatch(weekDraft({ heading: "Last week", period, report: report(), fines: fineTotals([]), topRep: null, live: false }, "Manager").text, /Waiting for a decision/);
+
+  const reps = repsDraft({ heading: "Sales reps · this week so far", period, rows: [
+    { repId: "a", name: "Chelsea", orders: 60, delivered: 38, lateSends: 2, finesAmount: 500, waitingOrders: 3 }
+  ] }).text;
+  assert.match(reps, /🥇 Chelsea – 38 of 60 delivered \(63%\) · 2 late sends · ₦500 fines · ≈₦3,000 waiting/);
+
+  const mine = finesRepDraft({
+    heading: "Your fines · this week so far", period, fines: [], logs: null, previous: null,
+    waiting: [
+      { kind: "late_send", orderId: "5932", minutesLate: 8, stillNew: false },
+      { kind: "late_send", orderId: "5940", minutesLate: 41, stillNew: true },
+      { kind: "missing_fee", orderId: "5900", deliveredDate: "2026-11-05" }
+    ]
+  }).text;
+  assert.match(mine, /No fines charged yet\./);
+  assert.doesNotMatch(mine, /✅ No fines/);
+  assert.match(mine, /⏳ Not charged yet: leadership will charge or skip each one\. Until then each counts as about ₦1,000\./);
+  assert.match(mine, /• #5932 sent out late, 8 min past the 15-minute limit\n• #5940 still in New, 41 min past the 15-minute limit\n• #5900 delivered Thu 5 Nov with no delivery fee/);
+  assert.match(mine, /About <b>₦3,000<\/b> if all are charged\./);
+});
