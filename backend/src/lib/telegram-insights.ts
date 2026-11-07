@@ -6,17 +6,17 @@
 
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
-import { arrivedAtMs, LATE_SEND_FINE_TYPE } from "./late-send.js";
+import { arrivedAtMs, LATE_SEND_FINE_TYPE, lateSendsFor } from "./late-send.js";
 import { LATE_SEND_FROM, lateSendWindow } from "./late-send-rules.js";
 import { addDaysToDateKey, lagosDateKey, sundayWeekStartForDateKey } from "./sales-bonus-engine.js";
-import { MISSING_FEE_TYPE } from "./missing-fee-penalty.js";
-import { NO_FEE_CHARGE_TYPE } from "./review-order-decisions.js";
+import { MISSING_FEE_TYPE, missingFeesFor } from "./missing-fee-penalty.js";
+import { NO_FEE_CHARGE_TYPE, attachDecisions, undecidedFor } from "./review-order-decisions.js";
 import { judgeProductWeek, weekFigures, type WeeklyAdDay, type WeeklyOrder } from "./product-weekly.js";
 import { LEADERSHIP_ROLES, commandDeniedText, seesBusinessMoney, type BusinessReport, type CommandKey } from "./telegram-rules.js";
 import {
   compareDraft, finesLeaderDraft, finesRepDraft, fineTotals, productsDraft, rankReps, rangeLabel, repsDraft, trendDraft, upsellsDraft,
   wantsLastWeek, weekDraft, weekPeriods,
-  type FineItem, type MissedLogs, type Period, type ProductRow, type Reply, type RepRow, type TrendRow, type UpsellRow
+  type FineItem, type MissedLogs, type Period, type ProductRow, type Reply, type RepRow, type TrendRow, type UpsellRow, type WaitingRow
 } from "./telegram-insights-rules.js";
 
 type Person = { userId: string; role: string; name: string };
@@ -88,6 +88,25 @@ async function missedLogs(ctx: InsightContext, weekStart: string, repId: string 
     logger.warn("telegram /fines missed logs failed", { orgId: ctx.orgId, error: String((error as Error)?.message ?? error) });
     return null;
   }
+}
+
+/**
+ * The weekly review's list still to decide: late send-outs and no-fee orders
+ * nobody has charged or skipped yet (the "SENT LATE 2 waiting" / "FEE
+ * MISSING 1 waiting" chips). Same lists and decisions as the review page.
+ */
+async function waitingDecisions(ctx: InsightContext, weekStart: string): Promise<WaitingRow[]> {
+  const [missingFees, lateSends] = await Promise.all([missingFeesFor(ctx.orgId, weekStart), lateSendsFor(ctx.orgId, weekStart)]);
+  if (!(await attachDecisions(ctx.orgId, missingFees, lateSends))) return [];
+  const rows: WaitingRow[] = [];
+  for (const repId of new Set([...Object.keys(missingFees), ...Object.keys(lateSends)])) {
+    if (!repInScope(ctx, repId)) continue;
+    const waiting = undecidedFor(repId, missingFees, lateSends);
+    const lateCount = waiting.filter((item) => item.kind === "late_send").length;
+    const noFee = waiting.filter((item) => item.kind === "missing_fee").length;
+    if (lateCount + noFee > 0) rows.push({ repId, repName: ctx.people.get(repId)?.name ?? "Former rep", lateSends: lateCount, noFee });
+  }
+  return rows;
 }
 
 // ── Reps (the Manager Dashboard's rule) ─────────────────────────────────────
@@ -323,13 +342,15 @@ export async function insightAnswer(ctx: InsightContext, command: CommandKey, ar
   // /fines: leadership see every rep in their branches; anyone else only their own.
   const own = leadership ? null : ctx.person.userId;
   const previousPeriod = last ? p.weekBefore : p.lastWeek;
-  const [fines, previousFines, logs] = await Promise.all([
+  const [fines, previousFines, logs, waiting] = await Promise.all([
     finesBetween(ctx, period.from, period.to, own),
     finesBetween(ctx, previousPeriod.from, previousPeriod.to, own),
-    missedLogs(ctx, period.from, own)
+    missedLogs(ctx, period.from, own),
+    // Leadership's list to decide (the app never shows it to reps).
+    leadership ? waitingDecisions(ctx, period.from) : Promise.resolve([] as WaitingRow[])
   ]);
   const input = { period, fines, logs, previous: { label: last ? "The week before" : "Last week", fines: previousFines } };
   return leadership
-    ? finesLeaderDraft({ heading: `Fines · ${when}`, ...input })
+    ? finesLeaderDraft({ heading: `Fines · ${when}`, ...input, waiting })
     : finesRepDraft({ heading: `Your fines · ${when}`, ...input });
 }

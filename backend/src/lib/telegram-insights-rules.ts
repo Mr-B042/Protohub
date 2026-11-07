@@ -314,26 +314,54 @@ const logsLine = (logs: MissedLogs | null) => {
   return parts.length ? [`Missed logs: ${parts.join(" · ")}`] : [];
 };
 
-/** Leadership: every rep's fines in the period. */
+/**
+ * Late send-outs and no-fee orders the weekly review still has to charge or
+ * skip ("SENT LATE 2 waiting", "FEE MISSING 1 waiting"). They have no amount
+ * yet, so they count at an estimate (Bright, 7 Nov 2026: "any fines that
+ * don't have [an amount] should use 1000 as estimated fine").
+ */
+export type WaitingRow = { repId: string; repName: string; lateSends: number; noFee: number };
+export const ESTIMATED_FINE = 1_000;
+const waitingCount = (row: WaitingRow) => row.lateSends + row.noFee;
+const waitingWhat = (row: WaitingRow) => [
+  row.lateSends ? plural(row.lateSends, "late send-out") : "",
+  row.noFee ? plural(row.noFee, "no delivery fee", "no delivery fees") : ""
+].filter(Boolean).join(", ");
+
+/** Leadership: every rep's fines in the period, and what still waits for a decision. */
 export function finesLeaderDraft(input: {
   heading: string; period: Period; fines: FineItem[]; logs: MissedLogs | null; previous: { label: string; fines: FineItem[] } | null;
+  waiting?: WaitingRow[];
 }): Reply {
   const totals = fineTotals(input.fines);
-  const byRep = new Map<string, { name: string; count: number; amount: number }>();
+  const waiting = (input.waiting ?? []).filter((row) => waitingCount(row) > 0);
+  const byRep = new Map<string, { name: string; count: number; amount: number; waiting: WaitingRow | null }>();
   for (const fine of input.fines.filter((row) => !row.held)) {
-    const entry = byRep.get(fine.repId) ?? { name: fine.repName, count: 0, amount: 0 };
+    const entry = byRep.get(fine.repId) ?? { name: fine.repName, count: 0, amount: 0, waiting: null };
     entry.count += 1;
     entry.amount += fine.amount;
     byRep.set(fine.repId, entry);
   }
+  for (const row of waiting) {
+    const entry = byRep.get(row.repId) ?? { name: row.repName, count: 0, amount: 0, waiting: null };
+    entry.waiting = row;
+    byRep.set(row.repId, entry);
+  }
+  const estimate = (entry: { waiting: WaitingRow | null }) => (entry.waiting ? waitingCount(entry.waiting) * ESTIMATED_FINE : 0);
+  const waitingOrders = waiting.reduce((sum, row) => sum + waitingCount(row), 0);
+  const repLine = (entry: { name: string; count: number; amount: number; waiting: WaitingRow | null }) => {
+    const charged = entry.count ? `${plural(entry.count, "fine")} · ${naira(entry.amount)}` : "";
+    const pending = entry.waiting ? `≈${naira(estimate(entry))} waiting (${waitingWhat(entry.waiting)})` : "";
+    return `• ${tgEscape(entry.name)}: ${[charged, pending].filter(Boolean).join(" + ")}`;
+  };
   const previous = input.previous ? fineTotals(input.previous.fines) : null;
   const lines = [
     `⚖️ <b>${tgEscape(input.heading)}</b>`,
     tgEscape(input.period.label),
     ``,
-    totals.count ? `Fines: <b>${totals.count}</b> · <b>${naira(totals.amount)}</b>` : `✅ No fines logged.`,
-    ...[...byRep.values()].sort((a, b) => b.amount - a.amount || a.name.localeCompare(b.name))
-      .map((entry) => `• ${tgEscape(entry.name)}: ${entry.count} · ${naira(entry.amount)}`),
+    totals.count ? `Fines charged: <b>${totals.count}</b> · <b>${naira(totals.amount)}</b>` : `No fines charged yet.`,
+    ...(waitingOrders ? [`⏳ Waiting for a decision: <b>${plural(waitingOrders, "order")}</b> · about <b>${naira(waitingOrders * ESTIMATED_FINE)}</b> (${naira(ESTIMATED_FINE)} each until charged or skipped)`] : []),
+    ...(byRep.size ? [``, ...[...byRep.values()].sort((a, b) => (b.amount + estimate(b)) - (a.amount + estimate(a)) || a.name.localeCompare(b.name)).map(repLine)] : []),
     ...(totals.heldCount ? [`Under appeal (not taken off yet): ${totals.heldCount} · ${naira(totals.heldAmount)}`] : []),
     ...logsLine(input.logs),
     ...(previous && input.previous ? [``, `${tgEscape(input.previous.label)}: ${plural(previous.count, "fine")} · ${naira(previous.amount)}`] : [])
