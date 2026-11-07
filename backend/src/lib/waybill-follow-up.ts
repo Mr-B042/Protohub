@@ -8,9 +8,9 @@ import { randomUUID } from "node:crypto";
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import {
-  CHANNELS, DEFAULT_SETTINGS, NEXT_ACTIONS, RESPONSES, SESSIONS, addDays, cleanSettings, complianceRate, dayStartMs, isWorkingDay, lagosDay,
-  logProblem, missedCharges, noNewsStreak, owesSession, responseOf, sessionForLog, sessionStatus, sessionWindows, waybillState,
-  type FollowUpSettings, type FollowUpWaybill, type SessionKey, type SessionWindow
+  CHANNELS, DEFAULT_SETTINGS, NEXT_ACTIONS, NOTICE_FROM, RESPONSES, SESSIONS, addDays, cleanSettings, complianceRate, dayStartMs, isWorkingDay, lagosDay,
+  logProblem, missedCharges, noNewsStreak, noticeCharges, noticeState, owesSession, responseOf, sessionForLog, sessionStatus, sessionWindows, waybillState,
+  type FollowUpSettings, type FollowUpWaybill, type NoticeState, type SessionKey, type SessionWindow
 } from "./waybill-follow-up-rules.js";
 
 export const PENALTY_TYPE = "waybill_follow_up_miss";
@@ -115,6 +115,29 @@ async function logsOfWaybills(orgId: string, ids: string[]): Promise<LogRecord[]
   return out.sort((a, b) => b.logged_at.localeCompare(a.logged_at));
 }
 
+/** "I've informed the agent's group" ticks of these waybills (migration 332). */
+async function noticesFor(orgId: string, ids: string[]): Promise<Map<string, { informedAt: string; informedByName: string }>> {
+  const out = new Map<string, { informedAt: string; informedByName: string }>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await supabase.from("waybill_agent_notices").select("waybill_id, informed_at, informed_by_name").eq("org_id", orgId).in("waybill_id", ids.slice(i, i + 200));
+    if (error) throw error;
+    for (const row of (data ?? []) as any[]) out.set(String(row.waybill_id), { informedAt: String(row.informed_at), informedByName: String(row.informed_by_name ?? "") });
+  }
+  return out;
+}
+
+type NoticeView = { state: NoticeState; startAt: string; dueAt: string; informedAt: string | null; informedByName: string | null } | null;
+function noticeView(row: WaybillRow, notice: { informedAt: string; informedByName: string } | undefined, settings: FollowUpSettings, nowMs: number): NoticeView {
+  const result = noticeState({
+    createdMs: Date.parse(row.created_at), informedMs: notice ? Date.parse(notice.informedAt) : null,
+    closedMs: row.closed_at ? Date.parse(row.closed_at) : null, nowMs, settings
+  });
+  return result ? {
+    state: result.state, startAt: new Date(result.startMs).toISOString(), dueAt: new Date(result.dueMs).toISOString(),
+    informedAt: notice?.informedAt ?? null, informedByName: notice?.informedByName ?? null
+  } : null;
+}
+
 /** Waybill ids with a log counted for each session of a day: "m1" → {WB-1, WB-2}. */
 const loggedBySession = (logs: LogRecord[], dateKey: string) => {
   const out = new Map<string, Set<string>>();
@@ -137,6 +160,8 @@ export type ActiveRow = {
   agentName: string; agentPhone: string | null; state: string; city: string;
   lastLog: { at: string; channels: string[]; response: string; note: string } | null;
   status: ReturnType<typeof waybillState>; noNewsStreak: number; followUpsToday: number;
+  /** "I've informed the agent's group" within the hour (null: made before that rule). */
+  notice: NoticeView;
 };
 
 export type LogView = {
@@ -156,7 +181,7 @@ function logView(log: LogRecord, places: Map<string, Place>): LogView {
   };
 }
 
-function activeRows(rows: WaybillRow[], places: Map<string, Place>, logs: LogRecord[], settings: FollowUpSettings, nowMs: number): ActiveRow[] {
+function activeRows(rows: WaybillRow[], places: Map<string, Place>, logs: LogRecord[], settings: FollowUpSettings, nowMs: number, notices: Map<string, { informedAt: string; informedByName: string }>): ActiveRow[] {
   const today = lagosDay(nowMs);
   const byWaybill = new Map<string, LogRecord[]>();
   for (const log of logs) byWaybill.set(log.waybill_id, [...(byWaybill.get(log.waybill_id) ?? []), log]);
@@ -174,7 +199,8 @@ function activeRows(rows: WaybillRow[], places: Map<string, Place>, logs: LogRec
       lastLog: last ? { at: last.logged_at, channels: last.channels, response: last.response, note: last.response_note } : null,
       status: waybillState({ lastResponse: last?.response ?? null, createdMs, nowMs, overdueAfterDays: settings.overdueAfterDays }),
       noNewsStreak: noNewsStreak(own.map((log) => log.response)),
-      followUpsToday: own.filter((log) => log.session_date === today).length
+      followUpsToday: own.filter((log) => log.session_date === today).length,
+      notice: noticeView(row, notices.get(String(row.id)), settings, nowMs)
     };
   }).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
 }
@@ -226,15 +252,18 @@ export async function dashboardFor(orgId: string, dateKey: string, nowMs = Date.
   const existing = rows.filter((row) => Date.parse(row.created_at) < dayEnd);
   const waybills = existing.map(asFollowUp);
   const active = rows.filter((row) => row.status === "In Transit");
-  const [places, activeLogs] = await Promise.all([placesFor(orgId, rows), logsOfWaybills(orgId, active.map((row) => String(row.id)))]);
+  const [places, activeLogs, notices] = await Promise.all([
+    placesFor(orgId, rows), logsOfWaybills(orgId, active.map((row) => String(row.id))), noticesFor(orgId, active.map((row) => String(row.id)))
+  ]);
   const dayLogs = weekLogs.filter((log) => log.session_date === dateKey);
   const sessions = daySessions(dateKey, waybills, dayLogs, settings, nowMs);
-  const activeList = activeRows(active, places, activeLogs, settings, nowMs);
+  const activeList = activeRows(active, places, activeLogs, settings, nowMs, notices);
 
   // Follow-ups due: the session open right now, else the next one today.
   const open = dateKey === today ? sessions.find((session) => session.status === "open") : undefined;
   const next = dateKey === today ? sessions.find((session) => nowMs < session.window.closeMs && session.status !== "off") ?? null : null;
-  const dueNow = open ? open.missing : next ? active.filter((row) => Date.parse(row.created_at) <= next.window.dueMs).length : 0;
+  // Sessions are owed from the day after a waybill is made.
+  const dueNow = open ? open.missing : next ? active.filter((row) => lagosDay(Date.parse(row.created_at)) < dateKey).length : 0;
 
   const ran = sessions.filter((session) => session.status !== "upcoming" && session.status !== "off");
   const owed = ran.reduce((sum, session) => sum + session.owed, 0);
@@ -285,9 +314,11 @@ export async function activeWaybills(orgId: string, nowMs = Date.now()) {
   const { data, error } = await supabase.from("waybill_records").select(WAYBILL_COLUMNS).eq("org_id", orgId).eq("status", "In Transit").limit(5000);
   if (error) throw error;
   const rows = (data ?? []) as WaybillRow[];
-  const [places, logs] = await Promise.all([placesFor(orgId, rows), logsOfWaybills(orgId, rows.map((row) => String(row.id)))]);
+  const [places, logs, notices] = await Promise.all([
+    placesFor(orgId, rows), logsOfWaybills(orgId, rows.map((row) => String(row.id))), noticesFor(orgId, rows.map((row) => String(row.id)))
+  ]);
   const session = sessionForLog(nowMs, settings.graceMinutes);
-  return { waybills: activeRows(rows, places, logs, settings, nowMs), currentSession: session ? { key: session, label: sessionLabelOf(session) } : null };
+  return { waybills: activeRows(rows, places, logs, settings, nowMs, notices), currentSession: session ? { key: session, label: sessionLabelOf(session) } : null };
 }
 
 /** Follow-Up History: every log in a date range, newest first. */
@@ -357,6 +388,32 @@ export async function addLogs(orgId: string, user: { id: string; name: string | 
   return { logged: rows.length, sessionKey, sessionLabel: sessionLabelOf(sessionKey) };
 }
 
+/**
+ * "I've informed the agent's group": one tick per waybill, timed by the
+ * server. A tick after the deadline still counts as told, but the late
+ * notice is charged.
+ */
+export async function informAgent(orgId: string, user: { id: string; name: string | null }, waybillIds: unknown, nowMs = Date.now()) {
+  const ids = Array.isArray(waybillIds) ? [...new Set(waybillIds.map((id) => String(id ?? "").trim()).filter(Boolean))].slice(0, 100) : [];
+  if (ids.length === 0) throw new FollowUpError(400, "Choose at least one waybill.");
+  const settings = await settingsFor(orgId);
+  const { data, error } = await supabase.from("waybill_records").select(WAYBILL_COLUMNS).eq("org_id", orgId).in("id", ids);
+  if (error) throw error;
+  const rows = ((data ?? []) as WaybillRow[]).filter((row) => needsNoticeRow(row));
+  if (rows.length === 0) throw new FollowUpError(404, "These waybills don't need the agent's group told.");
+  const informedAt = new Date(nowMs).toISOString();
+  const { data: saved, error: saveError } = await supabase.from("waybill_agent_notices").upsert(rows.map((row) => ({
+    org_id: orgId, branch_id: row.branch_id ?? null, waybill_id: String(row.id), informed_at: informedAt, informed_by: user.id, informed_by_name: user.name ?? ""
+  })), { onConflict: "org_id,waybill_id", ignoreDuplicates: true }).select("waybill_id");
+  if (saveError) throw saveError;
+  const late = rows.filter((row) => {
+    const notice = noticeState({ createdMs: Date.parse(row.created_at), informedMs: nowMs, closedMs: row.closed_at ? Date.parse(row.closed_at) : null, nowMs, settings });
+    return notice?.state === "done_late";
+  }).map((row) => String(row.id));
+  return { informed: (saved ?? []).length, already: rows.length - (saved ?? []).length, late };
+}
+const needsNoticeRow = (row: WaybillRow) => lagosDay(Date.parse(row.created_at)) >= NOTICE_FROM;
+
 export async function evidenceUrl(orgId: string, logId: string) {
   const { data, error } = await supabase.from("waybill_follow_up_logs").select("evidence_path").eq("org_id", orgId).eq("id", logId).maybeSingle();
   if (error) throw error;
@@ -368,6 +425,9 @@ export async function evidenceUrl(orgId: string, logId: string) {
 }
 
 // ── Charges ─────────────────────────────────────────────────────────────────
+
+const clockOf = (ms: number) => new Date(ms).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Africa/Lagos" });
+const noticeLength = (minutes: number) => (minutes % 60 === 0 ? `${minutes / 60} hour${minutes === 60 ? "" : "s"}` : `${minutes} min`);
 
 export async function missesBetween(orgId: string, from: string, to: string) {
   const { data, error } = await supabase.from("waybill_follow_up_misses").select("*").eq("org_id", orgId)
@@ -382,11 +442,18 @@ export async function missesBetween(orgId: string, from: string, to: string) {
     rows.push(...((res.data ?? []) as WaybillRow[]));
   }
   const places = await placesFor(orgId, rows);
+  const settings = await settingsFor(orgId);
+  const createdOf = new Map(rows.map((row) => [String(row.id), row.created_at]));
   return misses.map((row) => {
     const session = sessionWindows(String(row.session_date), 0).find((window) => window.key === row.session_key);
+    // A late notice: "Inform agent (1 hour)", due at its deadline.
+    const created = createdOf.get(String(row.waybill_id));
+    const notice = row.session_key === "notice" && created
+      ? noticeState({ createdMs: Date.parse(created), informedMs: null, closedMs: null, nowMs: Date.now(), settings }) : null;
     return {
-      id: String(row.id), waybillId: String(row.waybill_id), sessionDate: String(row.session_date), sessionKey: row.session_key as SessionKey,
-      sessionLabel: sessionLabelOf(row.session_key), timeLabel: session?.timeLabel ?? "", amount: Number(row.amount ?? 0), state: String(row.state),
+      id: String(row.id), waybillId: String(row.waybill_id), sessionDate: String(row.session_date), sessionKey: row.session_key as SessionKey | "notice",
+      sessionLabel: row.session_key === "notice" ? `Inform agent (${noticeLength(settings.noticeMinutes)})` : sessionLabelOf(row.session_key),
+      timeLabel: row.session_key === "notice" ? (notice ? `by ${clockOf(notice.dueMs)}` : "") : session?.timeLabel ?? "", amount: Number(row.amount ?? 0), state: String(row.state),
       responsibleUserId: row.responsible_user_id ?? null, responsibleName: String(row.responsible_name ?? ""),
       disputeReason: row.dispute_reason ?? null, decidedByName: row.decided_by_name ?? null, decidedAt: row.decided_at ?? null, decisionNote: row.decision_note ?? null,
       agentName: places.get(String(row.waybill_id))?.agentName ?? "", placeState: places.get(String(row.waybill_id))?.state ?? ""
@@ -431,6 +498,62 @@ async function chargeDay(orgId: string, dateKey: string, settings: FollowUpSetti
     await supabase.from("waybill_follow_up_misses").update({ penalty_id: (penalty as any).id }).eq("id", miss.id);
   }
   return fresh.map((row) => ({ ...row, charged: true, responsibleName: responsible.name }));
+}
+
+/**
+ * Record and charge every waybill whose agent's group was not told in time
+ * (Bright, 7 Nov 2026): ₦noticeAmount each, once, like a missed session.
+ */
+async function chargeNotices(orgId: string, settings: FollowUpSettings, nowMs: number) {
+  const since = [NOTICE_FROM, addDays(lagosDay(nowMs), -4)].sort().pop()!;
+  const { data, error } = await supabase.from("waybill_records").select(WAYBILL_COLUMNS).eq("org_id", orgId)
+    .gte("created_at", new Date(dayStartMs(since)).toISOString()).limit(5000);
+  if (error) throw error;
+  const rows = (data ?? []) as WaybillRow[];
+  if (rows.length === 0) return [];
+  const notices = await noticesFor(orgId, rows.map((row) => String(row.id)));
+  const charges = noticeCharges({
+    waybills: rows.map((row) => ({ ...asFollowUp(row), informedMs: notices.has(String(row.id)) ? Date.parse(notices.get(String(row.id))!.informedAt) : null })),
+    nowMs, settings
+  });
+  if (charges.length === 0) return [];
+  const responsible = await responsibleFor(orgId, settings);
+  const branchOf = new Map(rows.map((row) => [String(row.id), row.branch_id]));
+  const { data: inserted, error: insertError } = await supabase.from("waybill_follow_up_misses").upsert(charges.map((charge) => ({
+    org_id: orgId, branch_id: branchOf.get(charge.waybillId) ?? null, waybill_id: charge.waybillId, session_date: charge.sessionDate, session_key: "notice",
+    responsible_user_id: responsible?.id ?? null, responsible_name: responsible?.name ?? "", amount: charge.amount,
+    state: responsible ? "charged" : "not_charged"
+  })), { onConflict: "waybill_id,session_date,session_key", ignoreDuplicates: true }).select("id, waybill_id, session_date, session_key, amount, branch_id, state");
+  if (insertError) throw insertError;
+  const fresh = (inserted ?? []) as any[];
+  if (!responsible || fresh.length === 0) return fresh.map((row) => ({ ...row, charged: false }));
+  const places = await placesFor(orgId, rows.filter((row) => fresh.some((miss) => miss.waybill_id === row.id)));
+  const dueOf = new Map(charges.map((charge) => [charge.waybillId, charge.dueMs]));
+  for (const miss of fresh) {
+    const place = places.get(String(miss.waybill_id));
+    const { data: penalty, error: penaltyError } = await supabase.from("rep_penalties").insert({
+      org_id: orgId, branch_id: miss.branch_id ?? null, rep_id: responsible.id, rep_name: responsible.name, type: PENALTY_TYPE,
+      amount: Number(miss.amount), remove_all_bonuses: false, period: String(miss.session_date).slice(0, 7),
+      reason: `Waybill ${miss.waybill_id}${place?.state ? ` (${place.state})` : ""}: agent's group not told within ${noticeLength(settings.noticeMinutes)} (due ${clockOf(dueOf.get(String(miss.waybill_id)) ?? nowMs)}, ${shortDay(String(miss.session_date))})`,
+      by_name: SYSTEM_NAME
+    }).select("id").single();
+    if (penaltyError) { logger.warn("waybill notice charge failed", { orgId, miss: miss.id, error: penaltyError.message }); continue; }
+    await supabase.from("waybill_follow_up_misses").update({ penalty_id: (penalty as any).id }).eq("id", miss.id);
+  }
+  return fresh.map((row) => ({ ...row, charged: true, responsibleName: responsible.name }));
+}
+
+/** Waybills still waiting for the tick with 15 minutes or less left: the Telegram nudge. */
+async function noticesDueSoon(orgId: string, settings: FollowUpSettings, nowMs: number) {
+  const { data, error } = await supabase.from("waybill_records").select(WAYBILL_COLUMNS).eq("org_id", orgId).eq("status", "In Transit")
+    .gte("created_at", new Date(dayStartMs([NOTICE_FROM, addDays(lagosDay(nowMs), -4)].sort().pop()!)).toISOString()).limit(5000);
+  if (error) throw error;
+  const rows = (data ?? []) as WaybillRow[];
+  const notices = await noticesFor(orgId, rows.map((row) => String(row.id)));
+  return rows.filter((row) => !notices.has(String(row.id))).flatMap((row) => {
+    const notice = noticeState({ createdMs: Date.parse(row.created_at), informedMs: null, closedMs: null, nowMs, settings });
+    return notice && notice.state === "waiting" && notice.dueMs - nowMs <= 15 * 60_000 ? [{ id: String(row.id), dueMs: notice.dueMs }] : [];
+  });
 }
 
 /** Dispute a charge: the person charged (or leadership for them). It stays charged until the Owner decides. */
@@ -518,10 +641,13 @@ export async function weekReport(orgId: string, weekStart: string, nowMs = Date.
 
 // ── The job: reminders before each session, charges after it ──────────────
 
+const WAYBILL_TRIGGERS = ["waybill_follow_up_due", "waybill_follow_up_missed", "waybill_notice_due", "waybill_notice_late"] as const;
+const automationsReady = new Set<string>();
+
 export async function runWaybillFollowUpJob(nowMs = Date.now()) {
   const { data: orgs, error } = await supabase.from("organizations").select("id");
   if (error) throw error;
-  const { telegramWaybillReminder, telegramWaybillMissed } = await import("./telegram.js");
+  const { telegramWaybillReminder, telegramWaybillMissed, telegramWaybillNoticeSoon, telegramWaybillNoticeLate, ensureDefaultAutomations } = await import("./telegram.js");
   const linesFor = async (orgId: string, ids: string[]) => {
     const rows: WaybillRow[] = [];
     for (let i = 0; i < ids.length; i += 200) {
@@ -536,6 +662,29 @@ export async function runWaybillFollowUpJob(nowMs = Date.now()) {
     try {
       const settings = await settingsFor(org.id);
       const today = lagosDay(nowMs);
+      // The waybill messages need their ready-made automations; they are made
+      // here once, so nobody has to open the Telegram Bot page first.
+      if (!automationsReady.has(org.id)) {
+        await ensureDefaultAutomations(org.id, WAYBILL_TRIGGERS).catch((ensureError: any) => logger.warn("waybill automations not made", { orgId: org.id, error: String(ensureError?.message ?? ensureError) }));
+        automationsReady.add(org.id);
+      }
+
+      // The agent's group not told within the hour: charge, then say so.
+      const lateNotices = await chargeNotices(org.id, settings, nowMs);
+      if (lateNotices.length) {
+        const responsible = await responsibleFor(org.id, settings);
+        await telegramWaybillNoticeLate(org.id, {
+          waybills: await linesFor(org.id, lateNotices.map((row) => String(row.waybill_id))), amount: settings.noticeAmount, minutes: settings.noticeMinutes,
+          charged: lateNotices.some((row) => row.charged), responsibleUserId: responsible?.id ?? null, responsibleName: responsible?.name ?? null,
+          dedupeKey: lateNotices.map((row) => String(row.waybill_id)).sort().join(",")
+        }).catch((sendError: any) => logger.warn("waybill notice late telegram failed", { orgId: org.id, error: String(sendError?.message ?? sendError) }));
+      }
+      // 15 minutes or less left to tick: one nudge per waybill.
+      for (const soon of await noticesDueSoon(org.id, settings, nowMs)) {
+        const [line] = await linesFor(org.id, [soon.id]);
+        await telegramWaybillNoticeSoon(org.id, { waybill: line, dueMs: soon.dueMs, nowMs, amount: settings.noticeAmount, charged: lagosDay(soon.dueMs) >= settings.chargesFrom })
+          .catch((sendError: any) => logger.warn("waybill notice soon telegram failed", { orgId: org.id, error: String(sendError?.message ?? sendError) }));
+      }
       // Yesterday too, in case the server was down when its last session closed.
       for (const day of [addDays(today, -1), today]) {
         const fresh = await chargeDay(org.id, day, settings, nowMs);
@@ -557,7 +706,8 @@ export async function runWaybillFollowUpJob(nowMs = Date.now()) {
         const window = sessionWindows(today, settings.graceMinutes).find((row) => nowMs >= row.dueMs - 10 * 60_000 && nowMs < row.dueMs - 5 * 60_000);
         if (window) {
           const { data: active } = await supabase.from("waybill_records").select("id, created_at").eq("org_id", org.id).eq("status", "In Transit").limit(5000);
-          const owing = ((active ?? []) as any[]).filter((row) => Date.parse(row.created_at) <= window.dueMs).map((row) => String(row.id));
+          // Sessions start the day after a waybill is made.
+          const owing = ((active ?? []) as any[]).filter((row) => lagosDay(Date.parse(row.created_at)) < today).map((row) => String(row.id));
           if (owing.length) {
             await telegramWaybillReminder(org.id, {
               dateKey: today, sessionKey: window.key, label: window.label, timeLabel: window.timeLabel, openMs: window.openMs, closeMs: window.closeMs,

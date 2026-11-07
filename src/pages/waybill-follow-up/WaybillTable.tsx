@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, MoreHorizontal, Search } from "lucide-react";
 import type { WfActiveRow, WfResponseOption } from "../../lib/api";
 import { ChannelIcon, Initials, Pill, ResponsePill, STATUS_LOOK, btn, lagosTime } from "./wf-ui";
+import { NoticeChip } from "./Timers";
 
 type Props = {
   rows: WfActiveRow[];
@@ -10,6 +11,10 @@ type Props = {
   onLog: (ids: string[]) => void;
   onHistory: (id: string) => void;
   onOpenWaybills: () => void;
+  /** "I've informed the agent's group" with its countdown (Bright, 7 Nov 2026). */
+  nowMs: number;
+  onInform: (ids: string[]) => void;
+  informing: Set<string>;
 };
 
 const STATUS_FILTERS = [
@@ -33,7 +38,7 @@ function Select({ value, onChange, children, label }: { value: string; onChange:
 }
 
 /** The design's Active Waybills table: search, State / Agent / Status, select, Log Follow-Up, pages. */
-export default function WaybillTable({ rows, options, pageSize, onLog, onHistory, onOpenWaybills }: Props) {
+export default function WaybillTable({ rows, options, pageSize, onLog, onHistory, onOpenWaybills, nowMs, onInform, informing }: Props) {
   const [search, setSearch] = useState("");
   const [state, setState] = useState("");
   const [agent, setAgent] = useState("");
@@ -98,17 +103,17 @@ export default function WaybillTable({ rows, options, pageSize, onLog, onHistory
         )}
       </div>
       <div className="mt-3 overflow-x-auto">
-        <table className="!min-w-[820px] w-full border-collapse text-[13px]">
+        <table className="!min-w-[940px] w-full border-collapse text-[13px]">
           <thead className="bg-gray-50 dark:bg-slate-800/60">
             <tr>
               <th className="w-10 px-3 py-2.5"><input type="checkbox" aria-label="Select all on this page" checked={allOnPage} onChange={toggleAll} /></th>
-              <th className={th}>Waybill</th><th className={th}>State</th><th className={th}>Agent</th><th className={th}>Last Follow-Up</th>
+              <th className={th}>Waybill</th><th className={th}>State</th><th className={th}>Agent</th><th className={th}>Agent Told</th><th className={th}>Last Follow-Up</th>
               <th className={th}>Agent Response</th><th className={th}>Status</th><th className={th}>Action</th><th className="w-8" />
             </tr>
           </thead>
           <tbody>
             {visible.length === 0 && (
-              <tr><td colSpan={9} className="px-5 py-10 text-center text-[13px] text-gray-500">
+              <tr><td colSpan={10} className="px-5 py-10 text-center text-[13px] text-gray-500">
                 {rows.length === 0 ? "No waybill is waiting for receipt. A waybill shows here from when it is created until it is marked Received." : "No waybill matches these filters."}
               </td></tr>
             )}
@@ -125,6 +130,7 @@ export default function WaybillTable({ rows, options, pageSize, onLog, onHistory
                 </td>
                 <td className="whitespace-nowrap px-2.5 py-2.5 text-gray-800 dark:text-slate-200">{row.state || "—"}</td>
                 <td className="px-2.5 py-2.5"><span className="flex items-center gap-2 whitespace-nowrap text-gray-800 dark:text-slate-200"><Initials name={row.agentName} />{row.agentName}</span></td>
+                <td className="px-2.5 py-2.5"><NoticeChip notice={row.notice} nowMs={nowMs} busy={informing.has(row.id)} onInform={() => onInform([row.id])} /></td>
                 <td className="px-2.5 py-2.5">
                   {row.lastLog
                     ? <span className="flex items-center gap-1.5 whitespace-nowrap text-gray-800 dark:text-slate-200"><ChannelIcon channels={row.lastLog.channels} />{lagosTime(row.lastLog.at)}</span>

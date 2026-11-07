@@ -7,7 +7,10 @@
 //    marked Received); until then it is followed up five times a working day.
 //  - ₦500 per waybill per missed session, charged automatically.
 //  - Each session is logged on its own: a 10 AM log never covers 8 AM.
-//  - No session after the waybill left In Transit, or before it existed, is owed.
+//  - No session after the waybill left In Transit is owed.
+//  - The day a waybill is made, the agent's group is told within the hour
+//    ("I've informed the agent's group", ₦500 if late); the five sessions
+//    start the next working day (Bright, 7 Nov 2026).
 
 export type SessionKey = "m1" | "m2" | "a1" | "a2" | "ev";
 
@@ -31,10 +34,15 @@ export type FollowUpSettings = {
   /** No session before this day (Lagos) is ever charged. */
   chargesFrom: string;
   overdueAfterDays: number;
+  /** Minutes to tell the agent's group about a new waybill. */
+  noticeMinutes: number;
+  /** What a late notice costs, per waybill. */
+  noticeAmount: number;
 };
 
 export const DEFAULT_SETTINGS: FollowUpSettings = {
-  responsibleUserId: null, amount: 500, graceMinutes: 15, workingDays: [1, 2, 3, 4, 5, 6], chargesFrom: "2026-11-09", overdueAfterDays: 3
+  responsibleUserId: null, amount: 500, graceMinutes: 15, workingDays: [1, 2, 3, 4, 5, 6], chargesFrom: "2026-11-09", overdueAfterDays: 3,
+  noticeMinutes: 60, noticeAmount: 500
 };
 
 const clampInt = (value: unknown, min: number, max: number, fallback: number) => {
@@ -52,7 +60,9 @@ export function cleanSettings(raw: Record<string, unknown> | null | undefined): 
     graceMinutes: clampInt(r.grace_minutes ?? r.graceMinutes, 0, 45, DEFAULT_SETTINGS.graceMinutes),
     workingDays: [...new Set(days.map((day) => Math.round(Number(day))).filter((day) => day >= 0 && day <= 6))].sort(),
     chargesFrom: /^\d{4}-\d{2}-\d{2}$/.test(from) ? from : DEFAULT_SETTINGS.chargesFrom,
-    overdueAfterDays: clampInt(r.overdue_after_days ?? r.overdueAfterDays, 1, 30, DEFAULT_SETTINGS.overdueAfterDays)
+    overdueAfterDays: clampInt(r.overdue_after_days ?? r.overdueAfterDays, 1, 30, DEFAULT_SETTINGS.overdueAfterDays),
+    noticeMinutes: clampInt(r.notice_minutes ?? r.noticeMinutes, 15, 240, DEFAULT_SETTINGS.noticeMinutes),
+    noticeAmount: Math.max(0, Number(r.notice_amount ?? r.noticeAmount ?? DEFAULT_SETTINGS.noticeAmount) || 0)
   };
 }
 
@@ -111,13 +121,14 @@ export type FollowUpWaybill = {
 };
 
 /**
- * Does this waybill owe the session? It must have existed at the session's
- * time and still been In Transit when the window closed: received at 11:35 →
+ * Does this waybill owe the session? Sessions start the day AFTER it was made
+ * (that day the agent's group is told within the hour instead), and it must
+ * still have been In Transit when the window closed: received at 11:35 →
  * 12:00, 2:00 and evening are not owed; received at 12:05 (before 12:15) →
  * 12:00 is not owed either.
  */
 export function owesSession(waybill: FollowUpWaybill, window: SessionWindow) {
-  if (waybill.createdMs > window.dueMs) return false;
+  if (lagosDay(waybill.createdMs) >= window.dateKey) return false;
   if (waybill.closedMs === null) return waybill.status === "In Transit";
   return waybill.closedMs > window.closeMs;
 }
@@ -144,6 +155,61 @@ export function missedCharges(input: { window: SessionWindow; nowMs: number; wor
   return input.waybills
     .filter((waybill) => owesSession(waybill, window) && !input.loggedIds.has(waybill.id))
     .map((waybill) => ({ waybillId: waybill.id, sessionDate: window.dateKey, sessionKey: window.key, amount: input.settings.amount }));
+}
+
+// ── Telling the agent's group about a new waybill ───────────────────────────
+
+/** Waybills made from this day need the notice (older ones were made before the rule). */
+export const NOTICE_FROM = "2026-11-07";
+const WORK_START_MINUTE = 8 * 60;
+const WORK_END_MINUTE = 17 * 60;
+const minuteOfDay = (ms: number) => Math.floor((((ms + LAGOS_MS) % 86_400_000) + 86_400_000) % 86_400_000 / 60_000);
+export const needsNotice = (createdMs: number) => lagosDay(createdMs) >= NOTICE_FROM;
+
+/**
+ * When her hour starts: at once, or 8:00 AM the next working day when the
+ * waybill was made after 5 PM, before 8 AM or on a day off (Bright chose).
+ */
+export function noticeStartMs(createdMs: number, settings: Pick<FollowUpSettings, "workingDays">) {
+  const day = lagosDay(createdMs);
+  const minute = minuteOfDay(createdMs);
+  const working = isWorkingDay(day, settings);
+  if (working && minute >= WORK_START_MINUTE && minute < WORK_END_MINUTE) return createdMs;
+  let next = working && minute < WORK_START_MINUTE ? day : addDays(day, 1);
+  for (let guard = 0; guard < 7 && !isWorkingDay(next, settings); guard += 1) next = addDays(next, 1);
+  return dayStartMs(next) + WORK_START_MINUTE * 60_000;
+}
+
+export type NoticeState = "waiting" | "late" | "done" | "done_late" | "closed";
+
+/**
+ * Where a waybill's notice stands. waiting/late: not ticked yet (before or
+ * after the deadline); done/done_late: ticked in time or after it; closed:
+ * received before the hour ran out, so nothing was owed. null: made before
+ * the rule.
+ */
+export function noticeState(input: { createdMs: number; informedMs: number | null; closedMs: number | null; nowMs: number; settings: Pick<FollowUpSettings, "workingDays" | "noticeMinutes"> }) {
+  if (!needsNotice(input.createdMs)) return null;
+  const startMs = noticeStartMs(input.createdMs, input.settings);
+  const dueMs = startMs + input.settings.noticeMinutes * 60_000;
+  const state: NoticeState = input.informedMs !== null ? (input.informedMs <= dueMs ? "done" : "done_late")
+    : input.closedMs !== null && input.closedMs <= dueMs ? "closed"
+      : input.nowMs > dueMs ? "late" : "waiting";
+  return { state, startMs, dueMs };
+}
+
+/**
+ * The late notices to charge: not ticked by the deadline (ticked late still
+ * counts as late), once the deadline has passed, from the charges start day.
+ */
+export function noticeCharges(input: { waybills: Array<FollowUpWaybill & { informedMs: number | null }>; nowMs: number; settings: FollowUpSettings }) {
+  return input.waybills.flatMap((waybill) => {
+    const notice = noticeState({ createdMs: waybill.createdMs, informedMs: waybill.informedMs, closedMs: waybill.closedMs, nowMs: input.nowMs, settings: input.settings });
+    if (!notice || (notice.state !== "late" && notice.state !== "done_late") || input.nowMs <= notice.dueMs) return [];
+    const sessionDate = lagosDay(notice.dueMs);
+    if (sessionDate < input.settings.chargesFrom) return [];
+    return [{ waybillId: waybill.id, sessionDate, sessionKey: "notice" as const, amount: input.settings.noticeAmount, dueMs: notice.dueMs }];
+  });
 }
 
 // ── What the agent said ─────────────────────────────────────────────────────

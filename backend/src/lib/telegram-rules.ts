@@ -27,7 +27,7 @@ export const ROLE_SHORT: Record<string, string> = {
 export type TriggerKey =
   | "order_new" | "order_assigned" | "order_confirmed" | "order_delivered" | "order_failed" | "order_cancelled" | "order_rescheduled"
   | "cart_assigned" | "send_out_soon" | "follow_up_due" | "low_stock" | "daily_report" | "weekly_report" | "weekly_rep_note"
-  | "waybill_follow_up_due" | "waybill_follow_up_missed";
+  | "waybill_follow_up_due" | "waybill_follow_up_missed" | "waybill_notice_due" | "waybill_notice_late";
 
 /** Reports carry company-wide figures: leadership only (Bright, 6 Nov 2026). */
 export const LEADERSHIP_ROLES = ["Owner", "Admin", "Manager"];
@@ -84,7 +84,9 @@ export const TRIGGERS: Record<TriggerKey, TriggerDef> = {
   weekly_rep_note: { label: "Scheduled (Weekly, each rep)", description: "Each sales rep's own late send-outs and fines last week.", group: "reports", settings: ["weekday", "hour"], repApplies: false },
   // Waybill Follow-Up Center (Bright, 7 Nov 2026).
   waybill_follow_up_due: { label: "Waybill Follow-Up Due", description: "Ten minutes before each waybill follow-up session (8, 10, 12, 2 and 4 PM) while waybills are waiting for the agent.", group: "delivery", settings: [], repApplies: false },
-  waybill_follow_up_missed: { label: "Waybill Follow-Up Missed", description: "Waybills were not followed up in a session (₦500 each, charged automatically).", group: "delivery", settings: [], repApplies: false }
+  waybill_follow_up_missed: { label: "Waybill Follow-Up Missed", description: "Waybills were not followed up in a session (₦500 each, charged automatically).", group: "delivery", settings: [], repApplies: false },
+  waybill_notice_due: { label: "Waybill: Tell the Agent (15 min left)", description: "A new waybill's agent's group is not told yet and 15 minutes or less are left (one message per waybill).", group: "delivery", settings: [], repApplies: false },
+  waybill_notice_late: { label: "Waybill: Agent Not Told in Time", description: "A new waybill's agent's group was not told within the hour (₦500 each, charged automatically).", group: "delivery", settings: [], repApplies: false }
 };
 
 export const TRIGGER_KEYS = Object.keys(TRIGGERS) as TriggerKey[];
@@ -114,7 +116,9 @@ export const DEFAULT_AUTOMATIONS: DefaultAutomation[] = [
   { trigger: "weekly_report", name: "Weekly Sales Report", enabled: true, recipients: { roles: ["Owner"], assignedRep: false, userIds: [] }, settings: { weekday: 1, hour: 9 } },
   { trigger: "weekly_rep_note", name: "Weekly Late & Fines Note", enabled: true, recipients: { roles: ["Sales Rep"], assignedRep: false, userIds: [] }, settings: { weekday: 1, hour: 9 } },
   { trigger: "waybill_follow_up_due", name: "Waybill Follow-Up Reminder", enabled: true, recipients: { roles: ["Inventory Manager & Logistics Operations"], assignedRep: false, userIds: [] }, settings: {} },
-  { trigger: "waybill_follow_up_missed", name: "Waybill Follow-Up Missed", enabled: true, recipients: { roles: ["Owner", "Inventory Manager & Logistics Operations"], assignedRep: false, userIds: [] }, settings: {} }
+  { trigger: "waybill_follow_up_missed", name: "Waybill Follow-Up Missed", enabled: true, recipients: { roles: ["Owner", "Inventory Manager & Logistics Operations"], assignedRep: false, userIds: [] }, settings: {} },
+  { trigger: "waybill_notice_due", name: "Waybill: Tell the Agent (15 min left)", enabled: true, recipients: { roles: ["Inventory Manager & Logistics Operations"], assignedRep: false, userIds: [] }, settings: {} },
+  { trigger: "waybill_notice_late", name: "Waybill: Agent Not Told in Time", enabled: true, recipients: { roles: ["Owner", "Inventory Manager & Logistics Operations"], assignedRep: false, userIds: [] }, settings: {} }
 ];
 
 const ROLE_SET = new Set<string>(TELEGRAM_ROLES);
@@ -140,7 +144,8 @@ export function allowedRoles(trigger: TriggerKey): readonly string[] {
   if (trigger === "daily_report" || trigger === "weekly_report") return LEADERSHIP_ROLES;
   if (trigger === "weekly_rep_note") return REP_NOTE_ROLES;
   if (SALES_TRIGGERS.has(trigger)) return LEADERSHIP_ROLES;
-  if (DELIVERY_TRIGGERS.has(trigger) || trigger === "low_stock" || trigger === "waybill_follow_up_due" || trigger === "waybill_follow_up_missed") return [...LEADERSHIP_ROLES, ...INVENTORY_ROLES];
+  if (DELIVERY_TRIGGERS.has(trigger) || trigger === "low_stock" || trigger === "waybill_follow_up_due" || trigger === "waybill_follow_up_missed"
+    || trigger === "waybill_notice_due" || trigger === "waybill_notice_late") return [...LEADERSHIP_ROLES, ...INVENTORY_ROLES];
   return LEADERSHIP_ROLES;
 }
 
@@ -522,6 +527,39 @@ export function waybillMissedDraft(input: { timeLabel: string; dayLabel: string;
       input.charged
         ? `Charged: <b>${naira(total)}</b> (${naira(input.amount)} each) to ${tgEscape(who)}.`
         : `Not charged: ${tgEscape(input.responsibleName ? "practice days" : "nobody is set as responsible in Reports & Settings")}.`
+    ].join("\n"),
+    keyboard: [[{ text: "Open Follow-Up Center", path: WAYBILL_PATH }]]
+  };
+}
+
+/** 15 minutes or less to tell the agent's group about a new waybill. */
+export function waybillNoticeSoonDraft(input: { waybill: WaybillLine; minutesLeft: number; due: string; amount: number; charged: boolean }): Draft {
+  return {
+    title: `Tell the agent: ${input.waybill.id}`,
+    text: [
+      `⏳ <b>${input.minutesLeft} min left · tell the agent's group</b>`,
+      `${tgEscape(input.waybill.id)} – ${tgEscape(input.waybill.place || "?")}, ${tgEscape(input.waybill.agent)}`,
+      `Post in the agent's group that the waybill is on the way, then tick "Agent informed" by <b>${tgEscape(input.due)}</b>.`,
+      input.charged ? `Late costs ${naira(input.amount)}.` : `Practice days: nothing is charged yet.`
+    ].join("\n"),
+    keyboard: [[{ text: "Open Follow-Up Center", path: WAYBILL_PATH }]]
+  };
+}
+
+/** New waybills whose agent's group was not told in time. */
+export function waybillNoticeLateDraft(input: { waybills: WaybillLine[]; minutes: number; amount: number; charged: boolean; responsibleName: string | null; forResponsible: boolean }): Draft {
+  const total = input.amount * input.waybills.length;
+  const who = input.forResponsible ? "you" : input.responsibleName ?? "nobody (no one is set as responsible)";
+  return {
+    title: `Agent not told in time: ${input.waybills.length} waybill${input.waybills.length === 1 ? "" : "s"}`,
+    text: [
+      `🚨 <b>Agent's group not told within ${input.minutes % 60 === 0 ? `${input.minutes / 60} hour${input.minutes === 60 ? "" : "s"}` : `${input.minutes} min`}</b>`,
+      ...input.waybills.slice(0, 12).map((row) => `• ${tgEscape(row.id)} – ${tgEscape(row.place || "?")}, ${tgEscape(row.agent)}`),
+      ...(input.waybills.length > 12 ? [`…and ${input.waybills.length - 12} more`] : []),
+      input.charged
+        ? `Charged: <b>${naira(total)}</b> (${naira(input.amount)} each) to ${tgEscape(who)}.`
+        : `Not charged: ${tgEscape(input.responsibleName ? "practice days" : "nobody is set as responsible in Reports & Settings")}.`,
+      `Tell the group now and tick "Agent informed".`
     ].join("\n"),
     keyboard: [[{ text: "Open Follow-Up Center", path: WAYBILL_PATH }]]
   };

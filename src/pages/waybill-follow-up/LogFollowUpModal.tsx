@@ -206,19 +206,20 @@ export default function LogFollowUpModal({ waybills, preselected, options, grace
   );
 
   // This waybill's own day, session by session.
+  // Follow-ups start the day after a waybill is made (Bright, 7 Nov 2026): that day the agent's group is told instead.
+  const madeToday = single ? new Date(Date.parse(single.createdAt) + LAGOS).toISOString().slice(0, 10) === new Date(nowMs + LAGOS).toISOString().slice(0, 10) : false;
   const progress = single ? sessions.map((session) => {
     const log = single.todayLogs.find((row) => row.sessionKey === session.key);
-    const owed = Date.parse(single.createdAt) <= session.dueMs;
     const state = !workingToday ? "off"
       : log ? "done"
-        : nowMs >= session.openMs && nowMs <= session.closeMs ? "now"
-          : nowMs < session.openMs ? "pending"
-            : owed ? "missed" : "not_due";
+        : madeToday ? "not_due"
+          : nowMs >= session.openMs && nowMs <= session.closeMs ? "now"
+            : nowMs < session.openMs ? "pending" : "missed";
     return { ...session, state, at: log?.at ?? null };
   }) : [];
   const progressText = (state: string, at: string | null) =>
     state === "done" ? `Completed (${clock(at!)})` : state === "now" ? "In Progress" : state === "missed" ? "Missed"
-      : state === "not_due" ? "Not due (before dispatch)" : state === "off" ? "Day off" : "Pending";
+      : state === "not_due" ? "Starts tomorrow (made today)" : state === "off" ? "Day off" : "Pending";
 
   // The session a log made now counts for; between sessions it counts for none.
   const sessionValue = !workingToday ? "Day off" : current ? `${current.label} – ${current.time}` : next ? `Next: ${next.time}` : "No more sessions today";

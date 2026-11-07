@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  DEFAULT_SETTINGS, cleanSettings, complianceRate, logProblem, missedCharges, noNewsStreak, owesSession, sessionForLog,
-  sessionStatus, sessionWindows, waybillState, type FollowUpWaybill
+  DEFAULT_SETTINGS, cleanSettings, complianceRate, logProblem, missedCharges, noNewsStreak, noticeCharges, noticeStartMs, noticeState, owesSession,
+  sessionForLog, sessionStatus, sessionWindows, waybillState, type FollowUpWaybill
 } from "./waybill-follow-up-rules.js";
 
 const at = (dateKey: string, hhmm: string) => Date.parse(`${dateKey}T${hhmm}:00+01:00`);
 const DAY = "2026-11-09"; // a Monday
+const DAY_BEFORE = "2026-11-08"; // Sunday
 const windows = sessionWindows(DAY, 15);
 const w = (key: string) => windows.find((row) => row.key === key)!;
 
@@ -22,24 +23,27 @@ test("five sessions a day, each logged on its own; the evening counts once from 
   assert.equal(sessionForLog(at(DAY, "17:01"), 15), null);
 });
 
-test("received at 11:35: 12:00, 2:00 and the evening are not owed; nothing before the waybill existed is owed", () => {
-  const waybill: FollowUpWaybill = { id: "WB-1", createdMs: at(DAY, "07:00"), status: "Received", closedMs: at(DAY, "11:35") };
+test("received at 11:35: 12:00, 2:00 and the evening are not owed; sessions start the day after the waybill is made", () => {
+  const waybill: FollowUpWaybill = { id: "WB-1", createdMs: at(DAY_BEFORE, "15:00"), status: "Received", closedMs: at(DAY, "11:35") };
   assert.deepEqual(windows.map((row) => owesSession(waybill, row)), [true, true, false, false, false]);
-  const lateIn: FollowUpWaybill = { id: "WB-2", createdMs: at(DAY, "10:05"), status: "In Transit", closedMs: null };
-  assert.deepEqual(windows.map((row) => owesSession(lateIn, row)), [false, false, true, true, true]);
+  // Made today (even at 7 AM): nothing today; the agent's group is told within the hour instead (Bright, 7 Nov 2026).
+  const madeToday: FollowUpWaybill = { id: "WB-2", createdMs: at(DAY, "07:00"), status: "In Transit", closedMs: null };
+  assert.deepEqual(windows.map((row) => owesSession(madeToday, row)), [false, false, false, false, false]);
+  const tomorrow = sessionWindows("2026-11-10", 15);
+  assert.deepEqual(tomorrow.map((row) => owesSession(madeToday, row)), [true, true, true, true, true]);
   // Received inside the window, before it closed: that session is not owed either.
-  const quick: FollowUpWaybill = { id: "WB-3", createdMs: at(DAY, "07:00"), status: "Received", closedMs: at(DAY, "12:05") };
+  const quick: FollowUpWaybill = { id: "WB-3", createdMs: at(DAY_BEFORE, "15:00"), status: "Received", closedMs: at(DAY, "12:05") };
   assert.equal(owesSession(quick, w("a1")), false);
   // An old waybill closed before the trigger existed (no time) is never owed.
-  assert.equal(owesSession({ id: "WB-4", createdMs: at(DAY, "07:00"), status: "Received", closedMs: null }, w("m1")), false);
+  assert.equal(owesSession({ id: "WB-4", createdMs: at(DAY_BEFORE, "15:00"), status: "Received", closedMs: null }, w("m1")), false);
 });
 
 test("₦500 per waybill per missed session, only after the window closes, on working days, from the start date", () => {
   const settings = { ...DEFAULT_SETTINGS, chargesFrom: DAY };
   const waybills: FollowUpWaybill[] = [
-    { id: "WB-1", createdMs: at(DAY, "07:00"), status: "In Transit", closedMs: null },
-    { id: "WB-2", createdMs: at(DAY, "07:00"), status: "In Transit", closedMs: null },
-    { id: "WB-3", createdMs: at(DAY, "07:00"), status: "In Transit", closedMs: null }
+    { id: "WB-1", createdMs: at(DAY_BEFORE, "15:00"), status: "In Transit", closedMs: null },
+    { id: "WB-2", createdMs: at(DAY_BEFORE, "15:00"), status: "In Transit", closedMs: null },
+    { id: "WB-3", createdMs: at(DAY_BEFORE, "15:00"), status: "In Transit", closedMs: null }
   ];
   const logged = new Set(["WB-1"]);
   const charges = missedCharges({ window: w("m2"), nowMs: at(DAY, "10:16"), workingDay: true, settings, waybills, loggedIds: logged });
@@ -85,5 +89,38 @@ test("waybill states and the no-news streak", () => {
 
 test("settings are cleaned", () => {
   const s = cleanSettings({ amount: "750", grace_minutes: 90, working_days: [1, 2, 9, 6], charges_from: "soon", overdue_after_days: 0 });
-  assert.deepEqual(s, { responsibleUserId: null, amount: 750, graceMinutes: 45, workingDays: [1, 2, 6], chargesFrom: "2026-11-09", overdueAfterDays: 1 });
+  assert.deepEqual(s, { responsibleUserId: null, amount: 750, graceMinutes: 45, workingDays: [1, 2, 6], chargesFrom: "2026-11-09", overdueAfterDays: 1, noticeMinutes: 60, noticeAmount: 500 });
+  assert.equal(cleanSettings({ notice_minutes: 5 }).noticeMinutes, 15);
+});
+
+test("the agent's group is told within the hour; after 5 PM, before 8 AM or on a day off the hour starts 8 AM the next working day", () => {
+  const settings = { ...DEFAULT_SETTINGS };
+  assert.equal(noticeStartMs(at(DAY, "10:05"), settings), at(DAY, "10:05"));
+  assert.equal(noticeStartMs(at(DAY, "17:30"), settings), at("2026-11-10", "08:00")); // Monday evening -> Tuesday 8 AM
+  assert.equal(noticeStartMs(at(DAY, "07:30"), settings), at(DAY, "08:00")); // early -> same day 8 AM
+  assert.equal(noticeStartMs(at("2026-11-14", "18:00"), settings), at("2026-11-16", "08:00")); // Saturday evening -> Monday (Sunday off)
+  assert.equal(noticeStartMs(at("2026-11-15", "12:00"), settings), at("2026-11-16", "08:00")); // Sunday -> Monday
+  const made = at(DAY, "10:05");
+  const state = (nowHm: string, informed: string | null, closed: string | null = null) =>
+    noticeState({ createdMs: made, informedMs: informed ? at(DAY, informed) : null, closedMs: closed ? at(DAY, closed) : null, nowMs: at(DAY, nowHm), settings })?.state;
+  assert.equal(state("10:50", null), "waiting");
+  assert.equal(state("11:06", null), "late");
+  assert.equal(state("11:06", "10:30"), "done");
+  assert.equal(state("11:20", "11:10"), "done_late");
+  assert.equal(state("11:20", null, "10:40"), "closed"); // received before the hour ran out: nothing owed
+  assert.equal(noticeState({ createdMs: at("2026-11-06", "10:00"), informedMs: null, closedMs: null, nowMs: at(DAY, "12:00"), settings }), null); // made before the rule
+});
+
+test("a late notice is charged once its hour has passed, ticked late or not at all, from the charges start day", () => {
+  const settings = { ...DEFAULT_SETTINGS, chargesFrom: DAY };
+  const base = { status: "In Transit", closedMs: null };
+  const waybills = [
+    { ...base, id: "WB-A", createdMs: at(DAY, "10:00"), informedMs: null }, // never ticked
+    { ...base, id: "WB-B", createdMs: at(DAY, "10:00"), informedMs: at(DAY, "11:20") }, // ticked late
+    { ...base, id: "WB-C", createdMs: at(DAY, "10:00"), informedMs: at(DAY, "10:20") }, // in time
+    { ...base, id: "WB-D", createdMs: at(DAY, "11:00"), informedMs: null } // still waiting at 11:30
+  ];
+  const charges = noticeCharges({ waybills, nowMs: at(DAY, "11:30"), settings });
+  assert.deepEqual(charges.map((row) => [row.waybillId, row.sessionKey, row.sessionDate, row.amount]), [["WB-A", "notice", DAY, 500], ["WB-B", "notice", DAY, 500]]);
+  assert.deepEqual(noticeCharges({ waybills, nowMs: at(DAY, "11:30"), settings: { ...settings, chargesFrom: "2026-11-10" } }), []);
 });

@@ -5228,7 +5228,11 @@ export type WfActiveRow = {
   agentName: string; agentPhone: string | null; state: string; city: string;
   lastLog: { at: string; channels: string[]; response: string; note: string } | null;
   status: WfWaybillStatus; noNewsStreak: number; followUpsToday: number;
+  /** "I've informed the agent's group" within the hour (null: made before that rule, 7 Nov 2026). */
+  notice: WfNotice | null;
 };
+export type WfNoticeState = "waiting" | "late" | "done" | "done_late" | "closed";
+export type WfNotice = { state: WfNoticeState; startAt: string; dueAt: string; informedAt: string | null; informedByName: string | null };
 export type WfLog = {
   id: string; waybillId: string; at: string; sessionKey: WfSessionKey | null; sessionLabel: string | null; channels: string[];
   response: string; responseNote: string; nextAction: string; loggedByName: string; hasEvidence: boolean; batchId: string | null;
@@ -5240,6 +5244,8 @@ export type WfSession = {
 };
 export type WfSettings = {
   responsibleUserId: string | null; amount: number; graceMinutes: number; workingDays: number[]; chargesFrom: string; overdueAfterDays: number;
+  /** Minutes to tell the agent's group about a new waybill, and what a late notice costs. */
+  noticeMinutes: number; noticeAmount: number;
 };
 export type WfDashboard = {
   date: string; today: string; nowMs: number; workingDay: boolean;
@@ -5254,7 +5260,7 @@ export type WfDashboard = {
   options: { responses: WfResponseOption[]; channels: Array<{ key: string; label: string }>; nextActions: string[] };
 };
 export type WfMiss = {
-  id: string; waybillId: string; sessionDate: string; sessionKey: WfSessionKey; sessionLabel: string | null; timeLabel: string; amount: number;
+  id: string; waybillId: string; sessionDate: string; sessionKey: WfSessionKey | "notice"; sessionLabel: string | null; timeLabel: string; amount: number;
   state: "charged" | "disputed" | "cancelled" | "not_charged"; responsibleUserId: string | null; responsibleName: string;
   disputeReason: string | null; decidedByName: string | null; decidedAt: string | null; decisionNote: string | null; agentName: string; placeState: string;
 };
@@ -5272,6 +5278,7 @@ export const waybillFollowUpApi = {
   log: (body: { waybillIds: string[]; channels: string[]; response: string; responseNote?: string; nextAction?: string; evidence?: { dataUrl: string } | null }) =>
     post<{ logged: number; sessionKey: WfSessionKey | null; sessionLabel: string | null }>("/api/waybill-follow-ups/logs", body),
   evidence: (logId: string) => get<{ url: string }>(`/api/waybill-follow-ups/logs/${encodeURIComponent(logId)}/evidence`),
+  inform: (waybillIds: string[]) => post<{ informed: number; already: number; late: string[] }>("/api/waybill-follow-ups/notices", { waybillIds }),
   misses: (params: { from?: string; to?: string } = {}) =>
     get<{ misses: WfMiss[]; viewerId: string }>(`/api/waybill-follow-ups/misses?${new URLSearchParams(Object.entries(params).filter(([, value]) => value) as Array<[string, string]>).toString()}`),
   dispute: (id: string, reason: string) => post<{ ok: boolean }>(`/api/waybill-follow-ups/misses/${encodeURIComponent(id)}/dispute`, { reason }),
