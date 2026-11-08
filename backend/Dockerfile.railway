@@ -1,0 +1,22 @@
+# Railway build (8 Nov 2026). Nixpacks and Railpack both download their build
+# tool from GitHub on every build, and those downloads kept failing (504), so
+# no deploy could get through. This recipe needs neither.
+# Node 22: @supabase/realtime-js needs its built-in WebSocket (Node 20 fails at start).
+FROM node:22-bookworm-slim
+
+# jemalloc: start-railway.sh switches it on (31 Oct memory fix, see nixpacks.toml).
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends libjemalloc2 \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci
+
+COPY . .
+RUN npm run build && npm prune --omit=dev
+
+ENV NODE_ENV=production
+
+CMD ["sh", "./start-railway.sh"]
