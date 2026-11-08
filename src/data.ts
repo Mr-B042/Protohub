@@ -41,7 +41,8 @@ import {
   ClipboardList,
   ShieldAlert,
   Rocket,
-  Send
+  Send,
+  Mail
 } from "lucide-react";
 
 export const navItems = [
@@ -87,6 +88,7 @@ export const navItems = [
   { label: "Marketing Performance", icon: TrendingUp },
   { label: "Ad Tracking", icon: Megaphone },
   { label: "Marketing", icon: TrendingUp },
+  { label: "Email Marketing", icon: Mail },
   { label: "User Management", icon: Users },
   { label: "Round-Robin", icon: Repeat2 },
   { label: "Embed Form", icon: Code2 },

@@ -73,6 +73,9 @@ import telegramRoutes, { telegramWebhookRouter } from "./routes/telegram.js";
 import waybillFollowUpRoutes from "./routes/waybill-follow-ups.js";
 import customerReviewRoutes from "./routes/customer-reviews.js";
 import { runWaybillFollowUpJob } from "./lib/waybill-follow-up.js";
+import emailMarketingRoutes from "./routes/email-marketing.js";
+import emailTrackingRoutes from "./routes/email-tracking.js";
+import { runEmailMarketingJob } from "./lib/email-marketing.js";
 import { runBotHealthChecks, runLowStock, runReports, runRetries, runSendOutSoon, runTelegramCleanup } from "./lib/telegram.js";
 import fineAppealRoutes from "./routes/fine-appeals.js";
 import orderReceiptRoutes from "./routes/order-receipts.js";
@@ -347,6 +350,8 @@ app.get("/health", (_req, res) => {
 
 // ── Public short-link redirector (no auth) ───────────────
 app.use("/r", shortLinkRoutes);
+// ── Campaign email links: open counter, click redirect, unsubscribe (no auth) ──
+app.use("/e", emailTrackingRoutes);
 
 // ── Spy middleware (Owner/Admin can pass X-Spy-User-Id to see another user's data) ──
 app.use("/api", applySpyHeader);
@@ -385,6 +390,7 @@ app.use("/api/page-visits", pageVisitRoutes);
 app.use("/api/telegram/webhook", telegramWebhookRouter);
 app.use("/api/telegram", telegramRoutes);
 app.use("/api/waybill-follow-ups", waybillFollowUpRoutes);
+app.use("/api/email-marketing", emailMarketingRoutes);
 app.use("/api/customer-reviews", customerReviewRoutes);
 app.use("/api/fine-appeals", fineAppealRoutes);
 app.use("/api/order-receipts", orderReceiptRoutes);
@@ -836,6 +842,14 @@ cron.schedule("*/15 * * * *", async () => {
 cron.schedule("*/5 * * * *", async () => {
   try { await runWaybillFollowUpJob(); } catch (e) {
     logger.error("cron: waybill follow-ups crashed", { error: (e as Error).message });
+  }
+});
+// Email Marketing (Bright, 8 Nov 2026): copies new order emails into the
+// list, starts due campaigns, feeds automations and sends within the daily
+// limit; counts orders that came from an email every 10 minutes.
+cron.schedule("* * * * *", async () => {
+  try { await runEmailMarketingJob(); } catch (e) {
+    logger.error("cron: email marketing crashed", { error: (e as Error).message });
   }
 });
 

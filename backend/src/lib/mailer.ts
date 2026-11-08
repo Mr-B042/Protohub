@@ -1392,3 +1392,85 @@ export async function sendAgentCredentialsEmail(
     return { ok: false, error: err?.message ?? "Could not send the email." };
   }
 }
+
+// ── Campaign emails (Email Marketing, Bright 8 Nov 2026) ──────────────────
+// The campaign builder makes its own HTML, so this sends it as-is through the
+// same providers, fallback and quota back-off as every other email. It adds
+// the unsubscribe headers mail apps show as their own "Unsubscribe" button.
+// Kept apart from dispatch() so order and staff emails are untouched.
+
+export type MarketingEmail = {
+  to: { email: string; name?: string };
+  subject: string;
+  html: string;
+  text: string;
+  unsubscribeUrl?: string;
+};
+
+export type MarketingSender = { fromName: string; fromEmail: string; ready: boolean; reason?: string };
+
+/** Who campaign emails come from, and whether sending can work at all. */
+export async function marketingSender(orgId: string): Promise<MarketingSender> {
+  const settings = await loadSettings(orgId);
+  if (!settings) return { fromName: "", fromEmail: "", ready: false, reason: "Email is not set up. Open Settings › Email first." };
+  const base = { fromName: brandName(settings), fromEmail: settings.from_email };
+  if (!settings.enabled) return { ...base, ready: false, reason: "Email sending is switched off in Settings › Email." };
+  if (!hasValidKeys(settings)) return { ...base, ready: false, reason: "No email service key is saved in Settings › Email." };
+  if (!settings.from_email) return { ...base, ready: false, reason: "No sender address is saved in Settings › Email." };
+  return { ...base, ready: true };
+}
+
+export async function sendMarketingEmail(orgId: string, message: MarketingEmail): Promise<{ provider: EmailProvider }> {
+  const settings = await loadSettings(orgId);
+  if (!settings || !settings.enabled || !hasValidKeys(settings) || !settings.from_email) {
+    throw new EmailDispatchError(settings?.provider ?? DEFAULT_EMAIL_PROVIDER, "Email sending is not set up.");
+  }
+  const headers: Record<string, string> = {};
+  if (message.unsubscribeUrl) {
+    headers["List-Unsubscribe"] = `<${message.unsubscribeUrl}>`;
+    headers["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
+  }
+  const providers = sendOrder(settings, orgId);
+  let lastError: EmailDispatchError | null = null;
+  for (const provider of providers) {
+    try {
+      if (provider === "resend") {
+        const client = new Resend(settings.resend_api_key);
+        const from = settings.from_name ? `${settings.from_name} <${settings.from_email}>` : settings.from_email;
+        const { error } = await client.emails.send({
+          from, to: [message.to.email], subject: message.subject, html: message.html, text: message.text,
+          ...(settings.reply_to ? { reply_to: settings.reply_to } : {}),
+          ...(Object.keys(headers).length ? { headers } : {})
+        } as Parameters<typeof client.emails.send>[0]);
+        if (error) throw normalizeDispatchError("resend", error);
+      } else {
+        const client = new Mailjet({ apiKey: settings.api_key_public, apiSecret: settings.api_key_private });
+        const mail: Record<string, unknown> = {
+          From: { Email: settings.from_email, Name: settings.from_name || settings.from_email },
+          To: [{ Email: message.to.email, Name: message.to.name || message.to.email }],
+          Subject: message.subject,
+          TextPart: message.text,
+          HTMLPart: message.html,
+          // Our own counters do the open/click tracking; Mailjet's would wrap the links twice.
+          TrackOpens: "disabled",
+          TrackClicks: "disabled"
+        };
+        if (settings.reply_to) mail.ReplyTo = { Email: settings.reply_to };
+        if (Object.keys(headers).length) mail.Headers = headers;
+        try {
+          await (client.post("send", { version: "v3.1" }) as any).request({ Messages: [mail] });
+        } catch (err: any) {
+          throw normalizeDispatchError("mailjet", err);
+        }
+      }
+      clearProviderQuotaBackoff(orgId, provider);
+      return { provider };
+    } catch (err: any) {
+      const normalized = normalizeDispatchError(provider, err);
+      if (normalized.quotaLike) setProviderQuotaBackoff(orgId, provider);
+      logger.warn("campaign email provider failed", { orgId, provider, statusCode: normalized.statusCode, quotaLike: normalized.quotaLike, error: normalized.message });
+      lastError = normalized;
+    }
+  }
+  throw lastError ?? new EmailDispatchError(settings.provider ?? DEFAULT_EMAIL_PROVIDER, "Email send failed.");
+}
