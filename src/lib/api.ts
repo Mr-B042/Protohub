@@ -5372,3 +5372,184 @@ export const stockAllocationsApi = {
   cancel: (id: string, note?: string) => post<{ decision: StockAllocationDecision }>(`/api/stock-allocations/${id}/cancel`, { note }),
   complete: (id: string, body: { note?: string; transferredUnits?: number }) => post<{ decision: StockAllocationDecision }>(`/api/stock-allocations/${id}/complete`, body)
 };
+
+// ── Email Marketing (Bright, 8 Nov 2026), part 1 ─────────────────────────
+import type { EmailBlock, EmailDesign } from "./email-render";
+
+export type EmCondition = { field: string; op: string; value: string | number };
+export type EmAudience = {
+  source: "all" | "segment" | "custom" | "journey" | "list";
+  segmentId?: string;
+  custom?: { name?: string; match: "all" | "any"; conditions: EmCondition[] };
+  journeyStage?: string;
+  listId?: string;
+  exclude?: { on: boolean; segmentId?: string; boughtWithinDays?: number; emailedWithinDays?: number };
+};
+export type EmDelivery = {
+  type: "one_time" | "recurring" | "automation";
+  sendAt?: string | null;
+  repeat?: { every: "day" | "week" | "month"; until?: string | null };
+  automation?: { preset?: string | null; trigger: "delivered" | "ordered" | "cart" | "inactive"; delayHours: number; inactiveDays?: number; exit: "none" | "purchased" };
+};
+export type EmOptions = { abTest: boolean; plainText: boolean; utm: boolean; resendNonOpeners: boolean; resendHours: number };
+export type EmStats = {
+  queued: number; sent: number; failed: number; skipped: number; opened: number; clicked: number; orders: number; deliveredOrders: number; revenue: number;
+  unsubscribed: number; a: { sent: number; opened: number; clicked: number }; b: { sent: number; opened: number; clicked: number }; lastSentAt: string | null;
+};
+export type EmCampaignStatus = "draft" | "scheduled" | "sending" | "active" | "paused" | "completed" | "cancelled" | "archived";
+export type EmCampaign = {
+  id: string; name: string; goal: string; subject: string; subjectB: string; preheader: string; offerType: string; productId: string | null;
+  offer: { on?: boolean; title?: string; benefit?: string }; audience: EmAudience; delivery: EmDelivery; options: Partial<EmOptions>;
+  status: EmCampaignStatus; slug: string; sendAt: string | null; nextRunAt: string | null; runCount: number; audienceCount: number;
+  thumbnailUrl: string | null; createdByName: string; createdAt: string; updatedAt: string; launchedAt: string | null; completedAt: string | null;
+  archivedFrom: string | null; design?: EmailDesign | null; stats: EmStats; audienceLabel?: string;
+};
+export type EmKpi = { value: number; change: number | null };
+export type EmOverview = {
+  nowMs: number;
+  sender: { ready: boolean; reason?: string; fromName: string; fromEmail: string };
+  formEmailOn: boolean;
+  health: { grade: "good" | "fair" | "poor"; percent: number; sent: number; failed: number } | null;
+  kpis: {
+    subscribers: EmKpi; activeCustomers: EmKpi; repeatCustomers: EmKpi;
+    frequency: { value: number; before: number }; ltv: EmKpi; retention: { value: number; changePp: number | null };
+  };
+  trend: Array<{ key: string; label: string; ltv: number; retention: number }>;
+  ltv: { value: number; change: number | null; aov: number; frequency: number; ageMonths: number };
+  funnel: { total: number; engaged: number; repeat: number; highValue: number };
+  segments: Array<{ key: string; name: string; icon: string; count: number; customers: number }>;
+  automations: Array<{ key: string; name: string; hint: string; state: "active" | "paused" | "off" | "unavailable" }>;
+  topAutomations: Array<{ id: string; name: string; status: string; customers: number; trigger: string | null }>;
+  recent: EmCampaign[];
+  scheduledToday: Array<{ id: string; name: string; at: string; audienceLabel: string }>;
+};
+export type EmEngagement = "high" | "medium" | "low" | "none";
+export type EmSegment = {
+  id: string; name: string; description: string; icon: string; kind: "auto" | "fixed"; match: "all" | "any"; conditions: EmCondition[];
+  excludeOn: boolean; exclude: EmCondition[];
+  contactIds: string[]; status: "active" | "paused" | "archived"; builtIn: string | null; createdAt: string; updatedAt: string; createdByName: string;
+  size: number; customers: number; contacts: number; subscribed: number; unsubscribed: number; percent: number; growth: number | null;
+  engagement: EmEngagement; isList: boolean;
+};
+export type EmTag = {
+  id: string; name: string; kind: "system" | "custom"; color: string; icon: string; description: string; match: "all" | "any"; conditions: EmCondition[];
+  status: "active" | "archived"; builtIn: string | null; createdAt: string; updatedAt: string; contacts: number; percent: number;
+};
+export type EmField = {
+  id: string; key: string; name: string; type: "text" | "number" | "date" | "dropdown" | "multi"; options: string[]; description: string; required: boolean; useInForms: boolean;
+  status: "active" | "inactive"; systemKey: string | null; icon: string; createdAt: string; updatedAt: string; filled: number; filledPercent: number;
+};
+export type EmAudiencePage = {
+  kpis: {
+    total: EmKpi; subscribed: EmKpi & { percent: number }; unsubscribed: { value: number; percent: number };
+    engaged: { value: number; percent: number }; vip: { value: number; percent: number };
+  };
+  counts: { all: number; subscribed: number; unsubscribed: number; bounced: number };
+  segments: EmSegment[];
+  lists: EmSegment[];
+  tags: EmTag[];
+  fields: EmField[];
+  donut: { total: number; slices: Array<{ label: string; count: number; percent: number }> };
+  insights: {
+    topSegment: { name: string; size: number } | null; fastestGrowing: { name: string; growth: number | null } | null;
+    engagementRate: number | null; nextBest: { name: string; size: number; customers: number } | null;
+  };
+  customersWithoutEmail: number;
+};
+export type EmContact = {
+  id: string; email: string; name: string; phone: string | null; source: string; status: string; joinedAt: string;
+  orders: number; spent: number; lastPurchaseAt: string | null; lastOpenedAt: string | null; lastActivityAt: string | null; state: string;
+  engagement: EmEngagement; segments: string[]; lists: string[]; tags: string[]; fields: Array<{ key: string; value: unknown }>; system: Array<{ key: string; value: string }>;
+};
+export type EmConditionField = { field: string; group: string; label: string; ops: Array<{ op: string; label: string }>; value: "product" | "number" | "days" | "money" | "percent" | "state" | "source" | "none" | "status" | "tag" | "channel"; unit?: string };
+export type EmDesignerProduct = { id: string; name: string; image: string; priceMin: number | null; priceMax: number | null; links: Array<{ label: string; url: string }> };
+export type EmDesigner = {
+  products: EmDesignerProduct[];
+  reviews: Array<{ id: string; quote: string; name: string; productName: string; rating: number | null }>;
+  saved: Array<{ id: string; kind: "block" | "template"; name: string; content: EmailBlock | EmailDesign; createdByName: string; createdAt: string }>;
+  sender: { ready: boolean; reason?: string; fromName: string; fromEmail: string };
+  settings: { dailyLimit: number; footerNote: string };
+  segments: Array<{ id: string; name: string; kind: "auto" | "fixed"; status: string; icon: string; list: boolean }>;
+  tags: Array<{ id: string; name: string; kind: "system" | "custom"; color: string; icon: string }>;
+  fields: Array<{ id: string; key: string; name: string; type: string; options: string[]; system: boolean }>;
+  states: string[];
+  conditionFields: EmConditionField[];
+  quickSegments: Array<{ key: string; name: string; hint: string; icon: string; rule: { match: "all" | "any"; conditions: EmCondition[] } }>;
+  journeyStages: Array<{ key: string; name: string; hint: string }>;
+  presets: Array<{ key: string; name: string; hint: string; trigger: "delivered" | "ordered" | "cart" | "inactive"; delayHours: number; inactiveDays?: number; exit: "none" | "purchased"; goal: string }>;
+  userEmail: string;
+};
+export type EmImports = {
+  imports: Array<{ id: string; source: "csv" | "paste" | "device" | "manual"; details: string; contacts: number; added: number; updated: number; duplicates: number; invalid: number; status: string; listId: string | null; createdAt: string; createdByName: string }>;
+  settings: { autoSync: boolean; defaultListId: string | null; updateExisting: boolean };
+  orderForm: { on: boolean; lastSyncAt: string | null; lastContactAt: string | null; contacts: number };
+};
+export type EmSegmentPreview = {
+  size: number; contacts: number; customers: number; withoutEmail: number; totalAudience: number; percentOfAudience: number;
+  avgOrders: number; avgOrderValue: number; totalValue: number;
+};
+export type EmPreview = {
+  recipients: number; matched: number; optedOut: number; withoutEmail: number;
+  insights: { total: number; percentOfAll: number; avgOrderValue: number; avgFrequency: number; avgDaysSinceLast: number | null };
+  breakdown: Array<{ label: string; percent: number }>;
+};
+export type EmPlanning = {
+  estimate: { open: { low: number; high: number }; click: { low: number; high: number }; conversion: { low: number; high: number }; revenue: { low: number; high: number } } | null;
+  pastCampaigns: number;
+  sendWindow: { startHour: number; endHour: number; share: number } | null;
+};
+export type EmCampaignInput = {
+  name: string; goal: string; subject: string; subjectB: string; preheader: string; offerType: string; productId: string | null;
+  offer: { on: boolean; title: string; benefit: string }; audience: EmAudience; design: EmailDesign; delivery: EmDelivery; options: EmOptions; thumbnailUrl: string | null;
+};
+export type EmReport = {
+  campaign: EmCampaign;
+  links: Array<{ label: string; url: string; clicks: number }>;
+  sends: Array<{ email: string; name: string; kind: string; runNo: number; variant: string; status: string; error: string | null; sentAt: string | null; openedAt: string | null; clickedAt: string | null; opens: number; clicks: number; orderId: string | null; unsubscribedAt: string | null }>;
+  orders: Array<{ id: string; customer: string; amount: number; status: string; createdAt: string }>;
+};
+
+const EM = "/api/email-marketing";
+export const emailMarketingApi = {
+  overview: () => get<EmOverview>(`${EM}/overview`),
+  audience: () => get<EmAudiencePage>(`${EM}/audience`),
+  contacts: () => get<{ contacts: EmContact[] }>(`${EM}/contacts`),
+  addContact: (body: { email: string; name?: string; phone?: string; consent: true }) => post<{ added: number }>(`${EM}/contacts`, body),
+  imports: () => get<EmImports>(`${EM}/imports`),
+  importContacts: (body: { rows: Array<{ email: string; name?: string; phone?: string; fields?: Record<string, string> }>; consent: true; listName?: string; source?: "csv" | "paste" | "device"; details?: string }) =>
+    post<{ added: number; updated: number; alreadyOnList: number; invalid: number; listId: string | null }>(`${EM}/contacts/import`, body),
+  unsubscribe: (id: string) => post<{ ok: boolean }>(`${EM}/contacts/${encodeURIComponent(id)}/unsubscribe`, {}),
+  removeContact: (id: string) => del<{ ok: boolean }>(`${EM}/contacts/${encodeURIComponent(id)}`),
+  updateContact: (id: string, body: { name?: string; phone?: string; fields?: Record<string, unknown>; tags?: string[] }) => patch<{ ok: boolean }>(`${EM}/contacts/${encodeURIComponent(id)}`, body),
+  segmentPreview: (body: { match: "all" | "any"; conditions: EmCondition[]; excludeOn?: boolean; exclude?: EmCondition[] }) => post<EmSegmentPreview>(`${EM}/segments/preview`, body),
+  createSegment: (body: { name: string; description?: string; icon?: string; kind?: "auto" | "fixed"; match: "all" | "any"; conditions: EmCondition[]; excludeOn?: boolean; exclude?: EmCondition[] }) => post<{ id: string }>(`${EM}/segments`, body),
+  updateSegment: (id: string, body: Partial<{ name: string; description: string; icon: string; match: "all" | "any"; conditions: EmCondition[]; excludeOn: boolean; exclude: EmCondition[]; status: "active" | "paused" | "archived" }>) =>
+    patch<{ ok: boolean }>(`${EM}/segments/${encodeURIComponent(id)}`, body),
+  createTag: (body: { name: string; color?: string; icon?: string; description?: string }) => post<{ id: string }>(`${EM}/tags`, body),
+  updateTag: (id: string, body: Partial<{ name: string; color: string; icon: string; description: string; status: "active" | "archived" }>) => patch<{ ok: boolean }>(`${EM}/tags/${encodeURIComponent(id)}`, body),
+  deleteTag: (id: string) => del<{ ok: boolean }>(`${EM}/tags/${encodeURIComponent(id)}`),
+  tagContacts: (id: string, contactIds: string[], add: boolean) => post<{ ok: boolean }>(`${EM}/tags/${encodeURIComponent(id)}/contacts`, { contactIds, add }),
+  createField: (body: { name: string; type: string; options?: string[]; description?: string; required?: boolean; useInForms?: boolean; icon?: string }) => post<{ id: string }>(`${EM}/fields`, body),
+  updateField: (id: string, body: Partial<{ name: string; options: string[]; description: string; required: boolean; useInForms: boolean; status: "active" | "inactive"; icon: string }>) => patch<{ ok: boolean }>(`${EM}/fields/${encodeURIComponent(id)}`, body),
+  deleteField: (id: string) => del<{ ok: boolean }>(`${EM}/fields/${encodeURIComponent(id)}`),
+  deleteSegment: (id: string) => del<{ ok: boolean }>(`${EM}/segments/${encodeURIComponent(id)}`),
+  designer: () => get<EmDesigner>(`${EM}/designer`),
+  audiencePreview: (audience: EmAudience) => post<EmPreview>(`${EM}/audience-preview`, { audience }),
+  planning: (audience: number) => get<EmPlanning>(`${EM}/planning?audience=${audience}`),
+  uploadPicture: (dataUrl: string) => post<{ url: string }>(`${EM}/pictures`, { dataUrl }),
+  saveItem: (body: { kind: "block" | "template"; name: string; content: unknown }) => post<{ id: string }>(`${EM}/saved`, body),
+  deleteItem: (id: string) => del<{ ok: boolean }>(`${EM}/saved/${encodeURIComponent(id)}`),
+  checkLinks: (urls: string[]) => post<{ results: Array<{ url: string; ok: boolean; status: number | null; reason: string }> }>(`${EM}/check-links`, { urls }),
+  campaigns: () => get<{ campaigns: EmCampaign[] }>(`${EM}/campaigns`),
+  campaign: (id: string) => get<{ campaign: EmCampaign }>(`${EM}/campaigns/${encodeURIComponent(id)}`),
+  createCampaign: (body: EmCampaignInput) => post<{ id: string }>(`${EM}/campaigns`, body),
+  updateCampaign: (id: string, body: EmCampaignInput) => patch<{ ok: boolean }>(`${EM}/campaigns/${encodeURIComponent(id)}`, body),
+  duplicateCampaign: (id: string) => post<{ id: string }>(`${EM}/campaigns/${encodeURIComponent(id)}/duplicate`, {}),
+  deleteCampaign: (id: string) => del<{ ok: boolean }>(`${EM}/campaigns/${encodeURIComponent(id)}`),
+  launch: (id: string, sendNow: boolean) => post<{ ok: boolean; status: string }>(`${EM}/campaigns/${encodeURIComponent(id)}/launch`, { sendNow }),
+  act: (id: string, action: "pause" | "resume" | "cancel" | "archive" | "unarchive") => post<{ ok: boolean; status: string }>(`${EM}/campaigns/${encodeURIComponent(id)}/${action}`, {}),
+  sendTest: (id: string, emails: string[]) => post<{ results: Array<{ email: string; ok: boolean; error?: string }> }>(`${EM}/campaigns/${encodeURIComponent(id)}/test`, { emails }),
+  report: (id: string) => get<EmReport>(`${EM}/campaigns/${encodeURIComponent(id)}/report`),
+  settings: () => get<{ dailyLimit: number; footerNote: string; sender: { ready: boolean; reason?: string; fromName: string; fromEmail: string } }>(`${EM}/settings`),
+  saveSettings: (body: { dailyLimit?: number; footerNote?: string; autoSync?: boolean; defaultListId?: string | null; updateExisting?: boolean }) => patch<{ ok: boolean }>(`${EM}/settings`, body)
+};
