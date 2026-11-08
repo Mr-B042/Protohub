@@ -28,6 +28,7 @@ import { notifyOutageRecoveredOrder } from "./order-notifications.js";
 import { buildPackageComponentSnapshot } from "./order-inventory.js";
 import { AUTO_SUBMIT_GIVES_UP_MS } from "./cart-assignment.js";
 import { tidyOrderState } from "./order-state.js";
+import { applyEmailOffer, offerColumns, recordRedemption } from "./email-offers.js";
 
 const MIN_IDLE_MS = 2 * 60 * 1000;   // must be idle at least 2 min
 // give up after 15 min - shared with the cart hand-out, which takes over from here
@@ -217,7 +218,13 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     : utmSource === "facebook" || utmSource === "Facebook" ? "Facebook"
     : "Website";
 
-  const amount = Number(cart.amount ?? pkg.price ?? 0);
+  // The same email offer the order form showed (Coupons & Offers, 8 Nov 2026).
+  const amountBeforeOffer = Number(cart.amount ?? pkg.price ?? 0);
+  const emailOffer = await applyEmailOffer({
+    orgId, utmSource: capturePayload.utm_source ?? capturePayload.utmSource, utmContent: capturePayload.utm_content ?? capturePayload.utmContent,
+    phone: customerPhone, productId: product.id, amount: amountBeforeOffer
+  });
+  const amount = amountBeforeOffer - (emailOffer?.discount ?? 0);
 
   const orderPayload = {
     org_id:           orgId,
@@ -244,6 +251,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     utm_source:       capturePayload.utm_source ?? capturePayload.utmSource ?? null,
     utm_campaign:     capturePayload.utm_campaign ?? capturePayload.utmCampaign ?? null,
     utm_medium:       capturePayload.utm_medium ?? capturePayload.utmMedium ?? null,
+    ...offerColumns(emailOffer),
     embed_label:      capturePayload.embedLabel ?? capturePayload.embed_label ?? null,
     referrer:         capturePayload.landingUrl ?? capturePayload.referrer ?? null,
     form_context:     {
@@ -289,6 +297,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
   }
   const order = (once as any)?.order;
   if (!order) return;
+  if (emailOffer) void recordRedemption(emailOffer, order.id, customerPhone, amountBeforeOffer);
 
   if (!order.review_hold) {
     const assignment = await assignOrderRep(orgId, product.id);

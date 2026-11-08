@@ -21,6 +21,8 @@ export type Draft = {
   options: EmOptions;
   thumbnailUrl: string | null;
   status: string;
+  /** Coupons & Offers: the offer this email carries (lower price when they order from it). */
+  offerId: string | null;
 };
 
 export const GOALS: Array<{ key: string; label: string; hint: string; icon: string }> = [
@@ -98,7 +100,8 @@ export function newDraft(designer: EmDesigner | null, preset?: string, segmentId
     sendNow: false,
     options: { ...DEFAULT_OPTIONS },
     thumbnailUrl: null,
-    status: "draft"
+    status: "draft",
+    offerId: null
   };
   return syncDesign(draft, designer);
 }
@@ -113,7 +116,8 @@ export function draftFromCampaign(row: EmCampaign): Draft {
     sendNow: false,
     options: { ...DEFAULT_OPTIONS, ...(row.options ?? {}) },
     thumbnailUrl: row.thumbnailUrl,
-    status: row.status
+    status: row.status,
+    offerId: row.offerId ?? null
   };
 }
 
@@ -122,7 +126,7 @@ export function toInput(draft: Draft): EmCampaignInput {
     name: draft.name.trim() || "Untitled campaign", goal: draft.goal, subject: draft.subject, subjectB: draft.subjectB, preheader: draft.preheader,
     offerType: draft.offerType, productId: draft.productId, offer: draft.offer, audience: draft.audience, design: draft.design,
     delivery: draft.delivery.type === "one_time" && draft.sendNow ? { ...draft.delivery, sendAt: null } : draft.delivery,
-    options: draft.options, thumbnailUrl: draft.thumbnailUrl
+    options: draft.options, thumbnailUrl: draft.thumbnailUrl, offerId: draft.offerId
   };
 }
 

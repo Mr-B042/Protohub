@@ -18,6 +18,8 @@ import {
   automationReport, automationsPage, deleteAutomation, duplicateAutomation, getAutomation, saveAutomation, setAutomationStatus, testAutomationEmails, type AutomationInput
 } from "../lib/email-automations.js";
 import { AUTOMATION_GOALS, STAGES } from "../lib/email-automation-rules.js";
+import { deleteOffer, offerRow, offerUsage, offersPage, saveOffer, setOfferStatus } from "../lib/email-offers.js";
+import { OFFER_TYPES as COUPON_OFFER_TYPES, benefitText, offerState } from "../lib/email-offers-rules.js";
 
 /**
  * Email Marketing (Bright, 8 Nov 2026), part 1: Overview, Campaigns, the
@@ -113,7 +115,9 @@ const campaignBody = z.object({
   design: z.any().optional(),
   delivery: z.any().optional(),
   options: z.any().optional(),
-  thumbnailUrl: z.string().max(2000).nullable().optional()
+  thumbnailUrl: z.string().max(2000).nullable().optional(),
+  /** Coupons & Offers: the offer this email carries (applied when they order from it). */
+  offerId: z.string().regex(UUID).nullable().optional()
 });
 
 function campaignColumns(body: z.infer<typeof campaignBody>) {
@@ -127,7 +131,8 @@ function campaignColumns(body: z.infer<typeof campaignBody>) {
     ...(design ? { design } : {}),
     ...(body.delivery !== undefined ? { delivery: cleanDelivery(body.delivery) } : {}),
     ...(body.options !== undefined ? { options: cleanOptions(body.options) } : {}),
-    thumbnail_url: body.thumbnailUrl && /^https:\/\//i.test(body.thumbnailUrl) ? body.thumbnailUrl : null
+    thumbnail_url: body.thumbnailUrl && /^https:\/\//i.test(body.thumbnailUrl) ? body.thumbnailUrl : null,
+    ...(body.offerId !== undefined ? { offer_id: body.offerId } : {})
   };
 }
 
@@ -386,18 +391,22 @@ router.delete("/fields/:id", async (req, res) => {
 
 router.get("/designer", async (req, res) => {
   try {
-    const [products, reviews, saved, sender, settings, world] = await Promise.all([
+    const [products, reviews, saved, sender, settings, world, offerRows] = await Promise.all([
       productsForDesigner(orgOf(req), branchOf(req)),
       reviewsForDesigner(orgOf(req), branchOf(req)),
       supabase.from("email_saved_blocks").select("id, kind, name, content, created_by_name, created_at").eq("org_id", orgOf(req)).eq("branch_id", branchOf(req)).order("created_at", { ascending: false }).limit(100),
       marketingSender(orgOf(req)),
       settingsFor(orgOf(req), branchOf(req)),
-      loadWorld(orgOf(req), branchOf(req))
+      loadWorld(orgOf(req), branchOf(req)),
+      supabase.from("email_offers").select("*").eq("org_id", orgOf(req)).eq("branch_id", branchOf(req)).in("status", ["active", "paused"]).order("created_at", { ascending: false }).limit(200)
     ]);
     if (saved.error) throw new Error(saved.error.message);
+    // Coupons & Offers an email can carry: running or about to start.
+    const offers = (offerRows.data ?? []).map(offerRow).map((offer) => ({ id: offer.id, name: offer.name, code: offer.code, benefitText: benefitText(offer), state: offerState(offer, Date.now()), endsAt: offer.endsAt }))
+      .filter((offer) => offer.state === "live" || offer.state === "scheduled");
     const states = [...new Set([...world.customers.values()].map((row) => row.state?.trim()).filter(Boolean) as string[])].sort();
     res.json({
-      products, reviews, saved: saved.data ?? [], sender, settings: { dailyLimit: settings.dailyLimit, footerNote: settings.footerNote },
+      products, reviews, saved: saved.data ?? [], sender, settings: { dailyLimit: settings.dailyLimit, footerNote: settings.footerNote }, offers,
       segments: world.segmentRows.filter((row) => row.status !== "archived").map((row) => ({ id: row.id, name: row.name, kind: row.kind, status: row.status, icon: row.icon, list: row.kind === "fixed" || !!row.builtIn?.startsWith("list_") })),
       tags: world.tagRows.filter((row) => row.status === "active").map((row) => ({ id: row.id, name: row.name, kind: row.kind, color: row.color, icon: row.icon })),
       fields: world.fieldRows.filter((row) => row.status === "active").map((row) => ({ id: row.id, key: row.key, name: row.name, type: row.type, options: row.options, system: !!row.systemKey })),
@@ -827,6 +836,70 @@ router.post("/automations/:id/:action(launch|pause|resume|archive|unarchive)", a
 router.delete("/automations/:id", async (req, res) => {
   try { await deleteAutomation(orgOf(req), branchOf(req), automationId(req)); res.json({ ok: true }); }
   catch (error) { sendError(res, error, "Could not delete the automation."); }
+});
+
+// ── Coupons & Offers (Bright's design 54, 8 Nov 2026) ─────────────────
+
+const offerBody = z.object({
+  name: z.string().trim().min(1, "Give the offer a name.").max(120),
+  description: z.string().max(200).default(""),
+  type: z.enum(COUPON_OFFER_TYPES).default("discount"),
+  benefit: z.enum(["percent", "fixed"]).default("percent"),
+  value: z.number().positive("Enter the discount."),
+  code: z.string().max(40),
+  minOrder: z.number().min(0).default(0),
+  productIds: z.array(z.string().regex(UUID)).max(200).default([]),
+  minDelivered: z.number().int().min(0).max(100).default(0),
+  startsAt: z.string().datetime({ offset: true }).nullable().default(null),
+  endsAt: z.string().datetime({ offset: true }).nullable().default(null),
+  usageLimit: z.number().int().positive().nullable().default(null),
+  perCustomerLimit: z.number().int().min(1).max(50).default(1),
+  status: z.enum(["draft", "active"]).default("active")
+});
+const offerError = (res: Response, error: any, fallback: string) => {
+  if (error?.issues) { res.status(400).json({ error: error.issues[0]?.message ?? "Check the offer's details." }); return; }
+  sendError(res, error, fallback);
+};
+const DAY_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** ?from=YYYY-MM-DD&to=YYYY-MM-DD (Lagos days, both included); default the last 30 days. */
+function offerRange(req: Request) {
+  const nowMs = Date.now();
+  const to = String(req.query.to ?? ""), from = String(req.query.from ?? "");
+  const toMs = DAY_KEY_RE.test(to) ? Math.min(nowMs + 1, Date.parse(`${to}T00:00:00+01:00`) + 86_400_000) : nowMs + 1;
+  const fromMs = DAY_KEY_RE.test(from) ? Date.parse(`${from}T00:00:00+01:00`) : toMs - 30 * 86_400_000;
+  return { fromMs: Math.min(fromMs, toMs - 3_600_000), toMs };
+}
+const offerId = (req: Request) => {
+  const id = String(req.params.id ?? "");
+  if (!UUID.test(id)) throw new EmailMarketingError(404, "Offer not found.");
+  return id;
+};
+
+router.get("/offers", async (req, res) => {
+  try { res.json(await offersPage(orgOf(req), branchOf(req), offerRange(req))); }
+  catch (error) { sendError(res, error, "Could not load the offers."); }
+});
+router.get("/offers/usage", async (req, res) => {
+  try { res.json({ rows: await offerUsage(orgOf(req), branchOf(req), offerRange(req)) }); }
+  catch (error) { sendError(res, error, "Could not load the usage report."); }
+});
+router.post("/offers", async (req, res) => {
+  try { res.status(201).json({ id: await saveOffer(orgOf(req), branchOf(req), { id: req.user!.id, name: req.user!.name }, null, offerBody.parse(req.body)) }); }
+  catch (error) { offerError(res, error, "Could not save the offer."); }
+});
+router.patch("/offers/:id", async (req, res) => {
+  try { res.json({ id: await saveOffer(orgOf(req), branchOf(req), { id: req.user!.id, name: req.user!.name }, offerId(req), offerBody.parse(req.body)) }); }
+  catch (error) { offerError(res, error, "Could not save the offer."); }
+});
+router.post("/offers/:id/:action(launch|pause|resume|archive|unarchive)", async (req, res) => {
+  try {
+    await setOfferStatus(orgOf(req), branchOf(req), offerId(req), String((req.params as Record<string, string>).action) as "launch" | "pause" | "resume" | "archive" | "unarchive");
+    res.json({ ok: true });
+  } catch (error) { sendError(res, error, "Could not change the offer."); }
+});
+router.delete("/offers/:id", async (req, res) => {
+  try { await deleteOffer(orgOf(req), branchOf(req), offerId(req)); res.json({ ok: true }); }
+  catch (error) { sendError(res, error, "Could not delete the offer."); }
 });
 
 export default router;

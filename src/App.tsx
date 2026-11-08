@@ -447,12 +447,13 @@ const PDA_RESTRICTED_STATUSES = [
 // Email Marketing (Bright, 8 Nov 2026), part 1: the pages built so far. The
 // later parts (Automations, Customer Journey, Coupons & Offers, Loyalty &
 // Rewards, Reviews & UGC) join this list as they are built.
-const EMAIL_MARKETING_SECTIONS: EmSection[] = ["overview", "campaigns", "automations", "audience", "health", "templates", "forms", "journey", "analytics", "settings"];
+const EMAIL_MARKETING_SECTIONS: EmSection[] = ["overview", "campaigns", "automations", "audience", "health", "templates", "forms", "journey", "offers", "analytics", "settings"];
 const EMAIL_MARKETING_SUBNAV: Array<{ key: EmSection; label: string; icon: typeof LayoutPanelTop }> = [
   { key: "overview", label: "Overview", icon: LayoutPanelTop },
   { key: "campaigns", label: "Campaigns", icon: Mail },
   { key: "automations", label: "Automations", icon: Zap },
   { key: "journey", label: "Customer Journey", icon: Route },
+  { key: "offers", label: "Coupons & Offers", icon: Tag },
   { key: "audience", label: "Audience & Segments", icon: Users }
 ];
 

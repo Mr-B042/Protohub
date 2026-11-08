@@ -38,6 +38,8 @@ export type EmailContent = {
   design: EmailDesign | null;
   productId: string | null;
   thumbnailUrl: string | null;
+  /** Coupons & Offers: applied when they order from this email. */
+  offerId?: string | null;
 };
 
 export type WorkflowNode =
@@ -170,7 +172,8 @@ export function normalizeWorkflow(raw: any): Workflow {
             email: {
               subject: text(node.email?.subject, 200), preheader: text(node.email?.preheader, 100), design,
               productId: UUID.test(String(node.email?.productId ?? "")) ? node.email.productId : null,
-              thumbnailUrl: /^https:\/\//i.test(String(node.email?.thumbnailUrl ?? "")) ? String(node.email.thumbnailUrl).slice(0, 2000) : null
+              thumbnailUrl: /^https:\/\//i.test(String(node.email?.thumbnailUrl ?? "")) ? String(node.email.thumbnailUrl).slice(0, 2000) : null,
+              offerId: UUID.test(String(node.email?.offerId ?? "")) ? node.email.offerId : null
             },
             campaignId: UUID.test(String(node.campaignId ?? "")) ? node.campaignId : null
           });

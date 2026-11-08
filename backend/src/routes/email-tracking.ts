@@ -2,6 +2,7 @@ import { Router } from "express";
 import { logger } from "../lib/logger.js";
 import { recordClick, recordOpen, unsubscribeToken } from "../lib/email-marketing.js";
 import { receiveMailjetEvents } from "../lib/email-health.js";
+import { publicOfferForToken } from "../lib/email-offers.js";
 
 /**
  * The links inside campaign emails (Email Marketing, Bright 8 Nov 2026).
@@ -10,6 +11,7 @@ import { receiveMailjetEvents } from "../lib/email-health.js";
  *   /e/c/<token>/<n>      counts a click, then opens the real page
  *   /e/u/<token>          unsubscribe (a page with a button; mail apps'
  *                         own Unsubscribe button POSTs straight here)
+ *   /e/offer?token=&product=  the offer an email brings to the order form
  *   /e/hooks/mailjet/<secret>  Mailjet's bounce, spam and blocked reports
  *                         (switched on from Audience Health; the secret is the key)
  */
@@ -73,6 +75,20 @@ router.post("/hooks/mailjet/:secret", async (req, res) => {
   } catch (error) {
     logger.warn("mailjet event report failed", { error: (error as Error).message });
     res.status(500).json({ ok: false });
+  }
+});
+
+// Coupons & Offers: no code box (Bright). The email's own token says which
+// offer it carries; nothing about the customer is sent back.
+router.get("/offer", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const token = String(req.query.token ?? "");
+  const product = /^[0-9a-f-]{36}$/i.test(String(req.query.product ?? "")) ? String(req.query.product) : null;
+  if (!TOKEN.test(token)) { res.json({ offer: null }); return; }
+  try { res.json({ offer: await publicOfferForToken(token, product) }); }
+  catch (error) {
+    logger.warn("email offer lookup failed", { error: (error as Error).message });
+    res.json({ offer: null });
   }
 });
 

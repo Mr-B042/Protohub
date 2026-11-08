@@ -4,7 +4,7 @@ import {
 } from "lucide-react";
 import type { EmDesigner } from "../../lib/api";
 import EmailFrame from "./EmailFrame";
-import { Card, Tick, Toggle, input } from "./em-ui";
+import { Card, Tick, Toggle, input, select } from "./em-ui";
 import { GOALS, OFFER_TYPES, fieldsFor, priceText, type Draft } from "./wizard-model";
 
 /** Step 1, Campaign Setup (image 44). */
@@ -133,7 +133,18 @@ export default function StepSetup({ draft, designer, onChange }: { draft: Draft;
             <label className="mt-2 block text-[12.5px] font-semibold text-gray-800 dark:text-slate-200">Discount / Benefit
               <input disabled={!draft.offer.on} value={draft.offer.benefit} onChange={(event) => onChange({ offer: { ...draft.offer, benefit: event.target.value.slice(0, 80) } })} placeholder="Up to 15% OFF" className={`${input} mt-1 !py-2 disabled:opacity-50`} />
             </label>
-            <p className="m-0 mt-1.5 text-[11.5px] leading-snug text-gray-500">The email shows the offer. The price is still set by the rep or the order form.</p>
+            <label className="mt-2 block text-[12.5px] font-semibold text-gray-800 dark:text-slate-200">Real Discount (Coupons &amp; Offers)
+              <select value={draft.offerId ?? ""} onChange={(event) => {
+                const offer = designer?.offers.find((row) => row.id === event.target.value);
+                onChange(offer ? { offerId: offer.id, offer: { on: true, title: draft.offer.title || offer.name, benefit: offer.benefitText } } : { offerId: null });
+              }} className={`${select} mt-1 !py-2`}>
+                <option value="">None: the email only shows the words above</option>
+                {(designer?.offers ?? []).map((offer) => <option key={offer.id} value={offer.id}>{offer.name}: {offer.benefitText} ({offer.code}){offer.state === "scheduled" ? ", starts later" : ""}</option>)}
+              </select>
+            </label>
+            <p className="m-0 mt-1.5 text-[11.5px] leading-snug text-gray-500">
+              {draft.offerId ? "When they order from this email, the order form shows the lower price and the order is saved with it. Nothing changes for anyone else." : "The email shows the offer. The price is still set by the rep or the order form."}
+            </p>
           </div>
         </div>
       </Card>

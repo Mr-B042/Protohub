@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { cartsApi, embedSettingsApi, productsApi, publicOrdersApi } from "../lib/api";
+import { cartsApi, embedSettingsApi, productsApi, publicOrdersApi, type PublicEmailOffer } from "../lib/api";
 import { browserSupabaseClient } from "../lib/realtime";
 import { makeCartId } from "../lib/cart-id";
 import { itemCountLabel } from "../lib/item-count-label";
@@ -2115,6 +2115,23 @@ export default function PublicOrderFormPage() {
     + selectedCrossSellLines.reduce((sum, line) => sum + line.total, 0)
     + autoCompanionLines.reduce((sum, line) => sum + line.total, 0);
 
+  // Coupons & Offers (Bright, 8 Nov 2026): no code box. Only a customer who
+  // came from an email that carries an offer sees the lower price; the server
+  // works it out again when it saves the order. summaryTotal stays the full
+  // price (carts and the order submit send it; the server takes the offer off).
+  const [emailOffer, setEmailOffer] = useState<PublicEmailOffer | null>(null);
+  const offerProductId = chosenProductId || publicProductId;
+  useEffect(() => {
+    if (publicUtmSource.toLowerCase() !== "email" || !/^[A-Za-z0-9_-]{16,40}$/.test(publicUtmContent) || !offerProductId) { setEmailOffer(null); return; }
+    let cancelled = false;
+    void publicOrdersApi.emailOffer(publicUtmContent, offerProductId).then((offer) => { if (!cancelled) setEmailOffer(offer); });
+    return () => { cancelled = true; };
+  }, [publicUtmSource, publicUtmContent, offerProductId]);
+  const offerDiscount = emailOffer && summaryTotal > 0 && summaryTotal >= (emailOffer.minOrder || 0)
+    ? Math.max(0, Math.min(summaryTotal, Math.round(emailOffer.benefit === "percent" ? (summaryTotal * Math.min(100, emailOffer.value)) / 100 : emailOffer.value)))
+    : 0;
+  const payTotal = summaryTotal - offerDiscount;
+
   useEffect(() => {
     if (publicEmbedIsStaffPreview) announceLandingPreviewLocked(publicProductId);
   }, [publicEmbedIsStaffPreview, publicProductId]);
@@ -3947,7 +3964,7 @@ export default function PublicOrderFormPage() {
           <strong style={{ fontSize: 15, color: "#0f172a" }}>Order breakdown so far</strong>
           <span style={{ fontSize: 12, color: "#64748b" }}>Each additional item appears here as soon as you add it.</span>
         </div>
-        <strong style={{ fontSize: 16, color: "#1F8FE0" }}>{formatProductMoney(summaryTotal, chosenPackageCurrency)}</strong>
+        <strong style={{ fontSize: 16, color: "#1F8FE0" }}>{formatProductMoney(payTotal, chosenPackageCurrency)}</strong>
       </div>
 
       <div
@@ -4017,7 +4034,7 @@ export default function PublicOrderFormPage() {
         }}
       >
         <span style={{ fontWeight: 800, fontSize: 14, color: "#0f172a" }}>Total so far</span>
-        <strong style={{ fontSize: 18, color: "#1F8FE0" }}>{formatProductMoney(summaryTotal, chosenPackageCurrency)}</strong>
+        <strong style={{ fontSize: 18, color: "#1F8FE0" }}>{formatProductMoney(payTotal, chosenPackageCurrency)}</strong>
       </div>
     </div>
   ) : null;
@@ -4096,9 +4113,15 @@ export default function PublicOrderFormPage() {
           <span>FREE</span>
         </div>
       ))}
+      {offerDiscount > 0 && emailOffer ? (
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12.5, padding: "4px 0", color: "#047857", fontWeight: 700 }}>
+          <span>🎉 Email offer: {emailOffer.text} ({emailOffer.code})</span>
+          <span>-{formatProductMoney(offerDiscount, chosenPackageCurrency)}</span>
+        </div>
+      ) : null}
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 16, padding: "10px 0 0", marginTop: 4, borderTop: "2px solid #1F8FE0", fontWeight: 800 }}>
         <span>Total</span>
-        <span style={{ color: "#1F8FE0" }}>{formatProductMoney(summaryTotal, chosenPackageCurrency)}</span>
+        <span style={{ color: "#1F8FE0" }}>{formatProductMoney(payTotal, chosenPackageCurrency)}</span>
       </div>
     </div>
   ) : null;
@@ -4210,7 +4233,7 @@ export default function PublicOrderFormPage() {
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, paddingTop: 10, borderTop: "2px solid #bfdbfe" }}>
           <span style={{ fontWeight: 800, fontSize: 14, color: "#0f172a" }}>Total to place now</span>
-          <strong style={{ fontSize: 20, color: "#1F8FE0" }}>{formatProductMoney(summaryTotal, chosenPackageCurrency)}</strong>
+          <strong style={{ fontSize: 20, color: "#1F8FE0" }}>{formatProductMoney(payTotal, chosenPackageCurrency)}</strong>
         </div>
       </div>
     </div>
@@ -4377,7 +4400,7 @@ export default function PublicOrderFormPage() {
           </span>
         </div>
         <strong style={{ fontSize: isCompactUpsellViewport ? 21 : 18, color: "#1F8FE0", whiteSpace: "nowrap" }}>
-          {formatProductMoney(summaryTotal, chosenPackageCurrency)}
+          {formatProductMoney(payTotal, chosenPackageCurrency)}
         </strong>
       </div>
       <button
@@ -4401,7 +4424,7 @@ export default function PublicOrderFormPage() {
         {publicOrderSubmitting
           ? "Submitting..."
           : reviewStepReady
-            ? `Place order now - ${formatProductMoney(summaryTotal, chosenPackageCurrency)}`
+            ? `Place order now - ${formatProductMoney(payTotal, chosenPackageCurrency)}`
             : additionalItemMissingCount > 0
               ? `Finish ${additionalItemMissingCount} missing detail${additionalItemMissingCount === 1 ? "" : "s"}`
               : "Continue to finish order"}
@@ -6141,7 +6164,7 @@ export default function PublicOrderFormPage() {
                                         {publicOrderSubmitting
                                           ? "Submitting..."
                                           : reviewStepReady
-                                            ? `Place order now - ${formatProductMoney(summaryTotal, chosenPackageCurrency)}`
+                                            ? `Place order now - ${formatProductMoney(payTotal, chosenPackageCurrency)}`
                                             : "Continue to finish order"}
                                       </button>
                                       <button
@@ -6426,7 +6449,7 @@ export default function PublicOrderFormPage() {
                       <strong style={{ fontSize: 13, color: "#0f172a" }}>Final action</strong>
                       <span style={{ fontSize: 12, color: "#64748b" }}>Tap Place My Order once you’re happy with the review above.</span>
                     </div>
-                    <strong style={{ fontSize: 18, color: "#1F8FE0", whiteSpace: "nowrap" }}>{formatProductMoney(summaryTotal, chosenPackageCurrency)}</strong>
+                    <strong style={{ fontSize: 18, color: "#1F8FE0", whiteSpace: "nowrap" }}>{formatProductMoney(payTotal, chosenPackageCurrency)}</strong>
                   </div>
                 )}
                 <button

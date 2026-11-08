@@ -8,7 +8,7 @@ import { spaceNaira } from "../../lib/naira-glyph";
 /** Shared pieces of the Email Marketing pages (Bright's designs, 8 Nov 2026). */
 
 /** "health" is Audience & Segments › Audience Health (its own page, highlighted under Audience & Segments). */
-export type EmSection = "overview" | "campaigns" | "automations" | "audience" | "health" | "templates" | "forms" | "journey" | "analytics" | "settings";
+export type EmSection = "overview" | "campaigns" | "automations" | "audience" | "health" | "templates" | "forms" | "journey" | "offers" | "analytics" | "settings";
 
 export const PURPLE = "#5B3FD9";
 

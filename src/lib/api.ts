@@ -4049,7 +4049,21 @@ export const cartsApi = {
 // ── Public Orders ────────────────────────────────────────
 // Raw fetch so we don't pick up the Authorization header (no auth context for
 // embed-form customers) and don't trigger request()'s 401 → reload behavior.
+/** Coupons & Offers: the offer an email brings to the order form (no code box). */
+export type PublicEmailOffer = { code: string; name: string; benefit: "percent" | "fixed"; value: number; minOrder: number; endsAt: string | null; text: string };
+
 export const publicOrdersApi = {
+  /** Never throws: no offer (or no answer) = the normal price. */
+  emailOffer: async (token: string, productId: string): Promise<PublicEmailOffer | null> => {
+    try {
+      const res = await fetchWithApiFailover(`/e/offer?token=${encodeURIComponent(token)}&product=${encodeURIComponent(productId)}`, { method: "GET" });
+      if (!res.ok) return null;
+      const json = await res.json().catch(() => null);
+      return json?.offer ?? null;
+    } catch {
+      return null;
+    }
+  },
   create: async (body: unknown) => {
     const res = await fetchWithApiFailover("/api/public/orders", {
       method: "POST",
@@ -5403,6 +5417,8 @@ export type EmCampaign = {
   status: EmCampaignStatus; slug: string; sendAt: string | null; nextRunAt: string | null; runCount: number; audienceCount: number;
   thumbnailUrl: string | null; createdByName: string; createdAt: string; updatedAt: string; launchedAt: string | null; completedAt: string | null;
   archivedFrom: string | null; design?: EmailDesign | null; stats: EmStats; audienceLabel?: string;
+  /** Coupons & Offers: the offer this email carries. */
+  offerId?: string | null;
 };
 export type EmKpi = { value: number; change: number | null };
 export type EmOverview = {
@@ -5478,6 +5494,8 @@ export type EmDesigner = {
   journeyStages: Array<{ key: string; name: string; hint: string }>;
   presets: Array<{ key: string; name: string; hint: string; trigger: "delivered" | "ordered" | "cart" | "inactive"; delayHours: number; inactiveDays?: number; exit: "none" | "purchased"; goal: string }>;
   userEmail: string;
+  /** Coupons & Offers an email can carry (running or about to start). */
+  offers: Array<{ id: string; name: string; code: string; benefitText: string; state: "live" | "scheduled"; endsAt: string | null }>;
 };
 export type EmImports = {
   imports: Array<{ id: string; source: "csv" | "paste" | "device" | "manual"; details: string; contacts: number; added: number; updated: number; duplicates: number; invalid: number; status: string; listId: string | null; createdAt: string; createdByName: string }>;
@@ -5501,6 +5519,7 @@ export type EmPlanning = {
 export type EmCampaignInput = {
   name: string; goal: string; subject: string; subjectB: string; preheader: string; offerType: string; productId: string | null;
   offer: { on: boolean; title: string; benefit: string }; audience: EmAudience; design: EmailDesign; delivery: EmDelivery; options: EmOptions; thumbnailUrl: string | null;
+  offerId: string | null;
 };
 export type EmReport = {
   campaign: EmCampaign;
@@ -5596,7 +5615,7 @@ export type EmTriggerKind = "order_delivered" | "order_placed" | "cart_abandoned
 export type EmTrigger = { kind: EmTriggerKind; productId?: string | null; cartMinutes?: number; inactiveDays?: number; fieldKey?: string; vipOrders?: number; reorderDays?: number };
 export type EmCheckKind = "placed_order" | "delivered_order" | "opened_last" | "clicked_last" | "left_review" | "in_segment" | "has_tag";
 export type EmCheck = { kind: EmCheckKind; segmentId?: string; tagId?: string };
-export type EmFlowEmail = { subject: string; preheader: string; design: EmailDesign | null; productId: string | null; thumbnailUrl: string | null };
+export type EmFlowEmail = { subject: string; preheader: string; design: EmailDesign | null; productId: string | null; thumbnailUrl: string | null; offerId?: string | null };
 export type EmFlowNode =
   | { id: string; type: "wait"; amount: number; unit: "hours" | "days" }
   | { id: string; type: "email"; name: string; email: EmFlowEmail; campaignId?: string | null }
@@ -5645,6 +5664,29 @@ export type EmAutomationReport = {
   emails: Array<{ stepId: string; name: string; subject: string; sent: number; waiting: number; openRate: number | null; clickRate: number | null; orders: number; revenue: number; unsubscribed: number }>;
   recent: Array<{ email: string; name: string; status: string; exitReason: string | null; enteredAt: string; finishedAt: string | null; nextAt: string | null; step: string | null; stepName: string | null }>;
 };
+
+// Email Marketing › Coupons & Offers (Bright's design 54, 8 Nov 2026).
+export type EmOfferType = "discount" | "fixed" | "flash" | "loyalty";
+export type EmOffer = {
+  id: string; name: string; description: string; type: EmOfferType; benefit: "percent" | "fixed"; value: number; code: string; minOrder: number;
+  productIds: string[]; minDelivered: number; startsAt: string | null; endsAt: string | null; usageLimit: number | null; perCustomerLimit: number;
+  status: "draft" | "active" | "paused" | "archived"; createdAt: string; updatedAt: string; createdByName: string;
+};
+export type EmOfferRow = EmOffer & {
+  state: "draft" | "live" | "scheduled" | "expired" | "paused" | "archived"; benefitText: string; redemptions: number; revenue: number; allTime: number;
+  imageUrl: string | null; productNames: string[];
+};
+export type EmOffersPage = {
+  kpis: {
+    active: { value: number; change: number | null }; redemptions: { value: number; change: number | null }; customers: { value: number; change: number | null };
+    revenue: { value: number; change: number | null }; lift: { value: number | null; changePp: number | null };
+  };
+  byType: Array<{ type: EmOfferType; revenue: number }>;
+  expired: number;
+  offers: EmOfferRow[];
+};
+export type EmOfferInput = Pick<EmOffer, "name" | "description" | "type" | "benefit" | "value" | "code" | "minOrder" | "productIds" | "minDelivered" | "startsAt" | "endsAt" | "usageLimit" | "perCustomerLimit"> & { status: "draft" | "active" };
+export type EmOfferUsageRow = { at: string; offer: string; code: string; orderId: string; customer: string; phone: string; status: string; before: number; discount: number; paid: number };
 
 export const emailMarketingApi = {
   overview: () => get<EmOverview>(`${EM}/overview`),
@@ -5700,5 +5742,11 @@ export const emailMarketingApi = {
   automationAction: (id: string, action: "launch" | "pause" | "resume" | "archive" | "unarchive") => post<{ ok: boolean }>(`${EM}/automations/${encodeURIComponent(id)}/${action}`, {}),
   duplicateAutomation: (id: string) => post<{ id: string }>(`${EM}/automations/${encodeURIComponent(id)}/duplicate`, {}),
   deleteAutomation: (id: string) => del<{ ok: boolean }>(`${EM}/automations/${encodeURIComponent(id)}`),
-  testAutomationEmails: (body: { emails: string[]; workflow: EmWorkflow }) => post<{ results: Array<{ step: string; email: string; ok: boolean; error?: string }> }>(`${EM}/automations/test-emails`, body)
+  testAutomationEmails: (body: { emails: string[]; workflow: EmWorkflow }) => post<{ results: Array<{ step: string; email: string; ok: boolean; error?: string }> }>(`${EM}/automations/test-emails`, body),
+  offers: (range: { from: string; to: string }) => get<EmOffersPage>(`${EM}/offers?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`),
+  offerUsage: (range: { from: string; to: string }) => get<{ rows: EmOfferUsageRow[] }>(`${EM}/offers/usage?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`),
+  createOffer: (body: EmOfferInput) => post<{ id: string }>(`${EM}/offers`, body),
+  updateOffer: (id: string, body: EmOfferInput) => patch<{ id: string }>(`${EM}/offers/${encodeURIComponent(id)}`, body),
+  offerAction: (id: string, action: "launch" | "pause" | "resume" | "archive" | "unarchive") => post<{ ok: boolean }>(`${EM}/offers/${encodeURIComponent(id)}/${action}`, {}),
+  deleteOffer: (id: string) => del<{ ok: boolean }>(`${EM}/offers/${encodeURIComponent(id)}`)
 };
