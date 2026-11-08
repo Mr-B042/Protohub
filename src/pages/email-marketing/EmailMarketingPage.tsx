@@ -5,6 +5,7 @@ import AudiencePage from "./AudiencePage";
 import AudienceHealthPage from "./AudienceHealthPage";
 import AutomationsPage from "./AutomationsPage";
 import AutomationWizard from "./AutomationWizard";
+import JourneysPage from "./JourneysPage";
 import { LEGACY_TEMPLATE } from "./automation-model";
 import CampaignWizard from "./CampaignWizard";
 import CampaignsPage from "./CampaignsPage";
@@ -43,11 +44,11 @@ export default function EmailMarketingPage({ section, onNavigate, onToast, onOpe
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [wizard, setWizard] = useState<WizardState>(null);
-  const [autoWizard, setAutoWizard] = useState<{ id?: string; template?: string | null; step?: number } | null>(null);
+  const [autoWizard, setAutoWizard] = useState<{ id?: string; template?: string | null; step?: number; noun?: "Automation" | "Journey" } | null>(null);
   const [report, setReport] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [audienceModal, setAudienceModal] = useState<"add-subscribers" | "create-segment" | null>(null);
-  const withHeader = section !== "campaigns" && section !== "audience" && section !== "health" && section !== "automations";
+  const withHeader = section !== "campaigns" && section !== "audience" && section !== "health" && section !== "automations" && section !== "journey";
   /** Part 1's ready-made flow names open the Automations window on the matching template. */
   const openAutomation = (preset?: string) => setAutoWizard({ template: preset ? LEGACY_TEMPLATE[preset] ?? preset : "post_purchase" });
 
@@ -127,7 +128,7 @@ export default function EmailMarketingPage({ section, onNavigate, onToast, onOpe
           onCreateSegment={() => { setAudienceModal("create-segment"); onNavigate("audience"); }} />
       )}
       {section === "automations" && <AutomationsPage onOpenWizard={setAutoWizard} onToast={onToast} refreshKey={refreshKey} />}
-      {section === "journey" && <WaitingForDesign title="Customer Journey" note="Your Customer Journey design is in and comes in a later part. Step 2 of Create Campaign can already send to a customer stage (just delivered, gone quiet, left a cart...)." />}
+      {section === "journey" && <JourneysPage onOpenWizard={(options) => setAutoWizard({ ...options, noun: "Journey" })} onToast={onToast} refreshKey={refreshKey} />}
       {section === "templates" && <WaitingForDesign title="Templates" note="Templates are in the Design Email step of Create Campaign for now (View All, and Save this design as a template). This tab is waiting for its design." />}
       {section === "forms" && <WaitingForDesign title="Forms & Lead Capture" note="Today the list grows from the order form's Email box. This tab is waiting for its design." />}
       {section === "analytics" && <WaitingForDesign title="Analytics" note="Each campaign's results open from the chart button on Campaigns. This tab is waiting for its design." />}
@@ -138,8 +139,8 @@ export default function EmailMarketingPage({ section, onNavigate, onToast, onOpe
           onDone={(message) => { setWizard(null); onToast(message); setRefreshKey((n) => n + 1); if (withHeader) void load(); }} />
       )}
       {autoWizard && (
-        <AutomationWizard automationId={autoWizard.id} template={autoWizard.template} startStep={autoWizard.step} onClose={() => setAutoWizard(null)} onToast={onToast}
-          onDone={(message) => { setAutoWizard(null); onToast(message); setRefreshKey((n) => n + 1); if (section !== "automations") onNavigate("automations"); }} />
+        <AutomationWizard automationId={autoWizard.id} template={autoWizard.template} startStep={autoWizard.step} noun={autoWizard.noun} onClose={() => setAutoWizard(null)} onToast={onToast}
+          onDone={(message) => { setAutoWizard(null); onToast(message); setRefreshKey((n) => n + 1); if (section !== "automations" && section !== "journey") onNavigate("automations"); }} />
       )}
       {report && <CampaignReport id={report} onClose={() => setReport(null)} onEdit={(id) => { setReport(null); setWizard({ campaignId: id }); }} />}
     </div>

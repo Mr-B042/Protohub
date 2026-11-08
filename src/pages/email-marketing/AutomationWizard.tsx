@@ -24,10 +24,12 @@ const NEXT_NOTE = [
   "Once launched, this automation will start automatically for customers who meet the trigger conditions."
 ];
 
-export default function AutomationWizard({ automationId, template, startStep, onClose, onDone, onToast }: {
+export default function AutomationWizard({ automationId, template, startStep, noun = "Automation", onClose, onDone, onToast }: {
   automationId?: string | null;
   template?: string | null;
   startStep?: number;
+  /** "Journey" when opened from Customer Journey (the same flows, by customer stage). */
+  noun?: "Automation" | "Journey";
   onClose: () => void;
   onDone: (message: string) => void;
   onToast: (message: string) => void;
@@ -113,7 +115,7 @@ export default function AutomationWizard({ automationId, template, startStep, on
 
   const save = async (launch: boolean) => {
     if (!draft) return null;
-    if (!draft.name.trim()) { setError("Give the automation a name (step 2)."); setStep(2); return null; }
+    if (!draft.name.trim()) { setError(`Give the ${noun.toLowerCase()} a name (step 2).`); setStep(2); return null; }
     const input = toAutomationInput(draft, launch);
     const id = draft.id ? (await emailMarketingApi.updateAutomation(draft.id, input)).id : (await emailMarketingApi.createAutomation(input)).id;
     setDraft((current) => (current ? { ...current, id } : current));
@@ -158,7 +160,7 @@ export default function AutomationWizard({ automationId, template, startStep, on
         <div className="flex items-start gap-4 px-5 pb-3 pt-5 sm:px-7">
           <span className="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-[#6E55E8] to-[#4C32C4] text-white shadow-sm"><Zap className="h-7 w-7" /></span>
           <div className="min-w-0 flex-1">
-            <h2 className="m-0 text-[26px] font-extrabold leading-tight text-gray-900 dark:text-slate-50">{automationId ? "Edit Automation" : "Create New Automation"}</h2>
+            <h2 className="m-0 text-[26px] font-extrabold leading-tight text-gray-900 dark:text-slate-50">{automationId ? `Edit ${noun}` : `Create New ${noun}`}</h2>
             <p className="m-0 text-[15px] text-gray-600 dark:text-slate-400">Build an automated email sequence that runs on customer actions.</p>
           </div>
           <button type="button" aria-label="Close" onClick={close} className="!min-h-0 inline-flex h-11 w-11 items-center justify-center rounded-xl border border-gray-200 bg-white text-[#5B3FD9] hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900"><X className="h-5 w-5" /></button>

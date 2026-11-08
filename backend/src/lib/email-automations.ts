@@ -8,9 +8,9 @@ import {
 } from "./email-marketing-rules.js";
 import { EmailMarketingError, audienceLabel, campaignLinks, forgetWorld, loadWorld, sendTest } from "./email-marketing.js";
 import {
-  PRIORITY_RANK, branchNodeId, checkMet, durationDays, emailNodes, findNode, firstNodeId, inSendWindow, mayEnter, nextNodeId, nextWindowStart,
+  PRIORITY_RANK, STAGES, branchNodeId, defaultStage, checkMet, durationDays, emailNodes, findNode, firstNodeId, inSendWindow, mayEnter, nextNodeId, nextWindowStart,
   normalizeSettings, normalizeTrigger, normalizeWorkflow, waitMs,
-  type AutomationSettings, type Trigger, type Workflow, type WorkflowNode
+  type AutomationSettings, type Stage, type Trigger, type Workflow, type WorkflowNode
 } from "./email-automation-rules.js";
 
 /**
@@ -30,7 +30,7 @@ const change = (now: number, before: number) => (before > 0 ? Math.round(((now -
 
 /** Automation goal → the campaign goal its hidden email campaigns carry. */
 const CAMPAIGN_GOAL: Record<string, string> = {
-  repeat: "retention", winback: "winback", cart: "cart", welcome: "announcement", reviews: "appreciation", reorder: "retention", occasion: "appreciation", loyalty: "appreciation"
+  repeat: "retention", winback: "winback", cart: "cart", welcome: "announcement", reviews: "appreciation", reorder: "retention", occasion: "appreciation", loyalty: "appreciation", upsell: "upsell"
 };
 
 export function automationRow(row: any) {
@@ -40,6 +40,8 @@ export function automationRow(row: any) {
     trigger: normalizeTrigger(row.trigger), audience: (row.audience?.source ? row.audience : { source: "all" }) as AudienceChoice,
     enrollment: { on: !!row.enrollment?.on, match: row.enrollment?.match === "any" ? "any" : "all", conditions: Array.isArray(row.enrollment?.conditions) ? row.enrollment.conditions : [] } as Enrollment,
     settings: normalizeSettings(row.settings), workflow, status: row.status as string,
+    // Customer Journey's grouping: the one picked, else from the template / trigger.
+    stage: ((STAGES as readonly string[]).includes(row.stage) ? row.stage : defaultStage(row.template, row.trigger)) as Stage,
     launchedAt: row.launched_at ?? null, pausedAt: row.paused_at ?? null, createdAt: row.created_at, updatedAt: row.updated_at, createdByName: row.created_by_name ?? ""
   };
 }
@@ -103,7 +105,7 @@ async function syncStepCampaigns(orgId: string, branchId: string, automationId: 
 
 export type AutomationInput = {
   name: string; description: string; template: string | null; goal: string; trigger: unknown; audience: AudienceChoice;
-  enrollment: Enrollment; settings: unknown; workflow: unknown;
+  enrollment: Enrollment; settings: unknown; workflow: unknown; stage: Stage | null;
 };
 
 /** What a launch needs: at least one finished email, and a working sender. */
@@ -137,7 +139,7 @@ export async function saveAutomation(orgId: string, branchId: string, user: { id
   const status = launch ? "active" : current?.status ?? "draft";
   const now = new Date().toISOString();
   const columns = {
-    name: input.name, description: input.description, template: input.template, goal: input.goal, trigger, audience: input.audience,
+    name: input.name, description: input.description, template: input.template, goal: input.goal, trigger, audience: input.audience, stage: input.stage,
     enrollment: input.enrollment, settings, status, updated_at: now,
     ...(launch && current?.status !== "active" ? { launched_at: now, paused_at: null } : {})
   };
@@ -192,7 +194,7 @@ export async function duplicateAutomation(orgId: string, branchId: string, user:
   const strip = (nodes: WorkflowNode[]): WorkflowNode[] => nodes.map((node) => (node.type === "email" ? { ...node, campaignId: null } : node.type === "condition" ? { ...node, yes: strip(node.yes), no: strip(node.no) } : node));
   return saveAutomation(orgId, branchId, user, null, {
     name: `${row.name} (copy)`.slice(0, 160), description: row.description, template: row.template, goal: row.goal, trigger: row.trigger, audience: row.audience,
-    enrollment: row.enrollment, settings: row.settings, workflow: { nodes: strip(row.workflow.nodes) }
+    enrollment: row.enrollment, settings: row.settings, workflow: { nodes: strip(row.workflow.nodes) }, stage: row.stage
   }, false);
 }
 
@@ -205,7 +207,7 @@ export async function getAutomation(orgId: string, branchId: string, id: string)
 
 // ── The page (design 50) ──────────────────────────────────────────────
 
-type SendLite = { campaignId: string; email: string; status: string; sentMs: number | null; orderId: string | null };
+type SendLite = { campaignId: string; email: string; status: string; sentMs: number | null; orderId: string | null; engaged: boolean };
 
 export async function automationsPage(orgId: string, branchId: string) {
   const nowMs = Date.now();
@@ -219,10 +221,10 @@ export async function automationsPage(orgId: string, branchId: string) {
   const steps = ids.length ? await selectByIdBatches<any>(ids, (batch) => supabase.from("email_campaigns").select("id, automation_id").in("automation_id", batch)) : [];
   const stepOf = new Map(steps.map((row) => [row.id, row.automation_id]));
   const sends: SendLite[] = steps.length
-    ? (await selectByIdBatches<any>(steps.map((row) => row.id), (batch) => supabase.from("email_campaign_sends").select("campaign_id, email, status, sent_at, order_id").in("campaign_id", batch)))
-      .map((row) => ({ campaignId: row.campaign_id, email: row.email, status: row.status, sentMs: row.sent_at ? Date.parse(row.sent_at) : null, orderId: row.order_id }))
+    ? (await selectByIdBatches<any>(steps.map((row) => row.id), (batch) => supabase.from("email_campaign_sends").select("campaign_id, email, status, sent_at, order_id, first_opened_at, first_clicked_at").in("campaign_id", batch)))
+      .map((row) => ({ campaignId: row.campaign_id, email: row.email, status: row.status, sentMs: row.sent_at ? Date.parse(row.sent_at) : null, orderId: row.order_id, engaged: !!(row.first_opened_at || row.first_clicked_at) }))
     : [];
-  const runs = ids.length ? await selectByIdBatches<any>(ids, (batch) => supabase.from("email_automation_runs").select("automation_id, email, status, entered_at").in("automation_id", batch)) : [];
+  const runs = ids.length ? await selectByIdBatches<any>(ids, (batch) => supabase.from("email_automation_runs").select("automation_id, email, status, entered_at, finished_at").in("automation_id", batch)) : [];
   const orderAmount = new Map(world.orders.filter((order) => order.status === "Delivered").map((order) => [order.id, order.amount]));
 
   const window = (list: SendLite[], fromMs: number, toMs: number) => {
@@ -236,8 +238,25 @@ export async function automationsPage(orgId: string, branchId: string) {
   const reached = (fromMs: number, toMs: number) => new Set(runs.filter((run) => { const at = Date.parse(run.entered_at); return at >= fromMs && at < toMs; }).map((run) => run.email)).size;
   const reachedNow = reached(nowMs - 30 * DAY_MS, nowMs + 1), reachedBefore = reached(nowMs - 60 * DAY_MS, nowMs - 30 * DAY_MS);
 
+  // Customer Journey (design 53): who is in a flow now and 30 days ago, and the last 30 days day by day.
+  const inFlowAt = (atMs: number) => new Set(runs.filter((run) => Date.parse(run.entered_at) <= atMs
+    && (run.finished_at ? Date.parse(run.finished_at) > atMs : run.status === "active")).map((run) => run.email)).size;
+  const inFlowNow = inFlowAt(nowMs), inFlowBefore = inFlowAt(nowMs - 30 * DAY_MS);
+  const sent30 = sends.filter((send) => send.status === "sent" && send.sentMs !== null && send.sentMs >= nowMs - 30 * DAY_MS);
+  const engaged30 = new Set(sent30.filter((send) => send.engaged).map((send) => send.email)).size;
+  const daily = Array.from({ length: 30 }, (_, i) => lagosDay(nowMs - (29 - i) * DAY_MS)).map((day) => {
+    const rows = sent30.filter((send) => lagosDay(send.sentMs!) === day);
+    return { day, sent: rows.length, conversions: rows.filter((send) => send.orderId).length, revenue: rows.reduce((sum, send) => sum + (send.orderId ? orderAmount.get(send.orderId) ?? 0 : 0), 0) };
+  });
+
   const audienceSize = (audience: AudienceChoice) => resolveAudience(world.people, audience, world.segments, world.ctx).recipients.length;
   return {
+    journey: {
+      inFlow: { value: inFlowNow, change: change(inFlowNow, inFlowBefore) },
+      engaged: { value: engaged30, percent: pct(engaged30, now30.people) },
+      conversions: { value: now30.buyers, percent: now30.conversion },
+      daily
+    },
     kpis: {
       active: automations.filter((row) => row.status === "active").length,
       sent: { value: now30.sent, change: change(now30.sent, before30.sent) },
