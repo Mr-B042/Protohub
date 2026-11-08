@@ -8,6 +8,7 @@ import { emailMarketingApi, type EmDesigner, type EmTemplateType } from "../../l
 import { STARTER_LAYOUTS, STARTER_TEMPLATES, TEMPLATE_CATEGORIES, buildStarterDesign, type EmailDesign } from "../../lib/email-render";
 import type { StartTemplate } from "./CampaignWizard";
 import EmailFrame from "./EmailFrame";
+import TemplateCover from "./TemplateCover";
 import StepDesign from "./StepDesign";
 import { ErrorNote, btn, input, select } from "./em-ui";
 
@@ -85,7 +86,7 @@ export default function TemplateWizard({ start, designer, onClose, onDone, onToa
   const layouts = STARTER_LAYOUTS
     .filter((row) => layoutTab === "all" || typeOf(row.key) === layoutTab)
     .filter((row) => !layoutQuery.trim() || `${row.name} ${row.hint}`.toLowerCase().includes(layoutQuery.trim().toLowerCase()));
-  const thumb = (key: string, height = 120) => <div className="pointer-events-none overflow-hidden rounded-lg bg-[#F4F1FE] dark:bg-slate-800" style={{ height }}><EmailFrame design={buildStarterDesign(key, fields)} fit brand={fields.brand} minHeight={height} /></div>;
+  const thumb = (key: string, height = 120) => <div className="overflow-hidden rounded-lg"><TemplateCover starterKey={key} name={key} brand={fields.brand} photo={fields.productImage} height={height} small={height < 130} /></div>;
 
   return createPortal(
     <div className="fixed inset-0 z-[85] flex items-center justify-center bg-slate-900/55 p-2 sm:p-5">
