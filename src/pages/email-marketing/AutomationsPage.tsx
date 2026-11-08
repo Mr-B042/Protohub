@@ -13,7 +13,7 @@ import { TEMPLATES, USE_CASES, draftFromTemplate, durationText, goalText, trigge
 
 /** Automations, built to Bright's design 50 (8 Nov 2026). */
 
-const STATUS: Record<string, { label: string; tone: string }> = {
+export const STATUS: Record<string, { label: string; tone: string }> = {
   active: { label: "Active", tone: "green" }, paused: { label: "Paused", tone: "amber" }, draft: { label: "Draft", tone: "slate" }, archived: { label: "Archived", tone: "slate" }
 };
 
@@ -250,7 +250,7 @@ export default function AutomationsPage({ onOpenWizard, onToast, refreshKey }: {
   );
 }
 
-function Kpi({ icon: Icon, label, value, chip, note }: { icon: typeof Mail; label: string; value: string; chip?: React.ReactNode; note?: string }) {
+export function Kpi({ icon: Icon, label, value, chip, note }: { icon: typeof Mail; label: string; value: string; chip?: React.ReactNode; note?: string }) {
   return (
     <Card className="flex items-center gap-3 p-4">
       <IconTile size="lg"><Icon className="h-6 w-6" /></IconTile>
@@ -288,7 +288,7 @@ const Mini = ({ icon: Icon, label, value }: { icon: typeof Mail; label: string; 
   </div>
 );
 
-function RowMenu({ row, disabled, onEdit, onTest, onAct }: { row: EmAutomationRow; disabled: boolean; onEdit: () => void; onTest: () => void; onAct: (action: "launch" | "pause" | "resume" | "archive" | "unarchive" | "duplicate" | "delete") => void }) {
+export function RowMenu({ row, disabled, onEdit, onTest, onAct }: { row: EmAutomationRow; disabled: boolean; onEdit: () => void; onTest: () => void; onAct: (action: "launch" | "pause" | "resume" | "archive" | "unarchive" | "duplicate" | "delete") => void }) {
   const [at, setAt] = useState<{ top: number; left: number } | null>(null);
   const button = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -330,7 +330,7 @@ function RowMenu({ row, disabled, onEdit, onTest, onAct }: { row: EmAutomationRo
 }
 
 /** The results of one automation: who is where, and each email's numbers. */
-function AutomationReport({ id, onClose }: { id: string; onClose: () => void }) {
+export function AutomationReport({ id, onClose }: { id: string; onClose: () => void }) {
   const [data, setData] = useState<EmAutomationReport | null>(null);
   const [error, setError] = useState("");
   useEffect(() => { emailMarketingApi.automationReport(id).then(setData).catch((err) => setError((err as Error).message || "Could not load the results.")); }, [id]);

@@ -5615,7 +5615,10 @@ export type EmAutomation = {
   id: string; name: string; description: string; template: string | null; goal: string; trigger: EmTrigger; audience: EmAudience;
   enrollment: { on: boolean; match: "all" | "any"; conditions: EmCondition[] }; settings: EmAutomationSettings; workflow: EmWorkflow;
   status: "draft" | "active" | "paused" | "archived"; launchedAt: string | null; pausedAt: string | null; createdAt: string; updatedAt: string; createdByName: string;
+  /** Customer Journey's grouping (design 53). */
+  stage: EmStage;
 };
+export type EmStage = "acquisition" | "nurture" | "conversion" | "retention" | "winback" | "post_purchase";
 export type EmAutomationRow = EmAutomation & {
   emails: number; durationDays: number; audienceLabel: string; audienceCount: number; reached: number; activeRuns: number; sent: number;
   conversion: number | null; revenue: number; conversionChangePp: number | null;
@@ -5626,8 +5629,15 @@ export type EmAutomationsPage = {
     conversion: { value: number | null; changePp: number | null }; revenue: { value: number; change: number | null };
   };
   automations: EmAutomationRow[];
+  /** Customer Journey (design 53): who is in a flow, engagement and orders over the last 30 days. */
+  journey: {
+    inFlow: { value: number; change: number | null };
+    engaged: { value: number; percent: number | null };
+    conversions: { value: number; percent: number | null };
+    daily: Array<{ day: string; sent: number; conversions: number; revenue: number }>;
+  };
 };
-export type EmAutomationInput = Pick<EmAutomation, "name" | "description" | "template" | "goal" | "trigger" | "audience" | "enrollment" | "settings" | "workflow"> & { launch: boolean };
+export type EmAutomationInput = Pick<EmAutomation, "name" | "description" | "template" | "goal" | "trigger" | "audience" | "enrollment" | "settings" | "workflow" | "stage"> & { launch: boolean };
 export type EmAutomationReport = {
   automation: EmAutomation;
   runs: { total: number; active: number; completed: number; exited: number };

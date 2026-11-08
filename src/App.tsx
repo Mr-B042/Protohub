@@ -129,7 +129,8 @@ import {
   Lock,
   ArrowDown,
   ArrowUp,
-  Tag
+  Tag,
+  Route
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { SendOutTimer } from "./components/SendOutTimer";
@@ -451,6 +452,7 @@ const EMAIL_MARKETING_SUBNAV: Array<{ key: EmSection; label: string; icon: typeo
   { key: "overview", label: "Overview", icon: LayoutPanelTop },
   { key: "campaigns", label: "Campaigns", icon: Mail },
   { key: "automations", label: "Automations", icon: Zap },
+  { key: "journey", label: "Customer Journey", icon: Route },
   { key: "audience", label: "Audience & Segments", icon: Users }
 ];
 

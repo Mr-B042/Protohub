@@ -17,7 +17,7 @@ import { cleanList, cleaningPlan, enableBounceReports, healthFor } from "../lib/
 import {
   automationReport, automationsPage, deleteAutomation, duplicateAutomation, getAutomation, saveAutomation, setAutomationStatus, testAutomationEmails, type AutomationInput
 } from "../lib/email-automations.js";
-import { AUTOMATION_GOALS } from "../lib/email-automation-rules.js";
+import { AUTOMATION_GOALS, STAGES } from "../lib/email-automation-rules.js";
 
 /**
  * Email Marketing (Bright, 8 Nov 2026), part 1: Overview, Campaigns, the
@@ -738,7 +738,7 @@ router.post("/health/bounce-reports", async (req, res) => {
 
 // ── Automations (Bright's designs 50, 51 and steps 2-4, 8 Nov 2026) ───
 
-const AUTOMATION_TEMPLATES = ["post_purchase", "win_back", "cart_abandonment", "welcome", "review_feedback", "replenishment", "birthday", "vip_loyalty"] as const;
+const AUTOMATION_TEMPLATES = ["post_purchase", "win_back", "cart_abandonment", "welcome", "review_feedback", "replenishment", "birthday", "vip_loyalty", "repeat_buyer", "upsell_cross_sell"] as const;
 const automationBody = z.object({
   name: z.string().trim().min(1, "Give the automation a name.").max(160),
   description: z.string().max(200).default(""),
@@ -749,6 +749,7 @@ const automationBody = z.object({
   enrollment: z.any().optional(),
   settings: z.any().optional(),
   workflow: z.any().optional(),
+  stage: z.enum(STAGES).nullable().default(null),
   launch: z.boolean().default(false)
 });
 
@@ -757,7 +758,7 @@ function automationInput(body: z.infer<typeof automationBody>): AutomationInput 
     name: body.name, description: body.description.trim(), template: body.template, goal: body.goal, trigger: body.trigger,
     audience: cleanAudience(body.audience ?? { source: "all" }),
     enrollment: { on: !!body.enrollment?.on, match: body.enrollment?.match === "any" ? "any" : "all", conditions: cleanConditions(body.enrollment?.conditions) },
-    settings: body.settings, workflow: body.workflow ?? { nodes: [] }
+    settings: body.settings, workflow: body.workflow ?? { nodes: [] }, stage: body.stage
   };
 }
 const automationError = (res: Response, error: any, fallback: string) => {

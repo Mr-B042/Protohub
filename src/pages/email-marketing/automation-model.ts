@@ -1,4 +1,4 @@
-import type { EmAutomation, EmAutomationInput, EmAutomationSettings, EmCheck, EmDesigner, EmFlowNode, EmTrigger, EmWorkflow } from "../../lib/api";
+import type { EmAutomation, EmAutomationInput, EmAutomationSettings, EmCheck, EmDesigner, EmFlowNode, EmStage, EmTrigger, EmWorkflow } from "../../lib/api";
 import { buildTemplateDesign, type CampaignFields, type EmailDesign } from "../../lib/email-render";
 import { priceText } from "./wizard-model";
 
@@ -19,9 +19,28 @@ export const GOAL_OPTIONS = [
   { key: "reviews", label: "Collect Reviews" },
   { key: "reorder", label: "Bring Reorders" },
   { key: "occasion", label: "Celebrate Customers" },
-  { key: "loyalty", label: "Reward Loyal Customers" }
+  { key: "loyalty", label: "Reward Loyal Customers" },
+  { key: "upsell", label: "Grow Order Value (AOV)" }
 ];
 export const goalText = (key: string) => GOAL_OPTIONS.find((row) => row.key === key)?.label ?? key;
+
+/** The short goal names on Customer Journey's list (design 53). */
+export const GOAL_PILL: Record<string, { label: string; tone: string }> = {
+  repeat: { label: "Retention", tone: "green" }, reorder: { label: "Retention", tone: "green" }, loyalty: { label: "Loyalty", tone: "orange" },
+  winback: { label: "Reactivation", tone: "red" }, cart: { label: "Conversion", tone: "purple" }, welcome: { label: "Acquisition", tone: "blue" },
+  reviews: { label: "Reviews", tone: "amber" }, occasion: { label: "Engagement", tone: "blue" }, upsell: { label: "AOV Growth", tone: "amber" }
+};
+
+/** Customer Journey's stages, in the order of a customer's life with the shop. */
+export const STAGES: Array<{ key: EmStage; label: string }> = [
+  { key: "acquisition", label: "Acquisition" }, { key: "nurture", label: "Nurture" }, { key: "conversion", label: "Conversion" },
+  { key: "retention", label: "Retention" }, { key: "winback", label: "Win-Back" }, { key: "post_purchase", label: "Post-Purchase" }
+];
+export const stageText = (key: EmStage) => STAGES.find((row) => row.key === key)?.label ?? key;
+const TRIGGER_STAGE: Record<EmTrigger["kind"], EmStage> = {
+  new_subscriber: "acquisition", date_field: "nurture", cart_abandoned: "conversion", order_placed: "conversion",
+  reorder: "retention", vip: "retention", inactive: "winback", order_delivered: "post_purchase"
+};
 
 /** `when` completes "Starts when ..." / "This automation will start when ...". */
 export const TRIGGER_OPTIONS: Array<{ kind: EmTrigger["kind"]; label: string; when: string }> = [
@@ -102,14 +121,14 @@ const email = (name: string, content: ReturnType<typeof starterEmail>): EmFlowNo
 const check = (name: string, kind: EmCheck["kind"], yes: EmFlowNode[], no: EmFlowNode[]): EmFlowNode => ({ id: newId("c"), type: "condition", name, check: { kind }, yes, no });
 
 export type TemplateDef = {
-  key: string; name: string; hint: string; icon: string; goal: string; trigger: EmTrigger; useCase: string;
+  key: string; name: string; hint: string; icon: string; goal: string; trigger: EmTrigger; useCase: string; stage: EmStage;
   settings?: Partial<EmAutomationSettings>;
   flow: (designer: EmDesigner | null) => EmFlowNode[];
 };
 
 export const TEMPLATES: TemplateDef[] = [
   {
-    key: "post_purchase", name: "Post-Purchase Follow-Up", hint: "Thank, educate, and drive repeat orders", icon: "cart", goal: "repeat", useCase: "repeat",
+    key: "post_purchase", name: "Post-Purchase Follow-Up", hint: "Thank, educate, and drive repeat orders", icon: "cart", goal: "repeat", useCase: "repeat", stage: "post_purchase",
     trigger: { kind: "order_delivered", productId: null },
     flow: (d) => [
       wait(1),
@@ -121,7 +140,7 @@ export const TEMPLATES: TemplateDef[] = [
     ]
   },
   {
-    key: "win_back", name: "Win-Back (Inactive Customers)", hint: "Re-engage customers who haven't purchased in a while", icon: "refresh", goal: "winback", useCase: "winback",
+    key: "win_back", name: "Win-Back (Inactive Customers)", hint: "Re-engage customers who haven't purchased in a while", icon: "refresh", goal: "winback", useCase: "winback", stage: "winback",
     trigger: { kind: "inactive", inactiveDays: 60 }, settings: { exit: { onUnsubscribe: true, onPurchase: true, afterDays: null } },
     flow: (d) => [
       email("Email 1: We Miss You", starterEmail(d, "winback", { title: "It's Been", highlight: "A While", body: "We have not seen you in a while. Here is what is new. Order today and pay when it arrives.", button: "See What's New", template: "win_back" }, "We miss you, {{first name}}", "Here's what's new")),
@@ -132,7 +151,7 @@ export const TEMPLATES: TemplateDef[] = [
     ]
   },
   {
-    key: "cart_abandonment", name: "Cart Abandonment", hint: "Remind customers to complete their order", icon: "cartx", goal: "cart", useCase: "cart",
+    key: "cart_abandonment", name: "Cart Abandonment", hint: "Remind customers to complete their order", icon: "cartx", goal: "cart", useCase: "cart", stage: "conversion",
     trigger: { kind: "cart_abandoned", cartMinutes: 60 }, settings: { exit: { onUnsubscribe: true, onPurchase: true, afterDays: null } },
     flow: (d) => [
       email("Email 1: You Left Something", starterEmail(d, "cart", { title: "You Left", highlight: "Something Behind", body: "You started an order but did not finish. It only takes a minute, and you pay when it arrives.", button: "Finish My Order", template: "product_promo" }, "Your order is waiting, {{first name}}", "Finish it in a minute")),
@@ -143,7 +162,7 @@ export const TEMPLATES: TemplateDef[] = [
     ]
   },
   {
-    key: "welcome", name: "Welcome Series", hint: "Nurture new subscribers and build trust", icon: "mail", goal: "welcome", useCase: "welcome",
+    key: "welcome", name: "Welcome Series", hint: "Nurture new subscribers and build trust", icon: "mail", goal: "welcome", useCase: "welcome", stage: "acquisition",
     trigger: { kind: "new_subscriber" }, settings: { reentry: false },
     flow: (d) => [
       email("Email 1: Welcome", starterEmail(d, "announcement", { title: "Welcome", highlight: "To The Family", body: "Thank you for joining us. We will only send things worth reading: new arrivals, tips and the occasional offer.", button: "See Our Shop" }, "Welcome, {{first name}}!", "Thanks for joining us")),
@@ -154,7 +173,7 @@ export const TEMPLATES: TemplateDef[] = [
     ]
   },
   {
-    key: "review_feedback", name: "Review & Feedback", hint: "Request product reviews from happy customers", icon: "star", goal: "reviews", useCase: "reviews",
+    key: "review_feedback", name: "Review & Feedback", hint: "Request product reviews from happy customers", icon: "star", goal: "reviews", useCase: "reviews", stage: "nurture",
     trigger: { kind: "order_delivered", productId: null },
     flow: (d) => [
       wait(3),
@@ -166,7 +185,7 @@ export const TEMPLATES: TemplateDef[] = [
     ]
   },
   {
-    key: "replenishment", name: "Replenishment / Reorder", hint: "Remind when it's time to buy again", icon: "refresh", goal: "reorder", useCase: "repeat",
+    key: "replenishment", name: "Replenishment / Reorder", hint: "Remind when it's time to buy again", icon: "refresh", goal: "reorder", useCase: "repeat", stage: "retention",
     trigger: { kind: "reorder", reorderDays: 30, productId: null }, settings: { exit: { onUnsubscribe: true, onPurchase: true, afterDays: null } },
     flow: (d) => [
       email("Email 1: Time To Restock?", starterEmail(d, "retention", { title: "Time To", highlight: "Restock?", body: "It has been a while since your last order. If you are running low, order today and pay on delivery.", button: "Order Again", template: "product_promo" }, "Time to restock, {{first name}}?", "Order today, pay on delivery")),
@@ -177,19 +196,43 @@ export const TEMPLATES: TemplateDef[] = [
     ]
   },
   {
-    key: "birthday", name: "Birthday / Special Occasion", hint: "Send personalized offers and greetings", icon: "gift", goal: "occasion", useCase: "loyalty",
+    key: "birthday", name: "Birthday / Special Occasion", hint: "Send personalized offers and greetings", icon: "gift", goal: "occasion", useCase: "loyalty", stage: "nurture",
     trigger: { kind: "date_field", fieldKey: "birthday" }, settings: { reentryDays: 300 },
     flow: (d) => [
       email("Email: Happy Birthday", starterEmail(d, "appreciation", { title: "Happy", highlight: "Birthday!", body: "Everyone at the shop wishes you a wonderful day. Thank you for being part of our family.", button: "Treat Yourself" }, "Happy birthday, {{first name}}!", "Wishing you a wonderful day"))
     ]
   },
   {
-    key: "vip_loyalty", name: "Loyalty / VIP", hint: "Reward and retain your best customers", icon: "crown", goal: "loyalty", useCase: "loyalty",
+    key: "vip_loyalty", name: "Loyalty / VIP", hint: "Reward and retain your best customers", icon: "crown", goal: "loyalty", useCase: "loyalty", stage: "retention",
     trigger: { kind: "vip", vipOrders: 3 }, settings: { reentry: false },
     flow: (d) => [
       email("Email 1: You're A VIP", starterEmail(d, "appreciation", { title: "You're One Of", highlight: "Our Best Customers", body: "You have ordered from us three times. Thank you. You will hear about new arrivals first.", button: "See What's New" }, "Thank you, {{first name}}: you're one of our best", "You'll hear about new arrivals first")),
       wait(7),
       email("Email 2: First Look", starterEmail(d, "launch", { title: "A First Look", highlight: "Just For You", body: "Here is what just arrived. Order before everyone else.", button: "Take A Look", template: "product_promo" }, "A first look, just for you", "New arrivals before everyone else"))
+    ]
+  },
+  {
+    key: "repeat_buyer", name: "Repeat Buyer Journey", hint: "Drive the second and third purchase", icon: "refresh", goal: "repeat", useCase: "repeat", stage: "retention",
+    trigger: { kind: "order_delivered", productId: null }, settings: { exit: { onUnsubscribe: true, onPurchase: true, afterDays: null } },
+    flow: (d) => [
+      wait(14),
+      email("Email 1: Your Next Order", starterEmail(d, "retention", { title: "Ready For", highlight: "Your Next Order?", body: "Many customers come back for a second piece for another room. Order today and pay on delivery.", button: "Shop Again", template: "product_promo" }, "Ready for your next order, {{first name}}?", "A second piece for another room")),
+      wait(7),
+      check("Did the customer place another order?", "placed_order", [], [
+        email("Email 2: Customer Favourites", starterEmail(d, "promotion", { title: "Our", highlight: "Customer Favourites", body: "These are the pieces customers order most after their first one.", button: "See Them", template: "product_promo" }, "What customers order next", "Our most-loved second buys"))
+      ])
+    ]
+  },
+  {
+    key: "upsell_cross_sell", name: "Upsell & Cross-sell Flow", hint: "Recommend related or higher value items", icon: "tag", goal: "upsell", useCase: "repeat", stage: "post_purchase",
+    trigger: { kind: "order_delivered", productId: null }, settings: { exit: { onUnsubscribe: true, onPurchase: true, afterDays: null } },
+    flow: (d) => [
+      wait(5),
+      email("Email 1: Goes Well With It", starterEmail(d, "upsell", { title: "Goes Well", highlight: "With Your Order", body: "Here is something that pairs well with what you bought. Order today and pay on delivery.", button: "See It", template: "product_promo" }, "This goes well with your order, {{first name}}", "A matching piece for your home")),
+      wait(4),
+      check("Did the customer place another order?", "placed_order", [], [
+        email("Email 2: Still Thinking?", starterEmail(d, "upsell", { title: "Still", highlight: "Thinking It Over?", body: "Reply to this email if you have a question about it. We deliver to your door and you pay on delivery.", button: "Order Now" }, "Still thinking it over, {{first name}}?", "Questions? Just reply"))
+      ])
     ]
   }
 ];
@@ -214,19 +257,20 @@ export function draftFromTemplate(key: string | null, designer: EmDesigner | nul
     trigger: template?.trigger ?? { kind: "order_delivered", productId: null }, audience: { source: "all" },
     enrollment: { on: false, match: "all", conditions: [] },
     settings: { ...DEFAULT_SETTINGS, ...(template?.settings ?? {}), exit: { ...DEFAULT_SETTINGS.exit, ...(template?.settings?.exit ?? {}) } },
-    workflow: { nodes: template ? template.flow(designer) : [] }
+    workflow: { nodes: template ? template.flow(designer) : [] },
+    stage: template?.stage ?? TRIGGER_STAGE.order_delivered
   };
 }
 
 export const draftFromAutomation = (row: EmAutomation): AutoDraft => ({
   id: row.id, status: row.status, active: row.status !== "paused" && row.status !== "archived",
   name: row.name, description: row.description, template: row.template, goal: row.goal, trigger: row.trigger, audience: row.audience,
-  enrollment: row.enrollment, settings: row.settings, workflow: row.workflow
+  enrollment: row.enrollment, settings: row.settings, workflow: row.workflow, stage: row.stage
 });
 
 export const toAutomationInput = (draft: AutoDraft, launch: boolean): EmAutomationInput => ({
   name: draft.name.trim(), description: draft.description.trim(), template: draft.template, goal: draft.goal, trigger: draft.trigger, audience: draft.audience,
-  enrollment: draft.enrollment, settings: draft.settings, workflow: draft.workflow, launch
+  enrollment: draft.enrollment, settings: draft.settings, workflow: draft.workflow, stage: draft.stage, launch
 });
 
 // ── Reading a flow ────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import {
-  CalendarDays, Check, ChevronDown, ChevronRight, Clock, Crown, Filter, Flag, Gift, GripVertical, Layers, LogOut, Mail, Maximize2, Minimize2, Play, Plus, Redo2, RefreshCw,
-  Rocket, Settings, ShoppingCart, Star, Target, Undo2, UserCheck, Users, Zap
+  CalendarDays, Check, ChevronDown, ChevronRight, Clock, Crown, Filter, Flag, Gift, GripVertical, Layers, LogOut, Mail, Map as MapIcon, Maximize2, Minimize2, Play, Plus, Redo2, RefreshCw,
+  Rocket, Settings, ShoppingCart, Star, Tag, Target, Undo2, UserCheck, Users, Zap
 } from "lucide-react";
 import type { EmAudience, EmDesigner, EmTrigger } from "../../lib/api";
 import { Card, IconTile, Toggle, input, select } from "./em-ui";
@@ -9,13 +9,13 @@ import SegmentBuilder from "./SegmentBuilder";
 import FlowDiagram, { DRAG_TYPE, TRIGGER_ICON } from "./FlowDiagram";
 import { ACTION_GROUPS } from "./NodeEditor";
 import {
-  DAY_NAMES, GOAL_OPTIONS, TEMPLATES, TRIGGER_OPTIONS, allNodes, durationDays, durationText, goalText, hourText, howItWorks, launchProblems, triggerText, windowText,
+  DAY_NAMES, GOAL_OPTIONS, STAGES, TEMPLATES, TRIGGER_OPTIONS, allNodes, stageText, durationDays, durationText, goalText, hourText, howItWorks, launchProblems, triggerText, windowText,
   type ActionKey, type AutoDraft, type Slot
 } from "./automation-model";
 
 /** The four steps of Create New Automation (Bright's designs 51, A, B, C). */
 
-export const TEMPLATE_ICON: Record<string, typeof Mail> = { cart: ShoppingCart, refresh: RefreshCw, cartx: ShoppingCart, mail: Mail, star: Star, gift: Gift, crown: Crown };
+export const TEMPLATE_ICON: Record<string, typeof Mail> = { cart: ShoppingCart, refresh: RefreshCw, cartx: ShoppingCart, mail: Mail, star: Star, gift: Gift, crown: Crown, tag: Tag };
 
 type StepProps = { draft: AutoDraft; designer: EmDesigner | null; onChange: (patch: Partial<AutoDraft>) => void };
 
@@ -251,6 +251,15 @@ export function StepDetails({ draft, designer, onChange }: StepProps) {
           <div className={label}>Audience / Segment <Req /><AudienceSelect draft={draft} designer={designer} onChange={onChange} /></div>
           <div className={label}>Trigger / Start Event <Req /><TriggerFields hint draft={draft} designer={designer} onChange={onChange} /></div>
           <div className={label}>Goal (What you want to achieve) <Req /><GoalSelect draft={draft} onChange={onChange} /></div>
+          <div className={label}>Customer Stage
+            <div className="relative mt-1.5">
+              <MapIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#5B3FD9]" />
+              <select value={draft.stage} onChange={(event) => onChange({ stage: event.target.value as AutoDraft["stage"] })} className={`${select} !pl-9`} aria-label="Customer stage">
+                {STAGES.map((row) => <option key={row.key} value={row.key}>{row.label}</option>)}
+              </select>
+            </div>
+            <span className="block text-[11.5px] font-normal text-gray-500">Where it sits on the Customer Journey page.</span>
+          </div>
         </div>
       </Panel>
 
@@ -484,7 +493,7 @@ export function StepLaunch({ draft, designer, onChange }: StepProps) {
           <p className="m-0 mb-3 text-[12.5px] text-gray-600 dark:text-slate-400">Review your setup before launching.</p>
           <div className="space-y-2">
             {([
-              ["Name", draft.name || "—"], ["Trigger", triggerText(draft.trigger)], ["Goal", goalText(draft.goal)], ["Audience", audienceName(draft.audience, designer)],
+              ["Name", draft.name || "—"], ["Trigger", triggerText(draft.trigger)], ["Goal", goalText(draft.goal)], ["Stage", stageText(draft.stage)], ["Audience", audienceName(draft.audience, designer)],
               ["Total Steps", String(allNodes(draft.workflow.nodes).length)], ["Duration", durationText(durationDays(draft.workflow.nodes))],
               ["Send Window", windowText(s)], ["Tracking", s.track ? (s.utm ? "Enabled (UTM + Performance)" : "Performance only") : s.utm ? "UTM only" : "Off"]
             ] as Array<[string, string]>).map(([key, value]) => (

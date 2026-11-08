@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  DEFAULT_SETTINGS, branchNodeId, checkMet, durationDays, emailNodes, firstNodeId, inSendWindow, mayEnter, nextNodeId, nextWindowStart, normalizeSettings,
+  DEFAULT_SETTINGS, branchNodeId, defaultStage, checkMet, durationDays, emailNodes, firstNodeId, inSendWindow, mayEnter, nextNodeId, nextWindowStart, normalizeSettings,
   normalizeTrigger, normalizeWorkflow, type CheckFacts
 } from "./email-automation-rules.js";
 
@@ -78,4 +78,12 @@ test("checks and who may enter again", () => {
   assert.equal(mayEnter(DEFAULT_SETTINGS, [{ status: "completed", enteredMs: now - 31 * DAY }], now), true);
   assert.equal(mayEnter({ ...DEFAULT_SETTINGS, reentry: false }, [{ status: "completed", enteredMs: now - 300 * DAY }], now), false);
   assert.equal(mayEnter({ ...DEFAULT_SETTINGS, frequency: "max_2" }, [{ status: "completed", enteredMs: now - 90 * DAY }, { status: "exited", enteredMs: now - 60 * DAY }], now), false);
+});
+
+test("customer stage: picked from the template, else the trigger", () => {
+  assert.equal(defaultStage("welcome", { kind: "new_subscriber" }), "acquisition");
+  assert.equal(defaultStage("upsell_cross_sell", { kind: "order_delivered" }), "post_purchase");
+  assert.equal(defaultStage(null, { kind: "inactive" }), "winback");
+  assert.equal(defaultStage(null, { kind: "cart_abandoned" }), "conversion");
+  assert.equal(defaultStage("not-a-template", null), "retention");
 });

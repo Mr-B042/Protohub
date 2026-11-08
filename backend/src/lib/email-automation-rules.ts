@@ -69,7 +69,23 @@ export const DEFAULT_SETTINGS: AutomationSettings = {
   utm: true, track: true, replyTo: ""
 };
 
-export const AUTOMATION_GOALS = ["repeat", "winback", "cart", "welcome", "reviews", "reorder", "occasion", "loyalty"] as const;
+export const AUTOMATION_GOALS = ["repeat", "winback", "cart", "welcome", "reviews", "reorder", "occasion", "loyalty", "upsell"] as const;
+
+/** Customer Journey (design 53) groups the flows by the customer's stage. */
+export const STAGES = ["acquisition", "nurture", "conversion", "retention", "winback", "post_purchase"] as const;
+export type Stage = (typeof STAGES)[number];
+const TEMPLATE_STAGE: Record<string, Stage> = {
+  welcome: "acquisition", review_feedback: "nurture", birthday: "nurture", cart_abandonment: "conversion",
+  repeat_buyer: "retention", replenishment: "retention", vip_loyalty: "retention", win_back: "winback", post_purchase: "post_purchase", upsell_cross_sell: "post_purchase"
+};
+const TRIGGER_STAGE: Record<string, Stage> = {
+  new_subscriber: "acquisition", date_field: "nurture", cart_abandoned: "conversion", order_placed: "conversion",
+  reorder: "retention", vip: "retention", inactive: "winback", order_delivered: "post_purchase"
+};
+/** A flow's stage when none was picked: from its ready-made template, else its trigger. */
+export function defaultStage(template: string | null | undefined, trigger: { kind: string } | null | undefined): Stage {
+  return (template && TEMPLATE_STAGE[template]) || TRIGGER_STAGE[trigger?.kind ?? ""] || "retention";
+}
 export const PRIORITY_RANK: Record<AutomationSettings["priority"], number> = { low: 0, normal: 1, high: 2 };
 
 // ── Cleaning what the browser sends ──────────────────────────────────
