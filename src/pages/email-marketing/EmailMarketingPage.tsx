@@ -8,6 +8,7 @@ import AutomationWizard from "./AutomationWizard";
 import JourneysPage from "./JourneysPage";
 import OffersPage from "./OffersPage";
 import LoyaltyPage from "./LoyaltyPage";
+import ReviewsPage from "./ReviewsPage";
 import TemplatesPage from "./TemplatesPage";
 import { LEGACY_TEMPLATE } from "./automation-model";
 import CampaignWizard, { type StartTemplate } from "./CampaignWizard";
@@ -51,7 +52,7 @@ export default function EmailMarketingPage({ section, onNavigate, onToast, onOpe
   const [report, setReport] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [audienceModal, setAudienceModal] = useState<"add-subscribers" | "create-segment" | null>(null);
-  const withHeader = section !== "campaigns" && section !== "audience" && section !== "health" && section !== "automations" && section !== "journey" && section !== "offers" && section !== "loyalty";
+  const withHeader = section !== "campaigns" && section !== "audience" && section !== "health" && section !== "automations" && section !== "journey" && section !== "offers" && section !== "loyalty" && section !== "reviews";
   /** Part 1's ready-made flow names open the Automations window on the matching template. */
   const openAutomation = (preset?: string) => setAutoWizard({ template: preset ? LEGACY_TEMPLATE[preset] ?? preset : "post_purchase" });
 
@@ -132,6 +133,7 @@ export default function EmailMarketingPage({ section, onNavigate, onToast, onOpe
       )}
       {section === "automations" && <AutomationsPage onOpenWizard={setAutoWizard} onToast={onToast} refreshKey={refreshKey} />}
       {section === "offers" && <OffersPage onToast={onToast} refreshKey={refreshKey} />}
+      {section === "reviews" && <ReviewsPage onToast={onToast} refreshKey={refreshKey} />}
       {section === "loyalty" && <LoyaltyPage onToast={onToast} refreshKey={refreshKey} onCreateAutomation={(template) => setAutoWizard({ template })} />}
       {section === "journey" && <JourneysPage onOpenWizard={(options) => setAutoWizard({ ...options, noun: "Journey" })} onToast={onToast} refreshKey={refreshKey} />}
       {section === "templates" && <TemplatesPage onToast={onToast} refreshKey={refreshKey} onUseTemplate={(template) => setWizard({ template })} onCreateFromScratch={() => setWizard({})} />}

@@ -16,6 +16,7 @@ const LoginScreen = lazy(() => import("./components/LoginScreen").then((module) 
 const ResetPasswordScreen = lazy(() => import("./components/ResetPasswordScreen").then((module) => ({ default: module.ResetPasswordScreen })));
 const PublicAgentApplicationPage = lazy(() => import("./PublicAgentApplicationPage"));
 const PublicAgentStatusPage = lazy(() => import("./PublicAgentStatusPage"));
+const PublicReviewPage = lazy(() => import("./pages/PublicReviewPage"));
 const PublicOrderFormPage = lazy(() => import("./pages/PublicOrderFormPage"));
 
 const STALE_IMPORT_PATTERNS = [
@@ -242,6 +243,10 @@ function Root() {
   // The status route is checked FIRST: it is a longer path under the same
   // prefix, so the application form would otherwise swallow it and applicants
   // would land on a blank second application.
+  // A customer's personal review link (Reviews & UGC): no login.
+  if (hash.startsWith("#/review/")) {
+    return <PublicReviewPage />;
+  }
   if (hash.startsWith("#/agent-application/status/")) {
     return <PublicAgentStatusPage />;
   }

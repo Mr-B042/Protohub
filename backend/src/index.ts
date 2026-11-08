@@ -79,6 +79,7 @@ import { runEmailMarketingJob } from "./lib/email-marketing.js";
 import { runDailyHealth } from "./lib/email-health.js";
 import { runAutomations } from "./lib/email-automations.js";
 import { runLoyaltyEarning } from "./lib/loyalty.js";
+import publicReviewRoutes from "./routes/public-reviews.js";
 import { runBotHealthChecks, runLowStock, runReports, runRetries, runSendOutSoon, runTelegramCleanup } from "./lib/telegram.js";
 import fineAppealRoutes from "./routes/fine-appeals.js";
 import orderReceiptRoutes from "./routes/order-receipts.js";
@@ -435,6 +436,8 @@ app.use("/api/whatsapp-destinations", whatsappDestinationRoutes);
 app.use("/api/whatsapp/conversations", whatsappConversationRoutes);
 app.use("/api/public/carts",           publicCartRoutes);
 app.use("/api/public/orders",          publicOrderRoutes);
+// Reviews & UGC (Bright, 8 Nov 2026): a customer's personal review link.
+app.use("/api/public/reviews",         publicReviewRoutes);
 // sendBeacon posts text/plain; the tracking route parses it itself.
 app.use("/api/public/tracking",        express.text({ type: "text/plain", limit: "16kb" }), publicTrackingRoutes);
 app.use("/api/public/products",        publicProductRoutes);

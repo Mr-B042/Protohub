@@ -129,7 +129,7 @@ function AmountsCard({ amounts, onSaved, onToast }: { amounts: ReviewAmounts; on
   );
 }
 
-function ReviewSheet({ reviewId, writable, onClose, onChanged, onToast }: {
+export function ReviewSheet({ reviewId, writable, onClose, onChanged, onToast }: {
   reviewId: string; writable: boolean; onClose: () => void; onChanged: () => void; onToast: (message: string) => void;
 }) {
   const [detail, setDetail] = useState<ReviewDetail | null>(null);

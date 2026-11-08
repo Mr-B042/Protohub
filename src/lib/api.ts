@@ -5052,6 +5052,8 @@ export type CustomerReview = {
   genuine: boolean | null; marketingOk: boolean; marketingWithdrawnAt: string | null;
   reviewedByName: string | null; reviewedAt: string | null; decisionReason: string | null; decisionReasonText: string | null; decisionNote: string | null;
   legacy: boolean; submittedAt: string | null; createdAt: string;
+  /** rep = sent from Upload media; customer = sent through their own review link (Reviews & UGC). */
+  source?: "rep" | "customer"; featured?: boolean;
   files: ReviewFile[];
   bonus: { paidForReview: number; paidForOrder: number };
 };
@@ -5091,7 +5093,40 @@ export const customerReviewsApi = {
   requestChanges: (id: string, note: string) => post<ReviewDetail>(`/api/customer-reviews/${id}/request-changes`, { note }),
   setMarketing: (id: string, ok: boolean) => post<ReviewDetail>(`/api/customer-reviews/${id}/marketing`, { ok }),
   settings: () => get<{ amounts: ReviewAmounts; canEdit: boolean; reasons: Record<string, string> }>("/api/customer-reviews/settings"),
-  saveSettings: (amounts: ReviewAmounts) => put<{ amounts: ReviewAmounts }>("/api/customer-reviews/settings", { amounts })
+  saveSettings: (amounts: ReviewAmounts) => put<{ amounts: ReviewAmounts }>("/api/customer-reviews/settings", { amounts }),
+  // Reviews & UGC page (Bright's design 56, 8 Nov 2026).
+  dashboard: (range: { from: string; to: string }) => get<ReviewDashboard>(`/api/customer-reviews/dashboard?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`),
+  feature: (id: string, featured: boolean) => post<{ ok: boolean; featured: boolean }>(`/api/customer-reviews/${id}/feature`, { featured }),
+  link: (orderId: string) => post<{ url: string }>("/api/customer-reviews/links", { orderId }),
+  requests: () => get<{ orders: ReviewRequestRow[] }>("/api/customer-reviews/requests"),
+  emailRequests: (orderIds: string[]) => post<{ sent: number; noEmail: number; unsubscribed: number; failed: number }>("/api/customer-reviews/requests/email", { orderIds })
+};
+type Change = { value: number; change: number | null };
+export type ReviewDashboard = {
+  kpis: { total: Change; photo: Change; video: Change; rating: { value: number | null; rated: number }; reviewers: Change; fromLink: number };
+  counts: { all: number; pending: number; approved: number; rejected: number };
+  monthly: Array<{ month: string; reviews: number }>;
+  products: Array<{ id: string; name: string }>;
+  links: { made: number; opened: number; emailed: number };
+};
+export type ReviewRequestRow = {
+  id: string; customer: string; phone: string; hasEmail: boolean; productName: string; deliveredOn: string | null; emailedAt: string | null; openedAt: string | null; copiedAt: string | null;
+};
+// A customer's personal review link (no login).
+export type PublicReviewPage = { brand: string; productName: string; productImage: string | null; firstName: string; delivered: boolean; alreadySent: boolean; maxImageMb: number; maxVideoMb: number; maxFiles: number };
+async function publicReviewCall<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await fetchWithApiFailover(`/api/public/reviews/${path}`, { ...init, headers: { "Content-Type": "application/json", ...(init.headers ?? {}) } });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json?.error || "Something went wrong. Try again.");
+  return json as T;
+}
+export const publicReviewsApi = {
+  page: (token: string) => publicReviewCall<PublicReviewPage>(encodeURIComponent(token)),
+  start: (token: string, body: { rating: number; text: string; genuine: true; marketing: boolean }) => publicReviewCall<{ reviewId: string }>(`${encodeURIComponent(token)}/start`, { method: "POST", body: JSON.stringify(body) }),
+  file: (token: string, body: { reviewId: string; mime: string; size: number; name: string }) => publicReviewCall<{ id: string; signedUrl: string }>(`${encodeURIComponent(token)}/files`, { method: "POST", body: JSON.stringify(body) }),
+  fileDone: (token: string, id: string, body: { posterDataUrl?: string; durationSeconds?: number }) => publicReviewCall<{ ok: boolean; kind: string }>(`${encodeURIComponent(token)}/files/${id}/complete`, { method: "POST", body: JSON.stringify(body) }),
+  removeFile: (token: string, id: string) => publicReviewCall<{ ok: boolean }>(`${encodeURIComponent(token)}/files/${id}`, { method: "DELETE" }),
+  submit: (token: string, reviewId: string) => publicReviewCall<{ ok: boolean }>(`${encodeURIComponent(token)}/submit`, { method: "POST", body: JSON.stringify({ reviewId }) })
 };
 
 export const productMediaApi = {

@@ -43,6 +43,8 @@ const BRANCH_TABLES = new Set([
   "waybill_agent_notices",
   // Customer Reviews (migration 329): each row carries its order's branch.
   "customer_reviews", "customer_review_incentives", "customer_review_events",
+  // Reviews & UGC personal review links (migration 341).
+  "review_links",
   // Email Marketing (migration 334): every row is written with its branch.
   "email_contacts", "email_segments", "email_campaigns", "email_campaign_sends", "email_campaign_clicks", "email_saved_blocks", "email_marketing_settings",
   "email_tags", "email_contact_tags", "email_custom_fields", "email_imports",
