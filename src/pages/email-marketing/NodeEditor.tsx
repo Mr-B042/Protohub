@@ -128,7 +128,7 @@ export function EmailStepEditor({ node, goal, designer, onSave, onClose, onToast
     id: null, name: step.name, goal, subject: step.email.subject, subjectB: "", preheader: step.email.preheader, offerType: "custom", productId: step.email.productId,
     offer: { on: false, title: "", benefit: "" }, audience: { source: "all" },
     design: step.email.design ?? { version: 1, template: "simple_message", touched: true, styles: { ...DEFAULT_STYLES }, blocks: [] },
-    delivery: { type: "one_time", sendAt: null }, sendNow: false, options: { ...DEFAULT_OPTIONS }, thumbnailUrl: step.email.thumbnailUrl, status: "draft"
+    delivery: { type: "one_time", sendAt: null }, sendNow: false, options: { ...DEFAULT_OPTIONS }, thumbnailUrl: step.email.thumbnailUrl, status: "draft", offerId: step.email.offerId ?? null
   }), [step, goal]);
   const sendTest = async () => {
     const to = designer?.userEmail;
@@ -160,6 +160,13 @@ export function EmailStepEditor({ node, goal, designer, onSave, onClose, onToast
             </label>
             <label className="block text-[13px] font-semibold text-gray-800 dark:text-slate-200">Preheader
               <input value={step.email.preheader} maxLength={100} onChange={(event) => setStep({ ...step, email: { ...step.email, preheader: event.target.value } })} placeholder="The short line shown after the subject" className={`${input} mt-1.5`} />
+            </label>
+            <label className="block text-[13px] font-semibold text-gray-800 dark:text-slate-200 md:col-span-2">Offer (Coupons &amp; Offers)
+              <select value={step.email.offerId ?? ""} onChange={(event) => setStep({ ...step, email: { ...step.email, offerId: event.target.value || null } })} className={`${select} mt-1.5`}>
+                <option value="">No offer</option>
+                {(designer?.offers ?? []).map((offer) => <option key={offer.id} value={offer.id}>{offer.name}: {offer.benefitText} ({offer.code}){offer.state === "scheduled" ? ", starts later" : ""}</option>)}
+              </select>
+              <span className="block text-[11.5px] font-normal text-gray-500">When they order from this email, the order form shows the lower price and the order is saved with it.</span>
             </label>
           </div>
           <StepDesign draft={draft} designer={designer} onToast={onToast} onDesignerChanged={onDesignerChanged} onSendTest={() => void sendTest()}

@@ -287,7 +287,7 @@ export async function statsFor(campaignIds: string[]): Promise<Map<string, Campa
   return out;
 }
 
-export const CAMPAIGN_LIST_COLUMNS = "id, name, goal, subject, subject_b, preheader, offer_type, product_id, offer, audience, delivery, options, status, slug, send_at, next_run_at, run_count, audience_count, thumbnail_url, archived_from, created_by_name, created_at, updated_at, launched_at, completed_at";
+export const CAMPAIGN_LIST_COLUMNS = "id, name, goal, subject, subject_b, preheader, offer_type, product_id, offer, offer_id, audience, delivery, options, status, slug, send_at, next_run_at, run_count, audience_count, thumbnail_url, archived_from, created_by_name, created_at, updated_at, launched_at, completed_at";
 
 export function campaignDto(row: any, stats?: CampaignStats) {
   return {
@@ -295,7 +295,7 @@ export function campaignDto(row: any, stats?: CampaignStats) {
     productId: row.product_id, offer: row.offer ?? {}, audience: row.audience ?? {}, delivery: row.delivery ?? {}, options: row.options ?? {},
     status: row.status, slug: row.slug, sendAt: row.send_at, nextRunAt: row.next_run_at, runCount: row.run_count, audienceCount: row.audience_count,
     thumbnailUrl: row.thumbnail_url, createdByName: row.created_by_name, createdAt: row.created_at, updatedAt: row.updated_at,
-    launchedAt: row.launched_at, completedAt: row.completed_at, archivedFrom: row.archived_from ?? null,
+    launchedAt: row.launched_at, completedAt: row.completed_at, archivedFrom: row.archived_from ?? null, offerId: row.offer_id ?? null,
     ...(row.design !== undefined ? { design: normalizeDesign(row.design) } : {}),
     stats: stats ?? EMPTY_STATS
   };

@@ -66,7 +66,7 @@ async function syncStepCampaigns(orgId: string, branchId: string, automationId: 
       const columns = {
         name: `${name} · ${node.name}`.slice(0, 160), goal: CAMPAIGN_GOAL[goal] ?? "retention", subject: node.email.subject, subject_b: "", preheader: node.email.preheader,
         offer_type: "custom", product_id: node.email.productId, offer: { on: false, title: "", benefit: "" }, audience, design: node.email.design ?? { blocks: [] },
-        delivery: { type: "step" }, options, status: STEP_STATUS[status] ?? "draft", thumbnail_url: node.email.thumbnailUrl, updated_at: new Date().toISOString()
+        delivery: { type: "step" }, options, status: STEP_STATUS[status] ?? "draft", thumbnail_url: node.email.thumbnailUrl, offer_id: node.email.offerId ?? null, updated_at: new Date().toISOString()
       };
       const current = byStep.get(node.id);
       const slug = current?.slug ?? slugFor(`${name} ${node.name}`, crypto.randomBytes(4).toString("hex"));

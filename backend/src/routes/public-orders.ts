@@ -238,6 +238,7 @@ const PublicUpsellAcceptSchema = z.object({
 import { ORDER_SOURCES as ALLOWED_SOURCES, resolveOrderSource } from "../lib/order-source.js";
 import { refreshPendingDeliveredLines } from "../lib/delivered-stock-refresh.js";
 import { tidyOrderState } from "../lib/order-state.js";
+import { applyEmailOffer, offerColumns, recordRedemption } from "../lib/email-offers.js";
 const PUBLIC_UPSELL_TTL_MS = 4 * 60 * 60 * 1000;
 
 const normalizeStateName = (value: string | undefined) => {
@@ -1267,6 +1268,13 @@ router.post("/", submitRateLimit, async (req, res) => {
     if (canonical.exists) d.cartId = canonical.id;
   }
 
+  // Coupons & Offers (Bright, 8 Nov 2026): an email with an offer brings its
+  // send token (utm_content) into the form; the lower amount is worked out
+  // again here, and an order is never refused over it.
+  const amountBeforeOffer = amount;
+  const emailOffer = await applyEmailOffer({ orgId: product.org_id, utmSource: d.utmSource, utmContent: d.utmContent, phone: d.phone, productId: stampProductId, amount });
+  if (emailOffer) amount -= emailOffer.discount;
+
   // 4. Insert order
   const baseInsert = {
     ...(d.id ? { id: d.id } : {}),
@@ -1298,6 +1306,7 @@ router.post("/", submitRateLimit, async (req, res) => {
     utm_source:        d.utmSource ?? null,
     utm_campaign:      d.utmCampaign ?? null,
     utm_medium:        d.utmMedium ?? null,
+    ...offerColumns(emailOffer),
     utm_content:       d.utmContent ?? null,
     utm_term:          d.utmTerm ?? null,
     embed_label:       cleanEmbedLabel(d.embedLabel),
@@ -1378,6 +1387,7 @@ router.post("/", submitRateLimit, async (req, res) => {
     return;
   }
   order = once?.order ?? null;
+  if (!orderErr && order?.id && emailOffer) void recordRedemption(emailOffer, order.id, d.phone, amountBeforeOffer);
 
   if (orderErr) {
     if (orderErr.code === "23505") {
