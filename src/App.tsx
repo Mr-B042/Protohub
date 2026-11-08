@@ -174,7 +174,8 @@ import {
   weeklyReportsApi, managerFundsApi, logMissApi, salesScriptApi, embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, upsellPerformanceApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, targetPeriodsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
   branchesApi, setApiSpyUserId, type ApprovedPayoutChange, type CartAssignmentPanel, type CartHandOutRules,
   setApiPreviewReadOnly, pageVisitsApi, fineAppealsApi, trackingHubApi,
-  PreviewReadOnlyError, type BranchWorkspace
+  PreviewReadOnlyError, type BranchWorkspace,
+  customerReviewsApi
 } from "./lib/api";
 import { NIGERIA_STATES, canonicalOrderState, UNPLACED_ORDER_STATE } from "./lib/nigeria";
 import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid,CartRecoverySummary, CartGridRow, CartLogPenaltiesView, CartLogRangePreset, RecoveryCalendarView, RecoveryFollowUpPairs, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, TargetPeriod, TargetProgressView, TargetSuggestion, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, CostChangeImpact, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView, UpsellPerformanceLog } from "./lib/api";
@@ -447,7 +448,7 @@ const PDA_RESTRICTED_STATUSES = [
 // Email Marketing (Bright, 8 Nov 2026), part 1: the pages built so far. The
 // later parts (Automations, Customer Journey, Coupons & Offers, Loyalty &
 // Rewards, Reviews & UGC) join this list as they are built.
-const EMAIL_MARKETING_SECTIONS: EmSection[] = ["overview", "campaigns", "automations", "audience", "health", "templates", "forms", "journey", "offers", "loyalty", "analytics", "settings"];
+const EMAIL_MARKETING_SECTIONS: EmSection[] = ["overview", "campaigns", "automations", "audience", "health", "templates", "forms", "journey", "offers", "loyalty", "reviews", "analytics", "settings"];
 const EMAIL_MARKETING_SUBNAV: Array<{ key: EmSection; label: string; icon: typeof LayoutPanelTop }> = [
   { key: "overview", label: "Overview", icon: LayoutPanelTop },
   { key: "campaigns", label: "Campaigns", icon: Mail },
@@ -455,6 +456,7 @@ const EMAIL_MARKETING_SUBNAV: Array<{ key: EmSection; label: string; icon: typeo
   { key: "journey", label: "Customer Journey", icon: Route },
   { key: "offers", label: "Coupons & Offers", icon: Tag },
   { key: "loyalty", label: "Loyalty & Rewards", icon: Star },
+  { key: "reviews", label: "Reviews & UGC", icon: ThumbsUp },
   { key: "audience", label: "Audience & Segments", icon: Users }
 ];
 
@@ -103758,6 +103760,23 @@ ${waybillLineItems(w).length > 1
                             >
                               <ReceiptText className="w-3.5 h-3.5" /> Send Order Receipt
                             </button>
+                            {selectedOrder.status === "Delivered" && (
+                              // Reviews & UGC (Bright, 8 Nov 2026): the customer's own review link, ready for WhatsApp.
+                              <button
+                                type="button"
+                                className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-violet-200 text-violet-700 text-xs font-bold hover:bg-violet-50"
+                                onClick={() => {
+                                  void customerReviewsApi.link(selectedOrder.id).then(async ({ url }) => {
+                                    const first = String(selectedOrder.customer ?? "").trim().split(/\s+/)[0] || "there";
+                                    const text = `Hi ${first}, thank you for your order! How is your ${selectedOrder.productName || "order"}? It would mean a lot if you left a quick review (photos welcome): ${url}`;
+                                    await navigator.clipboard.writeText(text).catch(() => undefined);
+                                    showToast("Review link copied with a message. Paste it into WhatsApp.");
+                                  }).catch((err: any) => showToast(err?.message ?? "Could not make the review link."));
+                                }}
+                              >
+                                <Star className="w-3.5 h-3.5" /> Copy Review Link
+                              </button>
+                            )}
                             <button
                               type="button"
                               className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-blue-200 text-blue-700 text-xs font-bold transition-colors hover:bg-blue-50"

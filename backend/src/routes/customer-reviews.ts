@@ -11,6 +11,9 @@ import {
 } from "../lib/customer-review-rules.js";
 import { readAmounts, saveAmounts } from "../lib/customer-reviews.js";
 import { silentFilterFor } from "../lib/product-launch.js";
+import { randomBytes } from "node:crypto";
+import { marketingSender, sendMarketingEmail } from "../lib/mailer.js";
+import { blockId, renderEmailHtml, renderEmailText, type EmailDesign } from "../lib/email-render.js";
 
 // ── Customer Reviews, part 1 (Bright, 7 Nov 2026) ──────────────────────────
 // A rep sends a customer's review from the Upload media window, linked to one
@@ -120,6 +123,7 @@ function mapReview(row: any, ctx: { orders: Map<string, any>; files: Map<string,
     decisionReason: row.decision_reason ?? null, decisionReasonText: row.decision_reason ? (REJECT_REASONS as Record<string, string>)[row.decision_reason] ?? "Other" : null,
     decisionNote: row.decision_note ?? null,
     legacy: !!row.legacy_touchpoint_id, submittedAt: row.submitted_at ?? null, createdAt: row.created_at,
+    source: (row.source ?? "rep") as "rep" | "customer", featured: row.featured === true,
     files: ctx.files.get(row.id) ?? [],
     bonus: { paidForReview: Math.round(paidForReview), paidForOrder: Math.round(paidForOrder) }
   };
@@ -359,6 +363,192 @@ router.get("/", async (req, res) => {
 });
 
 // ── One review, with everything an approver checks ────────
+// ── Reviews & UGC page (Bright's design 56, 8 Nov 2026) ──────────────────
+
+const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
+const DAY = 86_400_000;
+/** ?from=YYYY-MM-DD&to=YYYY-MM-DD (Lagos days, both included); default the last 30 days. */
+function rangeOf(req: Request) {
+  const nowMs = Date.now();
+  const to = String(req.query.to ?? ""), from = String(req.query.from ?? "");
+  const toMs = DAY_KEY.test(to) ? Math.min(nowMs + 1, Date.parse(`${to}T00:00:00+01:00`) + DAY) : nowMs + 1;
+  const fromMs = DAY_KEY.test(from) ? Date.parse(`${from}T00:00:00+01:00`) : toMs - 30 * DAY;
+  return { fromMs: Math.min(fromMs, toMs - 3_600_000), toMs };
+}
+const pctChange = (now: number, before: number) => (before > 0 ? Math.round(((now - before) / before) * 1000) / 10 : null);
+const lagosMonth = (ms: number) => new Date(ms + 3_600_000).toISOString().slice(0, 7);
+
+/** Tiles, tab counts, the monthly chart and the product list (approvers). */
+router.get("/dashboard", async (req, res) => {
+  try {
+    requireApprover(req);
+    const range = rangeOf(req);
+    const length = Math.max(DAY, range.toMs - range.fromMs);
+    const before = { fromMs: range.fromMs - length, toMs: range.fromMs };
+    const { data, error } = await supabase.from("customer_reviews").select("id, status, review_type, rating, order_id, product_id, source, created_at, submitted_at")
+      .eq("org_id", orgOf(req)).neq("status", "draft").order("created_at", { ascending: false }).limit(10000);
+    if (error) throw error;
+    const orders = await ordersById((data ?? []).map((row: any) => String(row.order_id)), scopeOf(req).role);
+    const rows = (data ?? []).filter((row: any) => orders.has(String(row.order_id)));
+    const at = (row: any) => Date.parse(row.submitted_at ?? row.created_at);
+    const inR = (row: any, r: { fromMs: number; toMs: number }) => { const ms = at(row); return ms >= r.fromMs && ms < r.toMs; };
+    const stats = (r: { fromMs: number; toMs: number }) => {
+      const list = rows.filter((row: any) => inR(row, r));
+      const rated = list.filter((row: any) => row.rating);
+      const phones = new Set(list.map((row: any) => String(orders.get(String(row.order_id))?.phone ?? "").replace(/\D/g, "").slice(-10)).filter(Boolean));
+      return {
+        total: list.length, photo: list.filter((row: any) => row.review_type === "photo").length, video: list.filter((row: any) => row.review_type === "video").length,
+        rating: rated.length ? Math.round((rated.reduce((sum: number, row: any) => sum + Number(row.rating), 0) / rated.length) * 10) / 10 : null, rated: rated.length, reviewers: phones.size,
+        fromLink: list.filter((row: any) => row.source === "customer").length
+      };
+    };
+    const now = stats(range), prev = stats(before);
+    const [year, month] = lagosMonth(Date.now()).split("-").map(Number);
+    const months = Array.from({ length: 6 }, (_, i) => new Date(Date.UTC(year, month - 6 + i, 1)).toISOString().slice(0, 7));
+    const products = new Map<string, string>();
+    for (const row of rows) { const order = orders.get(String(row.order_id)); if (row.product_id) products.set(String(row.product_id), order?.product_name ?? ""); }
+    const { data: links } = await supabase.from("review_links").select("created_at, opened_at, emailed_at").eq("org_id", orgOf(req)).gte("created_at", new Date(range.fromMs).toISOString());
+    res.json({
+      kpis: {
+        total: { value: now.total, change: pctChange(now.total, prev.total) }, photo: { value: now.photo, change: pctChange(now.photo, prev.photo) },
+        video: { value: now.video, change: pctChange(now.video, prev.video) }, rating: { value: now.rating, rated: now.rated },
+        reviewers: { value: now.reviewers, change: pctChange(now.reviewers, prev.reviewers) }, fromLink: now.fromLink
+      },
+      counts: {
+        all: rows.length, pending: rows.filter((row: any) => row.status === "pending").length, approved: rows.filter((row: any) => row.status === "approved").length,
+        rejected: rows.filter((row: any) => row.status === "rejected" || row.status === "changes_requested").length
+      },
+      monthly: months.map((m) => ({ month: m, reviews: rows.filter((row: any) => lagosMonth(at(row)) === m).length })),
+      products: [...products].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name)),
+      links: { made: (links ?? []).length, opened: (links ?? []).filter((row: any) => row.opened_at).length, emailed: (links ?? []).filter((row: any) => row.emailed_at).length }
+    });
+  } catch (error) { sendError(res, error, "Could not load the review numbers."); }
+});
+
+/** Featured: shown first. Only approved reviews the customer allowed for marketing. */
+router.post("/:id/feature", async (req, res) => {
+  try {
+    requireApprover(req);
+    const row = await loadReview(req);
+    const on = req.body?.featured !== false;
+    if (on && (row.status !== "approved" || !row.marketing_ok)) throw fail(422, "Only an approved review the customer allowed for marketing can be featured.");
+    const { error } = await supabase.from("customer_reviews").update({ featured: on, updated_at: new Date().toISOString() }).eq("id", row.id);
+    if (error) throw error;
+    await logEvent(row, req, { action: on ? "featured" : "unfeatured" });
+    res.json({ ok: true, featured: on });
+  } catch (error) { sendError(res, error, "Could not change it."); }
+});
+
+const appBase = () => (process.env.FRONTEND_URL ?? "").split(",")[0]?.trim().replace(/\/+$/, "") || "http://localhost:5173";
+const reviewUrl = (token: string) => `${appBase()}/#/review/${token}`;
+
+/** The order's personal review link, made the first time it is asked for. */
+async function linkFor(order: any) {
+  const { data: found } = await supabase.from("review_links").select("*").eq("order_id", order.id).maybeSingle();
+  if (found) return found;
+  const { data, error } = await supabase.from("review_links").insert({ org_id: order.org_id ?? null, branch_id: order.branch_id, order_id: order.id, token: randomBytes(18).toString("base64url") }).select("*").single();
+  if (error) {
+    if (String(error.code) === "23505") { const { data: again } = await supabase.from("review_links").select("*").eq("order_id", order.id).single(); return again; }
+    throw error;
+  }
+  return data;
+}
+
+/** Copy the link (the order's own rep, or an approver) to send on WhatsApp. */
+router.post("/links", async (req, res) => {
+  try {
+    const orderId = String(req.body?.orderId ?? "").slice(0, 80);
+    const { data: order, error } = await supabase.from("orders").select("id, org_id, branch_id, status, assigned_rep_id").eq("org_id", orgOf(req)).eq("id", orderId)
+      .neq("launch_stage", silentFilterFor(scopeOf(req).role)).maybeSingle();
+    if (error) throw error;
+    if (!order) throw fail(404, "That order was not found.");
+    if (!canApproveMedia(realRole(req)) && order.assigned_rep_id !== req.user!.id) throw fail(403, "You can only get review links for your own orders.");
+    if (order.status !== "Delivered") throw fail(422, "A review link is for a delivered order.");
+    const link = await linkFor(order);
+    await supabase.from("review_links").update({ copied_at: new Date().toISOString() }).eq("id", link.id);
+    res.json({ url: reviewUrl(link.token) });
+  } catch (error) { sendError(res, error, "Could not make the review link."); }
+});
+
+/** Delivered orders without a review yet (Review Request tab). */
+router.get("/requests", async (req, res) => {
+  try {
+    requireApprover(req);
+    const since = new Date(Date.now() - 60 * DAY).toISOString().slice(0, 10);
+    const { data: orders, error } = await supabase.from("orders").select("id, customer, phone, email, product_name, delivered_date, assigned_rep_id")
+      .eq("org_id", orgOf(req)).eq("status", "Delivered").neq("launch_stage", silentFilterFor(scopeOf(req).role)).gte("delivered_date", since)
+      .order("delivered_date", { ascending: false }).limit(300);
+    if (error) throw error;
+    const ids = (orders ?? []).map((row: any) => String(row.id));
+    const reviewed = new Set<string>(), links = new Map<string, any>();
+    for (const part of chunk(ids)) {
+      const [{ data: reviews }, { data: linkRows }] = await Promise.all([
+        supabase.from("customer_reviews").select("order_id").in("order_id", part).in("status", ["pending", "approved"]),
+        supabase.from("review_links").select("order_id, opened_at, emailed_at, email_count, copied_at").in("order_id", part)
+      ]);
+      for (const row of reviews ?? []) reviewed.add(String(row.order_id));
+      for (const row of linkRows ?? []) links.set(String(row.order_id), row);
+    }
+    res.json({
+      orders: (orders ?? []).filter((row: any) => !reviewed.has(String(row.id))).map((row: any) => {
+        const link = links.get(String(row.id));
+        return {
+          id: String(row.id), customer: row.customer ?? "", phone: row.phone ?? "", hasEmail: !!String(row.email ?? "").includes("@"), productName: row.product_name ?? "",
+          deliveredOn: dayOf(row.delivered_date), emailedAt: link?.emailed_at ?? null, openedAt: link?.opened_at ?? null, copiedAt: link?.copied_at ?? null
+        };
+      })
+    });
+  } catch (error) { sendError(res, error, "Could not load the orders to ask."); }
+});
+
+function requestDesign(brand: string, product: string, url: string): EmailDesign {
+  return {
+    version: 1, template: "review_request", touched: true,
+    styles: { fontFamily: "Inter, Arial, sans-serif", brandColor: "#5B3FD9", accentColor: "#FFC107", textColor: "#1F2937", backgroundColor: "#F4F1FE", contentColor: "#FFFFFF", radius: 16 } as any,
+    blocks: [
+      { id: blockId(), type: "header", brand, tagline: "", align: "center" },
+      { id: blockId(), type: "cover", title: "How's Your Order? 😊", subtitle: `We'd love to hear how ${product || "your order"} is working for you. It takes one minute.`, imageUrl: "", emoji: "⭐⭐⭐⭐⭐", buttonText: "Leave a Review →", buttonLink: url, buttonTone: "purple", tone: "sky" },
+      { id: blockId(), type: "text", text: "Hi {{First Name}}, add a few words, and a photo or video if you like. Thank you for helping other customers choose.", size: 15, align: "center", color: "", bold: false },
+      { id: blockId(), type: "footer", text: "Pay on Delivery | Delivered to Your Door" }
+    ]
+  };
+}
+
+/** Email the review link to customers who gave an email (never to someone who unsubscribed). */
+router.post("/requests/email", async (req, res) => {
+  try {
+    requireApprover(req);
+    const orderIds = (Array.isArray(req.body?.orderIds) ? req.body.orderIds : []).map(String).slice(0, 100);
+    if (!orderIds.length) throw fail(400, "Pick the orders to ask.");
+    const sender = await marketingSender(orgOf(req));
+    if (!sender.ready) throw fail(422, sender.reason ?? "Email is not set up.");
+    const { data: orders, error } = await supabase.from("orders").select("id, org_id, branch_id, customer, email, product_name, status")
+      .eq("org_id", orgOf(req)).in("id", orderIds).neq("launch_stage", silentFilterFor(scopeOf(req).role));
+    if (error) throw error;
+    const result = { sent: 0, noEmail: 0, unsubscribed: 0, failed: 0 };
+    for (const order of orders ?? []) {
+      const email = String(order.email ?? "").trim().toLowerCase();
+      if (order.status !== "Delivered" || !email.includes("@")) { result.noEmail += 1; continue; }
+      const { data: contact } = await supabase.from("email_contacts").select("status").eq("org_id", orgOf(req)).eq("email", email).limit(1).maybeSingle();
+      if (contact && ["unsubscribed", "bounced"].includes(String(contact.status))) { result.unsubscribed += 1; continue; }
+      const link = await linkFor(order);
+      const design = requestDesign(sender.fromName, order.product_name ?? "", reviewUrl(link.token));
+      const firstName = String(order.customer ?? "").trim().split(/\s+/)[0] ?? "";
+      try {
+        await sendMarketingEmail(orgOf(req), { to: { email, name: order.customer || undefined }, subject: `How's your order, ${firstName || "there"}?`,
+          html: renderEmailHtml(design, { firstName, brand: sender.fromName }), text: renderEmailText(design, { firstName }) });
+        await supabase.from("review_links").update({ emailed_at: new Date().toISOString(), email_count: Number(link.email_count ?? 0) + 1 }).eq("id", link.id);
+        result.sent += 1;
+      } catch (sendFail) {
+        console.warn("[customer-reviews] review request email failed", (sendFail as Error).message);
+        result.failed += 1;
+      }
+    }
+    res.json(result);
+  } catch (error) { sendError(res, error, "Could not send the review requests."); }
+});
+
+
 router.get("/:id", async (req, res) => {
   try {
     const row = await loadReview(req);
@@ -476,8 +666,9 @@ router.post("/:id/approve", async (req, res) => {
     if (!REVIEW_LEVELS.includes(level)) throw fail(400, "Choose what to approve it as.");
     const { data: files } = await supabase.from("product_media").select("kind, review_part").eq("review_id", row.id);
     const content = (files ?? []).filter((file: any) => (file.review_part ?? "content") === "content");
-    // Every review stands on the customer's WhatsApp screenshot (Bright, 7 Nov 2026).
-    if (!(files ?? []).some((file: any) => file.review_part === "proof" && file.kind === "image")) {
+    // Every review stands on the customer's WhatsApp screenshot (Bright, 7 Nov 2026),
+    // except one the customer sent themselves through their review link.
+    if (row.source !== "customer" && !(files ?? []).some((file: any) => file.review_part === "proof" && file.kind === "image")) {
       throw fail(422, `${NEEDS_SCREENSHOT} Ask the rep to fix it.`);
     }
     if (!levelsFor(row.review_type, content.some((file: any) => file.kind === "video"), content.some((file: any) => file.kind === "image")).includes(level)) {

@@ -86,7 +86,7 @@ const mapSettings = (row: any): CatalogSettings => row ? {
   defaultLifestyleImageUrl: row.default_lifestyle_image_url ?? null, updatedAt: row.updated_at ?? null
 } : { ...DEFAULT_SETTINGS };
 
-async function readSettings(orgId: string, branchId: string | null): Promise<CatalogSettings> {
+export async function readSettings(orgId: string, branchId: string | null): Promise<CatalogSettings> {
   if (!branchId) return { ...DEFAULT_SETTINGS };
   const { data } = await supabase.from("product_catalog_settings").select("*").eq("org_id", orgId).eq("branch_id", branchId).maybeSingle();
   return mapSettings(data);
@@ -339,10 +339,60 @@ export async function approveRow(row: any, reviewer: Request | null) {
   return updated;
 }
 
-const CompleteSchema = z.object({
+export const CompleteSchema = z.object({
   posterDataUrl: z.string().max(4_000_000).optional(),
   durationSeconds: z.number().min(0).max(36000).optional()
 });
+
+/**
+ * The checks every held file goes through, from a rep or (Reviews & UGC) a
+ * customer's review link: real photo or video, within the size limit, and a
+ * clean redrawn copy of a photo. Throws in plain words; returns the row's update.
+ */
+export async function checkHeldFile(row: any, settings: CatalogSettings, extra: { posterDataUrl?: string; durationSeconds?: number }) {
+  const parsed = { data: extra };
+  const { head, total } = await readHoldingStart(row.holding_path);
+  const realType = sniffMediaType(head);
+  if (!realType) throw fail(422, "This file is not a real photo or video, so it was refused and deleted.");
+  const kind = kindOf(realType);
+  if (kind !== row.kind) throw fail(422, "The file inside does not match what was sent, so it was refused and deleted.");
+  const maxBytes = (kind === "image" ? settings.maxImageMb : settings.maxVideoMb) * 1024 * 1024;
+  if (total > maxBytes) throw fail(413, kind === "image" ? `Photos must be ${settings.maxImageMb} MB or smaller.` : `Videos must be ${settings.maxVideoMb} MB or smaller.`);
+
+  const patch: Record<string, unknown> = { mime: realType, size_bytes: total, scan: scanRecord(realType, total, maxBytes, kind === "image") };
+  // The same file sent again shows up in the Customer Reviews checks: a
+  // photo's own bytes, or a video's start and size (videos are too big to read).
+  patch.fingerprint = createHash("sha256").update(head).update(String(total)).digest("hex");
+  if (kind === "image") {
+    const { data: blob, error } = await supabase.storage.from(HOLD).download(row.holding_path);
+    if (error || !blob) throw fail(422, "The file did not arrive. Try sending it again.");
+    const original = Buffer.from(await blob.arrayBuffer());
+    patch.fingerprint = createHash("sha256").update(original).digest("hex");
+    const main = await cleanImage(original, IMAGE_MAX_EDGE, 82).catch(() => { throw fail(422, "This photo could not be opened, so it was refused and deleted."); });
+    const thumb = await cleanImage(main.data, THUMB_EDGE, 72);
+    const mainPath = `${row.org_id}/${row.id}/main.webp`;
+    const thumbPath = `${row.org_id}/${row.id}/thumb.webp`;
+    await putHolding(mainPath, main.data, "image/webp");
+    await putHolding(thumbPath, thumb.data, "image/webp");
+    await removeFiles(HOLD, [row.holding_path]);
+    Object.assign(patch, { holding_path: mainPath, holding_thumb_path: thumbPath, width: main.width, height: main.height, size_bytes: main.data.length, mime: "image/webp" });
+  } else {
+    // The video is kept as sent: re-encoding 100 MB clips needs far more
+    // memory than the server has. It is only ever served as a video.
+    const poster = parsed.data.posterDataUrl?.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/);
+    if (poster) {
+      const thumb = await cleanImage(Buffer.from(poster[2], "base64"), THUMB_EDGE, 72).catch(() => null);
+      if (thumb) {
+        const thumbPath = `${row.org_id}/${row.id}/thumb.webp`;
+        await putHolding(thumbPath, thumb.data, "image/webp");
+        Object.assign(patch, { holding_thumb_path: thumbPath, width: thumb.width, height: thumb.height });
+      }
+    }
+    if (parsed.data.durationSeconds !== undefined) patch.duration_seconds = Math.round(parsed.data.durationSeconds * 10) / 10;
+  }
+
+  return patch;
+}
 
 router.post("/:id/complete", async (req, res) => {
   const orgId = orgOf(req);
@@ -358,45 +408,8 @@ router.post("/:id/complete", async (req, res) => {
     const parsed = CompleteSchema.safeParse(req.body ?? {});
     if (!parsed.success) throw fail(400, "The file details were not valid. Try sending it again.");
     const settings = await readSettings(orgId, row.branch_id ?? branchOf(req));
-    const { head, total } = await readHoldingStart(row.holding_path);
-    const realType = sniffMediaType(head);
-    if (!realType) throw fail(422, "This file is not a real photo or video, so it was refused and deleted.");
-    const kind = kindOf(realType);
-    if (kind !== row.kind) throw fail(422, "The file inside does not match what was sent, so it was refused and deleted.");
-    const maxBytes = (kind === "image" ? settings.maxImageMb : settings.maxVideoMb) * 1024 * 1024;
-    if (total > maxBytes) throw fail(413, kind === "image" ? `Photos must be ${settings.maxImageMb} MB or smaller.` : `Videos must be ${settings.maxVideoMb} MB or smaller.`);
-
-    const patch: Record<string, unknown> = { mime: realType, size_bytes: total, scan: scanRecord(realType, total, maxBytes, kind === "image") };
-    // The same file sent again shows up in the Customer Reviews checks: a
-    // photo's own bytes, or a video's start and size (videos are too big to read).
-    patch.fingerprint = createHash("sha256").update(head).update(String(total)).digest("hex");
-    if (kind === "image") {
-      const { data: blob, error } = await supabase.storage.from(HOLD).download(row.holding_path);
-      if (error || !blob) throw fail(422, "The file did not arrive. Try sending it again.");
-      const original = Buffer.from(await blob.arrayBuffer());
-      patch.fingerprint = createHash("sha256").update(original).digest("hex");
-      const main = await cleanImage(original, IMAGE_MAX_EDGE, 82).catch(() => { throw fail(422, "This photo could not be opened, so it was refused and deleted."); });
-      const thumb = await cleanImage(main.data, THUMB_EDGE, 72);
-      const mainPath = `${orgId}/${row.id}/main.webp`;
-      const thumbPath = `${orgId}/${row.id}/thumb.webp`;
-      await putHolding(mainPath, main.data, "image/webp");
-      await putHolding(thumbPath, thumb.data, "image/webp");
-      await removeFiles(HOLD, [row.holding_path]);
-      Object.assign(patch, { holding_path: mainPath, holding_thumb_path: thumbPath, width: main.width, height: main.height, size_bytes: main.data.length, mime: "image/webp" });
-    } else {
-      // The video is kept as sent: re-encoding 100 MB clips needs far more
-      // memory than the server has. It is only ever served as a video.
-      const poster = parsed.data.posterDataUrl?.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/);
-      if (poster) {
-        const thumb = await cleanImage(Buffer.from(poster[2], "base64"), THUMB_EDGE, 72).catch(() => null);
-        if (thumb) {
-          const thumbPath = `${orgId}/${row.id}/thumb.webp`;
-          await putHolding(thumbPath, thumb.data, "image/webp");
-          Object.assign(patch, { holding_thumb_path: thumbPath, width: thumb.width, height: thumb.height });
-        }
-      }
-      if (parsed.data.durationSeconds !== undefined) patch.duration_seconds = Math.round(parsed.data.durationSeconds * 10) / 10;
-    }
+    const patch = await checkHeldFile(row, settings, parsed.data);
+    const kind = row.kind as "image" | "video";
 
     // A customer review's files wait for the review's own approval, whoever sent them.
     const goesStraightIn = !row.review_id && (canApproveMedia(roleOf(req)) || !settings.requireApproval);
