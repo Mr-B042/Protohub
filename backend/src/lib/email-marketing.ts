@@ -12,6 +12,7 @@ import {
   type OrderLite, type Person, type SavedSegment, type SegmentRule
 } from "./email-marketing-rules.js";
 import { collectLinks, normalizeDesign, renderEmailHtml, renderEmailText, type EmailDesign } from "./email-render.js";
+import { inSendWindow } from "./email-automation-rules.js";
 
 /**
  * Email Marketing (Bright, 8 Nov 2026), part 1: the email list, saved
@@ -409,14 +410,20 @@ export async function overviewFor(orgId: string, branchId: string) {
   });
 
   const { data: campaignRows, error } = await supabase.from("email_campaigns").select(CAMPAIGN_LIST_COLUMNS)
-    .eq("org_id", orgId).eq("branch_id", branchId).neq("status", "archived").order("created_at", { ascending: false }).limit(200);
+    .eq("org_id", orgId).eq("branch_id", branchId).is("automation_id", null).neq("status", "archived").order("created_at", { ascending: false }).limit(200);
   if (error) throw new Error(error.message);
   const rows = campaignRows ?? [];
   const stats = await statsFor(rows.map((row) => row.id));
   const today = lagosDay(nowMs);
-  const automations = rows.filter((row) => (row.delivery as Delivery)?.type === "automation");
-  const presetState = (preset: string) => {
-    const match = automations.filter((row) => (row.delivery as Delivery)?.automation?.preset === preset);
+  // Automations (their own page since 8 Nov 2026): the ready-made flows' state and the busiest ones.
+  const { data: autoRows, error: autoError } = await supabase.from("email_automations").select("id, name, status, template, trigger").eq("org_id", orgId).eq("branch_id", branchId).neq("status", "archived");
+  if (autoError) throw new Error(autoError.message);
+  const autos = autoRows ?? [];
+  const autoRuns = autos.length ? await fetchAllRowsOrThrow<any>(() => supabase.from("email_automation_runs").select("automation_id").in("automation_id", autos.map((row) => row.id))) : [];
+  const reached = new Map<string, number>();
+  for (const run of autoRuns) reached.set(run.automation_id, (reached.get(run.automation_id) ?? 0) + 1);
+  const templateState = (template: string) => {
+    const match = autos.filter((row) => row.template === template);
     return match.some((row) => row.status === "active") ? "active" : match.length ? "paused" : "off";
   };
   const sender = await marketingSender(orgId);
@@ -440,14 +447,14 @@ export async function overviewFor(orgId: string, branchId: string) {
     funnel: { total: buyersList.length, engaged, repeat: now.repeat, highValue },
     segments,
     automations: [
-      { key: "post_purchase", name: "Post-Purchase", hint: "Thank, guide, upsell", state: presetState("post_purchase") },
-      { key: "cart_recovery", name: "Browse Abandonment", hint: "Remind & recover", state: presetState("cart_recovery") },
-      { key: "win_back", name: "Win-Back", hint: "Re-engage inactive", state: presetState("win_back") },
-      { key: "vip", name: "VIP Customers", hint: "Exclusive offers", state: automations.some((row) => row.status === "active" && (row.audience as AudienceChoice)?.source === "segment" && world.segmentRows.find((s) => s.id === (row.audience as AudienceChoice).segmentId)?.builtIn === "vip") ? "active" : "off" },
-      { key: "birthday", name: "Birthday", hint: "Personalised reward", state: "unavailable" }
+      { key: "post_purchase", name: "Post-Purchase", hint: "Thank, guide, upsell", state: templateState("post_purchase") },
+      { key: "cart_abandonment", name: "Browse Abandonment", hint: "Remind & recover", state: templateState("cart_abandonment") },
+      { key: "win_back", name: "Win-Back", hint: "Re-engage inactive", state: templateState("win_back") },
+      { key: "vip_loyalty", name: "VIP Customers", hint: "Exclusive offers", state: templateState("vip_loyalty") },
+      { key: "birthday", name: "Birthday", hint: "Personalised reward", state: templateState("birthday") }
     ],
-    topAutomations: automations
-      .map((row) => ({ id: row.id, name: row.name, status: row.status, customers: (stats.get(row.id) ?? EMPTY_STATS).sent, trigger: (row.delivery as Delivery)?.automation?.trigger ?? null }))
+    topAutomations: autos
+      .map((row) => ({ id: row.id, name: row.name, status: row.status, customers: reached.get(row.id) ?? 0, trigger: String((row.trigger as any)?.kind ?? "") || null }))
       .sort((a, b) => (a.status === "active" ? 0 : 1) - (b.status === "active" ? 0 : 1) || b.customers - a.customers)
       .slice(0, 4),
     recent: rows.filter((row) => (row.delivery as Delivery)?.type !== "automation").slice(0, 8).map((row) => ({ ...campaignDto(row, stats.get(row.id)), audienceLabel: audienceLabel(row.audience as AudienceChoice, world.segments) })),
@@ -788,13 +795,16 @@ export function renderForSend(campaign: any, design: EmailDesign, send: { token:
   // Each link goes through the click counter, numbered by its place in the
   // run's link list (the same page twice counts as one link).
   const links: RunLink[] = Array.isArray(campaign.links) && campaign.links.length ? campaign.links : campaignLinks(campaign, design);
+  // An automation with "Track Performance" off: plain links and no open picture.
+  const track = campaign.options?.track !== false;
   const linkFor = (url: string) => {
     const index = links.findIndex((link) => (link.original ?? link.url) === url);
+    if (!track) return index >= 0 ? links[index].url : url;
     return index >= 0 ? trackingUrl("c", send.token, index) : url;
   };
   const opts = {
     firstName: send.name, preheader: campaign.preheader || undefined, brand: sender.brand, footerNote: sender.footerNote,
-    unsubscribeUrl: trackingUrl("u", send.token), openPixelUrl: trackingUrl("o", send.token), plain: !!campaign.options?.plainText, nowMs
+    unsubscribeUrl: trackingUrl("u", send.token), openPixelUrl: track ? trackingUrl("o", send.token) : undefined, plain: !!campaign.options?.plainText, nowMs
   };
   const html = renderEmailHtml(design, { ...opts, linkFor });
   const text = renderEmailText(design, { ...opts, linkFor });
@@ -935,6 +945,9 @@ async function sendQueued(nowMs: number) {
     const campaign = campaigns.get(row.campaign_id);
     // Paused or cancelled campaigns keep their queue until resumed.
     if (!campaign || !["sending", "active"].includes(campaign.status)) continue;
+    // Automation emails wait for their sending hours (a daily limit can push one past them).
+    const window = campaign.options?.sendWindow;
+    if (window?.on && Array.isArray(window.days) && !inSendWindow(nowMs, window)) continue;
     const contact = row.contact_id ? await supabase.from("email_contacts").select("status").eq("id", row.contact_id).maybeSingle() : { data: { status: "subscribed" } };
     if (contact.data?.status !== "subscribed") {
       await supabase.from("email_campaign_sends").update({ status: "skipped", error: "Unsubscribed before sending" }).eq("id", row.id).eq("status", "queued");
@@ -944,7 +957,7 @@ async function sendQueued(nowMs: number) {
     if (!design) continue;
     const { html, text, subject } = renderForSend(campaign, design, row, { brand: sender.brand, footerNote: footers.get(row.branch_id) ?? "" }, nowMs);
     try {
-      const result = await sendMarketingEmail(row.org_id, { to: { email: row.email, name: row.name || undefined }, subject, html, text, unsubscribeUrl: trackingUrl("u", row.token), customId: row.token });
+      const result = await sendMarketingEmail(row.org_id, { to: { email: row.email, name: row.name || undefined }, subject, html, text, unsubscribeUrl: trackingUrl("u", row.token), customId: row.token, replyTo: campaign.options?.replyTo || undefined });
       const at = new Date().toISOString();
       await supabase.from("email_campaign_sends").update({ status: "sent", sent_at: at, provider: result.provider, provider_message_id: result.messageId ?? null, error: null }).eq("id", row.id);
       if (row.contact_id) await supabase.from("email_contacts").update({ last_emailed_at: at }).eq("id", row.contact_id);
@@ -1037,7 +1050,7 @@ export async function runEmailMarketingJob() {
     for (const campaign of due ?? []) {
       try { await startRun(campaign, nowMs); } catch (error) { logger.error("email campaign start failed", { campaignId: campaign.id, error: (error as Error).message }); }
     }
-    const { data: active } = await supabase.from("email_campaigns").select("*").eq("status", "active").limit(50);
+    const { data: active } = await supabase.from("email_campaigns").select("*").eq("status", "active").is("automation_id", null).limit(50);
     for (const campaign of active ?? []) {
       try { await feedAutomation(campaign, nowMs); } catch (error) { logger.error("email automation feed failed", { campaignId: campaign.id, error: (error as Error).message }); }
     }

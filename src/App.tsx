@@ -450,6 +450,7 @@ const EMAIL_MARKETING_SECTIONS: EmSection[] = ["overview", "campaigns", "automat
 const EMAIL_MARKETING_SUBNAV: Array<{ key: EmSection; label: string; icon: typeof LayoutPanelTop }> = [
   { key: "overview", label: "Overview", icon: LayoutPanelTop },
   { key: "campaigns", label: "Campaigns", icon: Mail },
+  { key: "automations", label: "Automations", icon: Zap },
   { key: "audience", label: "Audience & Segments", icon: Users }
 ];
 

@@ -48,6 +48,8 @@ const BRANCH_TABLES = new Set([
   "email_tags", "email_contact_tags", "email_custom_fields", "email_imports",
   // Audience Health (migration 335).
   "email_health_issues", "email_health_snapshots",
+  // Automations (migration 336).
+  "email_automations", "email_automation_runs",
 
   // Team Challenges (migration 287): every row carries a non-null branch_id.
   "team_challenges", "team_challenge_teams", "team_challenge_entries", "team_challenge_payouts", "team_challenge_log",
