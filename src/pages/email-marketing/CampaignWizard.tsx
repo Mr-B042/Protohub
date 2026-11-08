@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ArrowLeft, ArrowRight, Check, Info, Mail, Rocket, Save, Send, X } from "lucide-react";
 import { emailMarketingApi, type EmDesigner, type EmPlanning, type EmPreview } from "../../lib/api";
-import { collectLinks, safeUrl } from "../../lib/email-render";
+import { collectLinks, fillProduct, safeUrl, type EmailDesign } from "../../lib/email-render";
 import { TestSendModal } from "./CampaignsPage";
 import StepAudience from "./StepAudience";
 import StepDesign from "./StepDesign";
@@ -19,10 +19,14 @@ import { audienceSummary, draftFromCampaign, goalLabel, newDraft, sendSummary, s
 
 const STEPS = ["Campaign Setup", "Choose Audience", "Design Email", "Schedule & Automate", "Review & Launch"];
 
-export default function CampaignWizard({ campaignId, preset, segmentId, onClose, onDone, onToast }: {
+/** Templates tab: a template to start the campaign from. */
+export type StartTemplate = { key: string; name: string; design: EmailDesign; subject: string; preheader: string };
+
+export default function CampaignWizard({ campaignId, preset, segmentId, template, onClose, onDone, onToast }: {
   campaignId?: string | null;
   preset?: string;
   segmentId?: string;
+  template?: StartTemplate | null;
   onClose: () => void;
   onDone: (message: string) => void;
   onToast: (message: string) => void;
@@ -55,13 +59,19 @@ export default function CampaignWizard({ campaignId, preset, segmentId, onClose,
           const { campaign } = await emailMarketingApi.campaign(campaignId);
           if (live) setDraft(draftFromCampaign(campaign));
         } else {
-          setDraft(newDraft(loaded, preset, segmentId));
+          const base = newDraft(loaded, preset, segmentId);
+          const productName = loaded.products.find((row) => row.id === base.productId)?.name ?? "";
+          setDraft(template ? {
+            ...base, name: template.name, subject: fillProduct(template.subject, productName), preheader: template.preheader,
+            design: { ...template.design, touched: true }, templateKey: template.key
+          } : base);
         }
       } catch (err) {
         if (live) setError((err as Error).message || "Could not open the campaign builder.");
       }
     })();
     return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the template is read once, when the window opens.
   }, [campaignId, preset, segmentId, loadDesigner]);
 
   const change = (patch: Partial<Draft>) => {

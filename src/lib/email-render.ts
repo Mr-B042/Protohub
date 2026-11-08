@@ -166,6 +166,111 @@ export function splitBadge(text: string) {
   return { top: match[1].trim(), main: match[2].replace(/\s+/g, ""), bottom: match[3].trim() };
 }
 
+// ── Ready-made templates (Templates tab, Bright's design, 8 Nov 2026) ─
+
+export const TEMPLATE_CATEGORIES = [
+  { key: "promotional", label: "Promotional" }, { key: "retention", label: "Retention & Win-Back" }, { key: "post_purchase", label: "Post-Purchase" },
+  { key: "cart", label: "Abandoned Cart" }, { key: "welcome", label: "Welcome Series" }, { key: "launch", label: "Product Launch" },
+  { key: "reengagement", label: "Re-Engagement" }, { key: "announcement", label: "Announcements" }, { key: "seasonal", label: "Seasonal & Event" }
+] as const;
+/** What a template is mainly for (Create Custom Template, step 1). */
+export const TEMPLATE_TYPES = ["promotional", "retention", "transactional", "announcement"] as const;
+export type TemplateType = (typeof TEMPLATE_TYPES)[number];
+
+type Starter = { key: string; name: string; hint: string; category: string; type: TemplateType; layout: string; subject: string; preheader: string; build: (f: CampaignFields) => EmailBlock[] };
+
+const B = {
+  header: (f: CampaignFields): EmailBlock => ({ id: blockId(), type: "header", brand: f.brand || "Our Store", tagline: "Smart Home • Kitchen • Lifestyle", align: "center" }),
+  hero: (f: CampaignFields, title: string, highlight: string, subtitle: string, button: string): EmailBlock => ({
+    id: blockId(), type: "hero", title, highlight, subtitle, badgeTop: "", badgeMain: "", badgeBottom: "", imageUrl: f.productImage, buttonText: `${button} →`, buttonLink: f.productLink
+  }),
+  text: (text: string, size = 15, bold = false, align: Align = "left"): EmailBlock => ({ id: blockId(), type: "text", text, size, align, color: "", bold }),
+  button: (f: CampaignFields, text: string, link = f.productLink): EmailBlock => ({
+    id: blockId(), type: "button", text: `${text} →`, link, style: "primary", size: "large", align: "center", color: DEFAULT_STYLES.accentColor, textColor: "#1F1147", radius: 10
+  }),
+  product: (f: CampaignFields, button: string): EmailBlock => ({ id: blockId(), type: "product", productId: f.productId, name: f.productName || "Your product", price: f.productPrice, imageUrl: f.productImage, buttonText: button, link: f.productLink }),
+  features: (items: Array<[string, string]>): EmailBlock => ({ id: blockId(), type: "features", items: items.map(([icon, title]) => ({ icon, title })) }),
+  divider: (): EmailBlock => ({ id: blockId(), type: "divider", color: "#E9E5FB", thickness: 1 }),
+  timer: (label: string): EmailBlock => ({ id: blockId(), type: "timer", endsAt: new Date(Date.now() + 3 * 86_400_000).toISOString(), label }),
+  social: (): EmailBlock => ({ id: blockId(), type: "social", facebook: "", instagram: "", tiktok: "", whatsapp: "", align: "center" }),
+  footer: (): EmailBlock => ({ id: blockId(), type: "footer", text: "Pay on Delivery | Delivered to Your Door" })
+};
+const POD: Array<[string, string]> = [["cash", "Pay On Delivery"], ["truck", "Delivered To Your Door"], ["check", "Easy To Order"]];
+const product = (f: CampaignFields) => f.productName.trim() || "our best seller";
+
+/** Ready-made emails. Words make no claims: no made-up discounts, numbers or reviews. */
+export const STARTER_TEMPLATES: Starter[] = [
+  { key: "promo_offer", name: "Promotional Offer", hint: "Drive more sales with a special offer", category: "promotional", type: "promotional", layout: "product_promo",
+    subject: "A special offer on {{Product}}, just for you", preheader: "Order today and pay when it arrives",
+    build: (f) => [B.header(f), B.hero(f, "Don't", "Miss Out!", `A special offer on ${product(f)}`, "Shop Now"), B.text("Hi {{First Name}},", 20, true), B.text(`We picked ${product(f)} for you. Order today and pay when it arrives at your door.`), B.features(POD), B.button(f, "Shop Now"), B.footer()] },
+  { key: "product_collection", name: "Product Collection", hint: "Show a product with its price and a button", category: "promotional", type: "promotional", layout: "product_collection",
+    subject: "Picked for your home, {{First Name}}", preheader: "See what customers are ordering",
+    build: (f) => [B.header(f), B.text("Hi {{First Name}},", 20, true), B.text("Here is something we think your home will love."), B.product(f, "Order Now"), B.features(POD), B.button(f, "See More"), B.footer()] },
+  { key: "flash_sale", name: "Flash Sale", hint: "A time-limited deal with a countdown", category: "promotional", type: "promotional", layout: "product_promo",
+    subject: "Ends soon: {{Product}}", preheader: "Order before the clock runs out",
+    build: (f) => [B.header(f), B.hero(f, "Ends", "Soon!", `Don't miss ${product(f)}`, "Order Now"), B.timer("Offer ends in"), B.text("Hi {{First Name}}, order before the timer runs out. You pay when it arrives."), B.button(f, "Order Now"), B.footer()] },
+  { key: "win_back_offer", name: "Win-Back Campaign", hint: "Re-engage inactive customers and bring them back", category: "retention", type: "retention", layout: "win_back",
+    subject: "We miss you, {{First Name}}", preheader: "Here is a reason to come back",
+    build: (f) => [B.header(f), B.hero(f, "We Miss", "You!", "It's been a while. Here is a reason to come back:", "Come Back"), B.text("Hi {{First Name}},", 20, true), B.text("We have not seen you in a while. Take a look at what is new and order whenever you are ready. You pay on delivery."), B.button(f, "Come Back"), B.footer()] },
+  { key: "order_confirmation", name: "Order Confirmation", hint: "Confirm the order and set delivery expectations", category: "post_purchase", type: "transactional", layout: "order_confirmation",
+    subject: "Thanks for your order, {{First Name}}!", preheader: "Your order is confirmed",
+    build: (f) => [B.header(f), B.text("✅", 40, false, "center"), B.text("Thanks for Your Order!", 26, true, "center"), B.text("Your order is confirmed and being prepared. Our team will call you before delivery. You pay when it arrives.", 15, false, "center"), B.features([["check", "Order Confirmed"], ["truck", "On Its Way Soon"], ["cash", "Pay On Delivery"]]), B.footer()] },
+  { key: "review_request", name: "Review Request", hint: "Ask how the product is working for them", category: "post_purchase", type: "retention", layout: "simple_message",
+    subject: "How's your {{Product}}, {{First Name}}?", preheader: "We'd love to hear how it's going",
+    build: (f) => [B.header(f), B.text("How's Your Product? 😊", 26, true, "center"), B.text(`Hi {{First Name}}, how is ${product(f)} working for you? Just reply to this email and tell us. We read every reply.`, 15, false, "center"), B.text("⭐⭐⭐⭐⭐", 28, false, "center"), B.footer()] },
+  { key: "usage_tips", name: "Tips & How-To", hint: "Share tips for getting the most from the product", category: "post_purchase", type: "retention", layout: "educational",
+    subject: "Get the most from your {{Product}}", preheader: "A few quick tips",
+    build: (f) => [B.header(f), B.text("💡", 40, false, "center"), B.text("A Few Quick Tips", 24, true, "center"), B.text(`Hi {{First Name}}, here are a few ways to get the most from ${product(f)}:`), B.text("✅ Tip one: write your first tip here.\n✅ Tip two: write your second tip here.\n✅ Tip three: write your third tip here."), B.button(f, "See The Product"), B.footer()] },
+  { key: "cart_reminder", name: "Abandoned Cart Reminder", hint: "Remind customers about the order they didn't finish", category: "cart", type: "retention", layout: "abandoned_cart",
+    subject: "You left something behind, {{First Name}}", preheader: "Your order is one step away",
+    build: (f) => [B.header(f), B.hero(f, "You Left Something", "in Your Cart!", "Your order is waiting:", "Complete Order"), B.text("Hi {{First Name}}, you started an order but did not finish. It only takes a minute, and you pay when it arrives."), B.button(f, "Complete Order"), B.footer()] },
+  { key: "welcome_email", name: "Welcome Email", hint: "Start a great relationship with new subscribers", category: "welcome", type: "retention", layout: "welcome",
+    subject: "Welcome, {{First Name}}! 🎉", preheader: "Thanks for joining us",
+    build: (f) => [B.header(f), B.text("👋", 40, false, "center"), B.text(`Welcome to ${f.brand || "our store"}!`, 26, true, "center"), B.text("Thanks for joining us. You'll hear about new arrivals, offers and useful tips first.", 15, false, "center"), B.features(POD), B.button(f, "Start Shopping"), B.social(), B.footer()] },
+  { key: "new_arrival", name: "Product Announcement", hint: "Tell customers about a new product or restock", category: "launch", type: "announcement", layout: "product_promo",
+    subject: "Just arrived: {{Product}}", preheader: "Be the first to get it",
+    build: (f) => [B.header(f), B.hero(f, "New", "Arrival! ✨", `Be the first to get ${product(f)}`, "Explore Now"), B.text("Hi {{First Name}}, we just added something new and we think you'll like it. Order today and pay on delivery."), B.button(f, "Explore Now"), B.footer()] },
+  { key: "still_interested", name: "Re-Engagement", hint: "Reconnect with customers who have gone quiet", category: "reengagement", type: "retention", layout: "win_back",
+    subject: "Still interested, {{First Name}}?", preheader: "It's still available",
+    build: (f) => [B.header(f), B.hero(f, "Still", "Interested? 🤔", `${product(f)} is still available`, "Shop Now"), B.text("Hi {{First Name}}, the item you looked at is still available. Order today and pay when it arrives."), B.button(f, "Shop Now"), B.footer()] },
+  { key: "announcement", name: "Announcement", hint: "Share important news or updates", category: "announcement", type: "announcement", layout: "announcement",
+    subject: "An update for you, {{First Name}}", preheader: "News we wanted you to hear first",
+    build: (f) => [B.header(f), B.text("📣", 40, false, "center"), B.text("Some Good News", 26, true, "center"), B.text("Hi {{First Name}}, we have an update we wanted you to hear first. Write your news here.", 15, false, "center"), B.button(f, "Read More"), B.footer()] },
+  { key: "newsletter", name: "Newsletter", hint: "Send updates, stories and picks", category: "announcement", type: "announcement", layout: "newsletter",
+    subject: "What's new this month, {{First Name}}", preheader: "Updates, tips and picks for you",
+    build: (f) => [B.header(f), B.text("This Month", 26, true, "center"), B.text("Hi {{First Name}}, here's what's new:"), B.text("📰 Story one: write it here."), B.divider(), B.product(f, "See It"), B.divider(), B.text("💡 A quick tip: write it here."), B.social(), B.footer()] },
+  { key: "seasonal_sale", name: "Seasonal Sale", hint: "Holiday and event offers with a countdown", category: "seasonal", type: "promotional", layout: "product_promo",
+    subject: "Our holiday picks for you, {{First Name}}", preheader: "For a short time only",
+    build: (f) => [B.header(f), B.hero(f, "Holiday", "Specials 🎁", `Make the season easier with ${product(f)}`, "Shop The Sale"), B.timer("Sale ends in"), B.text("Hi {{First Name}}, order before the season ends. You pay on delivery."), B.button(f, "Shop The Sale"), B.footer()] },
+  { key: "blank", name: "Blank Template", hint: "Start from an empty layout and design freely", category: "promotional", type: "promotional", layout: "blank",
+    subject: "", preheader: "", build: (f) => [B.header(f), B.text("Write your message here."), B.footer()] }
+];
+
+/** The layouts in Create Custom Template, step 2 (the ready-made emails, by shape). */
+export const STARTER_LAYOUTS = [
+  { key: "promo_offer", name: "Product Promotion", hint: "Showcase a product with image, benefits, and a button" },
+  { key: "product_collection", name: "Product Collection", hint: "A product card with price and a button" },
+  { key: "win_back_offer", name: "Win-Back", hint: "Re-engage inactive customers" },
+  { key: "welcome_email", name: "Welcome Email", hint: "Welcome new subscribers and set expectations" },
+  { key: "order_confirmation", name: "Order Confirmation", hint: "Confirm an order and share next steps" },
+  { key: "cart_reminder", name: "Abandoned Cart", hint: "Remind customers about items left behind" },
+  { key: "announcement", name: "Announcement", hint: "Share important updates, restocks, or news" },
+  { key: "usage_tips", name: "Educational / Tips", hint: "Share tips, how-tos, or product usage guides" },
+  { key: "newsletter", name: "Newsletter", hint: "Send updates, stories, and picks" },
+  { key: "flash_sale", name: "Flash Sale", hint: "A deal with a countdown timer" },
+  { key: "review_request", name: "Review Request", hint: "Ask how the product is going" },
+  { key: "blank", name: "Blank Template", hint: "Start from an empty layout and design freely" }
+];
+
+/** A ready-made template's design, filled with the business's brand and product. */
+export function buildStarterDesign(key: string, fields: CampaignFields): EmailDesign {
+  const starter = STARTER_TEMPLATES.find((row) => row.key === key) ?? STARTER_TEMPLATES[0];
+  return { version: 1, template: `starter:${starter.key}`, touched: true, styles: { ...DEFAULT_STYLES }, blocks: starter.build(fields) };
+}
+
+/** {{Product}} in a template's subject becomes the product's name. */
+export const fillProduct = (text: string, productName: string) => text.replace(/\{\{\s*product\s*\}\}/gi, productName.trim() || "our best seller");
+
 /** A fresh block from the left-hand list. */
 export function newBlock(type: EmailBlockType, fields?: Partial<CampaignFields>): EmailBlock {
   const id = blockId();

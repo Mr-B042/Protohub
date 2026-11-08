@@ -5520,6 +5520,8 @@ export type EmCampaignInput = {
   name: string; goal: string; subject: string; subjectB: string; preheader: string; offerType: string; productId: string | null;
   offer: { on: boolean; title: string; benefit: string }; audience: EmAudience; design: EmailDesign; delivery: EmDelivery; options: EmOptions; thumbnailUrl: string | null;
   offerId: string | null;
+  /** The template it started from ("starter:<key>" or "saved:<id>"). */
+  templateKey?: string | null;
 };
 export type EmReport = {
   campaign: EmCampaign;
@@ -5688,6 +5690,14 @@ export type EmOffersPage = {
 export type EmOfferInput = Pick<EmOffer, "name" | "description" | "type" | "benefit" | "value" | "code" | "minOrder" | "productIds" | "minDelivered" | "startsAt" | "endsAt" | "usageLimit" | "perCustomerLimit"> & { status: "draft" | "active" };
 export type EmOfferUsageRow = { at: string; offer: string; code: string; orderId: string; customer: string; phone: string; status: string; before: number; discount: number; paid: number };
 
+// Email Marketing › Templates (Bright's design, 8 Nov 2026).
+export type EmTemplateType = "promotional" | "retention" | "transactional" | "announcement";
+export type EmTemplate = {
+  id: string; name: string; design: EmailDesign; category: string; description: string; templateType: EmTemplateType; visibility: "team" | "private";
+  subject: string; preheader: string; status: "draft" | "ready"; createdBy: string | null; createdByName: string; createdAt: string; updatedAt: string;
+};
+export type EmTemplateInput = Pick<EmTemplate, "name" | "category" | "description" | "templateType" | "visibility" | "subject" | "preheader" | "status" | "design">;
+
 // Email Marketing › Loyalty & Rewards (Bright's design 55, 8 Nov 2026).
 export type EmLoyaltyLevel = { key: string; name: string; minSpend: number; multiplier: number; welcomeVoucher: number; monthlyVoucher: number; perks: string[] };
 export type EmLoyaltyProgram = {
@@ -5802,5 +5812,9 @@ export const emailMarketingApi = {
   loyaltyRewardAction: (id: string, action: "pause" | "resume" | "archive" | "unarchive") => post<{ ok: boolean }>(`${EM}/loyalty/rewards/${encodeURIComponent(id)}/${action}`, {}),
   deleteLoyaltyReward: (id: string) => del<{ ok: boolean }>(`${EM}/loyalty/rewards/${encodeURIComponent(id)}`),
   saveLoyaltySettings: (body: { minOrder: number }) => patch<{ ok: boolean }>(`${EM}/loyalty/settings`, body),
-  adjustLoyaltyPoints: (body: { key: string; points: number; reason: string }) => post<{ ok: boolean }>(`${EM}/loyalty/adjust`, body)
+  adjustLoyaltyPoints: (body: { key: string; points: number; reason: string }) => post<{ ok: boolean }>(`${EM}/loyalty/adjust`, body),
+  templates: () => get<{ saved: EmTemplate[]; usage: Array<{ key: string; count: number }> }>(`${EM}/templates`),
+  createTemplate: (body: EmTemplateInput) => post<{ id: string }>(`${EM}/templates`, body),
+  updateTemplate: (id: string, body: EmTemplateInput) => patch<{ id: string }>(`${EM}/templates/${encodeURIComponent(id)}`, body),
+  deleteTemplate: (id: string) => del<{ ok: boolean }>(`${EM}/templates/${encodeURIComponent(id)}`)
 };
