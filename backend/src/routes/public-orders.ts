@@ -11,6 +11,7 @@
 // Org context derives from the package's product (same pattern as public-carts).
 
 import { nigerianPhoneForSave } from "../lib/ng-phone.js";
+import { cleanEmail } from "../lib/email-clean.js";
 import { Router, type Request } from "express";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import rateLimit from "express-rate-limit";
@@ -67,7 +68,9 @@ const PublicOrderSchema = z.object({
   customer:     z.string().min(1).max(120),
   phone:        z.string().min(1).max(40),
   whatsapp:     z.string().regex(/^\d{7,15}$/).optional(),
-  email:        z.string().email().max(254).optional().or(z.literal("")),
+  // A mistyped email ("ada@gmail") is dropped, never a reason to refuse the
+  // order (Bright, 8 Nov 2026: the Email box goes on for email marketing).
+  email:        z.string().max(500).optional().transform((value) => cleanEmail(value) ?? ""),
   address:      z.string().max(500).optional(),
   city:         z.string().max(80).optional(),
   state:        z.string().max(80).optional().transform(tidyOrderState),

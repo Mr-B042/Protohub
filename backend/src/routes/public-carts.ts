@@ -1,4 +1,5 @@
 import { nigerianPhoneForSave } from "../lib/ng-phone.js";
+import { cleanEmail } from "../lib/email-clean.js";
 import { Router } from "express";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import rateLimit from "express-rate-limit";
@@ -25,7 +26,8 @@ const CaptureSchema = z.object({
   customer:     z.string().max(120).optional(),
   phone:        z.string().min(1).max(40),
   whatsapp:     z.string().max(40).optional(),
-  email:        z.string().email().optional().or(z.literal("")),
+  // A mistyped email is dropped, never a reason to lose the cart (8 Nov 2026).
+  email:        z.string().max(500).optional().transform((value) => cleanEmail(value) ?? ""),
   address:      z.string().max(500).optional(),
   city:         z.string().max(80).optional(),
   state:        z.string().max(80).optional(),
