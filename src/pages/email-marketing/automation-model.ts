@@ -212,6 +212,19 @@ export const TEMPLATES: TemplateDef[] = [
     ]
   },
   {
+    // Loyalty & Rewards (design 55): a day after each delivery, once the order's points are in.
+    key: "loyalty_update", name: "Loyalty Points Update", hint: "Tell members their points, level and voucher after each delivery", icon: "star", goal: "loyalty", useCase: "loyalty", stage: "retention",
+    trigger: { kind: "order_delivered", productId: null }, settings: { exit: { onUnsubscribe: true, onPurchase: false, afterDays: null } },
+    flow: (d) => [
+      wait(1),
+      email("Email 1: Your Points", starterEmail(d, "appreciation", {
+        title: "You Have", highlight: "{{Points}} Points",
+        body: "Thank you for your order. Your level: {{Level}}. Your points: {{Points}}. Voucher waiting: {{Voucher}}. It comes off your next order by itself, with nothing to type. Next level: {{Next Level}}.",
+        button: "Order Again"
+      }, "{{first name}}, you have {{Points}} points", "Your level: {{Level}}"))
+    ]
+  },
+  {
     key: "repeat_buyer", name: "Repeat Buyer Journey", hint: "Drive the second and third purchase", icon: "refresh", goal: "repeat", useCase: "repeat", stage: "retention",
     trigger: { kind: "order_delivered", productId: null }, settings: { exit: { onUnsubscribe: true, onPurchase: true, afterDays: null } },
     flow: (d) => [
@@ -247,7 +260,7 @@ export const USE_CASES = [
 ];
 
 /** Part 1's names for the three ready-made flows (Overview, Audience Health). */
-export const LEGACY_TEMPLATE: Record<string, string> = { post_purchase: "post_purchase", win_back: "win_back", cart_recovery: "cart_abandonment" };
+export const LEGACY_TEMPLATE: Record<string, string> = { post_purchase: "post_purchase", win_back: "win_back", cart_recovery: "cart_abandonment", loyalty: "loyalty_update" };
 
 export function draftFromTemplate(key: string | null, designer: EmDesigner | null): AutoDraft {
   const template = TEMPLATES.find((row) => row.key === key) ?? null;

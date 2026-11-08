@@ -11,7 +11,7 @@ import {
   type AudienceChoice, type CampaignResult, type CartLite, type Condition, type ContactLite, type CustomerStats, type Delivery, type MatchContext,
   type OrderLite, type Person, type SavedSegment, type SegmentRule
 } from "./email-marketing-rules.js";
-import { collectLinks, normalizeDesign, renderEmailHtml, renderEmailText, type EmailDesign } from "./email-render.js";
+import { applyTags, collectLinks, normalizeDesign, renderEmailHtml, renderEmailText, usesLoyaltyTags, type EmailDesign, type RenderOptions } from "./email-render.js";
 import { inSendWindow } from "./email-automation-rules.js";
 
 /**
@@ -791,7 +791,7 @@ type RunLink = { label: string; original?: string; url: string };
 type SenderContext = { brand: string; footerNote: string };
 
 /** One email's HTML and text, links routed through the click counter. */
-export function renderForSend(campaign: any, design: EmailDesign, send: { token: string; name: string; variant: string }, sender: SenderContext, nowMs: number) {
+export function renderForSend(campaign: any, design: EmailDesign, send: { token: string; name: string; variant: string; loyalty?: RenderOptions["loyalty"] | null }, sender: SenderContext, nowMs: number) {
   // Each link goes through the click counter, numbered by its place in the
   // run's link list (the same page twice counts as one link).
   const links: RunLink[] = Array.isArray(campaign.links) && campaign.links.length ? campaign.links : campaignLinks(campaign, design);
@@ -804,11 +804,12 @@ export function renderForSend(campaign: any, design: EmailDesign, send: { token:
   };
   const opts = {
     firstName: send.name, preheader: campaign.preheader || undefined, brand: sender.brand, footerNote: sender.footerNote,
-    unsubscribeUrl: trackingUrl("u", send.token), openPixelUrl: track ? trackingUrl("o", send.token) : undefined, plain: !!campaign.options?.plainText, nowMs
+    unsubscribeUrl: trackingUrl("u", send.token), openPixelUrl: track ? trackingUrl("o", send.token) : undefined, plain: !!campaign.options?.plainText, nowMs,
+    loyalty: send.loyalty ?? undefined
   };
   const html = renderEmailHtml(design, { ...opts, linkFor });
   const text = renderEmailText(design, { ...opts, linkFor });
-  const subject = (send.variant === "b" && campaign.subject_b?.trim() ? campaign.subject_b : campaign.subject).replace(/\{\{\s*first\s*name\s*\}\}/gi, (send.name || "").split(/\s+/)[0] || "there");
+  const subject = applyTags(send.variant === "b" && campaign.subject_b?.trim() ? campaign.subject_b : campaign.subject, { firstName: send.name, loyalty: opts.loyalty });
   return { html, text, subject };
 }
 
@@ -913,7 +914,7 @@ const PER_MINUTE = 40;
 
 /** Sends what is queued, within each branch's daily limit. */
 async function sendQueued(nowMs: number) {
-  const queued = await supabase.from("email_campaign_sends").select("id, org_id, branch_id, campaign_id, contact_id, email, name, variant, token")
+  const queued = await supabase.from("email_campaign_sends").select("id, org_id, branch_id, campaign_id, contact_id, email, name, phone, variant, token")
     .eq("status", "queued").order("queued_at", { ascending: true }).limit(PER_MINUTE);
   if (queued.error) throw new Error(queued.error.message);
   const rows = queued.data ?? [];
@@ -955,7 +956,11 @@ async function sendQueued(nowMs: number) {
     }
     const design = normalizeDesign(campaign.design);
     if (!design) continue;
-    const { html, text, subject } = renderForSend(campaign, design, row, { brand: sender.brand, footerNote: footers.get(row.branch_id) ?? "" }, nowMs);
+    // {{Points}}, {{Level}}, {{Voucher}}: the member is looked up only when the email uses one (Loyalty & Rewards).
+    const loyalty = usesLoyaltyTags(`${JSON.stringify(campaign.design)} ${campaign.subject ?? ""} ${campaign.subject_b ?? ""}`)
+      ? await (await import("./loyalty.js")).loyaltyTagsFor(row.org_id, row.branch_id, row.phone)
+      : null;
+    const { html, text, subject } = renderForSend(campaign, design, { ...row, loyalty }, { brand: sender.brand, footerNote: footers.get(row.branch_id) ?? "" }, nowMs);
     try {
       const result = await sendMarketingEmail(row.org_id, { to: { email: row.email, name: row.name || undefined }, subject, html, text, unsubscribeUrl: trackingUrl("u", row.token), customId: row.token, replyTo: campaign.options?.replyTo || undefined });
       const at = new Date().toISOString();

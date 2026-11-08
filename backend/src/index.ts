@@ -78,6 +78,7 @@ import emailTrackingRoutes from "./routes/email-tracking.js";
 import { runEmailMarketingJob } from "./lib/email-marketing.js";
 import { runDailyHealth } from "./lib/email-health.js";
 import { runAutomations } from "./lib/email-automations.js";
+import { runLoyaltyEarning } from "./lib/loyalty.js";
 import { runBotHealthChecks, runLowStock, runReports, runRetries, runSendOutSoon, runTelegramCleanup } from "./lib/telegram.js";
 import fineAppealRoutes from "./routes/fine-appeals.js";
 import orderReceiptRoutes from "./routes/order-receipts.js";
@@ -865,6 +866,13 @@ cron.schedule("40 7 * * *", async () => {
     logger.error("cron: email audience health crashed", { error: (e as Error).message });
   }
 }, { timezone: "Africa/Lagos" });
+// Loyalty & Rewards (Bright, 8 Nov 2026): points for newly delivered orders,
+// once each, while a points program is on (lib/loyalty.ts).
+cron.schedule("3-59/10 * * * *", async () => {
+  try { await runLoyaltyEarning(); } catch (e) {
+    logger.error("cron: loyalty points crashed", { error: (e as Error).message });
+  }
+});
 
 // ── Campaigns with no order for 3 days (Bright, 5 Nov 2026) ──
 // After the :13 ad spend sync, four times a day (Lagos): one alert per

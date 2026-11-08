@@ -50,6 +50,8 @@ const BRANCH_TABLES = new Set([
   "email_health_issues", "email_health_snapshots",
   // Automations (migration 336).
   "email_automations", "email_automation_runs",
+  // Loyalty & Rewards (migration 339): every row is written with its branch.
+  "loyalty_programs", "loyalty_rewards", "loyalty_settings", "loyalty_earnings", "loyalty_redemptions", "loyalty_adjustments",
 
   // Team Challenges (migration 287): every row carries a non-null branch_id.
   "team_challenges", "team_challenge_teams", "team_challenge_entries", "team_challenge_payouts", "team_challenge_log",

@@ -197,6 +197,8 @@ export type RenderOptions = {
   firstName?: string;
   /** Keep {{First Name}} visible, as the editor does. */
   showTags?: boolean;
+  /** {{Points}}, {{Level}}, {{Voucher}}, {{Next Level}} (Loyalty & Rewards); missing = not a member yet. */
+  loyalty?: { points: string; level: string; voucher: string; nextLevel: string };
   preheader?: string;
   /** Every link goes through this (click counting); the label names the link. */
   linkFor?: (url: string, label: string) => string;
@@ -236,8 +238,17 @@ export function safeUrl(url: string) {
 export function applyTags(text: string, opts: RenderOptions) {
   if (opts.showTags) return text;
   const first = (opts.firstName ?? "").trim().split(/\s+/)[0] ?? "";
-  return text.replace(/\{\{\s*first\s*name\s*\}\}/gi, first || "there");
+  const loyalty = opts.loyalty ?? { points: "0", level: "Member", voucher: "no voucher yet", nextLevel: "" };
+  return text
+    .replace(/\{\{\s*first\s*name\s*\}\}/gi, first || "there")
+    .replace(/\{\{\s*points\s*\}\}/gi, loyalty.points)
+    .replace(/\{\{\s*level\s*\}\}/gi, loyalty.level)
+    .replace(/\{\{\s*voucher\s*\}\}/gi, loyalty.voucher)
+    .replace(/\{\{\s*next\s*level\s*\}\}/gi, loyalty.nextLevel);
 }
+
+/** True when an email uses a loyalty tag (only then is the member looked up at send time). */
+export const usesLoyaltyTags = (text: string) => /\{\{\s*(points|level|voucher|next\s*level)\s*\}\}/i.test(text);
 
 /** Every link in the design, in render order (the click counter numbers them). */
 export function collectLinks(design: EmailDesign): Array<{ url: string; label: string }> {

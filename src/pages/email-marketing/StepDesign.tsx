@@ -428,7 +428,7 @@ function BlockEditor({ block, designer, draft, update, onToast }: { block: Email
       return (
         <>
           {text("text", block.text, "Text", true, 2000)}
-          <p className="m-0 text-[11.5px] text-gray-500">{"{{First Name}}"} becomes each customer's first name.</p>
+          <p className="m-0 text-[11.5px] text-gray-500">{"{{First Name}}"} becomes each customer's first name. {"{{Points}}"}, {"{{Level}}"}, {"{{Voucher}}"} and {"{{Next Level}}"} show their loyalty points, level, the voucher waiting for them and how far the next level is.</p>
           <RangeField label="Size" value={block.size} min={11} max={40} onChange={(size) => update({ size }, "size")} />
           <AlignField value={block.align} onChange={(align) => update({ align })} />
           <ColourField label="Colour (blank = normal text)" value={block.color} onChange={(color) => update({ color }, "color")} />
