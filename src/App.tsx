@@ -447,13 +447,14 @@ const PDA_RESTRICTED_STATUSES = [
 // Email Marketing (Bright, 8 Nov 2026), part 1: the pages built so far. The
 // later parts (Automations, Customer Journey, Coupons & Offers, Loyalty &
 // Rewards, Reviews & UGC) join this list as they are built.
-const EMAIL_MARKETING_SECTIONS: EmSection[] = ["overview", "campaigns", "automations", "audience", "health", "templates", "forms", "journey", "offers", "analytics", "settings"];
+const EMAIL_MARKETING_SECTIONS: EmSection[] = ["overview", "campaigns", "automations", "audience", "health", "templates", "forms", "journey", "offers", "loyalty", "analytics", "settings"];
 const EMAIL_MARKETING_SUBNAV: Array<{ key: EmSection; label: string; icon: typeof LayoutPanelTop }> = [
   { key: "overview", label: "Overview", icon: LayoutPanelTop },
   { key: "campaigns", label: "Campaigns", icon: Mail },
   { key: "automations", label: "Automations", icon: Zap },
   { key: "journey", label: "Customer Journey", icon: Route },
   { key: "offers", label: "Coupons & Offers", icon: Tag },
+  { key: "loyalty", label: "Loyalty & Rewards", icon: Star },
   { key: "audience", label: "Audience & Segments", icon: Users }
 ];
 
@@ -1446,6 +1447,11 @@ type TrackedOrder = {
   amountRemitted?: number;
   remittanceStatus?: "Pending" | "Partial" | "Paid";
   remittanceReason?: string;
+  /** What came off the order (Coupons & Offers, Loyalty & Rewards, 8 Nov 2026); amount is already the lower one. */
+  offerCode?: string | null;
+  offerDiscount?: number | null;
+  loyaltyDiscount?: number | null;
+  loyaltyNote?: string | null;
   remittanceVarianceStatus?: "pending" | "approved" | "rejected" | null;
   remittanceVarianceReason?: string | null;
   remittanceVarianceReviewedAt?: string | null;
@@ -103463,6 +103469,31 @@ ${waybillLineItems(w).length > 1
 	                    </div>
 	                  );
 	                })()}
+	                {/* What came off this order: a loyalty voucher (it comes off by
+	                    itself, so the rep tells the customer on the call) or an email
+	                    offer. The amount is already the lower one. */}
+	                {(Number(selectedOrder.loyaltyDiscount) > 0 || Number(selectedOrder.offerDiscount) > 0) && (
+	                  <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 dark:border-violet-500/30 dark:bg-violet-500/10">
+	                    <div className="flex items-start gap-2.5">
+	                      <span className="text-lg leading-none">🎁</span>
+	                      <div className="min-w-0 flex-1">
+	                        {Number(selectedOrder.loyaltyDiscount) > 0 && (
+	                          <>
+	                            <p className="m-0 text-sm font-bold text-violet-900 dark:text-violet-200">Loyalty voucher: tell the customer</p>
+	                            <p className="mt-0.5 mb-0 text-xs text-gray-700 dark:text-gray-300">
+	                              {selectedOrder.loyaltyNote || `${formatProductMoney(Number(selectedOrder.loyaltyDiscount), selectedOrder.currency)} off`}. They&apos;re saving this as a loyal customer; the order amount already has it taken off.
+	                            </p>
+	                          </>
+	                        )}
+	                        {Number(selectedOrder.offerDiscount) > 0 && (
+	                          <p className={`${Number(selectedOrder.loyaltyDiscount) > 0 ? "mt-1.5" : "m-0"} mb-0 text-xs text-gray-700 dark:text-gray-300`}>
+	                            <b className="text-violet-900 dark:text-violet-200">Email offer{selectedOrder.offerCode ? ` ${selectedOrder.offerCode}` : ""}:</b> {formatProductMoney(Number(selectedOrder.offerDiscount), selectedOrder.currency)} off. The order amount already has it taken off.
+	                          </p>
+	                        )}
+	                      </div>
+	                    </div>
+	                  </div>
+	                )}
 	                {selectedOrder.remittanceVarianceStatus && selectedOrder.remittanceVarianceStatus !== "approved" && (
 	                  <div className={`rounded-xl border px-4 py-3 ${selectedOrder.remittanceVarianceStatus === "pending" ? "border-amber-300 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/10" : "border-rose-300 bg-rose-50 dark:border-rose-500/30 dark:bg-rose-500/10"}`}>
 	                    <div className="flex items-start gap-2.5">

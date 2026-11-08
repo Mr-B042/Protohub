@@ -7,6 +7,7 @@ import AutomationsPage from "./AutomationsPage";
 import AutomationWizard from "./AutomationWizard";
 import JourneysPage from "./JourneysPage";
 import OffersPage from "./OffersPage";
+import LoyaltyPage from "./LoyaltyPage";
 import { LEGACY_TEMPLATE } from "./automation-model";
 import CampaignWizard from "./CampaignWizard";
 import CampaignsPage from "./CampaignsPage";
@@ -49,7 +50,7 @@ export default function EmailMarketingPage({ section, onNavigate, onToast, onOpe
   const [report, setReport] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [audienceModal, setAudienceModal] = useState<"add-subscribers" | "create-segment" | null>(null);
-  const withHeader = section !== "campaigns" && section !== "audience" && section !== "health" && section !== "automations" && section !== "journey" && section !== "offers";
+  const withHeader = section !== "campaigns" && section !== "audience" && section !== "health" && section !== "automations" && section !== "journey" && section !== "offers" && section !== "loyalty";
   /** Part 1's ready-made flow names open the Automations window on the matching template. */
   const openAutomation = (preset?: string) => setAutoWizard({ template: preset ? LEGACY_TEMPLATE[preset] ?? preset : "post_purchase" });
 
@@ -130,6 +131,7 @@ export default function EmailMarketingPage({ section, onNavigate, onToast, onOpe
       )}
       {section === "automations" && <AutomationsPage onOpenWizard={setAutoWizard} onToast={onToast} refreshKey={refreshKey} />}
       {section === "offers" && <OffersPage onToast={onToast} refreshKey={refreshKey} />}
+      {section === "loyalty" && <LoyaltyPage onToast={onToast} refreshKey={refreshKey} onCreateAutomation={(template) => setAutoWizard({ template })} />}
       {section === "journey" && <JourneysPage onOpenWizard={(options) => setAutoWizard({ ...options, noun: "Journey" })} onToast={onToast} refreshKey={refreshKey} />}
       {section === "templates" && <WaitingForDesign title="Templates" note="Templates are in the Design Email step of Create Campaign for now (View All, and Save this design as a template). This tab is waiting for its design." />}
       {section === "forms" && <WaitingForDesign title="Forms & Lead Capture" note="Today the list grows from the order form's Email box. This tab is waiting for its design." />}

@@ -5688,6 +5688,43 @@ export type EmOffersPage = {
 export type EmOfferInput = Pick<EmOffer, "name" | "description" | "type" | "benefit" | "value" | "code" | "minOrder" | "productIds" | "minDelivered" | "startsAt" | "endsAt" | "usageLimit" | "perCustomerLimit"> & { status: "draft" | "active" };
 export type EmOfferUsageRow = { at: string; offer: string; code: string; orderId: string; customer: string; phone: string; status: string; before: number; discount: number; paid: number };
 
+// Email Marketing › Loyalty & Rewards (Bright's design 55, 8 Nov 2026).
+export type EmLoyaltyLevel = { key: string; name: string; minSpend: number; multiplier: number; welcomeVoucher: number; monthlyVoucher: number; perks: string[] };
+export type EmLoyaltyProgram = {
+  id: string; type: "points" | "tier"; name: string; description: string; status: "draft" | "active" | "paused" | "archived"; state: "draft" | "live" | "paused" | "archived" | "ended";
+  startsAt: string | null; endsAt: string | null; rate: number; productIds: string[]; levels: EmLoyaltyLevel[];
+  members: number; redemptions: number; revenue: number; revenueChange: number | null; used: boolean;
+};
+export type EmLoyaltyVoucher = { kind: "reward" | "welcome" | "monthly"; value: number; points: number; label: string };
+export type EmLoyaltyMember = {
+  key: string; name: string; phone: string; levelKey: string; levelName: string; delivered: number; spend: number; balance: number; earned: number; spent: number; adjusted: number;
+  voucher: EmLoyaltyVoucher | null; vouchers: number; firstAt: string; lastAt: string;
+};
+export type EmLoyaltyReward = { id: string; name: string; points: number; value: number; status: "active" | "paused" | "archived"; used: number; allTime: number; canAfford: number };
+type Kpi = { value: number; change: number | null };
+export type EmLoyaltyPage = {
+  live: { points: boolean; tier: boolean };
+  kpis: { members: Kpi; active: Kpi & { percent: number | null }; pointsIssued: Kpi; redeemed: Kpi; repeatRate: { value: number | null; changePp: number | null } };
+  programs: EmLoyaltyProgram[];
+  levels: Array<EmLoyaltyLevel & { members: number; spendText: string; lines: string[] }>;
+  impact: { revenue: Kpi; repeatRate: { value: number | null; changePp: number | null }; monthly: Array<{ month: string; revenue: number }> };
+  rewards: EmLoyaltyReward[];
+  settings: { minOrder: number };
+  analytics: {
+    months: Array<{ month: string; issued: number; used: number; repeatRate: number | null; voucherNaira: number }>;
+    top: EmLoyaltyMember[]; outstanding: number; withVoucher: number;
+  };
+};
+export type EmLoyaltyLedgerRow = {
+  id: string; at: string; kind: "earned" | "used" | "added" | "removed"; key: string; name: string; phone: string; points: number; discount: number; orderId: string | null; note: string; counted: boolean;
+};
+export type EmLoyaltyProgramInput = {
+  type: "points" | "tier"; name: string; description: string; rate: number; productIds: string[]; levels: EmLoyaltyLevel[]; endsAt: string | null; status: "draft" | "active";
+};
+export type EmLoyaltyRewardInput = { name: string; points: number; value: number; status: "active" | "paused" };
+const qs = (params: Record<string, string | number | boolean | undefined>) =>
+  Object.entries(params).filter(([, value]) => value !== undefined && value !== "" && value !== false).map(([key, value]) => `${key}=${encodeURIComponent(value === true ? "1" : String(value))}`).join("&");
+
 export const emailMarketingApi = {
   overview: () => get<EmOverview>(`${EM}/overview`),
   audience: () => get<EmAudiencePage>(`${EM}/audience`),
@@ -5748,5 +5785,22 @@ export const emailMarketingApi = {
   createOffer: (body: EmOfferInput) => post<{ id: string }>(`${EM}/offers`, body),
   updateOffer: (id: string, body: EmOfferInput) => patch<{ id: string }>(`${EM}/offers/${encodeURIComponent(id)}`, body),
   offerAction: (id: string, action: "launch" | "pause" | "resume" | "archive" | "unarchive") => post<{ ok: boolean }>(`${EM}/offers/${encodeURIComponent(id)}/${action}`, {}),
-  deleteOffer: (id: string) => del<{ ok: boolean }>(`${EM}/offers/${encodeURIComponent(id)}`)
+  deleteOffer: (id: string) => del<{ ok: boolean }>(`${EM}/offers/${encodeURIComponent(id)}`),
+  loyalty: (range: { from: string; to: string }) => get<EmLoyaltyPage>(`${EM}/loyalty?${qs({ from: range.from, to: range.to })}`),
+  loyaltyMembers: (q: { query?: string; level?: string; voucher?: boolean; sort?: string; page?: number; all?: boolean }) =>
+    get<{ total: number; page: number; pages: number; rows: EmLoyaltyMember[]; levels: Array<{ key: string; name: string; members: number }> }>(`${EM}/loyalty/members?${qs(q)}`),
+  loyaltyMember: (key: string) =>
+    get<{ member: EmLoyaltyMember & { next: { name: string; gap: number } | null; options: EmLoyaltyVoucher[] }; orders: Array<{ id: string; amount: number; deliveredAt: string }>; ledger: EmLoyaltyLedgerRow[] }>(`${EM}/loyalty/members/${encodeURIComponent(key)}`),
+  loyaltyTransactions: (q: { from: string; to: string; kind?: string; query?: string; page?: number; all?: boolean }) =>
+    get<{ summary: { earned: number; used: number; givenBack: number; adjusted: number }; total: number; page: number; pages: number; rows: EmLoyaltyLedgerRow[] }>(`${EM}/loyalty/transactions?${qs(q)}`),
+  createLoyaltyProgram: (body: EmLoyaltyProgramInput) => post<{ id: string }>(`${EM}/loyalty/programs`, body),
+  updateLoyaltyProgram: (id: string, body: EmLoyaltyProgramInput) => patch<{ id: string }>(`${EM}/loyalty/programs/${encodeURIComponent(id)}`, body),
+  loyaltyProgramAction: (id: string, action: "launch" | "pause" | "resume" | "archive" | "unarchive") => post<{ ok: boolean }>(`${EM}/loyalty/programs/${encodeURIComponent(id)}/${action}`, {}),
+  deleteLoyaltyProgram: (id: string) => del<{ ok: boolean }>(`${EM}/loyalty/programs/${encodeURIComponent(id)}`),
+  createLoyaltyReward: (body: EmLoyaltyRewardInput) => post<{ id: string }>(`${EM}/loyalty/rewards`, body),
+  updateLoyaltyReward: (id: string, body: EmLoyaltyRewardInput) => patch<{ id: string }>(`${EM}/loyalty/rewards/${encodeURIComponent(id)}`, body),
+  loyaltyRewardAction: (id: string, action: "pause" | "resume" | "archive" | "unarchive") => post<{ ok: boolean }>(`${EM}/loyalty/rewards/${encodeURIComponent(id)}/${action}`, {}),
+  deleteLoyaltyReward: (id: string) => del<{ ok: boolean }>(`${EM}/loyalty/rewards/${encodeURIComponent(id)}`),
+  saveLoyaltySettings: (body: { minOrder: number }) => patch<{ ok: boolean }>(`${EM}/loyalty/settings`, body),
+  adjustLoyaltyPoints: (body: { key: string; points: number; reason: string }) => post<{ ok: boolean }>(`${EM}/loyalty/adjust`, body)
 };

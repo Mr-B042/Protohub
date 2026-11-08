@@ -20,6 +20,9 @@ import {
 import { AUTOMATION_GOALS, STAGES } from "../lib/email-automation-rules.js";
 import { deleteOffer, offerRow, offerUsage, offersPage, saveOffer, setOfferStatus } from "../lib/email-offers.js";
 import { OFFER_TYPES as COUPON_OFFER_TYPES, benefitText, offerState } from "../lib/email-offers-rules.js";
+import {
+  adjustPoints, deleteProgram, deleteReward, loyaltyMembers, loyaltyPage, loyaltyTransactions, memberHistory, saveLoyaltySettings, saveProgram, saveReward, setProgramStatus, setRewardStatus
+} from "../lib/loyalty.js";
 
 /**
  * Email Marketing (Bright, 8 Nov 2026), part 1: Overview, Campaigns, the
@@ -900,6 +903,105 @@ router.post("/offers/:id/:action(launch|pause|resume|archive|unarchive)", async 
 router.delete("/offers/:id", async (req, res) => {
   try { await deleteOffer(orgOf(req), branchOf(req), offerId(req)); res.json({ ok: true }); }
   catch (error) { sendError(res, error, "Could not delete the offer."); }
+});
+
+// ── Loyalty & Rewards (Bright's design 55, 8 Nov 2026) ───────────────
+
+const programBody = z.object({
+  type: z.enum(["points", "tier"]),
+  name: z.string().trim().min(1, "Give the program a name.").max(80),
+  description: z.string().max(200).default(""),
+  rate: z.number().min(0.1, "Points per ₦1,000 must be at least 0.1.").max(100, "Keep it to 100 points per ₦1,000 or fewer.").default(1),
+  productIds: z.array(z.string().regex(UUID)).max(200).default([]),
+  levels: z.array(z.any()).max(5, "Keep it to 5 levels or fewer.").default([]),
+  endsAt: z.string().datetime({ offset: true }).nullable().default(null),
+  status: z.enum(["draft", "active"]).default("draft")
+});
+const rewardBody = z.object({
+  name: z.string().trim().min(1, "Give the reward a name.").max(60),
+  points: z.number().int("Points must be a whole number.").min(1, "A reward needs at least 1 point.").max(1_000_000),
+  value: z.number().min(1, "Enter how much naira comes off.").max(10_000_000),
+  status: z.enum(["active", "paused"]).default("active")
+});
+const adjustBody = z.object({
+  key: z.string().regex(/^\d{7,15}$/, "Member not found."),
+  points: z.number().int("Points must be a whole number.").refine((value) => value !== 0, "Enter the points to add or take away.")
+    .refine((value) => Math.abs(value) <= 100_000, "That is too many points at once."),
+  reason: z.string().trim().min(3, "Say why (3 letters or more).").max(200)
+});
+const loyaltyId = (req: Request, what: string) => {
+  const id = String(req.params.id ?? "");
+  if (!UUID.test(id)) throw new EmailMarketingError(404, `${what} not found.`);
+  return id;
+};
+const pageOf = (req: Request) => Math.max(1, Math.round(Number(req.query.page) || 1));
+const actionOf = (req: Request) => String((req.params as Record<string, string>).action);
+
+router.get("/loyalty", async (req, res) => {
+  try { res.json(await loyaltyPage(orgOf(req), branchOf(req), offerRange(req))); }
+  catch (error) { sendError(res, error, "Could not load Loyalty & Rewards."); }
+});
+router.get("/loyalty/members", async (req, res) => {
+  try {
+    res.json(await loyaltyMembers(orgOf(req), branchOf(req), {
+      query: String(req.query.query ?? "").slice(0, 80), level: String(req.query.level ?? "").slice(0, 24), voucher: req.query.voucher === "1",
+      sort: String(req.query.sort ?? "spend"), page: pageOf(req), all: req.query.all === "1"
+    }));
+  } catch (error) { sendError(res, error, "Could not load the members."); }
+});
+router.get("/loyalty/members/:key", async (req, res) => {
+  try {
+    const key = String(req.params.key ?? "");
+    if (!/^\d{7,15}$/.test(key)) throw new EmailMarketingError(404, "Member not found.");
+    res.json(await memberHistory(orgOf(req), branchOf(req), key));
+  } catch (error) { sendError(res, error, "Could not load the member."); }
+});
+router.get("/loyalty/transactions", async (req, res) => {
+  try {
+    res.json(await loyaltyTransactions(orgOf(req), branchOf(req), offerRange(req), {
+      kind: ["earned", "used", "adjusted"].includes(String(req.query.kind)) ? String(req.query.kind) : "", query: String(req.query.query ?? "").slice(0, 80), page: pageOf(req), all: req.query.all === "1"
+    }));
+  } catch (error) { sendError(res, error, "Could not load the points history."); }
+});
+router.post("/loyalty/programs", async (req, res) => {
+  try { res.status(201).json({ id: await saveProgram(orgOf(req), branchOf(req), { id: req.user!.id, name: req.user!.name }, null, programBody.parse(req.body)) }); }
+  catch (error) { offerError(res, error, "Could not save the program."); }
+});
+router.patch("/loyalty/programs/:id", async (req, res) => {
+  try { res.json({ id: await saveProgram(orgOf(req), branchOf(req), { id: req.user!.id, name: req.user!.name }, loyaltyId(req, "Program"), programBody.parse(req.body)) }); }
+  catch (error) { offerError(res, error, "Could not save the program."); }
+});
+router.post("/loyalty/programs/:id/:action(launch|pause|resume|archive|unarchive)", async (req, res) => {
+  try { await setProgramStatus(orgOf(req), branchOf(req), loyaltyId(req, "Program"), actionOf(req) as "launch" | "pause" | "resume" | "archive" | "unarchive"); res.json({ ok: true }); }
+  catch (error) { sendError(res, error, "Could not change the program."); }
+});
+router.delete("/loyalty/programs/:id", async (req, res) => {
+  try { await deleteProgram(orgOf(req), branchOf(req), loyaltyId(req, "Program")); res.json({ ok: true }); }
+  catch (error) { sendError(res, error, "Could not delete the program."); }
+});
+router.post("/loyalty/rewards", async (req, res) => {
+  try { res.status(201).json({ id: await saveReward(orgOf(req), branchOf(req), null, rewardBody.parse(req.body)) }); }
+  catch (error) { offerError(res, error, "Could not save the reward."); }
+});
+router.patch("/loyalty/rewards/:id", async (req, res) => {
+  try { res.json({ id: await saveReward(orgOf(req), branchOf(req), loyaltyId(req, "Reward"), rewardBody.parse(req.body)) }); }
+  catch (error) { offerError(res, error, "Could not save the reward."); }
+});
+router.post("/loyalty/rewards/:id/:action(pause|resume|archive|unarchive)", async (req, res) => {
+  try { await setRewardStatus(orgOf(req), branchOf(req), loyaltyId(req, "Reward"), actionOf(req) as "pause" | "resume" | "archive" | "unarchive"); res.json({ ok: true }); }
+  catch (error) { sendError(res, error, "Could not change the reward."); }
+});
+router.delete("/loyalty/rewards/:id", async (req, res) => {
+  try { await deleteReward(orgOf(req), branchOf(req), loyaltyId(req, "Reward")); res.json({ ok: true }); }
+  catch (error) { sendError(res, error, "Could not delete the reward."); }
+});
+router.patch("/loyalty/settings", async (req, res) => {
+  try { await saveLoyaltySettings(orgOf(req), branchOf(req), z.object({ minOrder: z.number().min(0).max(10_000_000) }).parse(req.body)); res.json({ ok: true }); }
+  catch (error) { offerError(res, error, "Could not save the settings."); }
+});
+router.post("/loyalty/adjust", async (req, res) => {
+  try { await adjustPoints(orgOf(req), branchOf(req), { id: req.user!.id, name: req.user!.name }, adjustBody.parse(req.body)); res.json({ ok: true }); }
+  catch (error) { offerError(res, error, "Could not change the points."); }
 });
 
 export default router;

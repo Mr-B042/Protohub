@@ -468,7 +468,9 @@ export type Delivery = {
 export const AUTOMATION_PRESETS: Record<string, { name: string; hint: string; trigger: "delivered" | "ordered" | "cart" | "inactive"; delayHours: number; inactiveDays?: number; exit: "none" | "purchased"; goal: string }> = {
   post_purchase: { name: "Post-Purchase Follow-Up", hint: "Thank you, usage tips, and upsell", trigger: "delivered", delayHours: 48, exit: "purchased", goal: "Increase repeat purchase" },
   win_back: { name: "Win-Back (Inactive Customers)", hint: "Re-engage customers after no purchase", trigger: "inactive", delayHours: 0, inactiveDays: 60, exit: "purchased", goal: "Bring them back" },
-  cart_recovery: { name: "Abandoned Cart Recovery", hint: "Remind customers to complete their order", trigger: "cart", delayHours: 1, exit: "purchased", goal: "Finish the order" }
+  cart_recovery: { name: "Abandoned Cart Recovery", hint: "Remind customers to complete their order", trigger: "cart", delayHours: 1, exit: "purchased", goal: "Finish the order" },
+  // A day after the delivery, so the order's points are in (Loyalty & Rewards gives them within 10 minutes).
+  loyalty: { name: "Loyalty Reward", hint: "Tell members their points, level and voucher", trigger: "delivered", delayHours: 24, exit: "none", goal: "Bring members back" }
 };
 
 /** The next send time after `afterMs` for a repeating campaign (null when it has ended). */

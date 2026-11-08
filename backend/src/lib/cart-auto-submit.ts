@@ -29,6 +29,7 @@ import { buildPackageComponentSnapshot } from "./order-inventory.js";
 import { AUTO_SUBMIT_GIVES_UP_MS } from "./cart-assignment.js";
 import { tidyOrderState } from "./order-state.js";
 import { applyEmailOffer, offerColumns, recordRedemption } from "./email-offers.js";
+import { applyLoyalty, loyaltyColumns, recordLoyaltyRedemption } from "./loyalty.js";
 
 const MIN_IDLE_MS = 2 * 60 * 1000;   // must be idle at least 2 min
 // give up after 15 min - shared with the cart hand-out, which takes over from here
@@ -224,7 +225,9 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     orgId, utmSource: capturePayload.utm_source ?? capturePayload.utmSource, utmContent: capturePayload.utm_content ?? capturePayload.utmContent,
     phone: customerPhone, productId: product.id, amount: amountBeforeOffer
   });
-  const amount = amountBeforeOffer - (emailOffer?.discount ?? 0);
+  // A returning loyalty member's voucher (Loyalty & Rewards, 8 Nov 2026), as on the order form. One discount per order.
+  const loyalty = emailOffer || mode === "cart" ? null : await applyLoyalty({ orgId, productId: product.id, phone: customerPhone, amount: amountBeforeOffer });
+  const amount = amountBeforeOffer - (emailOffer?.discount ?? 0) - (loyalty?.discount ?? 0);
 
   const orderPayload = {
     org_id:           orgId,
@@ -252,6 +255,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     utm_campaign:     capturePayload.utm_campaign ?? capturePayload.utmCampaign ?? null,
     utm_medium:       capturePayload.utm_medium ?? capturePayload.utmMedium ?? null,
     ...offerColumns(emailOffer),
+    ...loyaltyColumns(loyalty),
     embed_label:      capturePayload.embedLabel ?? capturePayload.embed_label ?? null,
     referrer:         capturePayload.landingUrl ?? capturePayload.referrer ?? null,
     form_context:     {
@@ -298,6 +302,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
   const order = (once as any)?.order;
   if (!order) return;
   if (emailOffer) void recordRedemption(emailOffer, order.id, customerPhone, amountBeforeOffer);
+  if (loyalty) void recordLoyaltyRedemption(loyalty, order.id, amountBeforeOffer);
 
   if (!order.review_hold) {
     const assignment = await assignOrderRep(orgId, product.id);

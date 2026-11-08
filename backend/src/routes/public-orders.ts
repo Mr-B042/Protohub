@@ -239,6 +239,7 @@ import { ORDER_SOURCES as ALLOWED_SOURCES, resolveOrderSource } from "../lib/ord
 import { refreshPendingDeliveredLines } from "../lib/delivered-stock-refresh.js";
 import { tidyOrderState } from "../lib/order-state.js";
 import { applyEmailOffer, offerColumns, recordRedemption } from "../lib/email-offers.js";
+import { applyLoyalty, loyaltyColumns, recordLoyaltyRedemption } from "../lib/loyalty.js";
 const PUBLIC_UPSELL_TTL_MS = 4 * 60 * 60 * 1000;
 
 const normalizeStateName = (value: string | undefined) => {
@@ -1274,6 +1275,11 @@ router.post("/", submitRateLimit, async (req, res) => {
   const amountBeforeOffer = amount;
   const emailOffer = await applyEmailOffer({ orgId: product.org_id, utmSource: d.utmSource, utmContent: d.utmContent, phone: d.phone, productId: stampProductId, amount });
   if (emailOffer) amount -= emailOffer.discount;
+  // Loyalty & Rewards (Bright, 8 Nov 2026): a returning member's voucher
+  // comes off by itself, matched by phone; the form looks the same and the
+  // rep tells the customer. One discount per order: an email offer wins.
+  const loyalty = emailOffer ? null : await applyLoyalty({ orgId: product.org_id, productId: stampProductId, phone: d.phone, amount });
+  if (loyalty) amount -= loyalty.discount;
 
   // 4. Insert order
   const baseInsert = {
@@ -1307,6 +1313,7 @@ router.post("/", submitRateLimit, async (req, res) => {
     utm_campaign:      d.utmCampaign ?? null,
     utm_medium:        d.utmMedium ?? null,
     ...offerColumns(emailOffer),
+    ...loyaltyColumns(loyalty),
     utm_content:       d.utmContent ?? null,
     utm_term:          d.utmTerm ?? null,
     embed_label:       cleanEmbedLabel(d.embedLabel),
@@ -1388,6 +1395,7 @@ router.post("/", submitRateLimit, async (req, res) => {
   }
   order = once?.order ?? null;
   if (!orderErr && order?.id && emailOffer) void recordRedemption(emailOffer, order.id, d.phone, amountBeforeOffer);
+  if (!orderErr && order?.id && loyalty) void recordLoyaltyRedemption(loyalty, order.id, amountBeforeOffer);
 
   if (orderErr) {
     if (orderErr.code === "23505") {

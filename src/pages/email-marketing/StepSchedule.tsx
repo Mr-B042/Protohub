@@ -18,7 +18,7 @@ const RECOMMENDED: Array<{ key: string; name: string; hint: string; icon: typeof
   { key: "win_back", name: "Win-Back (Inactive Customers)", hint: "Re-engage customers after no purchase", icon: RefreshCw },
   { key: "birthday", name: "Birthday Campaign", hint: "Send a special message and offer", icon: Cake, unavailable: "The order form doesn't ask for birthdays yet." },
   { key: "cart_recovery", name: "Abandoned Cart Recovery", hint: "Remind customers to complete their order", icon: ShoppingCart },
-  { key: "loyalty", name: "Loyalty Reward", hint: "Reward your repeat and high-value customers", icon: Crown, unavailable: "Comes with the Loyalty & Rewards part." }
+  { key: "loyalty", name: "Loyalty Reward", hint: "Tell members their points, level and voucher", icon: Crown }
 ];
 const TRIGGERS: Record<string, { label: string; short: string }> = {
   delivered: { label: "Customer gets a delivery", short: "Customer gets a delivery" },
