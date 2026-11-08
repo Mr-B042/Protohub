@@ -4821,7 +4821,7 @@ export default function PublicOrderFormPage() {
                     <input
                       value={orderFormEmail}
                       onChange={(event) => setOrderFormEmail(event.target.value)}
-                      placeholder="Your Email"
+                      placeholder="Your Email (optional)"
                       type="email"
                       name="email"
                       inputMode="email"
