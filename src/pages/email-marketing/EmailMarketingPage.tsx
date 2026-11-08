@@ -8,8 +8,9 @@ import AutomationWizard from "./AutomationWizard";
 import JourneysPage from "./JourneysPage";
 import OffersPage from "./OffersPage";
 import LoyaltyPage from "./LoyaltyPage";
+import TemplatesPage from "./TemplatesPage";
 import { LEGACY_TEMPLATE } from "./automation-model";
-import CampaignWizard from "./CampaignWizard";
+import CampaignWizard, { type StartTemplate } from "./CampaignWizard";
 import CampaignsPage from "./CampaignsPage";
 import TabOverview from "./TabOverview";
 import { Card, ErrorNote, Loading, WaitingForDesign, btn, count, input, type EmSection } from "./em-ui";
@@ -33,7 +34,7 @@ const TABS: Array<{ key: EmSection; label: string; icon: typeof Home }> = [
   { key: "settings", label: "Settings", icon: Settings }
 ];
 
-type WizardState = { campaignId?: string | null; preset?: string; segmentId?: string } | null;
+type WizardState = { campaignId?: string | null; preset?: string; segmentId?: string; template?: StartTemplate } | null;
 
 export default function EmailMarketingPage({ section, onNavigate, onToast, onOpenSettings }: {
   section: EmSection;
@@ -133,13 +134,13 @@ export default function EmailMarketingPage({ section, onNavigate, onToast, onOpe
       {section === "offers" && <OffersPage onToast={onToast} refreshKey={refreshKey} />}
       {section === "loyalty" && <LoyaltyPage onToast={onToast} refreshKey={refreshKey} onCreateAutomation={(template) => setAutoWizard({ template })} />}
       {section === "journey" && <JourneysPage onOpenWizard={(options) => setAutoWizard({ ...options, noun: "Journey" })} onToast={onToast} refreshKey={refreshKey} />}
-      {section === "templates" && <WaitingForDesign title="Templates" note="Templates are in the Design Email step of Create Campaign for now (View All, and Save this design as a template). This tab is waiting for its design." />}
+      {section === "templates" && <TemplatesPage onToast={onToast} refreshKey={refreshKey} onUseTemplate={(template) => setWizard({ template })} onCreateFromScratch={() => setWizard({})} />}
       {section === "forms" && <WaitingForDesign title="Forms & Lead Capture" note="Today the list grows from the order form's Email box. This tab is waiting for its design." />}
       {section === "analytics" && <WaitingForDesign title="Analytics" note="Each campaign's results open from the chart button on Campaigns. This tab is waiting for its design." />}
       {section === "settings" && <SettingsTab onToast={onToast} />}
 
       {wizard && (
-        <CampaignWizard campaignId={wizard.campaignId} preset={wizard.preset} segmentId={wizard.segmentId} onClose={() => setWizard(null)} onToast={onToast}
+        <CampaignWizard campaignId={wizard.campaignId} preset={wizard.preset} segmentId={wizard.segmentId} template={wizard.template} onClose={() => setWizard(null)} onToast={onToast}
           onDone={(message) => { setWizard(null); onToast(message); setRefreshKey((n) => n + 1); if (withHeader) void load(); }} />
       )}
       {autoWizard && (

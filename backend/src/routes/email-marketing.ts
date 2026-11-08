@@ -120,7 +120,9 @@ const campaignBody = z.object({
   options: z.any().optional(),
   thumbnailUrl: z.string().max(2000).nullable().optional(),
   /** Coupons & Offers: the offer this email carries (applied when they order from it). */
-  offerId: z.string().regex(UUID).nullable().optional()
+  offerId: z.string().regex(UUID).nullable().optional(),
+  // The template it started from (Templates tab: "starter:<key>" or "saved:<id>").
+  templateKey: z.string().regex(/^(starter:[a-z_]{1,40}|saved:[0-9a-f-]{36})$/).nullable().optional()
 });
 
 function campaignColumns(body: z.infer<typeof campaignBody>) {
@@ -135,7 +137,8 @@ function campaignColumns(body: z.infer<typeof campaignBody>) {
     ...(body.delivery !== undefined ? { delivery: cleanDelivery(body.delivery) } : {}),
     ...(body.options !== undefined ? { options: cleanOptions(body.options) } : {}),
     thumbnail_url: body.thumbnailUrl && /^https:\/\//i.test(body.thumbnailUrl) ? body.thumbnailUrl : null,
-    ...(body.offerId !== undefined ? { offer_id: body.offerId } : {})
+    ...(body.offerId !== undefined ? { offer_id: body.offerId } : {}),
+    ...(body.templateKey !== undefined ? { template_key: body.templateKey } : {})
   };
 }
 
@@ -397,7 +400,7 @@ router.get("/designer", async (req, res) => {
     const [products, reviews, saved, sender, settings, world, offerRows] = await Promise.all([
       productsForDesigner(orgOf(req), branchOf(req)),
       reviewsForDesigner(orgOf(req), branchOf(req)),
-      supabase.from("email_saved_blocks").select("id, kind, name, content, created_by_name, created_at").eq("org_id", orgOf(req)).eq("branch_id", branchOf(req)).order("created_at", { ascending: false }).limit(100),
+      supabase.from("email_saved_blocks").select("id, kind, name, content, created_by, created_by_name, created_at, visibility, status").eq("org_id", orgOf(req)).eq("branch_id", branchOf(req)).order("created_at", { ascending: false }).limit(100),
       marketingSender(orgOf(req)),
       settingsFor(orgOf(req), branchOf(req)),
       loadWorld(orgOf(req), branchOf(req)),
@@ -409,7 +412,10 @@ router.get("/designer", async (req, res) => {
       .filter((offer) => offer.state === "live" || offer.state === "scheduled");
     const states = [...new Set([...world.customers.values()].map((row) => row.state?.trim()).filter(Boolean) as string[])].sort();
     res.json({
-      products, reviews, saved: saved.data ?? [], sender, settings: { dailyLimit: settings.dailyLimit, footerNote: settings.footerNote }, offers,
+      products, reviews,
+      // Templates: drafts and other people's private ones stay out of Create Campaign.
+      saved: (saved.data ?? []).filter((row: any) => row.kind !== "template" || (row.status !== "draft" && (row.visibility !== "private" || row.created_by === req.user!.id)))
+        .map(({ created_by: _by, visibility: _v, status: _s, ...row }: any) => row), sender, settings: { dailyLimit: settings.dailyLimit, footerNote: settings.footerNote }, offers,
       segments: world.segmentRows.filter((row) => row.status !== "archived").map((row) => ({ id: row.id, name: row.name, kind: row.kind, status: row.status, icon: row.icon, list: row.kind === "fixed" || !!row.builtIn?.startsWith("list_") })),
       tags: world.tagRows.filter((row) => row.status === "active").map((row) => ({ id: row.id, name: row.name, kind: row.kind, color: row.color, icon: row.icon })),
       fields: world.fieldRows.filter((row) => row.status === "active").map((row) => ({ id: row.id, key: row.key, name: row.name, type: row.type, options: row.options, system: !!row.systemKey })),
@@ -903,6 +909,86 @@ router.post("/offers/:id/:action(launch|pause|resume|archive|unarchive)", async 
 router.delete("/offers/:id", async (req, res) => {
   try { await deleteOffer(orgOf(req), branchOf(req), offerId(req)); res.json({ ok: true }); }
   catch (error) { sendError(res, error, "Could not delete the offer."); }
+});
+
+// ── Templates tab + Create Custom Template (Bright's design, 8 Nov 2026) ──
+
+const TEMPLATE_COLUMNS = "id, name, content, category, description, template_type, visibility, subject, preheader, status, created_by, created_by_name, created_at, updated_at";
+const templateBody = z.object({
+  name: z.string().trim().min(1, "Give the template a name.").max(80),
+  category: z.string().regex(/^[a-z_]{1,30}$/).default("custom"),
+  description: z.string().max(200).default(""),
+  templateType: z.enum(["promotional", "retention", "transactional", "announcement"]).default("promotional"),
+  visibility: z.enum(["team", "private"]).default("team"),
+  subject: z.string().max(200).default(""),
+  preheader: z.string().max(120).default(""),
+  status: z.enum(["draft", "ready"]).default("ready"),
+  design: z.any()
+});
+const templateDto = (row: any) => ({
+  id: row.id, name: row.name, design: row.content, category: row.category, description: row.description, templateType: row.template_type, visibility: row.visibility,
+  subject: row.subject, preheader: row.preheader, status: row.status, createdBy: row.created_by, createdByName: row.created_by_name, createdAt: row.created_at, updatedAt: row.updated_at
+});
+/** Saved templates this person may see: the team's, and their own private ones. */
+async function templateFor(req: Request, id: string) {
+  if (!UUID.test(id)) throw new EmailMarketingError(404, "Template not found.");
+  const { data, error } = await supabase.from("email_saved_blocks").select(TEMPLATE_COLUMNS).eq("org_id", orgOf(req)).eq("branch_id", branchOf(req)).eq("kind", "template").eq("id", id).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data || (data.visibility === "private" && data.created_by !== req.user!.id)) throw new EmailMarketingError(404, "Template not found.");
+  return data;
+}
+function templateColumns(body: z.infer<typeof templateBody>) {
+  const design = normalizeDesign(body.design);
+  if (!design) throw new EmailMarketingError(400, "The template has no email design.");
+  if (JSON.stringify(design).length > 600_000) throw new EmailMarketingError(413, "The template is too big. Remove some HTML or pictures.");
+  return {
+    name: body.name, content: design, category: body.category, description: body.description.trim(), template_type: body.templateType, visibility: body.visibility,
+    subject: body.subject.trim(), preheader: body.preheader.trim(), status: body.status, updated_at: new Date().toISOString()
+  };
+}
+const templateError = (res: Response, error: any, fallback: string) => {
+  if (error?.issues) { res.status(400).json({ error: error.issues[0]?.message ?? "Check the template's details." }); return; }
+  sendError(res, error, fallback);
+};
+
+router.get("/templates", async (req, res) => {
+  try {
+    const [saved, used] = await Promise.all([
+      supabase.from("email_saved_blocks").select(TEMPLATE_COLUMNS).eq("org_id", orgOf(req)).eq("branch_id", branchOf(req)).eq("kind", "template")
+        .or(`visibility.eq.team,created_by.eq.${req.user!.id}`).order("updated_at", { ascending: false }).limit(300),
+      supabase.from("email_campaigns").select("template_key").eq("org_id", orgOf(req)).eq("branch_id", branchOf(req)).not("template_key", "is", null).limit(5000)
+    ]);
+    if (saved.error) throw new Error(saved.error.message);
+    if (used.error) throw new Error(used.error.message);
+    const counts = new Map<string, number>();
+    for (const row of used.data ?? []) counts.set(row.template_key, (counts.get(row.template_key) ?? 0) + 1);
+    // A list, not a dictionary keyed by template: response keys are renamed on the way to the browser.
+    res.json({ saved: (saved.data ?? []).map(templateDto), usage: [...counts].map(([key, count]) => ({ key, count })) });
+  } catch (error) { sendError(res, error, "Could not load the templates."); }
+});
+router.post("/templates", async (req, res) => {
+  try {
+    const body = templateBody.parse(req.body);
+    const { data, error } = await supabase.from("email_saved_blocks").insert({ ...templateColumns(body), kind: "template", org_id: orgOf(req), branch_id: branchOf(req), created_by: req.user!.id, created_by_name: req.user!.name ?? "" }).select("id").single();
+    if (error) throw new Error(error.message);
+    res.status(201).json({ id: data.id });
+  } catch (error) { templateError(res, error, "Could not save the template."); }
+});
+router.patch("/templates/:id", async (req, res) => {
+  try {
+    const row = await templateFor(req, String(req.params.id));
+    const { error } = await supabase.from("email_saved_blocks").update(templateColumns(templateBody.parse(req.body))).eq("id", row.id);
+    if (error) throw new Error(error.message);
+    res.json({ id: row.id });
+  } catch (error) { templateError(res, error, "Could not save the template."); }
+});
+router.delete("/templates/:id", async (req, res) => {
+  try {
+    const row = await templateFor(req, String(req.params.id));
+    const { error } = await supabase.from("email_saved_blocks").delete().eq("id", row.id);
+    if (error) throw new Error(error.message);
+    res.json({ ok: true });
+  } catch (error) { sendError(res, error, "Could not delete the template."); }
 });
 
 // ── Loyalty & Rewards (Bright's design 55, 8 Nov 2026) ───────────────

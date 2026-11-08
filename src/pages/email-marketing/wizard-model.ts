@@ -23,6 +23,8 @@ export type Draft = {
   status: string;
   /** Coupons & Offers: the offer this email carries (lower price when they order from it). */
   offerId: string | null;
+  /** Templates tab: the template it started from. */
+  templateKey?: string | null;
 };
 
 export const GOALS: Array<{ key: string; label: string; hint: string; icon: string }> = [
@@ -126,7 +128,8 @@ export function toInput(draft: Draft): EmCampaignInput {
     name: draft.name.trim() || "Untitled campaign", goal: draft.goal, subject: draft.subject, subjectB: draft.subjectB, preheader: draft.preheader,
     offerType: draft.offerType, productId: draft.productId, offer: draft.offer, audience: draft.audience, design: draft.design,
     delivery: draft.delivery.type === "one_time" && draft.sendNow ? { ...draft.delivery, sendAt: null } : draft.delivery,
-    options: draft.options, thumbnailUrl: draft.thumbnailUrl, offerId: draft.offerId
+    options: draft.options, thumbnailUrl: draft.thumbnailUrl, offerId: draft.offerId,
+    ...(draft.templateKey ? { templateKey: draft.templateKey } : {})
   };
 }
 
