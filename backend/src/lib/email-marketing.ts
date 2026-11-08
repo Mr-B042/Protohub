@@ -29,18 +29,19 @@ const newToken = () => crypto.randomBytes(18).toString("base64url");
 
 // ── Settings ──────────────────────────────────────────────────────────
 
-export type MarketingSettings = { dailyLimit: number; footerNote: string; seededAt: string | null; autoSync: boolean; defaultListId: string | null; updateExisting: boolean };
+export type MarketingSettings = { dailyLimit: number; footerNote: string; seededAt: string | null; autoSync: boolean; defaultListId: string | null; updateExisting: boolean; bounceHookOnAt: string | null };
 
 export async function settingsFor(orgId: string, branchId: string): Promise<MarketingSettings> {
-  const { data, error } = await supabase.from("email_marketing_settings").select("daily_limit, footer_note, seeded_at, auto_sync, default_list_id, update_existing").eq("branch_id", branchId).maybeSingle();
+  const { data, error } = await supabase.from("email_marketing_settings").select("daily_limit, footer_note, seeded_at, auto_sync, default_list_id, update_existing, bounce_hook_on_at").eq("branch_id", branchId).maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) {
     await supabase.from("email_marketing_settings").upsert({ branch_id: branchId, org_id: orgId }, { onConflict: "branch_id", ignoreDuplicates: true });
-    return { dailyLimit: 150, footerNote: "", seededAt: null, autoSync: true, defaultListId: null, updateExisting: true };
+    return { dailyLimit: 150, footerNote: "", seededAt: null, autoSync: true, defaultListId: null, updateExisting: true, bounceHookOnAt: null };
   }
   return {
     dailyLimit: Number(data.daily_limit) || 150, footerNote: data.footer_note ?? "", seededAt: data.seeded_at ?? null,
-    autoSync: data.auto_sync !== false, defaultListId: data.default_list_id ?? null, updateExisting: data.update_existing !== false
+    autoSync: data.auto_sync !== false, defaultListId: data.default_list_id ?? null, updateExisting: data.update_existing !== false,
+    bounceHookOnAt: data.bounce_hook_on_at ?? null
   };
 }
 
@@ -661,6 +662,11 @@ export async function addContacts(orgId: string, branchId: string, userId: strin
       added, updated, duplicates: Math.max(0, duplicates), invalid, created_by: userId, created_by_name: meta.userName
     }).select("id").single();
     importId = logged?.id ?? null;
+    // The people this upload added remember it (Audience Health › Quality by Source).
+    for (let i = 0; importId && i < ids.length; i += 200) {
+      const { error } = await supabase.from("email_contacts").update({ import_id: importId }).eq("branch_id", branchId).in("id", ids.slice(i, i + 200));
+      if (error) logger.warn("email upload: linking contacts to it failed", { importId, error: error.message });
+    }
   }
   forgetWorld(branchId);
   return { added, updated, alreadyOnList: existing, invalid, contactIds: allIds, importId };
@@ -938,9 +944,9 @@ async function sendQueued(nowMs: number) {
     if (!design) continue;
     const { html, text, subject } = renderForSend(campaign, design, row, { brand: sender.brand, footerNote: footers.get(row.branch_id) ?? "" }, nowMs);
     try {
-      const result = await sendMarketingEmail(row.org_id, { to: { email: row.email, name: row.name || undefined }, subject, html, text, unsubscribeUrl: trackingUrl("u", row.token) });
+      const result = await sendMarketingEmail(row.org_id, { to: { email: row.email, name: row.name || undefined }, subject, html, text, unsubscribeUrl: trackingUrl("u", row.token), customId: row.token });
       const at = new Date().toISOString();
-      await supabase.from("email_campaign_sends").update({ status: "sent", sent_at: at, provider: result.provider, error: null }).eq("id", row.id);
+      await supabase.from("email_campaign_sends").update({ status: "sent", sent_at: at, provider: result.provider, provider_message_id: result.messageId ?? null, error: null }).eq("id", row.id);
       if (row.contact_id) await supabase.from("email_contacts").update({ last_emailed_at: at }).eq("id", row.contact_id);
       allowance.set(row.branch_id, (allowance.get(row.branch_id) ?? 1) - 1);
       sentCount += 1;

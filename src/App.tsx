@@ -446,7 +446,7 @@ const PDA_RESTRICTED_STATUSES = [
 // Email Marketing (Bright, 8 Nov 2026), part 1: the pages built so far. The
 // later parts (Automations, Customer Journey, Coupons & Offers, Loyalty &
 // Rewards, Reviews & UGC) join this list as they are built.
-const EMAIL_MARKETING_SECTIONS: EmSection[] = ["overview", "campaigns", "automations", "audience", "templates", "forms", "journey", "analytics", "settings"];
+const EMAIL_MARKETING_SECTIONS: EmSection[] = ["overview", "campaigns", "automations", "audience", "health", "templates", "forms", "journey", "analytics", "settings"];
 const EMAIL_MARKETING_SUBNAV: Array<{ key: EmSection; label: string; icon: typeof LayoutPanelTop }> = [
   { key: "overview", label: "Overview", icon: LayoutPanelTop },
   { key: "campaigns", label: "Campaigns", icon: Mail },
@@ -76783,7 +76783,9 @@ ${waybillLineItems(w).length > 1
                   <div className="ml-4 mt-1 mb-2 pl-3.5 border-l border-white/10 space-y-1">
                     {EMAIL_MARKETING_SUBNAV.map((sub) => {
                       const SubIcon = sub.icon;
-                      const subActive = emailMarketingSection === sub.key || (sub.key === "overview" && !EMAIL_MARKETING_SUBNAV.some((row) => row.key === emailMarketingSection));
+                      // Audience Health sits under Audience & Segments.
+                      const navKey = emailMarketingSection === "health" ? "audience" : emailMarketingSection;
+                      const subActive = navKey === sub.key || (sub.key === "overview" && !EMAIL_MARKETING_SUBNAV.some((row) => row.key === navKey));
                       return (
                         <button
                           key={sub.key}
@@ -91965,7 +91967,8 @@ ${waybillLineItems(w).length > 1
             // Owner and Admin (Bright, 8 Nov 2026): the email list is customer
             // data. Gated on currentRole so "view as" shows the plain note.
             currentRole === "Owner" || currentRole === "Admin" ? (
-              <EmailMarketingPage section={emailMarketingSection} onNavigate={openEmailMarketingSection} onToast={showToast} />
+              <EmailMarketingPage section={emailMarketingSection} onNavigate={openEmailMarketingSection} onToast={showToast}
+                onOpenSettings={(panel) => { setSettingsPanel(panel); setActivePage("Settings"); setModal(null); syncHashRoute("#/dashboard/admin/settings"); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
             ) : (
               <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center shadow-sm">
                 <h2 className="m-0 text-base font-bold text-gray-900">Email Marketing</h2>

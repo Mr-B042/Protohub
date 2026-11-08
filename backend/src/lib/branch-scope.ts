@@ -46,6 +46,8 @@ const BRANCH_TABLES = new Set([
   // Email Marketing (migration 334): every row is written with its branch.
   "email_contacts", "email_segments", "email_campaigns", "email_campaign_sends", "email_campaign_clicks", "email_saved_blocks", "email_marketing_settings",
   "email_tags", "email_contact_tags", "email_custom_fields", "email_imports",
+  // Audience Health (migration 335).
+  "email_health_issues", "email_health_snapshots",
 
   // Team Challenges (migration 287): every row carries a non-null branch_id.
   "team_challenges", "team_challenge_teams", "team_challenge_entries", "team_challenge_payouts", "team_challenge_log",

@@ -168,7 +168,7 @@ export function AllAudienceTab({ data, contacts, designer, onAdd, onChanged, onT
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search contacts (name, email, phone, tag...)" className={`${input} !pl-9`} />
         </label>
-        <select value={status} onChange={(event) => setStatus(event.target.value)} disabled={chip !== "all"} className={`${select} !w-[130px]`} aria-label="Status"><option value="">All Status</option><option value="subscribed">Subscribed</option><option value="unsubscribed">Unsubscribed</option><option value="bounced">Bounced</option></select>
+        <select value={status} onChange={(event) => setStatus(event.target.value)} disabled={chip !== "all"} className={`${select} !w-[130px]`} aria-label="Status"><option value="">All Status</option><option value="subscribed">Subscribed</option><option value="unsubscribed">Unsubscribed</option><option value="bounced">Bounced</option><option value="cleaned">Cleaned</option></select>
         <select value={segment} onChange={(event) => setSegment(event.target.value)} className={`${select} !w-[150px]`} aria-label="Segment"><option value="">All Segments</option>{data.segments.filter((row) => row.status !== "archived").map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select>
         <select value={list} onChange={(event) => setList(event.target.value)} className={`${select} !w-[130px]`} aria-label="List"><option value="">All Lists</option>{data.lists.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select>
         <select value={engagement} onChange={(event) => setEngagement(event.target.value)} className={`${select} !w-[140px]`} aria-label="Engagement"><option value="">Engagement</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option><option value="none">Not emailed yet</option></select>
@@ -233,7 +233,7 @@ export function AllAudienceTab({ data, contacts, designer, onAdd, onChanged, onT
                       </button>
                     </td>
                     {show("Email / Phone") && <td className="px-3 py-2.5"><span className="inline-flex items-center gap-1.5"><Mail className="h-3.5 w-3.5 text-[#5B3FD9]" /><span className="max-w-[180px] truncate">{row.email}</span></span></td>}
-                    {show("Status") && <td className="px-3 py-2.5">{row.status === "subscribed" ? <Pill tone="green">Subscribed</Pill> : row.status === "bounced" ? <Pill tone="amber">Bounced</Pill> : <Pill tone="red">Unsubscribed</Pill>}</td>}
+                    {show("Status") && <td className="px-3 py-2.5">{row.status === "subscribed" ? <Pill tone="green">Subscribed</Pill> : row.status === "bounced" ? <Pill tone="amber">Bounced</Pill> : row.status === "cleaned" ? <Pill tone="slate">Cleaned</Pill> : <Pill tone="red">Unsubscribed</Pill>}</td>}
                     {show("Segments") && <td className="px-3 py-2.5"><span className="flex flex-wrap gap-1">
                       {groups.slice(0, 1).map((group) => <Pill key={group.id} tone="purple"><Zap className="h-3 w-3" />{group.name}</Pill>)}
                       {isVip && <Pill tone="amber"><SegmentIcon name="crown" className="h-3 w-3" />VIP</Pill>}

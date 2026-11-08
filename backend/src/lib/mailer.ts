@@ -1405,6 +1405,8 @@ export type MarketingEmail = {
   html: string;
   text: string;
   unsubscribeUrl?: string;
+  /** Our send token: Mailjet echoes it in bounce and spam reports. */
+  customId?: string;
 };
 
 export type MarketingSender = { fromName: string; fromEmail: string; ready: boolean; reason?: string };
@@ -1420,7 +1422,7 @@ export async function marketingSender(orgId: string): Promise<MarketingSender> {
   return { ...base, ready: true };
 }
 
-export async function sendMarketingEmail(orgId: string, message: MarketingEmail): Promise<{ provider: EmailProvider }> {
+export async function sendMarketingEmail(orgId: string, message: MarketingEmail): Promise<{ provider: EmailProvider; messageId?: string }> {
   const settings = await loadSettings(orgId);
   if (!settings || !settings.enabled || !hasValidKeys(settings) || !settings.from_email) {
     throw new EmailDispatchError(settings?.provider ?? DEFAULT_EMAIL_PROVIDER, "Email sending is not set up.");
@@ -1437,12 +1439,14 @@ export async function sendMarketingEmail(orgId: string, message: MarketingEmail)
       if (provider === "resend") {
         const client = new Resend(settings.resend_api_key);
         const from = settings.from_name ? `${settings.from_name} <${settings.from_email}>` : settings.from_email;
-        const { error } = await client.emails.send({
+        const { data, error } = await client.emails.send({
           from, to: [message.to.email], subject: message.subject, html: message.html, text: message.text,
           ...(settings.reply_to ? { reply_to: settings.reply_to } : {}),
           ...(Object.keys(headers).length ? { headers } : {})
         } as Parameters<typeof client.emails.send>[0]);
         if (error) throw normalizeDispatchError("resend", error);
+        clearProviderQuotaBackoff(orgId, provider);
+        return { provider, messageId: (data as any)?.id ?? undefined };
       } else {
         const client = new Mailjet({ apiKey: settings.api_key_public, apiSecret: settings.api_key_private });
         const mail: Record<string, unknown> = {
@@ -1457,14 +1461,17 @@ export async function sendMarketingEmail(orgId: string, message: MarketingEmail)
         };
         if (settings.reply_to) mail.ReplyTo = { Email: settings.reply_to };
         if (Object.keys(headers).length) mail.Headers = headers;
+        if (message.customId) mail.CustomID = message.customId;
         try {
-          await (client.post("send", { version: "v3.1" }) as any).request({ Messages: [mail] });
+          const result = await (client.post("send", { version: "v3.1" }) as any).request({ Messages: [mail] });
+          clearProviderQuotaBackoff(orgId, provider);
+          // MessageUUID, not the numeric MessageID: that one is too long for a JS number.
+          const sent = result?.body?.Messages?.[0]?.To?.[0];
+          return { provider, messageId: sent?.MessageUUID ? String(sent.MessageUUID) : undefined };
         } catch (err: any) {
           throw normalizeDispatchError("mailjet", err);
         }
       }
-      clearProviderQuotaBackoff(orgId, provider);
-      return { provider };
     } catch (err: any) {
       const normalized = normalizeDispatchError(provider, err);
       if (normalized.quotaLike) setProviderQuotaBackoff(orgId, provider);
@@ -1473,4 +1480,18 @@ export async function sendMarketingEmail(orgId: string, message: MarketingEmail)
     }
   }
   throw lastError ?? new EmailDispatchError(settings.provider ?? DEFAULT_EMAIL_PROVIDER, "Email send failed.");
+}
+
+/** Mailjet keys for registering bounce/spam reports (null when not set up). */
+export async function mailjetKeys(orgId: string): Promise<{ apiKey: string; apiSecret: string } | null> {
+  const settings = await loadSettings(orgId);
+  if (!settings?.api_key_public || !settings?.api_key_private) return null;
+  return { apiKey: settings.api_key_public, apiSecret: settings.api_key_private };
+}
+
+/** The sending address's domain, for the SPF / DKIM / DMARC checks. */
+export async function senderDomain(orgId: string): Promise<string | null> {
+  const settings = await loadSettings(orgId);
+  const email = settings?.from_email ?? "";
+  return email.includes("@") ? email.split("@")[1].toLowerCase() : null;
 }

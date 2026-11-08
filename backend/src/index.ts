@@ -76,6 +76,7 @@ import { runWaybillFollowUpJob } from "./lib/waybill-follow-up.js";
 import emailMarketingRoutes from "./routes/email-marketing.js";
 import emailTrackingRoutes from "./routes/email-tracking.js";
 import { runEmailMarketingJob } from "./lib/email-marketing.js";
+import { runDailyHealth } from "./lib/email-health.js";
 import { runBotHealthChecks, runLowStock, runReports, runRetries, runSendOutSoon, runTelegramCleanup } from "./lib/telegram.js";
 import fineAppealRoutes from "./routes/fine-appeals.js";
 import orderReceiptRoutes from "./routes/order-receipts.js";
@@ -852,6 +853,13 @@ cron.schedule("* * * * *", async () => {
     logger.error("cron: email marketing crashed", { error: (e as Error).message });
   }
 });
+// Audience Health, once a day: problems found or closed, the day's snapshot,
+// and an alert for each new Critical or High problem (lib/email-health.ts).
+cron.schedule("40 7 * * *", async () => {
+  try { await runDailyHealth(); } catch (e) {
+    logger.error("cron: email audience health crashed", { error: (e as Error).message });
+  }
+}, { timezone: "Africa/Lagos" });
 
 // ── Campaigns with no order for 3 days (Bright, 5 Nov 2026) ──
 // After the :13 ad spend sync, four times a day (Lagos): one alert per
