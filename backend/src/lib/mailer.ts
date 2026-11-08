@@ -1407,6 +1407,8 @@ export type MarketingEmail = {
   unsubscribeUrl?: string;
   /** Our send token: Mailjet echoes it in bounce and spam reports. */
   customId?: string;
+  /** An automation's own reply-to (else the one in Settings › Email). */
+  replyTo?: string;
 };
 
 export type MarketingSender = { fromName: string; fromEmail: string; ready: boolean; reason?: string };
@@ -1441,7 +1443,7 @@ export async function sendMarketingEmail(orgId: string, message: MarketingEmail)
         const from = settings.from_name ? `${settings.from_name} <${settings.from_email}>` : settings.from_email;
         const { data, error } = await client.emails.send({
           from, to: [message.to.email], subject: message.subject, html: message.html, text: message.text,
-          ...(settings.reply_to ? { reply_to: settings.reply_to } : {}),
+          ...(message.replyTo || settings.reply_to ? { reply_to: message.replyTo || settings.reply_to } : {}),
           ...(Object.keys(headers).length ? { headers } : {})
         } as Parameters<typeof client.emails.send>[0]);
         if (error) throw normalizeDispatchError("resend", error);
@@ -1459,7 +1461,7 @@ export async function sendMarketingEmail(orgId: string, message: MarketingEmail)
           TrackOpens: "disabled",
           TrackClicks: "disabled"
         };
-        if (settings.reply_to) mail.ReplyTo = { Email: settings.reply_to };
+        if (message.replyTo || settings.reply_to) mail.ReplyTo = { Email: message.replyTo || settings.reply_to };
         if (Object.keys(headers).length) mail.Headers = headers;
         if (message.customId) mail.CustomID = message.customId;
         try {

@@ -11,7 +11,7 @@ import { ActionCards, BarRow, CardHead, HealthKpi, Insights, Legend, Ring, SERIE
 
 type TabProps = { data: EmHealth; nav: HealthNav };
 
-const pts = (value: number | null | undefined, goodWhenDown = false) => <Delta value={value} suffix=" pts" goodWhenDown={goodWhenDown} />;
+const pts = (value: number | null | undefined, goodWhenDown = false) => <Delta value={value} suffix="pp" goodWhenDown={goodWhenDown} />;
 const share = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : null);
 
 // ── Overview ──────────────────────────────────────────────────────────

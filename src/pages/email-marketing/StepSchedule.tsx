@@ -83,7 +83,7 @@ export default function StepSchedule({ draft, designer, preview, planning, onCha
           <h3 className="m-0 text-[17px] font-bold text-gray-900 dark:text-slate-50">Schedule Details</h3>
           {d.type === "automation" ? (
             <p className="m-0 mt-3 rounded-xl bg-[#F7F4FF] px-3 py-3 text-[13px] text-gray-700 dark:bg-slate-800 dark:text-slate-300">
-              An automation has no send date. Once launched, it emails each customer when the trigger below happens, and counts only things that happen after launch.
+              An automation has no send date. Once launched, it emails each customer when the trigger below happens, and counts only things that happen after launch. For several emails with waits and checks, use the Automations page.
             </p>
           ) : (
             <>

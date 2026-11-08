@@ -5591,6 +5591,51 @@ export type EmHealth = {
 };
 export type EmCleaningPlan = { neverOpened: number; duplicates: number; bounced: number };
 
+// Email Marketing › Automations (Bright's designs 50, 51 and steps 2-4, 8 Nov 2026).
+export type EmTriggerKind = "order_delivered" | "order_placed" | "cart_abandoned" | "new_subscriber" | "inactive" | "date_field" | "vip" | "reorder";
+export type EmTrigger = { kind: EmTriggerKind; productId?: string | null; cartMinutes?: number; inactiveDays?: number; fieldKey?: string; vipOrders?: number; reorderDays?: number };
+export type EmCheckKind = "placed_order" | "delivered_order" | "opened_last" | "clicked_last" | "left_review" | "in_segment" | "has_tag";
+export type EmCheck = { kind: EmCheckKind; segmentId?: string; tagId?: string };
+export type EmFlowEmail = { subject: string; preheader: string; design: EmailDesign | null; productId: string | null; thumbnailUrl: string | null };
+export type EmFlowNode =
+  | { id: string; type: "wait"; amount: number; unit: "hours" | "days" }
+  | { id: string; type: "email"; name: string; email: EmFlowEmail; campaignId?: string | null }
+  | { id: string; type: "condition"; name: string; check: EmCheck; yes: EmFlowNode[]; no: EmFlowNode[] }
+  | { id: string; type: "tag"; action: "add" | "remove"; tagId: string; tagName: string }
+  | { id: string; type: "list"; listId: string; listName: string }
+  | { id: string; type: "exit" };
+export type EmWorkflow = { nodes: EmFlowNode[] };
+export type EmAutomationSettings = {
+  reentry: boolean; reentryDays: number; frequency: "per_event" | "max_2" | "max_3" | "unlimited"; priority: "low" | "normal" | "high";
+  exit: { onUnsubscribe: boolean; onPurchase: boolean; afterDays: number | null };
+  sendWindow: { on: boolean; from: number; to: number; days: number[] };
+  utm: boolean; track: boolean; replyTo: string;
+};
+export type EmAutomation = {
+  id: string; name: string; description: string; template: string | null; goal: string; trigger: EmTrigger; audience: EmAudience;
+  enrollment: { on: boolean; match: "all" | "any"; conditions: EmCondition[] }; settings: EmAutomationSettings; workflow: EmWorkflow;
+  status: "draft" | "active" | "paused" | "archived"; launchedAt: string | null; pausedAt: string | null; createdAt: string; updatedAt: string; createdByName: string;
+};
+export type EmAutomationRow = EmAutomation & {
+  emails: number; durationDays: number; audienceLabel: string; audienceCount: number; reached: number; activeRuns: number; sent: number;
+  conversion: number | null; revenue: number; conversionChangePp: number | null;
+};
+export type EmAutomationsPage = {
+  kpis: {
+    active: number; sent: { value: number; change: number | null }; reached: { value: number; change: number | null };
+    conversion: { value: number | null; changePp: number | null }; revenue: { value: number; change: number | null };
+  };
+  automations: EmAutomationRow[];
+};
+export type EmAutomationInput = Pick<EmAutomation, "name" | "description" | "template" | "goal" | "trigger" | "audience" | "enrollment" | "settings" | "workflow"> & { launch: boolean };
+export type EmAutomationReport = {
+  automation: EmAutomation;
+  runs: { total: number; active: number; completed: number; exited: number };
+  exitReasons: Array<{ reason: string; count: number }>;
+  emails: Array<{ stepId: string; name: string; subject: string; sent: number; waiting: number; openRate: number | null; clickRate: number | null; orders: number; revenue: number; unsubscribed: number }>;
+  recent: Array<{ email: string; name: string; status: string; exitReason: string | null; enteredAt: string; finishedAt: string | null; nextAt: string | null; step: string | null; stepName: string | null }>;
+};
+
 export const emailMarketingApi = {
   overview: () => get<EmOverview>(`${EM}/overview`),
   audience: () => get<EmAudiencePage>(`${EM}/audience`),
@@ -5636,5 +5681,14 @@ export const emailMarketingApi = {
   health: (range: { from: string; to: string }) => get<EmHealth>(`${EM}/health?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`),
   cleaningPlan: () => get<EmCleaningPlan>(`${EM}/health/cleaning`),
   cleanList: (body: { neverOpened: boolean; duplicates: boolean; bounced: boolean }) => post<EmCleaningPlan>(`${EM}/health/clean`, body),
-  enableBounceReports: () => post<{ on: boolean; skipped: string[] }>(`${EM}/health/bounce-reports`, {})
+  enableBounceReports: () => post<{ on: boolean; skipped: string[] }>(`${EM}/health/bounce-reports`, {}),
+  automations: () => get<EmAutomationsPage>(`${EM}/automations`),
+  automation: (id: string) => get<{ automation: EmAutomation }>(`${EM}/automations/${encodeURIComponent(id)}`),
+  automationReport: (id: string) => get<EmAutomationReport>(`${EM}/automations/${encodeURIComponent(id)}/report`),
+  createAutomation: (body: EmAutomationInput) => post<{ id: string }>(`${EM}/automations`, body),
+  updateAutomation: (id: string, body: EmAutomationInput) => patch<{ id: string }>(`${EM}/automations/${encodeURIComponent(id)}`, body),
+  automationAction: (id: string, action: "launch" | "pause" | "resume" | "archive" | "unarchive") => post<{ ok: boolean }>(`${EM}/automations/${encodeURIComponent(id)}/${action}`, {}),
+  duplicateAutomation: (id: string) => post<{ id: string }>(`${EM}/automations/${encodeURIComponent(id)}/duplicate`, {}),
+  deleteAutomation: (id: string) => del<{ ok: boolean }>(`${EM}/automations/${encodeURIComponent(id)}`),
+  testAutomationEmails: (body: { emails: string[]; workflow: EmWorkflow }) => post<{ results: Array<{ step: string; email: string; ok: boolean; error?: string }> }>(`${EM}/automations/test-emails`, body)
 };

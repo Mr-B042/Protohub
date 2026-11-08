@@ -26,9 +26,9 @@ const SEGMENT_TONE: Record<string, string> = {
 
 const FLOW_LOOK: Record<string, { icon: typeof Mail; tone: string }> = {
   post_purchase: { icon: ShoppingCart, tone: "text-[#5B3FD9]" },
-  cart_recovery: { icon: Mail, tone: "text-[#5B3FD9]" },
+  cart_abandonment: { icon: Mail, tone: "text-[#5B3FD9]" },
   win_back: { icon: RefreshCw, tone: "text-[#5B3FD9]" },
-  vip: { icon: Crown, tone: "text-amber-500" },
+  vip_loyalty: { icon: Crown, tone: "text-amber-500" },
   birthday: { icon: Cake, tone: "text-[#5B3FD9]" }
 };
 
@@ -77,10 +77,12 @@ export function CampaignRows({ rows, onOpen }: { rows: EmCampaign[]; onOpen: (ro
   );
 }
 
-export default function TabOverview({ data, onNavigate, onCreate, onOpenCampaign, onQuick }: {
+export default function TabOverview({ data, onNavigate, onCreate, onCreateAutomation, onOpenCampaign, onQuick }: {
   data: EmOverview;
   onNavigate: (section: EmSection) => void;
-  onCreate: (preset?: string) => void;
+  onCreate: () => void;
+  /** Opens Create New Automation on a template (Automations page, 8 Nov 2026). */
+  onCreateAutomation: (template?: string) => void;
   onOpenCampaign: (row: EmCampaign) => void;
   onQuick: (action: "add-subscribers" | "create-segment") => void;
 }) {
@@ -98,7 +100,7 @@ export default function TabOverview({ data, onNavigate, onCreate, onOpenCampaign
   ];
   const quick: Array<{ label: string; icon: typeof Send; run: () => void }> = [
     { label: "Create Campaign", icon: Send, run: () => onCreate() },
-    { label: "Build Automation", icon: Zap, run: () => onCreate("post_purchase") },
+    { label: "Build Automation", icon: Zap, run: () => onCreateAutomation("post_purchase") },
     { label: "Add Subscribers", icon: UserPlus, run: () => onQuick("add-subscribers") },
     { label: "Create Segment", icon: Layers, run: () => onQuick("create-segment") },
     { label: "Design Template", icon: ImageIcon, run: () => onNavigate("templates") },
@@ -168,11 +170,11 @@ export default function TabOverview({ data, onNavigate, onCreate, onOpenCampaign
                 {data.automations.map((flow, index) => {
                   const look = FLOW_LOOK[flow.key] ?? FLOW_LOOK.post_purchase;
                   const Icon = look.icon;
-                  const pill = flow.state === "active" ? <Pill tone="green">Active</Pill> : flow.state === "paused" ? <Pill tone="slate">Paused</Pill> : flow.state === "unavailable" ? <Pill tone="slate">No birthdays</Pill> : <Pill tone="slate">Off</Pill>;
+                  const pill = flow.state === "active" ? <Pill tone="green">Active</Pill> : flow.state === "paused" ? <Pill tone="slate">Paused</Pill> : <Pill tone="slate">Off</Pill>;
                   return (
                     <div key={flow.key} className="flex min-w-[78px] flex-1 items-center gap-1">
-                      <button type="button" disabled={flow.state === "unavailable"} onClick={() => (flow.key === "vip" ? onNavigate("audience") : onCreate(flow.key))}
-                        title={flow.state === "unavailable" ? "The order form does not ask for birthdays yet." : flow.state === "off" ? "Set it up" : undefined}
+                      <button type="button" onClick={() => (flow.state === "off" ? onCreateAutomation(flow.key) : onNavigate("automations"))}
+                        title={flow.state === "off" ? "Set it up" : "Open Automations"}
                         className="!min-h-0 flex h-full min-w-0 flex-1 flex-col items-center gap-1 rounded-xl border border-gray-200 bg-white px-1.5 py-3 text-center hover:border-[#C9BEF5] disabled:cursor-default dark:border-slate-700 dark:bg-slate-900">
                         <Icon className={`h-6 w-6 ${look.tone}`} />
                         <span className="text-[12.5px] font-bold leading-tight text-gray-900 dark:text-slate-50">{flow.name}</span>
@@ -289,13 +291,13 @@ export default function TabOverview({ data, onNavigate, onCreate, onOpenCampaign
               <button type="button" onClick={() => onNavigate("automations")} className="!min-h-0 text-[13px] font-semibold text-[#5B3FD9] hover:underline">View All</button>
             </div>
             <ul className="m-0 mt-2 list-none divide-y divide-gray-100 p-0 dark:divide-slate-800">
-              {(data.topAutomations.length ? data.topAutomations.map((row) => ({ key: row.id, name: row.name, sub: `${count(row.customers)} customers`, on: row.status === "active", run: () => undefined as void, trigger: row.trigger }))
+              {(data.topAutomations.length ? data.topAutomations.map((row) => ({ key: row.id, name: row.name, sub: `${count(row.customers)} customers`, on: row.status === "active", run: () => onNavigate("automations"), trigger: row.trigger }))
                 : [
-                  { key: "post_purchase", name: "Post-Purchase Follow-Up", sub: "Not running yet", on: false, run: () => onCreate("post_purchase"), trigger: "delivered" },
-                  { key: "win_back", name: "Win-Back (Inactive 60+ Days)", sub: "Not running yet", on: false, run: () => onCreate("win_back"), trigger: "inactive" },
-                  { key: "cart_recovery", name: "Abandoned Cart Recovery", sub: "Not running yet", on: false, run: () => onCreate("cart_recovery"), trigger: "cart" }
+                  { key: "post_purchase", name: "Post-Purchase Follow-Up", sub: "Not running yet", on: false, run: () => onCreateAutomation("post_purchase"), trigger: "order_delivered" },
+                  { key: "win_back", name: "Win-Back (Inactive 60+ Days)", sub: "Not running yet", on: false, run: () => onCreateAutomation("win_back"), trigger: "inactive" },
+                  { key: "cart_abandonment", name: "Abandoned Cart Recovery", sub: "Not running yet", on: false, run: () => onCreateAutomation("cart_abandonment"), trigger: "cart_abandoned" }
                 ]).map((row) => {
-                const Icon = row.trigger === "inactive" ? RefreshCw : row.trigger === "cart" ? ShoppingCart : row.trigger === "ordered" ? Sparkles : ShoppingCart;
+                const Icon = row.trigger === "inactive" ? RefreshCw : row.trigger === "cart_abandoned" ? ShoppingCart : row.trigger === "order_placed" || row.trigger === "new_subscriber" ? Sparkles : ShoppingCart;
                 return (
                   <li key={row.key}>
                     <button type="button" onClick={row.run} className="!min-h-0 flex w-full items-center gap-3 py-2.5 text-left">

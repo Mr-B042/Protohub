@@ -14,6 +14,10 @@ import {
 import { CONDITION_FIELDS, cleanConditions, cleanEmail, resolveAudience, slugFor, type AudienceChoice, type Delivery } from "../lib/email-marketing-rules.js";
 import { collectLinks, normalizeDesign, safeUrl } from "../lib/email-render.js";
 import { cleanList, cleaningPlan, enableBounceReports, healthFor } from "../lib/email-health.js";
+import {
+  automationReport, automationsPage, deleteAutomation, duplicateAutomation, getAutomation, saveAutomation, setAutomationStatus, testAutomationEmails, type AutomationInput
+} from "../lib/email-automations.js";
+import { AUTOMATION_GOALS } from "../lib/email-automation-rules.js";
 
 /**
  * Email Marketing (Bright, 8 Nov 2026), part 1: Overview, Campaigns, the
@@ -476,7 +480,8 @@ router.post("/check-links", async (req, res) => {
 
 router.get("/campaigns", async (req, res) => {
   try {
-    const { data, error } = await supabase.from("email_campaigns").select(CAMPAIGN_LIST_COLUMNS).eq("org_id", orgOf(req)).eq("branch_id", branchOf(req)).order("created_at", { ascending: false }).limit(500);
+    // Automation emails live on the Automations page, not here.
+    const { data, error } = await supabase.from("email_campaigns").select(CAMPAIGN_LIST_COLUMNS).eq("org_id", orgOf(req)).eq("branch_id", branchOf(req)).is("automation_id", null).order("created_at", { ascending: false }).limit(500);
     if (error) throw new Error(error.message);
     const rows = data ?? [];
     const [stats, world] = await Promise.all([statsFor(rows.map((row) => row.id)), loadWorld(orgOf(req), branchOf(req))]);
@@ -729,6 +734,98 @@ router.post("/health/clean", async (req, res) => {
 router.post("/health/bounce-reports", async (req, res) => {
   try { res.json(await enableBounceReports(orgOf(req), branchOf(req))); }
   catch (error) { sendError(res, error, "Could not switch on bounce reports."); }
+});
+
+// ── Automations (Bright's designs 50, 51 and steps 2-4, 8 Nov 2026) ───
+
+const AUTOMATION_TEMPLATES = ["post_purchase", "win_back", "cart_abandonment", "welcome", "review_feedback", "replenishment", "birthday", "vip_loyalty"] as const;
+const automationBody = z.object({
+  name: z.string().trim().min(1, "Give the automation a name.").max(160),
+  description: z.string().max(200).default(""),
+  template: z.enum(AUTOMATION_TEMPLATES).nullable().default(null),
+  goal: z.enum(AUTOMATION_GOALS).default("repeat"),
+  trigger: z.any().optional(),
+  audience: z.any().optional(),
+  enrollment: z.any().optional(),
+  settings: z.any().optional(),
+  workflow: z.any().optional(),
+  launch: z.boolean().default(false)
+});
+
+function automationInput(body: z.infer<typeof automationBody>): AutomationInput {
+  return {
+    name: body.name, description: body.description.trim(), template: body.template, goal: body.goal, trigger: body.trigger,
+    audience: cleanAudience(body.audience ?? { source: "all" }),
+    enrollment: { on: !!body.enrollment?.on, match: body.enrollment?.match === "any" ? "any" : "all", conditions: cleanConditions(body.enrollment?.conditions) },
+    settings: body.settings, workflow: body.workflow ?? { nodes: [] }
+  };
+}
+const automationError = (res: Response, error: any, fallback: string) => {
+  if (error?.issues) { res.status(400).json({ error: error.issues[0]?.message ?? "Check the automation's details." }); return; }
+  sendError(res, error, fallback);
+};
+const automationId = (req: Request) => {
+  const id = String(req.params.id ?? "");
+  if (!UUID.test(id)) throw new EmailMarketingError(404, "Automation not found.");
+  return id;
+};
+
+router.get("/automations", async (req, res) => {
+  try { res.json(await automationsPage(orgOf(req), branchOf(req))); }
+  catch (error) { sendError(res, error, "Could not load the automations."); }
+});
+
+router.post("/automations/test-emails", async (req, res) => {
+  try {
+    const body = z.object({ emails: z.array(z.string()).min(1).max(5), workflow: z.any() }).parse(req.body);
+    const emails = body.emails.map((email) => cleanEmail(email)).filter((email): email is string => !!email);
+    if (!emails.length) { res.status(400).json({ error: "Enter at least one valid email address." }); return; }
+    res.json({ results: await testAutomationEmails(orgOf(req), branchOf(req), body.workflow, emails, req.user!.name ?? "there") });
+  } catch (error) { automationError(res, error, "Could not send the test emails."); }
+});
+
+router.get("/automations/:id", async (req, res) => {
+  try { res.json({ automation: await getAutomation(orgOf(req), branchOf(req), automationId(req)) }); }
+  catch (error) { sendError(res, error, "Could not load the automation."); }
+});
+
+router.get("/automations/:id/report", async (req, res) => {
+  try { res.json(await automationReport(orgOf(req), branchOf(req), automationId(req))); }
+  catch (error) { sendError(res, error, "Could not load the results."); }
+});
+
+router.post("/automations", async (req, res) => {
+  try {
+    const body = automationBody.parse(req.body);
+    const id = await saveAutomation(orgOf(req), branchOf(req), { id: req.user!.id, name: req.user!.name }, null, automationInput(body), body.launch);
+    res.status(201).json({ id });
+  } catch (error) { automationError(res, error, "Could not save the automation."); }
+});
+
+router.patch("/automations/:id", async (req, res) => {
+  try {
+    const body = automationBody.parse(req.body);
+    const id = await saveAutomation(orgOf(req), branchOf(req), { id: req.user!.id, name: req.user!.name }, automationId(req), automationInput(body), body.launch);
+    res.json({ id });
+  } catch (error) { automationError(res, error, "Could not save the automation."); }
+});
+
+router.post("/automations/:id/duplicate", async (req, res) => {
+  try { res.status(201).json({ id: await duplicateAutomation(orgOf(req), branchOf(req), { id: req.user!.id, name: req.user!.name }, automationId(req)) }); }
+  catch (error) { sendError(res, error, "Could not copy the automation."); }
+});
+
+router.post("/automations/:id/:action(launch|pause|resume|archive|unarchive)", async (req, res) => {
+  try {
+    const action = String((req.params as Record<string, string>).action) as "launch" | "pause" | "resume" | "archive" | "unarchive";
+    await setAutomationStatus(orgOf(req), branchOf(req), automationId(req), action);
+    res.json({ ok: true });
+  } catch (error) { sendError(res, error, "Could not change the automation."); }
+});
+
+router.delete("/automations/:id", async (req, res) => {
+  try { await deleteAutomation(orgOf(req), branchOf(req), automationId(req)); res.json({ ok: true }); }
+  catch (error) { sendError(res, error, "Could not delete the automation."); }
 });
 
 export default router;

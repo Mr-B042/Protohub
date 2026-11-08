@@ -3,6 +3,9 @@ import { AlertTriangle, BarChart3, FileText, GitBranch, Home, Info, LayoutGrid, 
 import { emailMarketingApi, type EmCampaign, type EmOverview } from "../../lib/api";
 import AudiencePage from "./AudiencePage";
 import AudienceHealthPage from "./AudienceHealthPage";
+import AutomationsPage from "./AutomationsPage";
+import AutomationWizard from "./AutomationWizard";
+import { LEGACY_TEMPLATE } from "./automation-model";
 import CampaignWizard from "./CampaignWizard";
 import CampaignsPage from "./CampaignsPage";
 import TabOverview from "./TabOverview";
@@ -40,10 +43,13 @@ export default function EmailMarketingPage({ section, onNavigate, onToast, onOpe
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [wizard, setWizard] = useState<WizardState>(null);
+  const [autoWizard, setAutoWizard] = useState<{ id?: string; template?: string | null; step?: number } | null>(null);
   const [report, setReport] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [audienceModal, setAudienceModal] = useState<"add-subscribers" | "create-segment" | null>(null);
-  const withHeader = section !== "campaigns" && section !== "audience" && section !== "health";
+  const withHeader = section !== "campaigns" && section !== "audience" && section !== "health" && section !== "automations";
+  /** Part 1's ready-made flow names open the Automations window on the matching template. */
+  const openAutomation = (preset?: string) => setAutoWizard({ template: preset ? LEGACY_TEMPLATE[preset] ?? preset : "post_purchase" });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -111,16 +117,16 @@ export default function EmailMarketingPage({ section, onNavigate, onToast, onOpe
       )}
 
       {section === "overview" && (overview ? (
-        <TabOverview data={overview} onNavigate={onNavigate} onCreate={(preset) => setWizard(preset ? { preset } : {})} onOpenCampaign={openCampaign}
+        <TabOverview data={overview} onNavigate={onNavigate} onCreate={() => setWizard({})} onCreateAutomation={openAutomation} onOpenCampaign={openCampaign}
           onQuick={(action) => { setAudienceModal(action); onNavigate("audience"); }} />
       ) : !error && <Loading />)}
       {section === "campaigns" && <CampaignsPage onNavigate={onNavigate} onCreate={() => setWizard({})} onEdit={(id) => setWizard({ campaignId: id })} onToast={onToast} refreshKey={refreshKey} />}
       {section === "audience" && <AudiencePage onToast={onToast} onUseSegment={(segmentId) => setWizard({ segmentId })} openModal={audienceModal} onModalOpened={() => setAudienceModal(null)} onOpenHealth={() => onNavigate("health")} />}
       {section === "health" && (
-        <AudienceHealthPage onNavigate={onNavigate} onToast={onToast} onOpenSettings={onOpenSettings} onCreate={(preset) => setWizard(preset ? { preset } : {})}
+        <AudienceHealthPage onNavigate={onNavigate} onToast={onToast} onOpenSettings={onOpenSettings} onCreate={(preset) => (preset ? openAutomation(preset) : setWizard({}))}
           onCreateSegment={() => { setAudienceModal("create-segment"); onNavigate("audience"); }} />
       )}
-      {section === "automations" && <WaitingForDesign title="Automations" note="Your Automations designs are in and come in the next part. Until then, make an automation from Create Campaign › Schedule & Automate › Automation Workflow; it shows on the Overview and in Campaigns." />}
+      {section === "automations" && <AutomationsPage onOpenWizard={setAutoWizard} onToast={onToast} refreshKey={refreshKey} />}
       {section === "journey" && <WaitingForDesign title="Customer Journey" note="Your Customer Journey design is in and comes in a later part. Step 2 of Create Campaign can already send to a customer stage (just delivered, gone quiet, left a cart...)." />}
       {section === "templates" && <WaitingForDesign title="Templates" note="Templates are in the Design Email step of Create Campaign for now (View All, and Save this design as a template). This tab is waiting for its design." />}
       {section === "forms" && <WaitingForDesign title="Forms & Lead Capture" note="Today the list grows from the order form's Email box. This tab is waiting for its design." />}
@@ -130,6 +136,10 @@ export default function EmailMarketingPage({ section, onNavigate, onToast, onOpe
       {wizard && (
         <CampaignWizard campaignId={wizard.campaignId} preset={wizard.preset} segmentId={wizard.segmentId} onClose={() => setWizard(null)} onToast={onToast}
           onDone={(message) => { setWizard(null); onToast(message); setRefreshKey((n) => n + 1); if (withHeader) void load(); }} />
+      )}
+      {autoWizard && (
+        <AutomationWizard automationId={autoWizard.id} template={autoWizard.template} startStep={autoWizard.step} onClose={() => setAutoWizard(null)} onToast={onToast}
+          onDone={(message) => { setAutoWizard(null); onToast(message); setRefreshKey((n) => n + 1); if (section !== "automations") onNavigate("automations"); }} />
       )}
       {report && <CampaignReport id={report} onClose={() => setReport(null)} onEdit={(id) => { setReport(null); setWizard({ campaignId: id }); }} />}
     </div>

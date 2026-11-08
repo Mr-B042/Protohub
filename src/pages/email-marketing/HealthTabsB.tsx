@@ -13,7 +13,7 @@ import { ActionCards, BarRow, CardHead, GradePill, HealthKpi, Insights, Legend, 
 
 type TabProps = { data: EmHealth; nav: HealthNav };
 
-const pts = (value: number | null | undefined, goodWhenDown = false) => <Delta value={value} suffix=" pts" goodWhenDown={goodWhenDown} />;
+const pts = (value: number | null | undefined, goodWhenDown = false) => <Delta value={value} suffix="pp" goodWhenDown={goodWhenDown} />;
 const share = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : null);
 
 // ── Deliverability ────────────────────────────────────────────────────
@@ -194,7 +194,7 @@ export function GrowthTab({ data, nav }: TabProps) {
                     <td className="px-4 py-2 font-semibold text-gray-800 dark:text-slate-200">{row.label}</td>
                     <td className="px-2 py-2 text-right font-bold">{fmt(row.now)}</td>
                     <td className="px-2 py-2 text-right text-gray-600">{fmt(row.before)}</td>
-                    <td className="px-4 py-2 text-right"><Delta value={diff} suffix={row.percent ? " pts" : "%"} goodWhenDown={!row.goodWhenUp} note="—" /></td>
+                    <td className="px-4 py-2 text-right"><Delta value={diff} suffix={row.percent ? "pp" : "%"} goodWhenDown={!row.goodWhenUp} note="—" /></td>
                   </tr>
                 );
               })}

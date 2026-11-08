@@ -77,6 +77,7 @@ import emailMarketingRoutes from "./routes/email-marketing.js";
 import emailTrackingRoutes from "./routes/email-tracking.js";
 import { runEmailMarketingJob } from "./lib/email-marketing.js";
 import { runDailyHealth } from "./lib/email-health.js";
+import { runAutomations } from "./lib/email-automations.js";
 import { runBotHealthChecks, runLowStock, runReports, runRetries, runSendOutSoon, runTelegramCleanup } from "./lib/telegram.js";
 import fineAppealRoutes from "./routes/fine-appeals.js";
 import orderReceiptRoutes from "./routes/order-receipts.js";
@@ -849,6 +850,10 @@ cron.schedule("*/5 * * * *", async () => {
 // list, starts due campaigns, feeds automations and sends within the daily
 // limit; counts orders that came from an email every 10 minutes.
 cron.schedule("* * * * *", async () => {
+  // Automations first, so the emails they queue go out in the same minute.
+  try { await runAutomations(Date.now()); } catch (e) {
+    logger.error("cron: email automations crashed", { error: (e as Error).message });
+  }
   try { await runEmailMarketingJob(); } catch (e) {
     logger.error("cron: email marketing crashed", { error: (e as Error).message });
   }
