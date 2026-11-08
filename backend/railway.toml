@@ -1,5 +1,8 @@
+# Railpack, not Nixpacks (8 Nov 2026): Nixpacks' build tool is downloaded from
+# GitHub on every build, and that download kept failing (504), so no deploy
+# could get through. railpack.json installs jemalloc as nixpacks.toml did.
 [build]
-builder = "NIXPACKS"
+builder = "RAILPACK"
 
 [deploy]
 startCommand = "sh ./start-railway.sh"
