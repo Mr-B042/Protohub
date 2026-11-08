@@ -10,7 +10,7 @@ const GROUP_ICON: Record<string, typeof Users> = {
 };
 const DAY_CHOICES = [1, 3, 7, 14, 30, 60, 90, 180, 365];
 const SOURCE_CHOICES = [{ value: "order", label: "Order form" }, { value: "cart", label: "Unfinished order (cart)" }, { value: "manual", label: "Added by hand" }, { value: "import", label: "Uploaded list" }];
-const STATUS_CHOICES = [{ value: "subscribed", label: "Subscribed" }, { value: "unsubscribed", label: "Unsubscribed" }, { value: "bounced", label: "Bounced" }];
+const STATUS_CHOICES = [{ value: "subscribed", label: "Subscribed" }, { value: "unsubscribed", label: "Unsubscribed" }, { value: "bounced", label: "Bounced" }, { value: "cleaned", label: "Cleaned (list clean-up)" }];
 export const CHANNELS = ["Facebook", "Instagram", "TikTok", "Website", "Audience Network", "Threads", "WhatsApp", "Direct"];
 
 export type BuilderOptions = { fields: EmConditionField[]; products: EmDesignerProduct[]; states: string[]; tags: EmDesigner["tags"] };

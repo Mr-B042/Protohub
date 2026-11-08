@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { logger } from "../lib/logger.js";
 import { recordClick, recordOpen, unsubscribeToken } from "../lib/email-marketing.js";
+import { receiveMailjetEvents } from "../lib/email-health.js";
 
 /**
  * The links inside campaign emails (Email Marketing, Bright 8 Nov 2026).
@@ -9,6 +10,8 @@ import { recordClick, recordOpen, unsubscribeToken } from "../lib/email-marketin
  *   /e/c/<token>/<n>      counts a click, then opens the real page
  *   /e/u/<token>          unsubscribe (a page with a button; mail apps'
  *                         own Unsubscribe button POSTs straight here)
+ *   /e/hooks/mailjet/<secret>  Mailjet's bounce, spam and blocked reports
+ *                         (switched on from Audience Health; the secret is the key)
  */
 const router = Router();
 
@@ -59,6 +62,17 @@ router.post("/u/:token", async (req, res) => {
   } catch (error) {
     logger.warn("email unsubscribe failed", { error: (error as Error).message });
     res.status(500).send(page("Something went wrong", "<h1>Something went wrong</h1><p>Please try again in a minute.</p>"));
+  }
+});
+
+// Mailjet retries anything but a 2xx, so a failure here is answered 500 on purpose.
+router.post("/hooks/mailjet/:secret", async (req, res) => {
+  try {
+    const handled = await receiveMailjetEvents(String(req.params.secret ?? ""), req.body);
+    res.json({ ok: true, handled });
+  } catch (error) {
+    logger.warn("mailjet event report failed", { error: (error as Error).message });
+    res.status(500).json({ ok: false });
   }
 });
 

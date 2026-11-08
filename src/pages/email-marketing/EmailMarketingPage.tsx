@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, BarChart3, FileText, GitBranch, Home, Info, LayoutGrid, Mail, Plus, RefreshCw, Save, Settings, Users, Zap } from "lucide-react";
 import { emailMarketingApi, type EmCampaign, type EmOverview } from "../../lib/api";
 import AudiencePage from "./AudiencePage";
+import AudienceHealthPage from "./AudienceHealthPage";
 import CampaignWizard from "./CampaignWizard";
 import CampaignsPage from "./CampaignsPage";
 import TabOverview from "./TabOverview";
@@ -28,7 +29,13 @@ const TABS: Array<{ key: EmSection; label: string; icon: typeof Home }> = [
 
 type WizardState = { campaignId?: string | null; preset?: string; segmentId?: string } | null;
 
-export default function EmailMarketingPage({ section, onNavigate, onToast }: { section: EmSection; onNavigate: (section: EmSection) => void; onToast: (message: string) => void }) {
+export default function EmailMarketingPage({ section, onNavigate, onToast, onOpenSettings }: {
+  section: EmSection;
+  onNavigate: (section: EmSection) => void;
+  onToast: (message: string) => void;
+  /** The app's Settings page: "email" (the email service) or "workspace" (alerts). */
+  onOpenSettings: (panel: "email" | "workspace") => void;
+}) {
   const [overview, setOverview] = useState<EmOverview | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -36,7 +43,7 @@ export default function EmailMarketingPage({ section, onNavigate, onToast }: { s
   const [report, setReport] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [audienceModal, setAudienceModal] = useState<"add-subscribers" | "create-segment" | null>(null);
-  const withHeader = section !== "campaigns" && section !== "audience";
+  const withHeader = section !== "campaigns" && section !== "audience" && section !== "health";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -108,7 +115,11 @@ export default function EmailMarketingPage({ section, onNavigate, onToast }: { s
           onQuick={(action) => { setAudienceModal(action); onNavigate("audience"); }} />
       ) : !error && <Loading />)}
       {section === "campaigns" && <CampaignsPage onNavigate={onNavigate} onCreate={() => setWizard({})} onEdit={(id) => setWizard({ campaignId: id })} onToast={onToast} refreshKey={refreshKey} />}
-      {section === "audience" && <AudiencePage onToast={onToast} onUseSegment={(segmentId) => setWizard({ segmentId })} openModal={audienceModal} onModalOpened={() => setAudienceModal(null)} />}
+      {section === "audience" && <AudiencePage onToast={onToast} onUseSegment={(segmentId) => setWizard({ segmentId })} openModal={audienceModal} onModalOpened={() => setAudienceModal(null)} onOpenHealth={() => onNavigate("health")} />}
+      {section === "health" && (
+        <AudienceHealthPage onNavigate={onNavigate} onToast={onToast} onOpenSettings={onOpenSettings} onCreate={(preset) => setWizard(preset ? { preset } : {})}
+          onCreateSegment={() => { setAudienceModal("create-segment"); onNavigate("audience"); }} />
+      )}
       {section === "automations" && <WaitingForDesign title="Automations" note="Your Automations designs are in and come in the next part. Until then, make an automation from Create Campaign › Schedule & Automate › Automation Workflow; it shows on the Overview and in Campaigns." />}
       {section === "journey" && <WaitingForDesign title="Customer Journey" note="Your Customer Journey design is in and comes in a later part. Step 2 of Create Campaign can already send to a customer stage (just delivered, gone quiet, left a cart...)." />}
       {section === "templates" && <WaitingForDesign title="Templates" note="Templates are in the Design Email step of Create Campaign for now (View All, and Save this design as a template). This tab is waiting for its design." />}

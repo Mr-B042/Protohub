@@ -13,6 +13,7 @@ import {
 } from "../lib/email-marketing.js";
 import { CONDITION_FIELDS, cleanConditions, cleanEmail, resolveAudience, slugFor, type AudienceChoice, type Delivery } from "../lib/email-marketing-rules.js";
 import { collectLinks, normalizeDesign, safeUrl } from "../lib/email-render.js";
+import { cleanList, cleaningPlan, enableBounceReports, healthFor } from "../lib/email-health.js";
 
 /**
  * Email Marketing (Bright, 8 Nov 2026), part 1: Overview, Campaigns, the
@@ -689,6 +690,45 @@ router.patch("/settings", async (req, res) => {
     if (error?.issues) { res.status(400).json({ error: "The daily limit must be between 1 and 100,000." }); return; }
     sendError(res, error, "Could not save the settings.");
   }
+});
+
+// ── Audience Health (Bright's 7 designs, 8 Nov 2026) ─────────────────
+
+const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
+const DAY_MS = 86_400_000;
+/** ?from=YYYY-MM-DD&to=YYYY-MM-DD (Lagos days, both included); default the last 30 days. */
+function healthRange(req: Request) {
+  const nowMs = Date.now();
+  const from = String(req.query.from ?? ""), to = String(req.query.to ?? "");
+  const toMs = DAY_KEY.test(to) ? Math.min(nowMs, Date.parse(`${to}T00:00:00+01:00`) + DAY_MS) : nowMs;
+  const fromRaw = DAY_KEY.test(from) ? Date.parse(`${from}T00:00:00+01:00`) : toMs - 30 * DAY_MS;
+  const fromMs = Number.isFinite(fromRaw) && fromRaw < toMs ? Math.max(fromRaw, toMs - 400 * DAY_MS) : toMs - 30 * DAY_MS;
+  return { fromMs, toMs: Number.isFinite(toMs) ? toMs : nowMs };
+}
+
+router.get("/health", async (req, res) => {
+  try { res.json(await healthFor(orgOf(req), branchOf(req), healthRange(req))); }
+  catch (error) { sendError(res, error, "Could not load Audience Health."); }
+});
+
+router.get("/health/cleaning", async (req, res) => {
+  try {
+    const plan = await cleaningPlan(orgOf(req), branchOf(req));
+    res.json({ neverOpened: plan.neverOpened.length, duplicates: plan.duplicates.length, bounced: plan.bounced.length });
+  } catch (error) { sendError(res, error, "Could not check the list."); }
+});
+
+router.post("/health/clean", async (req, res) => {
+  try {
+    const body = z.object({ neverOpened: z.boolean().default(false), duplicates: z.boolean().default(false), bounced: z.boolean().default(false) }).parse(req.body ?? {});
+    if (!body.neverOpened && !body.duplicates && !body.bounced) { res.status(400).json({ error: "Tick at least one group to clean." }); return; }
+    res.json(await cleanList(orgOf(req), branchOf(req), req.user!.name ?? "staff", body));
+  } catch (error) { sendError(res, error, "Could not clean the list."); }
+});
+
+router.post("/health/bounce-reports", async (req, res) => {
+  try { res.json(await enableBounceReports(orgOf(req), branchOf(req))); }
+  catch (error) { sendError(res, error, "Could not switch on bounce reports."); }
 });
 
 export default router;

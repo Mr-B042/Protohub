@@ -5510,6 +5510,87 @@ export type EmReport = {
 };
 
 const EM = "/api/email-marketing";
+// Email Marketing › Audience Health (Bright's 7 designs, 8 Nov 2026).
+export type EmHealthChange = { value: number | null; change: number | null };
+export type EmHealthSegment = {
+  id: string; name: string; icon: string; kind: "auto" | "fixed"; audience: number; contacts: number; growth: number | null; sent: number;
+  openRate: number | null; clickRate: number | null; engagement: "high" | "good" | "low" | "none"; health: "healthy" | "at_risk" | "unhealthy"; usedByCampaign: boolean;
+};
+export type EmHealthCampaign = {
+  id: string; name: string; thumbnailUrl: string | null; goal: string; status: string; audienceLabel: string; sent: number; openRate: number | null; clickRate: number | null;
+  conversions: number; delivered: number; deliveredRate: number | null; spamRate: number | null; bounceRate: number | null;
+};
+export type EmHealthIssue = { id: string; key: string; title: string; area: "quality" | "engagement" | "deliverability" | "growth" | "segments"; severity: "critical" | "high" | "medium" | "low"; action: string; detectedAt: string };
+export type EmHealthGrade = "Excellent" | "Good" | "Fair" | "Poor" | null;
+export type EmHealth = {
+  nowMs: number;
+  range: { from: string; to: string };
+  sender: { ready: boolean; reason: string | null; fromEmail: string };
+  bounceReports: { on: boolean; since: string | null };
+  auth: { domain: string; spf: "verified" | "missing" | "other"; dkim: "verified" | "missing"; dmarc: "enforced" | "monitoring" | "missing"; checkedAt: string } | null;
+  overview: {
+    kpis: { total: { value: number; change: number | null }; quality: EmHealthChange; deliverability: EmHealthChange; engagement: EmHealthChange; atRisk: { value: number; percent: number | null } };
+    score: number | null; grade: EmHealthGrade;
+    checks: Array<{ label: string; value: number | null; good: boolean; lowIsGood?: boolean }>;
+    trend: Array<{ day: string; value: number | null }>;
+    breakdown: { total: number; valid: number; bounced: number; unsubscribed: number; duplicate: number; other: number; qualityPercent: number | null };
+    engagement: { openRate: number | null; openChange: number | null; clickRate: number | null; clickChange: number | null; repeatPurchaseRate: number | null; active: number; activePercent: number | null };
+    atRisk: { total: number; percent: number | null; quiet: number; bounced: number; unsubscribedRecently: number };
+  };
+  quality: {
+    kpis: { total: number; valid: number; bounced: number; duplicate: number; unsubscribed: number; other: number; percent: number | null };
+    trend: Array<{ day: string; value: number | null }>;
+    sources: Array<{ label: string; kind: string; total: number; valid: number; bounced: number; duplicate: number; unsubscribed: number; qualityRate: number | null; status: string }>;
+  };
+  engagement: {
+    kpis: {
+      sent: number; people: number; opened: number; clicked: number; openRate: number | null; clickRate: number | null; repeatEngagement: number | null; reengaged: number;
+      active: number; activePercent: number | null; inactive: number; inactivePercent: number | null; openChange: number | null; clickChange: number | null; repeatChange: number | null;
+    };
+    trend: Array<{ day: string; sent: number; openRate: number | null; clickRate: number | null }>;
+    segments: EmHealthSegment[];
+    campaigns: EmHealthCampaign[];
+  };
+  deliverability: {
+    kpis: {
+      tried: number; accepted: number; delivered: number; failed: number; bounced: number; hard: number; spam: number;
+      deliveredRate: number | null; failedRate: number | null; bounceRate: number | null; spamRate: number | null;
+      deliveredChange: number | null; bounceChange: number | null; spamChange: number | null; failedChange: number | null;
+    };
+    score: number | null; grade: EmHealthGrade;
+    trend: Array<{ day: string; sent: number; value: number | null }>;
+    listReputation: "Excellent" | "Good" | "Fair" | "Poor" | null;
+    campaigns: EmHealthCampaign[];
+  };
+  growth: {
+    kpis: {
+      total: number; added: number; addedChange: number | null; net: number; netChange: number | null; churned: number; churnRate: number | null; churnChange: number | null;
+      retentionRate: number | null; retentionChange: number | null; ltv: number | null; ltvChange: number | null;
+    };
+    series: Array<{ day: string; total: number; added: number; churned: number; churnRate: number | null }>;
+    summary: Array<{ key: string; label: string; now: number | null; before: number | null; goodWhenUp: boolean; percent?: boolean }>;
+    cohorts: Array<{ month: string; label: string; size: number; cells: Array<number | null> }>;
+    value: {
+      aov: number | null; aovBefore: number | null; frequency: number | null; frequencyBefore: number | null; ltv: number | null; ltvBefore: number | null;
+      repeatRate: number | null; repeatRateBefore: number | null; orders: number;
+    };
+  };
+  segments: {
+    kpis: { total: number; healthy: number; atRisk: number; unhealthy: number; inSegments: number };
+    healthPercent: number | null; grade: EmHealthGrade;
+    trend: Array<{ day: string; healthy: number | null; atRisk: number | null; unhealthy: number | null }>;
+    rows: EmHealthSegment[];
+    checks: { valid: number; duplicate: number; bounced: number; unsubscribed: number; total: number; hygiene: number | null };
+  };
+  issues: {
+    open: EmHealthIssue[];
+    counts: { open: number; openBefore: number; critical: number; high: number; medium: number; low: number; resolved30: number; total: number; resolutionRate: number | null; avgHoursToFix: number | null };
+    trend: Array<{ day: string; open: number }>;
+    byArea: Array<{ area: EmHealthIssue["area"]; count: number }>;
+  };
+};
+export type EmCleaningPlan = { neverOpened: number; duplicates: number; bounced: number };
+
 export const emailMarketingApi = {
   overview: () => get<EmOverview>(`${EM}/overview`),
   audience: () => get<EmAudiencePage>(`${EM}/audience`),
@@ -5551,5 +5632,9 @@ export const emailMarketingApi = {
   sendTest: (id: string, emails: string[]) => post<{ results: Array<{ email: string; ok: boolean; error?: string }> }>(`${EM}/campaigns/${encodeURIComponent(id)}/test`, { emails }),
   report: (id: string) => get<EmReport>(`${EM}/campaigns/${encodeURIComponent(id)}/report`),
   settings: () => get<{ dailyLimit: number; footerNote: string; sender: { ready: boolean; reason?: string; fromName: string; fromEmail: string } }>(`${EM}/settings`),
-  saveSettings: (body: { dailyLimit?: number; footerNote?: string; autoSync?: boolean; defaultListId?: string | null; updateExisting?: boolean }) => patch<{ ok: boolean }>(`${EM}/settings`, body)
+  saveSettings: (body: { dailyLimit?: number; footerNote?: string; autoSync?: boolean; defaultListId?: string | null; updateExisting?: boolean }) => patch<{ ok: boolean }>(`${EM}/settings`, body),
+  health: (range: { from: string; to: string }) => get<EmHealth>(`${EM}/health?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`),
+  cleaningPlan: () => get<EmCleaningPlan>(`${EM}/health/cleaning`),
+  cleanList: (body: { neverOpened: boolean; duplicates: boolean; bounced: boolean }) => post<EmCleaningPlan>(`${EM}/health/clean`, body),
+  enableBounceReports: () => post<{ on: boolean; skipped: string[] }>(`${EM}/health/bounce-reports`, {})
 };

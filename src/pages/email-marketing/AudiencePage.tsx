@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { emailMarketingApi, type EmAudiencePage, type EmContact, type EmDesigner, type EmField, type EmSegment } from "../../lib/api";
 import {
-  Card, Delta, Donut, ErrorNote, IconTile, KpiTile, Loading, Pill, SLICE_COLORS, SegmentIcon, WaitingForDesign, btn, count, downloadCsv, input, lagosDate, pct, select
+  Card, Delta, Donut, ErrorNote, IconTile, KpiTile, Loading, Pill, SLICE_COLORS, SegmentIcon, btn, count, downloadCsv, input, lagosDate, pct, select
 } from "./em-ui";
 import { AllAudienceTab, FieldsTab, ImportSyncTab, ListsTab, TagsTab } from "./AudienceTabs";
 import SegmentEditor from "./SegmentEditor";
@@ -33,11 +33,13 @@ const SOURCE_LABEL: Record<string, string> = { order: "Order form", cart: "Unfin
 
 type Modal = null | { kind: "add" } | { kind: "import" } | { kind: "segment"; segment?: EmSegment };
 
-export default function AudiencePage({ onToast, onUseSegment, openModal, onModalOpened }: {
+export default function AudiencePage({ onToast, onUseSegment, openModal, onModalOpened, onOpenHealth }: {
   onToast: (message: string) => void;
   onUseSegment: (segmentId: string) => void;
   openModal: "add-subscribers" | "create-segment" | null;
   onModalOpened: () => void;
+  /** Audience Health is its own page (7 tabs, Bright's designs). */
+  onOpenHealth: () => void;
 }) {
   const [data, setData] = useState<EmAudiencePage | null>(null);
   const [contacts, setContacts] = useState<EmContact[] | null>(null);
@@ -150,7 +152,7 @@ export default function AudiencePage({ onToast, onUseSegment, openModal, onModal
 
       <nav className="flex flex-wrap gap-1.5" aria-label="Audience sections">
         {SUB_TABS.map(({ key, label, icon: Icon }) => (
-          <button key={key} type="button" onClick={() => setTab(key)} aria-current={tab === key ? "page" : undefined}
+          <button key={key} type="button" onClick={() => (key === "health" ? onOpenHealth() : setTab(key))} aria-current={tab === key ? "page" : undefined}
             className={`!min-h-0 inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-[14px] font-semibold ${tab === key ? "bg-[#5B3FD9] text-white shadow-sm" : "text-gray-700 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800"}`}>
             <Icon className="h-4 w-4" />{label}{key === "segments" && data ? ` (${segments.length})` : ""}
           </button>
@@ -276,7 +278,6 @@ export default function AudiencePage({ onToast, onUseSegment, openModal, onModal
       {tab === "tags" && data && <TagsTab tags={data.tags} onChanged={reloadAll} onToast={onToast} />}
       {tab === "fields" && data && <FieldsTab fields={data.fields} onChanged={reloadAll} onToast={onToast} />}
       {tab === "import" && data && <ImportSyncTab lists={data.lists} fields={data.fields} onImported={reloadAll} onToast={onToast} onOpenCsv={() => setModal({ kind: "import" })} refreshKey={importRefresh} />}
-      {tab === "health" && <WaitingForDesign title="Audience Health" note="Your Audience Health designs (7 tabs) are in. They are built next, right after this part ships, and fill in as campaign emails go out." />}
 
       {menu && createPortal(
         <>
