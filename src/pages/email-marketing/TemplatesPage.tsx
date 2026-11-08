@@ -8,6 +8,7 @@ import { STARTER_TEMPLATES, TEMPLATE_CATEGORIES, buildStarterDesign, type Campai
 import { ModalShell } from "./AudiencePage";
 import type { StartTemplate } from "./CampaignWizard";
 import EmailFrame from "./EmailFrame";
+import TemplateCover from "./TemplateCover";
 import { Card, ErrorNote, Loading, btn, count, input, lagosDate, select } from "./em-ui";
 import { RowMenu } from "./loyalty-ui";
 import TemplateWizard, { type TemplateWizardStart } from "./TemplateWizard";
@@ -175,7 +176,7 @@ export default function TemplatesPage({ onToast, refreshKey, onUseTemplate, onCr
                       <span className={`absolute left-2 top-2 z-10 rounded-md px-2 py-0.5 text-[11.5px] font-bold ${CATEGORY_TONE[card.saved ? "custom" : card.category] ?? CATEGORY_TONE.custom}`}>
                         {card.saved ? (card.saved.status === "draft" ? "Draft" : card.saved.visibility === "private" ? "Private" : "Saved") : categoryLabel(card.category)}
                       </span>
-                      <div className="pointer-events-none"><EmailFrame design={card.design} fit brand={fields.brand} minHeight={220} /></div>
+                      <TemplateCover starterKey={card.saved ? null : card.key.replace("starter:", "")} design={card.design} name={card.name} brand={fields.brand} photo={fields.productImage} />
                     </button>
                     <div className="mt-2.5 flex-1 px-1">
                       <div className="text-[16px] font-bold text-gray-900 dark:text-slate-50">{card.name}</div>
