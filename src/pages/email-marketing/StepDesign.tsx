@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
   AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowUp, ChevronRight, Clock, Code2, Copy, Eye, Gift, Image as ImageIcon, LayoutGrid, Link2, Minus, Monitor,
-  MousePointerClick, Package, Paintbrush, Redo2, Save, Send, Settings2, Share2, Smartphone, Square, Star, Trash2, Type, Undo2, Upload, Video, MoveVertical, X
+  MousePointerClick, Package, Paintbrush, PanelTop, Redo2, Save, Send, Settings2, Share2, Smartphone, Square, Star, Trash2, Type, Undo2, Upload, Video, MoveVertical, X
 } from "lucide-react";
 import { emailMarketingApi, type EmDesigner } from "../../lib/api";
-import { FEATURE_ICONS, FONT_CHOICES, TEMPLATE_CHOICES, buildTemplateDesign, blockId, newBlock, normalizeDesign, type Align, type EmailBlock, type EmailBlockType, type EmailDesign } from "../../lib/email-render";
+import { COVER_TONES, FEATURE_ICONS, FONT_CHOICES, TEMPLATE_CHOICES, buildTemplateDesign, blockId, newBlock, normalizeDesign, type Align, type EmailBlock, type EmailBlockType, type EmailDesign } from "../../lib/email-render";
 import EmailFrame, { DRAG_TYPE } from "./EmailFrame";
 import { ModalShell } from "./AudiencePage";
 import { Card, btn, input, select } from "./em-ui";
@@ -13,14 +13,14 @@ import { fieldsFor, priceText, type Draft } from "./wizard-model";
 /** Step 3, Design Email (image 46): blocks on the left, the email in the middle, the picked block's settings on the right. */
 
 const PALETTE: Array<{ type: EmailBlockType; label: string; icon: typeof Type }> = [
-  { type: "text", label: "Text", icon: Type }, { type: "image", label: "Image", icon: ImageIcon }, { type: "button", label: "Button", icon: MousePointerClick },
+  { type: "cover", label: "Cover", icon: PanelTop }, { type: "text", label: "Text", icon: Type }, { type: "image", label: "Image", icon: ImageIcon }, { type: "button", label: "Button", icon: MousePointerClick },
   { type: "product", label: "Product", icon: Package }, { type: "offer", label: "Offer / Badge", icon: Gift }, { type: "divider", label: "Divider", icon: Minus },
   { type: "spacer", label: "Spacer", icon: MoveVertical }, { type: "social", label: "Social Links", icon: Share2 }, { type: "timer", label: "Timer", icon: Clock },
   { type: "video", label: "Video", icon: Video }, { type: "review", label: "Customer Review", icon: Star }, { type: "html", label: "HTML", icon: Code2 }
 ];
 const BLOCK_NAME: Record<EmailBlockType, string> = {
   header: "Header", hero: "Banner", text: "Text", image: "Image", button: "Button", product: "Product", offer: "Offer / Badge", divider: "Divider", spacer: "Spacer",
-  social: "Social Links", timer: "Timer", video: "Video", review: "Customer Review", html: "HTML", features: "Feature Boxes", footer: "Footer Line"
+  social: "Social Links", timer: "Timer", video: "Video", review: "Customer Review", html: "HTML", features: "Feature Boxes", footer: "Footer Line", cover: "Cover"
 };
 
 const label = "block text-[13px] font-bold text-gray-900 dark:text-slate-50";
@@ -422,6 +422,26 @@ function BlockEditor({ block, designer, draft, update, onToast }: { block: Email
           <PictureField value={block.imageUrl} onChange={(imageUrl) => update({ imageUrl })} designer={designer} onToast={onToast} />
           {text("buttonText", block.buttonText, "Button Text", false, 60)}
           <LinkField value={block.buttonLink} onChange={(buttonLink) => update({ buttonLink }, "buttonLink")} designer={designer} />
+        </>
+      );
+    case "cover":
+      return (
+        <>
+          {text("title", block.title, "Headline")}{text("subtitle", block.subtitle, "Line under it", true)}
+          <PictureField value={block.imageUrl} onChange={(imageUrl) => update({ imageUrl })} designer={designer} onToast={onToast} />
+          {text("emoji", block.emoji, "Emoji (when there is no picture)", false, 20)}
+          {text("buttonText", block.buttonText, "Button Text (empty = no button)", false, 60)}
+          <LinkField value={block.buttonLink} onChange={(buttonLink) => update({ buttonLink }, "buttonLink")} designer={designer} required={!!block.buttonText} />
+          <label className="block text-[13px] font-semibold text-gray-800 dark:text-slate-200">Button colour
+            <select value={block.buttonTone} onChange={(event) => update({ buttonTone: event.target.value as "yellow" | "purple" })} className="!min-h-0 mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-[14px] dark:border-slate-700 dark:bg-slate-950"><option value="yellow">Yellow</option><option value="purple">Purple</option></select>
+          </label>
+          <div className="text-[13px] font-semibold text-gray-800 dark:text-slate-200">Background</div>
+          <div className="flex flex-wrap gap-2">
+            {(Object.keys(COVER_TONES) as Array<keyof typeof COVER_TONES>).map((tone) => (
+              <button key={tone} type="button" aria-label={tone} aria-pressed={block.tone === tone} onClick={() => update({ tone })}
+                className={`!min-h-0 h-8 w-8 rounded-full border-2 ${block.tone === tone ? "border-[#5B3FD9]" : "border-gray-200"}`} style={{ background: `linear-gradient(180deg, ${COVER_TONES[tone][0]}, ${COVER_TONES[tone][1]})` }} />
+            ))}
+          </div>
         </>
       );
     case "text":

@@ -86,7 +86,7 @@ export default function TemplateWizard({ start, designer, onClose, onDone, onToa
   const layouts = STARTER_LAYOUTS
     .filter((row) => layoutTab === "all" || typeOf(row.key) === layoutTab)
     .filter((row) => !layoutQuery.trim() || `${row.name} ${row.hint}`.toLowerCase().includes(layoutQuery.trim().toLowerCase()));
-  const thumb = (key: string, height = 120) => <div className="overflow-hidden rounded-lg"><TemplateCover starterKey={key} name={key} brand={fields.brand} photo={fields.productImage} height={height} small={height < 130} /></div>;
+  const thumb = (key: string, height = 120) => <div className="overflow-hidden rounded-lg"><TemplateCover design={buildStarterDesign(key, fields)} name={key} brand={fields.brand} height={height} small={height < 130} /></div>;
 
   return createPortal(
     <div className="fixed inset-0 z-[85] flex items-center justify-center bg-slate-900/55 p-2 sm:p-5">
