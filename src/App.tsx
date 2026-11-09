@@ -1,3 +1,4 @@
+import OurStorePage from "./pages/OurStorePage";
 import { type Dispatch, type ReactNode, type SetStateAction, Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { mergeWaybillWeeks } from "./lib/waybill-expense-lines";
 import { isCompleteOrderChunk, isCompleteWorkspaceHistory, mergeOlderRows, settleBootstrapResource } from "./lib/bootstrap-resource";
@@ -338,7 +339,7 @@ type CurrencyCode = "NGN" | "GHS" | "KES" | "ZMW" | "XOF" | "XAF" | "TZS" | "MWK
 // currency no product can be priced in.
 type ProductCurrencyCode = CurrencyCode;
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "addBranch" | "cartAssignmentRules" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addExtraItems" | "addFreeGift" | "salesBonusFullReport" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | "pdaPortalCredentials" | null;
-type ActivePage = "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Team Challenges" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Product Trend" | "Product Launch" | "Ad Tracking" | "Tracking Hub" | "Marketing" | "Marketing Performance" | "Email Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Telegram Bot" | "Sales Closer Workspace" | "Sales Closers" | "Weekly Reports" | "Report a Bug" | "My Reports" | "Issue Management";
+type ActivePage = "Our Store" | "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Team Challenges" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Product Trend" | "Product Launch" | "Ad Tracking" | "Tracking Hub" | "Marketing" | "Marketing Performance" | "Email Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Telegram Bot" | "Sales Closer Workspace" | "Sales Closers" | "Weekly Reports" | "Report a Bug" | "My Reports" | "Issue Management";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type PendingSalesExpansionAction =
@@ -3123,6 +3124,7 @@ const dashboardHashByPage: Record<ActivePage, string> = {
   "Marketing Performance": "#/dashboard/admin/marketing-performance",
   "Email Marketing": "#/dashboard/admin/email-marketing",
   "Product Trend": "#/dashboard/admin/product-trend",
+  "Our Store": "#/dashboard/admin/our-store",
   "Product Launch": "#/dashboard/admin/product-launch",
   "Weekly Reports": "#/dashboard/admin/weekly-reports",
   "Report a Bug": "#/dashboard/admin/report-a-bug",
@@ -3150,13 +3152,15 @@ const PREVIEW_ROLE_STORAGE_KEY = "protohub.previewRole";
 // once instead of to every role's list. Issue Management is the technical
 // team's: Owner and Admin only (Bright's choice).
 const SUPPORT_PAGES: AccessiblePage[] = ["Report a Bug", "My Reports"];
+// Our Store (Bright, 9 Nov 2026): the online store, open to every role inside the app.
+const EVERYONE_PAGES: AccessiblePage[] = ["Our Store"];
 // The only extra pages the logistics role can be granted (see currentAllowedPages).
 const INVENTORY_OPERATIONS_EXTRA_PAGES: AccessiblePage[] = ["Product Trend"];
 const ISSUE_TEAM_ROLES: EditableUserRole[] = ["Owner", "Admin"];
 const allowedPagesFor = (role: EditableUserRole | undefined, extraPages: AccessiblePage[] = []): AccessiblePage[] => {
-  if (!role) return sanitizeActivePageList([...roleAllowedPages["Viewer"], ...SUPPORT_PAGES]);
+  if (!role) return sanitizeActivePageList([...EVERYONE_PAGES, ...roleAllowedPages["Viewer"], ...SUPPORT_PAGES]);
   const base = roleAllowedPages[role] ?? [];
-  return sanitizeActivePageList([...base, ...extraPages.filter((page) => page !== "Issue Management"), ...SUPPORT_PAGES, ...(ISSUE_TEAM_ROLES.includes(role) ? ["Issue Management" as AccessiblePage] : [])]);
+  return sanitizeActivePageList([...EVERYONE_PAGES, ...base, ...extraPages.filter((page) => page !== "Issue Management"), ...SUPPORT_PAGES, ...(ISSUE_TEAM_ROLES.includes(role) ? ["Issue Management" as AccessiblePage] : [])]);
 };
 const payStructureTypes: { value: PayStructureType; helper: string }[] = [
   { value: "Per Delivered Order", helper: "Rate × delivered orders" },
@@ -28843,6 +28847,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       "marketing-performance": "Marketing Performance",
       "email-marketing": "Email Marketing",
       "product-trend": "Product Trend",
+      "our-store": "Our Store",
       "product-launch": "Product Launch",
       "weekly-reports": "Weekly Reports",
       "report-a-bug": "Report a Bug",
@@ -38315,6 +38320,7 @@ ${waybillLineItems(w).length > 1
   "Marketing Performance": "#/dashboard/admin/marketing-performance",
   "Email Marketing": "#/dashboard/admin/email-marketing",
   "Product Trend": "#/dashboard/admin/product-trend",
+  "Our Store": "#/dashboard/admin/our-store",
   "Product Launch": "#/dashboard/admin/product-launch",
   "Weekly Reports": "#/dashboard/admin/weekly-reports",
   "Report a Bug": "#/dashboard/admin/report-a-bug",
@@ -38416,7 +38422,7 @@ ${waybillLineItems(w).length > 1
       return;
     }
 
-    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory & Logistics Operations" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Head of Sales Rep" || label === "Sales Closers" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Tracking Hub" || label === "Marketing" || label === "Marketing Performance" || label === "Email Marketing" || label === "Product Trend" || label === "Product Launch" || label === "Weekly Reports" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp" || label === "Telegram Bot" || label === "Report a Bug" || label === "My Reports" || label === "Issue Management") {
+    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory & Logistics Operations" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Head of Sales Rep" || label === "Sales Closers" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Tracking Hub" || label === "Marketing" || label === "Marketing Performance" || label === "Email Marketing" || label === "Product Trend" || label === "Our Store" || label === "Product Launch" || label === "Weekly Reports" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp" || label === "Telegram Bot" || label === "Report a Bug" || label === "My Reports" || label === "Issue Management") {
       if (label === "Inventory & Logistics Operations") {
         setInventoryOperationsSection("dashboard");
       }
@@ -76773,6 +76779,23 @@ ${waybillLineItems(w).length > 1
                     {sidebarSection}
                   </div>
                 )}
+                {item.label === "Our Store" ? (
+                  // Our Store (Bright, 9 Nov 2026): gold, with a moving shine, at the top for everyone.
+                  <button
+                    type="button"
+                    title={collapsed ? "Our Store" : undefined}
+                    className={`store-gold relative mb-2 flex w-full items-center overflow-hidden rounded-xl text-sm font-extrabold text-amber-950 shadow-[0_4px_18px_rgba(245,158,11,0.35)] transition-transform hover:scale-[1.02] ${collapsed ? "justify-center px-0 py-2.5" : "gap-3 px-3 py-2.5"} ${isActive ? "ring-2 ring-amber-200" : ""}`}
+                    onClick={() => {
+                      handleNavClick(item.label);
+                      if (window.matchMedia("(max-width: 1024px)").matches) setMobileMenuOpen(false);
+                    }}
+                  >
+                    <span className="store-gold-shine" aria-hidden="true" />
+                    <item.icon className="relative z-[1] h-5 w-5 shrink-0" />
+                    {!collapsed && <span className="relative z-[1] truncate">Our Store</span>}
+                    {!collapsed && <span className="relative z-[1] ml-auto rounded-full bg-amber-950/85 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-200">Shop</span>}
+                  </button>
+                ) : (
                 <button
                   type="button"
                   title={collapsed ? item.label : undefined}
@@ -76795,6 +76818,7 @@ ${waybillLineItems(w).length > 1
                     ? <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-red-500" aria-label={`${campaignAlertCount} campaigns with no order for 3 days`} />
                     : <span className="ml-auto rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white" title="Campaigns with no order for 3+ days">{campaignAlertCount}</span>)}
                 </button>
+                )}
                 {showEmailMarketingSubnav && (
                   <div className="ml-4 mt-1 mb-2 pl-3.5 border-l border-white/10 space-y-1">
                     {EMAIL_MARKETING_SUBNAV.map((sub) => {
@@ -91944,6 +91968,8 @@ ${waybillLineItems(w).length > 1
               ? <ProductLaunchPage onToast={showToast} readOnly={isPreviewing && previewReadOnly}
                   onChanged={() => { void productsApi.list().then((rows: any) => { if (Array.isArray(rows)) setProducts(rows as Product[]); }).catch(() => undefined); }} />
               : <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center text-sm text-gray-500">Product Launch is for the Owner.</section>
+          ) : activePage === "Our Store" ? (
+            <OurStorePage />
           ) : activePage === "Product Trend" ? (
             // Owner / Admin / Manager (Bright, 20 Oct 2026). Net profit is
             // Owner / Admin only: Managers have no Finance page. Gated on

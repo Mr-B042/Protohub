@@ -10455,3 +10455,20 @@ body:has(.waybill-create-modal) .waybill-modal-subtitle {
   .challenge-progress-fill::before,
   .challenge-progress-fill::after { animation: none; transition: none; }
 }
+
+
+/* Our Store sidebar entry (Bright, 9 Nov 2026): gold with a slow moving shine. */
+.store-gold {
+  background: linear-gradient(110deg, #b7791f 0%, #f6c453 22%, #fde68a 40%, #f59e0b 62%, #fcd34d 80%, #b7791f 100%);
+  background-size: 220% 100%;
+  animation: store-gold-flow 6s ease-in-out infinite;
+}
+.store-gold-shine {
+  position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(105deg, transparent 30%, rgba(255, 255, 255, 0.75) 48%, transparent 66%);
+  transform: translateX(-120%);
+  animation: store-gold-shine 3.2s ease-in-out infinite;
+}
+@keyframes store-gold-flow { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+@keyframes store-gold-shine { 0% { transform: translateX(-120%); } 55%, 100% { transform: translateX(120%); } }
+@media (prefers-reduced-motion: reduce) { .store-gold, .store-gold-shine { animation: none; } }
