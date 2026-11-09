@@ -83,7 +83,7 @@ function TriggerFields({ draft, designer, onChange, hint = false }: StepProps & 
         <Icon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#5B3FD9]" />
         <select value={t.kind} onChange={(event) => {
           const kind = event.target.value as EmTrigger["kind"];
-          onChange({ trigger: { kind, ...(kind === "cart_abandoned" ? { cartMinutes: 60 } : kind === "inactive" ? { inactiveDays: 60 } : kind === "vip" ? { vipOrders: 3 } : kind === "reorder" ? { reorderDays: 30, productId: null } : kind === "went_quiet" ? { quietDays: 1, quietReasons: [] } : kind === "date_field" ? { fieldKey: dateFields[0]?.key ?? "birthday" } : { productId: null }) } });
+          onChange({ trigger: { kind, ...(kind === "cart_abandoned" ? { cartMinutes: 60 } : kind === "inactive" ? { inactiveDays: 60 } : kind === "vip" ? { vipOrders: 3 } : kind === "reorder" ? { reorderDays: 30, productId: null } : kind === "went_quiet" ? { quietDays: 1, quietReasons: [] } : kind === "in_segment" ? { segmentId: (designer?.segments ?? []).find((row) => !row.list)?.id ?? "", rank: 50 } : kind === "date_field" ? { fieldKey: dateFields[0]?.key ?? "birthday" } : { productId: null }) } });
         }} className={`${select} !pl-9`} aria-label="Trigger">
           {TRIGGER_OPTIONS.map((row) => <option key={row.kind} value={row.kind}>{row.label}</option>)}
         </select>
@@ -113,6 +113,11 @@ function TriggerFields({ draft, designer, onChange, hint = false }: StepProps & 
         {t.kind === "reorder" && (
           <select value={String(t.reorderDays ?? 30)} onChange={(event) => set({ reorderDays: Number(event.target.value) })} className={`${select} !w-auto !py-2 !text-[13px]`} aria-label="Days after delivery">
             {[14, 21, 30, 45, 60, 90].map((n) => <option key={n} value={n}>{n} days after delivery</option>)}
+          </select>
+        )}
+        {t.kind === "in_segment" && (
+          <select value={t.segmentId ?? ""} onChange={(event) => set({ segmentId: event.target.value })} className={`${select} !w-auto min-w-[200px] flex-1 !py-2 !text-[13px]`} aria-label="Segment">
+            <option value="">Pick a segment…</option>{(designer?.segments ?? []).filter((row) => row.status !== "archived").map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
           </select>
         )}
         {t.kind === "went_quiet" && (

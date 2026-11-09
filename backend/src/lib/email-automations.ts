@@ -118,6 +118,10 @@ async function readyToLaunch(orgId: string, branchId: string, trigger: Trigger, 
     const { data } = await supabase.from("email_custom_fields").select("id").eq("org_id", orgId).eq("branch_id", branchId).eq("key", trigger.fieldKey ?? "").eq("type", "date").eq("status", "active").maybeSingle();
     if (!data) throw new EmailMarketingError(400, "Add the date field first: Audience & Segments › Custom Fields (type Date), e.g. Birthday.");
   }
+  if (trigger.kind === "in_segment") {
+    const { data } = await supabase.from("email_segments").select("id").eq("org_id", orgId).eq("branch_id", branchId).eq("id", trigger.segmentId || "00000000-0000-0000-0000-000000000000").eq("status", "active").maybeSingle();
+    if (!data) throw new EmailMarketingError(400, "Pick the group (segment) this flow is for.");
+  }
   const sender = await marketingSender(orgId);
   if (!sender.ready) throw new EmailMarketingError(409, sender.reason ?? "Email sending is not set up.");
 }
@@ -459,6 +463,16 @@ async function candidatesFor(auto: Automation, branchId: string, world: World, n
       if (ordersOf(person.stats?.key ?? "").some((other) => Date.parse(other.createdAt) > Date.parse(order.createdAt))) continue;
       out.push({ key: `reorder:${order.id}`, person, atMs: due, label: "Time to buy again", triggerOrderId: order.id });
     }
+  } else if (t.kind === "in_segment") {
+    // Everyone (subscribed) in the group right now. A flow that repeats gets a fresh key each day it may start again.
+    const row = world.segmentRows.find((item) => item.id === t.segmentId && item.status === "active");
+    if (row) {
+      for (const person of byContact.values()) {
+        if (!inGroup(world, row, person)) continue;
+        const id = person.contact!.id;
+        out.push({ key: auto.settings.reentry ? `seg:${row.id}:${id}:${lagosDay(nowMs)}` : `seg:${row.id}:${id}`, person, atMs: nowMs, label: `In the group: ${row.name}` });
+      }
+    }
   } else if (t.kind === "went_quiet") {
     // Every subscribed customer whose LATEST order went quiet, however long ago
     // (Bright: "any customers who ghosted us in the past"), once it is quietDays old.
@@ -481,6 +495,13 @@ async function candidatesFor(auto: Automation, branchId: string, world: World, n
   return out;
 }
 
+/** Is this customer in the group (auto rules, or a fixed list)? */
+function inGroup(world: World, row: World["segmentRows"][number], person: World["people"][number]) {
+  return row.kind === "fixed"
+    ? !!person.contact && row.contactIds.includes(person.contact.id)
+    : segmentMatches(person, { match: row.match, conditions: row.conditions, exclude: row.excludeOn ? row.exclude : [] }, world.ctx);
+}
+
 async function recentCarts(branchId: string, sinceMs: number) {
   const { data, error } = await supabase.from("abandoned_carts").select("id, phone, email, created_at, status, product_id")
     .eq("branch_id", branchId).gte("created_at", new Date(sinceMs).toISOString()).order("created_at", { ascending: true }).limit(5000);
@@ -494,8 +515,13 @@ async function enrollBranch(orgId: string, branchId: string, autos: Automation[]
   // Who is already walking a flow of this branch, and in which (for priority).
   const active = await fetchAllRowsOrThrow<any>(() => supabase.from("email_automation_runs").select("automation_id, email").eq("branch_id", branchId).eq("status", "active"));
   const rankOf = new Map(autos.map((auto) => [auto.id, PRIORITY_RANK[auto.settings.priority]]));
+  // Group flows ("Customer Is In a Segment"): one at a time per customer, the
+  // lowest rank first, so someone in several groups gets one stay-in-touch flow.
+  const groupFlow = new Set(autos.filter((auto) => auto.trigger.kind === "in_segment").map((auto) => auto.id));
+  const inGroupFlow = new Set(active.filter((run) => groupFlow.has(run.automation_id)).map((run) => run.email));
+  const ordered = [...autos].sort((a, b) => (a.trigger.kind === "in_segment" ? a.trigger.rank ?? 50 : -1) - (b.trigger.kind === "in_segment" ? b.trigger.rank ?? 50 : -1));
   let added = 0;
-  for (const auto of autos) {
+  for (const auto of ordered) {
     if (!firstNodeId(auto.workflow)) continue;
     let candidates = await candidatesFor(auto, branchId, world, nowMs);
     if (!candidates.length) continue;
@@ -509,6 +535,7 @@ async function enrollBranch(orgId: string, branchId: string, autos: Automation[]
     const myRank = PRIORITY_RANK[auto.settings.priority];
     const busyHigher = new Set(active.filter((run) => run.automation_id !== auto.id && (rankOf.get(run.automation_id) ?? 1) > myRank).map((run) => run.email));
     candidates = candidates.filter((row) => !busyHigher.has(row.person.contact!.email));
+    if (groupFlow.has(auto.id)) candidates = candidates.filter((row) => !inGroupFlow.has(row.person.contact!.email));
     if (!candidates.length) continue;
     // Their earlier walks through this automation, for re-entry and limits.
     const emails = [...new Set(candidates.map((row) => row.person.contact!.email))];
@@ -533,6 +560,7 @@ async function enrollBranch(orgId: string, branchId: string, autos: Automation[]
     if (!rows.length) continue;
     const { error } = await supabase.from("email_automation_runs").upsert(rows, { onConflict: "automation_id,entry_key", ignoreDuplicates: true });
     if (error) { logger.warn("automation enrol failed", { automationId: auto.id, error: error.message }); continue; }
+    if (groupFlow.has(auto.id)) for (const row of rows) inGroupFlow.add(row.email);
     added += rows.length;
   }
   return added;
@@ -561,6 +589,7 @@ async function advanceRun(run: any, auto: Automation, world: () => Promise<World
   // Ways out before the next step.
   if (auto.settings.exit.onUnsubscribe && contact && contact.status !== "subscribed") { status = "exited"; exitReason = "Unsubscribed"; }
   else if (auto.settings.exit.onPurchase && newOrders().length) { status = "exited"; exitReason = "Made a new purchase"; }
+  else if (auto.trigger.kind === "in_segment" && person && (() => { const row = w.segmentRows.find((item) => item.id === auto.trigger.segmentId); return !row || row.status !== "active" || !inGroup(w, row, person); })()) { status = "exited"; exitReason = "Left the group"; }
   else if (auto.trigger.kind === "went_quiet" && triggerOrder && w.orders.some((order) => order.id === triggerOrder && order.status === "Delivered")) { status = "exited"; exitReason = "Their order was delivered"; }
   else if (auto.settings.exit.afterDays && nowMs - enteredMs >= auto.settings.exit.afterDays * DAY_MS) { status = "exited"; exitReason = `Reached the ${auto.settings.exit.afterDays}-day limit`; }
 
