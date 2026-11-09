@@ -1,3 +1,4 @@
+import { emailBrand } from "../lib/email-brand.js";
 import { Router, type Request, type Response } from "express";
 import crypto from "node:crypto";
 import { z } from "zod";
@@ -397,14 +398,15 @@ router.delete("/fields/:id", async (req, res) => {
 
 router.get("/designer", async (req, res) => {
   try {
-    const [products, reviews, saved, sender, settings, world, offerRows] = await Promise.all([
+    const [products, reviews, saved, sender, settings, world, offerRows, brand] = await Promise.all([
       productsForDesigner(orgOf(req), branchOf(req)),
       reviewsForDesigner(orgOf(req), branchOf(req)),
       supabase.from("email_saved_blocks").select("id, kind, name, content, created_by, created_by_name, created_at, visibility, status").eq("org_id", orgOf(req)).eq("branch_id", branchOf(req)).order("created_at", { ascending: false }).limit(100),
       marketingSender(orgOf(req)),
       settingsFor(orgOf(req), branchOf(req)),
       loadWorld(orgOf(req), branchOf(req)),
-      supabase.from("email_offers").select("*").eq("org_id", orgOf(req)).eq("branch_id", branchOf(req)).in("status", ["active", "paused"]).order("created_at", { ascending: false }).limit(200)
+      supabase.from("email_offers").select("*").eq("org_id", orgOf(req)).eq("branch_id", branchOf(req)).in("status", ["active", "paused"]).order("created_at", { ascending: false }).limit(200),
+      emailBrand(orgOf(req))
     ]);
     if (saved.error) throw new Error(saved.error.message);
     // Coupons & Offers an email can carry: running or about to start.
@@ -425,7 +427,9 @@ router.get("/designer", async (req, res) => {
       quickSegments: Object.entries(QUICK_SEGMENTS).map(([key, row]) => ({ key, ...row })),
       journeyStages: Object.entries(JOURNEY_STAGES).map(([key, row]) => ({ key, name: row.name, hint: row.hint })),
       presets: Object.entries(AUTOMATION_PRESETS).map(([key, row]) => ({ key, ...row })),
-      userEmail: req.user!.email ?? ""
+      userEmail: req.user!.email ?? "",
+      // The logo every email shows (a normal web link the editor can draw too).
+      brand: { name: brand.name, logoUrl: brand.logoUrl }
     });
   } catch (error) { sendError(res, error, "Could not load the campaign builder."); }
 });

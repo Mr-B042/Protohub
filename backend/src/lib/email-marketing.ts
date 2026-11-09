@@ -11,6 +11,7 @@ import {
   type AudienceChoice, type CampaignResult, type CartLite, type Condition, type ContactLite, type CustomerStats, type Delivery, type MatchContext,
   type OrderLite, type Person, type SavedSegment, type SegmentRule
 } from "./email-marketing-rules.js";
+import { emailBrand } from "./email-brand.js";
 import { applyTags, collectLinks, fillTheirProduct, normalizeDesign, renderEmailHtml, renderEmailText, usesLoyaltyTags, usesTheirProduct, withTheirProduct, type EmailDesign, type RenderOptions, type TheirProduct } from "./email-render.js";
 import { inSendWindow } from "./email-automation-rules.js";
 
@@ -821,7 +822,7 @@ export function campaignLinks(campaign: { slug: string; options?: any }, design:
 
 type RunLink = { label: string; original?: string; url: string };
 
-type SenderContext = { brand: string; footerNote: string };
+type SenderContext = { brand: string; footerNote: string; logoUrl?: string | null };
 
 /** One email's HTML and text, links routed through the click counter. */
 export function renderForSend(campaign: any, rawDesign: EmailDesign, send: { token: string; name: string; variant: string; loyalty?: RenderOptions["loyalty"] | null; theirs?: TheirProduct | null }, sender: SenderContext, nowMs: number) {
@@ -838,7 +839,7 @@ export function renderForSend(campaign: any, rawDesign: EmailDesign, send: { tok
   };
   const opts = {
     firstName: send.name, preheader: campaign.preheader || undefined, brand: sender.brand, footerNote: sender.footerNote,
-    unsubscribeUrl: trackingUrl("u", send.token), openPixelUrl: track ? trackingUrl("o", send.token) : undefined, plain: !!campaign.options?.plainText, nowMs,
+    unsubscribeUrl: trackingUrl("u", send.token), openPixelUrl: track ? trackingUrl("o", send.token) : undefined, plain: !!campaign.options?.plainText, nowMs, logoUrl: sender.logoUrl ?? undefined,
     loyalty: send.loyalty ?? undefined
   };
   const html = renderEmailHtml(design, { ...opts, linkFor });
@@ -860,7 +861,7 @@ export async function sendTest(orgId: string, branchId: string, campaign: any, e
   const linkFor = (url: string) => links.find((link) => link.original === url)?.url ?? url;
   const results: Array<{ email: string; ok: boolean; error?: string }> = [];
   for (const email of emails) {
-    const html = renderEmailHtml(design, { firstName: senderName, preheader: campaign.preheader || undefined, brand: sender.fromName, footerNote: settings.footerNote, unsubscribeUrl: `${PUBLIC_BACKEND_URL}/e/u/test`, plain: !!campaign.options?.plainText, linkFor });
+    const html = renderEmailHtml(design, { logoUrl: (await emailBrand(orgId)).logoUrl ?? undefined, firstName: senderName, preheader: campaign.preheader || undefined, brand: sender.fromName, footerNote: settings.footerNote, unsubscribeUrl: `${PUBLIC_BACKEND_URL}/e/u/test`, plain: !!campaign.options?.plainText, linkFor });
     const text = renderEmailText(design, { firstName: senderName, unsubscribeUrl: `${PUBLIC_BACKEND_URL}/e/u/test`, linkFor });
     try {
       await sendMarketingEmail(orgId, { to: { email }, subject: `[Test] ${campaign.subject}`, html, text });
@@ -955,7 +956,7 @@ async function sendQueued(nowMs: number) {
   const rows = queued.data ?? [];
   if (!rows.length) return 0;
   const campaigns = new Map<string, any>();
-  const senders = new Map<string, { ready: boolean; brand: string; reason?: string }>();
+  const senders = new Map<string, { ready: boolean; brand: string; reason?: string; logoUrl: string | null }>();
   const allowance = new Map<string, number>();
   const footers = new Map<string, string>();
   const productCache = new Map<string, Promise<Awaited<ReturnType<typeof productsForDesigner>>>>();
@@ -964,7 +965,7 @@ async function sendQueued(nowMs: number) {
   for (const row of rows) {
     if (!senders.has(row.org_id)) {
       const sender = await marketingSender(row.org_id);
-      senders.set(row.org_id, { ready: sender.ready, brand: sender.fromName, reason: sender.reason });
+      senders.set(row.org_id, { ready: sender.ready, brand: sender.fromName, reason: sender.reason, logoUrl: (await emailBrand(row.org_id)).logoUrl });
     }
     const sender = senders.get(row.org_id)!;
     if (!sender.ready) continue;
@@ -1000,7 +1001,7 @@ async function sendQueued(nowMs: number) {
     const theirs = usesTheirProduct(design, `${campaign.subject ?? ""} ${campaign.subject_b ?? ""}`)
       ? await theirProductFor(row.org_id, row.branch_id, row.phone, campaign, productCache)
       : undefined;
-    const { html, text, subject } = renderForSend(campaign, design, { ...row, loyalty, theirs }, { brand: sender.brand, footerNote: footers.get(row.branch_id) ?? "" }, nowMs);
+    const { html, text, subject } = renderForSend(campaign, design, { ...row, loyalty, theirs }, { brand: sender.brand, footerNote: footers.get(row.branch_id) ?? "", logoUrl: sender.logoUrl }, nowMs);
     try {
       const result = await sendMarketingEmail(row.org_id, { to: { email: row.email, name: row.name || undefined }, subject, html, text, unsubscribeUrl: trackingUrl("u", row.token), customId: row.token, replyTo: campaign.options?.replyTo || undefined });
       const at = new Date().toISOString();

@@ -2,6 +2,7 @@
 // All requests go through `request()` which attaches the Bearer token
 // and auto-refreshes if the token has expired (401).
 
+import { setEmailBrand } from "./email-brand-store";
 import { restoreSharedPictures } from "./shared-pictures";
 import type { LateSendWeek } from "../components/WeeklyReportParts";
 import type { MissingFeeDetail } from "../pages/weekly-report-model";
@@ -5519,6 +5520,8 @@ export type EmDesigner = {
   reviews: Array<{ id: string; quote: string; name: string; productName: string; rating: number | null }>;
   saved: Array<{ id: string; kind: "block" | "template"; name: string; content: EmailBlock | EmailDesign; createdByName: string; createdAt: string }>;
   sender: { ready: boolean; reason?: string; fromName: string; fromEmail: string };
+  /** The logo every email shows. */
+  brand?: { name: string; logoUrl: string | null };
   settings: { dailyLimit: number; footerNote: string };
   segments: Array<{ id: string; name: string; kind: "auto" | "fixed"; status: string; icon: string; list: boolean }>;
   tags: Array<{ id: string; name: string; kind: "system" | "custom"; color: string; icon: string }>;
@@ -5794,7 +5797,11 @@ export const emailMarketingApi = {
   updateField: (id: string, body: Partial<{ name: string; options: string[]; description: string; required: boolean; useInForms: boolean; status: "active" | "inactive"; icon: string }>) => patch<{ ok: boolean }>(`${EM}/fields/${encodeURIComponent(id)}`, body),
   deleteField: (id: string) => del<{ ok: boolean }>(`${EM}/fields/${encodeURIComponent(id)}`),
   deleteSegment: (id: string) => del<{ ok: boolean }>(`${EM}/segments/${encodeURIComponent(id)}`),
-  designer: () => get<EmDesigner>(`${EM}/designer`),
+  designer: async () => {
+    const designer = await get<EmDesigner>(`${EM}/designer`);
+    if (designer.brand) setEmailBrand(designer.brand);
+    return designer;
+  },
   audiencePreview: (audience: EmAudience) => post<EmPreview>(`${EM}/audience-preview`, { audience }),
   planning: (audience: number) => get<EmPlanning>(`${EM}/planning?audience=${audience}`),
   uploadPicture: (dataUrl: string) => post<{ url: string }>(`${EM}/pictures`, { dataUrl }),
