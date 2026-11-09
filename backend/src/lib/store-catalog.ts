@@ -93,7 +93,8 @@ export async function storePicks(mode: StorePickMode, count: number, opts: { pro
   if (mode === "again") {
     if (!mine.length) return [];
     const best = all.map((item) => ({ item, s: score(item, new Set(mine)) / Math.max(1, mine.length) })).sort((a, b) => b.s - a.s)[0];
-    return best && best.s >= 0.6 ? [best.item] : [];
+    // Only the same product ("buy it again"), never a look-alike.
+    return best && best.s >= 0.85 ? [best.item] : [];
   }
   if (mode === "new") return seeded(all.slice(0, 40), seed).slice(0, n);
   if (mode === "value") return seeded(all.filter((item) => item.price <= 15000), seed).slice(0, n);

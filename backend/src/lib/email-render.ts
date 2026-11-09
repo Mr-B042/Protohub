@@ -568,6 +568,31 @@ export function buildStoreDesign(f: CampaignFields, spec: StoreEmailSpec): Email
   return { version: 1, template: `store:${spec.slug}`, touched: true, styles: { ...DEFAULT_STYLES }, blocks };
 }
 
+// ── Holiday & festival emails (Bright, 9 Nov 2026) ───────────────────
+// One email per holiday, in four versions so each customer gets exactly one:
+// VIP (top 20% spenders), Loyal (2+ deliveries), First-time (1 delivery):
+// all to Our Store (pay online, pay less) with live store picks; Everyone
+// else (no delivery yet): the best seller, pay on delivery. Greetings only,
+// no made-up discounts.
+
+export type HolidayTier = "vip" | "loyal" | "first" | "everyone";
+export type HolidaySpec = { slug: string; photo: string; tone: CoverTone; title: string; subtitle: string; greeting: string };
+export function buildHolidayDesign(f: CampaignFields, h: HolidaySpec, tier: HolidayTier): EmailDesign {
+  const cover = (button: string, link: string): EmailBlock => ({ id: blockId(), type: "cover", title: h.title, subtitle: h.subtitle, imageUrl: `${TEMPLATE_PHOTO_BASE}${h.photo}.jpg`, emoji: "", big: true,
+    buttonText: `${button} →`, buttonLink: link, buttonTone: "purple", tone: h.tone });
+  const picks = (mode: StorePicksMode, title: string): EmailBlock => ({ id: blockId(), type: "storePicks", mode, count: 4, title, buttonText: "Buy Now" });
+  const storeButton = { ...B.button(f, "Visit Our Store", STORE_HOME), color: BRAND_PALETTE.blue, textColor: "#FFFFFF" } as EmailBlock;
+  const storeEnd = [B.text(STORE_PROMISE, 14, false, "left"), storeButton, signOff(f), { id: blockId(), type: "footer", text: STORE_FOOTER } as EmailBlock];
+  const blocks: EmailBlock[] = tier === "everyone"
+    ? [B.header(f), cover("Order Now", f.productLink), hi(), p(h.greeting), p("Celebrate with something for your home. Order today and pay when it arrives at your door."), B.product(f, "Order Now"), B.features(POD), signOff(f), B.footer()]
+    : tier === "vip"
+      ? [B.header(f), cover("See What's New", STORE_HOME), hi(), p(h.greeting), p("As one of our very best customers, thank you for being with us. Here's a first look at what's new in our store for the season. Pay online, pay less."), picks("new", "A first look, just for you"), ...storeEnd]
+      : tier === "loyal"
+        ? [B.header(f), cover("Visit Our Store", STORE_HOME), hi(), p(h.greeting), p("Thank you for coming back to us again and again. We picked these for you this season. Pay online, pay less."), picks("related", "Picked for you"), ...storeEnd]
+        : [B.header(f), cover("Visit Our Store", STORE_HOME), hi(), p(h.greeting), p("You already received from us, so you know we deliver. Celebrate with our store: pay online and pay less. Search for anything you need in the store's search bar."), picks("value", "Great buys for the season"), ...storeEnd];
+  return { version: 1, template: `holiday:${h.slug}:${tier}`, touched: true, styles: { ...DEFAULT_STYLES }, blocks };
+}
+
 /** The layouts in Create Custom Template, step 2 (the ready-made emails, by shape). */
 export const STARTER_LAYOUTS = [
   { key: "promo_offer", name: "Product Promotion", hint: "Showcase a product with image, benefits, and a button" },

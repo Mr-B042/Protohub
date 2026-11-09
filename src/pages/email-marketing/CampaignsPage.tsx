@@ -10,6 +10,7 @@ import {
 } from "./em-ui";
 import CampaignReport from "./CampaignReport";
 import EmailPreviewGallery from "./EmailPreviewGallery";
+import HolidayCalendar from "./HolidayCalendar";
 
 /** Campaigns page, built to Bright's design (image 49, 8 Nov 2026). */
 
@@ -60,6 +61,7 @@ export default function CampaignsPage({ onNavigate, onCreate, onEdit, onToast, r
   const [menu, setMenu] = useState<MenuState>(null);
   const [report, setReport] = useState<string | null>(null);
   const [gallery, setGallery] = useState(false);
+  const [holidays, setHolidays] = useState(false);
   const [testFor, setTestFor] = useState<EmCampaign | null>(null);
   const [page, setPage] = useState(1);
 
@@ -169,6 +171,7 @@ export default function CampaignsPage({ onNavigate, onCreate, onEdit, onToast, r
           <p className="m-0 text-[15px] text-gray-600 dark:text-slate-400">Manage, track and improve all your email campaigns.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => setHolidays(true)} className={btn.ghost}><CalendarDays className="h-4 w-4 text-[#5B3FD9]" />Holiday Calendar</button>
           <button type="button" onClick={() => setGallery(true)} className={btn.ghost}><Eye className="h-4 w-4 text-[#5B3FD9]" />Preview Emails</button>
           <button type="button" onClick={() => onNavigate("templates")} className={btn.ghost}><FileText className="h-4 w-4 text-[#5B3FD9]" />Templates</button>
           <button type="button" onClick={() => onNavigate("automations")} className={btn.ghost}><Zap className="h-4 w-4 text-[#5B3FD9]" />Automations</button>
@@ -347,6 +350,7 @@ export default function CampaignsPage({ onNavigate, onCreate, onEdit, onToast, r
         </>,
         document.body
       )}
+      {holidays && <HolidayCalendar campaigns={rows ?? []} onClose={() => setHolidays(false)} onDone={() => { setHolidays(false); void load(); }} onToast={onToast} />}
       {gallery && <EmailPreviewGallery title="Campaign Email Previews" campaigns={(rows ?? []).filter((row) => row.status !== "archived")} onClose={() => setGallery(false)} onEdit={(id) => { setGallery(false); onEdit(id); }} />}
       {report && <CampaignReport id={report} onClose={() => setReport(null)} onEdit={(id) => { setReport(null); onEdit(id); }} />}
       {testFor && <TestSendModal campaign={testFor} onClose={() => setTestFor(null)} onToast={onToast} />}

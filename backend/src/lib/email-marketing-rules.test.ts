@@ -230,3 +230,32 @@ test("Went Quiet groups: latest order never delivered, by reason", async () => {
   assert.equal(new Set(v2.map((s) => s.key)).size, v2.length);
   assert.deepEqual(r.cleanConditions([{ field: "went_quiet", op: "is", value: "let_down" }]), [{ field: "went_quiet", op: "is", value: "let_down" }]);
 });
+
+test("holiday versions: every customer gets exactly one (VIP taken out of Loyal and First-time)", () => {
+  const list: OrderLite[] = [
+    order("08010000001", "Delivered", 200000, 10), order("08010000001", "Delivered", 150000, 40), order("08010000001", "Delivered", 90000, 80), // big spender, 3 orders
+    order("08010000002", "Delivered", 20000, 10), order("08010000002", "Delivered", 18000, 50), // loyal
+    order("08010000003", "Delivered", 15000, 20), // first-time
+    order("08010000004", "Failed", 15000, 5), // never delivered
+    order("08010000005", "Delivered", 12000, 30), order("08010000006", "Delivered", 11000, 30), order("08010000007", "Delivered", 10000, 30), order("08010000008", "Delivered", 9000, 30)
+  ];
+  const customers = buildCustomers(list, []);
+  const people = buildPeople(customers, ["1", "2", "3", "4", "5", "6", "7", "8"].map((n) => contact(`c${n}`, `p${n}@x.com`, `0801000000${n}`)));
+  const ctx = contextFor(customers, NOW);
+  const vipRule = { match: "all" as const, conditions: [{ field: "spend_top_percent" as const, op: "top", value: 20 }] };
+  const segments = new Map<string, SavedSegment>([["top", { id: "top", name: "Top 20%", kind: "auto", match: "all", conditions: vipRule.conditions, exclude: [], contactIds: [] }]]);
+  const not = { exclude: { on: true, segmentId: "top" } };
+  const vip = resolveAudience(people, { source: "custom", custom: vipRule }, segments, ctx).recipients.map((p) => p.contact!.email);
+  const loyal = resolveAudience(people, { source: "custom", custom: { match: "all", conditions: [{ field: "purchase_count", op: "gte", value: 2 }] }, ...not }, segments, ctx).recipients.map((p) => p.contact!.email);
+  const first = resolveAudience(people, { source: "custom", custom: { match: "all", conditions: [{ field: "purchase_count", op: "eq", value: 1 }] }, ...not }, segments, ctx).recipients.map((p) => p.contact!.email);
+  const rest = resolveAudience(people, { source: "custom", custom: { match: "all", conditions: [{ field: "purchase_count", op: "eq", value: 0 }] } }, segments, ctx).recipients.map((p) => p.contact!.email);
+  assert.ok(vip.includes("p1@x.com"));
+  assert.ok(!loyal.includes("p1@x.com"), "the big spender is VIP only");
+  // p2 (2 orders) is also in the top 20% here, so they get the VIP version and not the Loyal one.
+  assert.equal([vip.includes("p2@x.com"), loyal.includes("p2@x.com")].filter(Boolean).length, 1);
+  assert.ok(first.includes("p3@x.com"));
+  assert.ok(rest.includes("p4@x.com"));
+  const all = [...vip, ...loyal, ...first, ...rest];
+  assert.equal(new Set(all).size, all.length, "nobody is in two versions");
+  assert.equal(all.length, 8, "everyone on the list gets one");
+});
