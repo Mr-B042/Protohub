@@ -235,6 +235,7 @@ type PublicOrderFieldKey =
   | "name"
   | "phone"
   | "whatsapp"
+  | "email"
   | "address"
   | "city"
   | "state"
@@ -246,6 +247,7 @@ const PUBLIC_ORDER_VALIDATION_ORDER: PublicOrderFieldKey[] = [
   "name",
   "phone",
   "whatsapp",
+  "email",
   "state",
   "city",
   "address",
@@ -1773,6 +1775,13 @@ export default function PublicOrderFormPage() {
       nextErrors.whatsapp = "WhatsApp number is required.";
     } else if (orderFormWhatsapp.trim() && nigerianPhoneProblem(orderFormWhatsapp)) {
       nextErrors.whatsapp = nigerianPhoneProblem(orderFormWhatsapp)!;
+    }
+    // Email is required whenever the form shows it (Bright, 9 Nov 2026): it is how
+    // customers get their e-receipts and how we stay in touch after the order.
+    if (settings.showEmail) {
+      const email = orderFormEmail.trim();
+      if (!email) nextErrors.email = "Email is required: we send your order receipt there.";
+      else if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email)) nextErrors.email = "Please check your email, e.g. name@gmail.com.";
     }
     const addressVague = vagueAddressReason(orderFormAddress, orderFormCity, orderFormState, KNOWN_AREA_NAMES);
     if (settings.addressRequired && !orderFormAddress.trim()) nextErrors.address = "Delivery address is required.";
@@ -4842,15 +4851,25 @@ export default function PublicOrderFormPage() {
                 {settings.showEmail && (
                   <label className="field-full">
                     <input
+                      ref={setFieldRef("email") as any}
                       value={orderFormEmail}
-                      onChange={(event) => setOrderFormEmail(event.target.value)}
-                      placeholder="Your Email (optional)"
+                      onChange={(event) => { setOrderFormEmail(event.target.value); clearFieldError("email"); }}
+                      placeholder="Your Email * (for your order receipt)"
                       type="email"
                       name="email"
                       inputMode="email"
                       autoComplete="shipping email"
                       enterKeyHint="next"
+                      required
+                      aria-invalid={Boolean(fieldErrors.email)}
+                      aria-describedby={fieldErrors.email ? "public-order-error-email" : undefined}
+                      style={inputErrorStyle("email")}
                     />
+                    {fieldErrors.email && (
+                      <span id="public-order-error-email" style={{ marginTop: 6, display: "block", fontSize: 12, fontWeight: 700, color: "#dc2626" }}>
+                        {fieldErrors.email}
+                      </span>
+                    )}
                   </label>
                 )}
 
