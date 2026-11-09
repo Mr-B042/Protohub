@@ -91,3 +91,13 @@ test("went-quiet emails show the customer's own product", async () => {
   assert.match(r.renderEmailHtml(none, {}), /Your order is here\./);
   assert.equal(r.fillTheirProduct("Still want your {{Their Product}}?", mine), "Still want your Blender?");
 });
+
+test("emails Autopilot sends as they are have no [write … here] gaps; the check finds them", async () => {
+  const r = await import("./email-render.js");
+  const f = { brand: "Shop", goal: "retention", offerType: "custom", productId: "p", productName: "Rack", productImage: "", productLink: "https://x", productPrice: "", offerOn: false, offerTitle: "", offerBenefit: "" };
+  for (const key of ["welcome_email", "product_collection", "win_back_offer", "still_interested", "review_request", "cart_reminder"]) {
+    assert.deepEqual(r.unfilledGaps(r.buildStarterDesign(key, f)), [], key);
+  }
+  assert.deepEqual(r.unfilledGaps(r.buildStarterDesign("usage_tips", f)).length > 0, true);
+  assert.deepEqual(r.unfilledGaps(null, "Hi [write the date here]"), ["[write the date here]"]);
+});

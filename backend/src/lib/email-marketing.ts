@@ -12,7 +12,7 @@ import {
   type OrderLite, type Person, type SavedSegment, type SegmentRule
 } from "./email-marketing-rules.js";
 import { emailBrand } from "./email-brand.js";
-import { applyTags, collectLinks, fillTheirProduct, normalizeDesign, renderEmailHtml, renderEmailText, usesLoyaltyTags, usesTheirProduct, withTheirProduct, type EmailDesign, type RenderOptions, type TheirProduct } from "./email-render.js";
+import { applyTags, collectLinks, fillTheirProduct, unfilledGaps, normalizeDesign, renderEmailHtml, renderEmailText, usesLoyaltyTags, usesTheirProduct, withTheirProduct, type EmailDesign, type RenderOptions, type TheirProduct } from "./email-render.js";
 import { inSendWindow } from "./email-automation-rules.js";
 
 /**
@@ -993,6 +993,13 @@ async function sendQueued(nowMs: number) {
     }
     const design = normalizeDesign(campaign.design);
     if (!design) continue;
+    // Never send a "[write … here]" gap to a customer: skipped, with the reason shown on the send.
+    const gaps = unfilledGaps(design, `${campaign.subject ?? ""} ${campaign.subject_b ?? ""}`);
+    if (gaps.length) {
+      await supabase.from("email_campaign_sends").update({ status: "skipped", error: `Not sent: the email still has parts to fill in (${gaps.join(", ")}).`.slice(0, 300) }).eq("id", row.id).eq("status", "queued");
+      logger.warn("email held: unfilled gaps", { campaignId: campaign.id, gaps });
+      continue;
+    }
     // {{Points}}, {{Level}}, {{Voucher}}: the member is looked up only when the email uses one (Loyalty & Rewards).
     const loyalty = usesLoyaltyTags(`${JSON.stringify(campaign.design)} ${campaign.subject ?? ""} ${campaign.subject_b ?? ""}`)
       ? await (await import("./loyalty.js")).loyaltyTagsFor(row.org_id, row.branch_id, row.phone)
