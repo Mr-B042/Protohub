@@ -568,6 +568,29 @@ export function buildStoreDesign(f: CampaignFields, spec: StoreEmailSpec): Email
   return { version: 1, template: `store:${spec.slug}`, touched: true, styles: { ...DEFAULT_STYLES }, blocks };
 }
 
+// ── Helpful letters (Bright, 9 Nov 2026: "more plain text… tips to make their life easier") ──
+// A plain letter: the logo, a headline, numbered tips, a warm close. No pictures,
+// no big buttons, nothing to sell; one quiet line after the sign-off.
+export type LetterSpec = { title: string; intro: string; tips: string[]; close: string };
+export function buildLetterDesign(f: CampaignFields, letter: LetterSpec, version: "store" | "pod"): EmailDesign {
+  const ps = version === "store"
+    ? [B.text("P.S. Need something for this? Type it in our store's search bar.", 14, false, "left"),
+       { id: blockId(), type: "button", text: "Search our store →", link: STORE_HOME, style: "link", size: "small", align: "left", color: BRAND_PALETTE.blue, textColor: "#FFFFFF", radius: 0 } as EmailBlock]
+    : [B.text("P.S. Got a question, or a tip of your own? Just reply. A real person reads every reply.", 14, false, "left")];
+  const blocks: EmailBlock[] = [
+    B.header(f),
+    B.text(letter.title, 22, true, "left"),
+    hi(),
+    p(letter.intro),
+    p(letter.tips.map((tip, index) => `${index + 1}. ${tip}`).join("\n\n")),
+    p(letter.close),
+    p(`Warmly,\nThe ${brandName(f)} Team`),
+    ...ps,
+    version === "store" ? { id: blockId(), type: "footer", text: STORE_FOOTER } as EmailBlock : B.footer()
+  ];
+  return { version: 1, template: "letter:tip", touched: true, styles: { ...DEFAULT_STYLES }, blocks };
+}
+
 // ── "Add to your delivery" (Bright, 9 Nov 2026) ─────────────────────
 // Sent soon after an order is placed, while it is still being prepared: the
 // customer can ask (WhatsApp or reply) for more items in the same delivery.
