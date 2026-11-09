@@ -9,7 +9,7 @@ import SegmentBuilder from "./SegmentBuilder";
 import FlowDiagram, { DRAG_TYPE, TRIGGER_ICON } from "./FlowDiagram";
 import { ACTION_GROUPS } from "./NodeEditor";
 import {
-  DAY_NAMES, GOAL_OPTIONS, STAGES, TEMPLATES, TRIGGER_OPTIONS, allNodes, stageText, durationDays, durationText, goalText, hourText, howItWorks, launchProblems, triggerText, windowText,
+  DAY_NAMES, GOAL_OPTIONS, STAGES, TEMPLATES, QUIET_REASON_OPTIONS, TRIGGER_OPTIONS, allNodes, stageText, durationDays, durationText, goalText, hourText, howItWorks, launchProblems, triggerText, windowText,
   type ActionKey, type AutoDraft, type Slot
 } from "./automation-model";
 
@@ -83,7 +83,7 @@ function TriggerFields({ draft, designer, onChange, hint = false }: StepProps & 
         <Icon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#5B3FD9]" />
         <select value={t.kind} onChange={(event) => {
           const kind = event.target.value as EmTrigger["kind"];
-          onChange({ trigger: { kind, ...(kind === "cart_abandoned" ? { cartMinutes: 60 } : kind === "inactive" ? { inactiveDays: 60 } : kind === "vip" ? { vipOrders: 3 } : kind === "reorder" ? { reorderDays: 30, productId: null } : kind === "date_field" ? { fieldKey: dateFields[0]?.key ?? "birthday" } : { productId: null }) } });
+          onChange({ trigger: { kind, ...(kind === "cart_abandoned" ? { cartMinutes: 60 } : kind === "inactive" ? { inactiveDays: 60 } : kind === "vip" ? { vipOrders: 3 } : kind === "reorder" ? { reorderDays: 30, productId: null } : kind === "went_quiet" ? { quietDays: 1, quietReasons: [] } : kind === "date_field" ? { fieldKey: dateFields[0]?.key ?? "birthday" } : { productId: null }) } });
         }} className={`${select} !pl-9`} aria-label="Trigger">
           {TRIGGER_OPTIONS.map((row) => <option key={row.kind} value={row.kind}>{row.label}</option>)}
         </select>
@@ -115,12 +115,32 @@ function TriggerFields({ draft, designer, onChange, hint = false }: StepProps & 
             {[14, 21, 30, 45, 60, 90].map((n) => <option key={n} value={n}>{n} days after delivery</option>)}
           </select>
         )}
+        {t.kind === "went_quiet" && (
+          <select value={String(t.quietDays ?? 1)} onChange={(event) => set({ quietDays: Number(event.target.value) })} className={`${select} !w-auto !py-2 !text-[13px]`} aria-label="Days after the order">
+            {[1, 2, 3, 7, 14, 31].map((n) => <option key={n} value={n}>{n === 1 ? "1 day" : `${n} days`} after the order</option>)}
+          </select>
+        )}
         {t.kind === "date_field" && (dateFields.length ? (
           <select value={t.fieldKey ?? ""} onChange={(event) => set({ fieldKey: event.target.value })} className={`${select} !w-auto min-w-[170px] !py-2 !text-[13px]`} aria-label="Date field">
             {dateFields.map((field) => <option key={field.key} value={field.key}>{field.name}</option>)}
           </select>
         ) : <p className="m-0 text-[12px] text-amber-700">No date field yet. Add one in Audience &amp; Segments › Custom Fields (type Date), e.g. Birthday.</p>)}
       </div>
+      {t.kind === "went_quiet" && (
+        <div className="mt-2 space-y-1">
+          <p className="m-0 text-[12px] font-semibold text-gray-700 dark:text-slate-300">Why they went quiet (from the rep's last call note). None ticked = everyone.</p>
+          {QUIET_REASON_OPTIONS.map((row) => {
+            const on = (t.quietReasons ?? []).includes(row.key);
+            return (
+              <label key={row.key} className="flex items-center gap-2 text-[12.5px] text-gray-700 dark:text-slate-300">
+                <input type="checkbox" checked={on} onChange={() => set({ quietReasons: on ? (t.quietReasons ?? []).filter((key) => key !== row.key) : [...(t.quietReasons ?? []), row.key] })} />
+                {row.label}
+              </label>
+            );
+          })}
+          <p className="m-0 text-[11.5px] text-gray-500">Includes customers who went quiet before the automation started. It stops for a customer when they order again, their order is delivered, or they unsubscribe.</p>
+        </div>
+      )}
       {(t.kind === "inactive" || t.kind === "reorder" || t.kind === "vip") && <p className="m-0 mt-1 text-[11.5px] text-gray-500">Counts from launch: customers who reach this after the automation starts. To reach everyone already there, send a campaign.</p>}
     </>
   );

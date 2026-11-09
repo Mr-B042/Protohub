@@ -9,7 +9,7 @@ import {
 import { EmailMarketingError, audienceLabel, campaignLinks, forgetWorld, loadWorld, sendTest } from "./email-marketing.js";
 import {
   PRIORITY_RANK, STAGES, branchNodeId, defaultStage, checkMet, durationDays, emailNodes, findNode, firstNodeId, inSendWindow, mayEnter, nextNodeId, nextWindowStart,
-  normalizeSettings, normalizeTrigger, normalizeWorkflow, waitMs,
+  QUIET_REASON_LABELS, normalizeSettings, normalizeTrigger, normalizeWorkflow, quietReason, waitMs,
   type AutomationSettings, type Stage, type Trigger, type Workflow, type WorkflowNode
 } from "./email-automation-rules.js";
 
@@ -459,6 +459,24 @@ async function candidatesFor(auto: Automation, branchId: string, world: World, n
       if (ordersOf(person.stats?.key ?? "").some((other) => Date.parse(other.createdAt) > Date.parse(order.createdAt))) continue;
       out.push({ key: `reorder:${order.id}`, person, atMs: due, label: "Time to buy again", triggerOrderId: order.id });
     }
+  } else if (t.kind === "went_quiet") {
+    // Every subscribed customer whose LATEST order went quiet, however long ago
+    // (Bright: "any customers who ghosted us in the past"), once it is quietDays old.
+    const reasons = new Set(t.quietReasons ?? []);
+    for (const person of byContact.values()) {
+      const key = person.stats?.key ?? phoneKey(person.contact!.phone);
+      if (!key) continue;
+      const mine = ordersOf(key);
+      const latest = mine[mine.length - 1];
+      if (!latest) continue;
+      const reason = quietReason(latest.status, latest.outcome);
+      if (!reason || (reasons.size && !reasons.has(reason))) continue;
+      const cross = Date.parse(latest.createdAt) + (t.quietDays ?? 1) * DAY_MS;
+      if (cross > nowMs) continue;
+      // A flow that repeats (the monthly reminder) gets a fresh key each day it may start again.
+      const entryKey = auto.settings.reentry ? `quiet:${latest.id}:${lagosDay(nowMs)}` : `quiet:${latest.id}`;
+      out.push({ key: entryKey, person, atMs: cross, label: `Went quiet: ${QUIET_REASON_LABELS[reason]}`, triggerOrderId: latest.id });
+    }
   }
   return out;
 }
@@ -543,6 +561,7 @@ async function advanceRun(run: any, auto: Automation, world: () => Promise<World
   // Ways out before the next step.
   if (auto.settings.exit.onUnsubscribe && contact && contact.status !== "subscribed") { status = "exited"; exitReason = "Unsubscribed"; }
   else if (auto.settings.exit.onPurchase && newOrders().length) { status = "exited"; exitReason = "Made a new purchase"; }
+  else if (auto.trigger.kind === "went_quiet" && triggerOrder && w.orders.some((order) => order.id === triggerOrder && order.status === "Delivered")) { status = "exited"; exitReason = "Their order was delivered"; }
   else if (auto.settings.exit.afterDays && nowMs - enteredMs >= auto.settings.exit.afterDays * DAY_MS) { status = "exited"; exitReason = `Reached the ${auto.settings.exit.afterDays}-day limit`; }
 
   for (let i = 0; status === "active" && i < MAX_STEPS_PER_PASS; i += 1) {

@@ -11,7 +11,7 @@ import {
   type AudienceChoice, type CampaignResult, type CartLite, type Condition, type ContactLite, type CustomerStats, type Delivery, type MatchContext,
   type OrderLite, type Person, type SavedSegment, type SegmentRule
 } from "./email-marketing-rules.js";
-import { applyTags, collectLinks, normalizeDesign, renderEmailHtml, renderEmailText, usesLoyaltyTags, type EmailDesign, type RenderOptions } from "./email-render.js";
+import { applyTags, collectLinks, fillTheirProduct, normalizeDesign, renderEmailHtml, renderEmailText, usesLoyaltyTags, usesTheirProduct, withTheirProduct, type EmailDesign, type RenderOptions, type TheirProduct } from "./email-render.js";
 import { inSendWindow } from "./email-automation-rules.js";
 
 /**
@@ -67,7 +67,7 @@ export async function saveSettings(orgId: string, branchId: string, userId: stri
 
 type World = {
   nowMs: number;
-  orders: Array<OrderLite & { id: string; utmSource: string | null; utmCampaign: string | null; utmContent: string | null }>;
+  orders: Array<OrderLite & { id: string; utmSource: string | null; utmCampaign: string | null; utmContent: string | null; outcome: string }>;
   customers: Map<string, CustomerStats>;
   contacts: Array<ContactLite & { fields: Record<string, unknown> }>;
   people: Person[];
@@ -107,7 +107,7 @@ export const forgetWorld = (branchId: string) => { worldCache.delete(branchId); 
 
 async function loadOrders(orgId: string, branchId: string) {
   const rows = await fetchAllRowsOrThrow<any>(() => supabase.from("orders")
-    .select("id, phone, email, status, amount, quantity, product_id, state, created_at, delivered_date, utm_source, utm_campaign, utm_content, source, full_upfront_paid")
+    .select("id, phone, email, status, amount, quantity, product_id, state, created_at, delivered_date, utm_source, utm_campaign, utm_content, source, full_upfront_paid, last_contact_attempt_outcome, call_outcome")
     // launch-safe: Silent Test orders are test orders; marketing never uses them.
     .eq("org_id", orgId).eq("branch_id", branchId).neq("launch_stage", "silent")
     .order("created_at", { ascending: true }));
@@ -116,7 +116,9 @@ async function loadOrders(orgId: string, branchId: string) {
     quantity: row.quantity === null || row.quantity === undefined ? null : Number(row.quantity), productId: row.product_id ?? null,
     state: row.state ?? null, createdAt: row.created_at, deliveredDate: row.delivered_date ?? null,
     utmSource: row.utm_source ?? null, utmCampaign: row.utm_campaign ?? null, utmContent: row.utm_content ?? null,
-    source: row.source ?? null, upfrontPaid: !!row.full_upfront_paid
+    source: row.source ?? null, upfrontPaid: !!row.full_upfront_paid,
+    // The rep's last call note: why a customer went quiet (Automations › Customer Went Quiet).
+    outcome: [row.last_contact_attempt_outcome, row.call_outcome].filter((v) => typeof v === "string" && v.trim()).join(" · ").slice(0, 600)
   }));
 }
 
@@ -791,7 +793,8 @@ type RunLink = { label: string; original?: string; url: string };
 type SenderContext = { brand: string; footerNote: string };
 
 /** One email's HTML and text, links routed through the click counter. */
-export function renderForSend(campaign: any, design: EmailDesign, send: { token: string; name: string; variant: string; loyalty?: RenderOptions["loyalty"] | null }, sender: SenderContext, nowMs: number) {
+export function renderForSend(campaign: any, rawDesign: EmailDesign, send: { token: string; name: string; variant: string; loyalty?: RenderOptions["loyalty"] | null; theirs?: TheirProduct | null }, sender: SenderContext, nowMs: number) {
+  const design = send.theirs === undefined ? rawDesign : withTheirProduct(rawDesign, send.theirs);
   // Each link goes through the click counter, numbered by its place in the
   // run's link list (the same page twice counts as one link).
   const links: RunLink[] = Array.isArray(campaign.links) && campaign.links.length ? campaign.links : campaignLinks(campaign, design);
@@ -809,7 +812,8 @@ export function renderForSend(campaign: any, design: EmailDesign, send: { token:
   };
   const html = renderEmailHtml(design, { ...opts, linkFor });
   const text = renderEmailText(design, { ...opts, linkFor });
-  const subject = applyTags(send.variant === "b" && campaign.subject_b?.trim() ? campaign.subject_b : campaign.subject, { firstName: send.name, loyalty: opts.loyalty });
+  const rawSubject = send.variant === "b" && campaign.subject_b?.trim() ? campaign.subject_b : campaign.subject;
+  const subject = applyTags(send.theirs === undefined ? rawSubject : fillTheirProduct(rawSubject, send.theirs), { firstName: send.name, loyalty: opts.loyalty });
   return { html, text, subject };
 }
 
@@ -923,6 +927,7 @@ async function sendQueued(nowMs: number) {
   const senders = new Map<string, { ready: boolean; brand: string; reason?: string }>();
   const allowance = new Map<string, number>();
   const footers = new Map<string, string>();
+  const productCache = new Map<string, Promise<Awaited<ReturnType<typeof productsForDesigner>>>>();
   const dayStart = new Date(Date.parse(`${lagosDay(nowMs)}T00:00:00+01:00`)).toISOString();
   let sentCount = 0;
   for (const row of rows) {
@@ -960,7 +965,11 @@ async function sendQueued(nowMs: number) {
     const loyalty = usesLoyaltyTags(`${JSON.stringify(campaign.design)} ${campaign.subject ?? ""} ${campaign.subject_b ?? ""}`)
       ? await (await import("./loyalty.js")).loyaltyTagsFor(row.org_id, row.branch_id, row.phone)
       : null;
-    const { html, text, subject } = renderForSend(campaign, design, { ...row, loyalty }, { brand: sender.brand, footerNote: footers.get(row.branch_id) ?? "" }, nowMs);
+    // "Their product": the product of this customer's latest order, looked up only when the email asks for it.
+    const theirs = usesTheirProduct(design, `${campaign.subject ?? ""} ${campaign.subject_b ?? ""}`)
+      ? await theirProductFor(row.org_id, row.branch_id, row.phone, campaign, productCache)
+      : undefined;
+    const { html, text, subject } = renderForSend(campaign, design, { ...row, loyalty, theirs }, { brand: sender.brand, footerNote: footers.get(row.branch_id) ?? "" }, nowMs);
     try {
       const result = await sendMarketingEmail(row.org_id, { to: { email: row.email, name: row.name || undefined }, subject, html, text, unsubscribeUrl: trackingUrl("u", row.token), customId: row.token, replyTo: campaign.options?.replyTo || undefined });
       const at = new Date().toISOString();
@@ -976,6 +985,29 @@ async function sendQueued(nowMs: number) {
     }
   }
   return sentCount;
+}
+
+const naira = (n: number) => `₦${Math.round(n).toLocaleString("en-NG")}`;
+
+/** The product of this phone's latest order, with its photo, price and order page (links carry the email's utm tags). */
+export async function theirProductFor(orgId: string, branchId: string, phone: unknown, campaign: any, cache: Map<string, Promise<Awaited<ReturnType<typeof productsForDesigner>>>>): Promise<TheirProduct | null> {
+  const key = phoneKey(phone);
+  if (!key) return null;
+  const { data } = await supabase.from("orders").select("product_id, phone, created_at")
+    // launch-safe: Silent Test orders are test orders; marketing never uses them.
+    .eq("org_id", orgId).eq("branch_id", branchId).neq("launch_stage", "silent").not("product_id", "is", null)
+    .ilike("phone", `%${key.slice(-10)}`).order("created_at", { ascending: false }).limit(5);
+  const order = (data ?? []).find((row) => phoneKey(row.phone) === key);
+  if (!order) return null;
+  if (!cache.has(branchId)) cache.set(branchId, productsForDesigner(orgId, branchId));
+  const product = (await cache.get(branchId)!).find((row) => row.id === order.product_id);
+  if (!product) return null;
+  const page = product.links[0]?.url ?? "";
+  const price = product.priceMin === null ? "" : product.priceMax !== null && product.priceMax > product.priceMin ? `From ${naira(product.priceMin)}` : naira(product.priceMin);
+  return {
+    name: product.name, price, imageUrl: product.image,
+    link: page && campaign.options?.utm !== false ? withUtm(page, { utm_source: "email", utm_medium: "email", utm_campaign: campaign.slug }) : page
+  };
 }
 
 /** Runs whose queue is empty: completed, or back to waiting for the next repeat. */
