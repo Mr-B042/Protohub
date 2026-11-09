@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Check, Clock, Copy, Eye, ExternalLink, Package, Search, ShoppingCart, Store, Users } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Copy, Eye, ExternalLink, Package, ShoppingCart, Store, Users } from "lucide-react";
 import { storeActivityApi, type StoreActivitySummary } from "../lib/api";
 
 /**
@@ -135,40 +135,206 @@ export default function StoreAnalytics() {
             </div>
           </div>
 
-          <div className={card}>
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              <h3 className="m-0 mr-auto text-[16px] font-bold text-gray-900 dark:text-slate-50">By person</h3>
-              <select value={role} onChange={(event) => setRole(event.target.value)} aria-label="Role" className="!min-h-0 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-[13px] dark:border-slate-700 dark:bg-slate-900">
-                <option value="">All roles</option>{roles.map((row) => <option key={row} value={row}>{row}</option>)}
-              </select>
-            </div>
-            <div className="overflow-x-auto"><table className="w-full"><thead><tr><th className={th}>Person</th><th className={th}>Role</th><th className={th}>Visits</th><th className={th}>Days</th><th className={th}>Time</th><th className={th}>Pages</th><th className={th}>Products</th><th className={th}>Searches</th><th className={th}>Cart</th><th className={th}>Orders</th><th className={th}>Full screen</th><th className={th}>Last seen</th></tr></thead>
-              <tbody>{data.people.filter((row) => !role || row.role === role).map((row) => (
-                <tr key={row.userId} className="border-t border-gray-100 dark:border-slate-800"><td className={`${td} font-semibold`}>{row.name}</td><td className={td}>{row.role}</td><td className={td}>{row.visits}</td><td className={td}>{row.activeDays}</td><td className={td}>{duration(row.seconds)}</td><td className={td}>{row.pages}</td><td className={td}>{data.storeConnected ? row.products : "—"}</td><td className={td}>{data.storeConnected ? row.searches : "—"}</td><td className={td}>{data.storeConnected ? row.carts : "—"}</td><td className={td}>{data.storeConnected ? row.orders : "—"}</td><td className={td}>{row.fullStore}</td><td className={td}>{when(row.lastAt)}</td></tr>
-              ))}</tbody></table></div>
-            {data.notOpened.filter((row) => !role || row.role === role).length > 0 && (
-              <div className="mt-3 rounded-xl bg-gray-50 p-3 dark:bg-slate-800/60">
-                <div className="text-[12.5px] font-bold text-gray-700 dark:text-slate-300">Not opened in this period ({data.notOpened.filter((row) => !role || row.role === role).length})</div>
-                <div className="mt-1 text-[12.5px] text-gray-600 dark:text-slate-400">{data.notOpened.filter((row) => !role || row.role === role).map((row) => `${row.name} (${row.role})`).join(" · ")}</div>
-              </div>
-            )}
-          </div>
-
-          <div className={card}>
-            <h3 className="m-0 mb-2 text-[16px] font-bold text-gray-900 dark:text-slate-50">Latest activity</h3>
-            {data.recent.length ? (
-              <ul className="m-0 max-h-[420px] list-none space-y-1.5 overflow-y-auto p-0">{data.recent.filter((row) => !role || row.role === role).map((row, i) => (
-                <li key={`${row.at}-${i}`} className="flex flex-wrap items-baseline gap-x-2 border-b border-gray-50 pb-1.5 text-[13px] dark:border-slate-800">
-                  <span className="w-[120px] shrink-0 text-gray-500">{when(row.at)}</span>
-                  <span className="font-semibold text-gray-900 dark:text-slate-50">{row.name}</span><span className="text-gray-500">({row.role})</span>
-                  <span className="text-gray-800 dark:text-slate-200">{WHAT[row.event] ?? row.event}{row.event === "search" && row.detail?.query ? `: "${String(row.detail.query)}"` : ""}{row.title && row.event !== "open" ? `: ${row.title}` : ""}</span>
-                  {row.event === "search" && <Search className="h-3.5 w-3.5 text-amber-600" />}
-                </li>
-              ))}</ul>
-            ) : <p className="m-0 text-[13px] text-gray-500">Nothing yet in this period.</p>}
-          </div>
+          <PeopleSection data={data} roles={roles} role={role} setRole={setRole} />
+          <ActivitySection data={data} role={role} />
         </>
       )}
+    </div>
+  );
+}
+
+// ── Paging and grouping (Bright, 9 Nov 2026: "add pagination to avoid endless scrolling and add grouping for scalable") ──
+
+const PAGE = 10;
+const pages = (n: number) => Math.max(1, Math.ceil(n / PAGE));
+
+/** Previous / page x of y / next; hidden when everything fits on one page. */
+function Pager({ page, total, onPage, noun }: { page: number; total: number; onPage: (page: number) => void; noun: string }) {
+  const last = pages(total);
+  if (total <= PAGE) return null;
+  return (
+    <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[12.5px] text-gray-600 dark:text-slate-400">
+      <span>Showing {page * PAGE + 1}–{Math.min(total, (page + 1) * PAGE)} of {total} {noun}</span>
+      <div className="flex items-center gap-1">
+        <button type="button" disabled={page === 0} onClick={() => onPage(page - 1)} aria-label="Previous page" className="!min-h-0 rounded-lg border border-gray-200 p-1.5 disabled:opacity-40 dark:border-slate-700"><ChevronLeft className="h-4 w-4" /></button>
+        <span className="px-2 font-semibold">Page {page + 1} of {last}</span>
+        <button type="button" disabled={page >= last - 1} onClick={() => onPage(page + 1)} aria-label="Next page" className="!min-h-0 rounded-lg border border-gray-200 p-1.5 disabled:opacity-40 dark:border-slate-700"><ChevronRight className="h-4 w-4" /></button>
+      </div>
+    </div>
+  );
+}
+
+const cardCls = "rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900";
+const thCls = "px-3 py-2 text-left text-[11.5px] font-bold uppercase tracking-wide text-gray-500";
+const tdCls = "px-3 py-2 text-[13px] text-gray-800 dark:text-slate-200";
+type Person = StoreActivitySummary["people"][number];
+
+/** People grouped by role (each role folds open, 10 a page), or one paged list; who hasn't opened it, by role. */
+function PeopleSection({ data, roles, role, setRole }: { data: StoreActivitySummary; roles: string[]; role: string; setRole: (role: string) => void }) {
+  const [grouped, setGrouped] = useState(true);
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [pageOf, setPageOf] = useState<Record<string, number>>({});
+  const people = data.people.filter((row) => !role || row.role === role);
+  const notOpened = data.notOpened.filter((row) => !role || row.role === role);
+  const groups = [...new Set(people.map((row) => row.role || "—"))].map((name) => {
+    const list = people.filter((row) => (row.role || "—") === name);
+    return { name, list, visits: list.reduce((n, row) => n + row.visits, 0), seconds: list.reduce((n, row) => n + row.seconds, 0), carts: list.reduce((n, row) => n + row.carts, 0), orders: list.reduce((n, row) => n + row.orders, 0) };
+  }).sort((a, b) => b.visits - a.visits);
+  const quietGroups = [...new Set(notOpened.map((row) => row.role || "—"))].map((name) => ({ name, list: notOpened.filter((row) => (row.role || "—") === name) })).sort((a, b) => b.list.length - a.list.length);
+  const head = <thead><tr><th className={thCls}>Person</th><th className={thCls}>Role</th><th className={thCls}>Visits</th><th className={thCls}>Days</th><th className={thCls}>Time</th><th className={thCls}>Pages</th><th className={thCls}>Products</th><th className={thCls}>Searches</th><th className={thCls}>Cart</th><th className={thCls}>Orders</th><th className={thCls}>Full screen</th><th className={thCls}>Last seen</th></tr></thead>;
+  const rowOf = (row: Person) => (
+    <tr key={row.userId} className="border-t border-gray-100 dark:border-slate-800"><td className={`${tdCls} font-semibold`}>{row.name}</td><td className={tdCls}>{row.role}</td><td className={tdCls}>{row.visits}</td><td className={tdCls}>{row.activeDays}</td><td className={tdCls}>{duration(row.seconds)}</td><td className={tdCls}>{row.pages}</td><td className={tdCls}>{data.storeConnected ? row.products : "—"}</td><td className={tdCls}>{data.storeConnected ? row.searches : "—"}</td><td className={tdCls}>{data.storeConnected ? row.carts : "—"}</td><td className={tdCls}>{data.storeConnected ? row.orders : "—"}</td><td className={tdCls}>{row.fullStore}</td><td className={tdCls}>{when(row.lastAt)}</td></tr>
+  );
+  const page = (key: string) => pageOf[key] ?? 0;
+  const setPage = (key: string, n: number) => setPageOf((prev) => ({ ...prev, [key]: n }));
+  return (
+    <div className={cardCls}>
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <h3 className="m-0 mr-auto text-[16px] font-bold text-gray-900 dark:text-slate-50">By person</h3>
+        <div className="flex rounded-xl border border-gray-200 p-0.5 dark:border-slate-700">
+          <button type="button" aria-pressed={grouped} onClick={() => setGrouped(true)} className={`!min-h-0 rounded-lg px-3 py-1.5 text-[12.5px] font-semibold ${grouped ? "bg-amber-400 text-amber-950" : "text-gray-600"}`}>Group by role</button>
+          <button type="button" aria-pressed={!grouped} onClick={() => setGrouped(false)} className={`!min-h-0 rounded-lg px-3 py-1.5 text-[12.5px] font-semibold ${!grouped ? "bg-amber-400 text-amber-950" : "text-gray-600"}`}>One list</button>
+        </div>
+        <select value={role} onChange={(event) => { setRole(event.target.value); setPageOf({}); }} aria-label="Role" className="!min-h-0 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-[13px] dark:border-slate-700 dark:bg-slate-900">
+          <option value="">All roles</option>{roles.map((row) => <option key={row} value={row}>{row}</option>)}
+        </select>
+      </div>
+      {!people.length && <p className="m-0 text-[13px] text-gray-500">Nobody has opened Our Store in this period yet.</p>}
+      {people.length > 0 && !grouped && (
+        <>
+          <div className="overflow-x-auto"><table className="w-full">{head}<tbody>{people.slice(page("all") * PAGE, (page("all") + 1) * PAGE).map(rowOf)}</tbody></table></div>
+          <Pager page={page("all")} total={people.length} onPage={(n) => setPage("all", n)} noun="people" />
+        </>
+      )}
+      {people.length > 0 && grouped && (
+        <div className="space-y-2">
+          {groups.map((group) => {
+            const isOpen = open[group.name] ?? groups.length <= 3;
+            return (
+              <div key={group.name} className="overflow-hidden rounded-xl border border-gray-100 dark:border-slate-800">
+                <button type="button" onClick={() => setOpen((prev) => ({ ...prev, [group.name]: !isOpen }))} aria-expanded={isOpen}
+                  className="!min-h-0 flex w-full flex-wrap items-center gap-x-4 gap-y-1 bg-amber-50/60 px-3 py-2.5 text-left text-[13px] dark:bg-amber-500/5">
+                  {isOpen ? <ChevronDown className="h-4 w-4 text-amber-700" /> : <ChevronRight className="h-4 w-4 text-amber-700" />}
+                  <span className="mr-auto font-bold text-gray-900 dark:text-slate-50">{group.name} <span className="font-semibold text-gray-500">· {group.list.length} {group.list.length === 1 ? "person" : "people"}</span></span>
+                  <span className="text-gray-600 dark:text-slate-400">{group.visits} visits</span><span className="text-gray-600 dark:text-slate-400">{duration(group.seconds)}</span>
+                  {data.storeConnected && <span className="text-gray-600 dark:text-slate-400">{group.carts} cart · {group.orders} orders</span>}
+                </button>
+                {isOpen && (
+                  <div className="px-1 pb-2">
+                    <div className="overflow-x-auto"><table className="w-full">{head}<tbody>{group.list.slice(page(group.name) * PAGE, (page(group.name) + 1) * PAGE).map(rowOf)}</tbody></table></div>
+                    <div className="px-2"><Pager page={page(group.name)} total={group.list.length} onPage={(n) => setPage(group.name, n)} noun="people" /></div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {notOpened.length > 0 && (
+        <div className="mt-3 rounded-xl bg-gray-50 p-3 dark:bg-slate-800/60">
+          <div className="text-[12.5px] font-bold text-gray-700 dark:text-slate-300">Not opened in this period ({notOpened.length})</div>
+          <div className="mt-2 space-y-1.5">
+            {quietGroups.map((group) => {
+              const key = `quiet:${group.name}`;
+              const isOpen = open[key] ?? false;
+              return (
+                <div key={group.name}>
+                  <button type="button" onClick={() => setOpen((prev) => ({ ...prev, [key]: !isOpen }))} aria-expanded={isOpen} className="!min-h-0 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-gray-700 dark:text-slate-300">
+                    {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}{group.name} <span className="rounded-full bg-gray-200 px-2 py-0.5 text-[11px] font-bold dark:bg-slate-700">{group.list.length}</span>
+                  </button>
+                  {isOpen && (
+                    <>
+                      <div className="mt-1 flex flex-wrap gap-1.5 pl-5">{group.list.slice(page(key) * 24, (page(key) + 1) * 24).map((row) => <span key={row.userId} className="rounded-lg bg-white px-2 py-1 text-[12px] text-gray-700 shadow-sm dark:bg-slate-900 dark:text-slate-300">{row.name}</span>)}</div>
+                      {group.list.length > 24 && (
+                        <div className="mt-1 flex items-center gap-2 pl-5 text-[12px] text-gray-500">
+                          <button type="button" disabled={page(key) === 0} onClick={() => setPage(key, page(key) - 1)} className="!min-h-0 disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button>
+                          {page(key) + 1} / {Math.ceil(group.list.length / 24)}
+                          <button type="button" disabled={(page(key) + 1) * 24 >= group.list.length} onClick={() => setPage(key, page(key) + 1)} className="!min-h-0 disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type Activity = StoreActivitySummary["recent"][number];
+const lagosDay = (iso: string) => new Date(iso).toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });
+const dayLabel = (day: string, today: string) => {
+  if (day === today) return "Today";
+  const y = new Date(`${today}T12:00:00Z`); y.setUTCDate(y.getUTCDate() - 1);
+  if (day === y.toISOString().slice(0, 10)) return "Yesterday";
+  return new Date(`${day}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" });
+};
+const timeOnly = (iso: string) => new Date(iso).toLocaleTimeString("en-GB", { timeZone: "Africa/Lagos", hour: "numeric", minute: "2-digit" });
+const actionText = (row: Activity) => `${WHAT[row.event] ?? row.event}${row.event === "search" && row.detail?.query ? `: "${String(row.detail.query)}"` : ""}${row.title && row.event !== "open" ? `: ${row.title}` : ""}`;
+
+/** The feed as visits: one line per visit (who, when, what it added up to), under day headings; open a visit to see each step. 10 visits a page. */
+function ActivitySection({ data, role }: { data: StoreActivitySummary; role: string }) {
+  const [page, setPage] = useState(0);
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const visits = useMemo(() => {
+    const map = new Map<string, Activity[]>();
+    for (const row of data.recent) {
+      if (role && row.role !== role) continue;
+      map.set(row.sessionId, [...(map.get(row.sessionId) ?? []), row]);
+    }
+    return [...map.entries()].map(([id, list]) => {
+      const steps = [...list].sort((a, b) => a.at.localeCompare(b.at));
+      const count = (kind: string) => steps.filter((row) => row.event === kind).length;
+      return { id, steps, first: steps[0], last: steps[steps.length - 1], pages: count("page") + count("product"), products: count("product"), searches: count("search"), carts: count("cart"), orders: count("order") };
+    }).sort((a, b) => b.last.at.localeCompare(a.last.at));
+  }, [data.recent, role]);
+  const shown = visits.slice(page * PAGE, (page + 1) * PAGE);
+  let lastDay = "";
+  return (
+    <div className={cardCls}>
+      <h3 className="m-0 mb-2 text-[16px] font-bold text-gray-900 dark:text-slate-50">Latest activity <span className="text-[13px] font-semibold text-gray-500">· by visit</span></h3>
+      {!visits.length && <p className="m-0 text-[13px] text-gray-500">Nothing yet in this period.</p>}
+      <div className="space-y-1.5">
+        {shown.map((visit) => {
+          const day = lagosDay(visit.first.at);
+          const heading = day !== lastDay ? dayLabel(day, data.today) : null;
+          lastDay = day;
+          const isOpen = open[visit.id] ?? false;
+          const summary = [
+            `${visit.pages} page${visit.pages === 1 ? "" : "s"}`,
+            ...(visit.products ? [`${visit.products} product${visit.products === 1 ? "" : "s"}`] : []),
+            ...(visit.searches ? [`${visit.searches} search${visit.searches === 1 ? "" : "es"}`] : []),
+            ...(visit.carts ? [`${visit.carts} added to cart`] : []),
+            ...(visit.orders ? [`${visit.orders} order${visit.orders === 1 ? "" : "s"}`] : [])
+          ].join(" · ");
+          return (
+            <div key={visit.id}>
+              {heading && <div className="pb-1 pt-2 text-[11.5px] font-extrabold uppercase tracking-wide text-amber-700 dark:text-amber-300">{heading}</div>}
+              <div className="overflow-hidden rounded-xl border border-gray-100 dark:border-slate-800">
+                <button type="button" onClick={() => setOpen((prev) => ({ ...prev, [visit.id]: !isOpen }))} aria-expanded={isOpen}
+                  className="!min-h-0 flex w-full flex-wrap items-center gap-x-3 gap-y-0.5 px-3 py-2 text-left text-[13px] hover:bg-amber-50/50 dark:hover:bg-amber-500/5">
+                  {isOpen ? <ChevronDown className="h-4 w-4 text-amber-700" /> : <ChevronRight className="h-4 w-4 text-amber-700" />}
+                  <span className="w-[110px] shrink-0 text-gray-500">{timeOnly(visit.first.at)}{visit.last.at !== visit.first.at ? `–${timeOnly(visit.last.at)}` : ""}</span>
+                  <span className="font-semibold text-gray-900 dark:text-slate-50">{visit.first.name}</span><span className="text-gray-500">({visit.first.role})</span>
+                  <span className="ml-auto text-gray-700 dark:text-slate-300">{summary}</span>
+                  {visit.orders > 0 && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-700">ordered</span>}
+                </button>
+                {isOpen && (
+                  <ul className="m-0 list-none space-y-1 border-t border-gray-100 bg-gray-50/60 px-4 py-2 dark:border-slate-800 dark:bg-slate-800/40">
+                    {visit.steps.map((row, i) => (
+                      <li key={`${row.at}-${i}`} className="flex gap-3 text-[12.5px]"><span className="w-[64px] shrink-0 text-gray-500">{timeOnly(row.at)}</span><span className="text-gray-800 dark:text-slate-200">{actionText(row)}</span></li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <Pager page={page} total={visits.length} onPage={(n) => { setPage(n); setOpen({}); }} noun="visits" />
     </div>
   );
 }
