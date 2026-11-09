@@ -39,12 +39,12 @@ export type EmailBlock =
   | { id: string; type: "features"; items: FeatureItem[] }
   | { id: string; type: "footer"; text: string }
   // Cover (Templates design, 8 Nov 2026): soft colour, centred headline, a line, a picture or emoji, a button.
-  | { id: string; type: "cover"; title: string; subtitle: string; imageUrl: string; emoji: string; buttonText: string; buttonLink: string; buttonTone: "yellow" | "purple"; tone: CoverTone };
+  | { id: string; type: "cover"; title: string; subtitle: string; imageUrl: string; emoji: string; buttonText: string; buttonLink: string; buttonTone: "yellow" | "purple"; tone: CoverTone; big?: boolean };
 
 /** The cover's soft background (top and bottom of the fade). */
 export const COVER_TONES = {
   mint: ["#ECFDF3", "#D9F7E5"], lavender: ["#F6F3FF", "#E6DEFF"], peach: ["#FFF5EC", "#FFE3CC"], pink: ["#FFF1F3", "#FFDDE3"],
-  sky: ["#F1F6FF", "#DDE8FF"], teal: ["#ECFDFB", "#CFF5EF"], lilac: ["#FBF2FF", "#EED9FF"]
+  sky: ["#F1F6FF", "#DDE8FF"], teal: ["#ECFDFB", "#CFF5EF"], lilac: ["#FBF2FF", "#EED9FF"], butter: ["#FEFCE8", "#FEF3C7"]
 } as const;
 export type CoverTone = keyof typeof COVER_TONES;
 
@@ -190,9 +190,6 @@ type Starter = { key: string; name: string; hint: string; category: string; type
 
 const B = {
   header: (f: CampaignFields): EmailBlock => ({ id: blockId(), type: "header", brand: f.brand || "Our Store", tagline: "Smart Home • Kitchen • Lifestyle", align: "center" }),
-  hero: (f: CampaignFields, title: string, highlight: string, subtitle: string, button: string): EmailBlock => ({
-    id: blockId(), type: "hero", title, highlight, subtitle, badgeTop: "", badgeMain: "", badgeBottom: "", imageUrl: f.productImage, buttonText: `${button} →`, buttonLink: f.productLink
-  }),
   text: (text: string, size = 15, bold = false, align: Align = "left"): EmailBlock => ({ id: blockId(), type: "text", text, size, align, color: "", bold }),
   button: (f: CampaignFields, text: string, link = f.productLink): EmailBlock => ({
     id: blockId(), type: "button", text: `${text} →`, link, style: "primary", size: "large", align: "center", color: DEFAULT_STYLES.accentColor, textColor: "#1F1147", radius: 10
@@ -211,51 +208,225 @@ const B = {
 };
 const POD: Array<[string, string]> = [["cash", "Pay On Delivery"], ["truck", "Delivered To Your Door"], ["check", "Easy To Order"]];
 const product = (f: CampaignFields) => f.productName.trim() || "our best seller";
+const brandName = (f: CampaignFields) => f.brand.trim() || "our store";
+
+/**
+ * Bright's email designs ("ProtoHub Email Templates", 9 Nov 2026): 48 emails,
+ * each with its own designed photo, kept on the app's own site so every email
+ * app can load them. Words were checked for a pay-on-delivery business: no
+ * codes to type (an offer rides on the email's link and comes off by itself),
+ * no made-up percentages, numbers, perks or order details; anything only the
+ * business knows (dates, tips, delivery times) is a "[write … here]" gap.
+ */
+export const TEMPLATE_PHOTO_BASE = "https://protohub-zeta.vercel.app/email-templates/";
+
+/**
+ * Pictures that show a product (a shelf, rack or organiser). Bright, 9 Nov:
+ * a generic picture "might not be right for some of the products", so when
+ * the email has a product with a photo, these give way to that product's own
+ * photo. The other pictures (gifts, clock, van, envelope…) suit any product.
+ */
+export const PRODUCT_PICTURES = new Set([
+  "abandoned-cart-reminder", "almost-sold-out", "back-in-stock", "bestsellers", "bundle-deal", "buy-one-get-one", "cart-discount", "cart-free-delivery",
+  "clearance-sale", "flash-sale", "launch-day", "payday-sale", "pre-order", "product-announcement", "promotional-offer", "re-engagement",
+  "recommended-for-you", "replenishment-reminder", "review-request", "setup-and-care-tips", "vip-early-access", "weekend-deals", "whats-new"
+]);
+
+type Look = { slug: string; tone: CoverTone; title: string | ((f: CampaignFields) => string); subtitle: string | ((f: CampaignFields) => string); button?: string; buttonTone?: "yellow" | "purple" };
+const say = (value: string | ((f: CampaignFields) => string), f: CampaignFields) => (typeof value === "function" ? value(f) : value);
+function designed(look: Look, f: CampaignFields): EmailBlock {
+  const own = PRODUCT_PICTURES.has(look.slug) && !!f.productImage.trim();
+  return {
+    id: blockId(), type: "cover", title: say(look.title, f), subtitle: say(look.subtitle, f),
+    imageUrl: own ? f.productImage : `${TEMPLATE_PHOTO_BASE}${look.slug}.jpg`, emoji: "", big: !own,
+    buttonText: look.button ? `${look.button} →` : "", buttonLink: look.button ? f.productLink : "", buttonTone: look.buttonTone ?? "yellow", tone: look.tone
+  };
+}
+const hi = (text = "Hi {{First Name}},") => B.text(text, 19, true);
+const p = (text: string) => B.text(text);
+const OFFER_NOTE = "🎁 No code needed. Order through the button in this email and your offer comes off by itself.";
+const offerNote = () => B.text(OFFER_NOTE, 15, true, "center");
+const signOff = (f: CampaignFields) => p(`Thanks for shopping with us,\nThe ${brandName(f)} Team`);
+const OFFER_HINT = " Attach an offer when you send it.";
+
+function design(key: string, name: string, hint: string, category: string, type: TemplateType, subject: string, preheader: string, look: Look, body: (f: CampaignFields) => EmailBlock[]): Starter {
+  return { key, name, hint, category, type, layout: key, subject, preheader, build: (f) => [B.header(f), designed(look, f), ...body(f), B.footer()] };
+}
 
 /** Ready-made emails. Words make no claims: no made-up discounts, numbers or reviews. */
 export const STARTER_TEMPLATES: Starter[] = [
-  { key: "promo_offer", name: "Promotional Offer", hint: "Drive more sales with a special offer", category: "promotional", type: "promotional", layout: "product_promo",
-    subject: "A special offer on {{Product}}, just for you", preheader: "Order today and pay when it arrives",
-    build: (f) => [B.header(f), B.cover(f, "mint", "Don't Miss Out!", `A special offer on ${product(f)}, just for you.`, "photo", "Shop Now", "yellow"), B.text("Hi {{First Name}},", 20, true), B.text("Order today and pay when it arrives at your door."), B.features(POD), B.footer()] },
+  // ── Promotional ──
+  design("promo_offer", "Promotional Offer", "Drive more sales with a special offer." + OFFER_HINT, "promotional", "promotional", "A special offer on {{Product}}, just for you", "A limited-time offer just for you",
+    { slug: "promotional-offer", tone: "mint", title: "Don't Miss Out!", subtitle: "A limited-time offer just for you.", button: "Shop Now" },
+    (f) => [hi("Hi {{First Name}}, this one's for you"), p(`For a short time, ${product(f)} is on a special offer. Get yours before it's gone.`), offerNote(), B.product(f, "Order Now"), signOff(f)]),
+  design("flash_sale", "Flash Sale", "A short sale with a countdown." + OFFER_HINT, "promotional", "promotional", "Flash sale: {{Product}} for a short time only", "Prices drop for a short time only",
+    { slug: "flash-sale", tone: "butter", title: "Flash Sale ⚡", subtitle: "Prices drop for a short time only. Don't blink.", button: "Shop the Sale" },
+    (f) => [hi(), p("For a short time, our best sellers cost less. When the timer runs out, prices go back up."), B.timer("Sale ends in"), offerNote(), B.product(f, "Order Now"), signOff(f)]),
+  design("buy_one_get_one", "Buy 1 Get 1 Free", "Two for the price of one.", "promotional", "promotional", "Buy 1, get 1 free, {{First Name}} 🎁", "Buy one, get one free on selected products",
+    { slug: "buy-one-get-one", tone: "mint", title: "Buy 1, Get 1 Free 🎁", subtitle: "Double the order, same price.", button: "Get Both" },
+    (f) => [hi(), p("Order one of our selected products and the second one is on us. Keep one, give one to a friend."), p("Offer ends on [write the date here] or while stock lasts. You pay when it arrives."), B.product(f, "Get Both"), signOff(f)]),
+  design("free_delivery", "Free Delivery Weekend", "Delivery is free for a few days.", "promotional", "promotional", "Free delivery this weekend 🚚", "Free delivery on every order this weekend",
+    { slug: "free-delivery", tone: "sky", title: "Free Delivery This Weekend 🚚", subtitle: "No minimum. No delivery fee. Just order.", button: "Shop Free Delivery", buttonTone: "purple" },
+    (f) => [hi(), p("This weekend only, delivery is free on every order, big or small, anywhere we deliver."), p("Starts: [write the date here]\nEnds: [write the date here]"), p("You still pay when it arrives."), B.product(f, "Order Now"), signOff(f)]),
+  design("bundle_deal", "Bundle & Save", "Sell the complete set for less.", "promotional", "promotional", "Get the complete set for less, {{First Name}}", "Get the complete set and pay less",
+    { slug: "bundle-deal", tone: "lavender", title: "Bundle & Save", subtitle: "Get the complete set for less.", button: "Shop the Bundle", buttonTone: "purple" },
+    (f) => [hi(), p("Why buy one piece at a time? Get the complete set and pay less than buying each piece on its own."), p("What's in the set:\n✅ [write the first item here]\n✅ [write the second item here]\n✅ [write the third item here]"), B.product(f, "Order the Set"), signOff(f)]),
+  design("clearance_sale", "Clearance Sale", "Clear end-of-line stock.", "promotional", "promotional", "Clearance: last chance, {{First Name}}", "Once it's gone, it's gone",
+    { slug: "clearance-sale", tone: "pink", title: "Clearance Sale 🏷️", subtitle: "Last chance on end-of-line stock.", button: "Shop Clearance" },
+    (f) => [hi(), p("We're making room for new arrivals, so these items are going at our lowest prices. Quantities are limited and won't be restocked."), signOff(f)]),
+  design("vip_early_access", "VIP Early Access", "Best customers shop the sale first.", "promotional", "promotional", "You're in early, {{First Name}} 👑", "Shop the sale before everyone else",
+    { slug: "vip-early-access", tone: "lavender", title: "VIP Early Access 👑", subtitle: "Shop the sale before everyone else.", button: "Shop Early", buttonTone: "purple" },
+    (f) => [hi(), p("As one of our valued customers, you get first pick of our next sale, before it opens to everyone."), p("Early access opens: [write the date here]\nSale opens to everyone: [write the date here]"), signOff(f)]),
+  design("payday_sale", "Payday Sale", "Month-end deals." + OFFER_HINT, "promotional", "promotional", "Payday deals for your home 💸", "You've earned it",
+    { slug: "payday-sale", tone: "mint", title: "Payday Sale 💸", subtitle: "Treat your home. You've earned it.", button: "Treat Yourself" },
+    (f) => [hi(), p("Payday is here, and so are our best deals of the month. Upgrade your space with products that make every day easier."), offerNote(), B.product(f, "Order Now"), signOff(f)]),
+  design("almost_sold_out", "Almost Sold Out", "Only a few left.", "promotional", "promotional", "Almost gone: {{Product}}", "Only a few left of our best seller",
+    { slug: "almost-sold-out", tone: "peach", title: "Almost Sold Out!", subtitle: "Only a few left of our best seller.", button: "Get Yours Now" },
+    (f) => [hi(), p("Our most popular product is nearly gone, and we don't know when the next batch will arrive."), B.product(f, "Get Yours Now"), signOff(f)]),
+  design("special_discount", "Special Discount", "A thank-you discount, no reason needed." + OFFER_HINT, "promotional", "promotional", "A little thank-you for you, {{First Name}}", "A special discount, just because",
+    { slug: "discount-code", tone: "lavender", title: "A Special Discount, Just Because", subtitle: "A little thank-you for being with us.", button: "Get My Discount", buttonTone: "purple" },
+    (f) => [hi(), p(`No special occasion. We just wanted to say thanks for being part of the ${brandName(f)} family.`), offerNote(), signOff(f)]),
+  design("weekend_deals", "Weekend Deals", "Deals from Friday to Sunday.", "promotional", "promotional", "Weekend deals are live 🛋️", "Fresh deals on home essentials, all weekend long",
+    { slug: "weekend-deals", tone: "butter", title: "Weekend Deals Are Live 🛋️", subtitle: "Fresh deals on home essentials, all weekend.", button: "See Weekend Deals", buttonTone: "purple" },
+    (f) => [hi(), p("Make this weekend the one you finally get organised. Deals run from Friday to Sunday night."), B.product(f, "Order Now"), signOff(f)]),
+  design("tell_a_friend", "Tell a Friend", "Ask customers to pass the email on.", "promotional", "retention", "Know someone who'd love this, {{First Name}}?", "Share it with a friend",
+    { slug: "refer-a-friend", tone: "pink", title: "Share the Love 🤝", subtitle: "Know someone who'd love this?", button: "See What They'll Love", buttonTone: "purple" },
+    (f) => [hi(), p("Know someone who'd love what we sell? Forward this email to them. They can order through the button above and pay when it arrives."), signOff(f)]),
+
+  // ── Retention & Win-Back ──
+  design("loyalty_points_reminder", "Loyalty Points Reminder", "Show members their points and reward.", "retention", "retention", "You have points waiting, {{First Name}} 🌟", "Here's what's waiting for you",
+    { slug: "loyalty-points-reminder", tone: "lavender", title: "You Have Points Waiting 🌟", subtitle: "Here's what's waiting for you.", button: "Order Now", buttonTone: "purple" },
+    (f) => [hi(), p("Points: {{Points}}\nLevel: {{Level}}\nYour reward: {{Voucher}}"), p("Your reward comes off by itself on your next order. Nothing to type."), signOff(f)]),
+  design("vip_upgrade", "VIP Upgrade", "Tell a member they reached a new level.", "retention", "retention", "You've reached a new level, {{First Name}}! 👑", "Thanks for being one of our best customers",
+    { slug: "vip-upgrade", tone: "lavender", title: "You've Reached a New Level! 👑", subtitle: "Thanks for being one of our best customers.", button: "See What's New", buttonTone: "purple" },
+    (f) => [hi("Congratulations, {{First Name}}!"), p("You're now at the {{Level}} level.\nYour reward: {{Voucher}}"), p("It comes off by itself on your next order."), signOff(f)]),
+  design("customer_anniversary", "Customer Anniversary", "Celebrate a customer with a gift." + OFFER_HINT, "retention", "retention", "Thank you for being with us, {{First Name}} 🎂", "A gift to say thank you",
+    { slug: "customer-anniversary", tone: "pink", title: "Happy Anniversary! 🎂", subtitle: "Thank you for being with us.", button: "Claim My Gift", buttonTone: "purple" },
+    (f) => [hi(), p("Thank you for sticking with us. To celebrate, here's a gift for you."), offerNote(), signOff(f)]),
+  design("replenishment_reminder", "Restock Reminder", "Remind customers to order again.", "retention", "retention", "Running low on {{Product}}?", "Order again in one tap",
+    { slug: "replenishment-reminder", tone: "mint", title: "Time to Restock? 🔄", subtitle: "Order your favourite again in one tap.", button: "Order Again" },
+    (f) => [hi(), p("It's been a while since you bought this. If you're running low, order again now so you don't run out."), B.product(f, "Order Again"), signOff(f)]),
+  design("last_chance_winback", "Last Chance Win-Back", "Last reminder before an offer ends." + OFFER_HINT, "retention", "retention", "Your offer ends tonight, {{First Name}} ⏰", "Your comeback offer ends at midnight",
+    { slug: "last-chance-winback", tone: "peach", title: "Your Offer Ends Tonight ⏰", subtitle: "Your comeback offer ends at midnight.", button: "Use My Offer" },
+    (f) => [hi(), p("We sent you a special offer to welcome you back, and it ends at midnight tonight. This is your last reminder."), offerNote(), signOff(f)]),
+  design("thank_you_loyal", "Thank You", "Thank loyal customers with a gift." + OFFER_HINT, "retention", "retention", "Thank you, {{First Name}} 💜", "A little something for your loyalty",
+    { slug: "thank-you-loyal-customer", tone: "lavender", title: "Thank You for Sticking With Us 💜", subtitle: "Here's a little something for your loyalty.", button: "Open My Gift", buttonTone: "purple" },
+    (f) => [hi(), p(`Customers like you are the reason ${brandName(f)} exists, and we don't take that for granted.`), offerNote(), signOff(f)]),
+  design("birthday", "Birthday Gift", "A birthday gift." + OFFER_HINT, "retention", "retention", "Happy birthday, {{First Name}}! 🎉", "Your birthday gift is inside",
+    { slug: "birthday", tone: "butter", title: "Happy Birthday, {{First Name}}! 🎉", subtitle: "Your birthday gift is inside.", button: "Claim My Birthday Gift", buttonTone: "purple" },
+    (f) => [p(`Wishing you a wonderful day! To celebrate, here's a special gift from all of us at ${brandName(f)}.`), offerNote(), signOff(f)]),
+  design("win_back_offer", "Win-Back Campaign", "Bring back customers who stopped ordering." + OFFER_HINT, "retention", "retention", "We miss you, {{First Name}}", "Here is a reason to come back",
+    { slug: "win-back-campaign", tone: "lavender", title: "We Miss You! 👋", subtitle: "It's been a while. Here's a special offer to come back.", button: "Claim Your Offer", buttonTone: "purple" },
+    (f) => [hi(), p("We noticed you haven't ordered from us in a while, and we'd love to have you back. Here's a little something to make your next order sweeter."), offerNote(), p("We've added new products since your last order. Take a look, you might find something you love."), signOff(f)]),
+
+  // ── Post-Purchase ──
+  design("order_confirmation", "Order Confirmation", "Confirm the order and say what happens next.", "post_purchase", "transactional", "Thanks for your order, {{First Name}}!", "Your order is confirmed and being prepared",
+    { slug: "order-confirmation", tone: "lavender", title: "Thanks for Your Order! 🎉", subtitle: "Your order is confirmed and being prepared." },
+    (f) => [hi(), p("We've received your order and our team is getting it ready. We'll call you before delivery, and you pay when it arrives."), p("Need to change something? Just reply to this email."), signOff(f)]),
+  design("shipping_confirmation", "Order On Its Way", "Tell customers their order has left.", "post_purchase", "transactional", "Your order is on its way, {{First Name}} 🚚", "Good news: it's coming to you",
+    { slug: "shipping-confirmation", tone: "sky", title: "Your Order Is on Its Way! 🚚", subtitle: "It's coming to you." },
+    (f) => [hi(), p("Good news: your order has left us and is on its way to you. Our delivery partner will call you before they arrive."), p("Please keep your phone close. You pay when it arrives."), signOff(f)]),
+  design("out_for_delivery", "Out for Delivery", "Delivery is today: keep the phone close.", "post_purchase", "transactional", "Your order arrives today, {{First Name}} 📍", "Keep your phone close",
+    { slug: "out-for-delivery", tone: "mint", title: "Out for Delivery Today 📍", subtitle: "Your order arrives today. Keep your phone close." },
+    (f) => [hi(), p("Your order is out for delivery and should reach you today. Our rider will call you when they arrive."), p("Won't be home? Reply to this email and we'll help rearrange delivery."), signOff(f)]),
+  design("delivered", "Order Delivered", "Check everything arrived well.", "post_purchase", "transactional", "Your order has arrived, {{First Name}} 🏠", "We hope you love it",
+    { slug: "delivered", tone: "peach", title: "Your Order Has Arrived 🏠", subtitle: "We hope you love it!" },
+    (f) => [hi(), p("Your order has been delivered. If anything is missing or damaged, reply to this email and we'll sort it out."), signOff(f)]),
+  design("usage_tips", "Setup & Care Tips", "Help customers get the most from the product.", "post_purchase", "retention", "Get the most from your {{Product}}", "A few quick tips",
+    { slug: "setup-and-care-tips", tone: "lavender", title: "A Few Quick Tips 💡", subtitle: (f) => `Get the most from ${product(f)}.` },
+    (f) => [hi(), p("🔧 Setup: [write your setup tip here]\n🧽 Cleaning: [write your cleaning tip here]\n✅ Care: [write your care tip here]"), p("Questions? Just reply to this email."), B.button(f, "See The Product"), signOff(f)]),
+  design("review_request", "Review Request", "Ask how the product is working for them.", "post_purchase", "retention", "How's your {{Product}}, {{First Name}}?", "We'd love to hear how it's going",
+    { slug: "review-request", tone: "lavender", title: "How's Your New Product? 😊", subtitle: "We'd love to hear your experience." },
+    (f) => [B.text("⭐⭐⭐⭐⭐", 28, false, "center"), hi(), p(`Your ${product(f)} arrived recently, and we'd love to know what you think. Just reply to this email and tell us. We read every reply.`), signOff(f)]),
+
+  // ── Abandoned Cart ──
+  design("cart_reminder", "Abandoned Cart Reminder", "Remind customers about the order they didn't finish.", "cart", "retention", "You left something behind, {{First Name}}", "Your order is one step away",
+    { slug: "abandoned-cart-reminder", tone: "pink", title: "You Left Something in Your Cart! 🛒", subtitle: "Complete your order now before it's gone.", button: "Complete Order" },
+    (f) => [hi(), p("Looks like you didn't finish your order. It only takes a minute, and you pay when it arrives."), B.product(f, "Complete Order"), p("Popular products sell out fast. Need help? Just reply to this email."), signOff(f)]),
+  design("cart_discount", "Cart Discount", "A small offer to finish the order." + OFFER_HINT, "cart", "promotional", "Still thinking, {{First Name}}? Here's a little help", "Finish your order today and save",
+    { slug: "cart-discount", tone: "pink", title: "Still Thinking? Here's a Little Help", subtitle: "Finish your order today and save.", button: "Complete Order" },
+    (f) => [hi(), p("Your order is still waiting. To make it easier, here's a little something if you order today."), offerNote(), B.product(f, "Complete Order"), signOff(f)]),
+  design("cart_last_call", "Cart Last Call", "It's still available, for now.", "cart", "retention", "Still available, for now: {{Product}}", "Popular items sell out fast",
+    { slug: "cart-expiring", tone: "peach", title: "Still Available, For Now ⏳", subtitle: "Popular items sell out fast.", button: "Order Now" },
+    (f) => [hi(), p("The item you picked is still available, but we can't promise for how long. Order now so you don't miss out."), B.product(f, "Order Now"), signOff(f)]),
+  design("checkout_help", "Ordering Help", "Offer help to people who didn't finish.", "cart", "retention", "Need help with your order, {{First Name}}?", "We're here if something went wrong",
+    { slug: "checkout-help", tone: "sky", title: "Need Help Ordering? 🙋", subtitle: "We're here if something went wrong.", button: "Finish My Order", buttonTone: "purple" },
+    (f) => [hi(), p("We noticed you didn't finish your order. If something got in the way, we can help."), p("📦 Pay on delivery: you pay when it arrives.\n📞 Talk to us: reply to this email and we'll call you.\n🚚 Delivered to your door."), signOff(f)]),
+  design("cart_free_delivery", "Cart Free Delivery", "Free delivery if they order today.", "cart", "promotional", "Free delivery on your order, {{First Name}} 🚚", "We'll cover delivery if you order today",
+    { slug: "cart-free-delivery", tone: "mint", title: "Free Delivery on Your Order 🚚", subtitle: "We'll cover delivery if you order today.", button: "Claim Free Delivery" },
+    (f) => [hi(), p("Good news: if you complete your order today, delivery is on us."), B.product(f, "Complete Order"), signOff(f)]),
+
+  // ── Welcome Series ──
+  design("welcome_email", "Welcome Email", "Start a great relationship with new subscribers.", "welcome", "retention", "Welcome, {{First Name}}! 🎉", "Thanks for joining us",
+    { slug: "welcome-email", tone: "lavender", title: (f) => `Welcome to ${brandName(f)}! 🎉`, subtitle: "Thanks for joining. Get ready for great deals, useful tips, and more.", button: "Start Shopping", buttonTone: "purple" },
+    (f) => [hi("Hi {{First Name}}, glad you're here!"), p("Here's what you can expect from us:"), p("🏷️ Members-only deals: offers before anyone else.\n🚚 Delivered to your door, and you pay when it arrives.\n💡 Useful tips for a tidy, stylish home.\n💬 Real people: reply to any email and we'll get back to you."), signOff(f)]),
+  design("our_story", "Our Story", "Who you are and why you started.", "welcome", "retention", "Meet the team behind your order, {{First Name}} 👋", "Who we are and why we do this",
+    { slug: "our-story", tone: "lavender", title: (f) => `Meet ${brandName(f)} 👋`, subtitle: "Who we are and why we do this.", button: "See What We Sell", buttonTone: "purple" },
+    (f) => [hi(), p(`${brandName(f)} started with a simple idea: [write how you started here].`), p("🚚 Delivered to your door, and you pay when it arrives.\n🤝 Real people: a team that actually replies."), signOff(f)]),
+  design("bestsellers", "Bestsellers", "Start new customers with a favourite.", "welcome", "promotional", "Our customers' favourite, {{First Name}} ⭐", "Start with the one everyone loves",
+    { slug: "bestsellers", tone: "peach", title: "Our Customers' Favourites ⭐", subtitle: "Start with the products everyone loves.", button: "Shop Bestsellers" },
+    (f) => [hi(), p("Not sure where to start? Here's one our customers love."), B.product(f, "Order Now"), signOff(f)]),
+  design("welcome_gift_reminder", "Welcome Gift Reminder", "Remind new subscribers about their gift." + OFFER_HINT, "welcome", "retention", "Your welcome gift is waiting, {{First Name}} 🎁", "Your first-order gift is still here",
+    { slug: "welcome-gift-reminder", tone: "pink", title: "Your Welcome Gift Is Waiting 🎁", subtitle: "Your first-order gift is still here.", button: "Use My Gift", buttonTone: "purple" },
+    (f) => [hi(), p("You haven't used your welcome gift yet. Don't miss it."), offerNote(), signOff(f)]),
+
+  // ── Product Launch ──
+  design("coming_soon", "Coming Soon", "Build excitement before a launch.", "launch", "announcement", "Something new is coming, {{First Name}} 👀", "Be the first to know",
+    { slug: "coming-soon", tone: "lavender", title: "Something New Is Coming… 👀", subtitle: "Be the first to know when it arrives." },
+    (f) => [hi(), p("We've been working on something special, and it arrives on [write the date here]. Reply YES to this email and we'll tell you the moment it's here."), signOff(f)]),
+  design("launch_day", "Launch Day", "It's here: the new product is live.", "launch", "announcement", "It's here: {{Product}} 🚀", "Our newest product is live",
+    { slug: "launch-day", tone: "sky", title: "It's Here! Shop the Launch 🚀", subtitle: "Our newest product is live.", button: "Shop the Launch" },
+    (f) => [hi(), p("The wait is over. Our newest product is available now."), B.product(f, "Order Now"), signOff(f)]),
+  design("pre_order", "Pre-Order", "Take orders before stock lands.", "launch", "announcement", "Reserve yours early, {{First Name}}", "Reserve yours before it lands",
+    { slug: "pre-order", tone: "mint", title: "Pre-Order Now", subtitle: "Reserve yours before it lands.", button: "Reserve Mine" },
+    (f) => [hi(), p("Be first in line. Order today and we'll deliver as soon as stock lands. You pay when it arrives."), p("Delivery from: [write the date here]"), signOff(f)]),
+  design("back_in_stock", "Back in Stock", "The product people wanted is back.", "launch", "announcement", "Back in stock: {{Product}} 🔔", "The one you wanted is available again",
+    { slug: "back-in-stock", tone: "butter", title: "Back in Stock! 🔔", subtitle: "The one you wanted is available again.", button: "Buy Now", buttonTone: "purple" },
+    (f) => [hi(), p("It's back, and it sold out fast last time."), B.product(f, "Order Now"), signOff(f)]),
+
+  // ── Re-Engagement ──
+  design("still_interested", "Re-Engagement", "Reconnect with people who looked but didn't order.", "reengagement", "retention", "Still interested, {{First Name}}?", "It's still available",
+    { slug: "re-engagement", tone: "peach", title: "Still Interested? 🤔", subtitle: "The item you viewed is still available. Grab it now!", button: "Shop Now" },
+    (f) => [hi(), p("You were checking this out recently. It's still available, for now:"), B.product(f, "Order Now"), signOff(f)]),
+  design("whats_new", "What's New", "Show what's new since their last visit.", "reengagement", "retention", "Here's what you missed, {{First Name}} ✨", "New arrivals since your last visit",
+    { slug: "whats-new", tone: "lavender", title: "Here's What You Missed ✨", subtitle: "New arrivals since your last visit.", button: "See What's New", buttonTone: "purple" },
+    (f) => [hi(), p(`A lot has changed since you last visited. Here's what's new at ${brandName(f)}:`), B.product(f, "Order Now"), signOff(f)]),
+  design("stay_subscribed", "Stay Subscribed", "Check quiet subscribers still want emails.", "reengagement", "retention", "Still want to hear from us, {{First Name}}?", "Stay with us or change your mind any time",
+    { slug: "stay-subscribed", tone: "sky", title: "Still Want to Hear From Us?", subtitle: "Stay with us, or change your mind any time.", button: "See What's New", buttonTone: "purple" },
+    (f) => [hi(), p("We haven't heard from you in a while. We only want to email people who enjoy hearing from us."), p("Want to stay? You don't need to do anything. Rather not hear from us? Use the unsubscribe link at the bottom of this email."), signOff(f)]),
+  design("recommended_for_you", "Recommended for You", "One product picked for them.", "reengagement", "retention", "Picked for you, {{First Name}} 💡", "We think you'll like this",
+    { slug: "recommended-for-you", tone: "peach", title: "Picked Just for You 💡", subtitle: "We think you'll like this.", button: "See My Pick" },
+    (f) => [hi(), p("We picked this one for you."), B.product(f, "Order Now"), signOff(f)]),
+
+  // ── Announcements ──
+  design("new_arrival", "Product Announcement", "Tell customers about a new product.", "announcement", "announcement", "Just arrived: {{Product}}", "Be the first to get it",
+    { slug: "product-announcement", tone: "lavender", title: "New Arrival! ✨", subtitle: (f) => `Check out ${product(f)}.`, button: "Explore Now" },
+    (f) => [hi(`Hi {{First Name}}, meet ${product(f)}`), B.product(f, "Order Now"), p("Stock is limited for the first batch, so order early to get yours first."), signOff(f)]),
+  design("faster_delivery", "Faster Delivery", "Share better delivery times.", "announcement", "announcement", "Faster delivery, {{First Name}} 🚚", "We now deliver faster",
+    { slug: "faster-delivery", tone: "sky", title: "Faster Delivery 🚚", subtitle: "We now deliver to more places, faster.", button: "Order Now", buttonTone: "purple" },
+    (f) => [hi(), p("We've upgraded our delivery. Here's how long orders now take:"), p("Lagos & Abuja: [write the time here]\nOther major cities: [write the time here]\nEverywhere else: [write the time here]"), signOff(f)]),
+  design("holiday_schedule", "Holiday Delivery Schedule", "Last order dates before the holidays.", "announcement", "announcement", "Order by these dates for the holidays 📅", "Get it in time",
+    { slug: "holiday-schedule", tone: "mint", title: "Holiday Delivery Schedule 📅", subtitle: "Order by these dates to get it in time.", button: "Order Before the Cut-Off" },
+    (f) => [hi(), p("Planning gifts? Here are the last order dates for delivery before the holidays:"), p("Lagos & Abuja: [write the date here]\nOther cities: [write the date here]\nOffice closed: [write the dates here]"), signOff(f)]),
+
+  // ── Seasonal & Event ──
+  design("black_friday", "Black Friday", "The biggest sale of the year." + OFFER_HINT, "seasonal", "promotional", "Black Friday is here, {{First Name}} 🖤", "Our biggest price drops of the year",
+    { slug: "black-friday", tone: "lavender", title: "Black Friday Is Here 🖤", subtitle: "Our biggest price drops of the year.", button: "Shop Black Friday" },
+    (f) => [hi(), p("Our biggest sale of the year is live, for a limited time."), B.timer("Sale ends in"), offerNote(), B.product(f, "Order Now"), signOff(f)]),
+  design("christmas", "Christmas", "Festive deals." + OFFER_HINT, "seasonal", "promotional", "Merry Christmas, {{First Name}} 🎄", "Festive deals for a tidy new year",
+    { slug: "christmas", tone: "pink", title: (f) => `Merry Christmas from ${brandName(f)} 🎄`, subtitle: "Festive deals for a tidy new year.", button: "Shop Christmas Deals", buttonTone: "purple" },
+    (f) => [hi(), p("Wishing you and your family a joyful season. Start the new year organised, with festive savings."), offerNote(), signOff(f)]),
+
+  // ── Kept from before (Autopilot and Create Custom Template use these) ──
   { key: "product_collection", name: "Product Collection", hint: "Show a product with its price and a button", category: "promotional", type: "promotional", layout: "product_collection",
     subject: "Picked for your home, {{First Name}}", preheader: "See what customers are ordering",
     build: (f) => [B.header(f), B.cover(f, "lavender", "Picked For Your Home", "See what customers are ordering.", "photo", "Order Now", "purple"), B.text("Hi {{First Name}},", 20, true), B.product(f, "Order Now"), B.features(POD), B.footer()] },
-  { key: "flash_sale", name: "Flash Sale", hint: "A time-limited deal with a countdown", category: "promotional", type: "promotional", layout: "product_promo",
-    subject: "Ends soon: {{Product}}", preheader: "Order before the clock runs out",
-    build: (f) => [B.header(f), B.cover(f, "peach", "Ends Soon! ⏰", `Order ${product(f)} before the timer runs out.`, "photo", "Order Now", "yellow"), B.timer("Offer ends in"), B.text("Hi {{First Name}}, you pay when it arrives."), B.footer()] },
-  { key: "win_back_offer", name: "Win-Back Campaign", hint: "Re-engage inactive customers and bring them back", category: "retention", type: "retention", layout: "win_back",
-    subject: "We miss you, {{First Name}}", preheader: "Here is a reason to come back",
-    build: (f) => [B.header(f), B.cover(f, "lavender", "We Miss You! 👋", "It's been a while. Here's a reason to come back.", "🎁", "Come Back", "purple"), B.text("Hi {{First Name}},", 20, true), B.text("Take a look at what is new and order whenever you are ready. You pay on delivery."), B.footer()] },
-  { key: "order_confirmation", name: "Order Confirmation", hint: "Confirm the order and set delivery expectations", category: "post_purchase", type: "transactional", layout: "order_confirmation",
-    subject: "Thanks for your order, {{First Name}}!", preheader: "Your order is confirmed",
-    build: (f) => [B.header(f), B.cover(f, "lavender", "Thanks for Your Order! 🎉", "Your order is confirmed and being prepared.", "📦"), B.text("Hi {{First Name}}, our team will call you before delivery. You pay when it arrives.", 15, false, "center"), B.features([["check", "Order Confirmed"], ["truck", "On Its Way Soon"], ["cash", "Pay On Delivery"]]), B.footer()] },
-  { key: "review_request", name: "Review Request", hint: "Ask how the product is working for them", category: "post_purchase", type: "retention", layout: "simple_message",
-    subject: "How's your {{Product}}, {{First Name}}?", preheader: "We'd love to hear how it's going",
-    build: (f) => [B.header(f), B.cover(f, "sky", "How's Your Product? 😊", "We'd love to hear your experience.", "⭐⭐⭐⭐⭐"), B.text(`Hi {{First Name}}, how is ${product(f)} working for you? Just reply to this email and tell us. We read every reply.`, 15, false, "center"), B.footer()] },
-  { key: "usage_tips", name: "Tips & How-To", hint: "Share tips for getting the most from the product", category: "post_purchase", type: "retention", layout: "educational",
-    subject: "Get the most from your {{Product}}", preheader: "A few quick tips",
-    build: (f) => [B.header(f), B.cover(f, "teal", "A Few Quick Tips 💡", `Get the most from ${product(f)}.`, "photo"), B.text("Hi {{First Name}}, here are a few ways to get more from your order:"), B.text("✅ Tip one: write your first tip here.\n✅ Tip two: write your second tip here.\n✅ Tip three: write your third tip here."), B.button(f, "See The Product"), B.footer()] },
-  { key: "cart_reminder", name: "Abandoned Cart Reminder", hint: "Remind customers about the order they didn't finish", category: "cart", type: "retention", layout: "abandoned_cart",
-    subject: "You left something behind, {{First Name}}", preheader: "Your order is one step away",
-    build: (f) => [B.header(f), B.cover(f, "pink", "You Left Something in Your Cart! 🛒", "Complete your order now before it's gone.", "photo", "Complete Order", "yellow"), B.text("Hi {{First Name}}, it only takes a minute, and you pay when it arrives."), B.footer()] },
-  { key: "welcome_email", name: "Welcome Email", hint: "Start a great relationship with new subscribers", category: "welcome", type: "retention", layout: "welcome",
-    subject: "Welcome, {{First Name}}! 🎉", preheader: "Thanks for joining us",
-    build: (f) => [B.header(f), B.cover(f, "sky", `Welcome to ${f.brand || "our store"}! 🎉`, "Thanks for joining. Get ready for deals, tips, and more.", "👋", "Start Shopping", "purple"), B.features(POD), B.social(), B.footer()] },
-  { key: "new_arrival", name: "Product Announcement", hint: "Tell customers about a new product or restock", category: "launch", type: "announcement", layout: "product_promo",
-    subject: "Just arrived: {{Product}}", preheader: "Be the first to get it",
-    build: (f) => [B.header(f), B.cover(f, "lilac", "New Arrival! ✨", `Check out ${product(f)}.`, "photo", "Explore Now", "yellow"), B.text("Hi {{First Name}}, we just added something new and we think you'll like it. Order today and pay on delivery."), B.footer()] },
-  { key: "still_interested", name: "Re-Engagement", hint: "Reconnect with customers who have gone quiet", category: "reengagement", type: "retention", layout: "win_back",
-    subject: "Still interested, {{First Name}}?", preheader: "It's still available",
-    build: (f) => [B.header(f), B.cover(f, "peach", "Still Interested? 🤔", "The item you viewed is still available.", "photo", "Shop Now", "yellow"), B.text("Hi {{First Name}}, order today and pay when it arrives."), B.footer()] },
   { key: "announcement", name: "Announcement", hint: "Share important news or updates", category: "announcement", type: "announcement", layout: "announcement",
     subject: "An update for you, {{First Name}}", preheader: "News we wanted you to hear first",
     build: (f) => [B.header(f), B.cover(f, "lilac", "Some Good News 📣", "An update we wanted you to hear first.", "📣", "Read More", "purple"), B.text("Hi {{First Name}}, write your news here.", 15, false, "center"), B.footer()] },
   { key: "newsletter", name: "Newsletter", hint: "Send updates, stories and picks", category: "announcement", type: "announcement", layout: "newsletter",
     subject: "What's new this month, {{First Name}}", preheader: "Updates, tips and picks for you",
     build: (f) => [B.header(f), B.cover(f, "lavender", "This Month 📰", "Updates, tips, and picks for you.", "📰"), B.text("📰 Story one: write it here."), B.divider(), B.product(f, "See It"), B.divider(), B.text("💡 A quick tip: write it here."), B.social(), B.footer()] },
-  { key: "seasonal_sale", name: "Seasonal Sale", hint: "Holiday and event offers with a countdown", category: "seasonal", type: "promotional", layout: "product_promo",
-    subject: "Our holiday picks for you, {{First Name}}", preheader: "For a short time only",
-    build: (f) => [B.header(f), B.cover(f, "teal", "Holiday Specials 🎁", `Make the season easier with ${product(f)}.`, "photo", "Shop The Sale", "yellow"), B.timer("Sale ends in"), B.text("Hi {{First Name}}, order before the season ends. You pay on delivery."), B.footer()] },
   { key: "blank", name: "Blank Template", hint: "Start from an empty layout and design freely", category: "promotional", type: "promotional", layout: "blank",
     subject: "", preheader: "", build: (f) => [B.header(f), B.text("Write your message here."), B.footer()] }
 ];
@@ -471,7 +642,7 @@ export function renderEmailHtml(design: EmailDesign, opts: RenderOptions = {}): 
         const [top, bottom] = COVER_TONES[block.tone] ?? COVER_TONES.lavender;
         const src = safeUrl(block.imageUrl);
         const picture = src
-          ? `<img src="${escapeHtml(src)}" alt="" width="260" style="display:block;width:100%;max-width:260px;height:auto;border:0;margin:18px auto 0;border-radius:12px">`
+          ? `<img src="${escapeHtml(src)}" alt="" width="${block.big ? 520 : 260}" style="display:block;width:100%;max-width:${block.big ? 520 : 260}px;height:auto;border:0;margin:18px auto 0;border-radius:12px">`
           : block.emoji ? `<div style="font-size:56px;line-height:1.1;margin-top:16px">${t(block.emoji)}</div>` : "";
         const purple = block.buttonTone === "purple";
         const button = block.buttonText && block.buttonLink
