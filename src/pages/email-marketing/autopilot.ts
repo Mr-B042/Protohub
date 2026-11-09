@@ -149,7 +149,8 @@ const FIRST_MONTH_GAPS = [0, 2, 4, 7, 7, 9];
 
 function draft(name: string, description: string, template: string, goal: string, stage: AutoDraft["stage"], trigger: AutoDraft["trigger"], nodes: EmFlowNode[], exitOnPurchase: boolean): AutoDraft {
   return {
-    id: null, status: "draft", active: true, name, description, template, goal, trigger, audience: { source: "all" },
+    // The server takes at most 200 characters (Bright hit this on 9 Nov).
+    id: null, status: "draft", active: true, name: name.slice(0, 160), description: description.slice(0, 200), template, goal, trigger, audience: { source: "all" },
     enrollment: { on: false, match: "all", conditions: [] },
     settings: { ...SETTINGS, exit: { ...SETTINGS.exit, onPurchase: exitOnPurchase } },
     workflow: { nodes }, stage
@@ -202,7 +203,7 @@ export function autopilotPlan(designer: EmDesigner, sales: Array<{ productId: st
   {
     const nodes: EmFlowNode[] = [];
     for (const row of QUIET_MONTHLY) nodes.push(wait(30), quietEmail(designer, best, row));
-    const auto = draft("Autopilot: Went Quiet — Monthly, Until They Buy", "Everyone who went quiet over a month ago (including those who said no thanks): one email a month, six in turn, then again from the start. Stops when they order, their order is delivered, or they unsubscribe.",
+    const auto = draft("Autopilot: Went Quiet — Monthly, Until They Buy", "Everyone quiet for over a month, including those who said no thanks: one email a month, six in turn, then from the start. Stops when they order, get a delivery or unsubscribe.",
       "win_back", "winback", "winback", { kind: "went_quiet", quietDays: 31, quietReasons: [] }, nodes, true);
     auto.settings = { ...auto.settings, priority: "normal", reentry: true, reentryDays: 0, frequency: "unlimited" };
     plan.push({ key: "quiet:monthly", productName: null, ready: !storeNeeds.length, needs: storeNeeds, draft: auto });
