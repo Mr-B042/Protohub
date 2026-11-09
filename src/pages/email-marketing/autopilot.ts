@@ -1,5 +1,5 @@
 import type { EmDesigner, EmDesignerProduct, EmFlowNode, EmQuietReason } from "../../lib/api";
-import { buildQuietDesign, buildStarterDesign, buildStoreDesign, fillProduct, type CampaignFields, type QuietEmailSpec, type StoreEmailSpec } from "../../lib/email-render";
+import { buildAddOnDesign, buildQuietDesign, buildStarterDesign, buildStoreDesign, fillProduct, type CampaignFields, type QuietEmailSpec, type StoreEmailSpec } from "../../lib/email-render";
 import { DEFAULT_SETTINGS, newId, type AutoDraft } from "./automation-model";
 import { priceText } from "./wizard-model";
 
@@ -14,7 +14,11 @@ import { priceText } from "./wizard-model";
  * page; otherwise it is saved as a draft that says what is missing.
  */
 
-export type PlanItem = { key: string; draft: AutoDraft; ready: boolean; needs: string[]; productName: string | null };
+export type PlanItem = { key: string; draft: AutoDraft; ready: boolean; needs: string[]; productName: string | null;
+  /** Older Autopilot flows this one takes over: paused once it is live. */
+  replaces?: string[];
+  /** Already-running flow of the same name gets "payday weeks only" switched on. */
+  payday?: boolean };
 
 const SETTINGS = {
   ...DEFAULT_SETTINGS,
@@ -139,6 +143,42 @@ const QUIET_MONTHLY: QuietMail[] = [
       lines: ["Order below whenever you're ready.", POD_LINE] })
 ];
 
+// ── Welcome and Cart Recovery words (email playbook, 9 Nov 2026) ──────
+// Only what is true for a pay-on-delivery business: no codes, no deadlines,
+// no made-up numbers. The founder story is left for Bright to add in the editor.
+const ORDER_STEPS = "1️⃣ Order on our page: no payment needed.\n2️⃣ Our team calls you to confirm your order.\n3️⃣ We deliver to your door, and you pay when it's in your hands.";
+const WELCOME_MAIL: QuietMail[] = [
+  mail("Day 1: Welcome", "Welcome, {{First Name}}! 🎉", "Glad you're here",
+    { slug: "welcome-email", tone: "lavender", title: "Welcome! 🎉", subtitle: "We're glad you're here.", button: "See Our Best Seller", buttonTone: "purple", theirs: false,
+      lines: ["Thank you for joining us. We bring practical things for the home, kitchen and everyday life straight to your door.", POD_LINE] }),
+  mail("Day 2: How Ordering Works", "How ordering works (it's easy), {{First Name}}", "No payment until it arrives",
+    { slug: "shipping-confirmation", tone: "sky", title: "How Ordering Works 📦", subtitle: "Three easy steps. Nothing to pay upfront.", button: "Order Now", buttonTone: "purple", theirs: false,
+      lines: [ORDER_STEPS, "If anything isn't right when it arrives, tell the rider or WhatsApp us on 07083515972."] }),
+  mail("Day 3: Who We Are", "A little about us, {{First Name}}", "The team behind your orders",
+    { slug: "our-story", tone: "lavender", title: "A Little About Us 💜", subtitle: "Real people, real orders.", button: "Shop With Us", buttonTone: "purple", theirs: false, product: false,
+      lines: ["We're a small team that finds useful products for homes and brings them to your door.", "Every order is confirmed by phone before it's sent, and you only pay when it arrives.", REPLY] }),
+  mail("Day 4: Our Best Seller", "What our customers order most, {{First Name}}", "Our best seller right now",
+    { slug: "bestsellers", tone: "butter", title: "Our Best Seller 🏆", subtitle: "What customers order from us most right now.", button: "Order Now", theirs: false,
+      lines: ["If you're not sure where to start, start here: it's what customers order from us most right now.", POD_LINE] }),
+  mail("Day 5: Still Thinking?", "Still thinking about it, {{First Name}}?", "It's one tap away",
+    { slug: "re-engagement", tone: "peach", title: "Still Thinking About It? 🤔", subtitle: "No pressure. It's here when you're ready.", button: "Order Now", theirs: false,
+      lines: ["If something caught your eye this week, it's one tap away, and there's nothing to pay until it arrives.", REPLY] })
+];
+const cartMail = (name: string): QuietMail[] => [
+  mail("Email 1 (30 Minutes): You Left Something", `You left your ${name} behind, {{First Name}}`, "Your order is one step away",
+    { slug: "abandoned-cart-reminder", tone: "peach", title: "You Left Something Behind 🛒", subtitle: "Your order is one step away.", button: "Complete My Order", theirs: false,
+      lines: [`You were one step away from ordering your ${name}.`, "It's still available, and you don't pay anything until it arrives at your door."] }),
+  mail("Email 2 (Day 1): Here's How It Works", "Still deciding, {{First Name}}? Here's how it works", "No payment upfront",
+    { slug: "checkout-help", tone: "sky", title: "Still Deciding? 🤔", subtitle: "Here's exactly how it works.", button: "Complete My Order", buttonTone: "purple", theirs: false,
+      lines: [ORDER_STEPS, `Questions about the ${name}? Reply to this email or WhatsApp 07083515972 and we'll help.`] }),
+  mail("Email 3 (Day 2): Pick Your Day", "Pick the day that suits you, {{First Name}}", "We'll deliver then",
+    { slug: "holiday-schedule", tone: "mint", title: "Pick The Day That Suits You 📅", subtitle: "We'll deliver then.", button: "Order Now", theirs: false,
+      lines: ["Not ready today? Order now and tell our team the day that suits you when they call. We'll deliver then.", POD_LINE] }),
+  mail("Email 4 (Day 3): One Last Reminder", `One last reminder about your ${name}`, "Then we'll stop, promise",
+    { slug: "cart-expiring", tone: "lavender", title: "One Last Reminder 💜", subtitle: "Then we'll leave you be.", button: "Yes, Order Now", buttonTone: "purple", theirs: false,
+      lines: [`This is our last reminder about your ${name}. If you'd still like it, it's one tap away.`, "If not, no problem at all. Thank you for looking."] })
+];
+
 function quietEmail(designer: EmDesigner, sample: EmDesignerProduct | undefined, row: QuietMail): EmFlowNode {
   return {
     id: newId("e"), type: "email", name: row.name, campaignId: null,
@@ -148,12 +188,12 @@ function quietEmail(designer: EmDesigner, sample: EmDesignerProduct | undefined,
 /** Day 1, 3, 7, 14, 21, 30 (the trigger fires on day 1). */
 const FIRST_MONTH_GAPS = [0, 2, 4, 7, 7, 9];
 
-function draft(name: string, description: string, template: string, goal: string, stage: AutoDraft["stage"], trigger: AutoDraft["trigger"], nodes: EmFlowNode[], exitOnPurchase: boolean): AutoDraft {
+function draft(name: string, description: string, template: string, goal: string, stage: AutoDraft["stage"], trigger: AutoDraft["trigger"], nodes: EmFlowNode[], exitOnPurchase: boolean, payday = false): AutoDraft {
   return {
     // The server takes at most 200 characters (Bright hit this on 9 Nov).
     id: null, status: "draft", active: true, name: name.slice(0, 160), description: description.slice(0, 200), template, goal, trigger, audience: { source: "all" },
     enrollment: { on: false, match: "all", conditions: [] },
-    settings: { ...SETTINGS, exit: { ...SETTINGS.exit, onPurchase: exitOnPurchase } },
+    settings: { ...SETTINGS, exit: { ...SETTINGS.exit, onPurchase: exitOnPurchase }, ...(payday ? { payday: true } : {}) },
     workflow: { nodes }, stage
   };
 }
@@ -168,20 +208,36 @@ export function autopilotPlan(designer: EmDesigner, sales: Array<{ productId: st
   const plan: PlanItem[] = [];
 
   const storeNeeds = needsOf(best);
+  // Welcome (email playbook, 9 Nov 2026): five emails, a day apart, for people who joined the list
+  // without ordering or leaving a cart. Buyers get "Add To Your Delivery"; cart leavers get Cart Recovery.
   plan.push({
-    key: "welcome", productName: null, ready: !storeNeeds.length, needs: storeNeeds,
-    draft: draft("Autopilot: Welcome", "New subscribers get a welcome, then the best seller.", "welcome", "welcome", "acquisition", { kind: "new_subscriber" }, [
-      email("Email 1: Welcome", "welcome_email", designer, best, "Welcome, {{First Name}}! 🎉", "Thanks for joining us"),
-      wait(3),
-      email("Email 2: Our Best Seller", "product_collection", designer, best, "Our customers' favourite: {{Product}}", "Order today, pay on delivery")
-    ], true)
+    key: "welcome5", productName: null, ready: !storeNeeds.length, needs: storeNeeds, replaces: ["Autopilot: Welcome"],
+    draft: (() => {
+      const auto = draft("Autopilot: Welcome — 5 Days (No Order Yet)", "New on the list, no order and no cart: welcome, how ordering works, who we are, our best seller, a last friendly nudge. One a day; stops when they order.",
+        "welcome", "welcome", "acquisition", { kind: "new_subscriber" }, WELCOME_MAIL.flatMap((row, index) => [...(index ? [wait(1)] : []), quietEmail(designer, best, row)]), true);
+      auto.enrollment = { on: true, match: "all", conditions: [{ field: "ever_ordered", op: "is_not", value: "yes" }, { field: "cart_abandoned", op: "none_within", value: 7 }] };
+      return auto;
+    })()
   });
+  // Just ordered (email playbook #1): add more to the same delivery, an hour after the order.
+  {
+    const addOns = products.filter((row) => row.image && row.links.length).slice(0, 3)
+      .map((row) => ({ id: row.id, name: row.name, price: priceText(row), image: row.image ?? "" }));
+    const auto = draft("Autopilot: Add To Your Delivery (Just Ordered)", "An hour after an order: add more to the same delivery by WhatsApp or reply. The team checks the area and confirms first.",
+      "upsell_cross_sell", "upsell", "conversion", { kind: "order_placed", productId: null }, [
+        wait(1, "hours"),
+        { id: newId("e"), type: "email", name: "Add To Your Delivery", campaignId: null,
+          email: { subject: "Want to add something to your delivery, {{First Name}}? 🛍️", preheader: "One delivery, everything together", design: buildAddOnDesign(fields(designer, best), addOns), productId: null, thumbnailUrl: null } }
+      ], false);
+    auto.settings = { ...auto.settings, reentry: true, reentryDays: 0, frequency: "unlimited", priority: "high" };
+    plan.push({ key: "add_on", productName: null, ready: addOns.length > 0, needs: addOns.length ? [] : ["a selling product with a photo and an order page"], draft: auto });
+  }
   // Delivered customers shop on Our Store now (Bright, 9 Nov 2026): Win-Back invites them there.
   plan.push({
     key: "store_win_back", productName: null, ready: true, needs: [],
     draft: draft("Autopilot: Store — Win-Back", "Customers with no delivery for 60 days: back to Our Store (pay online, pay less), with live store picks.", "win_back", "winback", "winback", { kind: "inactive", inactiveDays: 60 }, [
       storeEmail(designer, best, STORE_MAIL.missYou), wait(7), storeEmail(designer, best, STORE_MAIL.greatBuys)
-    ], true)
+    ], true, true), payday: true
   });
   // Store Club: every delivered customer, whatever they bought. First make sure the product delivered value, then the store.
   {
@@ -215,8 +271,8 @@ export function autopilotPlan(designer: EmDesigner, sales: Array<{ productId: st
     for (const row of QUIET_MONTHLY) nodes.push(wait(30), quietEmail(designer, best, row));
     const auto = draft("Autopilot: Went Quiet — Monthly, Until They Buy", "Everyone quiet for over a month, including those who said no thanks: one email a month, six in turn, then from the start. Stops when they order, get a delivery or unsubscribe.",
       "win_back", "winback", "winback", { kind: "went_quiet", quietDays: 31, quietReasons: [] }, nodes, true);
-    auto.settings = { ...auto.settings, priority: "normal", reentry: true, reentryDays: 0, frequency: "unlimited" };
-    plan.push({ key: "quiet:monthly", productName: null, ready: !storeNeeds.length, needs: storeNeeds, draft: auto });
+    auto.settings = { ...auto.settings, priority: "normal", reentry: true, reentryDays: 0, frequency: "unlimited", payday: true };
+    plan.push({ key: "quiet:monthly", productName: null, ready: !storeNeeds.length, needs: storeNeeds, draft: auto, payday: true });
   }
 
   for (const product of [...products, ...quiet]) {
@@ -224,15 +280,15 @@ export function autopilotPlan(designer: EmDesigner, sales: Array<{ productId: st
     const selling = (count.get(product.id) ?? 0) > 0;
     const why = selling ? needs : [...needs, "sales: it has no orders in 60 days, so it waits as a draft"];
     // After Delivery per product is replaced by Store Club (one flow for every delivered customer).
+    // Cart Recovery (email playbook): 30 minutes, then one a day, four in all; each only if they still haven't ordered.
+    const mails = cartMail(product.name);
+    const step = (index: number): EmFlowNode[] => index >= mails.length ? [] : [
+      ...(index ? [wait(1), { id: newId("c"), type: "condition", name: "Did they order?", check: { kind: "placed_order" }, yes: [], no: [quietEmail(designer, product, mails[index]), ...step(index + 1)] } as EmFlowNode] : [quietEmail(designer, product, mails[0]), ...step(1)])
+    ];
     plan.push({
-      key: `cart:${product.id}`, productName: product.name, ready: selling && !needs.length, needs: why,
-      draft: draft(`Autopilot: ${product.name} — Cart Reminder`, `People who left the ${product.name} order form without ordering.`, "cart_abandonment", "cart", "conversion", { kind: "cart_abandoned", cartMinutes: 60, productId: product.id }, [
-        email("Email 1: You Left Something", "cart_reminder", designer, product, "You left something behind, {{First Name}}", "Your order is one step away"),
-        wait(1),
-        { id: newId("c"), type: "condition", name: "Did they order?", check: { kind: "placed_order" }, yes: [], no: [
-          email("Email 2: Still Interested?", "still_interested", designer, product, "Still interested in {{Product}}?", "It's still available, pay on delivery")
-        ] }
-      ], true)
+      key: `cart4:${product.id}`, productName: product.name, ready: selling && !needs.length, needs: why, replaces: [`Autopilot: ${product.name} — Cart Reminder`],
+      draft: draft(`Autopilot: ${product.name} — Cart Recovery (4 Emails)`, `People who left the ${product.name} order form: 30 minutes, then one a day, four emails, until they order.`, "cart_abandonment", "cart", "conversion",
+        { kind: "cart_abandoned", cartMinutes: 30, productId: product.id }, step(0), true)
     });
   }
   plan.push(...segmentFlows(designer, products, best, storeNeeds));
@@ -302,8 +358,8 @@ function segmentFlows(designer: EmDesigner, products: EmDesignerProduct[], best:
     const nodes: EmFlowNode[] = [];
     mails.forEach((mail, index) => { if (gaps[index]) nodes.push(wait(gaps[index])); nodes.push(storeEmail(designer, best, STORE_MAIL[mail])); });
     const auto = draft(`Autopilot: Store — ${title}`, about, "repeat_buyer", "repeat", "retention", { kind: "in_segment", segmentId: groupId, rank }, nodes, true);
-    auto.settings = { ...auto.settings, priority: "low", reentry: true, reentryDays: 30, frequency: "unlimited" };
-    out.push({ key: `segment:${key}`, productName: null, ready: true, needs: [], draft: auto });
+    auto.settings = { ...auto.settings, priority: "low", reentry: true, reentryDays: 30, frequency: "unlimited", payday: true };
+    out.push({ key: `segment:${key}`, productName: null, ready: true, needs: [], draft: auto, payday: true });
   };
   const vip = byKey("top_spenders");
   if (vip) add("vip", vip.id, 10, "VIP (Top 20% Spenders)", "Biggest spenders: first look at new arrivals, great buys, restock. Monthly, again after 30 days.", ["vipThanks", "greatBuys", "again"], [0, 30, 30]);

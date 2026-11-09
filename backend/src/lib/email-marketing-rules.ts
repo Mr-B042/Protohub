@@ -237,7 +237,7 @@ export type ConditionField =
   | "purchased_product" | "purchase_count" | "last_purchase_days" | "first_purchase_days"
   | "total_spent" | "avg_order_value" | "spend_top_percent" | "state" | "cart_abandoned"
   | "product_interest" | "email_opened" | "email_clicked" | "joined_days" | "source" | "upsell_ready"
-  | "contact_status" | "tag" | "left_review" | "order_source" | "went_quiet";
+  | "contact_status" | "tag" | "left_review" | "order_source" | "went_quiet" | "ever_ordered";
 
 export type Condition = { field: ConditionField; op: string; value: string | number };
 
@@ -254,7 +254,7 @@ export const CONDITION_FIELDS: Array<{ field: ConditionField; group: string; lab
   { field: "avg_order_value", group: "Money Spent", label: "Average Order", ops: [{ op: "gte", label: "Is at least" }, { op: "lte", label: "Is at most" }], value: "money" },
   { field: "spend_top_percent", group: "Money Spent", label: "Top Spenders", ops: [{ op: "top", label: "Is in the top" }], value: "percent", unit: "% by spend" },
   { field: "state", group: "Location", label: "Location / State", ops: [{ op: "is", label: "Is" }, { op: "is_not", label: "Is not" }], value: "state" },
-  { field: "cart_abandoned", group: "Carts", label: "Left a Cart", ops: [{ op: "within", label: "Within last" }], value: "days" },
+  { field: "cart_abandoned", group: "Carts", label: "Left a Cart", ops: [{ op: "within", label: "Within last" }, { op: "none_within", label: "None in the last" }], value: "days" },
   { field: "product_interest", group: "Purchase History", label: "Interested In", ops: [{ op: "is", label: "Ordered or carted" }], value: "product" },
   { field: "email_opened", group: "Email Activity", label: "Opened an Email", ops: [{ op: "within", label: "Within last" }, { op: "not_within", label: "Not within last" }], value: "days" },
   { field: "email_clicked", group: "Email Activity", label: "Clicked an Email", ops: [{ op: "within", label: "Within last" }, { op: "not_within", label: "Not within last" }], value: "days" },
@@ -263,6 +263,7 @@ export const CONDITION_FIELDS: Array<{ field: ConditionField; group: string; lab
   { field: "upsell_ready", group: "Purchase History", label: "Bought One Unit", ops: [{ op: "is", label: "Last order was 1 unit" }], value: "none" },
   { field: "order_source", group: "Location", label: "First Order From", ops: [{ op: "is", label: "Is" }, { op: "is_not", label: "Is not" }], value: "channel" },
   { field: "went_quiet", group: "Purchase History", label: "Went Quiet", ops: [{ op: "is", label: "Latest order never delivered:" }], value: "quiet" },
+  { field: "ever_ordered", group: "Purchase History", label: "Ever Ordered", ops: [{ op: "is", label: "Has placed an order (any status)" }, { op: "is_not", label: "Has never placed an order" }], value: "none" },
   { field: "left_review", group: "Purchase History", label: "Left a Review", ops: [{ op: "is", label: "Has an approved review" }, { op: "is_not", label: "Has no approved review" }], value: "none" },
   { field: "contact_status", group: "Email List", label: "Customer Status", ops: [{ op: "is", label: "Is" }, { op: "is_not", label: "Is not" }], value: "status" },
   { field: "tag", group: "Email List", label: "Tag", ops: [{ op: "is", label: "Has tag" }, { op: "is_not", label: "Doesn't have tag" }], value: "tag" }
@@ -322,8 +323,10 @@ export function personMatches(person: Person, condition: Condition, ctx: MatchCo
       const same = !!stats?.state && stats.state.trim().toLowerCase() === String(condition.value).trim().toLowerCase();
       return condition.op === "is_not" ? !same : same;
     }
-    case "cart_abandoned":
-      return !!stats?.lastOpenCartMs && ctx.nowMs - stats.lastOpenCartMs <= days;
+    case "cart_abandoned": {
+      const recent = !!stats?.lastOpenCartMs && ctx.nowMs - stats.lastOpenCartMs <= days;
+      return condition.op === "none_within" ? !recent : recent;
+    }
     case "product_interest":
       return !!stats?.interestProducts.has(String(condition.value));
     case "email_opened":
@@ -342,6 +345,8 @@ export function personMatches(person: Person, condition: Condition, ctx: MatchCo
       const same = !!stats?.firstSource && stats.firstSource.toLowerCase() === String(condition.value).toLowerCase();
       return condition.op === "is_not" ? !same : same;
     }
+    case "ever_ordered":
+      return condition.op === "is_not" ? !stats?.lastOrderMs : !!stats?.lastOrderMs;
     case "left_review":
       return condition.op === "is_not" ? !stats?.reviewed : !!stats?.reviewed;
     case "went_quiet":

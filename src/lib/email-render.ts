@@ -491,7 +491,7 @@ export function withTheirProduct(design: EmailDesign, product: TheirProduct | nu
         const slug = block.imageUrl.startsWith(TEMPLATE_PHOTO_BASE) ? block.imageUrl.slice(TEMPLATE_PHOTO_BASE.length).replace(/\.jpg$/, "") : null;
         const swap = !!product.imageUrl && (!slug || PRODUCT_PICTURES.has(slug));
         // A store email's button stays on the store (delivered customers shop there, not on the order page).
-        const keepLink = block.buttonLink.startsWith(STORE_HOME);
+        const keepLink = block.buttonLink.startsWith(STORE_HOME) || block.buttonLink.startsWith("https://wa.me/");
         return { ...block, imageUrl: swap ? product.imageUrl : block.imageUrl, big: swap ? false : block.big, buttonLink: block.buttonText && !keepLink ? product.link || block.buttonLink : block.buttonLink };
       }
       if (block.type === "product") return { ...block, name: product.name, price: product.price, imageUrl: product.imageUrl, link: product.link || block.link };
@@ -566,6 +566,30 @@ export function buildStoreDesign(f: CampaignFields, spec: StoreEmailSpec): Email
     { id: blockId(), type: "footer", text: STORE_FOOTER }
   ];
   return { version: 1, template: `store:${spec.slug}`, touched: true, styles: { ...DEFAULT_STYLES }, blocks };
+}
+
+// ── "Add to your delivery" (Bright, 9 Nov 2026) ─────────────────────
+// Sent soon after an order is placed, while it is still being prepared: the
+// customer can ask (WhatsApp or reply) for more items in the same delivery.
+// The team checks stock in their area and confirms before adding anything;
+// no fee or price promise is made.
+export const SUPPORT_WHATSAPP = "2347083515972";
+export const whatsappLink = (text: string) => `https://wa.me/${SUPPORT_WHATSAPP}?text=${encodeURIComponent(text)}`;
+export function buildAddOnDesign(f: CampaignFields, addOns: Array<{ id: string; name: string; price: string; image: string }>): EmailDesign {
+  const cover: EmailBlock = { ...designed({ slug: "recommended-for-you", tone: "lavender", title: "Want To Add Something? 🛍️", subtitle: "Your order is being prepared. Add more to the same delivery.", button: "Add To My Delivery", buttonTone: "purple" }, { ...f, productImage: "" }),
+    buttonLink: whatsappLink("Hi, I just placed an order. I'd like to add something to the same delivery."), theirs: true } as EmailBlock;
+  const blocks: EmailBlock[] = [
+    B.header(f), cover, hi(),
+    p("Thank you for your order of {{Their Product}}! Our team will call you to confirm it."),
+    p("While it's being prepared, you can add more to the same delivery: one trip, one rider, everything arrives together."),
+    p("Tap \"Add To My Delivery\" on anything below (it opens WhatsApp), or simply reply to this email. We'll check it's available in your area and confirm with you before adding it."),
+    ...addOns.map((item): EmailBlock => ({ id: blockId(), type: "product", productId: item.id, name: item.name, price: item.price, imageUrl: item.image, buttonText: "Add To My Delivery",
+      link: whatsappLink(`Hi, I just placed an order. Please add ${item.name} to the same delivery.`) })),
+    B.features(POD),
+    p("💬 Questions? WhatsApp us on 07083515972 or reply to this email."),
+    signOff(f), B.footer()
+  ];
+  return { version: 1, template: "addon:same-delivery", touched: true, styles: { ...DEFAULT_STYLES }, blocks };
 }
 
 // ── Holiday & festival emails (Bright, 9 Nov 2026) ───────────────────

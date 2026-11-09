@@ -259,3 +259,15 @@ test("holiday versions: every customer gets exactly one (VIP taken out of Loyal 
   assert.equal(new Set(all).size, all.length, "nobody is in two versions");
   assert.equal(all.length, 8, "everyone on the list gets one");
 });
+
+test("ever ordered and no recent cart: who the 5-day Welcome is for", () => {
+  const customers = buildCustomers([order("08010000001", "Failed", 15000, 3)], []);
+  const people = buildPeople(customers, [contact("c1", "a@x.com", "08010000001"), contact("c2", "b@x.com", "08010000002")]);
+  const ctx = contextFor(customers, NOW);
+  const [buyer, fresh] = [people.find((p) => p.contact?.id === "c1")!, people.find((p) => p.contact?.id === "c2")!];
+  assert.ok(personMatches(buyer, { field: "ever_ordered", op: "is", value: "yes" }, ctx), "any order counts, even a failed one");
+  assert.ok(!personMatches(buyer, { field: "ever_ordered", op: "is_not", value: "yes" }, ctx));
+  assert.ok(personMatches(fresh, { field: "ever_ordered", op: "is_not", value: "yes" }, ctx));
+  assert.ok(personMatches(fresh, { field: "cart_abandoned", op: "none_within", value: 7 }, ctx));
+  assert.deepEqual(cleanConditions([{ field: "cart_abandoned", op: "none_within", value: 7 }]), [{ field: "cart_abandoned", op: "none_within", value: 7 }]);
+});

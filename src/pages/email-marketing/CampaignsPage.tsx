@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Archive, BarChart3, CalendarDays, CheckCircle2, ChevronDown, Coins, Copy, FileText, LayoutGrid, List, Mail, MailOpen, MoreHorizontal, MousePointerClick,
-  Pause, Pencil, Play, Plus, Search, Send, ShoppingCart, Trash2, Undo2, Users, Zap, Eye
+  Pause, Pencil, Play, Plus, Search, Send, ShoppingCart, Trash2, Undo2, Users, Zap, Eye, Sparkles
 } from "lucide-react";
 import { emailMarketingApi, type EmCampaign } from "../../lib/api";
 import {
@@ -11,6 +11,7 @@ import {
 import CampaignReport from "./CampaignReport";
 import EmailPreviewGallery from "./EmailPreviewGallery";
 import HolidayCalendar from "./HolidayCalendar";
+import MonthlyPlan from "./MonthlyPlan";
 
 /** Campaigns page, built to Bright's design (image 49, 8 Nov 2026). */
 
@@ -62,6 +63,7 @@ export default function CampaignsPage({ onNavigate, onCreate, onEdit, onToast, r
   const [report, setReport] = useState<string | null>(null);
   const [gallery, setGallery] = useState(false);
   const [holidays, setHolidays] = useState(false);
+  const [monthly, setMonthly] = useState(false);
   const [testFor, setTestFor] = useState<EmCampaign | null>(null);
   const [page, setPage] = useState(1);
 
@@ -171,6 +173,7 @@ export default function CampaignsPage({ onNavigate, onCreate, onEdit, onToast, r
           <p className="m-0 text-[15px] text-gray-600 dark:text-slate-400">Manage, track and improve all your email campaigns.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => setMonthly(true)} className={btn.ghost}><Sparkles className="h-4 w-4 text-[#5B3FD9]" />Monthly Plan</button>
           <button type="button" onClick={() => setHolidays(true)} className={btn.ghost}><CalendarDays className="h-4 w-4 text-[#5B3FD9]" />Holiday Calendar</button>
           <button type="button" onClick={() => setGallery(true)} className={btn.ghost}><Eye className="h-4 w-4 text-[#5B3FD9]" />Preview Emails</button>
           <button type="button" onClick={() => onNavigate("templates")} className={btn.ghost}><FileText className="h-4 w-4 text-[#5B3FD9]" />Templates</button>
@@ -350,6 +353,7 @@ export default function CampaignsPage({ onNavigate, onCreate, onEdit, onToast, r
         </>,
         document.body
       )}
+      {monthly && <MonthlyPlan campaigns={rows ?? []} onClose={() => setMonthly(false)} onDone={() => { setMonthly(false); void load(); }} onToast={onToast} />}
       {holidays && <HolidayCalendar campaigns={rows ?? []} onClose={() => setHolidays(false)} onDone={() => { setHolidays(false); void load(); }} onToast={onToast} />}
       {gallery && <EmailPreviewGallery title="Campaign Email Previews" campaigns={(rows ?? []).filter((row) => row.status !== "archived")} onClose={() => setGallery(false)} onEdit={(id) => { setGallery(false); onEdit(id); }} />}
       {report && <CampaignReport id={report} onClose={() => setReport(null)} onEdit={(id) => { setReport(null); onEdit(id); }} />}
