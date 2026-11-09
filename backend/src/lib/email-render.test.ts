@@ -101,3 +101,22 @@ test("emails Autopilot sends as they are have no [write … here] gaps; the chec
   assert.deepEqual(r.unfilledGaps(r.buildStarterDesign("usage_tips", f)).length > 0, true);
   assert.deepEqual(r.unfilledGaps(null, "Hi [write the date here]"), ["[write the date here]"]);
 });
+
+test("store emails: live picks filled per customer, the promise, store links, no pay-on-delivery", async () => {
+  const r = await import("./email-render.js");
+  const f = { brand: "Shop", goal: "retention", offerType: "custom", productId: "p", productName: "Rack", productImage: "", productLink: "https://pod.example/rack", productPrice: "", offerOn: false, offerTitle: "", offerBenefit: "" };
+  const design = r.buildStoreDesign(f, { slug: "welcome-email", tone: "lavender", title: "Shop Online, Pay Less", subtitle: "x", button: "Visit Our Store", lines: ["Hi"], picks: [{ mode: "related", count: 2, title: "Picked for you" }] });
+  assert.equal(r.usesStorePicks(design), true);
+  assert.deepEqual(r.unfilledGaps(design), []);
+  const filled = r.withStorePicks(design, () => [{ name: "Mop Bucket", price: 6500, wasPrice: 7000, image: "https://store.example/m.jpg", url: "https://protoolshardwareventures.com.ng/products/mop" }]);
+  const html = r.renderEmailHtml(filled, { brand: "Protohub" });
+  assert.match(html, /Mop Bucket/); assert.match(html, /₦6,500/); assert.match(html, /line-through/);
+  assert.match(html, /Full refund if your order doesn/);
+  assert.doesNotMatch(html, /Pay on Delivery/);
+  assert.doesNotMatch(html, /pod\.example/);
+  // No products found: the block is left out, never an empty grid.
+  assert.equal(r.withStorePicks(design, () => []).blocks.some((b: any) => b.type === "storePicks"), false);
+  // The customer's own photo can go on the cover; the button stays on the store.
+  const theirs = r.withTheirProduct({ ...design, blocks: design.blocks.map((b: any) => (b.type === "cover" ? { ...b, theirs: true } : b)) }, { name: "Rack", price: "", imageUrl: "https://img/rack.jpg", link: "https://pod.example/rack" });
+  assert.equal((theirs.blocks.find((b: any) => b.type === "cover") as any).buttonLink, r.STORE_HOME);
+});

@@ -12,7 +12,7 @@ import {
   type OrderLite, type Person, type SavedSegment, type SegmentRule
 } from "./email-marketing-rules.js";
 import { emailBrand } from "./email-brand.js";
-import { applyTags, collectLinks, fillTheirProduct, unfilledGaps, normalizeDesign, renderEmailHtml, renderEmailText, usesLoyaltyTags, usesTheirProduct, withTheirProduct, type EmailDesign, type RenderOptions, type TheirProduct } from "./email-render.js";
+import { applyTags, collectLinks, fillTheirProduct, unfilledGaps, usesStorePicks, withStorePicks, type StorePickItem, normalizeDesign, renderEmailHtml, renderEmailText, usesLoyaltyTags, usesTheirProduct, withTheirProduct, type EmailDesign, type RenderOptions, type TheirProduct } from "./email-render.js";
 import { inSendWindow } from "./email-automation-rules.js";
 
 /**
@@ -861,7 +861,7 @@ export async function sendTest(orgId: string, branchId: string, campaign: any, e
   const linkFor = (url: string) => links.find((link) => link.original === url)?.url ?? url;
   const results: Array<{ email: string; ok: boolean; error?: string }> = [];
   for (const email of emails) {
-    const html = renderEmailHtml(design, { logoUrl: (await emailBrand(orgId)).logoUrl ?? undefined, firstName: senderName, preheader: campaign.preheader || undefined, brand: sender.fromName, footerNote: settings.footerNote, unsubscribeUrl: `${PUBLIC_BACKEND_URL}/e/u/test`, plain: !!campaign.options?.plainText, linkFor });
+    const html = renderEmailHtml(usesStorePicks(design) ? await fillStorePicks(design, { product: null, seed: email, slug: campaign.slug ?? "test", utm: false, nowMs: Date.now() }) : design, { logoUrl: (await emailBrand(orgId)).logoUrl ?? undefined, firstName: senderName, preheader: campaign.preheader || undefined, brand: sender.fromName, footerNote: settings.footerNote, unsubscribeUrl: `${PUBLIC_BACKEND_URL}/e/u/test`, plain: !!campaign.options?.plainText, linkFor });
     const text = renderEmailText(design, { firstName: senderName, unsubscribeUrl: `${PUBLIC_BACKEND_URL}/e/u/test`, linkFor });
     try {
       await sendMarketingEmail(orgId, { to: { email }, subject: `[Test] ${campaign.subject}`, html, text });
@@ -1008,7 +1008,13 @@ async function sendQueued(nowMs: number) {
     const theirs = usesTheirProduct(design, `${campaign.subject ?? ""} ${campaign.subject_b ?? ""}`)
       ? await theirProductFor(row.org_id, row.branch_id, row.phone, campaign, productCache)
       : undefined;
-    const { html, text, subject } = renderForSend(campaign, design, { ...row, loyalty, theirs }, { brand: sender.brand, footerNote: footers.get(row.branch_id) ?? "", logoUrl: sender.logoUrl }, nowMs);
+    // Store Picks: Our Store's products for this customer, with today's prices and stock (lib/store-catalog.ts).
+    let ready = design;
+    if (usesStorePicks(design)) {
+      const bought = theirs?.name ?? (await theirProductFor(row.org_id, row.branch_id, row.phone, campaign, productCache))?.name ?? null;
+      ready = await fillStorePicks(design, { product: bought, seed: row.email, slug: campaign.slug, utm: campaign.options?.utm !== false, nowMs });
+    }
+    const { html, text, subject } = renderForSend(campaign, ready, { ...row, loyalty, theirs }, { brand: sender.brand, footerNote: footers.get(row.branch_id) ?? "", logoUrl: sender.logoUrl }, nowMs);
     try {
       const result = await sendMarketingEmail(row.org_id, { to: { email: row.email, name: row.name || undefined }, subject, html, text, unsubscribeUrl: trackingUrl("u", row.token), customId: row.token, replyTo: campaign.options?.replyTo || undefined });
       const at = new Date().toISOString();
@@ -1047,6 +1053,19 @@ export async function theirProductFor(orgId: string, branchId: string, phone: un
     name: product.name, price, imageUrl: product.image,
     link: page && campaign.options?.utm !== false ? withUtm(page, { utm_source: "email", utm_medium: "email", utm_campaign: campaign.slug }) : page
   };
+}
+
+/** Each Store Picks block filled with store products for one customer (none found = block left out). */
+export async function fillStorePicks(design: EmailDesign, opts: { product: string | null; seed: string; slug: string; utm: boolean; nowMs: number }) {
+  const { storePicks } = await import("./store-catalog.js");
+  const found = new Map<string, StorePickItem[]>();
+  for (const block of design.blocks) {
+    if (block.type !== "storePicks") continue;
+    const items = await storePicks(block.mode, block.count, { product: opts.product, seed: opts.seed, nowMs: opts.nowMs });
+    found.set(block.id, items.map((item) => ({ name: item.name, price: item.price, wasPrice: item.wasPrice, image: item.image,
+      url: opts.utm ? withUtm(item.url, { utm_source: "email", utm_medium: "email", utm_campaign: opts.slug }) : item.url })));
+  }
+  return withStorePicks(design, (block) => found.get(block.id) ?? []);
 }
 
 /** Runs whose queue is empty: completed, or back to waiting for the next repeat. */

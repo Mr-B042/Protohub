@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { Monitor, Pencil, Smartphone, X } from "lucide-react";
 import { emailMarketingApi, type EmCampaign, type EmDesigner, type EmFlowNode } from "../../lib/api";
-import { withTheirProduct, type EmailDesign, type TheirProduct } from "../../lib/email-render";
+import { withStorePicks, withTheirProduct, type EmailDesign, type StorePickItem, type TheirProduct } from "../../lib/email-render";
 import EmailFrame from "./EmailFrame";
 
 /**
@@ -44,6 +44,8 @@ export default function EmailPreviewGallery({ title, flows, campaigns, onClose, 
   const [only, setOnly] = useState("");
   const [designer, setDesigner] = useState<EmDesigner | null>(null);
   const [loaded, setLoaded] = useState<Record<string, EmailDesign | null>>({});
+  // Store Picks: real store products for the previews (picked as for a customer who bought the sample product).
+  const [picks, setPicks] = useState<Record<string, StorePickItem[]>>({});
   useEffect(() => { void emailMarketingApi.designer().then(setDesigner).catch(() => undefined); }, []);
   // Campaign lists come without their designs: fetch each one shown.
   useEffect(() => {
@@ -72,6 +74,24 @@ export default function EmailPreviewGallery({ title, flows, campaigns, onClose, 
     return out;
   }, [flows, campaigns, loaded]);
   const groups = [...new Map(items.map((item) => [item.groupId, item.group])).entries()];
+  const pickKey = (mode: string, count: number) => `${mode}:${count}`;
+  useEffect(() => {
+    const needed = new Set<string>();
+    for (const item of items) for (const block of item.design?.blocks ?? []) if (block.type === "storePicks") needed.add(pickKey(block.mode, block.count));
+    for (const key of needed) {
+      if (key in picks) continue;
+      const [mode, count] = key.split(":");
+      setPicks((prev) => ({ ...prev, [key]: [] }));
+      void emailMarketingApi.storePicks(mode, Number(count), theirs?.name).then((res) => setPicks((prev) => ({ ...prev, [key]: res.items }))).catch(() => undefined);
+    }
+  }, [items, theirs?.name]); // eslint-disable-line react-hooks/exhaustive-deps
+  const withPicks = (design: EmailDesign) => {
+    const has = design.blocks.some((block) => block.type === "storePicks");
+    if (!has) return design;
+    const filled = withStorePicks(design, (block) => picks[pickKey(block.mode, block.count)] ?? []);
+    // While loading, keep the placeholder blocks rather than dropping them.
+    return filled.blocks.length === design.blocks.length ? filled : design;
+  };
   const shown = items.filter((item) => !only || item.groupId === only);
   const fill = (text: string) => (theirs ? text.split("{{Their Product}}").join(theirs.name) : text);
 
@@ -107,7 +127,7 @@ export default function EmailPreviewGallery({ title, flows, campaigns, onClose, 
                 {item.preheader && <div className="truncate text-[12.5px] text-gray-500" title={fill(item.preheader)}>{fill(item.preheader)}</div>}
               </div>
               <div className="flex-1 bg-[#F2F4F7] p-2">
-                {item.design ? <EmailFrame design={theirs ? withTheirProduct(item.design, theirs) : item.design} mobile={mobile} fit brand={designer?.sender.fromName} footerNote={designer?.settings.footerNote} preheader={item.preheader} minHeight={420} />
+                {item.design ? <EmailFrame design={withPicks(theirs ? withTheirProduct(item.design, theirs) : item.design)} mobile={mobile} fit brand={designer?.sender.fromName} footerNote={designer?.settings.footerNote} preheader={item.preheader} minHeight={420} />
                   : <p className="m-0 p-6 text-center text-[13px] text-gray-500">{item.loading ? "Loading…" : "This email has no saved design."}</p>}
               </div>
               <div className="border-t border-gray-100 px-4 py-2.5 dark:border-slate-800">

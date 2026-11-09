@@ -39,7 +39,28 @@ export type EmailBlock =
   | { id: string; type: "features"; items: FeatureItem[] }
   | { id: string; type: "footer"; text: string }
   // Cover (Templates design, 8 Nov 2026): soft colour, centred headline, a line, a picture or emoji, a button.
-  | { id: string; type: "cover"; title: string; subtitle: string; imageUrl: string; emoji: string; buttonText: string; buttonLink: string; buttonTone: "yellow" | "purple"; tone: CoverTone; big?: boolean; theirs?: boolean };
+  | { id: string; type: "cover"; title: string; subtitle: string; imageUrl: string; emoji: string; buttonText: string; buttonLink: string; buttonTone: "yellow" | "purple"; tone: CoverTone; big?: boolean; theirs?: boolean }
+  // Store Picks (Bright, 9 Nov 2026): Our Store's products, chosen for each customer when the email is sent
+  // (related to what they bought, great buys, just arrived, or the same item again). `items` is filled at send.
+  | { id: string; type: "storePicks"; mode: StorePicksMode; count: number; title: string; buttonText: string; items?: StorePickItem[] };
+
+export type StorePicksMode = "related" | "value" | "new" | "again";
+export type StorePickItem = { name: string; price: number; wasPrice: number | null; image: string; url: string };
+export const STORE_PICKS_MODES: Array<{ key: StorePicksMode; label: string }> = [
+  { key: "related", label: "Goes with what they bought" }, { key: "value", label: "Great buys (under ₦15,000)" },
+  { key: "new", label: "Just arrived" }, { key: "again", label: "The same item again" }
+];
+export const STORE_HOME = "https://protoolshardwareventures.com.ng/";
+/** True when the email has store products to fill in at send. */
+export const usesStorePicks = (design: EmailDesign | null) => !!design?.blocks.some((block) => block.type === "storePicks");
+/** The design with each Store Picks block's products put in (blocks with none found are dropped). */
+export function withStorePicks(design: EmailDesign, fill: (block: Extract<EmailBlock, { type: "storePicks" }>) => StorePickItem[]): EmailDesign {
+  return { ...design, blocks: design.blocks.flatMap((block): EmailBlock[] => {
+    if (block.type !== "storePicks") return [block];
+    const items = fill(block);
+    return items.length ? [{ ...block, items } as EmailBlock] : [];
+  }) };
+}
 
 /** The cover's soft background (top and bottom of the fade). */
 export const COVER_TONES = {
@@ -469,7 +490,9 @@ export function withTheirProduct(design: EmailDesign, product: TheirProduct | nu
         // A designed picture of a gift, clock, van… stays; a product picture (or the sample product's photo) becomes theirs.
         const slug = block.imageUrl.startsWith(TEMPLATE_PHOTO_BASE) ? block.imageUrl.slice(TEMPLATE_PHOTO_BASE.length).replace(/\.jpg$/, "") : null;
         const swap = !!product.imageUrl && (!slug || PRODUCT_PICTURES.has(slug));
-        return { ...block, imageUrl: swap ? product.imageUrl : block.imageUrl, big: swap ? false : block.big, buttonLink: block.buttonText ? product.link || block.buttonLink : block.buttonLink };
+        // A store email's button stays on the store (delivered customers shop there, not on the order page).
+        const keepLink = block.buttonLink.startsWith(STORE_HOME);
+        return { ...block, imageUrl: swap ? product.imageUrl : block.imageUrl, big: swap ? false : block.big, buttonLink: block.buttonText && !keepLink ? product.link || block.buttonLink : block.buttonLink };
       }
       if (block.type === "product") return { ...block, name: product.name, price: product.price, imageUrl: product.imageUrl, link: product.link || block.link };
       if (block.type === "button") return { ...block, link: product.link || block.link };
@@ -508,6 +531,41 @@ export function buildQuietDesign(f: CampaignFields, spec: QuietEmailSpec): Email
     B.footer()
   ];
   return { version: 1, template: `quiet:${spec.slug}`, touched: true, styles: { ...DEFAULT_STYLES }, blocks };
+}
+
+// ── Store emails (Bright, 9 Nov 2026) ───────────────────────────────
+// Delivered customers are invited to Our Store: pay online (before delivery),
+// lower prices. Customers fear paying first, so every store email carries the
+// promise (only what is true: Bright confirmed the full refund).
+
+export const STORE_PROMISE = [
+  "🛡️ Our promise to you:",
+  "✅ Every item is checked before it leaves us",
+  "💯 Full refund if your order doesn't arrive",
+  "↩️ Easy returns within 7 days on eligible items",
+  "🏦 Pay by bank transfer, confirmed by our team",
+  "💬 Questions? WhatsApp us on 07083515972"
+].join("\n");
+export const STORE_FOOTER = "Pay Online, Pay Less | Delivered to Your Door | Full Refund If It Doesn't Arrive";
+export type StoreEmailSpec = {
+  slug: string; tone: CoverTone; title: string; subtitle: string; button: string; buttonTone?: "yellow" | "purple";
+  lines: string[]; picks?: Array<{ mode: StorePicksMode; count: number; title: string }>; promise?: boolean; theirPhoto?: boolean;
+};
+/** A store email: designed cover (or the customer's own product photo), words, live store products, the promise, a big "Visit Our Store". */
+export function buildStoreDesign(f: CampaignFields, spec: StoreEmailSpec): EmailDesign {
+  const cover = { ...designed({ slug: spec.slug, tone: spec.tone, title: spec.title, subtitle: spec.subtitle, button: spec.button, buttonTone: spec.buttonTone }, { ...f, productImage: "" }), buttonLink: STORE_HOME } as EmailBlock;
+  const blocks: EmailBlock[] = [
+    B.header(f),
+    spec.theirPhoto ? { ...cover, theirs: true } as EmailBlock : cover,
+    hi(),
+    ...spec.lines.map((line) => p(line)),
+    ...(spec.picks ?? []).map((pick): EmailBlock => ({ id: blockId(), type: "storePicks", mode: pick.mode, count: pick.count, title: pick.title, buttonText: "Buy Now" })),
+    ...(spec.promise === false ? [] : [B.text(STORE_PROMISE, 14, false, "left")]),
+    { ...B.button(f, "Visit Our Store", STORE_HOME), color: BRAND_PALETTE.blue, textColor: "#FFFFFF" } as EmailBlock,
+    signOff(f),
+    { id: blockId(), type: "footer", text: STORE_FOOTER }
+  ];
+  return { version: 1, template: `store:${spec.slug}`, touched: true, styles: { ...DEFAULT_STYLES }, blocks };
 }
 
 /** The layouts in Create Custom Template, step 2 (the ready-made emails, by shape). */
@@ -557,6 +615,7 @@ export function newBlock(type: EmailBlockType, fields?: Partial<CampaignFields>)
     case "html": return { id, type, html: "<p style=\"margin:0\">Your HTML here</p>" };
     case "features": return { id, type, items: [{ icon: "cash", title: "Pay On Delivery" }, { icon: "truck", title: "Delivered To Your Door" }, { icon: "check", title: "Easy To Order" }] };
     case "footer": return { id, type, text: "Pay on Delivery | Delivered to Your Door" };
+    case "storePicks": return { id, type, mode: "related", count: 4, title: "Picked for you from our store", buttonText: "Buy Now" };
   }
 }
 
@@ -817,6 +876,22 @@ export function renderEmailHtml(design: EmailDesign, opts: RenderOptions = {}): 
       case "html":
         wrap(block, String(block.html ?? ""), "10px 28px");
         break;
+      case "storePicks": {
+        const items = (block.items ?? []).slice(0, 6);
+        if (!items.length) {
+          if (opts.editor || opts.showTags) wrap(block, `<div style="padding:22px;border:2px dashed #F2C14E;border-radius:14px;text-align:center;font-size:13.5px;color:#8A5A00;background:#FFFBEB">🛍️ ${t(block.title || "From our store")}<br><b>${clampNumber(block.count, 1, 6, 4)} store products</b>, picked for each customer when the email is sent (${escapeHtml(STORE_PICKS_MODES.find((m) => m.key === block.mode)?.label ?? block.mode)}).</div>`);
+          break;
+        }
+        const money = (n: number) => `₦${Math.round(n).toLocaleString("en-NG")}`;
+        const card = (item: StorePickItem) => {
+          const link = href(item.url, item.name) || "#";
+          return `<td class="st" valign="top" width="50%" style="padding:6px;${opts.mobile ? "display:block;width:100%" : ""}"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #ECE8F2;border-radius:14px;background:#FFFFFF"><tr><td style="padding:10px 10px 0"><a href="${link}"><img src="${escapeHtml(safeUrl(item.image))}" alt="" width="250" style="display:block;width:100%;max-width:250px;height:auto;border:0;border-radius:10px;margin:0 auto"></a></td></tr><tr><td style="padding:10px 12px 12px;font-family:${font}"><div style="font-size:14px;line-height:1.3;font-weight:700;color:${BRAND_PALETTE.charcoal}">${escapeHtml(item.name.length > 70 ? `${item.name.slice(0, 68)}…` : item.name)}</div><div style="margin-top:6px"><span style="font-size:17px;font-weight:900;color:${BRAND_PALETTE.blueDark}">${money(item.price)}</span>${item.wasPrice ? ` <span style="font-size:13px;color:#9CA3AF;text-decoration:line-through">${money(item.wasPrice)}</span>` : ""}</div><div style="margin-top:10px">${buttonHtml(block.buttonText || "Buy Now", item.url, { bg: accent, fg: "#FFFFFF", radius: 10, size: "small", style: "primary" })}</div></td></tr></table></td>`;
+        };
+        const rowsHtml: string[] = [];
+        for (let i = 0; i < items.length; i += 2) rowsHtml.push(`<tr>${card(items[i])}${items[i + 1] ? card(items[i + 1]) : `<td class="st" width="50%"></td>`}</tr>`);
+        wrap(block, `${block.title ? `<div style="font-size:19px;font-weight:900;color:${BRAND_PALETTE.charcoal};margin:0 0 8px;text-align:center">${t(block.title)}</div>` : ""}<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rowsHtml.join("")}</table>`, "10px 22px");
+        break;
+      }
       case "features": {
         const items = (block.items ?? []).slice(0, 4);
         if (!items.length) break;
@@ -827,7 +902,7 @@ export function renderEmailHtml(design: EmailDesign, opts: RenderOptions = {}): 
       }
       case "footer": {
         const parts = block.text.split("|").map((part) => part.trim()).filter(Boolean);
-        const icon = (part: string) => /deliver|door|ship/i.test(part) ? "🚚" : /pay|cash|pod/i.test(part) ? "💵" : /trust|home|customer|review/i.test(part) ? "⭐" : /call|phone|whatsapp/i.test(part) ? "📞" : "•";
+        const icon = (part: string) => /refund|money back/i.test(part) ? "💯" : /deliver|door|ship/i.test(part) ? "🚚" : /pay|cash|pod/i.test(part) ? "💵" : /trust|home|customer|review/i.test(part) ? "⭐" : /call|phone|whatsapp/i.test(part) ? "📞" : "•";
         // A charcoal band with the logo and name (like the e-receipts), the promises under it.
         const mark = opts.editor ? ` data-block-id="${escapeHtml(block.id)}"${opts.selectedId === block.id ? " data-selected=\"1\"" : ""}` : "";
         const promises = parts.length ? `<div style="font-size:12.5px;color:#E5E7EB;margin-top:12px">${parts.map((part) => `${icon(part)} ${t(part)}`).join(`<span style="color:#6B7280">&nbsp;&nbsp;|&nbsp;&nbsp;</span>`)}</div>` : "";
@@ -874,6 +949,7 @@ export function renderEmailText(design: EmailDesign, opts: RenderOptions = {}): 
       case "video": if (block.url) lines.push(`${tag(block.caption)}: ${link(block.url, block.caption)}`); break;
       case "review": if (block.quote.trim()) lines.push(`"${tag(block.quote)}" - ${tag(block.name)}`); break;
       case "features": lines.push(block.items.map((item) => item.title).join(" · ")); break;
+      case "storePicks": if (block.items?.length) lines.push([tag(block.title), ...block.items.map((item) => `${item.name}: ₦${Math.round(item.price).toLocaleString("en-NG")} ${link(item.url, item.name)}`)].filter(Boolean).join("\n")); break;
       case "footer": lines.push(block.text); break;
       default: break;
     }
@@ -887,7 +963,7 @@ export function normalizeDesign(raw: unknown): EmailDesign | null {
   if (!raw || typeof raw !== "object") return null;
   const value = raw as Partial<EmailDesign>;
   if (!Array.isArray(value.blocks)) return null;
-  const known = new Set<EmailBlockType>(["header", "hero", "text", "image", "button", "product", "offer", "divider", "spacer", "social", "timer", "video", "review", "html", "features", "footer", "cover"]);
+  const known = new Set<EmailBlockType>(["header", "hero", "text", "image", "button", "product", "offer", "divider", "spacer", "social", "timer", "video", "review", "html", "features", "footer", "cover", "storePicks"]);
   return {
     version: 1,
     template: typeof value.template === "string" ? value.template : "product_promo",

@@ -1,5 +1,5 @@
 import type { EmDesigner, EmDesignerProduct, EmFlowNode, EmQuietReason } from "../../lib/api";
-import { buildQuietDesign, buildStarterDesign, fillProduct, type CampaignFields, type QuietEmailSpec } from "../../lib/email-render";
+import { buildQuietDesign, buildStarterDesign, buildStoreDesign, fillProduct, type CampaignFields, type QuietEmailSpec, type StoreEmailSpec } from "../../lib/email-render";
 import { DEFAULT_SETTINGS, newId, type AutoDraft } from "./automation-model";
 import { priceText } from "./wizard-model";
 
@@ -176,16 +176,25 @@ export function autopilotPlan(designer: EmDesigner, sales: Array<{ productId: st
       email("Email 2: Our Best Seller", "product_collection", designer, best, "Our customers' favourite: {{Product}}", "Order today, pay on delivery")
     ], true)
   });
+  // Delivered customers shop on Our Store now (Bright, 9 Nov 2026): Win-Back invites them there.
   plan.push({
-    key: "win_back", productName: null, ready: !storeNeeds.length, needs: storeNeeds,
-    draft: draft("Autopilot: Win-Back", "Customers with no delivery for 60 days.", "win_back", "winback", "winback", { kind: "inactive", inactiveDays: 60 }, [
-      email("Email 1: We Miss You", "win_back_offer", designer, best, "We miss you, {{First Name}}", "Here is a reason to come back"),
-      wait(7),
-      { id: newId("c"), type: "condition", name: "Did the customer order again?", check: { kind: "placed_order" }, yes: [], no: [
-        email("Email 2: Still Here For You", "still_interested", designer, best, "Still thinking about {{Product}}?", "It's still available")
-      ] }
+    key: "store_win_back", productName: null, ready: true, needs: [],
+    draft: draft("Autopilot: Store — Win-Back", "Customers with no delivery for 60 days: back to Our Store (pay online, pay less), with live store picks.", "win_back", "winback", "winback", { kind: "inactive", inactiveDays: 60 }, [
+      storeEmail(designer, best, STORE_MAIL.missYou), wait(7), storeEmail(designer, best, STORE_MAIL.greatBuys)
     ], true)
   });
+  // Store Club: every delivered customer, whatever they bought. First make sure the product delivered value, then the store.
+  {
+    const nodes: EmFlowNode[] = [
+      wait(2), storeEmail(designer, best, STORE_MAIL.valueCheck), wait(3),
+      { id: newId("c"), type: "condition", name: "Did they tap \"Yes, I love it\"?", check: { kind: "clicked_last" }, yes: [], no: [storeEmail(designer, best, STORE_MAIL.valueCheckAgain), wait(3)] },
+      storeEmail(designer, best, STORE_MAIL.welcomeStore), wait(4), storeEmail(designer, best, STORE_MAIL.forYourHome), wait(5),
+      storeEmail(designer, best, STORE_MAIL.greatBuys), wait(7), storeEmail(designer, best, STORE_MAIL.justArrived), wait(7), storeEmail(designer, best, STORE_MAIL.safeOnline)
+    ];
+    const auto = draft("Autopilot: Store Club — Delivered Customers", "Every delivered customer: is it working well? Then Our Store (pay online, pay less), live store picks for them over the first month. The segment flows carry on after.",
+      "post_purchase", "repeat", "post_purchase", { kind: "order_delivered", productId: null }, nodes, false);
+    plan.push({ key: "store_club", productName: null, ready: true, needs: [], draft: auto });
+  }
 
   // Customers who went quiet: one first-month flow per reason, then the monthly one, forever.
   const quietFlows: Array<{ key: "unreachable" | "not_ready" | "let_down"; title: string; reasons: EmQuietReason[]; about: string }> = [
@@ -213,22 +222,8 @@ export function autopilotPlan(designer: EmDesigner, sales: Array<{ productId: st
   for (const product of [...products, ...quiet]) {
     const needs = needsOf(product);
     const selling = (count.get(product.id) ?? 0) > 0;
-    const partner = products.find((row) => row.id !== product.id && row.image && row.links.length);
     const why = selling ? needs : [...needs, "sales: it has no orders in 60 days, so it waits as a draft"];
-    plan.push({
-      key: `delivered:${product.id}`, productName: product.name, ready: selling && !needs.length, needs: why,
-      draft: draft(`Autopilot: ${product.name} — After Delivery`, `Customers who received ${product.name}.`, "post_purchase", "repeat", "post_purchase", { kind: "order_delivered", productId: product.id }, [
-        wait(1),
-        // No "[write … here]" gaps: an email Autopilot starts must be ready to send as it is.
-        { id: newId("e"), type: "email", name: "Email 1: Thank You + Need Help?", campaignId: null,
-          email: { subject: fillProduct("Enjoy your {{Product}}, {{First Name}}! 💙", product.name), preheader: "We're here if you need help", productId: product.id, thumbnailUrl: product.image || null,
-            design: buildQuietDesign(fields(designer, product), { slug: "delivered", tone: "peach", title: "Enjoy Your New Order! 🏠", subtitle: "Thank you for choosing us.", button: "Order Again", theirs: false, product: false,
-              lines: [`We hope your ${product.name} makes life easier at home.`, "Need help setting it up or keeping it like new? Just reply to this email and our team will help you. 💬"] }) } },
-        wait(5),
-        email("Email 2: How Is It Going?", "review_request", designer, product, "How's your {{Product}}, {{First Name}}?", "We'd love to hear how it's going"),
-        ...(partner ? [wait(14), email("Email 3: Goes Well With It", "product_collection", designer, partner, "Goes well with your order: {{Product}}", "Order today, pay on delivery")] : [])
-      ], false)
-    });
+    // After Delivery per product is replaced by Store Club (one flow for every delivered customer).
     plan.push({
       key: `cart:${product.id}`, productName: product.name, ready: selling && !needs.length, needs: why,
       draft: draft(`Autopilot: ${product.name} — Cart Reminder`, `People who left the ${product.name} order form without ordering.`, "cart_abandonment", "cart", "conversion", { kind: "cart_abandoned", cartMinutes: 60, productId: product.id }, [
@@ -253,113 +248,76 @@ export function autopilotPlan(designer: EmDesigner, sales: Array<{ productId: st
 // order takes them out (the after-delivery emails take over), and leaving
 // the segment ends it. No made-up offers or claims.
 
-type SegMail = { name: string; subject: string; preheader: string; spec: QuietEmailSpec; sample?: EmDesignerProduct };
-const seg = (name: string, subject: string, preheader: string, spec: QuietEmailSpec, sample?: EmDesignerProduct): SegMail => ({ name, subject, preheader, spec, sample });
+// Every store email (Bright, 9 Nov 2026): pay online, pay less; the promise; live store picks for this customer.
+const SM = (name: string, subject: string, preheader: string, spec: StoreEmailSpec) => ({ name, subject, preheader, spec });
+const STORE_MAIL = {
+  valueCheck: SM("Check: Is It Working Well?", "How's your {{Their Product}}, {{First Name}}? 😊", "We want to be sure you're happy",
+    { slug: "review-request", tone: "lavender", title: "Is Your {{Their Product}} Working Well? 😊", subtitle: "We want to be sure you got value for your money.", button: "Yes, I love it! 👍", theirPhoto: true, promise: false,
+      lines: ["It's been a couple of days since your {{Their Product}} arrived. We hope it's already making life easier.", "If anything isn't right, just reply to this email or WhatsApp us on 07083515972 and we'll sort it out quickly. Your happiness comes first."] }),
+  valueCheckAgain: SM("Check Again: All Good?", "Quick check, {{First Name}}: all good with your {{Their Product}}? 🙏", "We're here if you need anything",
+    { slug: "thank-you-loyal-customer", tone: "lavender", title: "All Good With Your Order? 🙏", subtitle: "Just making sure.", button: "Yes, all good! 👍", buttonTone: "purple", promise: false,
+      lines: ["We just want to be sure your {{Their Product}} is working well for you.", "Need help? Reply to this email or WhatsApp 07083515972. We'll make it right."] }),
+  welcomeStore: SM("Welcome To Our Store", "You're invited, {{First Name}}: shop online, pay less 🎉", "Lower prices when you pay online",
+    { slug: "welcome-email", tone: "lavender", title: "Shop Online, Pay Less 🎉", subtitle: "Our whole store, at lower prices when you pay before delivery.", button: "Visit Our Store", buttonTone: "purple",
+      lines: ["You already know us: your {{Their Product}} came from us. Now you can shop our whole store online, and pay less than on delivery.",
+        "🔎 Looking for something? Type it in the store's search bar. Kitchen, home, beauty, gadgets, kids and more: if it's in our store, you'll find it."],
+      picks: [{ mode: "related", count: 4, title: "Picked for you" }] }),
+  forYourHome: SM("Picked For Your Home", "Picked for your home, {{First Name}} 🏠", "Things that go with your {{Their Product}}",
+    { slug: "our-story", tone: "lavender", title: "Picked For Your Home 🏠", subtitle: "Things that go well with your {{Their Product}}.", button: "See More In Our Store", buttonTone: "purple",
+      lines: ["Customers who love their {{Their Product}} often make their home even easier with these."], picks: [{ mode: "related", count: 4, title: "Goes well with yours" }] }),
+  greatBuys: SM("Great Buys This Week", "Great buys this week, {{First Name}} 🔥", "Lower prices when you pay online",
+    { slug: "discount-code", tone: "lavender", title: "Great Buys This Week 🔥", subtitle: "Everyday things, at prices you'll love.", button: "Shop Great Buys", buttonTone: "purple",
+      lines: ["Pay online and pay less. Here are this week's great buys from our store."], picks: [{ mode: "value", count: 4, title: "Under ₦15,000" }] }),
+  justArrived: SM("Just Arrived", "Just arrived in our store, {{First Name}} ✨", "Be the first to get them",
+    { slug: "welcome-gift-reminder", tone: "pink", title: "Just Arrived ✨", subtitle: "New in our store this week.", button: "See What's New", buttonTone: "purple",
+      lines: ["Fresh in our store. Have a look before they're gone."], picks: [{ mode: "new", count: 4, title: "New arrivals" }] }),
+  safeOnline: SM("Paying Online Is Safe", "Paying online for the first time, {{First Name}}? 🛡️", "Here's how we protect you",
+    { slug: "shipping-confirmation", tone: "sky", title: "Paying Online? You're Protected 🛡️", subtitle: "Here's exactly how it works.", button: "Shop Safely Now", buttonTone: "purple",
+      lines: ["We know paying before delivery can feel scary. But you already received from us, and we're the same team.",
+        "1️⃣ Find what you want (use the search bar).\n2️⃣ Pay by bank transfer: our team confirms your payment.\n3️⃣ We deliver to your door, anywhere in Nigeria.\nIf your order doesn't arrive, you get your money back in full."],
+      picks: [{ mode: "related", count: 2, title: "Start with these" }] }),
+  missYou: SM("We Miss You", "We miss you, {{First Name}} 👋", "Come back and pay less",
+    { slug: "win-back-campaign", tone: "lavender", title: "We Miss You! 👋", subtitle: "Come back to our store: pay online, pay less.", button: "Visit Our Store", buttonTone: "purple",
+      lines: ["It's been a while since your last order. Our store has lots of new things for your home, at lower prices when you pay online."], picks: [{ mode: "related", count: 4, title: "Picked for you" }] }),
+  vipThanks: SM("Our Best Customers", "You're one of our best customers, {{First Name}} 👑", "A first look, just for you",
+    { slug: "vip-upgrade", tone: "lavender", title: "You're One Of Our Best Customers 👑", subtitle: "Here's a first look at what's new.", button: "See What's New", buttonTone: "purple",
+      lines: ["Thank you for trusting us again and again. As one of our best customers, you get a first look at what's new in our store."], picks: [{ mode: "new", count: 4, title: "First look" }] }),
+  loyalThanks: SM("Thank You For Coming Back", "Thank you for coming back, {{First Name}} 💜", "Picked for you",
+    { slug: "thank-you-loyal-customer", tone: "lavender", title: "Thank You For Coming Back 💜", subtitle: "It means a lot to us.", button: "Visit Our Store", buttonTone: "purple",
+      lines: ["You've ordered from us more than once, and that means a lot. Here's what we picked for you in our store, at online prices."], picks: [{ mode: "related", count: 4, title: "Picked for you" }] }),
+  again: SM("Buy It Again", "Running low on {{Their Product}}, {{First Name}}?", "Get it again in our store",
+    { slug: "replenishment-reminder", tone: "mint", title: "Time To Restock? 🔄", subtitle: "Get it again in our store, pay online, pay less.", button: "Visit Our Store", theirPhoto: true,
+      lines: ["If you're running low, get it again in our store. And have a look at what goes well with it."], picks: [{ mode: "again", count: 1, title: "Buy it again" }, { mode: "related", count: 2, title: "Goes well with it" }] })
+};
+function storeEmail(designer: EmDesigner, sample: EmDesignerProduct | undefined, mail: { name: string; subject: string; preheader: string; spec: StoreEmailSpec }): EmFlowNode {
+  return { id: newId("e"), type: "email", name: mail.name, campaignId: null,
+    email: { subject: mail.subject, preheader: mail.preheader, design: buildStoreDesign(fields(designer, sample), mail.spec), productId: null, thumbnailUrl: null } };
+}
 
-function segmentFlows(designer: EmDesigner, products: EmDesignerProduct[], best: EmDesignerProduct | undefined, storeNeeds: string[]): PlanItem[] {
+function segmentFlows(designer: EmDesigner, products: EmDesignerProduct[], best: EmDesignerProduct | undefined, _storeNeeds: string[]): PlanItem[] {
   const groups = designer.segments ?? [];
   const byKey = (key: string) => groups.find((row) => row.builtIn === key && row.status === "active");
-  const brand = designer.sender.fromName || designer.brand?.name || "us";
   const out: PlanItem[] = [];
-  const add = (key: string, groupId: string, rank: number, title: string, about: string, mails: SegMail[], gaps: number[]) => {
+  const add = (key: string, groupId: string, rank: number, title: string, about: string, mails: Array<keyof typeof STORE_MAIL>, gaps: number[]) => {
     const nodes: EmFlowNode[] = [];
-    mails.forEach((row, index) => {
-      if (gaps[index]) nodes.push(wait(gaps[index]));
-      const f = fields(designer, row.sample ?? best);
-      nodes.push({ id: newId("e"), type: "email", name: row.name, campaignId: null,
-        email: { subject: fillProduct(row.subject, f.productName), preheader: row.preheader, design: buildQuietDesign(f, row.spec), productId: (row.sample ?? best)?.id ?? null, thumbnailUrl: (row.sample ?? best)?.image || null } });
-    });
-    const auto = draft(`Autopilot: Segment — ${title}`, about, "repeat_buyer", "repeat", "retention", { kind: "in_segment", segmentId: groupId, rank }, nodes, true);
+    mails.forEach((mail, index) => { if (gaps[index]) nodes.push(wait(gaps[index])); nodes.push(storeEmail(designer, best, STORE_MAIL[mail])); });
+    const auto = draft(`Autopilot: Store — ${title}`, about, "repeat_buyer", "repeat", "retention", { kind: "in_segment", segmentId: groupId, rank }, nodes, true);
     auto.settings = { ...auto.settings, priority: "low", reentry: true, reentryDays: 30, frequency: "unlimited" };
-    out.push({ key: `segment:${key}`, productName: null, ready: !storeNeeds.length, needs: storeNeeds, draft: auto });
+    out.push({ key: `segment:${key}`, productName: null, ready: true, needs: [], draft: auto });
   };
-  const other = (not?: EmDesignerProduct) => products.find((row) => row.id !== not?.id && row.image && row.links.length) ?? best;
-
   const vip = byKey("top_spenders");
-  if (vip) add("vip", vip.id, 10, "VIP (Top 20% Spenders)", "Your biggest spenders: thanks, first look at favourites, their opinion. Monthly, again after a 30-day pause.", [
-    seg("Month 1: One of Our Best Customers", "You're one of our best customers, {{First Name}} 👑", "Thank you, from all of us",
-      { slug: "vip-upgrade", tone: "lavender", title: "You're One of Our Best Customers 👑", subtitle: "Thank you, from all of us.", button: "See What's New", buttonTone: "purple", product: false,
-        lines: [`Thank you for trusting ${brand} again and again. Customers like you are the reason we do this.`, "We'll keep you posted on new products and favourites."] }),
-    seg("Month 2: A Customer Favourite", "A customer favourite, picked for you: {{Product}}", "Take a look",
-      { slug: "product-announcement", tone: "lavender", title: "A Customer Favourite ✨", subtitle: "Picked for you.", button: "Take a Look", theirs: false, lines: ["Here's one our customers love right now.", "No payment upfront: you pay when it arrives at your door."] }, other()),
-    seg("Month 3: We'd Love Your Opinion", "We'd love your opinion, {{First Name}} ⭐", "It helps us choose what to stock",
-      { slug: "review-request", tone: "lavender", title: "We'd Love Your Opinion ⭐", subtitle: "It helps us choose what to stock next.", button: "Order Again", product: false,
-        lines: ["How is your {{Their Product}} working for you?", "Reply and tell us. We read every reply."] }),
-    seg("Month 4: Thank You", "Thank you, {{First Name}} 💜", "We're one tap away",
-      { slug: "thank-you-loyal-customer", tone: "lavender", title: "Thank You 💜", subtitle: "We're one tap away.", button: "Order Again", buttonTone: "purple",
-        lines: ["Just a note to say thank you. Whenever you need something for your home, we're one tap away."] })
-  ], [0, 30, 30, 30]);
-
+  if (vip) add("vip", vip.id, 10, "VIP (Top 20% Spenders)", "Biggest spenders: first look at new arrivals, great buys, restock. Monthly, again after 30 days.", ["vipThanks", "greatBuys", "again"], [0, 30, 30]);
   const repeat = byKey("repeat");
-  if (repeat) add("loyal", repeat.id, 20, "Loyal (Repeat Buyers)", "Customers with 2+ deliveries: thanks, a pick for them, tell a friend, restock. Monthly, again after a 30-day pause.", [
-    seg("Month 1: Thank You For Coming Back", "Thank you for coming back, {{First Name}} 💜", "It means a lot",
-      { slug: "thank-you-loyal-customer", tone: "lavender", title: "Thank You For Coming Back 💜", subtitle: "It means a lot to us.", button: "Order Again", buttonTone: "purple",
-        lines: ["You've ordered from us more than once, and that means a lot.", "No payment upfront: you pay when it arrives at your door."] }),
-    seg("Month 2: Customers Also Love", "Customers also love {{Product}}", "Picked for you",
-      { slug: "whats-new", tone: "lavender", title: "Customers Also Love… ✨", subtitle: "Picked for you.", button: "Take a Look", buttonTone: "purple", theirs: false, lines: ["Here's another favourite from our customers' homes."] }, other()),
-    seg("Month 3: Tell a Friend", "Know someone who'd love this, {{First Name}}?", "Share it with a friend",
-      { slug: "refer-a-friend", tone: "pink", title: "Share the Love 🤝", subtitle: "Know someone who'd love this?", button: "See What They'll Love", buttonTone: "purple", product: false,
-        lines: ["Know someone who'd love what you bought? Forward this email to them. They can order through the button above and pay when it arrives."] }),
-    seg("Month 4: Time to Restock?", "Running low on {{Their Product}}?", "Order again in one tap",
-      { slug: "replenishment-reminder", tone: "mint", title: "Time to Restock? 🔄", subtitle: "Order your favourite again in one tap.", button: "Order Again",
-        lines: ["If you're running low, order again now so you don't run out."] })
-  ], [0, 30, 30, 30]);
-
+  if (repeat) add("loyal", repeat.id, 20, "Loyal (Repeat Buyers)", "2+ deliveries: thanks, picks, new arrivals, great buys, paying online is safe. Monthly.", ["loyalThanks", "justArrived", "greatBuys", "safeOnline"], [0, 30, 30, 30]);
   const upsell = byKey("upsell");
-  if (upsell) add("upgrade", upsell.id, 30, "Need Another One? (Bought One Unit)", "Last order was a single unit: another one for another room or a friend. Again after a 30-day pause.", [
-    seg("Email 1: Need Another One?", "Need another {{Their Product}}, {{First Name}}?", "One for every room",
-      { slug: "re-engagement", tone: "peach", title: "Need Another One? 🏠", subtitle: "One for another room, or a friend.", button: "Order Another",
-        lines: ["Many homes need more than one. Order another {{Their Product}} for another room, or as a gift."] }),
-    seg("Email 2: Pay When It Arrives", "Order another, pay when it arrives, {{First Name}}", "No payment upfront",
-      { slug: "shipping-confirmation", tone: "sky", title: "Pay When It Arrives 💵", subtitle: "No payment upfront.", button: "Order Now", buttonTone: "purple",
-        lines: ["Our rider brings it to your door and you pay when it's in your hands."] }),
-    seg("Email 3: Still Thinking?", "Still thinking about it, {{First Name}}?", "Take your time",
-      { slug: "cart-expiring", tone: "peach", title: "Still Thinking About It? 🤔", subtitle: "Take your time.", button: "Order Now", lines: ["When you're ready, another {{Their Product}} is one tap away.", "Questions? Just reply to this email."] })
-  ], [0, 14, 21]);
-
+  if (upsell) add("upgrade", upsell.id, 30, "Buy Again (Bought One Unit)", "Last order was one unit: get it again in the store, and what goes with it.", ["again", "greatBuys"], [0, 21]);
   const once = byKey("one_time");
-  if (once) add("second", once.id, 40, "Second Order (One-Time Buyers)", "One delivery, 30+ days ago: how is it going, a pick for them, pay on delivery, restock. Again after a 30-day pause.", [
-    seg("Email 1: How's It Going?", "How's it going with your {{Their Product}}, {{First Name}}?", "We'd love to hear",
-      { slug: "review-request", tone: "lavender", title: "How's It Going? 💙", subtitle: "We'd love to hear.", button: "Order Again", product: false,
-        lines: ["It's been a while since your {{Their Product}} arrived. We hope it's making life easier.", "Reply and tell us how it's going. We read every reply."] }),
-    seg("Email 2: Customers Also Love", "Customers also love {{Product}}", "Picked for you",
-      { slug: "whats-new", tone: "lavender", title: "Customers Also Love… ✨", subtitle: "Picked for you.", button: "Take a Look", buttonTone: "purple", theirs: false, lines: ["Here's a favourite from our customers' homes."] }, other()),
-    seg("Email 3: Pay When It Arrives", "Pay when it arrives, {{First Name}}", "No payment upfront",
-      { slug: "shipping-confirmation", tone: "sky", title: "Pay When It Arrives 💵", subtitle: "No payment upfront.", button: "Order Now", buttonTone: "purple", theirs: false,
-        lines: ["Order today and pay only when it's in your hands."] }, other()),
-    seg("Email 4: Time to Restock?", "Running low on {{Their Product}}?", "Order again in one tap",
-      { slug: "replenishment-reminder", tone: "mint", title: "Time to Restock? 🔄", subtitle: "Order your favourite again in one tap.", button: "Order Again", lines: ["If you're running low, order again now so you don't run out."] })
-  ], [0, 7, 10, 14]);
-
-  // Buyers of each best seller: things that go with it, then a restock reminder.
+  if (once) add("second", once.id, 40, "Second Order (One-Time Buyers)", "One delivery, 30+ days ago: the store, picks, great buys, new, paying online is safe.", ["welcomeStore", "greatBuys", "justArrived", "safeOnline"], [0, 10, 14, 14]);
   for (const product of products.slice(0, 3)) {
     const group = groups.find((row) => row.builtIn === `bought_${product.id.slice(0, 8)}` && row.status === "active");
-    if (!group) continue;
-    const partners = products.filter((row) => row.id !== product.id && row.image && row.links.length).slice(0, 2);
-    const mails = [
-      ...partners.map((partner, index) => seg(`Email ${index + 1}: Goes Well With It`, `Goes well with your ${product.name}: {{Product}}`, "Picked for you",
-        { slug: index ? "bestsellers" : "whats-new", tone: index ? "peach" : "lavender", title: index ? "Another Favourite ⭐" : `Goes Well With Your ${product.name} ✨`, subtitle: "Picked for you.", button: "Take a Look", theirs: false,
-          lines: [`Here's something that goes well with your ${product.name}.`, "No payment upfront: you pay when it arrives at your door."] }, partner)),
-      seg(`Email ${partners.length + 1}: Time to Restock?`, `Running low on ${product.name}?`, "Order again in one tap",
-        { slug: "replenishment-reminder", tone: "mint", title: "Time to Restock? 🔄", subtitle: "Order your favourite again in one tap.", button: "Order Again", theirs: false,
-          lines: [`If you're running low on ${product.name}, order again now so you don't run out.`] }, product)
-    ];
-    add(`bought:${product.id}`, group.id, 50, `Bought ${product.name}`, `Customers who got ${product.name}: things that go with it, then a restock reminder. Again after a 30-day pause.`, mails, [0, 21, 21]);
+    if (group) add(`bought:${product.id}`, group.id, 50, `Bought ${product.name}`, `Customers who got ${product.name}: what goes with it in the store, then buy again.`, ["forYourHome", "again"], [0, 21]);
   }
-
   const inactive = byKey("inactive");
-  if (inactive) add("inactive", inactive.id, 60, "Inactive (No Purchase in 60+ Days)", "No delivery in 60+ days: we miss you, a pick, pay on delivery, still here. Monthly until they buy.", [
-    seg("Month 1: We Miss You", "We miss you, {{First Name}} 👋", "It's been a while",
-      { slug: "win-back-campaign", tone: "lavender", title: "We Miss You! 👋", subtitle: "It's been a while.", button: "Order Again", buttonTone: "purple",
-        lines: ["It's been a while since your last order, and we'd love to have you back.", "No payment upfront: you pay when it arrives at your door."] }),
-    seg("Month 2: What's New", "Here's what you missed, {{First Name}} ✨", "A favourite from our customers",
-      { slug: "whats-new", tone: "lavender", title: "Here's What You Missed ✨", subtitle: "A favourite from our customers.", button: "Take a Look", buttonTone: "purple", theirs: false, lines: ["Here's one our customers love right now."] }, other()),
-    seg("Month 3: Pay When It Arrives", "Pay when it arrives, {{First Name}}", "No payment upfront",
-      { slug: "shipping-confirmation", tone: "sky", title: "Pay On Delivery, Always 💵", subtitle: "No payment upfront.", button: "Order Now", buttonTone: "purple", lines: ["Order today and pay only when it's in your hands.", "Questions? Just reply to this email."] }),
-    seg("Month 4: Still Here For You", "Still here for you, {{First Name}}", "Whenever you're ready",
-      { slug: "refer-a-friend", tone: "pink", title: "Still Here For You 🤝", subtitle: "Whenever you're ready.", button: "Order Now", buttonTone: "purple",
-        lines: ["No pressure, just a friendly hello. Your {{Their Product}} is one tap away whenever you want it."] })
-  ], [0, 30, 30, 30]);
-
+  if (inactive) add("inactive", inactive.id, 60, "Inactive (No Purchase in 60+ Days)", "No delivery in 60+ days: miss you, new arrivals, paying online is safe, great buys. Monthly until they buy.", ["missYou", "justArrived", "safeOnline", "greatBuys"], [0, 30, 30, 30]);
   return out;
 }

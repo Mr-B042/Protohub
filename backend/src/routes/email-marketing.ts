@@ -396,6 +396,16 @@ router.delete("/fields/:id", async (req, res) => {
 
 // ── Campaign building ────────────────────────────────────────────────
 
+// Store Picks preview (Bright, 9 Nov 2026): the store products an email would show, for the editor and previews.
+router.get("/store-picks", async (req, res) => {
+  try {
+    const { storePicks } = await import("../lib/store-catalog.js");
+    const mode = ["related", "value", "new", "again"].includes(String(req.query.mode)) ? String(req.query.mode) as "related" | "value" | "new" | "again" : "related";
+    const items = await storePicks(mode, Math.min(6, Math.max(1, Number(req.query.count) || 4)), { product: String(req.query.product ?? "").slice(0, 120) || null, seed: req.user!.id });
+    res.json({ items: items.map((item) => ({ name: item.name, price: item.price, wasPrice: item.wasPrice, image: item.image, url: item.url })) });
+  } catch (error) { sendError(res, error, "Could not load the store products."); }
+});
+
 router.get("/designer", async (req, res) => {
   try {
     const [products, reviews, saved, sender, settings, world, offerRows, brand] = await Promise.all([
