@@ -10,7 +10,7 @@ import { Card, Delta, ErrorNote, IconTile, Loading, Pill, Toggle, btn, count, in
 import FlowDiagram, { TRIGGER_ICON } from "./FlowDiagram";
 import { TestFlowModal } from "./NodeEditor";
 import { TEMPLATE_ICON } from "./AutomationSteps";
-import { TEMPLATES, USE_CASES, draftFromTemplate, durationText, goalText, toAutomationInput, triggerText } from "./automation-model";
+import { TEMPLATES, USE_CASES, draftFromAutomation, draftFromTemplate, durationText, goalText, toAutomationInput, triggerText } from "./automation-model";
 import { autopilotPlan, type PlanItem } from "./autopilot";
 
 /** Automations, built to Bright's design 50 (8 Nov 2026). */
@@ -99,7 +99,7 @@ export default function AutomationsPage({ onOpenWizard, onToast, refreshKey }: {
           flows={(data?.automations ?? []).filter((row) => row.status !== "archived" && (gallery === "all" || row.id === gallery)).map((row) => ({ id: row.id, name: row.name, status: row.status, nodes: row.workflow?.nodes ?? [] }))}
           onClose={() => setGallery(null)} onEdit={(id) => { setGallery(null); onOpenWizard({ id, step: 3 }); }} />
       )}
-      {autopilot && <AutopilotModal existing={(data?.automations ?? []).map((row) => row.name)} onClose={() => setAutopilot(false)} onToast={onToast} onDone={async () => { setAutopilot(false); await load(); }} />}
+      {autopilot && <AutopilotModal existing={(data?.automations ?? []).map((row) => ({ id: row.id, name: row.name, status: row.status, payday: !!row.settings?.payday }))} onClose={() => setAutopilot(false)} onToast={onToast} onDone={async () => { setAutopilot(false); await load(); }} />}
 
       <ErrorNote message={error} />
       {!data && !error && <Loading />}
@@ -403,7 +403,7 @@ export function AutomationReport({ id, onClose }: { id: string; onClose: () => v
  * saved as drafts that say what they need. Flows that already exist (same
  * name) are left alone, so running it again only adds what is new.
  */
-function AutopilotModal({ existing, onClose, onToast, onDone }: { existing: string[]; onClose: () => void; onToast: (message: string) => void; onDone: () => Promise<void> }) {
+function AutopilotModal({ existing, onClose, onToast, onDone }: { existing: Array<{ id: string; name: string; status: string; payday: boolean }>; onClose: () => void; onToast: (message: string) => void; onDone: () => Promise<void> }) {
   const [plan, setPlan] = useState<PlanItem[] | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -418,8 +418,13 @@ function AutopilotModal({ existing, onClose, onToast, onDone }: { existing: stri
       } catch (err) { setError((err as Error).message || "Could not prepare the plan."); }
     })();
   }, []);
-  const taken = new Set(existing.map((name) => name.trim().toLowerCase()));
-  const todo = (plan ?? []).filter((item) => !taken.has(item.draft.name.trim().toLowerCase()));
+  const lower = (name: string) => name.trim().toLowerCase();
+  const taken = new Set(existing.map((row) => lower(row.name)));
+  const todo = (plan ?? []).filter((item) => !taken.has(lower(item.draft.name)));
+  // Running flows that get "payday weeks only" switched on, and old flows the new ones take over.
+  const paydayRows = (plan ?? []).filter((item) => item.payday).flatMap((item) => existing.filter((row) => lower(row.name) === lower(item.draft.name) && row.status !== "archived" && !row.payday));
+  const replaceRows = (items: PlanItem[]) => items.flatMap((item) => existing.filter((row) => row.status === "active" && (item.replaces ?? []).some((name) => lower(name) === lower(row.name))));
+  const toReplace = replaceRows(todo.filter((item) => item.ready && !senderProblem));
   const live = todo.filter((item) => item.ready && !senderProblem);
   const run = async () => {
     setBusy(true); setError("");
@@ -430,7 +435,16 @@ function AutopilotModal({ existing, onClose, onToast, onDone }: { existing: stri
         const goLive = item.ready && !senderProblem;
         const { id } = await emailMarketingApi.createAutomation(toAutomationInput(item.draft, false));
         made += 1;
-        if (goLive) { await emailMarketingApi.automationAction(id, "launch"); launched += 1; }
+        if (goLive) {
+          await emailMarketingApi.automationAction(id, "launch"); launched += 1;
+          // The new flow is live: the older one it replaces stops taking customers (kept, not deleted).
+          for (const old of replaceRows([item])) await emailMarketingApi.automationAction(old.id, "pause");
+        }
+      }
+      for (const row of paydayRows) {
+        setProgress(`Payday weeks only: ${row.name}`);
+        const { automation } = await emailMarketingApi.automation(row.id);
+        await emailMarketingApi.updateAutomation(row.id, toAutomationInput({ ...draftFromAutomation(automation), settings: { ...automation.settings, payday: true } }, false));
       }
       onToast(`Autopilot set up: ${launched} running, ${made - launched} saved as drafts.`);
       await onDone();
@@ -443,12 +457,18 @@ function AutopilotModal({ existing, onClose, onToast, onDone }: { existing: stri
     <ModalShell wide title="Autopilot" sub="The emails that run by themselves, for each product that sells. Ready ones go live; the rest are saved as drafts." onClose={onClose}
       footer={<>
         <button type="button" onClick={onClose} className={btn.ghost}>Cancel</button>
-        <button type="button" disabled={busy || !todo.length} onClick={() => void run()} className={btn.primary}><Zap className="h-4 w-4" />{busy ? "Setting up…" : todo.length ? `Set Up ${live.length} Live + ${todo.length - live.length} Drafts` : "All Set Up"}</button>
+        <button type="button" disabled={busy || (!todo.length && !paydayRows.length)} onClick={() => void run()} className={btn.primary}><Zap className="h-4 w-4" />{busy ? "Setting up…" : todo.length ? `Set Up ${live.length} Live + ${todo.length - live.length} Drafts` : paydayRows.length ? "Switch On Payday Timing" : "All Set Up"}</button>
       </>}>
       <ErrorNote message={error} />
       {senderProblem && <p className="m-0 mb-3 rounded-xl bg-amber-50 px-3 py-2 text-[13px] text-amber-900">{senderProblem} Everything will be saved as drafts until it is fixed.</p>}
       {!plan && !error && <Loading />}
       {busy && <p className="m-0 mb-3 text-[13px] font-semibold text-[#5B3FD9]">{progress}</p>}
+      {(toReplace.length > 0 || paydayRows.length > 0) && (
+        <div className="m-0 mb-3 rounded-xl bg-[#F7F4FF] px-3 py-2 text-[13px] text-gray-800 dark:bg-violet-500/10 dark:text-slate-200">
+          {toReplace.length > 0 && <p className="m-0">Replaced by newer versions (paused, kept): {toReplace.map((row) => row.name.replace("Autopilot: ", "")).join(", ")}.</p>}
+          {paydayRows.length > 0 && <p className="m-0 mt-1">Payday weeks only (selling emails wait for the 25th): {paydayRows.map((row) => row.name.replace("Autopilot: ", "")).join(", ")}.</p>}
+        </div>
+      )}
       {plan && (
         <div className="space-y-2">
           {plan.map((item) => {

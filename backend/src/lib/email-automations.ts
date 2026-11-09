@@ -9,7 +9,7 @@ import {
 } from "./email-marketing-rules.js";
 import { EmailMarketingError, audienceLabel, campaignLinks, forgetWorld, loadWorld, sendTest } from "./email-marketing.js";
 import {
-  PRIORITY_RANK, STAGES, branchNodeId, defaultStage, checkMet, durationDays, emailNodes, findNode, firstNodeId, inSendWindow, mayEnter, nextNodeId, nextWindowStart,
+  PRIORITY_RANK, STAGES, branchNodeId, defaultStage, checkMet, durationDays, emailNodes, findNode, firstNodeId, inSendWindow, mayEnter, nextNodeId, nextWindowStart, nextPaydayMs,
   QUIET_REASON_LABELS, normalizeSettings, normalizeTrigger, normalizeWorkflow, quietReason, waitMs,
   type AutomationSettings, type Stage, type Trigger, type Workflow, type WorkflowNode
 } from "./email-automation-rules.js";
@@ -608,6 +608,11 @@ async function advanceRun(run: any, auto: Automation, world: () => Promise<World
     }
     if (node.type === "email") {
       if (!inSendWindow(nowMs, auto.settings.sendWindow)) { nextAt = nextWindowStart(nowMs, auto.settings.sendWindow); break; }
+      if (auto.settings.payday && nextPaydayMs(nowMs) > nowMs) {
+        nextAt = nextPaydayMs(nowMs);
+        note(`"${node.name}" waits for payday (the 25th)`);
+        break;
+      }
       if (!node.campaignId) { note(`Skipped "${node.name}": the email was not saved`); nodeId = nextNodeId(auto.workflow, node.id); continue; }
       if (!contact || contact.status !== "subscribed") { note(`Not emailed "${node.name}": no longer subscribed`); nodeId = nextNodeId(auto.workflow, node.id); continue; }
       const { data: sent, error } = await supabase.from("email_campaign_sends").upsert({

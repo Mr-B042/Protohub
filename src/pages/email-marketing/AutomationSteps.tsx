@@ -317,6 +317,11 @@ export function StepDetails({ draft, designer, onChange }: StepProps) {
             <option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option>
           </select>
         </div>
+        <div className="py-3">
+          <label className="flex items-center gap-3"><input type="checkbox" className="h-4 w-4 accent-[#5B3FD9]" checked={!!s.payday} onChange={(event) => set({ payday: event.target.checked })} />
+            <span className="text-[14px] font-bold text-gray-900 dark:text-slate-50">Send in payday weeks only</span></label>
+          <p className="m-0 mt-1 text-[12px] text-gray-500">An email due between the 8th and 24th waits until the 25th at 9am, when most customers have been paid. For selling emails, not for order or cart follow-ups.</p>
+        </div>
       </Panel>
 
       <div className="space-y-4">

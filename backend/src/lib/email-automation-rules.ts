@@ -74,6 +74,8 @@ export type AutomationSettings = {
   utm: boolean;
   track: boolean;
   replyTo: string;
+  /** Payday timing (Bright, 9 Nov 2026, from "sell when customers have money"): an email due on the 8th–24th waits for the 25th. */
+  payday?: boolean;
 };
 
 export const DEFAULT_SETTINGS: AutomationSettings = {
@@ -151,7 +153,8 @@ export function normalizeSettings(raw: any): AutomationSettings {
     sendWindow: { on: raw?.sendWindow?.on === undefined ? d.sendWindow.on : !!raw.sendWindow.on, from, to: Math.max(from + 1, to), days: days.length ? days : d.sendWindow.days },
     utm: raw?.utm === undefined ? d.utm : !!raw.utm,
     track: raw?.track === undefined ? d.track : !!raw.track,
-    replyTo: /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/.test(reply) ? reply : ""
+    replyTo: /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/.test(reply) ? reply : "",
+    ...(raw?.payday ? { payday: true } : {})
   };
 }
 
@@ -290,6 +293,18 @@ export function inSendWindow(ms: number, window: SendWindow) {
   if (!window.on) return true;
   const { day, hour } = lagosParts(ms);
   return window.days.includes(day) && hour >= window.from && hour < window.to;
+}
+
+/**
+ * Payday weeks (Bright, 9 Nov 2026): most customers have money from the 25th
+ * to the 7th, so a selling email due on the 8th–24th (Lagos) waits for the
+ * 25th at 9am. Returns `ms` itself when it is already payday time.
+ */
+export function nextPaydayMs(ms: number) {
+  const lagos = new Date(ms + LAGOS_MS);
+  const day = lagos.getUTCDate();
+  if (day < 8 || day >= 25) return ms;
+  return Date.UTC(lagos.getUTCFullYear(), lagos.getUTCMonth(), 25, 9) - LAGOS_MS;
 }
 
 /** The next moment the window is open, from `ms` (itself when already open). */

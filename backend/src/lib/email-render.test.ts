@@ -120,3 +120,17 @@ test("store emails: live picks filled per customer, the promise, store links, no
   const theirs = r.withTheirProduct({ ...design, blocks: design.blocks.map((b: any) => (b.type === "cover" ? { ...b, theirs: true } : b)) }, { name: "Rack", price: "", imageUrl: "https://img/rack.jpg", link: "https://pod.example/rack" });
   assert.equal((theirs.blocks.find((b: any) => b.type === "cover") as any).buttonLink, r.STORE_HOME);
 });
+
+test("add to your delivery: product buttons open WhatsApp and keep doing so after their product is filled in", async () => {
+  const r = await import("./email-render.js");
+  const f = { brand: "Shop", goal: "retention", offerType: "custom", productId: "p", productName: "Rack", productImage: "https://x/r.jpg", productLink: "https://x/order", productPrice: "₦9,000", offerOn: false, offerTitle: "", offerBenefit: "" };
+  const design = r.buildAddOnDesign(f, [{ id: "a", name: "Shoe Rack", price: "₦8,000", image: "https://x/s.jpg" }]);
+  const filled = r.withTheirProduct(design, { name: "Edge Brusher Max", price: "₦12,000", imageUrl: "https://x/e.jpg", link: "https://x/edge" } as any);
+  const cover = filled.blocks.find((b) => b.type === "cover") as any;
+  assert.ok(cover.buttonLink.startsWith("https://wa.me/2347083515972"), "cover button stays on WhatsApp");
+  assert.equal(cover.imageUrl, "https://x/e.jpg", "their product photo");
+  const card = filled.blocks.find((b) => b.type === "product") as any;
+  assert.ok(card.link.includes(encodeURIComponent("Shoe Rack")), "the add-on card asks for that item");
+  assert.ok(JSON.stringify(filled).includes("Edge Brusher Max"));
+  assert.ok(!/₦0|free delivery|discount/i.test(JSON.stringify(design)), "no price or fee promises");
+});

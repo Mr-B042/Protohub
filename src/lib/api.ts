@@ -5687,7 +5687,7 @@ export type EmAutomationSettings = {
   reentry: boolean; reentryDays: number; frequency: "per_event" | "max_2" | "max_3" | "unlimited"; priority: "low" | "normal" | "high";
   exit: { onUnsubscribe: boolean; onPurchase: boolean; afterDays: number | null };
   sendWindow: { on: boolean; from: number; to: number; days: number[] };
-  utm: boolean; track: boolean; replyTo: string;
+  utm: boolean; track: boolean; replyTo: string; payday?: boolean;
 };
 export type EmAutomation = {
   id: string; name: string; description: string; template: string | null; goal: string; trigger: EmTrigger; audience: EmAudience;

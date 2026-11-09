@@ -114,3 +114,14 @@ test("normalizeTrigger keeps the group and its rank for in_segment", () => {
   assert.deepEqual(normalizeTrigger({ kind: "in_segment", segmentId: "11111111-2222-4333-8444-555555555555", rank: 500 }), { kind: "in_segment", segmentId: "11111111-2222-4333-8444-555555555555", rank: 99 });
   assert.deepEqual(normalizeTrigger({ kind: "in_segment", segmentId: "bad" }), { kind: "in_segment", segmentId: "", rank: 50 });
 });
+
+test("payday weeks: an email due on the 8th–24th waits for the 25th, 9am Lagos", async () => {
+  const { nextPaydayMs } = await import("./email-automation-rules.js");
+  const at = (iso: string) => Date.parse(iso);
+  assert.equal(nextPaydayMs(at("2026-11-03T10:00:00+01:00")), at("2026-11-03T10:00:00+01:00"), "early month is payday time");
+  assert.equal(nextPaydayMs(at("2026-11-27T10:00:00+01:00")), at("2026-11-27T10:00:00+01:00"), "late month is payday time");
+  assert.equal(nextPaydayMs(at("2026-11-12T10:00:00+01:00")), at("2026-11-25T09:00:00+01:00"), "mid month waits");
+  assert.equal(nextPaydayMs(at("2026-11-24T23:30:00+01:00")), at("2026-11-25T09:00:00+01:00"));
+  assert.equal(normalizeSettings({ payday: true }).payday, true);
+  assert.equal(normalizeSettings({}).payday, undefined);
+});
