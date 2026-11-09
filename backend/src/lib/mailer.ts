@@ -271,6 +271,19 @@ function sendOrder(settings: EmailSettings, orgId: string): EmailProvider[] {
   return ready.length ? ready : configured;
 }
 
+/**
+ * A service that can't send for us at all (domain not verified, bad key): skip
+ * it until tomorrow instead of trying it first again. 9 Nov 2026: the Resend
+ * backup had never verified the sender domain, so every email that fell back
+ * to it was lost (8 since 13 Oct, one a customer's order confirmation).
+ */
+export function looksMisconfigured(message: string | undefined | null): boolean {
+  return /domain is not verified|not verified|verify your domain|invalid api key|api key is invalid|unauthori[sz]ed|forbidden|sender (address )?is not|not a valid sender/i.test(String(message ?? ""));
+}
+
+/** A failed customer/staff email is tried again after 10, 30 and 90 minutes before it counts as failed. */
+export const RETRY_DELAYS_MIN = [10, 30, 90];
+
 function looksQuotaLike(raw: unknown): boolean {
   const text = typeof raw === "string"
     ? raw
@@ -589,7 +602,7 @@ async function dispatch(
       };
     } catch (err: any) {
       const normalized = normalizeDispatchError(provider, err);
-      if (normalized.quotaLike) setProviderQuotaBackoff(orgId, provider);
+      if (normalized.quotaLike || looksMisconfigured(normalized.message)) setProviderQuotaBackoff(orgId, provider);
       logger.warn("email provider failed", {
         orgId,
         provider,
@@ -720,6 +733,20 @@ async function deliverAndLogEmail(
     return result;
   } catch (err: any) {
     const normalized = normalizeDispatchError(settings.provider ?? DEFAULT_EMAIL_PROVIDER, err);
+    // Not lost: tried again from the queue (processQueuedEmails) a few times first.
+    if (trigger !== "test_email") {
+      await insertEmailLog({
+        ...basePayload,
+        metadata: { ...basePayload.metadata, __attempt: "1" },
+        provider: normalized.provider ?? settings.provider ?? DEFAULT_EMAIL_PROVIDER,
+        fallback_from: null,
+        status: "deferred",
+        scheduled_for: new Date(Date.now() + RETRY_DELAYS_MIN[0] * 60_000).toISOString(),
+        error_message: `Will try again: ${normalized.message}`.slice(0, 500)
+      });
+      logger.warn("email send failed, will retry", { orgId, trigger, to: to.email, error: normalized.message });
+      return { provider: normalized.provider ?? settings.provider ?? DEFAULT_EMAIL_PROVIDER };
+    }
     await insertEmailLog({
       ...basePayload,
       provider: normalized.provider ?? settings.provider ?? DEFAULT_EMAIL_PROVIDER,
@@ -1309,6 +1336,16 @@ export async function processQueuedEmails(limit = 100) {
       });
     } catch (err: any) {
       const normalized = normalizeDispatchError(settings.provider ?? DEFAULT_EMAIL_PROVIDER, err);
+      const attempt = Number((vars as any).__attempt ?? 0);
+      if (attempt < RETRY_DELAYS_MIN.length) {
+        await updateEmailLog(row.id, {
+          metadata: { ...(row.metadata as object ?? {}), __attempt: String(attempt + 1) },
+          provider: normalized.provider ?? settings.provider ?? DEFAULT_EMAIL_PROVIDER,
+          scheduled_for: new Date(Date.now() + RETRY_DELAYS_MIN[attempt] * 60_000).toISOString(),
+          error_message: `Will try again: ${normalized.message}`.slice(0, 500)
+        });
+        continue;
+      }
       await updateEmailLog(row.id, {
         provider: normalized.provider ?? settings.provider ?? DEFAULT_EMAIL_PROVIDER,
         fallback_from: null,
@@ -1528,7 +1565,7 @@ export async function sendMarketingEmail(orgId: string, message: MarketingEmail)
       }
     } catch (err: any) {
       const normalized = normalizeDispatchError(provider, err);
-      if (normalized.quotaLike) setProviderQuotaBackoff(orgId, provider);
+      if (normalized.quotaLike || looksMisconfigured(normalized.message)) setProviderQuotaBackoff(orgId, provider);
       logger.warn("campaign email provider failed", { orgId, provider, statusCode: normalized.statusCode, quotaLike: normalized.quotaLike, error: normalized.message });
       lastError = normalized;
     }

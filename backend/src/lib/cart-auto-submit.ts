@@ -11,6 +11,8 @@
  * This catches customers who closed the tab before the client-side countdown fired.
  */
 
+import { sendNewOrderEmail } from "./mailer.js";
+import { cleanEmail } from "./email-marketing-rules.js";
 import { randomUUID } from "node:crypto";
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
@@ -35,7 +37,7 @@ const MIN_IDLE_MS = 2 * 60 * 1000;   // must be idle at least 2 min
 // give up after 15 min - shared with the cart hand-out, which takes over from here
 const MAX_IDLE_MS = AUTO_SUBMIT_GIVES_UP_MS;
 const SUBMIT_ATTEMPT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
-const RECOVERY_CART_COLUMNS = "id, org_id, customer, phone, whatsapp, address, city, state, product_id, package_id, package_name, amount, currency, source, capture_payload, outage_captured, outage_captured_at";
+const RECOVERY_CART_COLUMNS = "id, org_id, customer, phone, whatsapp, email, address, city, state, product_id, package_id, package_name, amount, currency, source, capture_payload, outage_captured, outage_captured_at";
 
 export async function runCartAutoSubmit(): Promise<void> {
   const now = Date.now();
@@ -235,6 +237,9 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     customer:         cart.customer,
     phone:            customerPhone,
     whatsapp:         nigerianPhoneForSave(cart.whatsapp ?? null),
+    // The email typed on the form (9 Nov 2026: 892 auto-submitted orders in 30 days had dropped it,
+    // so none got the Order Confirmation e-receipt).
+    email:            cleanEmail(cart.email) ?? cleanEmail(capturePayload?.email) ?? null,
     address:          customerAddress,
     city:             customerCity,
     state:            customerState,
@@ -318,6 +323,15 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
   }
 
   logger.info("cart-auto-submit: order created", { cartId, orderId: order.id, customer: cart.customer });
+
+  // The Order Confirmation e-receipt, as for orders placed on the form (once per order; silent tests stay quiet).
+  if (order.email && order.launch_stage !== "silent") {
+    void sendNewOrderEmail(orgId, {
+      id: order.id, customer: order.customer, email: order.email, phone: order.phone,
+      product_name: order.product_name, package_name: order.package_name, amount: Number(order.amount) || 0, currency: order.currency ?? "NGN",
+      source: order.source ?? undefined, cross_sell_lines: order.cross_sell_lines ?? null, additional_lines: order.additional_lines ?? null
+    }).catch((error) => logger.warn("cart-auto-submit: confirmation email failed", { orderId: order.id, error: (error as Error).message }));
+  }
 
   // 5. Mark cart Converted
   await supabase
