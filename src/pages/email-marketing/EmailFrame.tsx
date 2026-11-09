@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { renderEmailHtml, type EmailBlockType, type EmailDesign } from "../../lib/email-render";
+import { emailBrandNow } from "../../lib/email-brand-store";
 
 /**
  * Shows an email exactly as it is sent: the HTML from email-render.ts in a
@@ -41,10 +42,11 @@ export default function EmailFrame({
   }, [fit]);
   const handlers = useRef({ onSelect, onDrop });
   handlers.current = { onSelect, onDrop };
+  const logo = emailBrandNow();
   const html = useMemo(() => renderEmailHtml(design, {
-    editor, selectedId: selectedId ?? undefined, mobile, preheader, brand, footerNote, showTags: showTags || editor, firstName: showTags || editor ? undefined : "Customer",
-    linkFor: (url) => url
-  }), [design, editor, selectedId, mobile, preheader, brand, footerNote, showTags]);
+    editor, selectedId: selectedId ?? undefined, mobile, preheader, brand: brand || logo.name || undefined, footerNote, showTags: showTags || editor, firstName: showTags || editor ? undefined : "Customer",
+    linkFor: (url) => url, logoUrl: logo.logoUrl ?? undefined
+  }), [design, editor, selectedId, mobile, preheader, brand, footerNote, showTags, logo.logoUrl, logo.name]);
   const [shown, setShown] = useState(html);
   // Typing re-draws at most every 150 ms so the frame doesn't flash per key.
   useEffect(() => {

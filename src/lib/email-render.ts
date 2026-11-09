@@ -74,11 +74,20 @@ export type CampaignFields = {
   offerBenefit: string;
 };
 
+/**
+ * Brand colours, read from the Protohub logo (Bright, 9 Nov 2026: "our
+ * branding colour is from our logo colour"): charcoal, sky blue, light grey.
+ */
+export const BRAND_PALETTE = { charcoal: "#26262E", blue: "#2A98DE", blueDark: "#1F7FC0", mist: "#EEF5FC", page: "#F2F4F7" } as const;
+/** The first colours (purple, yellow, lavender page): emails made with them get the brand colours when drawn. */
+const OLD_DEFAULTS: Record<string, string> = { "#5b3fd9": BRAND_PALETTE.charcoal, "#ffc107": BRAND_PALETTE.blue, "#f4f2fb": BRAND_PALETTE.page };
+export const brandColorOf = (value: string | undefined) => (value && OLD_DEFAULTS[value.trim().toLowerCase()]) || value || "";
+
 export const DEFAULT_STYLES: EmailStyles = {
-  backgroundColor: "#F4F2FB",
+  backgroundColor: BRAND_PALETTE.page,
   contentColor: "#FFFFFF",
-  brandColor: "#5B3FD9",
-  accentColor: "#FFC107",
+  brandColor: BRAND_PALETTE.charcoal,
+  accentColor: BRAND_PALETTE.blue,
   textColor: "#1F2937",
   fontFamily: "Arial, Helvetica, sans-serif",
   radius: 16
@@ -540,6 +549,8 @@ export function newBlock(type: EmailBlockType, fields?: Partial<CampaignFields>)
 // ── Rendering ─────────────────────────────────────────────────────────
 
 export type RenderOptions = {
+  /** The business's logo (a normal web link): drawn in the header and footer. */
+  logoUrl?: string;
   /** First name for {{First Name}}; when missing the tag shows (editor) or reads "there" (sent). */
   firstName?: string;
   /** Keep {{First Name}} visible, as the editor does. */
@@ -571,6 +582,21 @@ export function escapeHtml(value: string) {
 }
 
 const SAFE_COLOR = /^#[0-9a-f]{3,8}$/i;
+const luminance = (hex: string) => {
+  const h = hex.replace("#", "");
+  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h.slice(0, 6);
+  const [r, g, b] = [0, 2, 4].map((i) => { const v = parseInt(full.slice(i, i + 2), 16) / 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+/** Text that can be read on a colour: the chosen one when it stands out enough, else white or near-black. */
+export function readableOn(bg: string, fg: string) {
+  if (!SAFE_COLOR.test(bg) || !SAFE_COLOR.test(fg)) return fg;
+  // The first default text colour (dark purple) reads poorly on the brand blue: white there.
+  if (fg.toLowerCase() === "#1f1147" && luminance(bg) < 0.45) return "#FFFFFF";
+  const [a, b] = [luminance(bg), luminance(fg)].sort((x, y) => y - x);
+  if ((a + 0.05) / (b + 0.05) >= 3) return fg;
+  return luminance(bg) > 0.4 ? "#1C1C22" : "#FFFFFF";
+}
 const color = (value: string | undefined, fallback: string) => (value && SAFE_COLOR.test(value.trim()) ? value.trim() : fallback);
 const clampNumber = (value: unknown, min: number, max: number, fallback: number) => {
   const n = Number(value);
@@ -634,8 +660,12 @@ export function timeLeftText(endsAt: string, nowMs: number) {
 }
 
 export function renderEmailHtml(design: EmailDesign, opts: RenderOptions = {}): string {
-  const styles = { ...DEFAULT_STYLES, ...(design.styles ?? {}) };
+  const raw = { ...DEFAULT_STYLES, ...(design.styles ?? {}) };
+  const styles = { ...raw, backgroundColor: brandColorOf(raw.backgroundColor), brandColor: brandColorOf(raw.brandColor), accentColor: brandColorOf(raw.accentColor) };
   const font = escapeHtml(styles.fontFamily || DEFAULT_STYLES.fontFamily);
+  const logoSrc = safeUrl(opts.logoUrl ?? "");
+  const brandText = (value: string) => (value.trim() && value.trim() !== "Our Store" ? value : opts.brand || value);
+  const logoImg = (size: number, light = false) => logoSrc ? `<img src="${escapeHtml(logoSrc)}" alt="" width="${size}" height="${size}" style="display:block;width:${size}px;height:${size}px;border:0;border-radius:10px${light ? ";background:#FFFFFF" : ""}">` : "";
   const text = color(styles.textColor, DEFAULT_STYLES.textColor);
   const brandColor = color(styles.brandColor, DEFAULT_STYLES.brandColor);
   const accent = color(styles.accentColor, DEFAULT_STYLES.accentColor);
@@ -659,7 +689,8 @@ export function renderEmailHtml(design: EmailDesign, opts: RenderOptions = {}): 
     const url = href(link, label) || "#";
     if (look.style === "link") return `<a href="${url}" style="color:${look.bg};font-weight:700;font-size:${fontSize}px;text-decoration:underline">${t(label)}</a>`;
     const outline = look.style === "secondary";
-    return `<a href="${url}" style="display:inline-block;padding:${pads};border-radius:${look.radius}px;background:${outline ? "transparent" : look.bg};border:2px solid ${look.bg};color:${outline ? look.bg : look.fg};font-weight:800;font-size:${fontSize}px;text-decoration:none;font-family:${font}">${t(label)}</a>`;
+    const fg = readableOn(look.bg, look.fg);
+    return `<a href="${url}" style="display:inline-block;padding:${pads};border-radius:${look.radius}px;background:${outline ? "transparent" : look.bg};border:2px solid ${look.bg};color:${outline ? look.bg : fg};font-weight:800;font-size:${fontSize}px;text-decoration:none;font-family:${font}">${t(label)}</a>`;
   };
 
   for (const block of design.blocks ?? []) {
@@ -674,7 +705,13 @@ export function renderEmailHtml(design: EmailDesign, opts: RenderOptions = {}): 
     }
     switch (block.type) {
       case "header": {
-        wrap(block, `<div style="text-align:${block.align};font-size:26px;font-weight:800;color:#1F1147">🛍️ ${t(block.brand)}</div>${block.tagline ? `<div style="text-align:${block.align};font-size:13px;color:#6B7280;margin-top:4px">${t(block.tagline)}</div>` : ""}`, "22px 28px 14px");
+        // The logo and name, in the brand's charcoal (like the e-receipts).
+        const name = `<div style="font-size:24px;font-weight:900;letter-spacing:.5px;text-transform:uppercase;line-height:1.05;color:${BRAND_PALETTE.charcoal}">${t(brandText(block.brand))}</div>`;
+        const tagline = block.tagline ? `<div style="font-size:12.5px;color:#6B7280;margin-top:3px">${t(block.tagline)}</div>` : "";
+        const align = block.align === "left" ? "left" : block.align === "right" ? "right" : "center";
+        wrap(block, logoSrc
+          ? `<table role="presentation" cellpadding="0" cellspacing="0" align="${align}" style="${align === "center" ? "margin:0 auto" : ""}"><tr><td valign="middle">${logoImg(44)}</td><td valign="middle" style="padding-left:12px;text-align:left;font-family:${font}">${name}${tagline}</td></tr></table>`
+          : `<div style="text-align:${align}">${name}${tagline}</div>`, "22px 28px 14px");
         break;
       }
       case "hero": {
@@ -691,7 +728,7 @@ export function renderEmailHtml(design: EmailDesign, opts: RenderOptions = {}): 
         const narrow = !!opts.mobile;
         const textCell = `<td class="st" valign="top" style="padding:28px 0 0 28px;font-family:${font};${narrow ? "display:block;width:100%;padding:24px 22px 0" : "width:58%"}"><div style="font-size:30px;line-height:1.1;font-weight:900;color:#FFFFFF">${t(block.title)}</div><div style="font-size:30px;line-height:1.1;font-weight:900;color:${accent}">${t(block.highlight)}</div><div style="font-size:15px;line-height:1.4;color:#EDE9FE;margin-top:12px">${t(block.subtitle)}</div>${badge}</td>`;
         const imageCell = `<td class="st" valign="middle" style="padding:22px 22px 0 8px;${narrow ? "display:block;width:100%;padding:16px 22px 0" : "width:42%"}">${image}</td>`;
-        rows.push(`<tr><td${mark} style="padding:0 16px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${brandColor};background-image:linear-gradient(135deg,${brandColor} 0%,#8B6CF2 100%);border-radius:${Math.max(0, radius - 2)}px;border-bottom:5px solid ${accent}"><tr>${textCell}${imageCell}</tr><tr><td colspan="2" style="padding:0 22px 24px">${button}</td></tr></table></td></tr>`);
+        rows.push(`<tr><td${mark} style="padding:0 16px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${brandColor};background-image:linear-gradient(135deg,${brandColor} 0%,${accent} 100%);border-radius:${Math.max(0, radius - 2)}px;border-bottom:5px solid ${accent}"><tr>${textCell}${imageCell}</tr><tr><td colspan="2" style="padding:0 22px 24px">${button}</td></tr></table></td></tr>`);
         break;
       }
       case "cover": {
@@ -722,16 +759,16 @@ export function renderEmailHtml(design: EmailDesign, opts: RenderOptions = {}): 
         break;
       }
       case "button": {
-        wrap(block, `<div style="text-align:${block.align}">${buttonHtml(block.text, block.link, { bg: color(block.color, accent), fg: color(block.textColor, "#1F1147"), radius: clampNumber(block.radius, 0, 40, 10), size: block.size, style: block.style })}</div>`, "14px 28px");
+        wrap(block, `<div style="text-align:${block.align}">${buttonHtml(block.text, block.link, { bg: color(brandColorOf(block.color), accent), fg: color(block.textColor, "#1F1147"), radius: clampNumber(block.radius, 0, 40, 10), size: block.size, style: block.style })}</div>`, "14px 28px");
         break;
       }
       case "product": {
         const src = safeUrl(block.imageUrl);
-        wrap(block, `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #ECE8FB;border-radius:14px"><tr>${src ? `<td width="120" style="padding:14px"><img src="${escapeHtml(src)}" alt="" width="110" style="display:block;width:110px;height:auto;border:0;border-radius:10px"></td>` : ""}<td style="padding:14px;font-family:${font}"><div style="font-size:17px;font-weight:800;color:#1F1147">${t(block.name)}</div>${block.price ? `<div style="font-size:14px;font-weight:700;color:${brandColor};margin-top:4px">${t(block.price)}</div>` : ""}${block.link ? `<div style="margin-top:12px">${buttonHtml(block.buttonText || "Order Now", block.link, { bg: brandColor, fg: "#FFFFFF", radius: 10, size: "medium", style: "primary" })}</div>` : ""}</td></tr></table>`, "10px 28px");
+        wrap(block, `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #ECE8FB;border-radius:14px"><tr>${src ? `<td width="120" style="padding:14px"><img src="${escapeHtml(src)}" alt="" width="110" style="display:block;width:110px;height:auto;border:0;border-radius:10px"></td>` : ""}<td style="padding:14px;font-family:${font}"><div style="font-size:17px;font-weight:800;color:${BRAND_PALETTE.charcoal}">${t(block.name)}</div>${block.price ? `<div style="font-size:14px;font-weight:700;color:${brandColor};margin-top:4px">${t(block.price)}</div>` : ""}${block.link ? `<div style="margin-top:12px">${buttonHtml(block.buttonText || "Order Now", block.link, { bg: accent, fg: "#FFFFFF", radius: 10, size: "medium", style: "primary" })}</div>` : ""}</td></tr></table>`, "10px 28px");
         break;
       }
       case "offer": {
-        const bg = color(block.color, accent), fg = color(block.textColor, "#1F1147");
+        const bg = color(brandColorOf(block.color), accent), fg = readableOn(bg, color(block.textColor, "#1F1147"));
         wrap(block, `<table role="presentation" align="center" cellpadding="0" cellspacing="0"><tr><td align="center" valign="middle" width="120" height="120" style="width:120px;height:120px;border-radius:60px;background:${bg};color:${fg};text-align:center;font-family:${font};line-height:1.05">${block.top ? `<div style="font-size:13px;font-weight:700">${t(block.top)}</div>` : ""}<div style="font-size:32px;font-weight:900">${t(block.main)}</div>${block.bottom ? `<div style="font-size:16px;font-weight:900">${t(block.bottom)}</div>` : ""}</td></tr></table>`, "12px 28px");
         break;
       }
@@ -770,14 +807,18 @@ export function renderEmailHtml(design: EmailDesign, opts: RenderOptions = {}): 
         const items = (block.items ?? []).slice(0, 4);
         if (!items.length) break;
         const width = Math.floor(100 / items.length);
-        const cells = items.map((item) => `<td class="st" valign="top" width="${width}%" style="padding:6px;${opts.mobile ? "display:block;width:100%" : ""}"><div style="background:#F6F4FE;border-radius:12px;padding:14px 8px;text-align:center;font-family:${font}"><div style="font-size:24px">${FEATURE_ICONS[item.icon] ?? "✨"}</div><div style="font-size:13px;font-weight:800;color:#1F1147;margin-top:6px">${t(item.title)}</div></div></td>`).join("");
+        const cells = items.map((item) => `<td class="st" valign="top" width="${width}%" style="padding:6px;${opts.mobile ? "display:block;width:100%" : ""}"><div style="background:${BRAND_PALETTE.mist};border-radius:12px;padding:14px 8px;text-align:center;font-family:${font}"><div style="font-size:24px">${FEATURE_ICONS[item.icon] ?? "✨"}</div><div style="font-size:13px;font-weight:800;color:${BRAND_PALETTE.charcoal};margin-top:6px">${t(item.title)}</div></div></td>`).join("");
         wrap(block, `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>${cells}</tr></table>`, "10px 22px");
         break;
       }
       case "footer": {
         const parts = block.text.split("|").map((part) => part.trim()).filter(Boolean);
         const icon = (part: string) => /deliver|door|ship/i.test(part) ? "🚚" : /pay|cash|pod/i.test(part) ? "💵" : /trust|home|customer|review/i.test(part) ? "⭐" : /call|phone|whatsapp/i.test(part) ? "📞" : "•";
-        wrap(block, `<div style="text-align:center;font-size:12.5px;color:#4B5563">${parts.map((part) => `${icon(part)} ${t(part)}`).join(`<span style="color:#D1D5DB">&nbsp;&nbsp;|&nbsp;&nbsp;</span>`)}</div>`, "14px 28px 22px");
+        // A charcoal band with the logo and name (like the e-receipts), the promises under it.
+        const mark = opts.editor ? ` data-block-id="${escapeHtml(block.id)}"${opts.selectedId === block.id ? " data-selected=\"1\"" : ""}` : "";
+        const promises = parts.length ? `<div style="font-size:12.5px;color:#E5E7EB;margin-top:12px">${parts.map((part) => `${icon(part)} ${t(part)}`).join(`<span style="color:#6B7280">&nbsp;&nbsp;|&nbsp;&nbsp;</span>`)}</div>` : "";
+        const brandLine = `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto"><tr>${logoSrc ? `<td valign="middle" style="padding-right:10px">${logoImg(36, true)}</td>` : ""}<td valign="middle" style="font-family:${font};font-size:20px;font-weight:900;letter-spacing:.5px;text-transform:uppercase;color:#FFFFFF">${escapeHtml(opts.brand || "")}</td></tr></table>`;
+        rows.push(`<tr><td${mark} style="padding:14px 0 0;background:${color(styles.contentColor, "#FFFFFF")}"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND_PALETTE.charcoal}"><tr><td style="padding:0"><div style="height:18px;background:${color(styles.contentColor, "#FFFFFF")};border-radius:0 0 50% 50% / 0 0 100% 100%"></div></td></tr><tr><td align="center" style="padding:16px 24px 22px;font-family:${font};text-align:center">${opts.brand || logoSrc ? brandLine : ""}${promises}</td></tr></table></td></tr>`);
         break;
       }
     }
