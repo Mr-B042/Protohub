@@ -937,7 +937,8 @@ async function sendReceiptEmail(orgId: string, trigger: EmailTrigger, orderId: s
   }
   if (!built) return false;
   try {
-    await deliverAndLogEmail(orgId, settings, trigger, "customer", { ...vars, receipt: kind, __html: built.html }, to, built.subject, built.text);
+    // A receipt goes the moment the order is placed / delivered, never held for working hours.
+    await deliverAndLogEmail(orgId, settings, trigger, "customer", { ...vars, receipt: kind, __html: built.html }, to, built.subject, built.text, { ignoreWorkingSchedule: true });
   } catch {
     // already logged as failed; not sent twice
   }
@@ -1301,7 +1302,8 @@ export async function processQueuedEmails(limit = 100) {
         : {};
     const recipientRole = typeof vars.recipient_role === "string" ? vars.recipient_role : null;
 
-    if (shouldRespectWorkingSchedule(row.trigger as EmailTrigger, row.audience as EmailLogAudience, recipientRole)) {
+    // E-receipts (and their retries) go straight away, never held for working hours.
+    if (!vars.receipt && shouldRespectWorkingSchedule(row.trigger as EmailTrigger, row.audience as EmailLogAudience, recipientRole)) {
       if (!isWithinWorkingSchedule(settings)) {
         await updateEmailLog(row.id, {
           scheduled_for: nextWorkingScheduleAt(settings) ?? new Date(Date.now() + 60 * 60 * 1000).toISOString()

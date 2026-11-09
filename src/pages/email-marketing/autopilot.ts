@@ -18,8 +18,9 @@ export type PlanItem = { key: string; draft: AutoDraft; ready: boolean; needs: s
 
 const SETTINGS = {
   ...DEFAULT_SETTINGS,
-  // Customers order every day: send every day, 8am to 8pm Lagos.
-  sendWindow: { on: true, from: 8, to: 20, days: [0, 1, 2, 3, 4, 5, 6] }
+  // Bright, 9 Nov 2026: "it should be sent immediately" — no sending hours;
+  // each email goes the moment its step is due (it can be switched on per flow).
+  sendWindow: { on: false, from: 8, to: 20, days: [0, 1, 2, 3, 4, 5, 6] }
 };
 
 function fields(designer: EmDesigner, product: EmDesignerProduct | undefined): CampaignFields {
