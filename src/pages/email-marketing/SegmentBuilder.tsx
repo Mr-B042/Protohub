@@ -27,11 +27,21 @@ export function defaultValue(field: EmConditionField, o: BuilderOptions): string
     case "status": return "unsubscribed";
     case "tag": return o.tags[0]?.id ?? "";
     case "channel": return "Facebook";
+    case "quiet": return "any";
     default: return "yes";
   }
 }
 
 const cell = `${select} !py-2 !text-[13px] !font-semibold`;
+/** Why their latest order went quiet (read from the rep's last call note). */
+const QUIET_CHOICES = [
+  { value: "any", label: "Any reason" },
+  { value: "unreachable", label: "Stopped picking calls or replying" },
+  { value: "not_ready", label: "Not ready yet (travel, money, timing)" },
+  { value: "let_down", label: "We let them down (stock, area)" },
+  { value: "said_no", label: "Said no thanks" },
+  { value: "other", label: "Other or no reason written" }
+];
 
 export function ConditionRow({ condition, options, onChange, onRemove, iconTile = false, exclusion = false }: {
   condition: EmCondition;
@@ -151,6 +161,9 @@ function ValueInput({ field, op, value, options, onChange }: { field: EmConditio
   }
   if (field.value === "channel") {
     return <select aria-label="Source" value={String(value)} onChange={(event) => onChange(event.target.value)} className={cell}>{CHANNELS.map((row) => <option key={row} value={row}>{row}</option>)}</select>;
+  }
+  if (field.value === "quiet") {
+    return <select aria-label="Why" value={String(value)} onChange={(event) => onChange(event.target.value)} className={cell}>{QUIET_CHOICES.map((row) => <option key={row.value} value={row.value}>{row.label}</option>)}</select>;
   }
   if (field.value === "none") return <span className="text-[12.5px] text-gray-500">—</span>;
   return (

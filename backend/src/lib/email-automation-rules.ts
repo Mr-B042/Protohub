@@ -32,40 +32,9 @@ export type Trigger = {
   quietReasons?: QuietReason[];
 };
 
-// ── Customers who went quiet (Bright, 9 Nov 2026) ─────────────────────
-// "Follow up customers who aren't scheduled but haven't been picking calls
-// for days… forever till they buy." A customer is quiet when their LATEST
-// order never got delivered: it failed, was postponed or cancelled, or it is
-// still open but the last call note says they don't pick or reply. The
-// reason (read from the rep's call note) picks the words of the email.
-
-export const QUIET_REASONS = ["unreachable", "not_ready", "let_down", "said_no", "other"] as const;
-export type QuietReason = (typeof QUIET_REASONS)[number];
-export const QUIET_REASON_LABELS: Record<QuietReason, string> = {
-  unreachable: "Stopped picking calls or replying",
-  not_ready: "Not ready yet (travel, money, timing)",
-  let_down: "We let them down (out of stock, can't reach their area)",
-  said_no: "Said no thanks",
-  other: "Other or no reason written"
-};
-const CLOSED_QUIET = new Set(["Failed", "Postponed", "Cancelled"]);
-const OPEN = new Set(["New", "Confirmed"]);
-const UNREACHABLE = /pick|respond|answer|reply|unreachable|switched off|busy|ignor|block|silent|hung up|ends the call|not reachable|unavailable on phone/;
-
-/** Why a customer's latest order went quiet, or null when it doesn't count (delivered, still being worked normally, wrong number). */
-export function quietReason(status: string, note: string | null | undefined): QuietReason | null {
-  const t = String(note ?? "").toLowerCase();
-  if (/wrong number|invalid number|not .*(his|her|their) number/.test(t)) return null;
-  const open = OPEN.has(status);
-  if (!open && !CLOSED_QUIET.has(status)) return null;
-  // Open orders count only when the customer stopped answering.
-  if (open) return UNREACHABLE.test(t) && !/stock|coverage/.test(t) ? "unreachable" : null;
-  if (/stock|coverage|far|waybill|no rider/.test(t)) return "let_down";
-  if (/not interested|doesn.?t want|don.?t want|stop (calling|disturb|question)|disturbing|reject|no longer need|changed (his|her|their) mind/.test(t)) return "said_no";
-  if (UNREACHABLE.test(t)) return "unreachable";
-  if (/travel|town|not back|back to|when (he|she|they)|ready|available|next week|next month|monday|tuesday|wednesday|thursday|friday|saturday|sunday|resched|reach out|call (me|back)|money|salary|payment|paid/.test(t)) return "not_ready";
-  return "other";
-}
+// Customers who went quiet: the rule lives in email-marketing-rules.ts (segments use it too).
+export { QUIET_REASONS, QUIET_REASON_LABELS, quietReason, type QuietReason } from "./email-marketing-rules.js";
+import { QUIET_REASONS, type QuietReason } from "./email-marketing-rules.js";
 
 export const CHECK_KINDS = ["placed_order", "delivered_order", "opened_last", "clicked_last", "left_review", "in_segment", "has_tag"] as const;
 export type CheckKind = (typeof CHECK_KINDS)[number];

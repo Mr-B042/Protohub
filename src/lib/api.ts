@@ -5512,7 +5512,7 @@ export type EmContact = {
   orders: number; spent: number; lastPurchaseAt: string | null; lastOpenedAt: string | null; lastActivityAt: string | null; state: string;
   engagement: EmEngagement; segments: string[]; lists: string[]; tags: string[]; fields: Array<{ key: string; value: unknown }>; system: Array<{ key: string; value: string }>;
 };
-export type EmConditionField = { field: string; group: string; label: string; ops: Array<{ op: string; label: string }>; value: "product" | "number" | "days" | "money" | "percent" | "state" | "source" | "none" | "status" | "tag" | "channel"; unit?: string };
+export type EmConditionField = { field: string; group: string; label: string; ops: Array<{ op: string; label: string }>; value: "product" | "number" | "days" | "money" | "percent" | "state" | "source" | "none" | "status" | "tag" | "channel" | "quiet"; unit?: string };
 export type EmDesignerProduct = { id: string; name: string; image: string; priceMin: number | null; priceMax: number | null; links: Array<{ label: string; url: string }> };
 export type EmDesigner = {
   products: EmDesignerProduct[];

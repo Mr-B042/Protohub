@@ -5,7 +5,7 @@ import { fetchAllRowsOrThrow, selectByIdBatches } from "./query-limits.js";
 import { marketingSender, sendMarketingEmail } from "./mailer.js";
 import {
   AUTOMATION_PRESETS, BUILT_IN_FIELDS, BUILT_IN_LISTS, BUILT_IN_TAGS, DAY_MS, JOURNEY_STAGES, OVERVIEW_SEGMENTS, QUICK_SEGMENTS,
-  assignVariants, automationRecipients, bestSendWindow, buildCustomers, buildPeople, builtInSegments, cleanConditions, cleanEmail,
+  assignVariants, automationRecipients, bestSendWindow, buildCustomers, buildPeople, builtInSegments, builtInSegmentsV2, cleanConditions, cleanEmail,
   contextFor, emailHealth, engagementOf, estimateFromPast, fieldKeyFor, groupEngagement, kpisAt, lagosDay, monthEnds, nextRepeatAt, percentChange, phoneKey, resolveAudience,
   cleanFieldValues, segmentMatches, slugFor, systemFieldValue, withUtm,
   type AudienceChoice, type CampaignResult, type CartLite, type Condition, type ContactLite, type CustomerStats, type Delivery, type MatchContext,
@@ -192,6 +192,36 @@ async function ensureBuiltIns(orgId: string, branchId: string, orders: OrderLite
   await supabase.from("email_marketing_settings").update({ seeded_at: new Date().toISOString() }).eq("branch_id", branchId);
 }
 
+/** The second batch of ready-made groups (builtInSegmentsV2), once per branch, for branches set up before it existed too. */
+const seededV2 = new Set<string>();
+async function ensureBuiltInsV2(orgId: string, branchId: string, orders: OrderLite[]) {
+  if (seededV2.has(branchId)) return;
+  const { data: row } = await supabase.from("email_marketing_settings").select("seeded_v2_at").eq("branch_id", branchId).maybeSingle();
+  if (row?.seeded_v2_at) seededV2.add(branchId);
+  if (!row || row.seeded_v2_at) return;
+  const since = Date.now() - 90 * DAY_MS;
+  const products = new Map<string, number>();
+  const states = new Map<string, number>();
+  for (const order of orders) {
+    if (order.status !== "Delivered") continue;
+    if (order.productId && Date.parse(order.createdAt) >= since) products.set(order.productId, (products.get(order.productId) ?? 0) + 1);
+    if (order.state?.trim()) states.set(order.state.trim(), (states.get(order.state.trim()) ?? 0) + 1);
+  }
+  const topIds = [...products.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([id]) => id);
+  const { data: named } = topIds.length ? await supabase.from("products").select("id, name").in("id", topIds) : { data: [] as any[] };
+  const topProducts = topIds.map((id) => (named ?? []).find((p: any) => p.id === id)).filter(Boolean).map((p: any) => ({ id: p.id as string, name: p.name as string }));
+  // Lagos already has its own group (first batch).
+  const topStates = [...states.entries()].filter(([state]) => state.toLowerCase() !== "lagos").sort((a, b) => b[1] - a[1]).slice(0, 2).map(([state]) => state);
+  const rows = builtInSegmentsV2(topProducts, topStates).map((segment) => ({
+    org_id: orgId, branch_id: branchId, name: segment.name, description: segment.description, icon: segment.icon, kind: "auto",
+    match: segment.match, conditions: segment.conditions, built_in: segment.key, created_by_name: "Ready-made"
+  }));
+  const { error } = await supabase.from("email_segments").upsert(rows, { onConflict: "branch_id,built_in", ignoreDuplicates: true });
+  if (error) throw new Error(error.message);
+  await supabase.from("email_marketing_settings").update({ seeded_v2_at: new Date().toISOString() }).eq("branch_id", branchId);
+  seededV2.add(branchId);
+}
+
 /** Phones of customers with an approved review (Products & Stock › Customer Reviews). */
 async function reviewedPhones(orgId: string, branchId: string, orders: Array<{ id: string; phone: string | null }>) {
   const { data, error } = await supabase.from("customer_reviews").select("order_id").eq("org_id", orgId).eq("branch_id", branchId).eq("status", "approved").limit(20000);
@@ -204,6 +234,7 @@ async function buildWorld(orgId: string, branchId: string): Promise<World> {
   const nowMs = Date.now();
   const [orders, carts, contacts] = await Promise.all([loadOrders(orgId, branchId), loadCarts(orgId, branchId), loadContacts(orgId, branchId)]);
   await ensureBuiltIns(orgId, branchId, orders);
+  await ensureBuiltInsV2(orgId, branchId, orders);
   const [segmentResult, tagResult, fieldResult, contactTagRows, reviewed, productResult] = await Promise.all([
     supabase.from("email_segments").select("*").eq("org_id", orgId).eq("branch_id", branchId).order("created_at", { ascending: true }),
     supabase.from("email_tags").select("*").eq("org_id", orgId).eq("branch_id", branchId).order("created_at", { ascending: true }),
