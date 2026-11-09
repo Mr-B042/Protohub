@@ -68,3 +68,26 @@ test("plain mode drops pictures; the editor marks blocks", () => {
   assert.equal(normalizeDesign({ blocks: [{ id: "1", type: "bogus" }, { id: "2", type: "spacer", height: 10 }] })!.blocks.length, 1);
   assert.equal(normalizeDesign("nope"), null);
 });
+
+test("went-quiet emails show the customer's own product", async () => {
+  const r = await import("./email-render.js");
+  const f = { brand: "Shop", goal: "retention", offerType: "custom", productId: "p1", productName: "Sample Rack", productImage: "https://img/sample.jpg", productLink: "https://shop/sample", productPrice: "₦1,000", offerOn: false, offerTitle: "", offerBenefit: "" };
+  const design = r.buildQuietDesign(f, { slug: "re-engagement", tone: "peach", title: "Still Want Your {{Their Product}}?", subtitle: "x", button: "Order Now", lines: ["Your {{Their Product}} is here."] });
+  assert.equal(r.usesTheirProduct(design), true);
+  const mine = { name: "Blender", price: "₦25,000", imageUrl: "https://img/blender.jpg", link: "https://shop/blender" };
+  const out = r.withTheirProduct(design, mine);
+  const html = r.renderEmailHtml(out, { firstName: "Ada" });
+  assert.match(html, /Still Want Your Blender\?/);
+  assert.match(html, /blender\.jpg/);
+  assert.doesNotMatch(html, /sample\.jpg|Sample Rack|shop\/sample/);
+  // A designed gift picture stays; only the button follows their product.
+  const gift = r.withTheirProduct(r.buildQuietDesign(f, { slug: "win-back-campaign", tone: "lavender", title: "Hi", subtitle: "x", button: "Order", lines: [] }), mine);
+  const cover = gift.blocks.find((b: any) => b.type === "cover") as any;
+  assert.match(cover.imageUrl, /win-back-campaign\.jpg$/);
+  assert.equal(cover.buttonLink, "https://shop/blender");
+  // Not found: "your order", and no card for the wrong product.
+  const none = r.withTheirProduct(design, null);
+  assert.equal(none.blocks.some((b: any) => b.type === "product"), false);
+  assert.match(r.renderEmailHtml(none, {}), /Your order is here\./);
+  assert.equal(r.fillTheirProduct("Still want your {{Their Product}}?", mine), "Still want your Blender?");
+});

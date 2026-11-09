@@ -26,8 +26,8 @@ export type EmailBlock =
   | { id: string; type: "hero"; title: string; highlight: string; subtitle: string; badgeTop: string; badgeMain: string; badgeBottom: string; imageUrl: string; buttonText: string; buttonLink: string }
   | { id: string; type: "text"; text: string; size: number; align: Align; color: string; bold: boolean }
   | { id: string; type: "image"; url: string; alt: string; link: string; width: number }
-  | { id: string; type: "button"; text: string; link: string; style: "primary" | "secondary" | "link"; size: "small" | "medium" | "large"; align: Align; color: string; textColor: string; radius: number }
-  | { id: string; type: "product"; productId: string; name: string; price: string; imageUrl: string; buttonText: string; link: string }
+  | { id: string; type: "button"; text: string; link: string; style: "primary" | "secondary" | "link"; size: "small" | "medium" | "large"; align: Align; color: string; textColor: string; radius: number; theirs?: boolean }
+  | { id: string; type: "product"; productId: string; name: string; price: string; imageUrl: string; buttonText: string; link: string; theirs?: boolean }
   | { id: string; type: "offer"; top: string; main: string; bottom: string; color: string; textColor: string }
   | { id: string; type: "divider"; color: string; thickness: number }
   | { id: string; type: "spacer"; height: number }
@@ -39,7 +39,7 @@ export type EmailBlock =
   | { id: string; type: "features"; items: FeatureItem[] }
   | { id: string; type: "footer"; text: string }
   // Cover (Templates design, 8 Nov 2026): soft colour, centred headline, a line, a picture or emoji, a button.
-  | { id: string; type: "cover"; title: string; subtitle: string; imageUrl: string; emoji: string; buttonText: string; buttonLink: string; buttonTone: "yellow" | "purple"; tone: CoverTone; big?: boolean };
+  | { id: string; type: "cover"; title: string; subtitle: string; imageUrl: string; emoji: string; buttonText: string; buttonLink: string; buttonTone: "yellow" | "purple"; tone: CoverTone; big?: boolean; theirs?: boolean };
 
 /** The cover's soft background (top and bottom of the fade). */
 export const COVER_TONES = {
@@ -430,6 +430,62 @@ export const STARTER_TEMPLATES: Starter[] = [
   { key: "blank", name: "Blank Template", hint: "Start from an empty layout and design freely", category: "promotional", type: "promotional", layout: "blank",
     subject: "", preheader: "", build: (f) => [B.header(f), B.text("Write your message here."), B.footer()] }
 ];
+
+// ── "Their product" (Bright, 9 Nov 2026) ─────────────────────────────
+// A follow-up to a customer who went quiet shows the product THEY ordered.
+// Blocks marked `theirs` (cover picture + button, product card, button) and
+// the {{Their Product}} tag are filled per customer right before sending; in
+// the editor they show the sample product.
+
+export type TheirProduct = { name: string; price: string; imageUrl: string; link: string };
+export const THEIR_PRODUCT_TAG = "{{Their Product}}";
+
+/** True when the email has anything that changes with the customer's own product. */
+export function usesTheirProduct(design: EmailDesign | null, subject = "") {
+  if (subject.includes(THEIR_PRODUCT_TAG)) return true;
+  return !!design?.blocks.some((block) => ("theirs" in block && block.theirs) || JSON.stringify(block).includes(THEIR_PRODUCT_TAG));
+}
+
+/** The design with the customer's own product in the marked places (no product found = "order", sample picture kept). */
+export function withTheirProduct(design: EmailDesign, product: TheirProduct | null): EmailDesign {
+  const name = product?.name.trim() || "order";
+  const filled = JSON.parse(JSON.stringify(design).split(THEIR_PRODUCT_TAG).join(JSON.stringify(name).slice(1, -1))) as EmailDesign;
+  // Not found: no card for the wrong product.
+  if (!product) return { ...filled, blocks: filled.blocks.filter((block) => !(block.type === "product" && block.theirs)) };
+  return {
+    ...filled,
+    blocks: filled.blocks.map((block): EmailBlock => {
+      if (!("theirs" in block) || !block.theirs) return block;
+      if (block.type === "cover") {
+        // A designed picture of a gift, clock, van… stays; a product picture (or the sample product's photo) becomes theirs.
+        const slug = block.imageUrl.startsWith(TEMPLATE_PHOTO_BASE) ? block.imageUrl.slice(TEMPLATE_PHOTO_BASE.length).replace(/\.jpg$/, "") : null;
+        const swap = !!product.imageUrl && (!slug || PRODUCT_PICTURES.has(slug));
+        return { ...block, imageUrl: swap ? product.imageUrl : block.imageUrl, big: swap ? false : block.big, buttonLink: block.buttonText ? product.link || block.buttonLink : block.buttonLink };
+      }
+      if (block.type === "product") return { ...block, name: product.name, price: product.price, imageUrl: product.imageUrl, link: product.link || block.link };
+      if (block.type === "button") return { ...block, link: product.link || block.link };
+      return block;
+    })
+  };
+}
+export const fillTheirProduct = (text: string, product: TheirProduct | null) => text.split(THEIR_PRODUCT_TAG).join(product?.name.trim() || "order");
+
+/** A follow-up email (Autopilot's "went quiet" flows): designed cover, words, the customer's product. */
+export type QuietEmailSpec = { slug: string; tone: CoverTone; title: string; subtitle: string; button: string; buttonTone?: "yellow" | "purple"; lines: string[]; offer?: boolean; product?: boolean };
+export function buildQuietDesign(f: CampaignFields, spec: QuietEmailSpec): EmailDesign {
+  const blocks: EmailBlock[] = [
+    B.header(f),
+    // The designed picture; a product picture becomes the customer's own product when the email is sent.
+    { ...designed({ slug: spec.slug, tone: spec.tone, title: spec.title, subtitle: spec.subtitle, button: spec.button, buttonTone: spec.buttonTone }, { ...f, productImage: "" }), theirs: true } as EmailBlock,
+    hi(),
+    ...spec.lines.map((line) => p(line)),
+    ...(spec.offer ? [offerNote()] : []),
+    ...(spec.product === false ? [] : [{ ...B.product(f, "Order Now"), theirs: true } as EmailBlock]),
+    signOff(f),
+    B.footer()
+  ];
+  return { version: 1, template: `quiet:${spec.slug}`, touched: true, styles: { ...DEFAULT_STYLES }, blocks };
+}
 
 /** The layouts in Create Custom Template, step 2 (the ready-made emails, by shape). */
 export const STARTER_LAYOUTS = [

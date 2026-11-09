@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   DEFAULT_SETTINGS, branchNodeId, defaultStage, checkMet, durationDays, emailNodes, firstNodeId, inSendWindow, mayEnter, nextNodeId, nextWindowStart, normalizeSettings,
-  normalizeTrigger, normalizeWorkflow, type CheckFacts
+  normalizeTrigger, normalizeWorkflow, quietReason, type CheckFacts
 } from "./email-automation-rules.js";
 
 const DAY = 86_400_000;
@@ -86,4 +86,26 @@ test("customer stage: picked from the template, else the trigger", () => {
   assert.equal(defaultStage(null, { kind: "inactive" }), "winback");
   assert.equal(defaultStage(null, { kind: "cart_abandoned" }), "conversion");
   assert.equal(defaultStage("not-a-template", null), "retention");
+});
+
+test("quietReason: why a customer went quiet, from the rep's call note", () => {
+  assert.equal(quietReason("Failed", "Not answering calls and not responding to messages"), "unreachable");
+  assert.equal(quietReason("Failed", "Customer blocked me"), "unreachable");
+  assert.equal(quietReason("Postponed", "Said he’s out of town"), "not_ready");
+  assert.equal(quietReason("Failed", "Customer said when he reach Lagos he’ll personal call me"), "not_ready");
+  assert.equal(quietReason("Failed", "Product out of stock in this location"), "let_down");
+  assert.equal(quietReason("Failed", "Out of coverage"), "let_down");
+  assert.equal(quietReason("Failed", "Customer said she's not interested in buying Item"), "said_no");
+  assert.equal(quietReason("Cancelled", ""), "other");
+  assert.equal(quietReason("Failed", "Wrong number"), null);
+  assert.equal(quietReason("Delivered", "Not picking"), null);
+  // Open orders only count when the customer stopped answering.
+  assert.equal(quietReason("Confirmed", "Rescheduled"), null);
+  assert.equal(quietReason("Confirmed", "Not picking or responding on WhatsApp"), "unreachable");
+  assert.equal(quietReason("Confirmed", "Out of stock"), null);
+});
+
+test("normalizeTrigger keeps went_quiet days and reasons", () => {
+  assert.deepEqual(normalizeTrigger({ kind: "went_quiet", quietDays: 0, quietReasons: ["unreachable", "bogus", "unreachable"] }), { kind: "went_quiet", quietDays: 1, quietReasons: ["unreachable"] });
+  assert.equal(defaultStage(null, { kind: "went_quiet" }), "winback");
 });

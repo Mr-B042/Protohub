@@ -1,4 +1,4 @@
-import type { EmAutomation, EmAutomationInput, EmAutomationSettings, EmCheck, EmDesigner, EmFlowNode, EmStage, EmTrigger, EmWorkflow } from "../../lib/api";
+import type { EmAutomation, EmAutomationInput, EmAutomationSettings, EmCheck, EmDesigner, EmFlowNode, EmQuietReason, EmStage, EmTrigger, EmWorkflow } from "../../lib/api";
 import { buildTemplateDesign, type CampaignFields, type EmailDesign } from "../../lib/email-render";
 import { priceText } from "./wizard-model";
 
@@ -39,7 +39,7 @@ export const STAGES: Array<{ key: EmStage; label: string }> = [
 export const stageText = (key: EmStage) => STAGES.find((row) => row.key === key)?.label ?? key;
 const TRIGGER_STAGE: Record<EmTrigger["kind"], EmStage> = {
   new_subscriber: "acquisition", date_field: "nurture", cart_abandoned: "conversion", order_placed: "conversion",
-  reorder: "retention", vip: "retention", inactive: "winback", order_delivered: "post_purchase"
+  reorder: "retention", vip: "retention", inactive: "winback", went_quiet: "winback", order_delivered: "post_purchase"
 };
 
 /** `when` completes "Starts when ..." / "This automation will start when ...". */
@@ -51,7 +51,17 @@ export const TRIGGER_OPTIONS: Array<{ kind: EmTrigger["kind"]; label: string; wh
   { kind: "inactive", label: "No Purchase in a While", when: "a customer has not bought for a number of days" },
   { kind: "date_field", label: "Birthday / Special Date", when: "it is the date saved in a customer's date field (e.g. Birthday)" },
   { kind: "vip", label: "Becomes a VIP", when: "a customer reaches a number of delivered orders" },
-  { kind: "reorder", label: "Time to Reorder", when: "a number of days have passed since an order was delivered" }
+  { kind: "reorder", label: "Time to Reorder", when: "a number of days have passed since an order was delivered" },
+  { kind: "went_quiet", label: "Customer Went Quiet", when: "a customer's latest order failed, was postponed or cancelled, or they stopped picking calls" }
+];
+
+/** Why a customer went quiet, read from the rep's last call note (same list as the server). */
+export const QUIET_REASON_OPTIONS: Array<{ key: EmQuietReason; label: string }> = [
+  { key: "unreachable", label: "Stopped picking calls or replying" },
+  { key: "not_ready", label: "Not ready yet (travel, money, timing)" },
+  { key: "let_down", label: "We let them down (out of stock, can't reach their area)" },
+  { key: "said_no", label: "Said no thanks" },
+  { key: "other", label: "Other or no reason written" }
 ];
 export function triggerText(trigger: EmTrigger) {
   switch (trigger.kind) {
@@ -59,6 +69,7 @@ export function triggerText(trigger: EmTrigger) {
     case "inactive": return `No Purchase (${trigger.inactiveDays ?? 60} Days)`;
     case "vip": return `Becomes VIP (${trigger.vipOrders ?? 3} orders)`;
     case "reorder": return `Time to Reorder (${trigger.reorderDays ?? 30} days)`;
+    case "went_quiet": return `Went Quiet (${trigger.quietDays ?? 1} ${(trigger.quietDays ?? 1) === 1 ? "day" : "days"})`;
     default: return TRIGGER_OPTIONS.find((row) => row.kind === trigger.kind)?.label ?? trigger.kind;
   }
 }

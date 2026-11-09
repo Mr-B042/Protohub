@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
-  ArrowDown, ArrowUp, Clock, Crown, Diamond, Gift, List, LogOut, Mail, MoreHorizontal, Pencil, Plus, RefreshCw, Repeat, ShoppingBag, ShoppingCart, Tag, Trash2, UserPlus
+  ArrowDown, ArrowUp, Clock, Crown, Diamond, Gift, List, LogOut, Mail, MoreHorizontal, Pencil, PhoneOff, Plus, RefreshCw, Repeat, ShoppingBag, ShoppingCart, Tag, Trash2, UserPlus
 } from "lucide-react";
 import type { EmFlowNode, EmTrigger, EmWorkflow } from "../../lib/api";
 import { checkQuestion, triggerText, waitText, type ActionKey, type Slot } from "./automation-model";
@@ -14,7 +14,7 @@ import { checkQuestion, triggerText, waitText, type ActionKey, type Slot } from 
 
 export const TRIGGER_ICON: Record<EmTrigger["kind"], typeof Mail> = {
   order_delivered: ShoppingCart, order_placed: ShoppingBag, cart_abandoned: ShoppingCart, new_subscriber: UserPlus,
-  inactive: RefreshCw, date_field: Gift, vip: Crown, reorder: Repeat
+  inactive: RefreshCw, date_field: Gift, vip: Crown, reorder: Repeat, went_quiet: PhoneOff
 };
 
 export const DRAG_TYPE = "application/x-protohub-action";
