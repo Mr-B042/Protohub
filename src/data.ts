@@ -1,4 +1,5 @@
 import {
+  Store,
   Archive,
   ArrowLeftRight,
   BadgeDollarSign,
@@ -46,6 +47,8 @@ import {
 } from "lucide-react";
 
 export const navItems = [
+  // Our Store (Bright, 9 Nov 2026): first, gold, for every role.
+  { label: "Our Store", icon: Store },
   { label: "Dashboard", icon: LayoutDashboard, active: true },
   // Keep the primary workspaces together. The list is filtered by role, so
   // this single canonical order also keeps the Sales Rep mobile menu sane.
