@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, Eye, Loader2, Sparkles, X } from "lucide-react";
 import { emailMarketingApi, type EmAudience, type EmCampaign, type EmCampaignInput, type EmDesigner } from "../../lib/api";
-import { buildLetterDesign, buildQuietDesign, buildStoreDesign, type EmailDesign } from "../../lib/email-render";
+import { STORE_HOME, asPersonalNote, buildLetterDesign, buildQuietDesign, buildStoreDesign, type EmailDesign } from "../../lib/email-render";
 import EmailPreviewGallery from "./EmailPreviewGallery";
 import { christmasSeason, normalMonth, planDays, tipSlot, type PlanSlot } from "./email-plan";
 import { TIPS } from "./tips-library";
@@ -38,6 +38,9 @@ export default function MonthlyPlan({ campaigns, onClose, onDone, onToast }: { c
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<number | null>(null);
   const [library, setLibrary] = useState(false);
+  const [ab, setAb] = useState(true);
+  const [person, setPerson] = useState(() => { try { return localStorage.getItem("em.personSender") ?? ""; } catch { return ""; } });
+  useEffect(() => { try { localStorage.setItem("em.personSender", person); } catch { /* private mode */ } }, [person]);
   const [counts, setCounts] = useState<Record<string, number | null>>({ store: null, pod: null });
   useEffect(() => { emailMarketingApi.designer().then(setDesigner).catch((err) => setError((err as Error).message || "Could not load.")); }, []);
   useEffect(() => { for (const v of VERSIONS) void emailMarketingApi.audiencePreview(v.audience).then((res) => setCounts((prev) => ({ ...prev, [v.key]: res.recipients }))).catch(() => undefined); }, []);
@@ -60,16 +63,29 @@ export default function MonthlyPlan({ campaigns, onClose, onDone, onToast }: { c
     for (let i = 0; !fixed && busyDays.has(sendDay) && i < 3; i += 1) sendDay = addDay(sendDay, 1);
     return { slot: slots[index], day, sendDay, moved: sendDay !== day, clash: busyDays.has(sendDay) };
   }), [year, month, cutoff, slots, busyDays]);
-  const names = new Set(campaigns.filter((row) => row.status !== "archived").map((row) => row.name));
   const nameOf = (index: number, version: (typeof VERSIONS)[number]) => `Plan: ${label} · ${index + 1}. ${rows[index].slot.title} · ${version.label}`;
+  // Already scheduled = any plan email for this month, place and version (its title may have changed since).
+  const allNames = campaigns.filter((row) => row.status !== "archived").map((row) => row.name);
+  const has = (index: number, version: (typeof VERSIONS)[number]) => allNames.some((name) => name.startsWith(`Plan: ${label} · ${index + 1}. `) && name.endsWith(` · ${version.label}`));
   const best = designer?.products.find((row) => row.image && row.links.length) ?? designer?.products[0];
   const fields = () => ({ brand: designer?.sender.fromName || "Our Store", goal: "retention", offerType: "custom", productId: best?.id ?? "", productName: best?.name ?? "", productImage: best?.image ?? "",
     productLink: best?.links[0]?.url ?? "", productPrice: priceText(best), offerOn: false, offerTitle: "", offerBenefit: "" });
-  const designOf = (slot: PlanSlot, version: "store" | "pod"): EmailDesign =>
-    slot.tip ? buildLetterDesign(fields(), slot.tip, version)
-      : version === "store" && !slot.noSell ? buildStoreDesign(fields(), slot.store.spec!) : buildQuietDesign(fields(), slot.pod.spec!);
+  const designOf = (slot: PlanSlot, version: "store" | "pod"): EmailDesign => {
+    if (slot.tip) return buildLetterDesign(fields(), slot.tip, version);
+    if (version === "store" && !slot.noSell) return buildStoreDesign(fields(), slot.store.spec!);
+    const d = buildQuietDesign(fields(), slot.pod.spec!);
+    // Every email needs one link: a thank-you gets a quiet one.
+    if (!slot.noSell) return d;
+    const link = { id: `l${slot.key}`, type: "button" as const, text: "We're here whenever you need us →", link: version === "store" ? STORE_HOME : fields().productLink || STORE_HOME, style: "link" as const, size: "small" as const, align: "center" as const, color: "#2A98DE", textColor: "#FFFFFF", radius: 0 };
+    return { ...d, blocks: [...d.blocks.slice(0, -1), link, d.blocks[d.blocks.length - 1]] };
+  };
+  // A/B (Bright, 9 Nov 2026): B = short lowercase subject, from a person, as a plain note.
+  const subjectB = (slot: PlanSlot, subject: string) => {
+    const plain = (slot.tip ? slot.tip.title : subject.replace(/,?\s*\{\{First Name\}\}/, "")).replace(/[^\p{L}\p{N}\s',:?-]/gu, "").replace(/\s+/g, " ").trim().toLowerCase();
+    return slot.tip ? `{{First Name}}, ${plain}` : plain;
+  };
   const future = rows.map((row, index) => ({ ...row, index })).filter((row) => row.sendDay >= today);
-  const todo = future.filter((row) => VERSIONS.some((v) => !names.has(nameOf(row.index, v))));
+  const todo = future.filter((row) => VERSIONS.some((v) => !has(row.index, v)));
 
   const schedule = async () => {
     if (!designer) return;
@@ -81,12 +97,13 @@ export default function MonthlyPlan({ campaigns, onClose, onDone, onToast }: { c
         const at = row.sendDay === today ? new Date(Date.now() + 3_600_000) : new Date(`${row.sendDay}T08:00:00+01:00`);
         for (const v of VERSIONS) {
           const name = nameOf(row.index, v);
-          if (names.has(name)) continue;
+          if (has(row.index, v)) continue;
           const words = v.key === "store" ? row.slot.store : row.slot.pod;
           const input: EmCampaignInput = {
-            name, goal: "retention", subject: words.subject, subjectB: "", preheader: words.preheader, offerType: "custom",
+            name, goal: "retention", subject: words.subject, subjectB: ab ? subjectB(row.slot, words.subject) : "", preheader: words.preheader, offerType: "custom",
             productId: v.key === "pod" ? best?.id ?? null : null, offer: { on: false, title: "", benefit: "" }, audience: v.audience, design: designOf(row.slot, v.key),
-            delivery: { type: "one_time", sendAt: at.toISOString() }, options: { ...DEFAULT_OPTIONS }, thumbnailUrl: null, offerId: null
+            delivery: { type: "one_time", sendAt: at.toISOString() },
+            options: { ...DEFAULT_OPTIONS, abTest: ab, ...(ab ? { noteB: true, ...(person.trim() ? { fromNameB: person.trim() } : {}) } : {}) }, thumbnailUrl: null, offerId: null
           };
           const created = await emailMarketingApi.createCampaign(input);
           await emailMarketingApi.launch(created.id, false);
@@ -136,19 +153,30 @@ export default function MonthlyPlan({ campaigns, onClose, onDone, onToast }: { c
             </div>
           ))}
         </div>
+        <div className="flex flex-wrap items-center gap-3 border-b border-gray-100 bg-[#F7F4FF] px-5 py-3 dark:border-slate-800 dark:bg-violet-500/10">
+          <label className="flex items-center gap-2 text-[13px] font-bold text-gray-900 dark:text-slate-50"><input type="checkbox" className="h-4 w-4 accent-[#5B3FD9]" checked={ab} onChange={(event) => setAb(event.target.checked)} />A/B test every email</label>
+          {ab && <>
+            <label className="flex items-center gap-1.5 text-[12.5px] text-gray-700 dark:text-slate-300">Version B comes from
+              <input value={person} onChange={(event) => setPerson(event.target.value)} maxLength={60} placeholder="e.g. Bright from ProTools"
+                className="!min-h-0 w-[210px] rounded-lg border border-gray-200 bg-white px-2 py-1 text-[12.5px] dark:border-slate-700 dark:bg-slate-900" />
+            </label>
+            <span className="text-[12px] text-gray-500">Half get A (designed, from your business). Half get B: a plain note, short lowercase subject{person.trim() ? `, from "${person.trim()}"` : ""}. Compare clicks, not opens.</span>
+          </>}
+        </div>
         <div className="flex-1 overflow-y-auto px-5 py-3">
           {error && <p className="m-0 mb-3 rounded-xl bg-rose-50 px-4 py-2.5 text-[13px] text-rose-700">{error}</p>}
           <ul className="m-0 list-none space-y-2 p-0">
             {rows.map((row, index) => {
               const past = row.sendDay < today;
-              const done = VERSIONS.every((v) => names.has(nameOf(index, v)));
+              const done = VERSIONS.every((v) => has(index, v));
               return (
                 <li key={index} className={`flex flex-wrap items-center gap-3 rounded-xl border px-3 py-2.5 ${past ? "border-gray-100 opacity-50" : "border-gray-200 dark:border-slate-700"}`}>
                   <div className="w-[92px] shrink-0 text-[13px] font-bold text-gray-900 dark:text-slate-50">{nice(row.sendDay)}</div>
                   <span className={`rounded-full px-2 py-0.5 text-[11.5px] font-bold ${PILLAR_STYLE[row.slot.pillar]}`}>{row.slot.tip ? "Helpful tip" : row.slot.pillar}</span>
                   <div className="mr-auto min-w-0">
                     <div className="text-[14px] font-bold text-gray-900 dark:text-slate-50">{row.slot.title}</div>
-                    <div className="truncate text-[12px] text-gray-500">{row.slot.store.subject.replace("{{First Name}}", "Ada")}</div>
+                    <div className="truncate text-[12px] text-gray-500">A: {row.slot.store.subject.replace("{{First Name}}", "Ada")}</div>
+                    {ab && <div className="truncate text-[12px] text-gray-500">B: {subjectB(row.slot, row.slot.store.subject).replace("{{First Name}}", "Ada")}</div>}
                     {row.moved && <div className="text-[11.5px] text-amber-700">Moved from {nice(row.day)}: another email already goes out that day.</div>}
                     {row.clash && <div className="text-[11.5px] text-amber-700">Another email also goes out this day.</div>}
                   </div>
@@ -175,9 +203,13 @@ export default function MonthlyPlan({ campaigns, onClose, onDone, onToast }: { c
       )}
       {previewRow && preview !== null && (
         <EmailPreviewGallery title={`${nice(previewRow.sendDay)}: ${previewRow.slot.title}`}
-          flows={[{ id: `plan-${preview}`, name: previewRow.slot.title, status: "draft", nodes: VERSIONS.map((v) => {
+          flows={[{ id: `plan-${preview}`, name: previewRow.slot.title, status: "draft", nodes: VERSIONS.flatMap((v) => {
             const words = v.key === "store" ? previewRow.slot.store : previewRow.slot.pod;
-            return { id: `plan-${preview}-${v.key}`, type: "email", name: `${v.label} (${v.who})`, email: { subject: words.subject, preheader: words.preheader, design: designOf(previewRow.slot, v.key), productId: null, thumbnailUrl: null } };
+            const design = designOf(previewRow.slot, v.key);
+            return [
+              { id: `plan-${preview}-${v.key}`, type: "email" as const, name: `${v.label} · A (designed)`, email: { subject: words.subject, preheader: words.preheader, design, productId: null, thumbnailUrl: null } },
+              ...(ab ? [{ id: `plan-${preview}-${v.key}-b`, type: "email" as const, name: `${v.label} · B (plain note${person.trim() ? `, from ${person.trim()}` : ""})`, email: { subject: subjectB(previewRow.slot, words.subject), preheader: words.preheader, design: asPersonalNote(design, person), productId: null, thumbnailUrl: null } }] : [])
+            ];
           }) }]}
           onClose={() => setPreview(null)} onEdit={() => setPreview(null)} />
       )}

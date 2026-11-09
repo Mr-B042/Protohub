@@ -12,7 +12,7 @@ import {
   type OrderLite, type Person, type SavedSegment, type SegmentRule
 } from "./email-marketing-rules.js";
 import { emailBrand } from "./email-brand.js";
-import { applyTags, collectLinks, fillTheirProduct, unfilledGaps, usesStorePicks, withStorePicks, type StorePickItem, normalizeDesign, renderEmailHtml, renderEmailText, usesLoyaltyTags, usesTheirProduct, withTheirProduct, type EmailDesign, type RenderOptions, type TheirProduct } from "./email-render.js";
+import { asPersonalNote, applyTags, collectLinks, fillTheirProduct, unfilledGaps, usesStorePicks, withStorePicks, type StorePickItem, normalizeDesign, renderEmailHtml, renderEmailText, usesLoyaltyTags, usesTheirProduct, withTheirProduct, type EmailDesign, type RenderOptions, type TheirProduct } from "./email-render.js";
 import { inSendWindow } from "./email-automation-rules.js";
 
 /**
@@ -826,7 +826,9 @@ type SenderContext = { brand: string; footerNote: string; logoUrl?: string | nul
 
 /** One email's HTML and text, links routed through the click counter. */
 export function renderForSend(campaign: any, rawDesign: EmailDesign, send: { token: string; name: string; variant: string; loyalty?: RenderOptions["loyalty"] | null; theirs?: TheirProduct | null }, sender: SenderContext, nowMs: number) {
-  const design = send.theirs === undefined ? rawDesign : withTheirProduct(rawDesign, send.theirs);
+  const filledDesign = send.theirs === undefined ? rawDesign : withTheirProduct(rawDesign, send.theirs);
+  // A/B: version B as a plain personal note (no logo, no colour band, buttons as simple links).
+  const design = send.variant === "b" && campaign.options?.noteB ? asPersonalNote(filledDesign, campaign.options?.fromNameB) : filledDesign;
   // Each link goes through the click counter, numbered by its place in the
   // run's link list (the same page twice counts as one link).
   const links: RunLink[] = Array.isArray(campaign.links) && campaign.links.length ? campaign.links : campaignLinks(campaign, design);
@@ -1016,7 +1018,8 @@ async function sendQueued(nowMs: number) {
     }
     const { html, text, subject } = renderForSend(campaign, ready, { ...row, loyalty, theirs }, { brand: sender.brand, footerNote: footers.get(row.branch_id) ?? "", logoUrl: sender.logoUrl }, nowMs);
     try {
-      const result = await sendMarketingEmail(row.org_id, { to: { email: row.email, name: row.name || undefined }, subject, html, text, unsubscribeUrl: trackingUrl("u", row.token), customId: row.token, replyTo: campaign.options?.replyTo || undefined });
+      const result = await sendMarketingEmail(row.org_id, { to: { email: row.email, name: row.name || undefined }, subject, html, text, unsubscribeUrl: trackingUrl("u", row.token), customId: row.token, replyTo: campaign.options?.replyTo || undefined,
+        ...(row.variant === "b" && campaign.options?.abTest && campaign.options?.fromNameB ? { fromName: String(campaign.options.fromNameB) } : {}) });
       const at = new Date().toISOString();
       await supabase.from("email_campaign_sends").update({ status: "sent", sent_at: at, provider: result.provider, provider_message_id: result.messageId ?? null, error: null }).eq("id", row.id);
       if (row.contact_id) await supabase.from("email_contacts").update({ last_emailed_at: at }).eq("id", row.contact_id);

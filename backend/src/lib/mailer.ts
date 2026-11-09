@@ -1500,6 +1500,8 @@ export type MarketingEmail = {
   customId?: string;
   /** An automation's own reply-to (else the one in Settings › Email). */
   replyTo?: string;
+  /** A/B version B's sender name (a person); same address, so nothing changes for delivery checks. */
+  fromName?: string;
 };
 
 export type MarketingSender = { fromName: string; fromEmail: string; ready: boolean; reason?: string };
@@ -1531,7 +1533,8 @@ export async function sendMarketingEmail(orgId: string, message: MarketingEmail)
     try {
       if (provider === "resend") {
         const client = new Resend(settings.resend_api_key);
-        const from = settings.from_name ? `${settings.from_name} <${settings.from_email}>` : settings.from_email;
+        const name = message.fromName || settings.from_name;
+        const from = name ? `${name} <${settings.from_email}>` : settings.from_email;
         const { data, error } = await client.emails.send({
           from, to: [message.to.email], subject: message.subject, html: message.html, text: message.text,
           ...(message.replyTo || settings.reply_to ? { reply_to: message.replyTo || settings.reply_to } : {}),
@@ -1543,7 +1546,7 @@ export async function sendMarketingEmail(orgId: string, message: MarketingEmail)
       } else {
         const client = new Mailjet({ apiKey: settings.api_key_public, apiSecret: settings.api_key_private });
         const mail: Record<string, unknown> = {
-          From: { Email: settings.from_email, Name: settings.from_name || settings.from_email },
+          From: { Email: settings.from_email, Name: message.fromName || settings.from_name || settings.from_email },
           To: [{ Email: message.to.email, Name: message.to.name || message.to.email }],
           Subject: message.subject,
           TextPart: message.text,

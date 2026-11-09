@@ -5459,7 +5459,7 @@ export type EmDelivery = {
   repeat?: { every: "day" | "week" | "month"; until?: string | null };
   automation?: { preset?: string | null; trigger: "delivered" | "ordered" | "cart" | "inactive"; delayHours: number; inactiveDays?: number; exit: "none" | "purchased" };
 };
-export type EmOptions = { abTest: boolean; plainText: boolean; utm: boolean; resendNonOpeners: boolean; resendHours: number };
+export type EmOptions = { abTest: boolean; plainText: boolean; utm: boolean; resendNonOpeners: boolean; resendHours: number; fromNameB?: string; noteB?: boolean };
 export type EmStats = {
   queued: number; sent: number; failed: number; skipped: number; opened: number; clicked: number; orders: number; deliveredOrders: number; revenue: number;
   unsubscribed: number; a: { sent: number; opened: number; clicked: number }; b: { sent: number; opened: number; clicked: number }; lastSentAt: string | null;

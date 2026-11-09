@@ -144,3 +144,20 @@ test("helpful letter: words only, numbered tips, nothing to sell", async () => {
     assert.ok(JSON.stringify(d).includes("1. a\\n\\n2. b"));
   }
 });
+
+test("A/B version B as a personal note: no logo, band, pictures or cards; links kept", async () => {
+  const r = await import("./email-render.js");
+  const f = { brand: "Shop", goal: "r", offerType: "custom", productId: "p", productName: "Rack", productImage: "https://x/r.jpg", productLink: "https://x/o", productPrice: "₦1", offerOn: false, offerTitle: "", offerBenefit: "" };
+  const note = r.asPersonalNote(r.buildQuietDesign(f, { slug: "welcome-email", tone: "lavender", title: "T", subtitle: "S", button: "Order", theirs: false, lines: ["hello"] }));
+  assert.ok(!note.blocks.some((b) => ["header", "footer", "cover", "product", "image"].includes(b.type)));
+  assert.ok(note.blocks.some((b) => b.type === "button" && b.style === "link" && b.link === "https://x/o"), "the product card becomes a text link");
+  assert.ok(r.collectLinks(note).length > 0);
+  for (const v of ["store", "pod"] as const) assert.ok(r.collectLinks(r.buildLetterDesign(f, { title: "T", intro: "I", tips: ["a"], close: "C" }, v)).length > 0, `${v} letter has a link`);
+});
+
+test("personal note is signed by the person it comes from", async () => {
+  const r = await import("./email-render.js");
+  const f = { brand: "Shop", goal: "r", offerType: "custom", productId: "p", productName: "Rack", productImage: "", productLink: "https://x/o", productPrice: "", offerOn: false, offerTitle: "", offerBenefit: "" };
+  const note = r.asPersonalNote(r.buildLetterDesign(f, { title: "T", intro: "I", tips: ["a"], close: "C" }, "pod"), "Bright from ProTools");
+  assert.ok(note.blocks.some((b) => b.type === "text" && b.text === "Warmly,\nBright, ProTools"));
+});
