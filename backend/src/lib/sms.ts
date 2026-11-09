@@ -1,3 +1,4 @@
+import { repeatWindow, sameStatusSave, takeLock } from "./message-once.js";
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { TtlCache } from "./ttl-cache.js";
@@ -1143,6 +1144,17 @@ export function withinReminderWindow(iso: string, now: Date, maxAgeHours = 2) {
   return ts <= now.getTime() && ts >= now.getTime() - maxAgeHours * 60 * 60 * 1000;
 }
 
+/** Was this order + status SMS already sent (a reschedule: for the same delivery day)? */
+async function statusSmsAlreadySent(orgId: string, orderId: string, trigger: SmsTrigger, toStatus: string, day: string) {
+  const window = repeatWindow(trigger);
+  let query = supabase.from("sms_messages").select("id").eq("org_id", orgId).eq("order_id", orderId).eq("trigger", trigger).neq("status", "failed")
+    .contains("metadata", day ? { event: "order_status", toStatus, scheduledDate: day } : { event: "order_status", toStatus });
+  if (window !== "once") query = query.gte("created_at", new Date(Date.now() - window).toISOString());
+  const { data, error } = await query.limit(1);
+  if (error) { logger.warn("sms repeat check failed", { orgId, orderId, trigger, error: error.message }); return false; }
+  return (data?.length ?? 0) > 0;
+}
+
 async function reminderAlreadyLogged(
   orgId: string,
   orderId: string,
@@ -1578,14 +1590,21 @@ export async function sendOrderStatusSms(
     response?: string | null;
   },
   fromStatus: string | null,
-  toStatus: string
+  toStatus: string,
+  days?: { before?: string | null; after?: string | null }
 ) {
+  // Saving the same status again (or a double tap) sends nothing (message-once.ts):
+  // the 9 Nov audit found ~2,400 repeat customer SMS from re-saves.
+  if (sameStatusSave(fromStatus, toStatus, days?.before, days?.after ?? order.scheduled_date)) return null;
   let trigger: SmsTrigger;
   if (toStatus === "Delivered") trigger = "order_delivered";
   else if (toStatus === "Failed") trigger = "order_failed";
   else if (toStatus === "Cancelled") trigger = "order_cancelled";
   else if (toStatus === "Postponed") trigger = resolvePostponedTrigger(order.call_outcome, order.response);
   else trigger = "order_status_change";
+  const day = toStatus === "Postponed" ? order.scheduled_date ?? "" : "";
+  if (!takeLock(`${orgId}:sms:${trigger}:${order.id}:${toStatus}:${day}`)) return null;
+  if (await statusSmsAlreadySent(orgId, order.id, trigger, toStatus, day)) return null;
 
   const assignedRep = await loadAssignedRepContact(orgId, order.assignedRepId);
 
@@ -1618,6 +1637,7 @@ export async function sendOrderStatusSms(
         fromStatus,
         toStatus,
         trigger,
+        scheduledDate: day || null,
         assignedRepId: order.assignedRepId ?? null,
         assignedRepName: assignedRep?.name ?? null,
         assignedRepPhone: assignedRep?.phone ?? null

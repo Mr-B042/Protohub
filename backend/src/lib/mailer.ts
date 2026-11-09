@@ -1,3 +1,4 @@
+import { repeatWindow, sameStatusSave, takeLock } from "./message-once.js";
 import Mailjet from "node-mailjet";
 import { Resend } from "resend";
 import { supabase } from "./supabase.js";
@@ -871,15 +872,20 @@ export async function sendOrderStatusEmail(
     product_name: string; package_name?: string | null; amount: number; currency: string;
   },
   fromStatus: string | null,
-  toStatus: string
+  toStatus: string,
+  days?: { before?: string | null; after?: string | null }
 ): Promise<void> {
   if (!order.email) return;
+  // Saving the same status again (or a double tap) sends nothing (message-once.ts).
+  if (sameStatusSave(fromStatus, toStatus, days?.before, days?.after)) return;
   const vars: Record<string, string> = {
     order_id: order.id, customer: order.customer,
     product_name: orderDisplayName(order), amount: String(order.amount),
     currency: order.currency, from_status: fromStatus ?? "—", status: toStatus
   };
   const trigger: EmailTrigger = toStatus === "Delivered" ? "order_delivered" : "order_status_change";
+  if (!takeLock(`${orgId}:email:${trigger}:${order.id}:${toStatus}:${days?.after ?? ""}`)) return;
+  if (await customerEmailAlreadySent(orgId, trigger, order.id, order.email, toStatus)) return;
   // Delivered: the "Thank You" e-receipt (Bright, 9 Nov 2026); plain text only if it can't be made.
   if (trigger === "order_delivered" && await sendReceiptEmail(orgId, "order_delivered", order.id, "thank_you", { email: order.email, name: order.customer }, vars)) return;
   await sendEmail(orgId, trigger, vars, { email: order.email, name: order.customer });
@@ -909,6 +915,17 @@ async function sendReceiptEmail(orgId: string, trigger: EmailTrigger, orderId: s
     // already logged as failed; not sent twice
   }
   return true;
+}
+
+/** Was this order's message already sent (or waiting for working hours) to this customer? */
+async function customerEmailAlreadySent(orgId: string, trigger: EmailTrigger, orderId: string, email: string, status: string | null) {
+  const window = repeatWindow(trigger);
+  let query = supabase.from("email_messages").select("id").eq("org_id", orgId).eq("trigger", trigger).eq("recipient_email", email)
+    .in("status", ["sent", "deferred"]).contains("metadata", status ? { order_id: orderId, status } : { order_id: orderId });
+  if (window !== "once") query = query.gte("created_at", new Date(Date.now() - window).toISOString());
+  const { data, error } = await query.limit(1);
+  if (error) { logger.warn("email repeat check failed", { orgId, orderId, trigger, error: error.message }); return false; }
+  return (data?.length ?? 0) > 0;
 }
 
 // ── Customer: new order confirmation ─────────────────────
@@ -953,6 +970,9 @@ export async function sendNewOrderEmail(
     currency: order.currency, source: order.source ?? "—",
     addons: buildAddonsEmailLine(order.cross_sell_lines, order.currency, order.additional_lines)
   };
+  // Once per order, ever (a double tap or a retried save never sends it twice).
+  if (!takeLock(`${orgId}:email:order_new:${order.id}`)) return;
+  if (await customerEmailAlreadySent(orgId, "order_new", order.id, order.email, null)) return;
   // The "Order Confirmation" e-receipt; plain text only if it can't be made.
   if (await sendReceiptEmail(orgId, "order_new", order.id, "confirmation", { email: order.email, name: order.customer }, vars)) return;
   await sendEmail(orgId, "order_new", vars, { email: order.email, name: order.customer });
