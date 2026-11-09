@@ -134,3 +134,13 @@ test("add to your delivery: product buttons open WhatsApp and keep doing so afte
   assert.ok(JSON.stringify(filled).includes("Edge Brusher Max"));
   assert.ok(!/₦0|free delivery|discount/i.test(JSON.stringify(design)), "no price or fee promises");
 });
+
+test("helpful letter: words only, numbered tips, nothing to sell", async () => {
+  const r = await import("./email-render.js");
+  const f = { brand: "Shop", goal: "r", offerType: "custom", productId: "p", productName: "Rack", productImage: "https://x/r.jpg", productLink: "https://x/o", productPrice: "₦1", offerOn: false, offerTitle: "", offerBenefit: "" };
+  for (const version of ["store", "pod"] as const) {
+    const d = r.buildLetterDesign(f, { title: "T", intro: "I", tips: ["a", "b"], close: "C" }, version);
+    assert.ok(!d.blocks.some((b) => ["cover", "image", "product", "storePicks", "offer", "hero"].includes(b.type)), "no pictures, cards or offers");
+    assert.ok(JSON.stringify(d).includes("1. a\\n\\n2. b"));
+  }
+});

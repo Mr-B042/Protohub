@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, Eye, Loader2, Sparkles, X } from "lucide-react";
 import { emailMarketingApi, type EmAudience, type EmCampaign, type EmCampaignInput, type EmDesigner } from "../../lib/api";
-import { buildQuietDesign, buildStoreDesign, type EmailDesign } from "../../lib/email-render";
+import { buildLetterDesign, buildQuietDesign, buildStoreDesign, type EmailDesign } from "../../lib/email-render";
 import EmailPreviewGallery from "./EmailPreviewGallery";
-import { christmasSeason, normalMonth, planDays, type PlanSlot } from "./email-plan";
+import { christmasSeason, normalMonth, planDays, tipSlot, type PlanSlot } from "./email-plan";
+import { TIPS } from "./tips-library";
 import { DEFAULT_OPTIONS, priceText } from "./wizard-model";
 
 /**
@@ -36,19 +37,20 @@ export default function MonthlyPlan({ campaigns, onClose, onDone, onToast }: { c
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<number | null>(null);
+  const [library, setLibrary] = useState(false);
   const [counts, setCounts] = useState<Record<string, number | null>>({ store: null, pod: null });
   useEffect(() => { emailMarketingApi.designer().then(setDesigner).catch((err) => setError((err as Error).message || "Could not load.")); }, []);
   useEffect(() => { for (const v of VERSIONS) void emailMarketingApi.audiencePreview(v.audience).then((res) => setCounts((prev) => ({ ...prev, [v.key]: res.recipients }))).catch(() => undefined); }, []);
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && preview === null) onClose(); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && preview === null && !library) onClose(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, preview]);
+  }, [onClose, preview, library]);
 
   const { year, month } = choices[pick];
   const label = `${MONTHS[month]} ${year}`;
   const cutoffText = new Date(Date.UTC(year, 11, cutoff, 12)).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
-  const slots = useMemo(() => (month === 11 ? christmasSeason(cutoffText) : normalMonth(month)), [month, cutoffText]);
+  const slots = useMemo(() => (month === 11 ? christmasSeason(cutoffText) : normalMonth(month, year)), [month, year, cutoffText]);
   // Days that already carry a one-time email (holidays etc.): move ours a day so nobody gets two in a day.
   const busyDays = useMemo(() => new Set(campaigns.filter((row) => row.status !== "archived" && !row.name.startsWith("Plan:") && row.sendAt)
     .map((row) => new Date(row.sendAt!).toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" }))), [campaigns]);
@@ -64,7 +66,8 @@ export default function MonthlyPlan({ campaigns, onClose, onDone, onToast }: { c
   const fields = () => ({ brand: designer?.sender.fromName || "Our Store", goal: "retention", offerType: "custom", productId: best?.id ?? "", productName: best?.name ?? "", productImage: best?.image ?? "",
     productLink: best?.links[0]?.url ?? "", productPrice: priceText(best), offerOn: false, offerTitle: "", offerBenefit: "" });
   const designOf = (slot: PlanSlot, version: "store" | "pod"): EmailDesign =>
-    version === "store" && !slot.noSell ? buildStoreDesign(fields(), slot.store.spec) : buildQuietDesign(fields(), slot.pod.spec);
+    slot.tip ? buildLetterDesign(fields(), slot.tip, version)
+      : version === "store" && !slot.noSell ? buildStoreDesign(fields(), slot.store.spec!) : buildQuietDesign(fields(), slot.pod.spec!);
   const future = rows.map((row, index) => ({ ...row, index })).filter((row) => row.sendDay >= today);
   const todo = future.filter((row) => VERSIONS.some((v) => !names.has(nameOf(row.index, v))));
 
@@ -105,8 +108,9 @@ export default function MonthlyPlan({ campaigns, onClose, onDone, onToast }: { c
           <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#5B3FD9] text-white"><Sparkles className="h-5 w-5" /></span>
           <div className="mr-auto">
             <h2 className="m-0 text-[19px] font-extrabold text-gray-900 dark:text-slate-50">Monthly Plan</h2>
-            <p className="m-0 text-[13px] text-gray-600 dark:text-slate-400">Two emails a week. Selling emails go out in payday weeks; the middle of the month gives help and asks for nothing.</p>
+            <p className="m-0 text-[13px] text-gray-600 dark:text-slate-400">Two emails a week: 7 helpful tips as plain letters, and 1 selling email in payday week (the 25th–31st). The tips change every month.</p>
           </div>
+          <button type="button" onClick={() => setLibrary(true)} disabled={!designer} className="!min-h-0 inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[12.5px] font-semibold text-[#5B3FD9] dark:border-slate-700"><Eye className="h-4 w-4" />Tips Library ({TIPS.length})</button>
           <button type="button" onClick={onClose} aria-label="Close" className="!min-h-0 rounded-lg p-1.5 text-gray-500 hover:bg-gray-100"><X className="h-5 w-5" /></button>
         </div>
         <div className="flex flex-wrap items-center gap-2 border-b border-gray-100 px-5 py-3 dark:border-slate-800">
@@ -141,7 +145,7 @@ export default function MonthlyPlan({ campaigns, onClose, onDone, onToast }: { c
               return (
                 <li key={index} className={`flex flex-wrap items-center gap-3 rounded-xl border px-3 py-2.5 ${past ? "border-gray-100 opacity-50" : "border-gray-200 dark:border-slate-700"}`}>
                   <div className="w-[92px] shrink-0 text-[13px] font-bold text-gray-900 dark:text-slate-50">{nice(row.sendDay)}</div>
-                  <span className={`rounded-full px-2 py-0.5 text-[11.5px] font-bold ${PILLAR_STYLE[row.slot.pillar]}`}>{row.slot.pillar}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-[11.5px] font-bold ${PILLAR_STYLE[row.slot.pillar]}`}>{row.slot.tip ? "Helpful tip" : row.slot.pillar}</span>
                   <div className="mr-auto min-w-0">
                     <div className="text-[14px] font-bold text-gray-900 dark:text-slate-50">{row.slot.title}</div>
                     <div className="truncate text-[12px] text-gray-500">{row.slot.store.subject.replace("{{First Name}}", "Ada")}</div>
@@ -163,6 +167,12 @@ export default function MonthlyPlan({ campaigns, onClose, onDone, onToast }: { c
           </button>
         </div>
       </div>
+      {library && designer && (
+        <EmailPreviewGallery title={`Tips Library: ${TIPS.length} helpful letters`}
+          flows={[{ id: "tips", name: "Helpful tips", status: "draft", nodes: TIPS.map((tip) => ({ id: `tip-${tip.key}`, type: "email", name: `${tip.topic}: ${tip.title}`,
+            email: { subject: tip.subject, preheader: tip.preheader, design: designOf(tipSlot(tip.key, tip), "store"), productId: null, thumbnailUrl: null } })) }]}
+          onClose={() => setLibrary(false)} onEdit={() => setLibrary(false)} />
+      )}
       {previewRow && preview !== null && (
         <EmailPreviewGallery title={`${nice(previewRow.sendDay)}: ${previewRow.slot.title}`}
           flows={[{ id: `plan-${preview}`, name: previewRow.slot.title, status: "draft", nodes: VERSIONS.map((v) => {
