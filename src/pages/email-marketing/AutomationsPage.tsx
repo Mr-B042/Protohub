@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  Archive, BarChart3, ChevronRight, Clock, Coins, Copy, Filter, LayoutGrid, Layers, List, Mail, MoreHorizontal, Pause, Pencil, Play, Plus, Search, Send, Target, Trash2, Undo2, Users, Zap
+  Archive, BarChart3, ChevronRight, Clock, Coins, Copy, Filter, LayoutGrid, Layers, List, Mail, MoreHorizontal, Pause, Pencil, Play, Plus, Search, Send, Target, Trash2, Undo2, Users, Zap, Eye
 } from "lucide-react";
+import EmailPreviewGallery from "./EmailPreviewGallery";
 import { emailMarketingApi, type EmAutomationReport, type EmAutomationRow, type EmAutomationsPage, type EmDesigner } from "../../lib/api";
 import { ModalShell } from "./AudiencePage";
 import { Card, Delta, ErrorNote, IconTile, Loading, Pill, Toggle, btn, count, input, lagosDate, naira, pct, select } from "./em-ui";
@@ -36,6 +37,8 @@ export default function AutomationsPage({ onOpenWizard, onToast, refreshKey }: {
   const [designer, setDesigner] = useState<EmDesigner | null>(null);
   const [busy, setBusy] = useState(false);
   const [autopilot, setAutopilot] = useState(false);
+  /** "all" = every flow's emails; an id = that flow's. */
+  const [gallery, setGallery] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -87,9 +90,15 @@ export default function AutomationsPage({ onOpenWizard, onToast, refreshKey }: {
           <h1 className="m-0 text-[28px] font-extrabold leading-tight text-gray-900 dark:text-slate-50">Automations</h1>
           <p className="m-0 text-[15px] text-gray-600 dark:text-slate-400">Set up automatic emails that run on customer actions to increase retention, repeat purchase, and LTV.</p>
         </div>
+        <button type="button" onClick={() => setGallery("all")} className={`${btn.ghost} !px-5 !py-3`}><Eye className="h-4 w-4 text-[#5B3FD9]" />Preview All Emails</button>
         <button type="button" onClick={() => setAutopilot(true)} className={`${btn.ghost} !px-5 !py-3`}><Zap className="h-4 w-4 text-[#5B3FD9]" />Autopilot</button>
         <button type="button" onClick={() => onOpenWizard({ template: "post_purchase" })} className={`${btn.primary} !px-5 !py-3`}><Plus className="h-4 w-4" />New Automation</button>
       </div>
+      {gallery && (
+        <EmailPreviewGallery title={gallery === "all" ? "All Automation Emails" : "Flow Email Previews"}
+          flows={(data?.automations ?? []).filter((row) => row.status !== "archived" && (gallery === "all" || row.id === gallery)).map((row) => ({ id: row.id, name: row.name, status: row.status, nodes: row.workflow?.nodes ?? [] }))}
+          onClose={() => setGallery(null)} onEdit={(id) => { setGallery(null); onOpenWizard({ id, step: 3 }); }} />
+      )}
       {autopilot && <AutopilotModal existing={(data?.automations ?? []).map((row) => row.name)} onClose={() => setAutopilot(false)} onToast={onToast} onDone={async () => { setAutopilot(false); await load(); }} />}
 
       <ErrorNote message={error} />
@@ -137,6 +146,7 @@ export default function AutomationsPage({ onOpenWizard, onToast, refreshKey }: {
               {current ? (
                 <div className="flex flex-wrap items-center gap-2">
                   <button type="button" onClick={() => onOpenWizard({ id: current.id, step: 3 })} className={btn.ghost}><Pencil className="h-4 w-4 text-[#5B3FD9]" />Edit</button>
+                  <button type="button" onClick={() => setGallery(current.id)} className={btn.ghost}><Eye className="h-4 w-4 text-[#5B3FD9]" />Preview</button>
                   <button type="button" onClick={() => void openTest(current)} className={btn.ghost}><Send className="h-4 w-4 text-[#5B3FD9]" />Test</button>
                   {current.status !== "archived" && (
                     <span className="inline-flex items-center gap-2 rounded-xl bg-[#5B3FD9] px-3 py-2 text-[14px] font-semibold text-white">

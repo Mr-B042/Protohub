@@ -127,7 +127,7 @@ export function confirmationHtml(model: ReceiptModel, brand: EmailBrand, imageOf
   <div style="margin-top:20px">${promises()}</div>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:18px 0 22px;background:${C.mist};border:1px solid #d6e6f5;border-radius:16px;border-collapse:separate"><tr>
     <td width="44" valign="top" style="padding:16px 0 16px 16px"><div style="width:32px;height:32px;border-radius:16px;background:${C.blue};text-align:center;line-height:32px;font-size:16px">📋</div></td>
-    <td style="padding:16px 18px 16px 12px;font:15px ${FONT};color:#173a5e;line-height:1.5"><b style="color:${C.blueDark}">Important:</b><br>${model.paid ? `This order was paid on delivery: <b>${money(model.total, s)}</b>.` : `You will pay <b>${money(model.total, s)}</b> when you receive your order.`}<br>Please keep this receipt for reference. Questions? Just reply to this email.</td>
+    <td style="padding:16px 18px 16px 12px;font:15px ${FONT};color:#173a5e;line-height:1.5"><b style="color:${C.blueDark}">Important:</b><br>${model.paid ? `This order was paid on delivery: <b>${money(model.total, s)}</b>.` : `You will pay <b>${money(model.total, s)}</b> when you receive your order.`}<br>Please keep this receipt for reference. Questions? Just reply to this email.<div style="margin-top:10px;font-size:13px;color:#475569">📌 Tip: if this landed in Promotions or Updates, move it to your <b>Primary</b> tab (or add us to your contacts) so you don't miss your delivery updates.</div></td>
   </tr></table>
 </td></tr>
 ${footer(brand)}`;
