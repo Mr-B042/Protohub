@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, BarChart3, FileText, GitBranch, Home, Info, LayoutGrid, Mail, Plus, RefreshCw, Save, Settings, Users, Zap } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertTriangle, BarChart3, FileText, GitBranch, Home, Info, LayoutGrid, Mail, Plus, RefreshCw, Save, Settings, Star, Tag, ThumbsUp, Users, Zap } from "lucide-react";
 import { emailMarketingApi, type EmCampaign, type EmOverview } from "../../lib/api";
 import AudiencePage from "./AudiencePage";
 import AudienceHealthPage from "./AudienceHealthPage";
@@ -23,17 +23,25 @@ import CampaignReport from "./CampaignReport";
  * designs. The sidebar's sub-list and the tab bar both move between pages.
  */
 
+// Every section, in the sidebar's order (Bright, 9 Nov 2026: "from Campaigns
+// we don't see the tabs… we scroll down to use the side nav"). The bar shows
+// on every page and stays at the top while scrolling.
 const TABS: Array<{ key: EmSection; label: string; icon: typeof Home }> = [
   { key: "overview", label: "Overview", icon: Home },
   { key: "campaigns", label: "Campaigns", icon: Mail },
   { key: "automations", label: "Automations", icon: Zap },
+  { key: "journey", label: "Customer Journey", icon: GitBranch },
+  { key: "offers", label: "Coupons & Offers", icon: Tag },
+  { key: "loyalty", label: "Loyalty & Rewards", icon: Star },
+  { key: "reviews", label: "Reviews & UGC", icon: ThumbsUp },
   { key: "audience", label: "Audience & Segments", icon: Users },
   { key: "templates", label: "Templates", icon: LayoutGrid },
   { key: "forms", label: "Forms & Lead Capture", icon: FileText },
-  { key: "journey", label: "Customer Journey", icon: GitBranch },
   { key: "analytics", label: "Analytics", icon: BarChart3 },
   { key: "settings", label: "Settings", icon: Settings }
 ];
+/** Audience Health opens from Audience & Segments: that tab stays lit. */
+const tabOf = (section: EmSection): EmSection => (section === "health" ? "audience" : section);
 
 type WizardState = { campaignId?: string | null; preset?: string; segmentId?: string; template?: StartTemplate } | null;
 
@@ -78,6 +86,7 @@ export default function EmailMarketingPage({ section, onNavigate, onToast, onOpe
 
   return (
     <div className="space-y-4">
+      {!withHeader && <SectionTabs section={section} onNavigate={onNavigate} />}
       {withHeader && (
         <>
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
@@ -99,14 +108,7 @@ export default function EmailMarketingPage({ section, onNavigate, onToast, onOpe
             </div>
           </div>
 
-          <nav className="flex gap-1 overflow-x-auto rounded-2xl border border-gray-200/80 bg-white p-1.5 dark:border-slate-800 dark:bg-slate-900" aria-label="Email Marketing sections">
-            {TABS.map(({ key, label, icon: Icon }) => (
-              <button key={key} type="button" onClick={() => onNavigate(key)} aria-current={section === key ? "page" : undefined}
-                className={`!min-h-0 inline-flex flex-none items-center justify-center gap-1.5 whitespace-nowrap rounded-xl px-2.5 py-2.5 text-[13px] font-semibold xl:flex-auto ${section === key ? "bg-[#5B3FD9] text-white shadow-sm" : "text-gray-700 hover:bg-gray-50 dark:text-slate-300 dark:hover:bg-slate-800"}`}>
-                <Icon className="h-4 w-4" />{label}
-              </button>
-            ))}
-          </nav>
+          <SectionTabs section={section} onNavigate={onNavigate} />
 
           {overview && !overview.sender.ready && (
             <p className="m-0 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-[13px] text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />Emails can't be sent yet: {overview.sender.reason}</p>
@@ -198,5 +200,26 @@ function SettingsTab({ onToast }: { onToast: (message: string) => void }) {
         </div>
       )}
     </Card>
+  );
+}
+
+/** The section bar: on every Email Marketing page, pinned to the top while scrolling, the open tab kept in view. */
+function SectionTabs({ section, onNavigate }: { section: EmSection; onNavigate: (section: EmSection) => void }) {
+  const bar = useRef<HTMLElement | null>(null);
+  const current = tabOf(section);
+  useEffect(() => {
+    bar.current?.querySelector<HTMLElement>('[aria-current="page"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [current]);
+  return (
+    <div className="sticky top-14 z-20 -mx-1 bg-[#F6F7FB]/95 px-1 pb-1 pt-1 backdrop-blur dark:bg-slate-950/95">
+      <nav ref={bar} className="flex gap-1 overflow-x-auto rounded-2xl border border-gray-200/80 bg-white p-1.5 shadow-sm dark:border-slate-800 dark:bg-slate-900" aria-label="Email Marketing sections">
+        {TABS.map(({ key, label, icon: Icon }) => (
+          <button key={key} type="button" onClick={() => onNavigate(key)} aria-current={current === key ? "page" : undefined}
+            className={`!min-h-0 inline-flex flex-none items-center justify-center gap-1.5 whitespace-nowrap rounded-xl px-3 py-2.5 text-[13px] font-semibold 2xl:flex-auto ${current === key ? "bg-[#5B3FD9] text-white shadow-sm" : "text-gray-700 hover:bg-gray-50 dark:text-slate-300 dark:hover:bg-slate-800"}`}>
+            <Icon className="h-4 w-4" />{label}
+          </button>
+        ))}
+      </nav>
+    </div>
   );
 }
