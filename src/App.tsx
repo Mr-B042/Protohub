@@ -457,7 +457,9 @@ const EMAIL_MARKETING_SUBNAV: Array<{ key: EmSection; label: string; icon: typeo
   { key: "offers", label: "Coupons & Offers", icon: Tag },
   { key: "loyalty", label: "Loyalty & Rewards", icon: Star },
   { key: "reviews", label: "Reviews & UGC", icon: ThumbsUp },
-  { key: "audience", label: "Audience & Segments", icon: Users }
+  { key: "audience", label: "Audience & Segments", icon: Users },
+  { key: "templates", label: "Templates", icon: LayoutGrid },
+  { key: "settings", label: "Settings", icon: Settings }
 ];
 
 const RETENTION_SUBNAV_ITEMS: Array<{ key: RetentionSubPage; label: string; icon: typeof LayoutPanelTop; ownerOnly?: boolean }> = [
@@ -76550,7 +76552,9 @@ ${waybillLineItems(w).length > 1
   })();
 
   return (
-    <div className={`app-shell !flex min-h-[100dvh] lg:min-h-screen bg-[hsl(var(--surface-page))] overflow-x-hidden ${isPreviewing ? "pt-9" : ""} ${collapsed ? "is-collapsed" : ""}`} data-theme={theme} data-density={density}>
+    // overflow-x "clip" (not "hidden"): it hides sideways overflow the same way but
+    // doesn't turn the box into a scroll area, so bars can stay pinned while scrolling.
+    <div className={`app-shell !flex min-h-[100dvh] lg:min-h-screen bg-[hsl(var(--surface-page))] ${isPreviewing ? "pt-9" : ""} ${collapsed ? "is-collapsed" : ""}`} style={{ overflowX: "clip" }} data-theme={theme} data-density={density}>
       {isPreviewing && (
         <div className={`fixed top-0 left-0 right-0 z-[60] h-9 px-4 flex items-center justify-center gap-3 shadow-md text-sm font-semibold ${previewReadOnly ? "bg-amber-500 text-amber-950" : "bg-rose-600 text-white"}`}>
           <Eye className="w-4 h-4 shrink-0" />
@@ -77112,7 +77116,7 @@ ${waybillLineItems(w).length > 1
       </aside>
 
       {/* Main Content Area */}
-      <div className={`flex-1 flex flex-col min-w-0 overflow-x-hidden ${collapsed ? "lg:ml-[72px]" : "lg:ml-[280px]"} ${repGoldHonorActive ? "bg-gradient-to-b from-amber-50/60 via-transparent to-transparent" : ""}`}>
+      <div style={{ overflowX: "clip" }} className={`flex-1 flex flex-col min-w-0 ${collapsed ? "lg:ml-[72px]" : "lg:ml-[280px]"} ${repGoldHonorActive ? "bg-gradient-to-b from-amber-50/60 via-transparent to-transparent" : ""}`}>
         {/* Top Bar */}
         <header className={`app-topbar fixed inset-x-0 top-0 z-30 h-14 bg-white border-b border-gray-200 px-4 flex items-center justify-between shrink-0 overflow-visible lg:right-0 lg:z-40 ${collapsed ? "lg:left-[72px]" : "lg:left-[280px]"} ${isSpying ? "!top-9" : ""} ${repGoldHonorActive ? "!border-b-2 !border-amber-300/60 bg-gradient-to-r from-amber-50/80 via-white to-amber-50/80" : ""}`}>
           <div className="flex items-center gap-2 lg:hidden">
