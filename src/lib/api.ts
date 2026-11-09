@@ -5388,7 +5388,7 @@ export type StoreActivitySummary = {
   notOpened: Array<{ userId: string; name: string; role: string }>;
   daily: Array<{ day: string; visits: number; people: number }>;
   topPages: Array<{ title: string; url: string; views: number; kind: string }>;
-  recent: Array<{ at: string; userId: string; name: string; role: string; event: StoreEventKind; title: string | null; url: string | null; detail: Record<string, unknown> }>;
+  recent: Array<{ at: string; sessionId: string; userId: string; name: string; role: string; event: StoreEventKind; title: string | null; url: string | null; detail: Record<string, unknown> }>;
 };
 /** Our Store activity (Bright, 9 Nov 2026): every role records, the Owner reads. */
 export const storeActivityApi = {

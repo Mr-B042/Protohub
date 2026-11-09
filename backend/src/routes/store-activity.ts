@@ -161,8 +161,9 @@ router.get("/summary", requireRole("Owner"), async (req, res) => {
       notOpened: users.filter((row) => !byUser.has(row.id)).map((row) => ({ userId: row.id, name: row.name, role: row.role })),
       daily,
       topPages: [...pageCounts.values()].sort((a, b) => b.views - a.views).slice(0, 15),
-      recent: events.slice(0, 120).map((row) => ({
-        at: row.created_at, userId: String(row.user_id), name: nameOf.get(String(row.user_id))?.name ?? row.user_name, role: row.role, event: row.event,
+      // Grouped into visits (sessions) and paged in the browser.
+      recent: events.slice(0, 1500).map((row) => ({
+        at: row.created_at, sessionId: String(row.session_id), userId: String(row.user_id), name: nameOf.get(String(row.user_id))?.name ?? row.user_name, role: row.role, event: row.event,
         title: row.title ?? null, url: row.url ?? null, detail: row.detail ?? {}
       }))
     });
