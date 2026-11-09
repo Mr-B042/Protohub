@@ -103,7 +103,7 @@ const text = (value: unknown, max: number) => String(value ?? "").trim().slice(0
 export function normalizeTrigger(raw: any): Trigger {
   const kind: TriggerKind = TRIGGER_KINDS.includes(raw?.kind) ? raw.kind : "order_delivered";
   const out: Trigger = { kind };
-  if (["order_delivered", "order_placed", "reorder"].includes(kind)) out.productId = UUID.test(String(raw?.productId ?? "")) ? raw.productId : null;
+  if (["order_delivered", "order_placed", "reorder", "cart_abandoned"].includes(kind)) out.productId = UUID.test(String(raw?.productId ?? "")) ? raw.productId : null;
   if (kind === "cart_abandoned") out.cartMinutes = int(raw?.cartMinutes, 15, 7 * 24 * 60, 60);
   if (kind === "inactive") out.inactiveDays = int(raw?.inactiveDays, 7, 365, 60);
   if (kind === "date_field") out.fieldKey = /^[a-z][a-z0-9_]{0,40}$/.test(String(raw?.fieldKey ?? "")) ? raw.fieldKey : "birthday";
