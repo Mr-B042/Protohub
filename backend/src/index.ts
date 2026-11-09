@@ -69,6 +69,7 @@ import weeklyReportRoutes from "./routes/weekly-reports.js";
 import stockAllocationRoutes from "./routes/stock-allocations.js";
 import productPerformanceRoutes from "./routes/product-performance.js";
 import pageVisitRoutes from "./routes/page-visits.js";
+import storeActivityRoutes from "./routes/store-activity.js";
 import telegramRoutes, { telegramWebhookRouter } from "./routes/telegram.js";
 import waybillFollowUpRoutes from "./routes/waybill-follow-ups.js";
 import customerReviewRoutes from "./routes/customer-reviews.js";
@@ -390,6 +391,7 @@ app.use("/api/weekly-reports", weeklyReportRoutes);
 app.use("/api/stock-allocations", stockAllocationRoutes);
 app.use("/api/product-performance", productPerformanceRoutes);
 app.use("/api/page-visits", pageVisitRoutes);
+app.use("/api/store-activity", storeActivityRoutes);
 // Telegram calls the webhook without a login (secret header); mounted first.
 app.use("/api/telegram/webhook", telegramWebhookRouter);
 app.use("/api/telegram", telegramRoutes);

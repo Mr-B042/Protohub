@@ -5379,6 +5379,24 @@ export const telegramApi = {
   logs: (period: string, trigger = "all", status = "all") => get<{ totals: { sent: number; failed: number; rate: number | null; people: number }; byDay: Array<{ day: string; sent: number; failed: number }>; byTrigger: Array<{ trigger: string; sent: number; failed: number }>; rows: TelegramLogRow[]; total: number }>(`/api/telegram/logs?period=${period}&trigger=${trigger}&status=${status}`)
 };
 
+export type StoreEventKind = "open" | "heartbeat" | "page" | "full_store" | "home" | "product" | "search" | "cart" | "checkout" | "order";
+export type StoreActivitySummary = {
+  days: number; since: string; today: string; storeConnected: boolean;
+  kpis: { people: number; staff: number; visits: number; seconds: number; pages: number; fullStore: number; products: number; searches: number; carts: number; checkouts: number; orders: number };
+  roles: Array<{ role: string; people: number; visits: number; seconds: number; pages: number; carts: number; orders: number }>;
+  people: Array<{ userId: string; name: string; role: string; visits: number; seconds: number; pages: number; activeDays: number; fullStore: number; products: number; searches: number; carts: number; checkouts: number; orders: number; lastAt: string | null }>;
+  notOpened: Array<{ userId: string; name: string; role: string }>;
+  daily: Array<{ day: string; visits: number; people: number }>;
+  topPages: Array<{ title: string; url: string; views: number; kind: string }>;
+  recent: Array<{ at: string; userId: string; name: string; role: string; event: StoreEventKind; title: string | null; url: string | null; detail: Record<string, unknown> }>;
+};
+/** Our Store activity (Bright, 9 Nov 2026): every role records, the Owner reads. */
+export const storeActivityApi = {
+  record: (body: { sessionId: string; event: StoreEventKind; url?: string; title?: string; detail?: Record<string, string | number | boolean>; device?: string }) =>
+    post<{ ok: boolean }>("/api/store-activity/event", body),
+  summary: (days = 30) => get<StoreActivitySummary>(`/api/store-activity/summary?days=${days}`)
+};
+
 export const pageVisitsApi = {
   record: (key: string, label: string) => post<{ ok: boolean }>("/api/page-visits", { key, label }),
   list: (days = 30) => get<{ since: string; today: string; days: number; users: Array<{ id: string; name: string; role: string }>; visits: PageVisitRow[]; daily?: PageVisitDayRow[] }>(`/api/page-visits?days=${days}`)

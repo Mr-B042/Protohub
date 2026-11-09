@@ -91969,7 +91969,8 @@ ${waybillLineItems(w).length > 1
                   onChanged={() => { void productsApi.list().then((rows: any) => { if (Array.isArray(rows)) setProducts(rows as Product[]); }).catch(() => undefined); }} />
               : <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center text-sm text-gray-500">Product Launch is for the Owner.</section>
           ) : activePage === "Our Store" ? (
-            <OurStorePage />
+            // Analytics is the Owner's only (gate on currentRole, so "view as" a rep hides it).
+            <OurStorePage isOwner={currentRole === "Owner"} />
           ) : activePage === "Product Trend" ? (
             // Owner / Admin / Manager (Bright, 20 Oct 2026). Net profit is
             // Owner / Admin only: Managers have no Finance page. Gated on
