@@ -1,3 +1,4 @@
+import { unfilledGaps } from "./email-render.js";
 import crypto from "node:crypto";
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
@@ -114,6 +115,8 @@ async function readyToLaunch(orgId: string, branchId: string, trigger: Trigger, 
   if (!emails.length) throw new EmailMarketingError(400, "Add at least one email to the flow before launching.");
   const unfinished = emails.find((node) => !node.email.subject.trim() || !node.email.design?.blocks?.length);
   if (unfinished) throw new EmailMarketingError(400, `"${unfinished.name}" needs a subject and some content before launching.`);
+  const gapped = emails.find((node) => unfilledGaps(node.email.design, node.email.subject).length);
+  if (gapped) throw new EmailMarketingError(400, `"${gapped.name}" still has parts to fill in: ${unfilledGaps(gapped.email.design, gapped.email.subject).join(", ")}. Write them, then launch.`);
   if (trigger.kind === "date_field") {
     const { data } = await supabase.from("email_custom_fields").select("id").eq("org_id", orgId).eq("branch_id", branchId).eq("key", trigger.fieldKey ?? "").eq("type", "date").eq("status", "active").maybeSingle();
     if (!data) throw new EmailMarketingError(400, "Add the date field first: Audience & Segments › Custom Fields (type Date), e.g. Birthday.");

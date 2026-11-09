@@ -479,6 +479,16 @@ export function withTheirProduct(design: EmailDesign, product: TheirProduct | nu
 }
 export const fillTheirProduct = (text: string, product: TheirProduct | null) => text.split(THEIR_PRODUCT_TAG).join(product?.name.trim() || "order");
 
+/**
+ * The "[write … here]" gaps a ready-made leaves for the business to fill
+ * (dates, tips, delivery times). An email that still has one is never sent
+ * (Bright, 9 Nov 2026: four live After Delivery emails still had them).
+ */
+export function unfilledGaps(design: EmailDesign | null, subject = ""): string[] {
+  const text = `${subject} ${JSON.stringify(design?.blocks ?? [])}`;
+  return [...new Set(text.match(/\[write [^\]]{1,60} here\]/gi) ?? [])];
+}
+
 /** A follow-up email (Autopilot's "went quiet" flows): designed cover, words, the customer's product. */
 export type QuietEmailSpec = { slug: string; tone: CoverTone; title: string; subtitle: string; button: string; buttonTone?: "yellow" | "purple"; lines: string[]; offer?: boolean; product?: boolean;
   /** false = the email shows the product it was built with (a pick for them), not the one they ordered. */

@@ -218,7 +218,11 @@ export function autopilotPlan(designer: EmDesigner, sales: Array<{ productId: st
       key: `delivered:${product.id}`, productName: product.name, ready: selling && !needs.length, needs: why,
       draft: draft(`Autopilot: ${product.name} — After Delivery`, `Customers who received ${product.name}.`, "post_purchase", "repeat", "post_purchase", { kind: "order_delivered", productId: product.id }, [
         wait(1),
-        email("Email 1: Thanks + How To Use It", "usage_tips", designer, product, "Get the most from your {{Product}}, {{First Name}}", "A few quick tips"),
+        // No "[write … here]" gaps: an email Autopilot starts must be ready to send as it is.
+        { id: newId("e"), type: "email", name: "Email 1: Thank You + Need Help?", campaignId: null,
+          email: { subject: fillProduct("Enjoy your {{Product}}, {{First Name}}! 💙", product.name), preheader: "We're here if you need help", productId: product.id, thumbnailUrl: product.image || null,
+            design: buildQuietDesign(fields(designer, product), { slug: "delivered", tone: "peach", title: "Enjoy Your New Order! 🏠", subtitle: "Thank you for choosing us.", button: "Order Again", theirs: false, product: false,
+              lines: [`We hope your ${product.name} makes life easier at home.`, "Need help setting it up or keeping it like new? Just reply to this email and our team will help you. 💬"] }) } },
         wait(5),
         email("Email 2: How Is It Going?", "review_request", designer, product, "How's your {{Product}}, {{First Name}}?", "We'd love to hear how it's going"),
         ...(partner ? [wait(14), email("Email 3: Goes Well With It", "product_collection", designer, partner, "Goes well with your order: {{Product}}", "Order today, pay on delivery")] : [])

@@ -13,7 +13,7 @@ import {
   segmentPreviewFull, sendTest, setContactStatus, settingsFor, statsFor, syncContacts, tagContacts, updateContact, updateField, updateTag, uploadPicture
 } from "../lib/email-marketing.js";
 import { CONDITION_FIELDS, cleanConditions, cleanEmail, resolveAudience, slugFor, type AudienceChoice, type Delivery } from "../lib/email-marketing-rules.js";
-import { collectLinks, normalizeDesign, safeUrl } from "../lib/email-render.js";
+import { unfilledGaps, collectLinks, normalizeDesign, safeUrl } from "../lib/email-render.js";
 import { cleanList, cleaningPlan, enableBounceReports, healthFor } from "../lib/email-health.js";
 import {
   automationReport, automationsPage, deleteAutomation, duplicateAutomation, getAutomation, saveAutomation, setAutomationStatus, testAutomationEmails, type AutomationInput
@@ -581,6 +581,7 @@ async function launchProblems(req: Request, row: any, sendNow: boolean) {
   if (row.options?.abTest && !String(row.subject_b ?? "").trim()) problems.push("A/B test is on: add the second subject line.");
   const design = normalizeDesign(row.design);
   if (!design || !design.blocks.length) problems.push("Design the email first.");
+  else if (unfilledGaps(design, `${row.subject ?? ""} ${row.subject_b ?? ""}`).length) problems.push(`Fill in the parts still marked ${unfilledGaps(design, `${row.subject ?? ""} ${row.subject_b ?? ""}`).join(", ")} before sending.`);
   else {
     const broken = design.blocks.filter((block) => (block.type === "button" && !safeUrl(block.link)) || (block.type === "hero" && block.buttonText.trim() && !safeUrl(block.buttonLink)));
     if (broken.length) problems.push("A button has no web link (it must start with https://).");
