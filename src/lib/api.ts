@@ -5817,6 +5817,7 @@ export const emailMarketingApi = {
   cleanList: (body: { neverOpened: boolean; duplicates: boolean; bounced: boolean }) => post<EmCleaningPlan>(`${EM}/health/clean`, body),
   enableBounceReports: () => post<{ on: boolean; skipped: string[] }>(`${EM}/health/bounce-reports`, {}),
   automations: () => get<EmAutomationsPage>(`${EM}/automations`),
+  autopilotSales: () => get<{ sales: Array<{ productId: string; orders: number }> }>(`${EM}/autopilot/sales`),
   automation: (id: string) => get<{ automation: EmAutomation }>(`${EM}/automations/${encodeURIComponent(id)}`),
   automationReport: (id: string) => get<EmAutomationReport>(`${EM}/automations/${encodeURIComponent(id)}/report`),
   createAutomation: (body: EmAutomationInput) => post<{ id: string }>(`${EM}/automations`, body),

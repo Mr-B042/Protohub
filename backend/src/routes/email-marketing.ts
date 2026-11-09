@@ -789,6 +789,24 @@ const automationId = (req: Request) => {
   return id;
 };
 
+// Autopilot (Bright, 9 Nov 2026): orders per product in the last 60 days, to pick which products get their own flows.
+router.get("/autopilot/sales", async (req, res) => {
+  try {
+    const since = new Date(Date.now() - 60 * 86_400_000).toISOString();
+    const rows: any[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase.from("orders").select("product_id")
+        // launch-safe: Silent Test orders are left out; this is only a count per product.
+        .eq("org_id", orgOf(req)).eq("branch_id", branchOf(req)).neq("launch_stage", "silent").gte("created_at", since).range(from, from + 999);
+      if (error) throw new Error(error.message);
+      rows.push(...(data ?? []));
+      if ((data ?? []).length < 1000) break;
+    }
+    const counts = new Map<string, number>();
+    for (const row of rows) if (row.product_id) counts.set(row.product_id, (counts.get(row.product_id) ?? 0) + 1);
+    res.json({ sales: [...counts].map(([productId, orders]) => ({ productId, orders })) });
+  } catch (error) { sendError(res, error, "Could not count the orders."); }
+});
 router.get("/automations", async (req, res) => {
   try { res.json(await automationsPage(orgOf(req), branchOf(req))); }
   catch (error) { sendError(res, error, "Could not load the automations."); }

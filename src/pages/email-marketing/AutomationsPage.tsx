@@ -9,7 +9,8 @@ import { Card, Delta, ErrorNote, IconTile, Loading, Pill, Toggle, btn, count, in
 import FlowDiagram, { TRIGGER_ICON } from "./FlowDiagram";
 import { TestFlowModal } from "./NodeEditor";
 import { TEMPLATE_ICON } from "./AutomationSteps";
-import { TEMPLATES, USE_CASES, draftFromTemplate, durationText, goalText, triggerText } from "./automation-model";
+import { TEMPLATES, USE_CASES, draftFromTemplate, durationText, goalText, toAutomationInput, triggerText } from "./automation-model";
+import { autopilotPlan, type PlanItem } from "./autopilot";
 
 /** Automations, built to Bright's design 50 (8 Nov 2026). */
 
@@ -34,6 +35,7 @@ export default function AutomationsPage({ onOpenWizard, onToast, refreshKey }: {
   const [testing, setTesting] = useState<EmAutomationRow | null>(null);
   const [designer, setDesigner] = useState<EmDesigner | null>(null);
   const [busy, setBusy] = useState(false);
+  const [autopilot, setAutopilot] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -85,8 +87,10 @@ export default function AutomationsPage({ onOpenWizard, onToast, refreshKey }: {
           <h1 className="m-0 text-[28px] font-extrabold leading-tight text-gray-900 dark:text-slate-50">Automations</h1>
           <p className="m-0 text-[15px] text-gray-600 dark:text-slate-400">Set up automatic emails that run on customer actions to increase retention, repeat purchase, and LTV.</p>
         </div>
+        <button type="button" onClick={() => setAutopilot(true)} className={`${btn.ghost} !px-5 !py-3`}><Zap className="h-4 w-4 text-[#5B3FD9]" />Autopilot</button>
         <button type="button" onClick={() => onOpenWizard({ template: "post_purchase" })} className={`${btn.primary} !px-5 !py-3`}><Plus className="h-4 w-4" />New Automation</button>
       </div>
+      {autopilot && <AutopilotModal existing={(data?.automations ?? []).map((row) => row.name)} onClose={() => setAutopilot(false)} onToast={onToast} onDone={async () => { setAutopilot(false); await load(); }} />}
 
       <ErrorNote message={error} />
       {!data && !error && <Loading />}
@@ -377,6 +381,82 @@ export function AutomationReport({ id, onClose }: { id: string; onClose: () => v
               ))}
             </ul>
           </div>
+        </div>
+      )}
+    </ModalShell>
+  );
+}
+
+/**
+ * Autopilot (Bright, 9 Nov 2026): sets up every flow that keeps email
+ * running by itself, per selling product. Ready flows go live; the rest are
+ * saved as drafts that say what they need. Flows that already exist (same
+ * name) are left alone, so running it again only adds what is new.
+ */
+function AutopilotModal({ existing, onClose, onToast, onDone }: { existing: string[]; onClose: () => void; onToast: (message: string) => void; onDone: () => Promise<void> }) {
+  const [plan, setPlan] = useState<PlanItem[] | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState("");
+  const [senderProblem, setSenderProblem] = useState("");
+  useEffect(() => {
+    (async () => {
+      try {
+        const [designer, { sales }] = await Promise.all([emailMarketingApi.designer(), emailMarketingApi.autopilotSales()]);
+        if (!designer.sender.ready) setSenderProblem(designer.sender.reason ?? "Email sending is not set up.");
+        setPlan(autopilotPlan(designer, sales));
+      } catch (err) { setError((err as Error).message || "Could not prepare the plan."); }
+    })();
+  }, []);
+  const taken = new Set(existing.map((name) => name.trim().toLowerCase()));
+  const todo = (plan ?? []).filter((item) => !taken.has(item.draft.name.trim().toLowerCase()));
+  const live = todo.filter((item) => item.ready && !senderProblem);
+  const run = async () => {
+    setBusy(true); setError("");
+    let made = 0, launched = 0;
+    try {
+      for (const item of todo) {
+        setProgress(`Setting up ${made + 1} of ${todo.length}: ${item.draft.name}`);
+        const goLive = item.ready && !senderProblem;
+        const { id } = await emailMarketingApi.createAutomation(toAutomationInput(item.draft, false));
+        made += 1;
+        if (goLive) { await emailMarketingApi.automationAction(id, "launch"); launched += 1; }
+      }
+      onToast(`Autopilot set up: ${launched} running, ${made - launched} saved as drafts.`);
+      await onDone();
+    } catch (err) {
+      setError(`${(err as Error).message || "Something went wrong."} ${made} were set up before this; run Autopilot again to finish the rest.`);
+      setBusy(false);
+    }
+  };
+  return (
+    <ModalShell wide title="Autopilot" sub="The emails that run by themselves, for each product that sells. Ready ones go live; the rest are saved as drafts." onClose={onClose}
+      footer={<>
+        <button type="button" onClick={onClose} className={btn.ghost}>Cancel</button>
+        <button type="button" disabled={busy || !todo.length} onClick={() => void run()} className={btn.primary}><Zap className="h-4 w-4" />{busy ? "Setting up…" : todo.length ? `Set Up ${live.length} Live + ${todo.length - live.length} Drafts` : "All Set Up"}</button>
+      </>}>
+      <ErrorNote message={error} />
+      {senderProblem && <p className="m-0 mb-3 rounded-xl bg-amber-50 px-3 py-2 text-[13px] text-amber-900">{senderProblem} Everything will be saved as drafts until it is fixed.</p>}
+      {!plan && !error && <Loading />}
+      {busy && <p className="m-0 mb-3 text-[13px] font-semibold text-[#5B3FD9]">{progress}</p>}
+      {plan && (
+        <div className="space-y-2">
+          {plan.map((item) => {
+            const done = taken.has(item.draft.name.trim().toLowerCase());
+            const emails = JSON.stringify(item.draft.workflow).split('"type":"email"').length - 1;
+            return (
+              <div key={item.key} className="flex items-start gap-3 rounded-xl border border-gray-200 px-3 py-2.5 dark:border-slate-700">
+                <IconTile size="sm">{item.draft.trigger.kind === "cart_abandoned" ? <Target className="h-4 w-4" /> : item.draft.trigger.kind === "order_delivered" ? <Send className="h-4 w-4" /> : <Users className="h-4 w-4" />}</IconTile>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[14px] font-bold text-gray-900 dark:text-slate-50">{item.draft.name.replace("Autopilot: ", "")}</div>
+                  <div className="text-[12.5px] text-gray-600 dark:text-slate-400">{triggerText(item.draft.trigger)} · {emails} {emails === 1 ? "email" : "emails"}</div>
+                  {!done && !item.ready && <div className="text-[12px] text-amber-700 dark:text-amber-300">Draft until it has {item.needs.join(" and ")}.</div>}
+                </div>
+                {done ? <Pill tone="slate">Already set up</Pill> : item.ready && !senderProblem ? <Pill tone="green">Goes live</Pill> : <Pill tone="amber">Draft</Pill>}
+              </div>
+            );
+          })}
+          <p className="m-0 pt-1 text-[12px] text-gray-500">Emails go out every day between 8am and 8pm (Lagos), only to people on the email list who have not unsubscribed. Each email uses that product's own photo and order page. Edit or pause any of them later like any automation.</p>
         </div>
       )}
     </ModalShell>
