@@ -10,7 +10,7 @@ import { normalizeDesign, type EmailDesign } from "./email-render.js";
 
 // ── Shapes ────────────────────────────────────────────────────────────
 
-export const TRIGGER_KINDS = ["order_delivered", "order_placed", "cart_abandoned", "new_subscriber", "inactive", "date_field", "vip", "reorder", "went_quiet"] as const;
+export const TRIGGER_KINDS = ["order_delivered", "order_placed", "cart_abandoned", "new_subscriber", "inactive", "date_field", "vip", "reorder", "went_quiet", "in_segment"] as const;
 export type TriggerKind = (typeof TRIGGER_KINDS)[number];
 export type Trigger = {
   kind: TriggerKind;
@@ -26,6 +26,10 @@ export type Trigger = {
   vipOrders?: number;
   /** reorder: days after delivery when it is time to buy again. */
   reorderDays?: number;
+  /** in_segment: the group (segment) whose customers walk the flow. */
+  segmentId?: string;
+  /** in_segment: which flow wins when a customer is in several groups (lower first). */
+  rank?: number;
   /** went_quiet: days after the order before the first email. */
   quietDays?: number;
   /** went_quiet: only customers who went quiet for these reasons (empty = all). */
@@ -90,7 +94,7 @@ const TEMPLATE_STAGE: Record<string, Stage> = {
 };
 const TRIGGER_STAGE: Record<string, Stage> = {
   new_subscriber: "acquisition", date_field: "nurture", cart_abandoned: "conversion", order_placed: "conversion",
-  reorder: "retention", vip: "retention", inactive: "winback", went_quiet: "winback", order_delivered: "post_purchase"
+  reorder: "retention", vip: "retention", inactive: "winback", went_quiet: "winback", in_segment: "retention", order_delivered: "post_purchase"
 };
 /** A flow's stage when none was picked: from its ready-made template, else its trigger. */
 export function defaultStage(template: string | null | undefined, trigger: { kind: string } | null | undefined): Stage {
@@ -117,6 +121,10 @@ export function normalizeTrigger(raw: any): Trigger {
   if (kind === "date_field") out.fieldKey = /^[a-z][a-z0-9_]{0,40}$/.test(String(raw?.fieldKey ?? "")) ? raw.fieldKey : "birthday";
   if (kind === "vip") out.vipOrders = int(raw?.vipOrders, 2, 50, 3);
   if (kind === "reorder") out.reorderDays = int(raw?.reorderDays, 7, 365, 30);
+  if (kind === "in_segment") {
+    out.segmentId = UUID.test(String(raw?.segmentId ?? "")) ? raw.segmentId : "";
+    out.rank = int(raw?.rank, 0, 99, 50);
+  }
   if (kind === "went_quiet") {
     out.quietDays = int(raw?.quietDays, 1, 120, 1);
     out.quietReasons = Array.isArray(raw?.quietReasons) ? [...new Set<QuietReason>(raw.quietReasons.filter((r: any) => QUIET_REASONS.includes(r)))] : [];

@@ -109,3 +109,8 @@ test("normalizeTrigger keeps went_quiet days and reasons", () => {
   assert.deepEqual(normalizeTrigger({ kind: "went_quiet", quietDays: 0, quietReasons: ["unreachable", "bogus", "unreachable"] }), { kind: "went_quiet", quietDays: 1, quietReasons: ["unreachable"] });
   assert.equal(defaultStage(null, { kind: "went_quiet" }), "winback");
 });
+
+test("normalizeTrigger keeps the group and its rank for in_segment", () => {
+  assert.deepEqual(normalizeTrigger({ kind: "in_segment", segmentId: "11111111-2222-4333-8444-555555555555", rank: 500 }), { kind: "in_segment", segmentId: "11111111-2222-4333-8444-555555555555", rank: 99 });
+  assert.deepEqual(normalizeTrigger({ kind: "in_segment", segmentId: "bad" }), { kind: "in_segment", segmentId: "", rank: 50 });
+});

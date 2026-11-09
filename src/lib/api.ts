@@ -5523,7 +5523,7 @@ export type EmDesigner = {
   /** The logo every email shows. */
   brand?: { name: string; logoUrl: string | null };
   settings: { dailyLimit: number; footerNote: string };
-  segments: Array<{ id: string; name: string; kind: "auto" | "fixed"; status: string; icon: string; list: boolean }>;
+  segments: Array<{ id: string; name: string; kind: "auto" | "fixed"; status: string; icon: string; list: boolean; builtIn?: string | null }>;
   tags: Array<{ id: string; name: string; kind: "system" | "custom"; color: string; icon: string }>;
   fields: Array<{ id: string; key: string; name: string; type: string; options: string[]; system: boolean }>;
   states: string[];
@@ -5651,9 +5651,9 @@ export type EmHealth = {
 export type EmCleaningPlan = { neverOpened: number; duplicates: number; bounced: number };
 
 // Email Marketing › Automations (Bright's designs 50, 51 and steps 2-4, 8 Nov 2026).
-export type EmTriggerKind = "order_delivered" | "order_placed" | "cart_abandoned" | "new_subscriber" | "inactive" | "date_field" | "vip" | "reorder" | "went_quiet";
+export type EmTriggerKind = "order_delivered" | "order_placed" | "cart_abandoned" | "new_subscriber" | "inactive" | "date_field" | "vip" | "reorder" | "went_quiet" | "in_segment";
 export type EmQuietReason = "unreachable" | "not_ready" | "let_down" | "said_no" | "other";
-export type EmTrigger = { kind: EmTriggerKind; productId?: string | null; cartMinutes?: number; inactiveDays?: number; fieldKey?: string; vipOrders?: number; reorderDays?: number; quietDays?: number; quietReasons?: EmQuietReason[] };
+export type EmTrigger = { kind: EmTriggerKind; productId?: string | null; cartMinutes?: number; inactiveDays?: number; fieldKey?: string; vipOrders?: number; reorderDays?: number; quietDays?: number; quietReasons?: EmQuietReason[]; segmentId?: string; rank?: number };
 export type EmCheckKind = "placed_order" | "delivered_order" | "opened_last" | "clicked_last" | "left_review" | "in_segment" | "has_tag";
 export type EmCheck = { kind: EmCheckKind; segmentId?: string; tagId?: string };
 export type EmFlowEmail = { subject: string; preheader: string; design: EmailDesign | null; productId: string | null; thumbnailUrl: string | null; offerId?: string | null };

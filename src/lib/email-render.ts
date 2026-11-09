@@ -480,16 +480,20 @@ export function withTheirProduct(design: EmailDesign, product: TheirProduct | nu
 export const fillTheirProduct = (text: string, product: TheirProduct | null) => text.split(THEIR_PRODUCT_TAG).join(product?.name.trim() || "order");
 
 /** A follow-up email (Autopilot's "went quiet" flows): designed cover, words, the customer's product. */
-export type QuietEmailSpec = { slug: string; tone: CoverTone; title: string; subtitle: string; button: string; buttonTone?: "yellow" | "purple"; lines: string[]; offer?: boolean; product?: boolean };
+export type QuietEmailSpec = { slug: string; tone: CoverTone; title: string; subtitle: string; button: string; buttonTone?: "yellow" | "purple"; lines: string[]; offer?: boolean; product?: boolean;
+  /** false = the email shows the product it was built with (a pick for them), not the one they ordered. */
+  theirs?: boolean };
 export function buildQuietDesign(f: CampaignFields, spec: QuietEmailSpec): EmailDesign {
   const blocks: EmailBlock[] = [
     B.header(f),
     // The designed picture; a product picture becomes the customer's own product when the email is sent.
-    { ...designed({ slug: spec.slug, tone: spec.tone, title: spec.title, subtitle: spec.subtitle, button: spec.button, buttonTone: spec.buttonTone }, { ...f, productImage: "" }), theirs: true } as EmailBlock,
+    spec.theirs === false
+      ? designed({ slug: spec.slug, tone: spec.tone, title: spec.title, subtitle: spec.subtitle, button: spec.button, buttonTone: spec.buttonTone }, f)
+      : { ...designed({ slug: spec.slug, tone: spec.tone, title: spec.title, subtitle: spec.subtitle, button: spec.button, buttonTone: spec.buttonTone }, { ...f, productImage: "" }), theirs: true } as EmailBlock,
     hi(),
     ...spec.lines.map((line) => p(line)),
     ...(spec.offer ? [offerNote()] : []),
-    ...(spec.product === false ? [] : [{ ...B.product(f, "Order Now"), theirs: true } as EmailBlock]),
+    ...(spec.product === false ? [] : [spec.theirs === false ? B.product(f, "Order Now") : { ...B.product(f, "Order Now"), theirs: true } as EmailBlock]),
     signOff(f),
     B.footer()
   ];

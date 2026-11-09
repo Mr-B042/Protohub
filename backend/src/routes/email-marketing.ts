@@ -418,7 +418,7 @@ router.get("/designer", async (req, res) => {
       // Templates: drafts and other people's private ones stay out of Create Campaign.
       saved: (saved.data ?? []).filter((row: any) => row.kind !== "template" || (row.status !== "draft" && (row.visibility !== "private" || row.created_by === req.user!.id)))
         .map(({ created_by: _by, visibility: _v, status: _s, ...row }: any) => row), sender, settings: { dailyLimit: settings.dailyLimit, footerNote: settings.footerNote }, offers,
-      segments: world.segmentRows.filter((row) => row.status !== "archived").map((row) => ({ id: row.id, name: row.name, kind: row.kind, status: row.status, icon: row.icon, list: row.kind === "fixed" || !!row.builtIn?.startsWith("list_") })),
+      segments: world.segmentRows.filter((row) => row.status !== "archived").map((row) => ({ id: row.id, name: row.name, kind: row.kind, status: row.status, icon: row.icon, list: row.kind === "fixed" || !!row.builtIn?.startsWith("list_"), builtIn: row.builtIn ?? null })),
       tags: world.tagRows.filter((row) => row.status === "active").map((row) => ({ id: row.id, name: row.name, kind: row.kind, color: row.color, icon: row.icon })),
       fields: world.fieldRows.filter((row) => row.status === "active").map((row) => ({ id: row.id, key: row.key, name: row.name, type: row.type, options: row.options, system: !!row.systemKey })),
       // ⚠️ Lists with a `key`, never objects keyed by "high_value" etc.: the
