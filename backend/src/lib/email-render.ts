@@ -568,6 +568,28 @@ export function buildStoreDesign(f: CampaignFields, spec: StoreEmailSpec): Email
   return { version: 1, template: `store:${spec.slug}`, touched: true, styles: { ...DEFAULT_STYLES }, blocks };
 }
 
+/**
+ * A plain personal note (A/B version B, Bright 9 Nov 2026: "plain text that
+ * looks like a personal email… no logo, no banner, no buttons"): the same
+ * words, without the logo header, colour band, pictures or product cards;
+ * buttons become simple text links (the unsubscribe line stays).
+ */
+export function asPersonalNote(design: EmailDesign, signer?: string): EmailDesign {
+  // Signed by the person it comes from ("Bright from ProTools" signs as "Bright, ProTools").
+  const sign = signer?.trim() ? signer.trim().replace(/\s+from\s+/i, ", ") : "";
+  const drop = new Set(["header", "footer", "cover", "hero", "image", "video", "features", "offer", "social", "divider", "spacer", "timer", "html", "storePicks"]);
+  return { ...design, blocks: design.blocks.flatMap((block): EmailBlock[] => {
+    if (drop.has(block.type)) return [];
+    if (block.type === "button") return [{ ...block, style: "link", size: "medium", align: "left" }];
+    if (block.type === "product") return block.link ? [{ id: block.id, type: "button", text: `${block.buttonText || "See it here"}: ${block.name} →`, link: block.link, style: "link", size: "medium", align: "left", color: BRAND_PALETTE.blue, textColor: "#FFFFFF", radius: 0 }] : [];
+    if (block.type === "text") {
+      const signOff = /^(Warmly|Thanks for shopping with us),\n/.test(block.text);
+      return [{ ...block, size: Math.min(block.size, 16), align: "left", ...(signOff && sign ? { text: `${block.text.split("\n")[0]}\n${sign}` } : {}) }];
+    }
+    return [block];
+  }) };
+}
+
 // ── Helpful letters (Bright, 9 Nov 2026: "more plain text… tips to make their life easier") ──
 // A plain letter: the logo, a headline, numbered tips, a warm close. No pictures,
 // no big buttons, nothing to sell; one quiet line after the sign-off.
@@ -576,7 +598,8 @@ export function buildLetterDesign(f: CampaignFields, letter: LetterSpec, version
   const ps = version === "store"
     ? [B.text("P.S. Need something for this? Type it in our store's search bar.", 14, false, "left"),
        { id: blockId(), type: "button", text: "Search our store →", link: STORE_HOME, style: "link", size: "small", align: "left", color: BRAND_PALETTE.blue, textColor: "#FFFFFF", radius: 0 } as EmailBlock]
-    : [B.text("P.S. Got a question, or a tip of your own? Just reply. A real person reads every reply.", 14, false, "left")];
+    : [B.text("P.S. Got a question, or a tip of your own? Just reply. A real person reads every reply.", 14, false, "left"),
+       { id: blockId(), type: "button", text: "See what customers order most →", link: f.productLink || STORE_HOME, style: "link", size: "small", align: "left", color: BRAND_PALETTE.blue, textColor: "#FFFFFF", radius: 0 } as EmailBlock];
   const blocks: EmailBlock[] = [
     B.header(f),
     B.text(letter.title, 22, true, "left"),

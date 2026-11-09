@@ -96,13 +96,22 @@ function cleanDelivery(raw: any): Delivery {
   return { type, sendAt };
 }
 
+/** A sender name people see in the inbox: letters, numbers, spaces and . ' & - only. */
+function cleanSenderName(raw: unknown) {
+  const name = String(raw ?? "").replace(/\s+/g, " ").trim().slice(0, 60);
+  return /^[\p{L}\p{N} .'&-]{2,60}$/u.test(name) ? name : "";
+}
+
 function cleanOptions(raw: any) {
   return {
     abTest: !!raw?.abTest,
     plainText: !!raw?.plainText,
     utm: raw?.utm !== false,
     resendNonOpeners: !!raw?.resendNonOpeners,
-    resendHours: [24, 48, 72, 96].includes(Number(raw?.resendHours)) ? Number(raw.resendHours) : 48
+    resendHours: [24, 48, 72, 96].includes(Number(raw?.resendHours)) ? Number(raw.resendHours) : 48,
+    // A/B (Bright, 9 Nov 2026): version B can come from a person ("Bright from …") and look like a plain note.
+    ...(cleanSenderName(raw?.fromNameB) ? { fromNameB: cleanSenderName(raw?.fromNameB) } : {}),
+    ...(raw?.noteB ? { noteB: true } : {})
   };
 }
 
