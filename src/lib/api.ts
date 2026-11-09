@@ -5815,6 +5815,7 @@ export const emailMarketingApi = {
   updateField: (id: string, body: Partial<{ name: string; options: string[]; description: string; required: boolean; useInForms: boolean; status: "active" | "inactive"; icon: string }>) => patch<{ ok: boolean }>(`${EM}/fields/${encodeURIComponent(id)}`, body),
   deleteField: (id: string) => del<{ ok: boolean }>(`${EM}/fields/${encodeURIComponent(id)}`),
   deleteSegment: (id: string) => del<{ ok: boolean }>(`${EM}/segments/${encodeURIComponent(id)}`),
+  storePicks: (mode: string, count: number, product?: string) => get<{ items: Array<{ name: string; price: number; wasPrice: number | null; image: string; url: string }> }>(`${EM}/store-picks?mode=${encodeURIComponent(mode)}&count=${count}&product=${encodeURIComponent(product ?? "")}`),
   designer: async () => {
     const designer = await get<EmDesigner>(`${EM}/designer`);
     if (designer.brand) setEmailBrand(designer.brand);

@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
   AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowUp, ChevronRight, Clock, Code2, Copy, Eye, Gift, Image as ImageIcon, LayoutGrid, Link2, Minus, Monitor,
-  MousePointerClick, Package, Paintbrush, PanelTop, Redo2, Save, Send, Settings2, Share2, Smartphone, Square, Star, Trash2, Type, Undo2, Upload, Video, MoveVertical, X
+  MousePointerClick, Package, Paintbrush, PanelTop, Redo2, Save, Send, Settings2, Share2, Smartphone, Square, Star, Trash2, Type, Undo2, Upload, Video, MoveVertical, X, ShoppingBag
 } from "lucide-react";
 import { emailMarketingApi, type EmDesigner } from "../../lib/api";
-import { COVER_TONES, FEATURE_ICONS, FONT_CHOICES, TEMPLATE_CHOICES, buildTemplateDesign, blockId, newBlock, normalizeDesign, type Align, type EmailBlock, type EmailBlockType, type EmailDesign } from "../../lib/email-render";
+import { COVER_TONES, FEATURE_ICONS, STORE_PICKS_MODES, FONT_CHOICES, TEMPLATE_CHOICES, buildTemplateDesign, blockId, newBlock, normalizeDesign, type Align, type EmailBlock, type EmailBlockType, type EmailDesign } from "../../lib/email-render";
 import EmailFrame, { DRAG_TYPE } from "./EmailFrame";
 import { ModalShell } from "./AudiencePage";
 import { Card, btn, input, select } from "./em-ui";
@@ -16,10 +16,11 @@ const PALETTE: Array<{ type: EmailBlockType; label: string; icon: typeof Type }>
   { type: "cover", label: "Cover", icon: PanelTop }, { type: "text", label: "Text", icon: Type }, { type: "image", label: "Image", icon: ImageIcon }, { type: "button", label: "Button", icon: MousePointerClick },
   { type: "product", label: "Product", icon: Package }, { type: "offer", label: "Offer / Badge", icon: Gift }, { type: "divider", label: "Divider", icon: Minus },
   { type: "spacer", label: "Spacer", icon: MoveVertical }, { type: "social", label: "Social Links", icon: Share2 }, { type: "timer", label: "Timer", icon: Clock },
-  { type: "video", label: "Video", icon: Video }, { type: "review", label: "Customer Review", icon: Star }, { type: "html", label: "HTML", icon: Code2 }
+  { type: "video", label: "Video", icon: Video }, { type: "review", label: "Customer Review", icon: Star }, { type: "html", label: "HTML", icon: Code2 },
+  { type: "storePicks", label: "Store Picks", icon: ShoppingBag }
 ];
 const BLOCK_NAME: Record<EmailBlockType, string> = {
-  header: "Header", hero: "Banner", text: "Text", image: "Image", button: "Button", product: "Product", offer: "Offer / Badge", divider: "Divider", spacer: "Spacer",
+  storePicks: "Store Picks", header: "Header", hero: "Banner", text: "Text", image: "Image", button: "Button", product: "Product", offer: "Offer / Badge", divider: "Divider", spacer: "Spacer",
   social: "Social Links", timer: "Timer", video: "Video", review: "Customer Review", html: "HTML", features: "Feature Boxes", footer: "Footer Line", cover: "Cover"
 };
 
@@ -571,6 +572,24 @@ function BlockEditor({ block, designer, draft, update, onToast }: { block: Email
             <textarea value={block.html} onChange={(event) => update({ html: event.target.value.slice(0, 20000) }, "html")} rows={10} className={`${field} resize-y font-mono !text-[12px]`} />
           </label>
           <p className="m-0 text-[11.5px] leading-snug text-gray-500">Goes into the email exactly as typed. Email apps remove scripts.</p>
+        </>
+      );
+    case "storePicks":
+      return (
+        <>
+          <p className="m-0 rounded-lg bg-amber-50 px-3 py-2 text-[12.5px] text-amber-900">Our Store's products, chosen for each customer when the email is sent, with the store's prices and stock at that moment.</p>
+          {text("title", block.title, "Title above the products", false, 80)}
+          <label className={label}>Which products
+            <select value={block.mode} onChange={(event) => update({ mode: event.target.value as typeof block.mode })} className={`${select} mt-1.5 !py-2`}>
+              {STORE_PICKS_MODES.map((row) => <option key={row.key} value={row.key}>{row.label}</option>)}
+            </select>
+          </label>
+          <label className={label}>How many
+            <select value={String(block.count)} onChange={(event) => update({ count: Number(event.target.value) })} className={`${select} mt-1.5 !py-2`}>
+              {[1, 2, 3, 4, 6].map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </label>
+          {text("buttonText", block.buttonText, "Button on each product", false, 30)}
         </>
       );
     case "features":
