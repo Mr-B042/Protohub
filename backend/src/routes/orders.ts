@@ -2120,7 +2120,7 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
   sendOrderStatusEmail(req.user!.orgId, {
     id: data.id, customer: data.customer, email: data.email,
     product_name: data.product_name, package_name: data.package_name, amount: data.amount, currency: data.currency
-  }, existing?.status ?? null, status);
+  }, existing?.status ?? null, status, { before: existing?.scheduled_date ?? null, after: data.scheduled_date ?? null });
   sendOrderStatusSms(req.user!.orgId, {
     id: data.id,
     customer: data.customer,
@@ -2133,7 +2133,7 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
     scheduled_date: data.scheduled_date,
     call_outcome: data.call_outcome,
     response: data.response
-  }, existing?.status ?? null, status);
+  }, existing?.status ?? null, status, { before: existing?.scheduled_date ?? null, after: data.scheduled_date ?? null });
 
   // WhatsApp automation: status-driven customer notifications
   {
