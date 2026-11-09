@@ -211,3 +211,22 @@ test("custom field answers are checked against the field type", () => {
   assert.deepEqual(cleanFieldValues(fields, { tier: "vip", visits: "1,200", colours: "red; green; Blue", state: "Lagos", other: "x" }), { tier: "VIP", visits: "1200", colours: ["Red", "Blue"] });
   assert.deepEqual(cleanFieldValues(fields, { tier: "Gold" }), {});
 });
+
+test("Went Quiet groups: latest order never delivered, by reason", async () => {
+  const r = await import("./email-marketing-rules.js");
+  const o = (phone: string, status: string, outcome: string, day: string) => ({ phone, email: null, status, amount: 1000, quantity: 1, productId: "p", state: "Lagos", createdAt: `${day}T10:00:00Z`, deliveredDate: status === "Delivered" ? day : null, outcome });
+  const customers = r.buildCustomers([
+    o("08011111111", "Failed", "Not picking calls", "2026-10-01"),
+    o("08022222222", "Failed", "Out of stock", "2026-10-01"),
+    o("08033333333", "Failed", "Not picking", "2026-09-01"), o("08033333333", "Delivered", "", "2026-10-01"),
+    o("08044444444", "Postponed", "Customer said he travelled", "2026-10-01")
+  ] as any, []);
+  assert.equal(customers.get(r.phoneKey("08011111111"))!.quietReason, "unreachable");
+  assert.equal(customers.get(r.phoneKey("08022222222"))!.quietReason, "let_down");
+  assert.equal(customers.get(r.phoneKey("08033333333"))!.quietReason, null);
+  assert.equal(customers.get(r.phoneKey("08044444444"))!.quietReason, "not_ready");
+  const v2 = r.builtInSegmentsV2([{ id: "abcdef12-0000-4000-8000-000000000000", name: "Edge Brusher Max" }], ["FCT Abuja", "Rivers"]);
+  assert.deepEqual(v2.map((s) => s.name).filter((n) => n.startsWith("By Location") || n.startsWith("Bought")), ["Bought: Edge Brusher Max", "By Location – Abuja", "By Location – Rivers"]);
+  assert.equal(new Set(v2.map((s) => s.key)).size, v2.length);
+  assert.deepEqual(r.cleanConditions([{ field: "went_quiet", op: "is", value: "let_down" }]), [{ field: "went_quiet", op: "is", value: "let_down" }]);
+});

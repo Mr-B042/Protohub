@@ -43,6 +43,8 @@ export type OrderLite = {
   /** Where the order came from (Facebook, Instagram, TikTok, ...). */
   source?: string | null;
   upfrontPaid?: boolean;
+  /** The rep's last call note (why an order went quiet). */
+  outcome?: string;
 };
 
 export type CartLite = {
@@ -75,6 +77,8 @@ export type CustomerStats = {
   upfrontPaid: boolean;
   /** Has an approved customer review (set from customer_reviews). */
   reviewed: boolean;
+  /** Their latest order never got delivered, and why (quietReason); null = not quiet. */
+  quietReason: QuietReason | null;
 };
 
 const deliveredMs = (order: OrderLite) => {
@@ -89,7 +93,7 @@ export function buildCustomers(orders: OrderLite[], carts: CartLite[]): Map<stri
   const get = (key: string) => {
     let row = customers.get(key);
     if (!row) {
-      row = { key, deliveredCount: 0, deliveredTotal: 0, firstDeliveredMs: null, lastDeliveredMs: null, lastDeliveredQty: null, lastDeliveredOrderCreatedMs: null, boughtProducts: new Set(), interestProducts: new Set(), state: "", lastOrderMs: null, lastOpenCartMs: null, name: "", email: null, firstSource: "", upfrontPaid: false, reviewed: false };
+      row = { key, deliveredCount: 0, deliveredTotal: 0, firstDeliveredMs: null, lastDeliveredMs: null, lastDeliveredQty: null, lastDeliveredOrderCreatedMs: null, boughtProducts: new Set(), interestProducts: new Set(), state: "", lastOrderMs: null, lastOpenCartMs: null, name: "", email: null, firstSource: "", upfrontPaid: false, reviewed: false, quietReason: null };
       customers.set(key, row);
     }
     return row;
@@ -122,6 +126,10 @@ export function buildCustomers(orders: OrderLite[], carts: CartLite[]): Map<stri
       }
     }
   }
+  // Went quiet: judged on each customer's latest order (sorted oldest first above).
+  const latest = new Map<string, OrderLite>();
+  for (const order of sorted) { const key = phoneKey(order.phone); if (key) latest.set(key, order); }
+  for (const [key, order] of latest) customers.get(key)!.quietReason = quietReason(order.status, order.outcome);
   for (const cart of carts) {
     const key = phoneKey(cart.phone);
     if (!key) continue;
@@ -190,11 +198,46 @@ export function buildPeople(customers: Map<string, CustomerStats>, contacts: Con
 
 // ── Conditions ────────────────────────────────────────────────────────
 
+// ── Customers who went quiet (Bright, 9 Nov 2026) ─────────────────────
+// "Follow up customers who aren't scheduled but haven't been picking calls
+// for days… forever till they buy." A customer is quiet when their LATEST
+// order never got delivered: it failed, was postponed or cancelled, or it is
+// still open but the last call note says they don't pick or reply. The
+// reason (read from the rep's call note) picks the words of the email.
+
+export const QUIET_REASONS = ["unreachable", "not_ready", "let_down", "said_no", "other"] as const;
+export type QuietReason = (typeof QUIET_REASONS)[number];
+export const QUIET_REASON_LABELS: Record<QuietReason, string> = {
+  unreachable: "Stopped picking calls or replying",
+  not_ready: "Not ready yet (travel, money, timing)",
+  let_down: "We let them down (out of stock, can't reach their area)",
+  said_no: "Said no thanks",
+  other: "Other or no reason written"
+};
+const CLOSED_QUIET = new Set(["Failed", "Postponed", "Cancelled"]);
+const OPEN = new Set(["New", "Confirmed"]);
+const UNREACHABLE = /pick|respond|answer|reply|unreachable|switched off|busy|ignor|block|silent|hung up|ends the call|not reachable|unavailable on phone/;
+
+/** Why a customer's latest order went quiet, or null when it doesn't count (delivered, still being worked normally, wrong number). */
+export function quietReason(status: string, note: string | null | undefined): QuietReason | null {
+  const t = String(note ?? "").toLowerCase();
+  if (/wrong number|invalid number|not .*(his|her|their) number/.test(t)) return null;
+  const open = OPEN.has(status);
+  if (!open && !CLOSED_QUIET.has(status)) return null;
+  // Open orders count only when the customer stopped answering.
+  if (open) return UNREACHABLE.test(t) && !/stock|coverage/.test(t) ? "unreachable" : null;
+  if (/stock|coverage|far|waybill|no rider/.test(t)) return "let_down";
+  if (/not interested|doesn.?t want|don.?t want|stop (calling|disturb|question)|disturbing|reject|no longer need|changed (his|her|their) mind/.test(t)) return "said_no";
+  if (UNREACHABLE.test(t)) return "unreachable";
+  if (/travel|town|not back|back to|when (he|she|they)|ready|available|next week|next month|monday|tuesday|wednesday|thursday|friday|saturday|sunday|resched|reach out|call (me|back)|money|salary|payment|paid/.test(t)) return "not_ready";
+  return "other";
+}
+
 export type ConditionField =
   | "purchased_product" | "purchase_count" | "last_purchase_days" | "first_purchase_days"
   | "total_spent" | "avg_order_value" | "spend_top_percent" | "state" | "cart_abandoned"
   | "product_interest" | "email_opened" | "email_clicked" | "joined_days" | "source" | "upsell_ready"
-  | "contact_status" | "tag" | "left_review" | "order_source";
+  | "contact_status" | "tag" | "left_review" | "order_source" | "went_quiet";
 
 export type Condition = { field: ConditionField; op: string; value: string | number };
 
@@ -202,7 +245,7 @@ export type Condition = { field: ConditionField; op: string; value: string | num
 export type SegmentRule = { match: "all" | "any"; conditions: Condition[]; exclude?: Condition[] };
 
 /** The picker in the condition builder: plain words for every field and test. */
-export const CONDITION_FIELDS: Array<{ field: ConditionField; group: string; label: string; ops: Array<{ op: string; label: string }>; value: "product" | "number" | "days" | "money" | "percent" | "state" | "source" | "none" | "status" | "tag" | "channel"; unit?: string }> = [
+export const CONDITION_FIELDS: Array<{ field: ConditionField; group: string; label: string; ops: Array<{ op: string; label: string }>; value: "product" | "number" | "days" | "money" | "percent" | "state" | "source" | "none" | "status" | "tag" | "channel" | "quiet"; unit?: string }> = [
   { field: "purchased_product", group: "Purchase History", label: "Purchase History", ops: [{ op: "is", label: "Purchased product" }, { op: "is_not", label: "Never bought product" }], value: "product" },
   { field: "purchase_count", group: "Purchase Frequency", label: "Purchase Frequency", ops: [{ op: "gte", label: "Is at least" }, { op: "lte", label: "Is at most" }, { op: "eq", label: "Is exactly" }], value: "number", unit: "times" },
   { field: "last_purchase_days", group: "Last Purchase", label: "Last Purchase", ops: [{ op: "within", label: "Within last" }, { op: "over", label: "More than" }], value: "days", unit: "ago" },
@@ -219,6 +262,7 @@ export const CONDITION_FIELDS: Array<{ field: ConditionField; group: string; lab
   { field: "source", group: "Email List", label: "Came From", ops: [{ op: "is", label: "Is" }], value: "source" },
   { field: "upsell_ready", group: "Purchase History", label: "Bought One Unit", ops: [{ op: "is", label: "Last order was 1 unit" }], value: "none" },
   { field: "order_source", group: "Location", label: "First Order From", ops: [{ op: "is", label: "Is" }, { op: "is_not", label: "Is not" }], value: "channel" },
+  { field: "went_quiet", group: "Purchase History", label: "Went Quiet", ops: [{ op: "is", label: "Latest order never delivered:" }], value: "quiet" },
   { field: "left_review", group: "Purchase History", label: "Left a Review", ops: [{ op: "is", label: "Has an approved review" }, { op: "is_not", label: "Has no approved review" }], value: "none" },
   { field: "contact_status", group: "Email List", label: "Customer Status", ops: [{ op: "is", label: "Is" }, { op: "is_not", label: "Is not" }], value: "status" },
   { field: "tag", group: "Email List", label: "Tag", ops: [{ op: "is", label: "Has tag" }, { op: "is_not", label: "Doesn't have tag" }], value: "tag" }
@@ -300,6 +344,8 @@ export function personMatches(person: Person, condition: Condition, ctx: MatchCo
     }
     case "left_review":
       return condition.op === "is_not" ? !stats?.reviewed : !!stats?.reviewed;
+    case "went_quiet":
+      return !!stats?.quietReason && (String(condition.value) === "any" || stats.quietReason === condition.value);
     case "contact_status": {
       const same = (contact?.status ?? "") === String(condition.value);
       return condition.op === "is_not" ? !same : same;
@@ -333,6 +379,38 @@ export function cleanConditions(raw: unknown): Condition[] {
     out.push({ field: field.field, op, value: typeof value === "number" ? value : String(value ?? "").slice(0, 120) });
   }
   return out;
+}
+
+
+/**
+ * Second batch of ready-made groups (Bright, 9 Nov 2026: "which segment are
+ * we missing… create them"). Added to every branch once, after the first
+ * batch: customers who went quiet (all, and by reason, matching the
+ * Autopilot follow-ups), one-time buyers, top spenders, engaged readers,
+ * buyers of each best seller and the next biggest states after Lagos.
+ */
+export function builtInSegmentsV2(topProducts: Array<{ id: string; name: string }>, topStates: string[]): BuiltInSegment[] {
+  const quiet = (key: string, name: string, description: string, value: string): BuiltInSegment =>
+    ({ key, name, description, icon: "alert", match: "all", conditions: [{ field: "went_quiet", op: "is", value }] });
+  return [
+    quiet("quiet_all", "Went Quiet – Everyone", "Ordered, but their latest order was never delivered (failed, postponed, cancelled or stopped answering)", "any"),
+    quiet("quiet_unreachable", "Went Quiet – Stopped Answering", "Stopped picking calls or replying to messages", "unreachable"),
+    quiet("quiet_not_ready", "Went Quiet – Not Ready Yet", "Travelled, no money yet, or asked to wait", "not_ready"),
+    quiet("quiet_let_down", "Went Quiet – We Let Them Down", "We couldn't deliver: out of stock, or we couldn't reach their area", "let_down"),
+    quiet("quiet_said_no", "Went Quiet – Said No", "Told the rep they no longer want it", "said_no"),
+    { key: "one_time", name: "One-Time Buyers", description: "One delivery, 30+ days ago: ready for a second order", icon: "userplus", match: "all",
+      conditions: [{ field: "purchase_count", op: "eq", value: 1 }, { field: "last_purchase_days", op: "over", value: 30 }] },
+    { key: "top_spenders", name: "Top 20% Spenders", description: "The fifth of customers who spent the most", icon: "crown", match: "all", conditions: [{ field: "spend_top_percent", op: "top", value: 20 }] },
+    { key: "engaged", name: "Engaged Readers", description: "Opened an email in the last 30 days", icon: "mail", match: "all", conditions: [{ field: "email_opened", op: "within", value: 30 }] },
+    ...topProducts.map((product): BuiltInSegment => ({
+      key: `bought_${product.id.slice(0, 8)}`, name: `Bought: ${product.name}`, description: `Got ${product.name} delivered`, icon: "cart", match: "all",
+      conditions: [{ field: "purchased_product", op: "is", value: product.id }]
+    })),
+    ...topStates.map((state): BuiltInSegment => ({
+      key: `state_${state.toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 30)}`, name: `By Location – ${state.replace(/^FCT\s+/i, "")}`, description: `Customers in ${state}`, icon: "pin", match: "all",
+      conditions: [{ field: "state", op: "is", value: state }]
+    }))
+  ];
 }
 
 // ── Ready-made groups ─────────────────────────────────────────────────
