@@ -65,7 +65,8 @@ export default function MonthlyPlan({ campaigns, onClose, onDone, onToast }: { c
   }), [year, month, cutoff, slots, busyDays]);
   const nameOf = (index: number, version: (typeof VERSIONS)[number]) => `Plan: ${label} · ${index + 1}. ${rows[index].slot.title} · ${version.label}`;
   // Already scheduled = any plan email for this month, place and version (its title may have changed since).
-  const allNames = campaigns.filter((row) => row.status !== "archived").map((row) => row.name);
+  // A draft is one that failed to schedule (e.g. refused for a missing link): it doesn't count, so the place gets filled.
+  const allNames = campaigns.filter((row) => row.status !== "archived" && row.status !== "draft").map((row) => row.name);
   const has = (index: number, version: (typeof VERSIONS)[number]) => allNames.some((name) => name.startsWith(`Plan: ${label} · ${index + 1}. `) && name.endsWith(` · ${version.label}`));
   const best = designer?.products.find((row) => row.image && row.links.length) ?? designer?.products[0];
   const fields = () => ({ brand: designer?.sender.fromName || "Our Store", goal: "retention", offerType: "custom", productId: best?.id ?? "", productName: best?.name ?? "", productImage: best?.image ?? "",
