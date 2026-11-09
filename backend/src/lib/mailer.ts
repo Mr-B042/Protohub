@@ -389,6 +389,8 @@ function buildEmailContent(
   body: string,
   vars?: Record<string, string>
 ): EmailContent {
+  // A finished design (e-receipts): sent as it is, also when it waited for working hours.
+  if (vars?.__html) return { text: body, html: vars.__html };
   const brandedText = ensureBrandSignature(body, settings);
   const sections = brandedText.split(/\n\s*\n/).filter((section) => section.trim());
   const preview = sections.find((section) => section.trim())?.replace(/\s+/g, " ").slice(0, 140) ?? subject;
@@ -878,7 +880,35 @@ export async function sendOrderStatusEmail(
     currency: order.currency, from_status: fromStatus ?? "—", status: toStatus
   };
   const trigger: EmailTrigger = toStatus === "Delivered" ? "order_delivered" : "order_status_change";
+  // Delivered: the "Thank You" e-receipt (Bright, 9 Nov 2026); plain text only if it can't be made.
+  if (trigger === "order_delivered" && await sendReceiptEmail(orgId, "order_delivered", order.id, "thank_you", { email: order.email, name: order.customer }, vars)) return;
   await sendEmail(orgId, trigger, vars, { email: order.email, name: order.customer });
+}
+
+/**
+ * E-receipts: the Order Confirmation / Thank You designs from Send Order
+ * Receipt, as a real email. Same switch as the plain email it replaces
+ * (Settings › Email triggers). Returns false when nothing was sent so the
+ * caller can fall back to the plain email.
+ */
+async function sendReceiptEmail(orgId: string, trigger: EmailTrigger, orderId: string, kind: "confirmation" | "thank_you", to: { email: string; name?: string }, vars: Record<string, string>): Promise<boolean> {
+  const settings = await loadSettings(orgId);
+  if (!settings || !settings.enabled || !settings.triggers[trigger] || !hasValidKeys(settings) || !settings.from_email || !to.email) return true;
+  let built: Awaited<ReturnType<typeof import("./receipt-email.js")["buildReceiptEmail"]>>;
+  try {
+    const { buildReceiptEmail } = await import("./receipt-email.js");
+    built = await buildReceiptEmail(orgId, orderId, kind);
+  } catch (error) {
+    logger.warn("receipt email could not be made, sending the plain one", { orgId, orderId, kind, error: (error as Error).message });
+    return false;
+  }
+  if (!built) return false;
+  try {
+    await deliverAndLogEmail(orgId, settings, trigger, "customer", { ...vars, receipt: kind, __html: built.html }, to, built.subject, built.text);
+  } catch {
+    // already logged as failed; not sent twice
+  }
+  return true;
 }
 
 // ── Customer: new order confirmation ─────────────────────
@@ -923,6 +953,8 @@ export async function sendNewOrderEmail(
     currency: order.currency, source: order.source ?? "—",
     addons: buildAddonsEmailLine(order.cross_sell_lines, order.currency, order.additional_lines)
   };
+  // The "Order Confirmation" e-receipt; plain text only if it can't be made.
+  if (await sendReceiptEmail(orgId, "order_new", order.id, "confirmation", { email: order.email, name: order.customer }, vars)) return;
   await sendEmail(orgId, "order_new", vars, { email: order.email, name: order.customer });
 }
 

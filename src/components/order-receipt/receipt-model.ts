@@ -1,3 +1,7 @@
+// ⚠️ TWO COPIES: src/components/order-receipt/receipt-model.ts and
+// backend/src/lib/receipt-model.ts must stay byte-for-byte the same
+// (receipt-email.test.ts checks): the WhatsApp image and the email receipt
+// show the same figures.
 // Order receipt (Bright's design, 20 Oct 2026): what goes on the image.
 //
 // ⚠️ EVERY figure comes from the order record. Nothing on the receipt can be
