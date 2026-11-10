@@ -118,6 +118,8 @@ export type FollowUpWaybill = {
   status: string;
   /** When it left In Transit; null while still In Transit. */
   closedMs: number | null;
+  /** Where it goes ("Customer:5984" = stock Protohub moved by itself when an order was delivered). */
+  toLocation?: string | null;
 };
 
 /**
@@ -165,6 +167,14 @@ const WORK_START_MINUTE = 8 * 60;
 const WORK_END_MINUTE = 17 * 60;
 const minuteOfDay = (ms: number) => Math.floor((((ms + LAGOS_MS) % 86_400_000) + 86_400_000) % 86_400_000 / 60_000);
 export const needsNotice = (createdMs: number) => lagosDay(createdMs) >= NOTICE_FROM;
+/**
+ * Only a waybill the team sends to an agent needs the agent's group told
+ * (10 Nov 2026: 31 delivered-order stock records, "Customer:…", were charged
+ * ₦500 each though nobody could tick them; they never show as In Transit).
+ */
+export const isCustomerDelivery = (toLocation: string | null | undefined) => /^customer:/i.test(String(toLocation ?? "").trim());
+export const needsAgentNotice = (waybill: Pick<FollowUpWaybill, "status" | "closedMs" | "toLocation">) =>
+  !isCustomerDelivery(waybill.toLocation) && (waybill.status === "In Transit" || waybill.closedMs !== null);
 
 /**
  * When her hour starts: at once, or 8:00 AM the next working day when the
@@ -204,6 +214,7 @@ export function noticeState(input: { createdMs: number; informedMs: number | nul
  */
 export function noticeCharges(input: { waybills: Array<FollowUpWaybill & { informedMs: number | null }>; nowMs: number; settings: FollowUpSettings }) {
   return input.waybills.flatMap((waybill) => {
+    if (!needsAgentNotice(waybill)) return [];
     const notice = noticeState({ createdMs: waybill.createdMs, informedMs: waybill.informedMs, closedMs: waybill.closedMs, nowMs: input.nowMs, settings: input.settings });
     if (!notice || (notice.state !== "late" && notice.state !== "done_late") || input.nowMs <= notice.dueMs) return [];
     const sessionDate = lagosDay(notice.dueMs);

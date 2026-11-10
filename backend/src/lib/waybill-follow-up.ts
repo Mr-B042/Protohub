@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import {
-  CHANNELS, DEFAULT_SETTINGS, NEXT_ACTIONS, NOTICE_FROM, RESPONSES, SESSIONS, addDays, cleanSettings, complianceRate, dayStartMs, isWorkingDay, lagosDay,
+  CHANNELS, DEFAULT_SETTINGS, isCustomerDelivery, NEXT_ACTIONS, NOTICE_FROM, RESPONSES, SESSIONS, addDays, cleanSettings, complianceRate, dayStartMs, isWorkingDay, lagosDay,
   logProblem, missedCharges, noNewsStreak, noticeCharges, noticeState, owesSession, responseOf, sessionForLog, sessionStatus, sessionWindows, waybillState,
   type FollowUpSettings, type FollowUpWaybill, type NoticeState, type SessionKey, type SessionWindow
 } from "./waybill-follow-up-rules.js";
@@ -61,7 +61,7 @@ async function waybillsSince(orgId: string, sinceDay: string): Promise<WaybillRo
 }
 
 const asFollowUp = (row: WaybillRow): FollowUpWaybill => ({
-  id: String(row.id), createdMs: Date.parse(row.created_at), status: String(row.status), closedMs: row.closed_at ? Date.parse(row.closed_at) : null
+  id: String(row.id), createdMs: Date.parse(row.created_at), status: String(row.status), closedMs: row.closed_at ? Date.parse(row.closed_at) : null, toLocation: row.to_location ?? null
 });
 
 type Place = { agentName: string; agentPhone: string | null; state: string; city: string };
@@ -412,7 +412,7 @@ export async function informAgent(orgId: string, user: { id: string; name: strin
   }).map((row) => String(row.id));
   return { informed: (saved ?? []).length, already: rows.length - (saved ?? []).length, late };
 }
-const needsNoticeRow = (row: WaybillRow) => lagosDay(Date.parse(row.created_at)) >= NOTICE_FROM;
+const needsNoticeRow = (row: WaybillRow) => lagosDay(Date.parse(row.created_at)) >= NOTICE_FROM && !isCustomerDelivery(row.to_location);
 
 export async function evidenceUrl(orgId: string, logId: string) {
   const { data, error } = await supabase.from("waybill_follow_up_logs").select("evidence_path").eq("org_id", orgId).eq("id", logId).maybeSingle();

@@ -124,3 +124,14 @@ test("a late notice is charged once its hour has passed, ticked late or not at a
   assert.deepEqual(charges.map((row) => [row.waybillId, row.sessionKey, row.sessionDate, row.amount]), [["WB-A", "notice", DAY, 500], ["WB-B", "notice", DAY, 500]]);
   assert.deepEqual(noticeCharges({ waybills, nowMs: at(DAY, "11:30"), settings: { ...settings, chargesFrom: "2026-11-10" } }), []);
 });
+
+test("delivered-order stock records (Customer:…) never owe the agent notice; real waybills still do", () => {
+  const settings = { ...DEFAULT_SETTINGS, chargesFrom: DAY };
+  const waybills = [
+    { id: "WB-CUST", status: "Received", closedMs: null, toLocation: "Customer:5984", createdMs: at(DAY, "10:00"), informedMs: null },
+    { id: "WB-CUST2", status: "In Transit", closedMs: null, toLocation: "customer:12", createdMs: at(DAY, "10:00"), informedMs: null },
+    { id: "WB-RCVD", status: "Received", closedMs: null, toLocation: "Gombe", createdMs: at(DAY, "10:00"), informedMs: null }, // made as received: nothing to tell
+    { id: "WB-AGENT", status: "In Transit", closedMs: null, toLocation: "FCT Abuja", createdMs: at(DAY, "10:00"), informedMs: null }
+  ];
+  assert.deepEqual(noticeCharges({ waybills, nowMs: at(DAY, "11:30"), settings }).map((row) => row.waybillId), ["WB-AGENT"]);
+});
