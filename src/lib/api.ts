@@ -4630,6 +4630,8 @@ export type HubLink = {
 export type HubPixelOption = {
   id: string; name: string; pixelId: string; status: string; platform: string; business: string | null; active: boolean; hasAccess: boolean | null;
   health: HubDataSource["health"]; lastFiredAt: string | null;
+  /** Ad sets that spent in the last 7 days optimising on this Pixel (biggest spend first). */
+  adsets?: Array<{ name: string; campaign: string; spend: number; active: boolean }> | null;
 };
 export type HubLinksResponse = {
   period: HubPeriod;
