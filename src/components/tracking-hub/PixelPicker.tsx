@@ -43,6 +43,12 @@ function Row({ option, reasons, selected, onPick, use }: { option: HubPixelOptio
       {/* Full business name on its own line (Bright, 11 Nov 2026: names were cut off). */}
       <span className="block text-[11.5px] leading-snug text-gray-500">ID {option.pixelId}{option.lastFiredAt ? ` · last event ${ago(option.lastFiredAt)}` : " · no events seen"}</span>
       {option.business ? <span className="block break-words text-[11.5px] leading-snug text-gray-500">{option.business}</span> : null}
+      {/* Ad sets on this Pixel (Bright, 11 Nov 2026: tells same-named Pixels apart). */}
+      {option.adsets?.length ? (
+        <span className="mt-0.5 block text-[11.5px] leading-snug text-gray-700 dark:text-slate-300">
+          <span className="font-semibold">Ad sets:</span> {option.adsets.slice(0, 3).map((row) => `${row.name}${row.campaign ? ` (${row.campaign})` : ""}${row.spend ? ` ₦${row.spend.toLocaleString("en-NG")}` : ""}`).join(" · ")}{option.adsets.length > 3 ? ` +${option.adsets.length - 3} more` : ""}
+        </span>
+      ) : option.adsets ? <span className="mt-0.5 block text-[11.5px] italic leading-snug text-gray-400">No ad set in your connected ad accounts uses this Pixel</span> : null}
       {use && use.links > 0 ? <span className="block text-[11px] font-semibold text-[#1F8FE0]">{use.links} link{use.links === 1 ? "" : "s"} · {use.orders} order{use.orders === 1 ? "" : "s"} this week</span> : null}
       {reasons?.length ? <span className="mt-0.5 flex flex-wrap gap-1">{reasons.map((reason) => <span key={reason} className="rounded bg-emerald-50 px-1.5 text-[10.5px] font-semibold text-emerald-700">{reason}</span>)}</span> : null}
     </button>
@@ -71,7 +77,7 @@ export default function PixelPicker({ options, value, onPick, hints, exclude = [
   // Busiest first (Bright, 11 Nov 2026): orders, then visits on links using it, then its last event, then name.
   const useOf = (id: string) => usage[id] ?? { links: 0, orders: 0, views: 0 };
   const fired = (row: HubPixelOption) => (row.lastFiredAt ? Date.parse(row.lastFiredAt) : 0);
-  const all = scored.filter((row) => !needle || `${row.option.name} ${row.option.pixelId} ${row.option.business ?? ""}`.toLowerCase().includes(needle))
+  const all = scored.filter((row) => !needle || `${row.option.name} ${row.option.pixelId} ${row.option.business ?? ""} ${(row.option.adsets ?? []).map((ad) => `${ad.name} ${ad.campaign}`).join(" ")}`.toLowerCase().includes(needle))
     .sort((a, b) => { const x = useOf(a.option.id), y = useOf(b.option.id); return y.orders - x.orders || y.views - x.views || fired(b.option) - fired(a.option) || a.option.name.localeCompare(b.option.name); });
   const weekAgo = Date.now() - 7 * 86_400_000;
   const isActive = (row: HubPixelOption) => { const u = useOf(row.id); return u.orders + u.views > 0 || fired(row) > weekAgo; };
@@ -92,7 +98,7 @@ export default function PixelPicker({ options, value, onPick, hints, exclude = [
         <div className="absolute right-0 z-30 mt-1 w-full min-w-[min(26rem,calc(100vw-2rem))] rounded-xl border border-gray-200 bg-white p-2 shadow-xl dark:border-slate-700 dark:bg-slate-900">
           <label className="relative block">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-            <input autoFocus value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search by name, Pixel ID or business" className="h-9 w-full rounded-lg border border-gray-200 pl-8 pr-3 text-[13px] font-normal dark:border-slate-700 dark:bg-slate-900" />
+            <input autoFocus value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search by name, Pixel ID, business or ad set" className="h-9 w-full rounded-lg border border-gray-200 pl-8 pr-3 text-[13px] font-normal dark:border-slate-700 dark:bg-slate-900" />
           </label>
           <div className="mt-2 max-h-80 overflow-y-auto">
             {emptyLabel && !needle ? <button type="button" onClick={() => pick(null)} className="!min-h-0 block w-full rounded-lg px-3 py-2 text-left text-[13px] font-normal text-gray-600 hover:bg-gray-50 dark:text-slate-300 dark:hover:bg-slate-800">{emptyLabel}</button> : null}

@@ -347,11 +347,15 @@ export async function adsetPixel(adsetId: string, token: string): Promise<{ ok: 
 /** Every ad set in an account with the Pixel it optimises on (Refresh Data warms the one-Pixel cache). */
 export async function accountAdsetPixels(adAccountId: string, token: string) {
   const account = adAccountId.startsWith("act_") ? adAccountId : `act_${adAccountId}`;
-  const result = await graphGet<{ data?: Array<{ id: string; campaign_id?: string; promoted_object?: { pixel_id?: string } }> }>(`${account}/adsets`, token, {
-    fields: "id,campaign_id,promoted_object", limit: "500"
-  });
+  // Names and status too (11 Nov 2026): the Pixel picker shows each Pixel's ad sets.
+  const result = await graphAll<{ id: string; name?: string; campaign_id?: string; campaign?: { name?: string }; effective_status?: string; promoted_object?: { pixel_id?: string } }>(`${account}/adsets`, token, {
+    fields: "id,name,campaign_id,campaign{name},effective_status,promoted_object"
+  }, 2000);
   if (!result.ok) return { ok: false as const, message: result.message };
-  return { ok: true as const, rows: (result.data.data ?? []).map((row) => ({ adsetId: String(row.id), campaignId: row.campaign_id ? String(row.campaign_id) : null, pixelId: row.promoted_object?.pixel_id ? String(row.promoted_object.pixel_id) : null })) };
+  return { ok: true as const, rows: result.data.map((row) => ({
+    adsetId: String(row.id), campaignId: row.campaign_id ? String(row.campaign_id) : null, pixelId: row.promoted_object?.pixel_id ? String(row.promoted_object.pixel_id) : null,
+    name: row.name ?? null, campaignName: row.campaign?.name ?? null, status: row.effective_status ?? null
+  })) };
 }
 
 // ------------------------------------------------- Since Start (8 Oct 2026)

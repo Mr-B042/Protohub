@@ -886,6 +886,49 @@ const adUrlFor = (link: any) => {
   try { const url = new URL(base); url.searchParams.set("ph_link", link.tracking_key); return url.toString(); } catch { return null; }
 };
 
+/**
+ * Each Pixel's ad sets that spent in the last 7 days (Bright, 11 Nov 2026:
+ * Pixels share names, "so we can differentiate"). The ad set → Pixel link is
+ * already saved (tracking_meta_adset_pixels, from Meta's promoted_object), so
+ * this asks Meta nothing.
+ */
+type PixelAdset = { name: string; campaign: string; spend: number; active: boolean };
+async function adsetsByPixel(orgId: string, branchId: string): Promise<{ byPixel: Map<string, PixelAdset[]>; known: boolean }> {
+  const since = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+  const spend = new Map<string, { name: string; campaign: string; spend: number }>();
+  for (let page = 0; page < 20; page += 1) {
+    const { data, error } = await supabase.from("tracking_meta_ad_insights").select("id, adset_id, adset_name, campaign_name, spend")
+      .eq("org_id", orgId).eq("branch_id", branchId).gte("day", since).gt("spend", 0).order("id").range(page * 1000, page * 1000 + 999);
+    if (error) throw error;
+    for (const row of (data ?? []) as any[]) {
+      if (!row.adset_id) continue;
+      const item = spend.get(String(row.adset_id)) ?? { name: String(row.adset_name ?? ""), campaign: String(row.campaign_name ?? ""), spend: 0 };
+      item.spend += Number(row.spend) || 0;
+      spend.set(String(row.adset_id), item);
+    }
+    if ((data ?? []).length < 1000) break;
+  }
+  const byPixel = new Map<string, PixelAdset[]>();
+  let known = false;
+  for (let page = 0; page < 20; page += 1) {
+    const { data, error } = await supabase.from("tracking_meta_adset_pixels").select("adset_id, pixel_id, adset_name, campaign_name, effective_status")
+      .eq("org_id", orgId).not("pixel_id", "is", null).order("adset_id").range(page * 1000, page * 1000 + 999);
+    if (error) throw error;
+    for (const row of (data ?? []) as any[]) {
+      known = true;
+      const spent = spend.get(String(row.adset_id));
+      const active = row.effective_status === "ACTIVE";
+      // Only ad sets running now or that spent this week (old, switched-off ones would bury them).
+      if (!active && !spent) continue;
+      const item: PixelAdset = { name: String(row.adset_name ?? spent?.name ?? "") || `Ad set ${row.adset_id}`, campaign: String(row.campaign_name ?? spent?.campaign ?? ""), spend: Math.round(spent?.spend ?? 0), active };
+      byPixel.set(String(row.pixel_id), [...(byPixel.get(String(row.pixel_id)) ?? []), item]);
+    }
+    if ((data ?? []).length < 1000) break;
+  }
+  for (const list of byPixel.values()) list.sort((x, y) => y.spend - x.spend || Number(y.active) - Number(x.active) || x.name.localeCompare(y.name));
+  return { byPixel, known };
+}
+
 router.get("/links", async (req, res) => {
   try {
     const orgId = req.user!.orgId;
@@ -931,6 +974,7 @@ router.get("/links", async (req, res) => {
         status: link.active === false ? "paused" : linkStatusOf(Boolean(linkHealth?.healthy), stats.conversionRate, stats.views, settings.lowConversionRate)
       };
     });
+    const pixelAdsets = await adsetsByPixel(orgId, branchId).catch(() => ({ byPixel: new Map<string, PixelAdset[]>(), known: false }));
     const { data: pageBeacons = [] } = await supabase.from("tracking_browser_events").select("page_domain, page_url, pixels_on_page")
       .eq("org_id", orgId).gte("fired_at", new Date(Date.now() - 30 * 86_400_000).toISOString()).limit(2000) as any;
     // Each product's package sets (the order form shows one set) and their currency.
@@ -964,7 +1008,9 @@ router.get("/links", async (req, res) => {
       // Pixel pickers show the id, business and last event, and recommend Pixels.
       dataSources: assessment.sourceRows.map((row: any) => ({
         id: row.id, name: row.name, pixelId: row.pixelId, status: row.status, platform: row.platform,
-        business: row.connectionName || row.businessName || null, active: row.active, hasAccess: row.hasAccess, health: row.health, lastFiredAt: row.metaLastFiredAt
+        business: row.connectionName || row.businessName || null, active: row.active, hasAccess: row.hasAccess, health: row.health, lastFiredAt: row.metaLastFiredAt,
+        // null = ad sets not read yet (run Refresh Data); [] = none of the connected ad accounts uses it.
+        adsets: (row.platform ?? "meta") !== "meta" || !pixelAdsets.known ? null : (pixelAdsets.byPixel.get(String(row.pixelId)) ?? []).slice(0, 8)
       })),
       // Pixels each landing page was seen loading (last scan + browser reports).
       websites: basics.websites.map((row: any) => {

@@ -62,7 +62,8 @@ export async function refreshAccount(orgId: string, branchId: string, target: Re
   if (adsets.ok && adsets.rows.length) {
     const fetchedAt = new Date().toISOString();
     await supabase.from("tracking_meta_adset_pixels").upsert(adsets.rows.map((row) => ({
-      org_id: orgId, adset_id: row.adsetId, campaign_id: row.campaignId, ad_account_id: account, pixel_id: row.pixelId, fetched_at: fetchedAt
+      org_id: orgId, adset_id: row.adsetId, campaign_id: row.campaignId, ad_account_id: account, pixel_id: row.pixelId, fetched_at: fetchedAt,
+      adset_name: row.name, campaign_name: row.campaignName, effective_status: row.status
     })), { onConflict: "org_id,adset_id" });
   }
   return { source: target.label, account, ok: true, message: info.ok ? "Loaded." : `Loaded; campaign names not read (${humanMetaError(info.message, null).title}).`, rows: result.rows.length };
