@@ -158,12 +158,15 @@ function sha256(value?: string | null) {
   return createHash("sha256").update(normalized).digest("hex");
 }
 
-function normalizePhone(value?: string | null) {
+function normalizePhone(value?: string | null, country?: string | null) {
   const digits = String(value ?? "").replace(/\D+/g, "");
   if (!digits) return "";
-  if (digits.startsWith("234")) return digits;
-  if (digits.startsWith("0")) return `234${digits.slice(1)}`;
-  if (digits.length === 10) return `234${digits}`;
+  // Zambia (11 Nov 2026): +260 and 9-digit numbers; Nigeria as before.
+  const zm = String(country ?? "").toLowerCase() === "zm";
+  const code = zm ? "260" : "234";
+  if (digits.startsWith(code)) return digits;
+  if (digits.startsWith("0")) return `${code}${digits.slice(1)}`;
+  if (digits.length === (zm ? 9 : 10)) return `${code}${digits}`;
   return digits;
 }
 
@@ -335,7 +338,7 @@ async function sendMetaCapiEvent(args: SendMetaPurchaseArgs & { eventName: strin
   const userData: Record<string, unknown> = {
     client_ip_address: args.clientIp || undefined,
     client_user_agent: args.userAgent || undefined,
-    ph: sha256(normalizePhone(args.phone)),
+    ph: sha256(normalizePhone(args.phone, args.country)),
     em: sha256(args.email),
     fn: sha256(firstName),
     ln: sha256(lastName),

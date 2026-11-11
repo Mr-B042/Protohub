@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { branchCountry } from "../lib/branch-country.js";
 import rateLimit from "express-rate-limit";
 import { supabase } from "../lib/supabase.js";
 import {
@@ -380,7 +381,7 @@ const dedupePublicCompanionMedia = (products: Array<ReturnType<typeof sanitisePr
 };
 
 const PUBLIC_PRODUCT_SELECT = `
-  id, org_id, name, description, package_description, active, available_states, catalog_type,
+  id, org_id, branch_id, name, description, package_description, active, available_states, catalog_type,
   can_be_cross_sell, can_be_free_gift,
   cross_sell_product_ids, cross_sell_state_restrictions, cross_sell_price_overrides,
   free_gift_product_ids, free_gift_state_restrictions,
@@ -669,7 +670,9 @@ router.get("/:id", readRateLimit, async (req, res) => {
   const publicProduct = sanitiseProduct(product, companionSocialProofByProductId);
   const publicRelated = related.map((item) => sanitiseProduct(item));
   const media = dedupePublicCompanionMedia([publicProduct, ...publicRelated]);
-  res.json({ product: publicProduct, related: publicRelated, media });
+  // The form's country (Zambia branch, 11 Nov 2026): phone code, provinces, Meta country.
+  const country = (await branchCountry((product as any).branch_id ?? null)).toUpperCase();
+  res.json({ product: { ...publicProduct, country }, related: publicRelated, media });
 });
 
 export default router;

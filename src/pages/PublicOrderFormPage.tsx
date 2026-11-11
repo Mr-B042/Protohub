@@ -3,7 +3,7 @@ import { cartsApi, embedSettingsApi, productsApi, publicOrdersApi, type PublicEm
 import { browserSupabaseClient } from "../lib/realtime";
 import { makeCartId } from "../lib/cart-id";
 import { itemCountLabel } from "../lib/item-count-label";
-import { nigerianPhoneProblem } from "../lib/ng-phone";
+import { DIAL_CODE, META_COUNTRY, ZAMBIA_KNOWN_AREAS, ZAMBIA_PROVINCES, ZAMBIA_TOWNS, formCountryOf, metaPhoneDigits, phonePlaceholderFor, phoneProblemFor, zambiaAddressExample, zambiaAreaSuggestions, type FormCountry } from "../lib/country-form";
 import { vagueAddressReason } from "../lib/nigeria";
 import { addressExampleFor, areaSuggestions, KNOWN_AREA_NAMES, STATE_AREAS } from "../lib/ng-areas";
 import { announceLandingPreviewLocked, insideLandingPreview } from "../lib/landing-preview";
@@ -266,11 +266,11 @@ const sanitizePhoneDigitsInput = (value: string) => {
 
 // Address that only repeats the state/city, only names an area, or is an
 // email (Bright, 5 Nov 2026).
-const vagueAddressMessage = (reason: "place" | "short" | "email", state?: string) => reason === "email"
+const vagueAddressMessage = (reason: "place" | "short" | "email", state?: string, country: FormCountry = "NG") => reason === "email"
   ? "This looks like an email. Please type where we should deliver: your street, area or a nearby landmark."
   : reason === "short"
-    ? `Please add a little more so we can find you: your house number and street, or a nearby landmark, e.g. ${addressExampleFor(state)}.`
-    : `You already gave us your state and city. Please add your house number, street and a nearby landmark so we can find you, e.g. ${addressExampleFor(state)}.`;
+    ? `Please add a little more so we can find you: your house number and street, or a nearby landmark, e.g. ${country === "ZM" ? zambiaAddressExample(state ?? "") : addressExampleFor(state)}.`
+    : `You already gave us your ${country === "ZM" ? "province" : "state"} and city. Please add your house number, street and a nearby landmark so we can find you, e.g. ${country === "ZM" ? zambiaAddressExample(state ?? "") : addressExampleFor(state)}.`;
 
 type PendingUpsellOffer = {
   orderId: string;
@@ -1380,6 +1380,10 @@ export default function PublicOrderFormPage() {
   const bootSettings = cachedSettings ?? staleSettings;
 
   const [products, setProducts] = useState<PublicProduct[]>(() => bootProductBundle?.products ?? []);
+  // The form's country, from the product's branch (Zambia: +260, provinces). Nigeria is unchanged.
+  const formCountry: FormCountry = formCountryOf((products.find((product) => product.id === publicProductId) as { country?: string } | undefined)?.country);
+  const knownAreas = formCountry === "ZM" ? ZAMBIA_KNOWN_AREAS : KNOWN_AREA_NAMES;
+  const areasOf = (state: string) => (formCountry === "ZM" ? ZAMBIA_TOWNS[state] : STATE_AREAS[state]);
   const [settings, setSettings] = useState<PublicEmbedSettings>(() => ({ ...DEFAULT_SETTINGS, ...(bootSettings ?? {}) }));
   const [loading, setLoading] = useState(Boolean(publicProductId) && !(bootProductBundle?.products?.length));
   const [productCacheStatus, setProductCacheStatus] = useState<"empty" | "fresh_cache" | "stale_cache" | "live">(
@@ -1529,10 +1533,9 @@ export default function PublicOrderFormPage() {
   // for the Pixel's init. The Pixel normalises and hashes it; the server's copy
   // of the event already carries the same details, hashed.
   const metaUserData = useCallback(() => {
-    const digits = orderFormPhone.replace(/\D+/g, "");
-    const phone = !digits ? "" : digits.startsWith("234") ? digits : digits.startsWith("0") ? `234${digits.slice(1)}` : digits.length === 10 ? `234${digits}` : digits;
+    const phone = metaPhoneDigits(formCountry, orderFormPhone);
     const parts = orderFormName.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    const data: Record<string, string> = { country: "ng" };
+    const data: Record<string, string> = { country: META_COUNTRY[formCountry] };
     if (phone) data.ph = phone;
     if (parts[0]) data.fn = parts[0];
     if (parts.length > 1) data.ln = parts[parts.length - 1];
@@ -1542,7 +1545,7 @@ export default function PublicOrderFormPage() {
     const visitorId = publicVisitorId();
     if (visitorId) data.external_id = visitorId;
     return data;
-  }, [orderFormCity, orderFormEmail, orderFormName, orderFormPhone, orderFormState]);
+  }, [formCountry, orderFormCity, orderFormEmail, orderFormName, orderFormPhone, orderFormState]);
   const postMetaBrowserEvent = useCallback((
     eventName: "Lead" | "Purchase",
     eventId: string,
@@ -1664,15 +1667,15 @@ export default function PublicOrderFormPage() {
   const guidedCheckout = settings.publicFormMode === "guided_checkout";
   const phoneDigits = orderFormPhone.replace(/\D/g, "");
   const whatsappDigits = sanitizePhoneDigitsInput(orderFormWhatsapp);
-  const phoneValid = phoneDigits.length > 0 && !nigerianPhoneProblem(orderFormPhone);
-  const whatsappValid = !orderFormWhatsapp.trim() || !nigerianPhoneProblem(orderFormWhatsapp);
+  const phoneValid = phoneDigits.length > 0 && !phoneProblemFor(formCountry, orderFormPhone);
+  const whatsappValid = !orderFormWhatsapp.trim() || !phoneProblemFor(formCountry, orderFormWhatsapp);
   const contactStepComplete = !!orderFormName.trim()
     && phoneValid
     && (!settings.showWhatsapp || !settings.requireWhatsapp || !!whatsappDigits)
     && whatsappValid;
   const deliveryStepComplete = !!orderFormState.trim()
     && (!settings.addressRequired || !!orderFormAddress.trim())
-    && !vagueAddressReason(orderFormAddress, orderFormCity, orderFormState, KNOWN_AREA_NAMES)
+    && !vagueAddressReason(orderFormAddress, orderFormCity, orderFormState, knownAreas)
     && (!settings.cityRequired || !!orderFormCity.trim())
     && (!settings.askDelivery || !!orderFormDeliveryWindow.trim())
     && (!settings.requireConfirmation || orderFormConfirmed)
@@ -1778,13 +1781,13 @@ export default function PublicOrderFormPage() {
     if (!orderFormName.trim()) nextErrors.name = "Customer name is required.";
     if (!orderFormPhone.trim()) {
       nextErrors.phone = "Phone number is required.";
-    } else if (nigerianPhoneProblem(orderFormPhone)) {
-      nextErrors.phone = nigerianPhoneProblem(orderFormPhone)!;
+    } else if (phoneProblemFor(formCountry, orderFormPhone)) {
+      nextErrors.phone = phoneProblemFor(formCountry, orderFormPhone)!;
     }
     if (settings.showWhatsapp && settings.requireWhatsapp && !whatsappDigits) {
       nextErrors.whatsapp = "WhatsApp number is required.";
-    } else if (orderFormWhatsapp.trim() && nigerianPhoneProblem(orderFormWhatsapp)) {
-      nextErrors.whatsapp = nigerianPhoneProblem(orderFormWhatsapp)!;
+    } else if (orderFormWhatsapp.trim() && phoneProblemFor(formCountry, orderFormWhatsapp)) {
+      nextErrors.whatsapp = phoneProblemFor(formCountry, orderFormWhatsapp)!;
     }
     // Email is required whenever the form shows it (Bright, 9 Nov 2026): it is how
     // customers get their e-receipts and how we stay in touch after the order.
@@ -1793,11 +1796,11 @@ export default function PublicOrderFormPage() {
       if (!email) nextErrors.email = "Email is required: we send your order receipt there.";
       else if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email)) nextErrors.email = "Please check your email, e.g. name@gmail.com.";
     }
-    const addressVague = vagueAddressReason(orderFormAddress, orderFormCity, orderFormState, KNOWN_AREA_NAMES);
+    const addressVague = vagueAddressReason(orderFormAddress, orderFormCity, orderFormState, knownAreas);
     if (settings.addressRequired && !orderFormAddress.trim()) nextErrors.address = "Delivery address is required.";
-    else if (addressVague) nextErrors.address = vagueAddressMessage(addressVague, orderFormState);
+    else if (addressVague) nextErrors.address = vagueAddressMessage(addressVague, orderFormState, formCountry);
     if (settings.cityRequired && !orderFormCity.trim()) nextErrors.city = "City is required.";
-    if (!orderFormState.trim()) nextErrors.state = "Please select your state.";
+    if (!orderFormState.trim()) nextErrors.state = formCountry === "ZM" ? "Please select your province." : "Please select your state.";
     if (settings.askDelivery && !orderFormDeliveryWindow.trim()) nextErrors.delivery = "Please select a delivery time.";
     if (settings.requireConfirmation && !orderFormConfirmed) nextErrors.confirmation = "Please confirm before submitting.";
     if (settings.showCommitment && !settings.allowDisagree && !orderFormCommitmentAccepted) {
@@ -3384,7 +3387,7 @@ export default function PublicOrderFormPage() {
           // Same event (its type list is a database check); the message tells them apart.
           trackSubmitBlocked("submit_blocked_missing_address", !orderFormAddress.trim()
             ? "Delivery address is required."
-            : vagueAddressReason(orderFormAddress, orderFormCity, orderFormState, KNOWN_AREA_NAMES) === "short" ? "Address was only one name or area." : "Address only named the state or city.");
+            : vagueAddressReason(orderFormAddress, orderFormCity, orderFormState, knownAreas) === "short" ? "Address was only one name or area." : "Address only named the state or city.");
           break;
         case "city":
           trackSubmitBlocked("submit_blocked_missing_city", "City is required.");
@@ -3746,6 +3749,7 @@ export default function PublicOrderFormPage() {
   }
 
   const allowedStates = useMemo(() => {
+    if (formCountry === "ZM") return [...ZAMBIA_PROVINCES] as string[];
     const normalizedAvailableStates = Array.from(new Set((publicProduct?.availableStates ?? []).map(normalizeStateName).filter(Boolean)));
     const treatAsAllNigeriaStates =
       normalizedAvailableStates.length >= NIGERIA_STATES.length - 1 &&
@@ -3757,7 +3761,7 @@ export default function PublicOrderFormPage() {
             (state === "FCT Abuja" && treatAsAllNigeriaStates)
         )
       : NIGERIA_STATES;
-  }, [publicProduct]);
+  }, [publicProduct, formCountry]);
 
   const companionSiblings = chosenPackage?.companionProducts ?? [];
   const companionOptions = companionSiblings
@@ -4247,7 +4251,7 @@ export default function PublicOrderFormPage() {
           </div>
         ))}
         <div style={{ display: "grid", gap: 4, paddingTop: 10, borderTop: "1px solid #dbeafe", fontSize: 13, color: "#334155" }}>
-          <div><strong>Contact:</strong> {orderFormName.trim() || "Your name"} · +234 {orderFormPhone.trim() || "phone number"}</div>
+          <div><strong>Contact:</strong> {orderFormName.trim() || "Your name"} · {DIAL_CODE[formCountry]} {orderFormPhone.trim() || "phone number"}</div>
           <div><strong>Delivery:</strong> {orderFormCity.trim() || "City"}, {orderFormState.trim() || "State"}{orderFormDeliveryWindow.trim() ? ` · ${orderFormDeliveryWindow.trim()}` : ""}</div>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, paddingTop: 10, borderTop: "2px solid #bfdbfe" }}>
@@ -4766,7 +4770,7 @@ export default function PublicOrderFormPage() {
                 <label className="field-full">
                   <div className="phone-prefix-row" style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
                     <span aria-hidden="true" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 14px", background: "#f3f4f6", border: "1px solid #d1d5db", borderRadius: 8, fontWeight: 700, fontSize: 14, color: "#111827", minWidth: 70, whiteSpace: "nowrap" }}>
-                      +234
+                      {DIAL_CODE[formCountry]}
                     </span>
                     <input
                       ref={setFieldRef("phone") as any}
@@ -4778,10 +4782,10 @@ export default function PublicOrderFormPage() {
                         clearFieldError("phone");
                       }}
                       onBlur={() => {
-                        const problem = nigerianPhoneProblem(orderFormPhone);
+                        const problem = phoneProblemFor(formCountry, orderFormPhone);
                         if (problem) setFieldErrors((current) => ({ ...current, phone: problem }));
                       }}
-                      placeholder="Phone Number *"
+                      placeholder={phonePlaceholderFor(formCountry) ? `Phone Number * (e.g. ${phonePlaceholderFor(formCountry)})` : "Phone Number *"}
                       inputMode="tel"
                       enterKeyHint="next"
                       pattern="[0-9\\s\\-]{7,15}"
@@ -4802,7 +4806,7 @@ export default function PublicOrderFormPage() {
                   <label className="field-full">
                     <div className="phone-prefix-row" style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
                       <span aria-hidden="true" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 14px", background: "#f3f4f6", border: "1px solid #d1d5db", borderRadius: 8, fontWeight: 700, fontSize: 14, color: "#111827", minWidth: 70, whiteSpace: "nowrap" }}>
-                        +234
+                        {DIAL_CODE[formCountry]}
                       </span>
                       <input
                         ref={setFieldRef("whatsapp") as any}
@@ -4815,7 +4819,7 @@ export default function PublicOrderFormPage() {
                           clearFieldError("whatsapp");
                         }}
                         onBlur={() => {
-                          const problem = orderFormWhatsapp.trim() ? nigerianPhoneProblem(orderFormWhatsapp) : null;
+                          const problem = orderFormWhatsapp.trim() ? phoneProblemFor(formCountry, orderFormWhatsapp) : null;
                           if (problem) setFieldErrors((current) => ({ ...current, whatsapp: problem }));
                         }}
                         placeholder={`WhatsApp No.${settings.requireWhatsapp ? " *" : ""}`}
@@ -4899,7 +4903,7 @@ export default function PublicOrderFormPage() {
                     aria-describedby={fieldErrors.state ? "public-order-error-state" : undefined}
                     style={inputErrorStyle("state")}
                   >
-                    <option value="" disabled>Select your state *</option>
+                    <option value="" disabled>{formCountry === "ZM" ? "Select your province *" : "Select your state *"}</option>
                     {allowedStates.map((state) => (
                       <option key={state} value={state}>{state}</option>
                     ))}
@@ -4928,12 +4932,12 @@ export default function PublicOrderFormPage() {
                     aria-describedby={fieldErrors.city ? "public-order-error-city" : undefined}
                     style={inputErrorStyle("city")}
                   />
-                  {orderFormState && STATE_AREAS[orderFormState] && (() => {
+                  {orderFormState && areasOf(orderFormState) && (() => {
                     // Area chips for the chosen state (Bright, 5 Nov 2026): tap one, or type any place.
                     const typed = orderFormCity.trim();
-                    const shown = !typed && showAllAreas ? STATE_AREAS[orderFormState] : areaSuggestions(orderFormState, typed, 8);
+                    const shown = !typed && showAllAreas ? areasOf(orderFormState)! : formCountry === "ZM" ? zambiaAreaSuggestions(orderFormState, typed, 8) : areaSuggestions(orderFormState, typed, 8);
                     if (shown.length === 0) return null;
-                    const more = !typed && !showAllAreas && STATE_AREAS[orderFormState].length > shown.length;
+                    const more = !typed && !showAllAreas && areasOf(orderFormState)!.length > shown.length;
                     return (
                       <div style={{ marginTop: 8 }}>
                         <span style={{ display: "block", marginBottom: 6, fontSize: 11.5, fontWeight: 700, color: "#6b7280" }}>
@@ -4983,8 +4987,8 @@ export default function PublicOrderFormPage() {
                       clearFieldError("address");
                     }}
                     onBlur={() => {
-                      const reason = vagueAddressReason(orderFormAddress, orderFormCity, orderFormState, KNOWN_AREA_NAMES);
-                      if (reason) setFieldErrors((current) => ({ ...current, address: vagueAddressMessage(reason, orderFormState) }));
+                      const reason = vagueAddressReason(orderFormAddress, orderFormCity, orderFormState, knownAreas);
+                      if (reason) setFieldErrors((current) => ({ ...current, address: vagueAddressMessage(reason, orderFormState, formCountry) }));
                     }}
                     placeholder={`House No. & Street${settings.addressRequired ? " *" : ""}`}
                     aria-invalid={Boolean(fieldErrors.address)}
@@ -4993,7 +4997,7 @@ export default function PublicOrderFormPage() {
                   />
                   {!fieldErrors.address && (
                     <span style={{ marginTop: 6, display: "block", fontSize: 12, fontWeight: 600, color: "#6b7280", lineHeight: 1.35 }}>
-                      Your full delivery address, with a nearby landmark. E.g. {addressExampleFor(orderFormState)}.
+                      Your full delivery address, with a nearby landmark. E.g. {formCountry === "ZM" ? zambiaAddressExample(orderFormState) : addressExampleFor(orderFormState)}.
                     </span>
                   )}
                   {fieldErrors.address && (
@@ -5031,7 +5035,7 @@ export default function PublicOrderFormPage() {
                   <div style={{ border: "1px solid #dbeafe", borderRadius: 18, padding: 16, background: "#eff6ff", color: "#1e3a8a" }}>
                     <strong style={{ display: "block", fontSize: 15 }}>
                       {!normalizedSelectedState
-                        ? "Pick your state first"
+                        ? (formCountry === "ZM" ? "Pick your province first" : "Pick your state first")
                         : packageAvailabilityLoading
                           ? `Checking package availability in ${orderFormState}...`
                           : `No package is available in ${orderFormState} right now`}
