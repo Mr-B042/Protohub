@@ -389,7 +389,7 @@ function CreateOfferPanel({ products, template, onCreated, onToast }: { products
     const components = extraItems.length
       ? [{ productId: main.id, quantity: qty, isFreeGift: false }, ...extraItems.map((item) => ({ ...item, isFreeGift: false })), ...giftItems.map((item) => ({ ...item, isFreeGift: true }))]
       : giftItems.map((item) => ({ ...item, isFreeGift: true }));
-    const currency = ["NGN", "USD", "GBP"].includes(main.packages[0]?.currency ?? "NGN") ? (main.packages[0]?.currency ?? "NGN") : "NGN";
+    const currency = ["NGN", "USD", "GBP", "ZMW"].includes(main.packages[0]?.currency ?? "NGN") ? (main.packages[0]?.currency ?? "NGN") : "NGN";
     setBusy(true);
     try {
       const saved = await productsApi.createPackage(main.id, {

@@ -36,7 +36,7 @@ const CaptureSchema = z.object({
   productName:  z.string().min(1).max(160),
   packageName:  z.string().min(1).max(160),
   amount:       z.number().min(0).max(1_000_000_000),
-  currency:     z.enum(["NGN", "USD", "GBP"]),
+  currency:     z.enum(["NGN", "USD", "GBP", "ZMW"]),
   source:       z.string().max(60).optional(),
   embedLabel:   z.string().max(120).optional(),
   preferredDelivery: z.string().max(160).optional(),

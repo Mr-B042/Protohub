@@ -1,8 +1,8 @@
 import { LucideIcon } from "lucide-react";
 
 export type Period = "Today" | "This Week" | "This Month" | "This Year" | "Custom";
-export type CurrencyCode = "NGN" | "USD" | "GBP";
-export type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
+export type CurrencyCode = "NGN" | "USD" | "GBP" | "ZMW";
+export type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR" | "ZMW";
 export type ModalType = "createTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
 
 export type ActivePage =

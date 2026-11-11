@@ -93,7 +93,7 @@ export function OfferDetailsSheet({ product, pkg, products, states, hubs, stockO
     setBusy("duplicate");
     try {
       const saved = await productsApi.createPackage(product.id, {
-        name: `${pkg.name} (copy)`.slice(0, 80), quantity: qty, price: pkg.price, currency: ["NGN", "USD", "GBP"].includes(pkg.currency) ? pkg.currency : "NGN",
+        name: `${pkg.name} (copy)`.slice(0, 80), quantity: qty, price: pkg.price, currency: ["NGN", "USD", "GBP", "ZMW"].includes(pkg.currency) ? pkg.currency : "NGN",
         active: false, displayOrder: product.packages.length, featuredComboCard: pkg.featuredComboCard === true,
         stateFilterMode: pkg.stateFilterMode ?? "all", stateRestrictions: pkg.stateRestrictions ?? [],
         imageUrl: pkg.imageUrl ?? "", imageUrls: pkg.imageUrls ?? [], packageComponents: pkg.packageComponents ?? []

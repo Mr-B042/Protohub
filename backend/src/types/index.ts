@@ -2,7 +2,7 @@
 // Keep these in sync with the database schema.
 
 export type UserRole = "Owner" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Inventory Manager & Logistics Operations" | "Marketer" | "Viewer" | "Recovery Rep" | "Delivery Agent" | "Sales Closer";
-export type CurrencyCode = "NGN" | "USD" | "GBP";
+export type CurrencyCode = "NGN" | "USD" | "GBP" | "ZMW";
 export type OrderStatus = "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 export type OrderSource = "TikTok" | "Facebook" | "WhatsApp" | "Website" | "Direct";
 export type CallOutcome = string;
