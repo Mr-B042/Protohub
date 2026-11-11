@@ -377,22 +377,36 @@ export async function runAdSpendAutoSync(now = new Date()) {
  * Each Pixel's ad accounts from Meta (shared with / owner), at most every 6
  * hours per Pixel and 40 Pixels per run, so the 30-minute sync stays light.
  */
-async function refreshPixelAdAccounts(now: Date) {
+const pixelAccountsRunning = new Set<string>();
+/** Unchecked Pixels of one org, all at once (opening Tracking Links calls this; Bright: "I want all to show now"). */
+export async function refreshPixelAdAccountsNow(orgId: string) {
+  if (pixelAccountsRunning.has(orgId)) return;
+  pixelAccountsRunning.add(orgId);
+  try { await refreshPixelAdAccounts(new Date(), { orgId, onlyNew: true, limit: 300 }); } finally { pixelAccountsRunning.delete(orgId); }
+}
+
+async function refreshPixelAdAccounts(now: Date, opts: { orgId?: string; onlyNew?: boolean; limit?: number } = {}) {
   const stale = new Date(now.getTime() - 6 * 3_600_000).toISOString();
-  const { data: pixels, error } = await supabase.from("tracking_data_sources").select("id, pixel_id, connection_id, ad_accounts_at")
-    .or("platform.is.null,platform.eq.meta").not("connection_id", "is", null).not("pixel_id", "is", null)
-    .or(`ad_accounts_at.is.null,ad_accounts_at.lt.${stale}`).order("ad_accounts_at", { ascending: true, nullsFirst: true }).limit(40);
+  let query = supabase.from("tracking_data_sources").select("id, pixel_id, connection_id, ad_accounts_at")
+    .or("platform.is.null,platform.eq.meta").not("connection_id", "is", null).not("pixel_id", "is", null);
+  if (opts.orgId) query = query.eq("org_id", opts.orgId);
+  query = opts.onlyNew ? query.is("ad_accounts_at", null) : query.or(`ad_accounts_at.is.null,ad_accounts_at.lt.${stale}`);
+  const { data: pixels, error } = await query.order("ad_accounts_at", { ascending: true, nullsFirst: true }).limit(opts.limit ?? 120);
   if (error) throw error;
   if (!pixels?.length) return;
   const ids = [...new Set(pixels.map((row: any) => row.connection_id))];
   const { data: connections } = await supabase.from("tracking_meta_connections").select("id, business_id, access_token").in("id", ids);
   const connectionOf = new Map((connections ?? []).map((row: any) => [row.id, row]));
-  for (const pixel of pixels as any[]) {
-    const connection: any = connectionOf.get(pixel.connection_id);
-    if (!connection?.access_token) continue;
-    const result = await pixelAdAccounts(String(pixel.pixel_id), connection.business_id ?? null, String(connection.access_token));
-    await supabase.from("tracking_data_sources").update(result.ok
-      ? { ad_accounts: result.accounts, ad_accounts_at: now.toISOString(), ad_accounts_error: null }
-      : { ad_accounts_at: now.toISOString(), ad_accounts_error: result.message.slice(0, 300) }).eq("id", pixel.id);
+  // Five at a time: quick, and gentle on Meta.
+  const list = pixels as any[];
+  for (let i = 0; i < list.length; i += 5) {
+    await Promise.all(list.slice(i, i + 5).map(async (pixel) => {
+      const connection: any = connectionOf.get(pixel.connection_id);
+      if (!connection?.access_token) return;
+      const result = await pixelAdAccounts(String(pixel.pixel_id), connection.business_id ?? null, String(connection.access_token));
+      await supabase.from("tracking_data_sources").update(result.ok
+        ? { ad_accounts: result.accounts, ad_accounts_at: new Date().toISOString(), ad_accounts_error: null }
+        : { ad_accounts_at: new Date().toISOString(), ad_accounts_error: result.message.slice(0, 300) }).eq("id", pixel.id);
+    }));
   }
 }
