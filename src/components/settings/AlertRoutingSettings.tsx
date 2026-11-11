@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Bell, BellOff, Lock, RotateCcw, Smartphone } from "lucide-react";
+import { Bell, BellOff, Lock, RotateCcw, Smartphone, Pin
+} from "lucide-react";
 import { notificationRoutingApi, type AlertRoute, type AlertRoutingSettings as Settings } from "../../lib/api";
 
 // ── Alert routing (Bright, 20 Oct 2026) ─────────────────────────────────────
@@ -11,7 +12,7 @@ const ROLE_LABEL: Record<string, string> = {
   "Inventory Manager & Logistics Operations": "Inventory & Logistics",
 };
 const sameRoute = (a: AlertRoute, b: AlertRoute) =>
-  a.rep === b.rep && a.push === b.push && a.roles.length === b.roles.length && a.roles.every((r) => b.roles.includes(r));
+  a.rep === b.rep && a.push === b.push && a.stay === b.stay && a.roles.length === b.roles.length && a.roles.every((r) => b.roles.includes(r));
 
 export default function AlertRoutingSettings({ showToast }: { showToast: (message: string) => void }) {
   const [data, setData] = useState<Settings | null>(null);
@@ -103,6 +104,16 @@ export default function AlertRoutingSettings({ showToast }: { showToast: (messag
                   )}
                 </div>
 
+                {route.push && (
+                  <div className="mt-3 flex items-center justify-between gap-3 border-t border-gray-100 pt-3">
+                    <span className="flex items-center gap-2 text-[13px] text-gray-600"><Pin className="h-4 w-4 text-gray-400" />{route.stay ? "Stays on screen until closed" : "Slides away by itself"}<span className="hidden text-[11.5px] text-gray-400 sm:inline">· Chrome and Edge</span></span>
+                    <button type="button" role="switch" aria-checked={route.stay} aria-label={`Stays on screen for "${alert.label}"`} disabled={!canEdit}
+                      onClick={() => update(alert.key, (r) => ({ ...r, stay: !r.stay }))}
+                      className={`relative h-6 w-11 shrink-0 rounded-full p-0 !min-h-0 transition-colors disabled:opacity-60 ${route.stay ? "bg-[#1F8FE0]" : "bg-gray-200"}`}>
+                      <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${route.stay ? "left-5" : "left-0.5"}`} />
+                    </button>
+                  </div>
+                )}
                 <div className="mt-3 flex items-center justify-between gap-3 border-t border-gray-100 pt-3">
                   <span className="flex items-center gap-2 text-[13px] text-gray-600"><Smartphone className="h-4 w-4 text-gray-400" />{route.push ? "Pops up on phones" : "Notifications list only, no pop-up"}</span>
                   <button type="button" role="switch" aria-checked={route.push} aria-label={`Phone pop-up for "${alert.label}"`} disabled={!canEdit}

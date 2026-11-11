@@ -24339,6 +24339,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     notificationsApi.markRead(id).catch(() => { /* swallow - local copy is already read */ });
   };
   const unreadNotificationCount = systemNotifications.filter((n) => !n.read).length;
+  // App icon badge (Bright, 11 Nov 2026): the unread count on the Protohub icon
+  // when it is installed as an app (Dock, taskbar, home screen).
+  useEffect(() => {
+    const nav = navigator as Navigator & { setAppBadge?: (n?: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
+    try {
+      if (unreadNotificationCount > 0) void nav.setAppBadge?.(unreadNotificationCount)?.catch(() => undefined);
+      else void nav.clearAppBadge?.()?.catch(() => undefined);
+    } catch { /* not supported here */ }
+  }, [unreadNotificationCount]);
   const notificationTargetLink = (notification: SystemNotification) => {
     if (notification.link) return notification.link;
     const adminBase = "/dashboard/admin";

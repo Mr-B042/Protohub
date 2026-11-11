@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import webpush from "web-push";
 import { supabase } from "./supabase.js";
+import { ALERTS, getRoute, type AlertKey } from "./notification-routing.js";
 import { deliveryPolicyForPush, preparePushPayload, trayTagFor } from "./push-policy.js";
 
 // VAPID config — set these in .env
@@ -447,7 +448,16 @@ export async function sendNativePushToDevices(
 /**
  * Send push notification to a specific user across web + native registrations.
  */
-export async function sendPushToUser(orgId: string, userId: string, payload: PushPayload): Promise<PushDeliveryStats> {
+const ALERT_KINDS = new Set(Object.keys(ALERTS));
+/** "Stays on screen" from Alert Routing, unless the sender already decided. */
+async function withStay(orgId: string, payload: PushPayload): Promise<PushPayload> {
+  if (typeof payload.requireInteraction === "boolean" || !payload.kind || !ALERT_KINDS.has(payload.kind)) return payload;
+  const route = await getRoute(orgId, payload.kind as AlertKey);
+  return { ...payload, requireInteraction: route.stay };
+}
+
+export async function sendPushToUser(orgId: string, userId: string, rawPayload: PushPayload): Promise<PushDeliveryStats> {
+  const payload = await withStay(orgId, rawPayload);
   // Copy to Telegram when the Owner switched this alert on there (Telegram
   // Automation Center → Notifications & Alerts). Loaded lazily: telegram.ts
   // reaches push.ts through late-send.ts.
