@@ -731,6 +731,32 @@ const missingPublicOrderOptionalColumn = (error: { message?: string } | null | u
     && new RegExp(`\\b${column}\\b`, "i").test(error?.message ?? "")
   );
 
+/**
+ * The Pixel for this visitor's Lead (Bright, 11 Nov 2026): the Pixel of the ad
+ * set they clicked when it is on the link ("Other Pixels"), else the link's
+ * main Pixel - the same one-Pixel rule as Purchase, so several ad accounts
+ * can share one landing page with no change to their ads.
+ */
+router.get("/lead-pixel", async (req, res) => {
+  try {
+    const key = String(req.query.key ?? "").trim().toLowerCase().slice(0, 120);
+    const adset = String(req.query.adset ?? "").trim();
+    if (!key || !/^\d{6,25}$/.test(adset)) { res.json({ pixelId: null }); return; }
+    const { data: link } = await supabase.from("meta_capi_configs").select("org_id, branch_id, pixel_id, data_source_id").eq("tracking_key", key).eq("active", true).limit(1).maybeSingle();
+    if (!link) { res.json({ pixelId: null }); return; }
+    let mainPixel = (link as any).pixel_id ?? null;
+    if ((link as any).data_source_id) {
+      const { data: source } = await supabase.from("tracking_data_sources").select("pixel_id").eq("id", (link as any).data_source_id).maybeSingle();
+      mainPixel = (source as any)?.pixel_id ?? mainPixel;
+    }
+    const target = await purchasePixelFor({ orgId: (link as any).org_id, branchId: (link as any).branch_id ?? null, trackingKey: key, config: { pixelId: mainPixel } as any, adsetId: adset });
+    res.set("Cache-Control", "private, max-age=300");
+    res.json({ pixelId: target.reason === "clicked_ad" ? target.pixelId : null });
+  } catch {
+    res.json({ pixelId: null });
+  }
+});
+
 router.post("/", submitRateLimit, async (req, res) => {
   const parsed = PublicOrderSchema.safeParse(req.body);
   if (!parsed.success) {
