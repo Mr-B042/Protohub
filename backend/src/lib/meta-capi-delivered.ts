@@ -1,4 +1,5 @@
 import { supabase } from "./supabase.js";
+import { branchCountry } from "./branch-country.js";
 import { logger } from "./logger.js";
 import { addDaysToDateKey, lagosDateKey } from "./sales-bonus-engine.js";
 import { serverEventsAllowed, withDataSource } from "./tracking-credentials.js";
@@ -151,7 +152,7 @@ export async function runMetaDeliveredEvents(): Promise<{ sent: number; skipped:
         eventSourceUrl: pageUrl, clientIp: null,
         userAgent: typeof context.userAgent === "string" ? context.userAgent : null,
         customer: String(order.customer ?? ""), phone: String(order.phone ?? ""), email: order.email ?? null,
-        city: order.city ?? null, state: order.state ?? null, country: "ng",
+        city: order.city ?? null, state: order.state ?? null, country: await branchCountry(order.branch_id ?? null),
         fbp: ids.fbp, fbc: ids.fbc, fbclid: ids.fbclid, fbclidSeenAtMs: fbclidSeenAt(context, order.created_at),
         visitorId: ids.visitorId,
         value, currency, orderId: String(order.id),

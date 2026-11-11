@@ -10,6 +10,7 @@
 //
 // Org context derives from the package's product (same pattern as public-carts).
 
+import { branchCountry, zambianPhoneForSave } from "../lib/branch-country.js";
 import { nigerianPhoneForSave } from "../lib/ng-phone.js";
 import { cleanEmail } from "../lib/email-clean.js";
 import { Router, type Request } from "express";
@@ -790,10 +791,10 @@ router.post("/", submitRateLimit, async (req, res) => {
     return;
   }
 
-  const productSelectBase = "id, org_id, name, active, cross_sell_product_ids, cross_sell_price_overrides, cross_sell_state_restrictions";
+  const productSelectBase = "id, org_id, branch_id, name, active, cross_sell_product_ids, cross_sell_price_overrides, cross_sell_state_restrictions";
   let productResult = await supabase
     .from("products")
-    .select(`id, org_id, name, active, public_order_assignment_mode, image_url, cross_sell_product_ids, cross_sell_price_overrides, cross_sell_state_restrictions`)
+    .select(`id, org_id, branch_id, name, active, public_order_assignment_mode, image_url, cross_sell_product_ids, cross_sell_price_overrides, cross_sell_state_restrictions`)
     .eq("id", pkg.product_id)
     .maybeSingle();
   if (productResult.error && isMissingProductAssignmentModeColumnError(productResult.error)) {
@@ -815,6 +816,12 @@ router.post("/", submitRateLimit, async (req, res) => {
     });
     res.status(404).json({ error: "Product not available." });
     return;
+  }
+  // Zambia branch (11 Nov 2026): Zambian numbers saved as 0971234567, and Meta told "zm".
+  const orderCountry = await branchCountry((product as any).branch_id ?? null);
+  if (orderCountry === "zm") {
+    d.phone = zambianPhoneForSave(d.phone) as string;
+    if (d.whatsapp) d.whatsapp = zambianPhoneForSave(d.whatsapp) as string;
   }
 
   if (requestedPackageSet && String((pkg as { package_set?: string | null }).package_set ?? "Default").trim().toLowerCase() !== requestedPackageSet.toLowerCase()) {
@@ -1615,7 +1622,7 @@ router.post("/", submitRateLimit, async (req, res) => {
     email: d.email || null,
     city: d.city || null,
     state: d.state || null,
-    country: "ng",
+    country: orderCountry,
     fbp: metaIds.fbp,
     fbc: metaIds.fbc,
     fbclid: metaIds.fbclid,

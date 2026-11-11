@@ -11,6 +11,7 @@
  * This catches customers who closed the tab before the client-side countdown fired.
  */
 
+import { branchCountry } from "./branch-country.js";
 import { sendNewOrderEmail } from "./mailer.js";
 import { cleanEmail } from "./email-marketing-rules.js";
 import { randomUUID } from "node:crypto";
@@ -454,7 +455,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
       email: null,
       city: customerCity,
       state: customerState,
-      country: "ng",
+      country: await branchCountry(autoBranchId),
       fbp: autoMetaIds.fbp,
       fbc: autoMetaIds.fbc,
       fbclid: autoMetaIds.fbclid,
