@@ -10,7 +10,13 @@ test("defaults keep today's behaviour: Admins get every Owner order alert", () =
 });
 
 test("cleanRoute drops unknown roles and duplicates", () => {
-  assert.deepEqual(cleanRoute("order_delivered", { roles: ["Owner", "Owner", "Hacker"], rep: false, push: false }), { roles: ["Owner"], rep: false, push: false });
+  assert.deepEqual(cleanRoute("order_delivered", { roles: ["Owner", "Owner", "Hacker"], rep: false, push: false }), { roles: ["Owner"], rep: false, push: false, stay: false });
+});
+
+test("stays on screen: saved flag wins, else the default (only cancelled and failed stayed before)", () => {
+  assert.equal(cleanRoute("order_new", { roles: ["Owner"], rep: true, push: true, stay: true }).stay, true);
+  assert.equal(cleanRoute("order_new", { roles: ["Owner"], rep: true, push: true }).stay, false);
+  assert.deepEqual(Object.entries(ALERTS).filter(([, def]) => def.defaults.stay).map(([key]) => key).sort(), ["order_cancelled", "order_failed"]);
 });
 
 test("cleanRoute falls back to the default for junk", () => {

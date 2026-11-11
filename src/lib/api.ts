@@ -5184,7 +5184,7 @@ export const orderReceiptsApi = {
 };
 
 // ── Alert routing (Settings, migration 309) ─────────────────────────────────
-export type AlertRoute = { roles: string[]; rep: boolean; push: boolean };
+export type AlertRoute = { roles: string[]; rep: boolean; push: boolean; stay: boolean };
 export type AlertRoutingItem = { key: string; label: string; group: string; hint: string; repApplies: boolean; defaults: AlertRoute; route: AlertRoute };
 export type AlertRoutingSettings = { roles: string[]; canEdit: boolean; alerts: AlertRoutingItem[] };
 export const notificationRoutingApi = {

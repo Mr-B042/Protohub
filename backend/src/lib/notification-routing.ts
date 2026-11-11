@@ -40,7 +40,7 @@ function routeFrom(org: OrgRouting, key: AlertKey): AlertRoute {
   if (key in org.routing) return cleanRoute(key, org.routing[key]);
   // Before this setting, new-cart alerts were off unless the old
   // "Notify admins on new abandoned carts" switch was on.
-  if (key === "cart_new" && !org.adminCartNotifications) return { roles: [], rep: false, push: true };
+  if (key === "cart_new" && !org.adminCartNotifications) return { roles: [], rep: false, push: true, stay: false };
   return cleanRoute(key, undefined);
 }
 

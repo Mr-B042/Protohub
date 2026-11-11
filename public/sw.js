@@ -377,6 +377,9 @@ self.addEventListener("push", (event) => {
     self.registration.showNotification(title, options)
       .then(() => (chimeInTab ? askTabsToChime(kind, title, chimeKey) : undefined))
       .then(pruneOldNotifications)
+      // App icon badge (installed app only): a mark until the page opens and sets the exact unread count.
+      .then(() => (self.navigator && typeof self.navigator.setAppBadge === "function" ? self.navigator.setAppBadge() : undefined))
+      .catch(() => undefined)
   );
 });
 
