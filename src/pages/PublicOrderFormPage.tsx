@@ -311,6 +311,7 @@ const PRODUCT_CURRENCIES: Record<ProductCurrencyCode, { locale: string; currency
   USD: { locale: "en-US", currency: "USD" },
   GBP: { locale: "en-GB", currency: "GBP" },
   EUR: { locale: "de-DE", currency: "EUR" },
+  ZMW: { locale: "en-ZM", currency: "ZMW" },
 };
 
 const NIGERIA_STATES = [
@@ -1307,7 +1308,7 @@ export default function PublicOrderFormPage() {
   );
   const publicProductId = params?.get("product") ?? "";
   const rawPublicCurrency = params?.get("currency") ?? "NGN";
-  const publicCurrency: ProductCurrencyCode = rawPublicCurrency === "USD" || rawPublicCurrency === "GBP" ? rawPublicCurrency : "NGN";
+  const publicCurrency: ProductCurrencyCode = rawPublicCurrency === "USD" || rawPublicCurrency === "GBP" || rawPublicCurrency === "ZMW" ? rawPublicCurrency : "NGN";
   const publicUtmSource = (params?.get("utm_source") ?? "direct").slice(0, 100);
   const publicUtmCampaign = (params?.get("utm_campaign") ?? "embed").slice(0, 100);
   const publicUtmMedium = (params?.get("utm_medium") ?? "").slice(0, 100);

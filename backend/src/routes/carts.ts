@@ -267,7 +267,7 @@ const CartUpsertSchema = z.object({
   productName:  z.string().min(1),
   packageName:  z.string().min(1),
   amount:       z.number().min(0),
-  currency:     z.enum(["NGN", "USD", "GBP"]),
+  currency:     z.enum(["NGN", "USD", "GBP", "ZMW"]),
   source:       z.string().optional(),
   embedLabel:   z.string().max(120).optional(),
   preferredDelivery: z.string().optional(),

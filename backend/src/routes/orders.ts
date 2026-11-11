@@ -762,7 +762,7 @@ const OrderSchema = z.object({
   packageName:    z.string().optional(),
   quantity:       z.number().int().min(1).default(1),
   amount:         z.number().min(0),
-  currency:       z.enum(["NGN", "USD", "GBP"]).default("NGN"),
+  currency:       z.enum(["NGN", "USD", "GBP", "ZMW"]).default("NGN"),
   // Matches the frontend's full OrderSource union (orderSources, App.tsx) -
   // the manual Create Order form already offers Instagram/Messenger/Audience
   // Network/Threads, so validation must accept them too rather than 400

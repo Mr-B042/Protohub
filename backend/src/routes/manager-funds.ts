@@ -600,7 +600,7 @@ async function reverseOrderPayment(req: Request, orderId: string, payment: numbe
 
 const currencyFor = async (branchId: string) => {
   const { data } = await supabase.from("branches").select("currency").eq("id", branchId).maybeSingle();
-  return ["NGN", "USD", "GBP"].includes(String(data?.currency)) ? String(data!.currency) : "NGN";
+  return ["NGN", "USD", "GBP", "ZMW"].includes(String(data?.currency)) ? String(data!.currency) : "NGN";
 };
 
 const expenseRow = (input: { id: string; orgId: string; branchId: string; walletId: string; date: string; category: string; description: string; amount: number; paidBy: string; currency: string; productId?: string | null }) => ({

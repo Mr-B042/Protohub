@@ -61,7 +61,7 @@ const ExpenseSchema = z.object({
   category:    z.string().min(1),
   description: z.string().optional(),
   amount:      z.number().min(0),
-  currency:    z.enum(["NGN", "USD", "GBP"]).default("NGN"),
+  currency:    z.enum(["NGN", "USD", "GBP", "ZMW"]).default("NGN"),
   paidBy:      z.string().optional(),
   productId:   z.string().optional()
 });
@@ -72,7 +72,7 @@ const AdSpendBatchEntrySchema = z.object({
   productId: z.string().min(1),
   description: z.string().optional(),
   amount: z.number().min(0),
-  currency: z.enum(["NGN", "USD", "GBP"]).default("NGN")
+  currency: z.enum(["NGN", "USD", "GBP", "ZMW"]).default("NGN")
 });
 
 const AdSpendBatchSchema = z.object({

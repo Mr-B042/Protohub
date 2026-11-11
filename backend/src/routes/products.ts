@@ -436,7 +436,7 @@ router.get("/:id/pricings", requireRole("Owner", "Admin", "Manager", "Sales Rep"
 
 // ── POST /api/products/:id/pricings ──────────────────────
 const PricingSchema = z.object({
-  currency:     z.enum(["NGN", "USD", "GBP"]),
+  currency:     z.enum(["NGN", "USD", "GBP", "ZMW"]),
   sellingPrice: z.number().min(0),
   unitCost:     z.number().min(0),
   isPrimary:    z.boolean().default(false)
@@ -645,7 +645,7 @@ const PackageSchema = z.object({
   description:  z.string().optional(),
   quantity:     z.number().int().min(1),
   price:        z.number().min(0),
-  currency:     z.enum(["NGN", "USD", "GBP"]).default("NGN"),
+  currency:     z.enum(["NGN", "USD", "GBP", "ZMW"]).default("NGN"),
   displayOrder: z.number().int().default(0),
   active:       z.boolean().default(false),
   stateFilterMode:   z.enum(["all", "allow", "block"]).default("all"),
@@ -749,7 +749,7 @@ const PackageUpdateSchema = z.object({
   description:  z.string().optional(),
   quantity:     z.number().int().min(1).optional(),
   price:        z.number().min(0).optional(),
-  currency:     z.enum(["NGN", "USD", "GBP"]).optional(),
+  currency:     z.enum(["NGN", "USD", "GBP", "ZMW"]).optional(),
   displayOrder: z.number().int().optional(),
   active:       z.boolean().optional(),
   stateFilterMode:   z.enum(["all", "allow", "block"]).optional(),

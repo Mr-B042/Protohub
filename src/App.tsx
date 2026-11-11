@@ -7763,7 +7763,7 @@ const normalizeExpenseRecord = (value: any): ExpenseRecord => {
     id: row.id,
     type: allowedExpenseTypes.includes(normalizedType as ExpenseType) ? (normalizedType as ExpenseType) : "Other",
     amount: Number(row.amount ?? 0),
-    currency: (["NGN", "USD", "GBP"].includes(row.currency) ? row.currency : "NGN") as CurrencyCode,
+    currency: (["NGN", "USD", "GBP", "ZMW"].includes(row.currency) ? row.currency : "NGN") as CurrencyCode,
     date: row.date ?? "",
     createdAt: row.createdAt ?? undefined,
     productId: row.productId ?? undefined,
@@ -15922,7 +15922,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // an arbitrary string into the order record.
   const rawPublicCurrency = publicEmbedParams?.get("currency") ?? "NGN";
   const publicCurrency: ProductCurrencyCode =
-    rawPublicCurrency === "USD" || rawPublicCurrency === "GBP" ? rawPublicCurrency : "NGN";
+    rawPublicCurrency === "USD" || rawPublicCurrency === "GBP" || rawPublicCurrency === "ZMW" ? rawPublicCurrency : "NGN";
   const publicUtmSource   = (publicEmbedParams?.get("utm_source")   ?? "direct").slice(0, 100);
   const publicUtmCampaign = (publicEmbedParams?.get("utm_campaign") ?? "embed").slice(0, 100);
   const publicUtmMedium   = (publicEmbedParams?.get("utm_medium")   ?? "").slice(0, 100);
@@ -19680,7 +19680,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const prevExpenses = expenses;
     try {
       for (const product of activeProds) {
-        const productCurrency = (["NGN", "USD", "GBP"].includes(product.pricings?.[0]?.currency) ? product.pricings[0].currency : "NGN") as CurrencyCode;
+        const productCurrency = (["NGN", "USD", "GBP", "ZMW"].includes(product.pricings?.[0]?.currency) ? product.pricings[0].currency : "NGN") as CurrencyCode;
         for (const day of adSpendWeekDays) {
           const key = `${product.id}-${day}`;
           const draftVal = parseFloat(adSpendDraft[key] ?? "") || 0;
@@ -23595,7 +23595,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         id: expenseId,
         type: category,
         amount: fee,
-        currency: (["NGN", "USD", "GBP"].includes(order.currency) ? order.currency : "NGN") as CurrencyCode,
+        currency: (["NGN", "USD", "GBP", "ZMW"].includes(order.currency) ? order.currency : "NGN") as CurrencyCode,
         date,
         productId: order.productId,
         productName: order.productName,

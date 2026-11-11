@@ -59,7 +59,7 @@ export function deliveryExpenseFor(order: DeliveryExpenseOrder, failedOn: string
       ? `Failed delivery cost for ${order.id} - ${customer} (${order.status})`
       : `Delivery cost for ${order.id} - ${customer}`,
     amount: fee,
-    currency: ["NGN", "USD", "GBP"].includes(String(order.currency)) ? String(order.currency) : "NGN",
+    currency: ["NGN", "USD", "GBP", "ZMW"].includes(String(order.currency)) ? String(order.currency) : "NGN",
     date,
     productId: order.product_id ?? null
   };
