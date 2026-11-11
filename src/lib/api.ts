@@ -4054,6 +4054,15 @@ export const cartsApi = {
 export type PublicEmailOffer = { code: string; name: string; benefit: "percent" | "fixed"; value: number; minOrder: number; endsAt: string | null; text: string };
 
 export const publicOrdersApi = {
+  /** The clicked ad set's Pixel on this link (for Lead), or null to use the link's main Pixel. */
+  leadPixel: async (trackingKey: string, adsetId: string): Promise<string | null> => {
+    try {
+      const res = await fetchWithApiFailover(`/api/public/orders/lead-pixel?key=${encodeURIComponent(trackingKey)}&adset=${encodeURIComponent(adsetId)}`, { method: "GET" });
+      if (!res.ok) return null;
+      const body = await res.json().catch(() => null);
+      return typeof body?.pixelId === "string" && body.pixelId ? body.pixelId : null;
+    } catch { return null; }
+  },
   /** Never throws: no offer (or no answer) = the normal price. */
   emailOffer: async (token: string, productId: string): Promise<PublicEmailOffer | null> => {
     try {

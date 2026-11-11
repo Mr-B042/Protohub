@@ -1319,6 +1319,15 @@ export default function PublicOrderFormPage() {
   const publicMetaPixelId = (params?.get("meta_pixel_id") ?? params?.get("metaPixelId") ?? "").trim().slice(0, 80);
   // Tracking Hub "Also send to" Pixels: the page fires the browser event for each too, same event id.
   const publicMetaTrackingKey = (params?.get("meta_tracking_key") ?? params?.get("metaTrackingKey") ?? "").trim().slice(0, 120);
+  // Lead goes to the clicked ad set's Pixel too (11 Nov 2026), like Purchase.
+  const publicAdsetId = [params?.get("adset_id"), params?.get("utm_term")].map((value) => String(value ?? "").trim()).find((value) => /^\d{6,25}$/.test(value)) ?? "";
+  const [leadPixelId, setLeadPixelId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!publicMetaTrackingKey || !publicAdsetId) return;
+    let live = true;
+    void publicOrdersApi.leadPixel(publicMetaTrackingKey, publicAdsetId).then((pixel) => { if (live) setLeadPixelId(pixel); });
+    return () => { live = false; };
+  }, [publicMetaTrackingKey, publicAdsetId]);
   const publicMetaTestEventCode = (params?.get("meta_test_event_code") ?? params?.get("metaTestEventCode") ?? params?.get("test_event_code") ?? params?.get("testEventCode") ?? "").trim().slice(0, 80);
   const publicMetaTestMode = parsePublicBoolean(params?.get("meta_test") ?? params?.get("metaTest") ?? params?.get("meta_test_mode") ?? params?.get("metaTestMode")) || Boolean(publicMetaTestEventCode);
   // Opened from Products & Stock "View landing page": the real page, but the
@@ -3413,7 +3422,7 @@ export default function PublicOrderFormPage() {
       content_name: `${publicProduct?.name ?? "Product"} - ${submittedPackageName}`,
       content_ids: [submittedPackageId],
       content_type: "product"
-    });
+    }, leadPixelId);
     trackCartJourney("submit_attempted", {
       cartId: submissionCartId || undefined,
       packageId: submittedPackageId,
