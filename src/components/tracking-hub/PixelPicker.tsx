@@ -31,25 +31,29 @@ function score(option: HubPixelOption, hints: PixelHints) {
   return { points, reasons };
 }
 
-function Row({ option, reasons, selected, onPick }: { option: HubPixelOption; reasons?: string[]; selected: boolean; onPick: () => void }) {
+type Use = { links: number; orders: number; views: number };
+function Row({ option, reasons, selected, onPick, use }: { option: HubPixelOption; reasons?: string[]; selected: boolean; onPick: () => void; use?: Use }) {
   const warn = !option.active ? "Off" : option.hasAccess === false ? "No access" : option.status === "testing" ? "Testing" : option.status === "paused" ? "Paused" : null;
   return (
     <button type="button" onClick={onPick} className={`!min-h-0 block w-full rounded-lg px-3 py-2 text-left hover:bg-blue-50 dark:hover:bg-slate-800 ${selected ? "bg-blue-50 dark:bg-blue-950/30" : ""}`}>
       <span className="flex items-center justify-between gap-2">
-        <span className="truncate text-[13.5px] font-semibold text-gray-900 dark:text-slate-100">{option.name}</span>
+        <span className="break-words text-[13.5px] font-semibold text-gray-900 dark:text-slate-100">{option.name}</span>
         {warn ? <span className="shrink-0 rounded bg-amber-50 px-1.5 text-[10.5px] font-semibold text-amber-700">{warn}</span> : null}
       </span>
-      <span className="block truncate text-[11.5px] text-gray-500">
-        ID {option.pixelId}{option.business ? ` · ${option.business}` : ""}{option.lastFiredAt ? ` · last event ${ago(option.lastFiredAt)}` : " · no events seen"}
-      </span>
+      {/* Full business name on its own line (Bright, 11 Nov 2026: names were cut off). */}
+      <span className="block text-[11.5px] leading-snug text-gray-500">ID {option.pixelId}{option.lastFiredAt ? ` · last event ${ago(option.lastFiredAt)}` : " · no events seen"}</span>
+      {option.business ? <span className="block break-words text-[11.5px] leading-snug text-gray-500">{option.business}</span> : null}
+      {use && use.links > 0 ? <span className="block text-[11px] font-semibold text-[#1F8FE0]">{use.links} link{use.links === 1 ? "" : "s"} · {use.orders} order{use.orders === 1 ? "" : "s"} this week</span> : null}
       {reasons?.length ? <span className="mt-0.5 flex flex-wrap gap-1">{reasons.map((reason) => <span key={reason} className="rounded bg-emerald-50 px-1.5 text-[10.5px] font-semibold text-emerald-700">{reason}</span>)}</span> : null}
     </button>
   );
 }
 
 /** Single Pixel (value) or "add one more" (multi: pick adds, value ignored). */
-export default function PixelPicker({ options, value, onPick, hints, exclude = [], placeholder, emptyLabel }: {
+export default function PixelPicker({ options, value, onPick, hints, exclude = [], placeholder, emptyLabel, usage = {} }: {
   options: HubPixelOption[]; value: string | null; onPick: (id: string | null) => void; hints: PixelHints; exclude?: string[]; placeholder: string; emptyLabel?: string;
+  /** Per data source: links using it and their last-7-days orders and visits (busiest first). */
+  usage?: Record<string, Use>;
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -64,8 +68,15 @@ export default function PixelPicker({ options, value, onPick, hints, exclude = [
   const scored = useMemo(() => choices.map((option) => ({ option, ...score(option, hints) })), [choices, hints]);
   const recommended = useMemo(() => scored.filter((row) => row.points >= 20).sort((a, b) => b.points - a.points).slice(0, 6), [scored]);
   const needle = q.trim().toLowerCase();
+  // Busiest first (Bright, 11 Nov 2026): orders, then visits on links using it, then its last event, then name.
+  const useOf = (id: string) => usage[id] ?? { links: 0, orders: 0, views: 0 };
+  const fired = (row: HubPixelOption) => (row.lastFiredAt ? Date.parse(row.lastFiredAt) : 0);
   const all = scored.filter((row) => !needle || `${row.option.name} ${row.option.pixelId} ${row.option.business ?? ""}`.toLowerCase().includes(needle))
-    .sort((a, b) => a.option.name.localeCompare(b.option.name));
+    .sort((a, b) => { const x = useOf(a.option.id), y = useOf(b.option.id); return y.orders - x.orders || y.views - x.views || fired(b.option) - fired(a.option) || a.option.name.localeCompare(b.option.name); });
+  const weekAgo = Date.now() - 7 * 86_400_000;
+  const isActive = (row: HubPixelOption) => { const u = useOf(row.id); return u.orders + u.views > 0 || fired(row) > weekAgo; };
+  const active = all.filter((row) => isActive(row.option));
+  const quiet = all.filter((row) => !isActive(row.option));
   const current = options.find((row) => row.id === value) ?? null;
   const pick = (id: string | null) => { onPick(id); setOpen(false); setQ(""); };
   return (
@@ -78,7 +89,7 @@ export default function PixelPicker({ options, value, onPick, hints, exclude = [
         <ChevronDown className="h-4 w-4 shrink-0 text-gray-500" />
       </button>
       {open ? (
-        <div className="absolute left-0 right-0 z-30 mt-1 rounded-xl border border-gray-200 bg-white p-2 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+        <div className="absolute right-0 z-30 mt-1 w-full min-w-[min(26rem,calc(100vw-2rem))] rounded-xl border border-gray-200 bg-white p-2 shadow-xl dark:border-slate-700 dark:bg-slate-900">
           <label className="relative block">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
             <input autoFocus value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search by name, Pixel ID or business" className="h-9 w-full rounded-lg border border-gray-200 pl-8 pr-3 text-[13px] font-normal dark:border-slate-700 dark:bg-slate-900" />
@@ -89,10 +100,12 @@ export default function PixelPicker({ options, value, onPick, hints, exclude = [
               <>
                 <p className="m-0 flex items-center gap-1 px-3 pb-1 pt-2 text-[11px] font-black uppercase tracking-wider text-emerald-700"><Sparkles className="h-3.5 w-3.5" /> Recommended</p>
                 {recommended.map((row) => <Row key={`r${row.option.id}`} option={row.option} reasons={row.reasons} selected={row.option.id === value} onPick={() => pick(row.option.id)} />)}
-                <p className="m-0 px-3 pb-1 pt-3 text-[11px] font-black uppercase tracking-wider text-gray-500">All Pixels ({all.length})</p>
               </>
             ) : null}
-            {all.map((row) => <Row key={row.option.id} option={row.option} reasons={needle ? row.reasons : undefined} selected={row.option.id === value} onPick={() => pick(row.option.id)} />)}
+            {active.length > 0 && <p className="m-0 px-3 pb-1 pt-3 text-[11px] font-black uppercase tracking-wider text-[#1F8FE0]">Active in the last 7 days ({active.length})</p>}
+            {active.map((row) => <Row key={row.option.id} option={row.option} use={useOf(row.option.id)} reasons={needle ? row.reasons : undefined} selected={row.option.id === value} onPick={() => pick(row.option.id)} />)}
+            {quiet.length > 0 && <p className="m-0 px-3 pb-1 pt-3 text-[11px] font-black uppercase tracking-wider text-gray-500">{active.length ? "Not used lately" : "All Pixels"} ({quiet.length})</p>}
+            {quiet.map((row) => <Row key={row.option.id} option={row.option} use={useOf(row.option.id)} reasons={needle ? row.reasons : undefined} selected={row.option.id === value} onPick={() => pick(row.option.id)} />)}
             {all.length === 0 ? <p className="m-0 px-3 py-4 text-center text-[13px] text-gray-500">No Pixel matches "{q}".</p> : null}
           </div>
         </div>

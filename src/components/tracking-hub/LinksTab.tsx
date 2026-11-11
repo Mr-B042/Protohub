@@ -51,39 +51,7 @@ export default function LinksTab({ tabBar, onToast, createSignal }: { tabBar: Re
   const [guide, setGuide] = useState(false);
   useEffect(() => { if (createSignal > 0) setCreating(true); }, [createSignal]);
   useEffect(() => { if (!selected && !closed && data?.links.length) setSelected(data.links[0].id); }, [data]);
-  // Filters (Bright, 11 Nov 2026: "actively used at the top"): busiest first by
-  // the last 7 days' orders, then visits, then how many links use it.
-  const ranked = useMemo(() => {
-    const score = new Map<string, { orders: number; views: number; links: number }>();
-    const add = (key: string, link: HubLink) => {
-      const row = score.get(key) ?? { orders: 0, views: 0, links: 0 };
-      row.orders += link.stats.orders; row.views += link.stats.views; row.links += 1;
-      score.set(key, row);
-    };
-    for (const link of data?.links ?? []) {
-      if (link.dataSourceId) add(`s:${link.dataSourceId}`, link);
-      if (link.websiteId) add(`w:${link.websiteId}`, link);
-      if (link.productId) add(`p:${link.productId}`, link);
-    }
-    const order = <T extends { id: string }>(prefix: string, list: T[], name: (row: T) => string) => {
-      const of = (row: T) => score.get(`${prefix}${row.id}`) ?? { orders: 0, views: 0, links: 0 };
-      const sorted = [...list].sort((a, b) => of(b).orders - of(a).orders || of(b).views - of(a).views || of(b).links - of(a).links || name(a).localeCompare(name(b)));
-      return { active: sorted.filter((row) => of(row).orders + of(row).views > 0), quiet: sorted.filter((row) => of(row).orders + of(row).views === 0) };
-    };
-    return {
-      sources: order("s:", data?.dataSources ?? [], (row) => row.name),
-      websites: order("w:", data?.websites ?? [], (row) => row.domain),
-      products: order("p:", data?.products ?? [], (row) => row.name)
-    };
-  }, [data]);
-  const grouped = <T extends { id: string }>(lists: { active: T[]; quiet: T[] }, label: (row: T) => string) => (
-    <>
-      {lists.active.length > 0 && <optgroup label="Active in the last 7 days">{lists.active.map((row) => <option key={row.id} value={row.id}>{label(row)}</option>)}</optgroup>}
-      {lists.quiet.length > 0 && (lists.active.length > 0
-        ? <optgroup label="Not used lately">{lists.quiet.map((row) => <option key={row.id} value={row.id}>{label(row)}</option>)}</optgroup>
-        : lists.quiet.map((row) => <option key={row.id} value={row.id}>{label(row)}</option>))}
-    </>
-  );
+  const ranked = useMemo(() => rankByUse(data?.links ?? [], data?.dataSources ?? [], data?.websites ?? [], data?.products ?? []), [data]);
   const rows = useMemo(() => {
     const list = (data?.links ?? []).filter((link) =>
       (!filters.q || `${link.label} ${link.landingPageUrl} ${link.productName ?? ""} ${link.formLabel}`.toLowerCase().includes(filters.q.toLowerCase()))
@@ -183,6 +151,47 @@ export default function LinksTab({ tabBar, onToast, createSignal }: { tabBar: Re
       />
       {modals}
     </div>
+  );
+}
+
+// Busiest first (Bright, 11 Nov 2026: "actively used at the top so we don't
+// scroll endlessly"): by the last 7 days' orders, then visits, then how many
+// links use it; split into "Active in the last 7 days" and "Not used lately".
+type UseScore = { orders: number; views: number; links: number };
+function rankByUse<S extends { id: string; name: string }, W extends { id: string; domain: string }, P extends { id: string; name: string }>(links: HubLink[], sources: S[], websites: W[], products: P[]) {
+  const score = new Map<string, UseScore>();
+  const add = (key: string, link: HubLink) => {
+    const row = score.get(key) ?? { orders: 0, views: 0, links: 0 };
+    row.orders += link.stats.orders; row.views += link.stats.views; row.links += 1;
+    score.set(key, row);
+  };
+  for (const link of links) {
+    if (link.dataSourceId) add(`s:${link.dataSourceId}`, link);
+    for (const extra of link.extraPixels ?? []) add(`s:${extra.id}`, link);
+    if (link.websiteId) add(`w:${link.websiteId}`, link);
+    if (link.productId) add(`p:${link.productId}`, link);
+  }
+  const of = (key: string) => score.get(key) ?? { orders: 0, views: 0, links: 0 };
+  const order = <T extends { id: string }>(prefix: string, list: T[], name: (row: T) => string) => {
+    const sorted = [...list].sort((a, b) => { const x = of(prefix + a.id), y = of(prefix + b.id); return y.orders - x.orders || y.views - x.views || y.links - x.links || name(a).localeCompare(name(b)); });
+    const busy = (row: T) => { const u = of(prefix + row.id); return u.orders + u.views > 0; };
+    return { active: sorted.filter(busy), quiet: sorted.filter((row) => !busy(row)) };
+  };
+  return {
+    sources: order("s:", sources, (row) => row.name),
+    websites: order("w:", websites, (row) => row.domain),
+    products: order("p:", products, (row) => row.name),
+    sourceUse: (id: string) => of(`s:${id}`)
+  };
+}
+function grouped<T extends { id: string }>(lists: { active: T[]; quiet: T[] }, label: (row: T) => string) {
+  return (
+    <>
+      {lists.active.length > 0 && <optgroup label="Active in the last 7 days">{lists.active.map((row) => <option key={row.id} value={row.id}>{label(row)}</option>)}</optgroup>}
+      {lists.quiet.length > 0 && (lists.active.length > 0
+        ? <optgroup label="Not used lately">{lists.quiet.map((row) => <option key={row.id} value={row.id}>{label(row)}</option>)}</optgroup>
+        : lists.quiet.map((row) => <option key={row.id} value={row.id}>{label(row)}</option>))}
+    </>
   );
 }
 
@@ -332,6 +341,8 @@ function LinkForm({ link, meta, onToast, onSaved, onCancel, compact }: { link: H
   const metaSources = meta.dataSources.filter((row) => (row.platform ?? "meta") === "meta");
   // What the picker recommends: Pixels this landing page loads, Pixels other
   // links for the product use, names matching the product / link name.
+  const ranked = useMemo(() => rankByUse(meta.links, meta.dataSources, meta.websites, meta.products), [meta]);
+  const pixelUse = useMemo(() => Object.fromEntries(meta.dataSources.map((row) => [row.id, ranked.sourceUse(row.id)])), [meta, ranked]);
   const pixelHints = useMemo(() => {
     const site = meta.websites.find((row) => row.id === form.websiteId);
     let path: string | null = null;
@@ -393,10 +404,10 @@ function LinkForm({ link, meta, onToast, onSaved, onCancel, compact }: { link: H
     <div className="space-y-4">
       <div className={`grid gap-3 ${cols}`}>
         <label className={`${labelCls} sm:col-span-2`}>Name<input value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder="Shelf Main" className={input} /></label>
-        <label className={labelCls}>Product<select value={form.productId} onChange={(e) => setForm({ ...form, productId: e.target.value })} className={input}><option value="">Choose…</option>{meta.products.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
+        <label className={labelCls}>Product<select value={form.productId} onChange={(e) => setForm({ ...form, productId: e.target.value })} className={input}><option value="">Choose…</option>{grouped(ranked.products, (row) => row.name)}</select></label>
         <label className={labelCls}>Tracking profile<select value={form.profileId} onChange={(e) => applyProfile(e.target.value)} className={input}><option value="">None</option>{meta.profiles.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
-        <label className={labelCls}>Website<select value={form.websiteId} onChange={(e) => setForm({ ...form, websiteId: e.target.value })} className={input}><option value="">Choose…</option>{meta.websites.map((row) => <option key={row.id} value={row.id}>{row.domain}</option>)}</select></label>
-        <div className={labelCls}>Data source (main Pixel)<PixelPicker options={meta.dataSources} value={form.dataSourceId || null} hints={pixelHints} exclude={form.extraDataSourceIds}
+        <label className={labelCls}>Website<select value={form.websiteId} onChange={(e) => setForm({ ...form, websiteId: e.target.value })} className={input}><option value="">Choose…</option>{grouped(ranked.websites, (row) => row.domain)}</select></label>
+        <div className={labelCls}>Data source (main Pixel)<PixelPicker options={meta.dataSources} value={form.dataSourceId || null} hints={pixelHints} usage={pixelUse} exclude={form.extraDataSourceIds}
           placeholder="From profile / website" emptyLabel="From profile / website" onPick={(id) => setForm({ ...form, dataSourceId: id ?? "" })} /></div>
         <div className={`${labelCls} sm:col-span-2`}>
           Other Pixels this page's ads use <span className="font-normal text-gray-400">(optional)</span>
@@ -406,7 +417,7 @@ function LinkForm({ link, meta, onToast, onSaved, onCancel, compact }: { link: H
               return <span key={id} className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-1 text-[12px] font-semibold text-blue-800 dark:bg-blue-950/40 dark:text-blue-200">{pixel?.name ?? id}{pixel ? <span className="font-normal text-blue-600/70">{pixel.pixelId}</span> : null}<button type="button" aria-label={`Remove ${pixel?.name ?? id}`} className="!min-h-0 ml-0.5 text-blue-600" onClick={() => setForm({ ...form, extraDataSourceIds: form.extraDataSourceIds.filter((value) => value !== id) })}>×</button></span>;
             })}
             <div className="min-w-[220px] flex-1 [&>div>button]:!mt-0 [&>div>button]:!border-0">
-              <PixelPicker options={meta.dataSources} value={null} hints={pixelHints} exclude={[form.dataSourceId, ...form.extraDataSourceIds].filter(Boolean)}
+              <PixelPicker options={meta.dataSources} value={null} hints={pixelHints} usage={pixelUse} exclude={[form.dataSourceId, ...form.extraDataSourceIds].filter(Boolean)}
                 placeholder={form.extraDataSourceIds.length ? "Add another Pixel…" : "Add a Pixel…"} onPick={(id) => { if (id) setForm({ ...form, extraDataSourceIds: [...form.extraDataSourceIds, id] }); }} />
             </div>
           </div>
