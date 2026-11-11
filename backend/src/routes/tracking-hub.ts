@@ -14,7 +14,7 @@ import {
 } from "../lib/tracking-hub-data.js";
 import { refreshAccount, refreshTargets } from "../lib/tracking-meta-refresh.js";
 import { AD_SPEND_VIEWS, allocate, buildReport, mappingIndex, validSplits, type AdSpendView, type PlatformChoice } from "../lib/ad-spend.js";
-import { loadAdSpendInputs, loadSinceStart, loadTikTokConnections, suggestProduct, syncAdSpend } from "../lib/ad-spend-data.js";
+import { refreshPixelAdAccountsNow, loadAdSpendInputs, loadSinceStart, loadTikTokConnections, suggestProduct, syncAdSpend } from "../lib/ad-spend-data.js";
 import { RULES as SINCE_START_RULES, VERDICT_ORDER } from "../lib/ad-since-start.js";
 import { droughtsFor } from "../lib/campaign-drought-alerts.js";
 import { DROUGHT_RULES } from "../lib/campaign-drought.js";
@@ -993,6 +993,8 @@ router.get("/links", async (req, res) => {
     });
     const { data: accountRows } = await supabase.from("tracking_meta_ad_accounts").select("account_id, name").eq("org_id", orgId);
     for (const account of (accountRows ?? []) as any[]) accountNames.set(String(account.account_id).replace(/^act_/, ""), String(account.name ?? ""));
+    // Pixels not yet checked for ad accounts: check them now, in the background (shows on the next load).
+    if (assessment.sourceRows.some((row: any) => (row.platform ?? "meta") === "meta" && !row.adAccountsAt)) void refreshPixelAdAccountsNow(orgId).catch(() => undefined);
     const pixelAdsets = await adsetsByPixel(orgId, branchId).catch(() => ({ byPixel: new Map<string, PixelAdset[]>(), known: false }));
     const { data: pageBeacons = [] } = await supabase.from("tracking_browser_events").select("page_domain, page_url, pixels_on_page")
       .eq("org_id", orgId).gte("fired_at", new Date(Date.now() - 30 * 86_400_000).toISOString()).limit(2000) as any;
