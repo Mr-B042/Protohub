@@ -51,6 +51,39 @@ export default function LinksTab({ tabBar, onToast, createSignal }: { tabBar: Re
   const [guide, setGuide] = useState(false);
   useEffect(() => { if (createSignal > 0) setCreating(true); }, [createSignal]);
   useEffect(() => { if (!selected && !closed && data?.links.length) setSelected(data.links[0].id); }, [data]);
+  // Filters (Bright, 11 Nov 2026: "actively used at the top"): busiest first by
+  // the last 7 days' orders, then visits, then how many links use it.
+  const ranked = useMemo(() => {
+    const score = new Map<string, { orders: number; views: number; links: number }>();
+    const add = (key: string, link: HubLink) => {
+      const row = score.get(key) ?? { orders: 0, views: 0, links: 0 };
+      row.orders += link.stats.orders; row.views += link.stats.views; row.links += 1;
+      score.set(key, row);
+    };
+    for (const link of data?.links ?? []) {
+      if (link.dataSourceId) add(`s:${link.dataSourceId}`, link);
+      if (link.websiteId) add(`w:${link.websiteId}`, link);
+      if (link.productId) add(`p:${link.productId}`, link);
+    }
+    const order = <T extends { id: string }>(prefix: string, list: T[], name: (row: T) => string) => {
+      const of = (row: T) => score.get(`${prefix}${row.id}`) ?? { orders: 0, views: 0, links: 0 };
+      const sorted = [...list].sort((a, b) => of(b).orders - of(a).orders || of(b).views - of(a).views || of(b).links - of(a).links || name(a).localeCompare(name(b)));
+      return { active: sorted.filter((row) => of(row).orders + of(row).views > 0), quiet: sorted.filter((row) => of(row).orders + of(row).views === 0) };
+    };
+    return {
+      sources: order("s:", data?.dataSources ?? [], (row) => row.name),
+      websites: order("w:", data?.websites ?? [], (row) => row.domain),
+      products: order("p:", data?.products ?? [], (row) => row.name)
+    };
+  }, [data]);
+  const grouped = <T extends { id: string }>(lists: { active: T[]; quiet: T[] }, label: (row: T) => string) => (
+    <>
+      {lists.active.length > 0 && <optgroup label="Active in the last 7 days">{lists.active.map((row) => <option key={row.id} value={row.id}>{label(row)}</option>)}</optgroup>}
+      {lists.quiet.length > 0 && (lists.active.length > 0
+        ? <optgroup label="Not used lately">{lists.quiet.map((row) => <option key={row.id} value={row.id}>{label(row)}</option>)}</optgroup>
+        : lists.quiet.map((row) => <option key={row.id} value={row.id}>{label(row)}</option>))}
+    </>
+  );
   const rows = useMemo(() => {
     const list = (data?.links ?? []).filter((link) =>
       (!filters.q || `${link.label} ${link.landingPageUrl} ${link.productName ?? ""} ${link.formLabel}`.toLowerCase().includes(filters.q.toLowerCase()))
@@ -103,9 +136,9 @@ export default function LinksTab({ tabBar, onToast, createSignal }: { tabBar: Re
           <Card className="p-4">
             <SearchBox value={filters.q} onChange={(q) => setFilters({ ...filters, q })} placeholder="Search links, landing pages, products or campaigns..." />
             <div className="mt-3 flex flex-wrap gap-2">
-              <FilterSelect value={filters.websiteId} onChange={(websiteId) => setFilters({ ...filters, websiteId })} className="w-40"><option value="">All Websites</option>{data.websites.map((row) => <option key={row.id} value={row.id}>{row.domain}</option>)}</FilterSelect>
-              <FilterSelect value={filters.productId} onChange={(productId) => setFilters({ ...filters, productId })} className="w-40"><option value="">All Products</option>{data.products.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</FilterSelect>
-              <FilterSelect value={filters.dataSourceId} onChange={(dataSourceId) => setFilters({ ...filters, dataSourceId })} className="w-40"><option value="">All Data Sources</option>{data.dataSources.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</FilterSelect>
+              <FilterSelect value={filters.websiteId} onChange={(websiteId) => setFilters({ ...filters, websiteId })} className="w-40"><option value="">All Websites</option>{grouped(ranked.websites, (row) => row.domain)}</FilterSelect>
+              <FilterSelect value={filters.productId} onChange={(productId) => setFilters({ ...filters, productId })} className="w-40"><option value="">All Products</option>{grouped(ranked.products, (row) => row.name)}</FilterSelect>
+              <FilterSelect value={filters.dataSourceId} onChange={(dataSourceId) => setFilters({ ...filters, dataSourceId })} className="w-40"><option value="">All Data Sources</option>{grouped(ranked.sources, (row) => row.name)}</FilterSelect>
               <FilterSelect value={filters.status} onChange={(status) => setFilters({ ...filters, status })} className="w-36"><option value="">All Status</option><option value="healthy">Healthy</option><option value="needs_review">Needs Review</option><option value="low_performance">Low Performance</option><option value="paused">Paused</option></FilterSelect>
             </div>
             <div className="mt-3 overflow-x-auto">
