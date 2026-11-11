@@ -4632,6 +4632,8 @@ export type HubPixelOption = {
   health: HubDataSource["health"]; lastFiredAt: string | null;
   /** Ad sets that spent in the last 7 days optimising on this Pixel (biggest spend first). */
   adsets?: Array<{ name: string; campaign: string; spend: number; active: boolean }> | null;
+  /** Ad accounts this Pixel is shared with, owned by, or used in by ad sets (most running ad sets first); null = not read yet. */
+  adAccounts?: Array<{ accountId: string; name: string; owner: boolean; running: number; adsets: number }> | null;
 };
 export type HubLinksResponse = {
   period: HubPeriod;

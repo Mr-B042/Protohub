@@ -241,7 +241,7 @@ export async function assess(orgId: string, branchId: string) {
       id: source.id, name: source.name, description: source.description ?? "", platform, businessName: source.business_name, adAccountIds: source.ad_account_ids ?? [], adAccountLabel: source.ad_account_label ?? "",
       pixelId: source.pixel_id, datasetName: source.dataset_name ?? null, currency: source.currency ?? "NGN", timezone: source.timezone ?? "Africa/Lagos",
       hasToken: Boolean(source.effective_token), ownToken: Boolean(source.access_token), active: source.active !== false, hasAccess: source.has_access ?? null,
-      connectionId: connection?.id ?? null, connectionName: connection?.name ?? null, metaLastFiredAt: source.meta_last_fired_at ?? null, testEventCode: source.test_event_code ?? "", isMain: source.is_main, status: source.status,
+      connectionId: connection?.id ?? null, connectionName: connection?.name ?? null, metaLastFiredAt: source.meta_last_fired_at ?? null, adAccounts: source.ad_accounts ?? null, adAccountsAt: source.ad_accounts_at ?? null, testEventCode: source.test_event_code ?? "", isMain: source.is_main, status: source.status,
       lastCheckAt: source.last_check_at ?? (usesConnectionToken ? connection.last_check_at : null), lastCheckOk: checkOk ?? null,
       lastCheckMessage: source.last_check_message ?? (usesConnectionToken ? connection.last_check_message : null),
       metaStatsAt: source.meta_stats_at, emq: stats.emq ?? null,
