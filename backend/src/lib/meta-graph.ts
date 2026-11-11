@@ -404,3 +404,27 @@ export async function adLifetime(adAccountId: string, token: string, campaignIds
   }
   return { ok: true, rows };
 }
+
+// ------------------------------------------- Pixel → ad accounts (11 Nov 2026)
+
+export type PixelAdAccount = { accountId: string; name: string; owner: boolean };
+/** The ad accounts a Pixel is shared with (in this business) and the one that owns it, if any. */
+export async function pixelAdAccounts(pixelId: string, businessId: string | null, token: string): Promise<{ ok: true; accounts: PixelAdAccount[] } | { ok: false; message: string }> {
+  const out = new Map<string, PixelAdAccount>();
+  const owner = await graphGet<{ owner_ad_account?: { account_id?: string; name?: string } }>(pixelId, token, { fields: "owner_ad_account{account_id,name}" });
+  if (owner.ok && owner.data.owner_ad_account?.account_id) {
+    const row = owner.data.owner_ad_account;
+    out.set(String(row.account_id), { accountId: String(row.account_id), name: row.name ?? "", owner: true });
+  }
+  let shared: GraphResult<Array<{ account_id?: string; id?: string; name?: string }>> | null = null;
+  if (businessId) {
+    shared = await graphAll<{ account_id?: string; id?: string; name?: string }>(`${pixelId}/shared_accounts`, token, { business: businessId, fields: "account_id,name" });
+    if (shared.ok) for (const row of shared.data) {
+      const id = String(row.account_id ?? String(row.id ?? "").replace(/^act_/, ""));
+      if (id && !out.has(id)) out.set(id, { accountId: id, name: row.name ?? "", owner: false });
+    }
+  }
+  if (!owner.ok && (!shared || !shared.ok)) return { ok: false, message: owner.message };
+  return { ok: true, accounts: [...out.values()] };
+}
+
