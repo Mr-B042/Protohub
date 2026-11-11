@@ -2387,7 +2387,7 @@ const productCurrencies: Record<ProductCurrencyCode, { label: string; symbol: st
   NGN: { label: "Nigerian Naira", symbol: "₦", locale: "en-NG", currency: "NGN" },
   GHS: { label: "Ghanaian Cedi", symbol: "₵", locale: "en-GH", currency: "GHS" },
   KES: { label: "Kenyan Shilling", symbol: "KSh", locale: "en-KE", currency: "KES" },
-  ZMW: { label: "Zambian Kwacha", symbol: "ZK", locale: "en-ZM", currency: "ZMW" },
+  ZMW: { label: "Zambian Kwacha", symbol: "K", locale: "en-ZM", currency: "ZMW" },
   XOF: { label: "West African CFA Franc", symbol: "CFA", locale: "fr-SN", currency: "XOF" },
   XAF: { label: "Central African CFA Franc", symbol: "FCFA", locale: "fr-CM", currency: "XAF" },
   TZS: { label: "Tanzanian Shilling", symbol: "TSh", locale: "en-TZ", currency: "TZS" },
