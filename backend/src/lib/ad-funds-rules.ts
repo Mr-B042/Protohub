@@ -46,10 +46,12 @@ export type FundsLeft = { left: number | null; source: "prepaid" | "spend_limit"
 
 /**
  * Money the account can still spend:
- * - prepaid ("Add funds") accounts: the available balance Meta shows on the funding source;
+ * - prepaid ("Add funds") accounts: the "Available balance" Meta shows, the
+ *   same figure as Ads Manager. Meta also sets a limit on these accounts, but
+ *   limit minus spent is that balance without the 7.5% VAT (₦22,000 → ₦20,465
+ *   on 12 Nov 2026), so the balance wins;
  * - otherwise, an account spending limit set: limit minus spent so far;
  * - a card that is charged after (no limit): nothing to run out of, null.
- * Both a prepaid balance and a limit: the smaller one stops the ads first.
  */
 export function fundsLeft(raw: MetaFundsRaw): FundsLeft {
   const currency = String(raw.currency ?? "NGN");
@@ -59,9 +61,9 @@ export function fundsLeft(raw: MetaFundsRaw): FundsLeft {
   const cap = minorToMajor(raw.spend_cap, currency);
   const spent = minorToMajor(raw.amount_spent, currency) ?? 0;
   const limitLeft = cap && cap > 0 ? Math.max(0, cap - spent) : null;
-  if (prepaid !== null && limitLeft !== null) return prepaid <= limitLeft ? { left: prepaid, source: "prepaid" } : { left: limitLeft, source: "spend_limit" };
-  if (prepaid !== null) return { left: prepaid, source: "prepaid" };
-  if (limitLeft !== null) return { left: limitLeft, source: "spend_limit" };
+  const cents = (n: number) => Math.round(n * 100) / 100;
+  if (prepaid !== null) return { left: cents(prepaid), source: "prepaid" };
+  if (limitLeft !== null) return { left: cents(limitLeft), source: "spend_limit" };
   return { left: null, source: null };
 }
 

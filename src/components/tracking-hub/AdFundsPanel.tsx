@@ -15,6 +15,7 @@ const lagosTime = (iso: string) => new Date(iso).toLocaleString("en-GB", { day: 
 function sourceText(row: AdFundsAccount) {
   if (row.source === "prepaid") return "Prepaid balance";
   if (row.source === "spend_limit") return "Left of the account spending limit";
+  if (!row.fundingText) return "No payment method added in Meta yet";
   return "Card charged after spending, no limit set";
 }
 
@@ -35,7 +36,7 @@ function AccountCard({ row, threshold }: { row: AdFundsAccount; threshold: numbe
       ) : (
         <>
           <span className={`mt-1 block text-[22px] font-extrabold leading-7 ${low ? "text-rose-600 dark:text-rose-300" : "text-gray-900 dark:text-slate-50"}`}>
-            {row.fundsLeft === null ? <span className="text-[15px] font-semibold text-gray-500">No limit to run out of</span> : row.currency === "NGN" ? naira(row.fundsLeft) : `${row.currency} ${row.fundsLeft.toLocaleString()}`}
+            {row.fundsLeft === null ? <span className="text-[15px] font-semibold text-gray-500">{row.fundingText ? "No limit to run out of" : "Not set up for payment"}</span> : row.currency === "NGN" ? naira(row.fundsLeft) : `${row.currency} ${row.fundsLeft.toLocaleString()}`}
           </span>
           <span className="flex items-center gap-1 text-[11.5px] text-gray-500 dark:text-slate-400">
             {row.fundsLeft === null ? <CreditCard className="h-3 w-3" /> : <Wallet className="h-3 w-3" />}{sourceText(row)}

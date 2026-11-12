@@ -27,8 +27,10 @@ test("card charged after, no limit: nothing to run out of", () => {
   assert.deepEqual(fundsLeft({ currency: "NGN", spend_cap: "0", amount_spent: "999", funding_source_details: { type: 1, display_string: "Visa *1234" } }), { left: null, source: null });
 });
 
-test("both: the smaller one stops ads first", () => {
-  assert.deepEqual(fundsLeft({ currency: "NGN", is_prepay_account: true, spend_cap: "1000000", amount_spent: "900000", funding_source_details: { type: 20, display_string: "Available balance (NGN 50,000.00)" } }), { left: 1000, source: "spend_limit" });
+test("prepaid with Meta's own limit: the Available balance (with VAT), as Ads Manager shows", () => {
+  // Real reading, 12 Nov 2026: limit minus spent = ₦20,465.12 = ₦22,000 / 1.075.
+  assert.deepEqual(fundsLeft({ currency: "NGN", is_prepay_account: true, spend_cap: "1734261462", amount_spent: "1734240857", funding_source_details: { type: 20, display_string: "Available balance (NGN221.50)" } }), { left: 221.5, source: "prepaid" });
+  assert.deepEqual(fundsLeft({ currency: "NGN", spend_cap: "1000000", amount_spent: "966666.6", funding_source_details: { type: 1, display_string: "Visa *1234" } }), { left: 333.33, source: "spend_limit" });
 });
 
 test("low only below the level, naira only; unpaid always", () => {
