@@ -5,6 +5,9 @@ import { runTrackingAlerts } from "./lib/tracking-alerts.js";
 import { runAdSpendAutoSync } from "./lib/ad-spend-data.js";
 import { runCampaignDroughtAlerts } from "./lib/campaign-drought-alerts.js";
 import { runAdFundsCheck } from "./lib/ad-funds.js";
+import socialLeadRoutes from "./routes/social-leads.js";
+import publicSocialLeadRoutes from "./routes/public-social-leads.js";
+import { runSocialLeadsJob } from "./lib/social-leads.js";
 import "./lib/load-env.js";
 import express from "express";
 import compression from "compression";
@@ -290,6 +293,8 @@ app.use(rateLimit({
     isLoopbackIp(req.ip) ||
     req.path === "/api/auth/refresh" ||
     req.path.startsWith("/api/public/branding/") ||
+    // ManyChat posts every comment and message; the secret address guards it.
+    req.path.startsWith("/api/public/social-leads/manychat/") ||
     req.path.startsWith("/api/public/pwa/")
 }));
 
@@ -397,6 +402,7 @@ app.use("/api/store-activity", storeActivityRoutes);
 app.use("/api/telegram/webhook", telegramWebhookRouter);
 app.use("/api/telegram", telegramRoutes);
 app.use("/api/waybill-follow-ups", waybillFollowUpRoutes);
+app.use("/api/social-leads", socialLeadRoutes);
 app.use("/api/email-marketing", emailMarketingRoutes);
 app.use("/api/customer-reviews", customerReviewRoutes);
 app.use("/api/fine-appeals", fineAppealRoutes);
@@ -439,6 +445,7 @@ app.use("/api/whatsapp-destinations", whatsappDestinationRoutes);
 app.use("/api/whatsapp/conversations", whatsappConversationRoutes);
 app.use("/api/public/carts",           publicCartRoutes);
 app.use("/api/public/orders",          publicOrderRoutes);
+app.use("/api/public/social-leads",    publicSocialLeadRoutes);
 // Reviews & UGC (Bright, 8 Nov 2026): a customer's personal review link.
 app.use("/api/public/reviews",         publicReviewRoutes);
 // sendBeacon posts text/plain; the tracking route parses it itself.
@@ -884,6 +891,18 @@ cron.schedule("40 7 * * *", async () => {
 cron.schedule("3-59/10 * * * *", async () => {
   try { await runLoyaltyEarning(); } catch (e) {
     logger.error("cron: loyalty points crashed", { error: (e as Error).message });
+  }
+});
+
+// ── Social Leads Inbox (Bright, 12 Nov 2026) ── every minute: hand out
+// waiting leads, the response clock (nudge / managers / another rep) and
+// follow-ups due (lib/social-leads.ts).
+cron.schedule("* * * * *", async () => {
+  try {
+    const result = await runSocialLeadsJob();
+    if (result.assigned || result.escalated || result.moved) logger.info("cron: social leads", result);
+  } catch (e) {
+    logger.error("cron: social leads crashed", { error: (e as Error).message });
   }
 });
 

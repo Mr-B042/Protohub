@@ -39,6 +39,8 @@ const BRANCH_TABLES = new Set([
   "state_replenishment_notes",
   // Waybill Follow-Up Center (migration 328): each row carries its waybill's branch.
   "waybill_follow_up_logs", "waybill_follow_up_misses",
+  // Social Leads Inbox (migration 351): every row has a branch.
+  "social_leads", "social_lead_messages", "social_lead_settings",
   // "I've informed the agent's group" ticks (migration 332): the waybill's branch.
   "waybill_agent_notices",
   // Customer Reviews (migration 329): each row carries its order's branch.

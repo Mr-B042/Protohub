@@ -1,5 +1,6 @@
 import { liteOrder } from "../lib/lite-lists.js";
 import { fetchPagesTogether } from "../lib/paged-fetch.js";
+import { leadConverted } from "../lib/social-leads.js";
 import { Router } from "express";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { randomUUID } from "node:crypto";
@@ -769,6 +770,8 @@ const OrderSchema = z.object({
   // on a source picked from that same dropdown.
   source:         z.enum(["TikTok", "Facebook", "Instagram", "Messenger", "Audience Network", "Threads", "WhatsApp", "Website", "Direct"]).optional(),
   sourceCartId:   z.string().min(1).max(80).regex(/^[A-Za-z0-9\-_]+$/, "Cart ID must be alphanumeric (hyphens and underscores allowed)").optional(),
+  // Social Leads Inbox (12 Nov 2026): the lead this order was made from.
+  sourceSocialLeadId: z.string().uuid().optional(),
   location:       z.string().optional(),
   assignedRepId:  z.string().uuid().optional(),
   agentId:        z.string().uuid().optional().nullable(),
@@ -820,6 +823,23 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery
       .maybeSingle();
     if (existingForCart) {
       res.status(200).json({ ...existingForCart, already_existed: true });
+      return;
+    }
+  }
+
+  // One live order per social lead too (same double-tap guard as carts).
+  if (d.sourceSocialLeadId) {
+    const { data: existingForLead } = await supabase
+      .from("orders")
+      .select("*").neq("launch_stage", silentFilterFor(scopeOf(req).role))
+      .eq("org_id", req.user!.orgId)
+      .eq("source_social_lead_id", d.sourceSocialLeadId)
+      .not("status", "in", "(Cancelled,Failed)")
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (existingForLead) {
+      res.status(200).json({ ...existingForLead, already_existed: true });
       return;
     }
   }
@@ -970,6 +990,7 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery
     package_components_snapshot: packageComponentsSnapshot,
     source:          d.source,
     source_cart_id:  d.sourceCartId ?? null,
+    ...(d.sourceSocialLeadId ? { source_social_lead_id: d.sourceSocialLeadId } : {}),
     location:        d.location,
     assigned_rep_id: d.assignedRepId ?? req.user!.id,
     assigned_by_user_id: req.user!.id,
@@ -1212,6 +1233,9 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery
         packageName: data.package_name ?? null
       }
     });
+  }
+  if (d.sourceSocialLeadId) {
+    await leadConverted(req.user!.orgId, d.sourceSocialLeadId, String(data.id), req.user!.name).catch(() => undefined);
   }
 
   res.status(201).json(data);
