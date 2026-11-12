@@ -8,6 +8,38 @@ import { FacebookIcon } from "../../components/SocialIcons";
 import { Card, CardTitle, Empty, Kpi, Modal, Pill, Select, Switch, btn, field, timeAgo } from "./sl-ui";
 import { useLoad } from "./sl-data";
 import type { Shared } from "./SocialLeadsPage";
+import AutomationWizard, { EMPTY_CONFIG, type BuilderConfig } from "./AutomationWizard";
+
+/** "Use Template" starts the builder already filled in (Bright's 13 Nov designs). */
+function presetFor(key: string): { name: string; description: string; config: BuilderConfig } {
+  const base = (patch: Partial<BuilderConfig>): BuilderConfig => JSON.parse(JSON.stringify({ ...EMPTY_CONFIG, ...patch }));
+  const msg = (text: string) => ({ id: Math.random().toString(36).slice(2, 9), type: "send_message", config: { kind: "text", text } });
+  switch (key) {
+    case "inquiry": return { name: "Product Inquiry Flow", description: "Answer price, availability and delivery questions.", config: base({
+      trigger: { key: "new_message", platforms: ["facebook", "instagram"], event: "any" },
+      conditions: { enabled: true, match: "any", rules: [{ id: "r1", field: "message", op: "any", values: ["price", "cost", "how much", "available", "deliver"] }], groups: [] },
+      actions: [msg("Hi {{customer_name}} 👋 The {{product}} is {{price}} and we deliver to {{state}} — you pay when it arrives. Would you like to order?"), { id: "n1", type: "notify_team", config: { assignedRep: true, roles: [], push: true, message: "{{customer_name}} asked about price ({{product}})." } }]
+    }) };
+    case "followup": return { name: "Follow-up (No Response)", description: "Re-engage leads that went quiet.", config: base({
+      trigger: { key: "time_based", platforms: ["facebook", "instagram"], event: "first" },
+      conditions: { enabled: true, match: "all", rules: [{ id: "r1", field: "status", op: "is", values: ["awaiting_customer"] }], groups: [] },
+      actions: [msg("Hello {{customer_name}}, just checking in about the {{product}}. Would you like us to deliver it this week? 🙏")],
+      schedule: { ...EMPTY_CONFIG.schedule, mode: "recurring", repeat: true, frequency: "daily", every: 1, time: "10:00", workingHoursOnly: true }
+    }) };
+    case "upsell": return { name: "Upsell / Cross-sell", description: "Recommend related products after an order.", config: base({
+      trigger: { key: "order_update", platforms: ["facebook", "instagram"], event: "first", orderStatus: "New" },
+      actions: [{ id: "w1", type: "wait", config: { amount: 30, unit: "minutes" } }, msg("Thank you {{customer_name}}! 🎉 Most customers add a second one for another room. Would you like us to add it to your delivery at a better price?")]
+    }) };
+    case "confirm": return { name: "Order Confirmation (Social)", description: "Send the order summary after the order is created.", config: base({
+      trigger: { key: "order_update", platforms: ["facebook", "instagram"], event: "first", orderStatus: "New" },
+      actions: [msg("Thank you {{customer_name}}! Your order {{order_id}} for the {{product}} is confirmed. Our delivery team will call you before they arrive. 🚚")]
+    }) };
+    default: return { name: "Comment to Message (Main)", description: "Thank new leads and send them to a rep.", config: base({
+      trigger: { key: "new_lead", platforms: ["facebook", "instagram"], event: "first" },
+      actions: [msg("Hi {{customer_name}}, 👋\nThanks for reaching out to ProtoHub!\nOne of our sales reps will contact you shortly to assist you."), { id: "a1", type: "assign", config: { mode: "rotation" } }]
+    }) };
+  }
+}
 
 const TRIGGERS: Record<string, { label: string; Icon: React.ComponentType<{ className?: string }>; tile: string }> = {
   comment: { label: "Comment", Icon: MessageSquareText, tile: "bg-violet-50 text-violet-600" },
@@ -16,7 +48,13 @@ const TRIGGERS: Record<string, { label: string; Icon: React.ComponentType<{ clas
   inactivity: { label: "Inactivity", Icon: Clock, tile: "bg-fuchsia-50 text-fuchsia-600" },
   after_reply: { label: "After Reply", Icon: MessageCircle, tile: "bg-amber-50 text-amber-600" },
   order_created: { label: "Order Created", Icon: ShoppingCart, tile: "bg-amber-50 text-amber-500" },
-  other: { label: "Other", Icon: Zap, tile: "bg-gray-100 text-gray-600" }
+  other: { label: "Other", Icon: Zap, tile: "bg-gray-100 text-gray-600" },
+  new_message: { label: "New Message", Icon: MessageSquareText, tile: "bg-violet-50 text-violet-600" },
+  new_lead: { label: "New Lead", Icon: ShoppingCart, tile: "bg-rose-50 text-rose-500" },
+  tag_added: { label: "Tag Added", Icon: Tag, tile: "bg-amber-50 text-amber-600" },
+  order_update: { label: "Order Update", Icon: ShoppingCart, tile: "bg-emerald-50 text-emerald-600" },
+  assigned: { label: "Assigned", Icon: Users, tile: "bg-sky-50 text-sky-600" },
+  time_based: { label: "Time-Based", Icon: CalendarClock, tile: "bg-indigo-50 text-indigo-600" }
 };
 
 const TEMPLATES = [
@@ -38,7 +76,7 @@ export default function AutomationsTab({ shared }: { shared: Shared }) {
   const [chip, setChip] = useState<"all" | "active" | "paused" | "draft">("all");
   const [trigger, setTrigger] = useState("all");
   const [search, setSearch] = useState("");
-  const [modal, setModal] = useState<null | { kind: "edit"; flow: Partial<SlAutomation>; template?: typeof TEMPLATES[number] } | { kind: "logs" }>(null);
+  const [modal, setModal] = useState<null | { kind: "edit"; flow: Partial<SlAutomation>; template?: typeof TEMPLATES[number] } | { kind: "logs" } | { kind: "wizard"; existing?: SlAutomation; preset?: ReturnType<typeof presetFor> }>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const d = data.data, k = d?.kpis;
@@ -72,7 +110,7 @@ export default function AutomationsTab({ shared }: { shared: Shared }) {
             <p className="m-0 text-[13.5px] text-gray-600 dark:text-slate-400">Create and manage automated conversations, follow-ups and lead nurturing with Manychat.</p>
           </div>
           {shared.canSetup && <button type="button" onClick={sync} disabled={syncing} className={btn.ghost}>{syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}Sync from ManyChat</button>}
-          {shared.canSetup && <button type="button" onClick={() => setModal({ kind: "edit", flow: { trigger: "comment", status: "draft" } })} className={btn.primary}><Plus className="h-4 w-4" />Create Automation</button>}
+          {shared.canSetup && <button type="button" onClick={() => setModal({ kind: "wizard" })} className={btn.primary}><Plus className="h-4 w-4" />Create Automation</button>}
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-2">
           {([["all", "All Automations", ""], ["active", "Active", "bg-emerald-500"], ["paused", "Paused", "bg-amber-500"], ["draft", "Drafts", "bg-gray-400"]] as const).map(([key, label, dot]) => (
@@ -103,7 +141,7 @@ export default function AutomationsTab({ shared }: { shared: Shared }) {
                       <td><span className="flex items-center gap-2"><Switch on={f.status === "active"} label={`${f.name} active`} disabled={!shared.canSetup} onChange={(on) => void setStatus(f, on ? "active" : "paused")} /><span className={`text-[13px] font-semibold ${f.status === "active" ? "text-emerald-600" : f.status === "paused" ? "text-amber-600" : "text-gray-500"}`}>{f.status === "active" ? "Active" : f.status === "paused" ? "Paused" : "Draft"}</span></span></td>
                       <td>
                         <span className="relative flex items-center gap-1">
-                          {shared.canSetup && <button type="button" aria-label="Edit" onClick={() => setModal({ kind: "edit", flow: f })} className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800"><PencilLine className="h-[18px] w-[18px]" /></button>}
+                          {shared.canSetup && <button type="button" aria-label="Edit" onClick={() => setModal(f.kind === "protohub" ? { kind: "wizard", existing: f } : { kind: "edit", flow: f })} className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800"><PencilLine className="h-[18px] w-[18px]" /></button>}
                           <button type="button" aria-label="More" onClick={() => setMenuFor(menuFor === f.id ? null : f.id)} className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800"><MoreHorizontal className="h-[18px] w-[18px]" /></button>
                           {menuFor === f.id && (
                             <div className="absolute right-0 top-9 z-20 w-60 rounded-xl border border-gray-200 bg-white p-1 text-[13px] shadow-lg dark:border-slate-700 dark:bg-slate-900" onMouseLeave={() => setMenuFor(null)}>
@@ -149,7 +187,7 @@ export default function AutomationsTab({ shared }: { shared: Shared }) {
                 <t.Icon className="h-6 w-6 text-[#5B3FD9]" />
                 <b className="mt-2 text-[14px]">{t.title}</b>
                 <span className="flex-1 text-[12.5px] text-gray-600 dark:text-slate-400">{t.sub}</span>
-                <button type="button" disabled={!shared.canSetup} onClick={() => setModal({ kind: "edit", flow: { name: t.name, description: t.description, trigger: t.trigger, status: "draft" }, template: t })} className="!min-h-0 mt-3 inline-flex items-center justify-center gap-1 rounded-lg border border-gray-200 px-2 py-1.5 text-[12.5px] font-semibold text-[#5B3FD9] hover:bg-[#F5F2FE] disabled:opacity-40 dark:border-slate-700">Use Template<ArrowRight className="h-3.5 w-3.5" /></button>
+                <button type="button" disabled={!shared.canSetup} onClick={() => setModal({ kind: "wizard", preset: presetFor(t.key) })} className="!min-h-0 mt-3 inline-flex items-center justify-center gap-1 rounded-lg border border-gray-200 px-2 py-1.5 text-[12.5px] font-semibold text-[#5B3FD9] hover:bg-[#F5F2FE] disabled:opacity-40 dark:border-slate-700">Use Template<ArrowRight className="h-3.5 w-3.5" /></button>
               </div>
             ))}
           </div>
@@ -165,6 +203,7 @@ export default function AutomationsTab({ shared }: { shared: Shared }) {
 
       {modal?.kind === "edit" && <AutomationModal shared={shared} flow={modal.flow} template={modal.template} webhookUrl={settings.data?.webhookUrl ?? null} onClose={() => setModal(null)} onDone={() => { setModal(null); data.reload(); }} />}
       {modal?.kind === "logs" && <LogsModal onClose={() => setModal(null)} />}
+      {modal?.kind === "wizard" && <AutomationWizard shared={shared} existing={modal.existing ?? null} preset={modal.preset ?? null} automations={flows} onClose={() => setModal(null)} onSaved={() => { setModal(null); data.reload(); }} />}
     </div>
   );
 }
@@ -176,6 +215,7 @@ export function activityText(a: { kind: string; ok: boolean; name: string | null
   if (a.kind === "send") return `Reply sent to ${a.name ?? "a customer"}`;
   if (a.kind === "escalated") return `No reply in time: ${a.name ?? a.lead ?? "a lead"}`;
   if (a.kind === "test") return "Test event received";
+  if (a.kind === "automation") return `Automation “${a.flow ?? ""}” ran for ${a.name ?? "a lead"}`;
   if (a.kind === "inbound.comment") return `${a.flow ? `Automation “${a.flow}” triggered: ` : ""}${a.name ?? "Someone"} commented`;
   if (a.kind === "inbound.bot") return `${a.flow ? `“${a.flow}” ` : "Automation "}sent a message to ${a.name ?? "a customer"}`;
   return `${a.name ?? "A customer"} wrote${a.flow ? ` (${a.flow})` : ""}`;

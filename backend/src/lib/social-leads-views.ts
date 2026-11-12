@@ -1,6 +1,7 @@
 import { supabase } from "./supabase.js";
 import { hideSilentOrders } from "./product-launch.js";
 import { cleanPrefs, cleanSla, messagingWindow, OPEN_STATUSES, workingMsBetween } from "./social-leads-rules.js";
+import { automationStats } from "./social-lead-automations.js";
 import { LEADERSHIP, hoursFor, loadLeadFor, openNow, settingsFor, type Actor } from "./social-leads.js";
 
 // What the Social Leads Inbox tabs show (Bright, 12 Nov 2026, nine designs).
@@ -521,9 +522,11 @@ export async function automations(actor: Actor) {
   };
   const recent = events.filter((e) => e.created_at >= since && e.ok);
   const before = events.filter((e) => e.created_at < since && e.ok);
+  const builder = await automationStats(((flowsRes.data ?? []) as any[]).filter((f) => f.kind === "protohub").map((f) => f.id), since);
   const flows = ((flowsRes.data ?? []) as any[]).map((flow) => ({
     id: flow.id, key: flow.flow_key, name: flow.name, description: flow.description, trigger: flow.trigger, status: flow.status, template: flow.template, manychatNs: flow.manychat_ns,
-    ...perf(recent.filter((e) => e.detail?.flow && slugOf(String(e.detail.flow)) === flow.flow_key))
+    kind: flow.kind ?? "manychat", config: flow.config ?? {}, nextRunAt: flow.next_run_at ?? null,
+    ...(flow.kind === "protohub" ? builder.get(flow.id) ?? { triggered: 0, engaged: 0, converted: 0, conversion: null } : perf(recent.filter((e) => e.detail?.flow && slugOf(String(e.detail.flow)) === flow.flow_key)))
   }));
   const inbound = (rows: any[]) => rows.filter((e) => String(e.kind).startsWith("inbound.") && !e.detail?.skipped);
   const sent = (rows: any[]) => rows.filter((e) => e.kind === "inbound.bot" || e.kind === "send").length;

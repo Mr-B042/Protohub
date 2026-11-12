@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import * as manychat from "../lib/manychat.js";
 import { cleanPrefs, cleanSla } from "../lib/social-leads-rules.js";
+import { cleanConfig, configProblem, nextScheduled } from "../lib/automation-rules.js";
 import {
   LEADERSHIP, SocialLeadError, addManualLead, announce, completeFollowUp, markRead, scheduleFollowUp, sendReply, settingsFor, transferLead, updateLead, loadLeadFor, type Actor
 } from "../lib/social-leads.js";
@@ -122,11 +123,21 @@ router.post("/leads/bulk", requireRole(...LEAD), handle("Could not update the le
 
 // ── Automations ───────────────────────────────────────────────────────────
 
-const TRIGGERS = ["comment", "keyword", "time_delay", "inactivity", "after_reply", "order_created", "other"] as const;
+const TRIGGERS = ["comment", "keyword", "time_delay", "inactivity", "after_reply", "order_created", "other", "new_message", "new_lead", "tag_added", "order_update", "assigned", "time_based"] as const;
 const AutomationSchema = z.object({
-  name: z.string().min(1).max(80), description: z.string().max(200).optional(), trigger: z.enum(TRIGGERS).optional(),
-  status: z.enum(["active", "paused", "draft"]).optional(), template: z.string().max(40).optional()
+  name: z.string().min(1).max(100), description: z.string().max(500).optional(), trigger: z.enum(TRIGGERS).optional(),
+  status: z.enum(["active", "paused", "draft"]).optional(), template: z.string().max(40).optional(),
+  // Create Automation builder (13 Nov 2026): the 5-step setup of an automation Protohub runs.
+  kind: z.enum(["manychat", "protohub"]).optional(), config: z.record(z.unknown()).optional()
 });
+/** A Protohub automation: clean its setup; refuse to switch on an incomplete one; work out its next scheduled run. */
+function builderFields(d: { name?: string; status?: string; config?: Record<string, unknown> }, current?: any) {
+  const config = cleanConfig(d.config ?? current?.config);
+  const status = d.status ?? current?.status ?? "draft";
+  if (status === "active") { const problem = configProblem(config, d.name ?? current?.name ?? ""); if (problem) throw new SocialLeadError(400, problem); }
+  const next = config.trigger.key === "time_based" ? nextScheduled(config.schedule, Date.now() - 1, current?.runs_done ?? 0, Date.now()) : null;
+  return { config, trigger: config.trigger.key, next_run_at: next ? new Date(next).toISOString() : null };
+}
 const slug = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "flow";
 router.post("/automations", requireRole(...SETUP), async (req, res) => {
   const parsed = AutomationSchema.safeParse(req.body);
@@ -134,9 +145,10 @@ router.post("/automations", requireRole(...SETUP), async (req, res) => {
   try {
     const actor = actorOf(req);
     const d = parsed.data;
+    const built = d.kind === "protohub" ? { kind: "protohub", ...builderFields(d) } : {};
     const { data, error } = await supabase.from("social_lead_automations").upsert({
-      org_id: actor.orgId, branch_id: actor.branchId, flow_key: slug(d.name), name: d.name, description: d.description ?? null,
-      trigger: d.trigger ?? "comment", status: d.status ?? "draft", template: d.template ?? null, updated_at: new Date().toISOString()
+      org_id: actor.orgId, branch_id: actor.branchId, flow_key: d.kind === "protohub" ? `ph-${slug(d.name)}-${Date.now().toString(36)}` : slug(d.name), name: d.name, description: d.description ?? null,
+      trigger: d.trigger ?? "comment", status: d.status ?? "draft", template: d.template ?? null, updated_at: new Date().toISOString(), ...built
     }, { onConflict: "org_id,branch_id,flow_key" }).select("*").single();
     if (error) throw error;
     res.json({ automation: data });
@@ -153,6 +165,8 @@ router.patch("/automations/:id", requireRole(...SETUP), async (req, res) => {
     if (d.description !== undefined) patch.description = d.description;
     if (d.trigger) patch.trigger = d.trigger;
     if (d.status) patch.status = d.status;
+    const { data: current } = await supabase.from("social_lead_automations").select("*").eq("org_id", actor.orgId).eq("id", String(req.params.id)).maybeSingle();
+    if (current?.kind === "protohub") Object.assign(patch, builderFields({ name: d.name, status: d.status, config: d.config }, current));
     const { data, error } = await supabase.from("social_lead_automations").update(patch).eq("org_id", actor.orgId).eq("id", String(req.params.id)).select("*").single();
     if (error) throw error;
     res.json({ automation: data });
