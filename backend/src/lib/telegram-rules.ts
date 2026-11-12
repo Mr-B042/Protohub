@@ -671,7 +671,7 @@ export const FORWARD_GROUPS: Array<{ key: string; label: string; hint: string; k
   { key: "orders", label: "Order updates", hint: "Confirmed, delivered, cancelled and rescheduled orders.", kinds: ["order_confirmed", "order_delivered", "order_cancelled", "order_rescheduled"] },
   { key: "late_send", label: "Orders not sent out in 15 min", hint: "A rep left an order in New past 15 working minutes.", kinds: ["order_late_send"] },
   { key: "carts", label: "New abandoned carts", hint: "A customer left the order form without finishing (carts given to a rep are an Automation).", kinds: ["abandoned_cart_new"] },
-  { key: "ads", label: "Campaigns with no order", hint: "A running campaign brought no order for 3 full days.", kinds: ["campaign_no_orders"] },
+  { key: "ads", label: "Ad alerts", hint: "A running campaign brought no order for 3 full days, or an ad account is low on funds.", kinds: ["campaign_no_orders", "ad_account_low_funds"] },
   { key: "other", label: "Everything else", hint: "Weekly reports, fines and appeals, challenges, bug reports and other phone alerts.", kinds: ["*"] }
 ];
 
@@ -688,7 +688,7 @@ export function forwardDedupeKey(kind: string | undefined, tag: string | undefin
 }
 
 /** Phone alerts about company-wide matters: never copied to a rep. */
-const NOT_FOR_REPS = new Set(["abandoned_cart_new", "campaign_no_orders", "low_stock"]);
+const NOT_FOR_REPS = new Set(["abandoned_cart_new", "campaign_no_orders", "ad_account_low_funds", "low_stock"]);
 
 /**
  * May this phone alert be copied to this person's Telegram? A rep gets only
@@ -698,7 +698,7 @@ const NOT_FOR_REPS = new Set(["abandoned_cart_new", "campaign_no_orders", "low_s
 export function forwardCheck(role: string, kind: string | undefined, tag: string | undefined): { allowed: false } | { allowed: true; ownOrderId?: string } {
   const k = String(kind ?? "");
   // Campaign alerts carry ad spend: the Owner and Admins only.
-  if (k === "campaign_no_orders" && !seesBusinessMoney(role)) return { allowed: false };
+  if ((k === "campaign_no_orders" || k === "ad_account_low_funds") && !seesBusinessMoney(role)) return { allowed: false };
   // Order and cart alerts carry the customer and the amount: never to a role that may not see them.
   if (!seesCustomer(role) && (k.startsWith("order_") || k.startsWith("abandoned_cart"))) return { allowed: false };
   if (!isRepRole(role)) return { allowed: true };

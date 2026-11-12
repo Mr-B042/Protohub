@@ -4765,6 +4765,13 @@ export type HubSinceStartRow = HubSinceStartRates & {
   ads: Array<HubSinceStartRates & { adId: string; adName: string; adsetName: string; firstDay: string | null; orders: number; cpa: number | null }>;
 };
 /** Campaigns with no order for 3 days (backend lib/campaign-drought.ts). */
+/** Low ad account funds (Bright, 12 Nov 2026). */
+export type AdFundsAccount = {
+  accountId: string; name: string; currency: string; fundsLeft: number | null; source: "prepaid" | "spend_limit" | null;
+  lowReason: "low" | "unpaid" | null; accountStatus: number | null; fundingText: string | null;
+  checkedAt: string | null; error: string | null; lowSince: string | null; lastAlertAt: string | null;
+};
+export type AdFundsView = { settings: { enabled: boolean; threshold: number }; accounts: AdFundsAccount[]; unchecked: number };
 export type CampaignDroughtGroup = "off" | "watch" | "adjust";
 export type CampaignDrought = {
   campaignId: string; campaignName: string; platform: string; accountName: string; running: boolean; start: string | null;
@@ -4866,6 +4873,9 @@ export const trackingHubApi = {
   syncAdSpend: (period: { from: string; to: string }) => post<{ ok: boolean; accounts: number; failed: string[]; message: string }>("/api/tracking-hub/ad-spend/sync", period),
   setAdSpendAutoSync: (on: boolean) => put<{ ok: true; autoSync: boolean }>("/api/tracking-hub/ad-spend/auto-sync", { on }),
   sinceStart: (platform: string) => get<HubSinceStart>(`/api/tracking-hub/ad-spend/since-start?platform=${encodeURIComponent(platform)}`),
+  adFunds: () => get<AdFundsView>("/api/tracking-hub/ad-funds"),
+  saveAdFundsSettings: (body: { enabled?: boolean; threshold?: number }) => put<AdFundsView>("/api/tracking-hub/ad-funds/settings", body),
+  checkAdFunds: () => post<AdFundsView>("/api/tracking-hub/ad-funds/check", {}),
   campaignAlerts: (fresh = false) => get<{ droughts: CampaignDrought[]; unchecked: number; checkedAt: string }>(`/api/tracking-hub/campaign-alerts${fresh ? "?fresh=1" : ""}`),
   setAdSpendTarget: (productId: string, targetCpa: number | null) => put<{ ok: true }>("/api/tracking-hub/ad-spend/targets", { productId, targetCpa }),
   tiktokConnections: () => get<{ connections: HubTikTokConnection[]; urlParameters: string }>("/api/tracking-hub/tiktok-connections"),

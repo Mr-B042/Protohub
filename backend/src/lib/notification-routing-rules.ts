@@ -10,7 +10,7 @@ export type AlertKey =
   | "order_new" | "order_confirmed" | "order_delivered" | "order_cancelled" | "order_failed"
   | "order_rescheduled" | "order_assigned" | "order_recovered" | "order_follow_up" | "order_late_send"
   | "cart_new" | "cart_assigned"
-  | "campaign_no_orders"
+  | "campaign_no_orders" | "ad_account_low_funds"
   | "email_list_issue";
 
 /** stay (Bright, 11 Nov 2026): the pop-up stays on screen until closed (Chrome/Edge; other browsers let it slide away). */
@@ -31,6 +31,8 @@ export const ALERTS: Record<AlertKey, AlertDef> = {
   order_follow_up:   { group: "Follow-ups", label: "Follow-up due", hint: "A scheduled call or follow-up is due.", repApplies: true, defaults: { roles: ["Owner", "Admin"], rep: true, push: true, stay: false } },
   cart_new:          { group: "Abandoned carts", label: "New abandoned cart", hint: "A customer left the order form without finishing.", repApplies: false, defaults: { roles: ["Owner", "Admin"], rep: false, push: true, stay: false } },
   campaign_no_orders: { group: "Ads", label: "Campaign with no order for 3 days", hint: "A running campaign spent money but brought no order for 3 days (Turn off / Watch / Check, by its cost per order since it started).", repApplies: false, defaults: { roles: ["Owner"], rep: false, push: true, stay: false } },
+  // Bright, 12 Nov 2026: on by default, stays on screen (ads stop when the money runs out).
+  ad_account_low_funds: { group: "Ads", label: "Ad account low on funds", hint: "A Meta ad account has less money left than your level (₦5,000 to start; change it on Tracking Hub › Ad Spend), or Meta stopped it for an unpaid bill. Reminds every 6 hours in the day until funded.", repApplies: false, defaults: { roles: ["Owner"], rep: false, push: true, stay: true } },
   cart_assigned:     { group: "Abandoned carts", label: "Cart assigned", hint: "A cart was given to a rep to call.", repApplies: true, defaults: { roles: ["Owner", "Admin", "Manager"], rep: true, push: true, stay: false } },
   // Email Marketing › Audience Health (Bright, 8 Nov 2026).
   email_list_issue:  { group: "Email", label: "Email list problem", hint: "Audience Health found a new Critical or High problem (bounces, spam complaints, unsubscribes, sending set-up).", repApplies: false, defaults: { roles: ["Owner"], rep: false, push: false, stay: false } },

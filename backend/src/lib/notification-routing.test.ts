@@ -16,7 +16,7 @@ test("cleanRoute drops unknown roles and duplicates", () => {
 test("stays on screen: saved flag wins, else the default (only cancelled and failed stayed before)", () => {
   assert.equal(cleanRoute("order_new", { roles: ["Owner"], rep: true, push: true, stay: true }).stay, true);
   assert.equal(cleanRoute("order_new", { roles: ["Owner"], rep: true, push: true }).stay, false);
-  assert.deepEqual(Object.entries(ALERTS).filter(([, def]) => def.defaults.stay).map(([key]) => key).sort(), ["order_cancelled", "order_failed"]);
+  assert.deepEqual(Object.entries(ALERTS).filter(([, def]) => def.defaults.stay).map(([key]) => key).sort(), ["ad_account_low_funds", "order_cancelled", "order_failed"]);
 });
 
 test("cleanRoute falls back to the default for junk", () => {
