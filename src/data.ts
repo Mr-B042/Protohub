@@ -43,8 +43,7 @@ import {
   ShieldAlert,
   Rocket,
   Send,
-  Mail
-} from "lucide-react";
+  Mail, MessagesSquare } from "lucide-react";
 
 export const navItems = [
   // Our Store (Bright, 9 Nov 2026): first, gold, for every role.
@@ -65,6 +64,8 @@ export const navItems = [
   { label: "Closed Orders", icon: Archive },
   { label: "Scheduled Deliveries", icon: CalendarClock },
   { label: "Abandoned Carts", icon: ShoppingCart },
+  // Social Leads Inbox (12 Nov 2026): Facebook / Instagram leads through ManyChat.
+  { label: "Social Leads Inbox", icon: MessagesSquare },
   { label: "Customers", icon: ReceiptText },
   { label: "WhatsApp", icon: MessageCircle },
   // Telegram Automation Center (6 Nov 2026): Owner only.

@@ -5905,3 +5905,138 @@ export const emailMarketingApi = {
   updateTemplate: (id: string, body: EmTemplateInput) => patch<{ id: string }>(`${EM}/templates/${encodeURIComponent(id)}`, body),
   deleteTemplate: (id: string) => del<{ ok: boolean }>(`${EM}/templates/${encodeURIComponent(id)}`)
 };
+
+// ── Social Leads Inbox (Bright, 12 Nov 2026) ─────────────────────────────
+export type SlPlatform = "facebook" | "instagram" | "messenger";
+export type SlChange = { value: number | null; change: number | null; unit: "%" | "pp" };
+export type SlLeadRow = {
+  id: string; ref: string; name: string; profilePic: string | null; platform: SlPlatform; status: string; chip: string; hot: boolean; score: number;
+  productId: string | null; product: string | null; productImage?: string | null; preview: string | null; lastMessageAt: string | null; unread: number;
+  awaitingSince: string | null; slaStage: string | null; followUpAt: string | null; followUpNote: string | null; orderId: string | null;
+  assignedTo: string | null; assignedName: string | null; assignedAvatar: string | null; createdAt: string; campaign: string | null; source: string | null;
+  phone: string | null; state: string | null; lostReason: string | null; convertedAt: string | null; manual: boolean;
+};
+export type SlMessage = { id: string; direction: "in" | "out" | "bot" | "note" | "system"; kind: "text" | "image" | "product" | "comment" | "event"; body: string; payload: any; senderName: string | null; status: "ok" | "sending" | "failed"; error: string | null; createdAt: string };
+export type SlTemplate = { id: string; title: string; body: string; category: string; kind: "template" | "quick"; updatedAt: string | null };
+export type SlHeader = {
+  connection: { manychat: boolean; pageName: string | null; facebook: boolean; instagram: boolean; lastEventAt: string | null };
+  counts: { inbox: number; followUpsDue: number };
+  prefs: { inboxName: string; templates: SlTemplate[]; allowRepResumeBot: boolean };
+  me: { id: string; role: string; leadership: boolean };
+};
+export type SlRep = {
+  id: string; name: string; avatar: string | null; assigned: number; engaged: number; qualified: number; orders: number; delivered: number; conversion: number | null; deliveryRate: number | null;
+  aov: number | null; upsells: number; upsellRate: number | null; revenue: number; avgResponseSeconds: number | null; open: number; lost: number; overdue: number;
+  sources: Record<SlPlatform, number>; followUps: { done: number; scheduled: number; overdue: number }; products: Array<{ name: string; count: number }>; responseBuckets: number[];
+};
+export type SlStats = {
+  filters: { range: string; from: string | null; to: string; days: number; source: string; product: string; rep: string };
+  cards: Record<"total" | "captured" | "engaged" | "assigned" | "qualified" | "orders" | "delivered" | "revenue" | "aov" | "conversion" | "deliveryRate" | "upsellRate" | "avgResponseSeconds" | "resolved" | "active" | "avgResolutionSeconds", SlChange>;
+  funnel: { captured: number; engaged: number; qualified: number; orders: number; delivered: number; assigned: number };
+  days: Array<{ day: string; leads: number; engaged: number; orders: number; delivered: number }>;
+  sources: Array<{ key: SlPlatform; count: number }>;
+  products: Array<{ id: string | null; name: string; image: string | null; leads: number; engaged: number; orders: number; delivered: number; revenue: number; conversion: number | null; pct: number | null }>;
+  convertedByProduct: Array<{ name: string; image: string | null; count: number; pct: number | null }>;
+  responseTimes: Array<{ label: string; count: number }>;
+  reps: SlRep[]; unassigned: number; activeReps: number;
+  statusBreakdown: Array<{ key: string; label: string; count: number; pct: number | null }>;
+  states: Array<{ state: string; count: number; pct: number | null }>;
+  campaigns: Array<{ name: string; image: string | null; leads: number; engaged: number; orders: number; delivered: number; revenue: number; conversion: number | null }>;
+  insights: string[];
+  nextActions: { unread: number; pendingFollowUps: number; hotLeads: number };
+};
+export type SlLeadDetail = {
+  lead: SlLeadRow & { instagramUsername: string | null; whatsapp: string | null; email: string | null; address: string | null; packageId: string | null; offerText: string | null; adName: string | null; originalComment: string | null; botPaused: boolean; firstSeenAt: string; lastCustomerMessageAt: string | null; firstResponseSeconds: number | null; manychatUrl: string | null; contactId: string };
+  messages: SlMessage[];
+  window: { state: "open" | "human_only" | "closed" | "none"; leftMs: number };
+  clock: { waitingSeconds: number | null; sla: { yellow: number; red: number; renotify: number; escalate: number; reassign: number }; stage: string | null };
+  history: Array<{ id: string; status: string; amount: number; currency: string; createdAt: string; product: string; packageName: string | null }>;
+  followUps: Array<{ id: string; dueAt: string; note: string | null; status: string; doneAt: string | null; createdByName: string | null; auto: boolean; createdAt: string }>;
+  product: { id: string; name: string; image: string | null; description: string | null } | null;
+  packages: Array<{ id: string; name: string; price: number; currency: string; quantity: number }>;
+  connected: boolean;
+};
+export type SlFollowUps = {
+  kpis: Record<"total" | "dueToday" | "overdue" | "scheduled" | "completed" | "conversion", { value: number | null; change: number | null }>;
+  today: { completed: number; dueToday: number; overdue: number; total: number };
+  upcoming: Array<{ day: string; count: number }>; calendar: Array<{ day: string; count: number }>;
+  page: number; size: number; total: number;
+  followUps: Array<{ id: string; dueAt: string; note: string | null; state: "overdue" | "due_today" | "scheduled" | "completed"; auto: boolean; doneAt: string | null; lead: SlLeadRow }>;
+};
+export type SlConverted = {
+  counts: { all: number; delivered: number; pending: number }; page: number; size: number; total: number;
+  leads: Array<SlLeadRow & { order: { id: string; status: string; amount: number; currency: string; product: string; packageName: string | null } }>;
+};
+export type SlAutomation = { id: string; key: string; name: string; description: string | null; trigger: string; status: "active" | "paused" | "draft"; template: string | null; manychatNs: string | null; triggered: number; engaged: number; converted: number; conversion: number | null };
+export type SlAutomations = {
+  kpis: Record<"active" | "messagesSent" | "engaged" | "orders" | "conversion", { value: number | null; change: number | null }>;
+  flows: SlAutomation[];
+  activity: Array<{ kind: string; ok: boolean; at: string; lead: string | null; name: string | null; flow: string | null; error: string | null; skipped: string | null }>;
+};
+export type SlPrefs = {
+  inboxName: string; description: string; businessName: string; timezone: string; workingDays: number[];
+  captureFacebookComments: boolean; captureInstagramComments: boolean; captureMessenger: boolean; autoCreate: boolean; preventDuplicates: boolean;
+  eligibleRepIds: string[]; sticky: boolean; pauseBotOnAssign: boolean; assignInHoursOnly: boolean; allowRepResumeBot: boolean;
+  autoCloseDays: number; hotKeywords: string[]; autoFollowUpHours: number; templates: SlTemplate[];
+  notifyInApp: boolean; notifyPush: boolean; notifyTelegram: boolean; roles: string[];
+  distributeByWorkload: boolean; skipInactive: boolean; reassignEnabled: boolean; maxOpenEnabled: boolean;
+  slaRules: Array<{ key: "new" | "follow_up" | "hot" | "returning"; label: string; first: number; next: number; escalateTo: string; enabled: boolean }>;
+  escalateOnBreach: boolean; notifyRepeatBreaches: boolean; dailySlaSummary: boolean;
+  hoursEnabled: boolean; startMinute: number; endMinute: number; offHoursReply: boolean; offHoursMessage: string; pendingOffHours: boolean;
+  teamSchedules: Array<{ id: string; team: string; days: number[]; start: number; end: number; enabled: boolean }>;
+  exceptions: Array<{ id: string; date: string; type: "holiday" | "custom"; description: string; closed: boolean; start: number; end: number; enabled: boolean }>;
+  tagOptions: string[]; customFields: Array<{ key: string; label: string; type: "select" | "text" | "money"; options: string[] }>;
+  notifyEvents: Record<"newLeads" | "orderAssigned" | "slaBreaches" | "deliveryUpdates" | "followUpReminders" | "teamPerformance" | "stockAlerts" | "announcements", boolean>;
+  templateCategories: string[]; templateUsage: Record<string, { count: number; lastUsedAt: string | null }>;
+  dedupeBy: "contact" | "phone"; mergeDuplicates: boolean; liveAutomations: boolean; pauseAllAutomations: boolean;
+};
+export type SlSettings = {
+  connected: boolean; keyHint: string | null; pageName: string | null; connectedAt: string | null; connectionError: string | null; facebook: boolean; instagram: boolean; lastEventAt: string | null;
+  webhookUrl: string; autoAssign: boolean; telegramAlerts: boolean; sla: { yellow: number; red: number; renotify: number; escalate: number; reassign: number }; maxOpenPerRep: number;
+  prefs: SlPrefs; hours: { start: number; end: number };
+};
+export type SlProduct = { id: string; name: string; image: string | null; packages: Array<{ id: string; name: string; price: number; currency: string; quantity: number }> };
+
+const SL = "/api/social-leads";
+const slQs = (params: Record<string, string | number | undefined | null>) => {
+  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== "") as Array<[string, string | number]>;
+  return entries.length ? `?${new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString()}` : "";
+};
+export const socialLeadsApi = {
+  header: () => get<SlHeader>(`${SL}/header`),
+  badge: () => get<{ count: number }>(`${SL}/badge`),
+  stats: (params: Record<string, string | undefined>) => get<SlStats>(`${SL}/stats${slQs(params)}`),
+  conversations: (filter: string, q: string) => get<{ filter: string; counts: Record<string, number>; conversations: SlLeadRow[] }>(`${SL}/conversations${slQs({ filter, q })}`),
+  lead: (id: string) => get<SlLeadDetail>(`${SL}/leads/${encodeURIComponent(id)}`),
+  messagesSince: (id: string, since: string | null) => get<{ messages: SlMessage[]; unread: number; status: string; awaitingSince: string | null }>(`${SL}/leads/${encodeURIComponent(id)}/messages${slQs({ since })}`),
+  send: (id: string, body: { kind: "text" | "note" | "product" | "image"; body?: string; productId?: string; packageId?: string; imageUrl?: string }) => post<{ message: SlMessage }>(`${SL}/leads/${encodeURIComponent(id)}/messages`, body),
+  markRead: (id: string) => post<{ ok: boolean }>(`${SL}/leads/${encodeURIComponent(id)}/read`, {}),
+  update: (id: string, body: Record<string, unknown>) => patch<{ lead: any }>(`${SL}/leads/${encodeURIComponent(id)}`, body),
+  transfer: (id: string, repId: string) => post<{ lead: any }>(`${SL}/leads/${encodeURIComponent(id)}/transfer`, { repId }),
+  followUpDone: (id: string, outcome?: string) => post<{ lead: any }>(`${SL}/leads/${encodeURIComponent(id)}/follow-up/done`, { outcome }),
+  bulkFollowUp: (leadIds: string[], dueAt: string, note?: string) => post<{ scheduled: number }>(`${SL}/follow-ups/bulk`, { leadIds, dueAt, note }),
+  bulkLeads: (leadIds: string[], body: { repId?: string; status?: string; lostReason?: string }) => post<{ changed: number }>(`${SL}/leads/bulk`, { leadIds, ...body }),
+  leads: (params: Record<string, string | number | undefined>) => get<{ page: number; size: number; total: number; leads: SlLeadRow[] }>(`${SL}/leads${slQs(params)}`),
+  exportLeads: (params: Record<string, string | number | undefined>) => get<{ rows: SlLeadRow[] }>(`${SL}/leads/export${slQs(params)}`),
+  addLead: (body: Record<string, unknown>) => post<{ lead: any }>(`${SL}/leads`, body),
+  importLeads: (rows: Array<Record<string, string>>) => post<{ added: number; problems: string[] }>(`${SL}/leads/import`, { rows }),
+  followUps: (params: Record<string, string | number | undefined>) => get<SlFollowUps>(`${SL}/follow-ups${slQs(params)}`),
+  converted: (params: Record<string, string | number | undefined>) => get<SlConverted>(`${SL}/converted${slQs(params)}`),
+  automations: () => get<SlAutomations>(`${SL}/automations`),
+  saveAutomation: (body: { name: string; description?: string; trigger?: string; status?: string; template?: string }) => post<{ automation: any }>(`${SL}/automations`, body),
+  updateAutomation: (id: string, body: Record<string, unknown>) => patch<{ automation: any }>(`${SL}/automations/${encodeURIComponent(id)}`, body),
+  deleteAutomation: (id: string) => del<{ ok: boolean }>(`${SL}/automations/${encodeURIComponent(id)}`),
+  syncAutomations: () => post<{ synced: number }>(`${SL}/automations/sync`, {}),
+  reps: () => get<{ reps: Array<{ id: string; name: string; role: string; avatar: string | null; inRotation: boolean }> }>(`${SL}/reps`),
+  products: () => get<{ products: SlProduct[] }>(`${SL}/products`),
+  settings: () => get<SlSettings>(`${SL}/settings`),
+  saveSettings: (body: Record<string, unknown>) => put<SlSettings>(`${SL}/settings`, body),
+  newAddress: () => post<SlSettings>(`${SL}/settings/new-address`, {}),
+  testConnection: () => post<{ ok: boolean; pageName: string }>(`${SL}/settings/test`, {}),
+  events: () => get<{ events: Array<{ id: string; kind: string; ok: boolean; detail: any; createdAt: string }> }>(`${SL}/events`),
+  section: <T = any>(name: string, params: Record<string, string> = {}) => get<T>(`${SL}/settings/section/${name}${slQs(params)}`),
+  markNotificationsRead: (ids: string[] | "all") => post<{ ok: boolean }>(`${SL}/settings/notifications/read`, { ids: ids === "all" ? undefined : ids }),
+  templateUsed: (id: string) => post<{ ok: boolean }>(`${SL}/templates/${encodeURIComponent(id)}/used`, {}),
+  testWebhook: () => post<{ ok: boolean; ms: number }>(`${SL}/settings/test-webhook`, {}),
+  announce: (body: { title: string; message: string; roles: string[] }) => post<{ sent: number }>(`${SL}/announcements`, body)
+};

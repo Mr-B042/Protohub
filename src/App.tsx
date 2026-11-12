@@ -174,7 +174,7 @@ import {
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, ordersExtraApi, productCostApi, stockApi as _stockApi,
   weeklyReportsApi, managerFundsApi, logMissApi, salesScriptApi, embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, upsellPerformanceApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, targetPeriodsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
   branchesApi, setApiSpyUserId, type ApprovedPayoutChange, type CartAssignmentPanel, type CartHandOutRules,
-  setApiPreviewReadOnly, pageVisitsApi, fineAppealsApi, trackingHubApi,
+  setApiPreviewReadOnly, pageVisitsApi, fineAppealsApi, trackingHubApi, socialLeadsApi,
   PreviewReadOnlyError, type BranchWorkspace,
   customerReviewsApi
 } from "./lib/api";
@@ -283,6 +283,7 @@ const RepProductPerformancePage = lazyPage(() => import("./pages/RepProductPerfo
 const RepWeeklyReportPage = lazyPage(() => import("./pages/RepWeeklyReportPage"));
 const TrackingHubPage = lazyPage(() => import("./pages/TrackingHubPage"));
 const TelegramCenterPage = lazyPage(() => import("./pages/telegram/TelegramCenterPage"));
+const SocialLeadsPage = lazyPage(() => import("./pages/social-leads/SocialLeadsPage"));
 const ReportBugPage = lazyPage(() => import("./pages/ReportBugPage"));
 const MyReportsPage = lazyPage(() => import("./pages/MyReportsPage"));
 const IssueManagementPage = lazyPage(() => import("./pages/IssueManagementPage"));
@@ -339,7 +340,7 @@ type CurrencyCode = "NGN" | "GHS" | "KES" | "ZMW" | "XOF" | "XAF" | "TZS" | "MWK
 // currency no product can be priced in.
 type ProductCurrencyCode = CurrencyCode;
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "addBranch" | "cartAssignmentRules" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addExtraItems" | "addFreeGift" | "salesBonusFullReport" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | "pdaPortalCredentials" | null;
-type ActivePage = "Our Store" | "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Team Challenges" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Product Trend" | "Product Launch" | "Ad Tracking" | "Tracking Hub" | "Marketing" | "Marketing Performance" | "Email Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Telegram Bot" | "Sales Closer Workspace" | "Sales Closers" | "Weekly Reports" | "Report a Bug" | "My Reports" | "Issue Management";
+type ActivePage = "Our Store" | "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Social Leads Inbox" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "My Targets & Incentives" | "Team Challenges" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Product Trend" | "Product Launch" | "Ad Tracking" | "Tracking Hub" | "Marketing" | "Marketing Performance" | "Email Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Telegram Bot" | "Sales Closer Workspace" | "Sales Closers" | "Weekly Reports" | "Report a Bug" | "My Reports" | "Issue Management";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type PendingSalesExpansionAction =
@@ -2997,19 +2998,19 @@ const resolvedPermissionsForRole = (
 type AccessiblePage = ActivePage; // alias for readability
 const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   "Owner": [
-    "Dashboard", "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
+    "Dashboard", "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Social Leads Inbox", "Scheduled Deliveries", "Deliveries",
     "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting", "Product Trend", "Product Launch",
     "Tracking Hub", "Ad Tracking", "Marketing", "Marketing Performance", "Email Marketing", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp", "Telegram Bot", "Weekly Reports"
   ],
   "Admin": [
-    "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
+    "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Social Leads Inbox", "Scheduled Deliveries", "Deliveries",
     "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting", "Product Trend",
     "Ad Tracking", "Marketing", "Email Marketing", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
   ],
   "Manager": [
-    "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
+    "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Social Leads Inbox", "Scheduled Deliveries", "Deliveries",
     "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Weekend Stock Summary", "Customers", "Personal Delivery Agents", "Product Trend", "Round-Robin", "Notifications", "Settings", "WhatsApp"
   ],
   // "Head of Sales Rep" is NOT listed here - a Sales Rep only gets it at
@@ -3017,7 +3018,7 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   // currentAllowedPages), the same way extraPages layers on top of this
   // static list. Most Sales Reps must never see the page in their sidebar.
   "Sales Rep": [
-    "Sales Rep Workspace", "My Targets & Incentives", "Team Challenges", "Products & Stock", "Bonuses", "Weekly Reports", "Call Rep Console", "Weekend Stock Summary", "Personal Delivery Agents", "Notifications", "Settings", "WhatsApp"
+    "Sales Rep Workspace", "My Targets & Incentives", "Team Challenges", "Products & Stock", "Bonuses", "Weekly Reports", "Call Rep Console", "Weekend Stock Summary", "Personal Delivery Agents", "Notifications", "Settings", "WhatsApp", "Social Leads Inbox"
   ],
   // "Products & Stock" (Bright, 17 Oct 2026): inventory roles use its
   // Manage Stock; they see no stock value and (logistics) no prices there.
@@ -3120,6 +3121,7 @@ const dashboardHashByPage: Record<ActivePage, string> = {
   "Ad Tracking": "#/dashboard/admin/utm-tracking",
   "Tracking Hub": "#/dashboard/admin/tracking-hub",
   "Telegram Bot": "#/dashboard/admin/telegram-bot",
+  "Social Leads Inbox": "#/dashboard/admin/social-leads-inbox",
   Marketing: "#/dashboard/admin/marketing",
   "Marketing Performance": "#/dashboard/admin/marketing-performance",
   "Email Marketing": "#/dashboard/admin/email-marketing",
@@ -11700,6 +11702,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Tracking Hub for the Owner (the only role that can open it). The server
   // keeps the answer 15 minutes, so checking every 15 minutes costs little.
   const [campaignAlertCount, setCampaignAlertCount] = useState(0);
+  // Social Leads Inbox (12 Nov 2026): unread or waiting conversations, on the sidebar.
+  const [socialLeadCount, setSocialLeadCount] = useState(0);
+  useEffect(() => {
+    if (!["Owner", "Admin", "Manager", "Sales Rep"].includes(currentRole) || isPreviewing) { setSocialLeadCount(0); return; }
+    let live = true;
+    const check = () => { void socialLeadsApi.badge().then((r) => { if (live) setSocialLeadCount(r.count); }).catch(() => undefined); };
+    check();
+    const timer = window.setInterval(check, 60_000);
+    return () => { live = false; window.clearInterval(timer); };
+  }, [currentRole, isPreviewing]);
   useEffect(() => {
     if (currentRole !== "Owner" || isPreviewing) { setCampaignAlertCount(0); return; }
     let live = true;
@@ -28851,6 +28863,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       "utm-tracking": "Ad Tracking",
       "tracking-hub": "Tracking Hub",
       "telegram-bot": "Telegram Bot",
+      "social-leads-inbox": "Social Leads Inbox",
       "ad-tracking": "Ad Tracking",
       marketing: "Marketing",
       "marketing-performance": "Marketing Performance",
@@ -38325,6 +38338,7 @@ ${waybillLineItems(w).length > 1
       "Ad Tracking": "#/dashboard/admin/utm-tracking",
       "Tracking Hub": "#/dashboard/admin/tracking-hub",
       "Telegram Bot": "#/dashboard/admin/telegram-bot",
+  "Social Leads Inbox": "#/dashboard/admin/social-leads-inbox",
       Marketing: "#/dashboard/admin/marketing",
   "Marketing Performance": "#/dashboard/admin/marketing-performance",
   "Email Marketing": "#/dashboard/admin/email-marketing",
@@ -38431,7 +38445,7 @@ ${waybillLineItems(w).length > 1
       return;
     }
 
-    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory & Logistics Operations" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Head of Sales Rep" || label === "Sales Closers" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Tracking Hub" || label === "Marketing" || label === "Marketing Performance" || label === "Email Marketing" || label === "Product Trend" || label === "Our Store" || label === "Product Launch" || label === "Weekly Reports" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp" || label === "Telegram Bot" || label === "Report a Bug" || label === "My Reports" || label === "Issue Management") {
+    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory & Logistics Operations" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Head of Sales Rep" || label === "Sales Closers" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Tracking Hub" || label === "Marketing" || label === "Marketing Performance" || label === "Email Marketing" || label === "Product Trend" || label === "Our Store" || label === "Product Launch" || label === "Weekly Reports" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp" || label === "Telegram Bot" || label === "Social Leads Inbox" || label === "Report a Bug" || label === "My Reports" || label === "Issue Management") {
       if (label === "Inventory & Logistics Operations") {
         setInventoryOperationsSection("dashboard");
       }
@@ -76823,6 +76837,9 @@ ${waybillLineItems(w).length > 1
                 >
                   <item.icon className={`w-5 h-5 shrink-0 ${isActive ? "text-[#1F8FE0]" : "text-gray-400"}`} />
                   {!collapsed && <span className="truncate">{item.label}</span>}
+                  {item.label === "Social Leads Inbox" && socialLeadCount > 0 && (collapsed
+                    ? <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-red-500" aria-label={`${socialLeadCount} social leads waiting`} />
+                    : <span className="ml-auto rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white" title="Unread or waiting social leads">{socialLeadCount}</span>)}
                   {item.label === "Tracking Hub" && campaignAlertCount > 0 && (collapsed
                     ? <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-red-500" aria-label={`${campaignAlertCount} campaigns with no order for 3 days`} />
                     : <span className="ml-auto rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white" title="Campaigns with no order for 3+ days">{campaignAlertCount}</span>)}
@@ -91958,6 +91975,11 @@ ${waybillLineItems(w).length > 1
               : <div className="mx-auto max-w-[640px] rounded-2xl border border-gray-200 bg-white p-8 text-center text-[13px] text-gray-600">Issue Management is for the Owner and Admins. Your own reports are in <b>My Reports</b>.</div>
           ) : activePage === "Weekly Reports" ? (
             renderWeeklyReportsArea("sidebar")
+          ) : activePage === "Social Leads Inbox" ? (
+            // Social Leads Inbox (Bright, 12 Nov 2026): Facebook / Instagram leads through ManyChat.
+            ["Owner", "Admin", "Manager", "Sales Rep"].includes(currentRole)
+              ? <SocialLeadsPage currentRole={currentRole} onToast={showToast} onOpenOrder={(orderId) => { setSelectedOrderId(orderId); setModal("orderDetails"); }} />
+              : <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center text-sm text-gray-500">The Social Leads Inbox is for call reps and leadership.</section>
           ) : activePage === "Telegram Bot" ? (
             // Telegram Automation Center (Bright, 6 Nov 2026): Owner only - it
             // holds the bot token. currentRole, so "view as" lands on a note.
