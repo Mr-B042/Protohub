@@ -47,6 +47,24 @@ const naira = (value: number) => `₦${Math.round(value).toLocaleString("en-NG")
 const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 const addDays = (day: string, days: number) => { const d = new Date(`${day}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); };
 
+/**
+ * Whole days from `from` up to (not incl.) `today` that the campaign spent,
+ * skipping a restart day after 2+ days off. Days before the daily data
+ * begins (`spendFrom`, 37+ days back) are unknown and count as before.
+ */
+export function runningDays(days: Map<string, number>, from: string, today: string, spendFrom?: string) {
+  let count = 0, idle = 0;
+  const start = spendFrom && spendFrom > from ? spendFrom : from;
+  if (start > from) count += daysBetween(from, start < today ? start : today);
+  for (let day = start; day < today; day = addDays(day, 1)) {
+    if ((days.get(day) ?? 0) > 0) {
+      if (idle < 2) count += 1;
+      idle = 0;
+    } else idle += 1;
+  }
+  return count;
+}
+
 export function groupFor(cpa: number | null): DroughtGroup {
   if (cpa === null || cpa > DROUGHT_RULES.offAbove) return "off";
   if (cpa >= DROUGHT_RULES.adjustBelow) return "watch";
@@ -87,7 +105,11 @@ export function campaignDroughts(input: {
     // 6th -> the 4th and 5th = 2 days; Ads Manager shows the same two empty
     // rows. Counting the 6th at 9am called it "3 days" a day early.
     // Never an order: whole days from its first day of spend.
-    const daysWithoutOrder = last ? daysBetween(last, input.today) - 1 : started ? daysBetween(started, input.today) : 0;
+    // Only days it RAN (Bright, 12 Nov 2026: a campaign off for two weeks and
+    // switched back on last night read "no order: 13 full days"). A day counts
+    // when the campaign spent; the day it is switched back on after 2+ days
+    // off does not (it ran part of that day only). Today never counts.
+    const daysWithoutOrder = last ? runningDays(days, addDays(last, 1), input.today, input.spendFrom) : started ? runningDays(days, started, input.today, input.spendFrom) : 0;
     if (daysWithoutOrder < DROUGHT_RULES.days) continue;
     const spendSinceLastOrder = [...days.entries()].filter(([day]) => !last || day > last).reduce((sum, [, spend]) => sum + spend, 0);
     // Lifetime spend is refreshed less often than the daily rows: never show
@@ -97,7 +119,7 @@ export function campaignDroughts(input: {
     const cpa = campaign.orders > 0 ? spend / campaign.orders : null;
     const group = groupFor(cpa);
     const todaySpend = days.get(input.today) ?? 0;
-    const dry = `${daysWithoutOrder} full day${daysWithoutOrder === 1 ? "" : "s"}`;
+    const dry = `${daysWithoutOrder} full day${daysWithoutOrder === 1 ? "" : "s"} running`;
     const advice = cpa === null
       ? `${naira(spend)} spent since it started and no order in ${dry}. Turn it off.`
       : group === "off"

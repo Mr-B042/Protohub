@@ -100,7 +100,7 @@ export async function runCampaignDroughtAlerts() {
       if (recipients.size === 0) continue;
       const rows = fresh.flatMap((drought) => [...recipients.keys()].map((recipientId) => ({
         org_id: orgId, branch_id: branchId, recipient_id: recipientId, type: DROUGHT_ALERT_TYPE, read: false, link: linkFor(drought),
-        title: `${GROUP_WORD[drought.group]}: ${drought.campaignName} - no order in ${drought.daysWithoutOrder} full days`,
+        title: `${GROUP_WORD[drought.group]}: ${drought.campaignName} - no order in ${drought.daysWithoutOrder} full days running`,
         message: drought.lastOrderDay && drought.spendSinceLastOrder >= 1
           ? `${drought.advice} ₦${Math.round(drought.spendSinceLastOrder).toLocaleString("en-NG")} spent since the last order${drought.todaySpend >= 1 ? `, including today's ₦${Math.round(drought.todaySpend).toLocaleString("en-NG")} so far` : ""}.`
           : drought.advice
@@ -112,7 +112,7 @@ export async function runCampaignDroughtAlerts() {
       const branding = await getOrgPushBranding(orgId);
       // Many at once: one push that sums them up, so phones are not flooded.
       const pushes = fresh.length <= 3
-        ? fresh.map((drought) => ({ title: `${GROUP_WORD[drought.group]}: ${drought.campaignName}`, body: `No order in ${drought.daysWithoutOrder} full days. ${drought.advice}`, url: linkFor(drought), tag: `campaign-dry-${drought.campaignId}` }))
+        ? fresh.map((drought) => ({ title: `${GROUP_WORD[drought.group]}: ${drought.campaignName}`, body: `No order in ${drought.daysWithoutOrder} full days running. ${drought.advice}`, url: linkFor(drought), tag: `campaign-dry-${drought.campaignId}` }))
         : [{
             title: `${fresh.length} campaigns with no order in ${DROUGHT_RULES.days}+ full days`,
             body: (["off", "watch", "adjust"] as DroughtGroup[]).map((group) => [group, fresh.filter((d) => d.group === group).length] as const)

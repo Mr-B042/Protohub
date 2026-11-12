@@ -88,12 +88,12 @@ export default function CampaignAlertsPanel({ focus }: { focus?: string | null }
                       <b className="block break-words text-[13px] text-gray-900 dark:text-slate-50">{row.campaignName}</b>
                       <span className="block text-[11.5px] text-gray-500 dark:text-slate-400">{row.accountName}{row.productName ? ` · ${row.productName}` : ""}{row.platform === "tiktok" ? " · TikTok" : ""}</span>
                       <span className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 font-semibold text-gray-800 dark:text-slate-200">
-                        <span className="text-rose-600">No order: {row.daysWithoutOrder} full day{row.daysWithoutOrder === 1 ? "" : "s"}</span>
+                        <span className="text-rose-600">No order: {row.daysWithoutOrder} full day{row.daysWithoutOrder === 1 ? "" : "s"} running</span>
                         <span>{money(row.spendSinceLastOrder)} spent since {row.lastOrderDay ? "the last order" : "it started"}</span>
                         <span>{row.cpa === null ? "No order yet" : `${money(row.cpa)} per order since start`}</span>
                       </span>
                       {/* Ads Manager's day rows stop at yesterday: say what of this is today (Bright, 6 Nov 2026). */}
-                      {(row.todaySpend ?? 0) >= 1 && <span className="mt-0.5 block text-[11.5px] text-gray-500 dark:text-slate-400">Includes today's {money(row.todaySpend ?? 0)} so far. Full days only: today is not counted as a day without an order.</span>}
+                      {(row.todaySpend ?? 0) >= 1 && <span className="mt-0.5 block text-[11.5px] text-gray-500 dark:text-slate-400">Includes today's {money(row.todaySpend ?? 0)} so far. Only full days the campaign ran are counted: not today, not days it was switched off, nor the day it was switched back on.</span>}
                       <span className="mt-1 block text-gray-600 dark:text-slate-400">{row.advice}</span>
                     </li>
                   ))}
