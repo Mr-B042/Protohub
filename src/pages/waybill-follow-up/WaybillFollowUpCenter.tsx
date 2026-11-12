@@ -7,6 +7,7 @@ import TabHistory from "./TabHistory";
 import TabMisses from "./TabMisses";
 import TabReports from "./TabReports";
 import WaybillTable from "./WaybillTable";
+import WaybillLogsModal from "./WaybillLogsModal";
 import { SessionTimer, useLiveNow } from "./Timers";
 import { Card, IconTile, btn, longDate, type WfTab } from "./wf-ui";
 
@@ -36,6 +37,7 @@ export default function WaybillFollowUpCenter({ currentRole, onToast, onOpenWayb
   const [logFor, setLogFor] = useState<string[] | null>(null);
   const [informing, setInforming] = useState<Set<string>>(new Set());
   const [historyWaybill, setHistoryWaybill] = useState("");
+  const [logsFor, setLogsFor] = useState<string | null>(null);
   const dateInput = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async (quiet = false) => {
@@ -56,7 +58,12 @@ export default function WaybillFollowUpCenter({ currentRole, onToast, onOpenWayb
     return () => window.clearInterval(refresh);
   }, [load]);
 
-  const openHistory = (waybillId = "") => { setHistoryWaybill(waybillId); setTab("history"); };
+  // One waybill opens its own log window (Bright, 12 Nov 2026); "View All" still opens the History tab.
+  const openHistory = (waybillId = "") => {
+    if (waybillId && data?.waybills.some((row) => row.id === waybillId)) { setLogsFor(waybillId); return; }
+    setHistoryWaybill(waybillId); setTab("history");
+  };
+  const logsRow = logsFor ? data?.waybills.find((row) => row.id === logsFor) ?? null : null;
   // "I've informed the agent's group" (Bright, 7 Nov 2026): the server keeps the time.
   const inform = async (ids: string[]) => {
     setInforming((current) => new Set([...current, ...ids]));
@@ -127,6 +134,10 @@ export default function WaybillFollowUpCenter({ currentRole, onToast, onOpenWayb
       {tab === "misses" && <TabMisses currentRole={currentRole} onToast={onToast} onChanged={() => void load(true)} />}
       {tab === "reports" && <TabReports canEdit={currentRole === "Owner" || currentRole === "Admin"} onToast={onToast} onSaved={() => void load(true)} />}
 
+      {logsRow && data && (
+        <WaybillLogsModal row={logsRow} options={data.options.responses} onToast={onToast} onClose={() => setLogsFor(null)}
+          onLog={() => { setLogsFor(null); setLogFor([logsRow.id]); }} onOpenWaybills={() => { setLogsFor(null); onOpenWaybills(); }} />
+      )}
       {logFor && data && (
         <LogFollowUpModal waybills={data.waybills} preselected={logFor} options={data.options} graceMinutes={data.settings.graceMinutes} workingDays={data.settings.workingDays}
           onClose={() => setLogFor(null)} onSaved={(message) => { setLogFor(null); onToast(message); void load(true); }} />

@@ -133,17 +133,23 @@ export default function WaybillTable({ rows, options, pageSize, onLog, onHistory
                 <td className="px-2.5 py-2.5"><NoticeChip notice={row.notice} nowMs={nowMs} busy={informing.has(row.id)} onInform={() => onInform([row.id])} /></td>
                 <td className="px-2.5 py-2.5">
                   {row.lastLog
-                    ? <span className="flex items-center gap-1.5 whitespace-nowrap text-gray-800 dark:text-slate-200"><ChannelIcon channels={row.lastLog.channels} />{lagosTime(row.lastLog.at)}</span>
+                    ? <button type="button" onClick={() => onHistory(row.id)} title="See every follow-up of this waybill" className="!min-h-0 flex items-center gap-1.5 whitespace-nowrap rounded-md text-gray-800 hover:underline dark:text-slate-200"><ChannelIcon channels={row.lastLog.channels} />{lagosTime(row.lastLog.at)}</button>
                     : <span className="text-gray-400">—</span>}
                 </td>
-                <td className="px-2.5 py-2.5"><ResponsePill response={row.lastLog?.response} note={row.lastLog?.note} options={options} /></td>
+                <td className="px-2.5 py-2.5">
+                  {row.lastLog
+                    ? <button type="button" onClick={() => onHistory(row.id)} title={row.lastLog.note ? `“${row.lastLog.note}” · click to see every follow-up` : "See every follow-up of this waybill"} className="!min-h-0 rounded-md hover:opacity-80">
+                        <ResponsePill response={row.lastLog.response} note={row.lastLog.note} options={options} />
+                      </button>
+                    : <ResponsePill response={null} options={options} />}
+                </td>
                 <td className="px-2.5 py-2.5"><Pill tone={STATUS_LOOK[row.status].tone}>{STATUS_LOOK[row.status].label}</Pill></td>
                 <td className="px-2.5 py-2.5"><button type="button" onClick={() => onLog([row.id])} className={`${btn.outline} whitespace-nowrap`}>Log Follow-Up</button></td>
                 <td className="relative px-2 py-2.5">
                   <button type="button" aria-label={`More for ${row.id}`} onClick={() => setMenuFor(menuFor === row.id ? null : row.id)} className="!min-h-0 rounded-md p-1 text-gray-600 hover:bg-gray-100 dark:hover:bg-slate-800"><MoreHorizontal className="h-4 w-4" /></button>
                   {menuFor === row.id && (
                     <div ref={menuRef} className="absolute right-2 top-9 z-20 w-52 rounded-xl border border-gray-200 bg-white p-1 text-[13px] shadow-lg dark:border-slate-700 dark:bg-slate-900">
-                      <button type="button" onClick={() => { setMenuFor(null); onHistory(row.id); }} className="!min-h-0 block w-full rounded-lg px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-slate-800">View follow-up history</button>
+                      <button type="button" onClick={() => { setMenuFor(null); onHistory(row.id); }} className="!min-h-0 block w-full rounded-lg px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-slate-800">See all follow-ups</button>
                       <button type="button" onClick={() => { setMenuFor(null); onOpenWaybills(); }} className="!min-h-0 block w-full rounded-lg px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-slate-800">Mark received (Waybills)</button>
                     </div>
                   )}

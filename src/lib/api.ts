@@ -5340,6 +5340,7 @@ export const waybillFollowUpApi = {
     get<{ logs: WfLog[] }>(`/api/waybill-follow-ups/history?${new URLSearchParams(Object.entries(params).filter(([, value]) => value) as Array<[string, string]>).toString()}`),
   log: (body: { waybillIds: string[]; channels: string[]; response: string; responseNote?: string; nextAction?: string; evidence?: { dataUrl: string } | null }) =>
     post<{ logged: number; sessionKey: WfSessionKey | null; sessionLabel: string | null }>("/api/waybill-follow-ups/logs", body),
+  waybillLogs: (waybillId: string) => get<{ logs: WfLog[] }>(`/api/waybill-follow-ups/waybills/${encodeURIComponent(waybillId)}/logs`),
   evidence: (logId: string) => get<{ url: string }>(`/api/waybill-follow-ups/logs/${encodeURIComponent(logId)}/evidence`),
   inform: (waybillIds: string[]) => post<{ informed: number; already: number; late: string[] }>("/api/waybill-follow-ups/notices", { waybillIds }),
   misses: (params: { from?: string; to?: string } = {}) =>

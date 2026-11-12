@@ -174,7 +174,7 @@ export default function TabDashboard({ data, nowMs, onLog, onHistory, onOpenWayb
                       <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${log.channels.includes("call") ? "bg-rose-50 dark:bg-rose-500/10" : "bg-emerald-50 dark:bg-emerald-500/10"}`}><ChannelIcon channels={log.channels} callTone="text-rose-500" /></span>
                       <span className="w-[62px] shrink-0 pt-1 text-[13px] text-gray-800 dark:text-slate-200">{lagosTime(log.at)}</span>
                       <span className="min-w-0 pt-1">
-                        <b className="block text-[13px] text-gray-900 dark:text-slate-100">{log.waybillId}{log.state ? ` (${log.state})` : ""}</b>
+                        <button type="button" onClick={() => onHistory(log.waybillId)} title="See every follow-up of this waybill" className="!min-h-0 block text-left text-[13px] font-bold text-gray-900 hover:text-[#5B3FD9] hover:underline dark:text-slate-100">{log.waybillId}{log.state ? ` (${log.state})` : ""}</button>
                         <span className="block truncate text-[12.5px] text-gray-600 dark:text-slate-400">{log.response === "other" && log.responseNote ? log.responseNote : option?.short ?? log.response} – {log.agentName}</span>
                       </span>
                     </li>
