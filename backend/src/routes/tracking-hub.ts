@@ -19,6 +19,7 @@ import { RULES as SINCE_START_RULES, VERDICT_ORDER } from "../lib/ad-since-start
 import { droughtsFor } from "../lib/campaign-drought-alerts.js";
 import { DROUGHT_RULES } from "../lib/campaign-drought.js";
 import { syncAdSpendExpenses } from "../lib/ad-spend-expenses.js";
+import { adFundsView, runAdFundsCheck, saveFundsSettings } from "../lib/ad-funds.js";
 import { TIKTOK_URL_PARAMETERS, tiktokAdvertisers } from "../lib/tiktok-ads.js";
 import { lastSyncedAt, sortPages, syncIsStale, syncWebsitePages } from "../lib/wordpress-pages.js";
 
@@ -1836,6 +1837,23 @@ router.post("/ad-spend/sync", async (req, res) => {
 });
 
 /** Campaigns with no order for 3 days (Bright, 5 Nov 2026): Ad Spend panel + sidebar count. */
+// Low ad account funds (Bright, 12 Nov 2026): lib/ad-funds.ts.
+router.get("/ad-funds", async (req, res) => {
+  try { res.json(await adFundsView(req.user!.orgId)); } catch (error: any) { fail(res, error, "Could not load the ad account funds."); }
+});
+router.put("/ad-funds/settings", async (req, res) => {
+  try {
+    await saveFundsSettings(req.user!.orgId, { enabled: req.body?.enabled, threshold: req.body?.threshold });
+    res.json(await adFundsView(req.user!.orgId));
+  } catch (error: any) { fail(res, error, "Could not save the low funds alert."); }
+});
+router.post("/ad-funds/check", async (req, res) => {
+  try {
+    await runAdFundsCheck({ orgId: req.user!.orgId });
+    res.json(await adFundsView(req.user!.orgId));
+  } catch (error: any) { fail(res, error, "Could not check the ad accounts."); }
+});
+
 router.get("/campaign-alerts", async (req, res) => {
   try {
     const { droughts, unchecked, checkedAt } = await droughtsFor(req.user!.orgId, branchOf(req), { fresh: req.query.fresh === "1" });

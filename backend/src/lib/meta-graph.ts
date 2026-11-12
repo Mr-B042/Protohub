@@ -428,3 +428,16 @@ export async function pixelAdAccounts(pixelId: string, businessId: string | null
   return { ok: true, accounts: [...out.values()] };
 }
 
+
+/**
+ * An ad account's money: prepaid balance (funding source words), spending
+ * limit and spent so far, and whether Meta stopped it for an unpaid bill
+ * (Bright, 12 Nov 2026: low funds alert). Money fields are in kobo.
+ */
+export async function adAccountFunds(adAccountId: string, token: string) {
+  const id = String(adAccountId).replace(/^act_/, "");
+  return graphGet<{
+    id: string; name?: string; currency?: string; is_prepay_account?: boolean; account_status?: number; disable_reason?: number;
+    balance?: string; amount_spent?: string; spend_cap?: string; funding_source_details?: { id?: string; display_string?: string; type?: number } | null;
+  }>(`act_${id}`, token, { fields: "name,currency,is_prepay_account,account_status,disable_reason,balance,amount_spent,spend_cap,funding_source_details" });
+}

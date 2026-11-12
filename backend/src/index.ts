@@ -4,6 +4,7 @@ import { runMetaDeliveredEvents } from "./lib/meta-capi-delivered.js";
 import { runTrackingAlerts } from "./lib/tracking-alerts.js";
 import { runAdSpendAutoSync } from "./lib/ad-spend-data.js";
 import { runCampaignDroughtAlerts } from "./lib/campaign-drought-alerts.js";
+import { runAdFundsCheck } from "./lib/ad-funds.js";
 import "./lib/load-env.js";
 import express from "express";
 import compression from "compression";
@@ -792,6 +793,13 @@ cron.schedule("13,43 * * * *", async () => {
     await runAdSpendAutoSync();
   } catch (e) {
     logger.error("cron: ad spend sync crashed", { error: (e as Error).message });
+  }
+  // Low ad account funds (Bright, 12 Nov 2026): lib/ad-funds.ts.
+  try {
+    const { alerted } = await runAdFundsCheck();
+    if (alerted) logger.info("cron: low ad funds alerts", { alerted });
+  } catch (e) {
+    logger.error("cron: ad funds check crashed", { error: (e as Error).message });
   }
 });
 

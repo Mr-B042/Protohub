@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import SinceStartView from "./SinceStartView";
 import CampaignAlertsPanel from "./CampaignAlertsPanel";
+import AdFundsPanel from "./AdFundsPanel";
 import { Bar, CartesianGrid, Cell, ComposedChart, LabelList, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   AlertTriangle, ArrowUpDown, BarChart3, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Columns3, Database, Download, Filter, Plus, RefreshCw, ShoppingCart, Trash2, Truck, Users, Wallet, X
@@ -431,6 +432,7 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
       {header}
       {tabBar}
 
+      {data.hasAccounts && <AdFundsPanel onToast={onToast} focus={new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("funds") === "1"} />}
       {data.hasAccounts && <CampaignAlertsPanel focus={new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("alert")} />}
 
       {!data.hasAccounts ? (
