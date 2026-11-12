@@ -100,12 +100,15 @@ export async function runAdFundsCheck(opts: { orgId?: string; nowMs?: number } =
         funding_type: raw.funding_source_details?.type ?? null, funding_display: raw.funding_source_details?.display_string ?? null,
         funds_left: left, funds_source: source, low_reason: reason, checked_at: nowIso, error: null, error_at: null,
         low_since: reason ? ((before as any)?.low_since ?? nowIso) : null,
-        last_alert_at: reason ? (due ? nowIso : (before as any)?.last_alert_at ?? null) : null
+        // Marked alerted only once the alert is saved (below): a refused alert is tried again next run.
+        last_alert_at: reason ? (before as any)?.last_alert_at ?? null : null
       };
       const save = await supabase.from("tracking_ad_account_funds").upsert(row, { onConflict: "org_id,ad_account_id" });
       if (save.error) throw save.error;
       if (due && reason) {
         await sendFundsAlert(target, row.name, reason, left, settings.threshold, due);
+        const mark = await supabase.from("tracking_ad_account_funds").update({ last_alert_at: nowIso }).eq("org_id", target.orgId).eq("ad_account_id", target.account);
+        if (mark.error) throw mark.error;
         alerted += 1;
       }
     } catch (error: any) {
