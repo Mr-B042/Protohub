@@ -336,6 +336,15 @@ export async function historyFor(orgId: string, from: string, to: string, waybil
   return { logs: logs.slice(0, 2000).map((log) => logView(log, places)) };
 }
 
+/** Every follow-up of one waybill, all time, newest first (the per-waybill log window, Bright 12 Nov 2026). */
+export async function waybillLogs(orgId: string, waybillId: string) {
+  const { data, error } = await supabase.from("waybill_records").select(WAYBILL_COLUMNS).eq("org_id", orgId).eq("id", waybillId).maybeSingle();
+  if (error) throw error;
+  if (!data) throw new FollowUpError(404, "This waybill was not found.");
+  const [logs, places] = await Promise.all([logsOfWaybills(orgId, [waybillId]), placesFor(orgId, [data as WaybillRow])]);
+  return { logs: logs.map((log) => logView(log, places)) };
+}
+
 // ── Logging a follow-up ─────────────────────────────────────────────────────
 
 const EVIDENCE_MIME: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "application/pdf": "pdf" };

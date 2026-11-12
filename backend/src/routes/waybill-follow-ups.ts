@@ -4,7 +4,7 @@ import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { addDays, cleanSettings, lagosDay } from "../lib/waybill-follow-up-rules.js";
 import {
-  FollowUpError, RESPONSIBLE_ROLES, activeWaybills, addLogs, dashboardFor, decideMiss, disputeMiss, evidenceUrl, historyFor, informAgent,
+  FollowUpError, RESPONSIBLE_ROLES, activeWaybills, addLogs, waybillLogs, dashboardFor, decideMiss, disputeMiss, evidenceUrl, historyFor, informAgent,
   missesBetween, responsibleFor, settingsFor, weekReport
 } from "../lib/waybill-follow-up.js";
 
@@ -44,6 +44,10 @@ router.get("/history", requireRole(...VIEW), async (req, res) => {
     const waybill = typeof req.query.waybill === "string" ? req.query.waybill.trim().slice(0, 40) : "";
     res.json(await historyFor(req.user!.orgId, from, to, waybill || undefined));
   } catch (error) { fail(res, error, "Could not load the history."); }
+});
+
+router.get("/waybills/:id/logs", requireRole(...VIEW), async (req, res) => {
+  try { res.json(await waybillLogs(req.user!.orgId, String(req.params.id).trim().slice(0, 40))); } catch (error) { fail(res, error, "Could not load this waybill's follow-ups."); }
 });
 
 router.post("/logs", requireRole(...VIEW), async (req, res) => {
