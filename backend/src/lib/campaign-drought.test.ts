@@ -109,6 +109,8 @@ test("days switched off never count, nor the day it is switched back on (Bright,
   // Still nothing by the 14th (30th, 12th, 13th = 3 running days): flagged then, honestly.
   const later = run("2026-11-14", [["2026-11-13", 3_000], ["2026-11-14", 500]]);
   assert.equal(later[0].daysWithoutOrder, 3);
+  // A new spell after switching back on: its own alert, not silenced by an older one.
+  assert.equal(later[0].episodeKey, "shelf:after-2026-10-29:on-2026-11-11");
 });
 
 test("running days: a one-day dip does not restart; days before the data count as before", () => {

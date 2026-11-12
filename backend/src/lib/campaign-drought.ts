@@ -47,6 +47,15 @@ const naira = (value: number) => `₦${Math.round(value).toLocaleString("en-NG")
 const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 const addDays = (day: string, days: number) => { const d = new Date(`${day}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); };
 
+/** The last day it was switched back on (spent after 2+ days with none), from `from` on; null when it never paused. */
+export function lastRestartDay(days: Map<string, number>, from: string, today: string) {
+  let idle = 0, restart: string | null = null;
+  for (let day = from; day <= today; day = addDays(day, 1)) {
+    if ((days.get(day) ?? 0) > 0) { if (idle >= 2) restart = day; idle = 0; } else idle += 1;
+  }
+  return restart;
+}
+
 /**
  * Whole days from `from` up to (not incl.) `today` that the campaign spent,
  * skipping a restart day after 2+ days off. Days before the daily data
@@ -111,6 +120,8 @@ export function campaignDroughts(input: {
     // off does not (it ran part of that day only). Today never counts.
     const daysWithoutOrder = last ? runningDays(days, addDays(last, 1), input.today, input.spendFrom) : started ? runningDays(days, started, input.today, input.spendFrom) : 0;
     if (daysWithoutOrder < DROUGHT_RULES.days) continue;
+    const restartFrom = last ? addDays(last, 1) : started;
+    const restart = restartFrom ? lastRestartDay(days, restartFrom > (input.spendFrom ?? "") ? restartFrom : input.spendFrom!, input.today) : null;
     const spendSinceLastOrder = [...days.entries()].filter(([day]) => !last || day > last).reduce((sum, [, spend]) => sum + spend, 0);
     // Lifetime spend is refreshed less often than the daily rows: never show
     // less spent since it started than the daily rows already add up to.
@@ -131,7 +142,9 @@ export function campaignDroughts(input: {
       ...campaign, spend, cpa, group, daysWithoutOrder, lastOrderDay: last, recentSpend, spendSinceLastOrder, todaySpend, advice,
       // "after-": the 6 Nov alerts went out a day early under the old count;
       // a new key lets the real alert go out once 3 whole days have passed.
-      episodeKey: `${campaign.campaignId}:${last ? `after-${last}` : `start-${started ?? ""}`}`
+      // Switched back on after a pause = a new spell (12 Nov 2026): an alert sent
+      // for the old spell must not silence a real one after the restart.
+      episodeKey: `${campaign.campaignId}:${last ? `after-${last}` : `start-${started ?? ""}`}${restart ? `:on-${restart}` : ""}`
     });
   }
   return out.sort((a, b) => DROUGHT_ORDER.indexOf(a.group) - DROUGHT_ORDER.indexOf(b.group) || b.spendSinceLastOrder - a.spendSinceLastOrder);
