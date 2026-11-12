@@ -17,6 +17,12 @@ import {
 // (turn order, working hours, paused reps out) and kept with that rep
 // ("sticky"). Reps reply through the ManyChat API. Rules: social-leads-rules.ts.
 
+/** Start the Protohub automations for this event (Create Automation builder, 13 Nov 2026). Never throws. */
+async function fire(key: "new_message" | "new_lead" | "tag_added" | "order_update" | "assigned", lead: any, ctx: Record<string, unknown> = {}) {
+  try { const m = await import("./social-lead-automations.js"); await m.fireTrigger(key, lead, ctx as any); } catch { /* logged inside */ }
+}
+const reload = async (id: string) => (await supabase.from("social_leads").select("*").eq("id", id).maybeSingle()).data as any;
+
 export class SocialLeadError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
@@ -78,7 +84,7 @@ async function settingsBySecret(secret: string): Promise<SettingsRow | null> {
   return (data as SettingsRow) ?? null;
 }
 
-async function logEvent(orgId: string, branchId: string | null, kind: string, ok: boolean, detail: Record<string, unknown>) {
+export async function logEvent(orgId: string, branchId: string | null, kind: string, ok: boolean, detail: Record<string, unknown>) {
   await supabase.from("social_lead_events").insert({ org_id: orgId, branch_id: branchId, kind, ok, detail }).then(() => undefined, () => undefined);
 }
 
@@ -145,6 +151,7 @@ export async function receiveManychat(secret: string, body: unknown, query: Reco
   if (duplicate) return { ok: true, lead: lead.ref, duplicate: true };
 
   if (direction === "in") await afterCustomerMessage(settings, lead, inbound, nowIso, created);
+  if (created) { const fresh = await reload(lead.id); if (fresh) await fire("new_lead", fresh, { message: body_ }); }
   else if (body_) {
     await supabase.from("social_leads").update({ last_message_preview: body_.slice(0, 200), last_message_at: nowIso, status: lead.status === "comment_captured" ? "dm_sent" : lead.status, updated_at: nowIso }).eq("id", lead.id);
   }
@@ -251,6 +258,8 @@ async function afterCustomerMessage(settings: SettingsRow, lead: any, inbound: I
   }
   if (!updated.assigned_to && settings.auto_assign) await assignLead(settings, updated, "auto");
   else if (updated.assigned_to) await notifyRep(settings.org_id, updated, created ? "new" : "reply", text);
+  const afterAll = await reload(lead.id);
+  if (afterAll) await fire("new_message", afterAll, { message: text, firstMessage: !lead.first_customer_message_at });
 }
 
 /** Settings › Working Hours › After-Hours: one automatic reply per quiet spell (12 hours). */
@@ -307,6 +316,7 @@ export async function assignLead(settings: SettingsRow, lead: any, by: "auto" | 
     if (paused.ok) await supabase.from("social_leads").update({ bot_paused: true }).eq("id", claimed.id);
   }
   await notifyRep(settings.org_id, claimed, "new", claimed.last_message_preview ?? "");
+  await fire("assigned", claimed);
   return rep;
 }
 
@@ -463,16 +473,24 @@ export async function runSocialLeadsJob(nowMs = Date.now()) {
       if (rows.length) await supabase.from("system_notifications").insert(rows);
     }
   }
-  // Delivered orders mark their lead delivered (the Converted tab and the funnel count real sales).
-  const { data: converted } = await supabase.from("social_leads").select("id, org_id, order_id").eq("status", "order_created").not("order_id", "is", null).limit(1000);
+  // Order status changes: the lead follows its order (Delivered marks it delivered) and "Order Update" automations fire.
+  const { data: converted } = await supabase.from("social_leads").select("*").not("order_id", "is", null).in("status", ["order_created", "delivered"]).limit(2000);
   const ids = [...new Set(((converted ?? []) as any[]).map((row) => String(row.order_id)))];
   for (let i = 0; i < ids.length; i += 200) {
-    // launch-safe: only the status is read, to mark the lead delivered; nothing is shown.
-    const { data: orders } = await supabase.from("orders").select("id, status").in("id", ids.slice(i, i + 200));
-    const delivered = new Set(((orders ?? []) as any[]).filter((row) => row.status === "Delivered").map((row) => String(row.id)));
-    const leadIds = ((converted ?? []) as any[]).filter((row) => delivered.has(String(row.order_id))).map((row) => row.id);
-    if (leadIds.length) await supabase.from("social_leads").update({ status: "delivered", updated_at: new Date(nowMs).toISOString() }).in("id", leadIds);
+    const chunk = ids.slice(i, i + 200);
+    // launch-safe: only the status is read, to follow the order; nothing is shown.
+    const { data: orders } = await supabase.from("orders").select("id, status").in("id", chunk);
+    const statusOf = new Map(((orders ?? []) as any[]).map((row) => [String(row.id), String(row.status)]));
+    for (const lead of ((converted ?? []) as any[]).filter((row) => chunk.includes(String(row.order_id)))) {
+      const st = statusOf.get(String(lead.order_id));
+      if (!st || st === lead.order_status) continue;
+      const patch: Record<string, unknown> = { order_status: st, updated_at: new Date(nowMs).toISOString() };
+      if (st === "Delivered") patch.status = "delivered";
+      const { data: fresh } = await supabase.from("social_leads").update(patch).eq("id", lead.id).select("*").single();
+      if (fresh) await fire("order_update", fresh, { orderStatus: st });
+    }
   }
+  try { const m = await import("./social-lead-automations.js"); await m.runAutomationsJob(nowMs); } catch (err: any) { logger.warn("automations job failed", { error: err?.message ?? String(err) }); }
   return { assigned, nudged, escalated, moved, followUps };
 }
 
@@ -708,6 +726,7 @@ export async function updateLead(actor: Actor, leadId: string, input: Record<str
   const { data, error } = await supabase.from("social_leads").update(patch).eq("id", lead.id).select("*").single();
   if (error) throw error;
   for (const note of notes) await systemMessage(lead, note, actor.name);
+  if (Array.isArray(patch.tags)) for (const tag of (patch.tags as string[]).filter((t) => !(lead.tags ?? []).includes(t))) await fire("tag_added", data, { tag });
   return { lead: data };
 }
 
@@ -720,6 +739,7 @@ export async function transferLead(actor: Actor, leadId: string, repId: string) 
   if (error) throw error;
   await systemMessage(lead, `Transferred to ${(rep as any).name} by ${actor.name}.`, actor.name);
   await notifyRep(lead.org_id, data, "new", data.last_message_preview ?? "");
+  await fire("assigned", data);
   return { lead: data };
 }
 
@@ -733,6 +753,9 @@ export async function leadConverted(orgId: string, leadId: string, orderId: stri
   await supabase.from("social_lead_follow_ups").update({ status: "done", done_at: nowIso }).eq("lead_id", leadId).eq("status", "scheduled");
   await systemMessage(lead as any, `Order #${orderId} created by ${actorName}.`, actorName);
   await logEvent(orgId, (lead as any).branch_id, "converted", true, { lead: (lead as any).ref, leadId, name: (lead as any).name, order: orderId });
+  await supabase.from("social_leads").update({ order_status: "New" }).eq("id", leadId);
+  const fresh = await reload(leadId);
+  if (fresh) await fire("order_update", fresh, { orderStatus: "New" });
 }
 
 export { showsBuyingIntent };

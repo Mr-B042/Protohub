@@ -5967,7 +5967,7 @@ export type SlConverted = {
   counts: { all: number; delivered: number; pending: number }; page: number; size: number; total: number;
   leads: Array<SlLeadRow & { order: { id: string; status: string; amount: number; currency: string; product: string; packageName: string | null } }>;
 };
-export type SlAutomation = { id: string; key: string; name: string; description: string | null; trigger: string; status: "active" | "paused" | "draft"; template: string | null; manychatNs: string | null; triggered: number; engaged: number; converted: number; conversion: number | null };
+export type SlAutomation = { id: string; key: string; name: string; description: string | null; trigger: string; status: "active" | "paused" | "draft"; template: string | null; manychatNs: string | null; triggered: number; engaged: number; converted: number; conversion: number | null; kind: "manychat" | "protohub"; config: any; nextRunAt: string | null };
 export type SlAutomations = {
   kpis: Record<"active" | "messagesSent" | "engaged" | "orders" | "conversion", { value: number | null; change: number | null }>;
   flows: SlAutomation[];
@@ -6023,7 +6023,7 @@ export const socialLeadsApi = {
   followUps: (params: Record<string, string | number | undefined>) => get<SlFollowUps>(`${SL}/follow-ups${slQs(params)}`),
   converted: (params: Record<string, string | number | undefined>) => get<SlConverted>(`${SL}/converted${slQs(params)}`),
   automations: () => get<SlAutomations>(`${SL}/automations`),
-  saveAutomation: (body: { name: string; description?: string; trigger?: string; status?: string; template?: string }) => post<{ automation: any }>(`${SL}/automations`, body),
+  saveAutomation: (body: { name: string; description?: string; trigger?: string; status?: string; template?: string; kind?: "manychat" | "protohub"; config?: Record<string, unknown> }) => post<{ automation: any }>(`${SL}/automations`, body),
   updateAutomation: (id: string, body: Record<string, unknown>) => patch<{ automation: any }>(`${SL}/automations/${encodeURIComponent(id)}`, body),
   deleteAutomation: (id: string) => del<{ ok: boolean }>(`${SL}/automations/${encodeURIComponent(id)}`),
   syncAutomations: () => post<{ synced: number }>(`${SL}/automations/sync`, {}),
