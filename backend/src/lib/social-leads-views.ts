@@ -1,6 +1,8 @@
 import { supabase } from "./supabase.js";
 import { hideSilentOrders } from "./product-launch.js";
 import { cleanPrefs, cleanSla, messagingWindow, OPEN_STATUSES, workingMsBetween } from "./social-leads-rules.js";
+import { privateReplyOpen } from "./meta-direct-rules.js";
+import { directActive } from "./meta-direct.js";
 import { automationStats } from "./social-lead-automations.js";
 import { LEADERSHIP, hoursFor, loadLeadFor, openNow, settingsFor, type Actor } from "./social-leads.js";
 
@@ -364,6 +366,7 @@ export async function leadDetail(actor: Actor, leadId: string) {
     const { data } = await hideSilentOrders(query, actor.role).maybeSingle();
     if (data) history.unshift(data);
   }
+  const directOn = await directActive(lead.org_id, lead.branch_id);
   const productRes = lead.product_id ? await supabase.from("products").select("id, name, image_url, description").eq("id", lead.product_id).maybeSingle() : { data: null as any };
   const packagesRes = lead.product_id ? await supabase.from("product_packages").select("id, name, price, currency, quantity").eq("product_id", lead.product_id).eq("active", true).order("display_order") : { data: [] as any[] };
   return {
@@ -380,7 +383,10 @@ export async function leadDetail(actor: Actor, leadId: string) {
     followUps: fups.data ?? [],
     product: productRes.data ? { id: productRes.data.id, name: productRes.data.name, image: productRes.data.image_url, description: productRes.data.description } : null,
     packages: (packagesRes.data ?? []).map((p: any) => ({ id: p.id, name: p.name, price: Number(p.price) || 0, currency: p.currency, quantity: p.quantity })),
-    connected: Boolean(settings.manychat_api_key)
+    connected: Boolean(settings.manychat_api_key) || directOn,
+    // Direct Meta: a commenter can get ONE private reply (7 days) before they write.
+    privateReply: directOn && lead.channel === "meta" && Boolean(lead.pending_comment_id) && privateReplyOpen(lead.pending_comment_at),
+    channel: directOn ? "meta" : settings.manychat_api_key ? "manychat" : null
   };
 }
 

@@ -87,7 +87,7 @@ export default function InboxTab({ shared, leadId, onLead }: { shared: Shared; l
             {!list.data && !list.error && <p className="flex items-center gap-2 px-4 py-6 text-[13px] text-gray-500"><Loader2 className="h-4 w-4 animate-spin" />Loading…</p>}
             {list.data && rows.length === 0 && (
               <p className="px-5 py-10 text-center text-[13px] text-gray-500">
-                {filter === "all" && !q ? (shared.leadership ? "No conversation yet. Comments and messages appear here as soon as ManyChat sends them." : "No conversation has been given to you yet.") : "No conversation matches."}
+                {filter === "all" && !q ? (shared.leadership ? "No conversation yet. Comments and messages appear here as soon as they come in from Facebook or Instagram." : "No conversation has been given to you yet.") : "No conversation matches."}
               </p>
             )}
             {rows.map((row) => <ConversationCard key={row.id} row={row} active={row.id === leadId} onClick={() => onLead(row.id)} />)}
@@ -192,7 +192,7 @@ function Conversation({ leadId, shared, onBack, onChanged }: { leadId: string; s
   const lead = detail.lead;
   const waitedLive = lead.awaitingSince ? Math.max(detail.clock.waitingSeconds ?? 0, 0) : null;
   const clockTone = waitedLive === null ? "green" : waitedLive >= detail.clock.sla.red * 60 ? "red" : waitedLive >= detail.clock.sla.yellow * 60 ? "amber" : "green";
-  const canChat = detail.connected && !lead.manual && detail.window.state !== "none" && detail.window.state !== "closed";
+  const canChat = detail.connected && !lead.manual && ((detail.window.state !== "none" && detail.window.state !== "closed") || Boolean(detail.privateReply));
   const notes = detail.messages.filter((m) => m.direction === "note");
   const templates = shared.header?.prefs.templates ?? [];
   const pricePkg = detail.packages.find((p) => p.id === lead.packageId) ?? detail.packages[0];
@@ -246,10 +246,12 @@ function Conversation({ leadId, shared, onBack, onChanged }: { leadId: string; s
           <span className="rounded-lg bg-white/70 px-2.5 py-1 text-[12.5px] font-medium text-gray-700 dark:bg-slate-900/60 dark:text-slate-300">SLA: Reply within {detail.clock.sla.red} minutes</span>
         </div>
         {detail.window.state === "human_only" && <Notice tone="amber">The 24-hour window has closed. You can still reply for {Math.ceil(detail.window.leftMs / 86_400_000)} more day(s) as a person; automated messages are off.</Notice>}
-        {detail.window.state === "closed" && <Notice tone="red">Over 7 days since the customer last wrote: Meta does not allow a message. {lead.phone ? "Call them instead." : "Ask ManyChat to send a new comment reply."}</Notice>}
-        {detail.window.state === "none" && !lead.manual && <Notice tone="amber">This customer only commented. You can message them once they reply to ManyChat's private message.</Notice>}
+        {detail.window.state === "closed" && <Notice tone="red">Over 7 days since the customer last wrote: Meta does not allow a message. {lead.phone ? "Call them instead." : "They can be messaged again after they comment or write to the Page."}</Notice>}
+        {detail.window.state === "none" && !lead.manual && (detail.privateReply
+          ? <Notice tone="amber">This customer only commented. You can send them ONE text message now (a private reply to their comment). Once they answer, the chat opens fully.</Notice>
+          : <Notice tone="amber">This customer only commented. You can message them once they reply to the private message about their comment.</Notice>)}
         {lead.manual && <Notice tone="slate">Added by hand: there is no Facebook chat for this lead. Call them on their number.</Notice>}
-        {!detail.connected && !lead.manual && <Notice tone="amber">ManyChat is not connected, so replies cannot be sent yet.</Notice>}
+        {!detail.connected && !lead.manual && <Notice tone="amber">No channel is sending yet (Direct Meta or ManyChat in Settings › Integrations), so replies cannot be sent.</Notice>}
 
         {/* Messages */}
         <div ref={scroller} className="min-h-[300px] flex-1 space-y-2.5 overflow-y-auto px-4 py-4">
@@ -281,7 +283,7 @@ function Conversation({ leadId, shared, onBack, onChanged }: { leadId: string; s
           <div className="flex flex-wrap items-center gap-1 px-3 pb-3">
             <ComposerButton label="Send a product card" icon={Plus} disabled={!canChat || mode === "note"} onClick={() => setMenu(menu === "product" ? "" : "product")} />
             <ComposerButton label="Send the product picture" icon={ImageIcon} disabled={!canChat || mode === "note" || !detail.product?.image} onClick={() => void send({ kind: "image", imageUrl: detail.product!.image!, body: text || undefined })} />
-            <ComposerButton label="Videos are sent from ManyChat for now" icon={Video} disabled onClick={() => undefined} />
+            <ComposerButton label="Videos can't be sent from Protohub yet" icon={Video} disabled onClick={() => undefined} />
             <ComposerButton label="Send the price list" icon={FileText} disabled={!canChat || mode === "note" || !detail.packages.length} onClick={() => setText(`${detail.product?.name ?? lead.product ?? "Prices"}:\n${detail.packages.map((p) => `• ${p.name}: ${money(p.price, p.currency)}`).join("\n")}\nPayment on delivery. Which one would you like?`)} />
             <span className="relative">
               <ComposerButton label="Emoji" icon={Smile} onClick={() => setMenu(menu === "emoji" ? "" : "emoji")} />
@@ -399,7 +401,7 @@ function Bubble({ m, lead }: { m: SlMessage; lead: SlLeadDetail["lead"] }) {
           <div className={`whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-[14.5px] leading-snug ${mine ? "rounded-br-md bg-[#EEEBFC] text-gray-900 dark:bg-violet-500/20 dark:text-slate-100" : "rounded-bl-md bg-gray-100 text-gray-900 dark:bg-slate-800 dark:text-slate-100"}`}>{m.body}</div>
         )}
         <span className={`mt-1 flex items-center gap-1 text-[11.5px] text-gray-500 ${mine ? "justify-end" : ""}`}>
-          {mine && <>{m.direction === "bot" ? "ManyChat" : m.senderName} ·</>} {lagosTime(m.createdAt)}
+          {mine && <>{m.direction === "bot" ? (m.senderName || "Automatic") : m.senderName} ·</>} {lagosTime(m.createdAt)}
           {mine && m.status === "ok" && <CheckCheck className="h-3.5 w-3.5 text-[#5B3FD9]" />}
           {m.status === "sending" && <Loader2 className="h-3 w-3 animate-spin" />}
           {m.status === "failed" && <span className="font-semibold text-rose-600" title={m.error ?? ""}>Not sent: {m.error}</span>}

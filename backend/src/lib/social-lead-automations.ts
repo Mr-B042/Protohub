@@ -2,7 +2,6 @@ import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { getOrgPushBranding } from "./push-branding.js";
 import { sendPushToUser } from "./push.js";
-import * as manychat from "./manychat.js";
 import { cleanPrefs, messagingWindow } from "./social-leads-rules.js";
 import { assignLead, logEvent, settingsFor, systemMessage, LINK } from "./social-leads.js";
 import {
@@ -180,11 +179,13 @@ async function doAction(action: Action, lead: any, auto: any, config: Automation
       const body = c.kind === "template" || c.kind === "quick" ? prefs.templates.find((t) => t.id === c.templateId)?.body ?? "" : String(c.text ?? "");
       const text = fillVariables(body, await variablesFor(lead, config)).trim();
       if (!text) return { ok: false, note: "No message text" };
-      if (!settings.manychat_api_key) return { ok: false, note: "ManyChat is not connected" };
       if (String(lead.manychat_contact_id).startsWith("manual-")) return { ok: false, note: "Lead added by hand: no chat" };
       const window = messagingWindow(lead.last_customer_message_at, Date.now());
-      if (window.state !== "open") return { ok: false, note: window.state === "none" ? "Customer has not written yet" : "Outside the 24-hour window: automatic messages are not allowed" };
-      const sent = await manychat.sendContent(settings.manychat_api_key, { subscriberId: lead.manychat_contact_id, platform: lead.platform, messages: [{ type: "text", text }] });
+      // Direct Meta: a commenter's one private reply is allowed (7 days); otherwise only inside 24 hours.
+      const privateReply = window.state === "none" && lead.channel === "meta" && Boolean(lead.pending_comment_id);
+      if (window.state !== "open" && !privateReply) return { ok: false, note: window.state === "none" ? "Customer has not written yet" : "Outside the 24-hour window: automatic messages are not allowed" };
+      const { deliver } = await import("./meta-direct.js");
+      const sent = await deliver(settings, lead, [{ type: "text", text }], { allowPrivateReply: privateReply });
       await supabase.from("social_lead_messages").insert({ org_id: lead.org_id, branch_id: lead.branch_id, lead_id: lead.id, direction: "bot", kind: "text", body: text, sender_name: `Automation: ${auto.name}`, status: sent.ok ? "ok" : "failed", error: sent.ok ? null : sent.message });
       if (sent.ok) await supabase.from("social_leads").update({ last_message_preview: text.slice(0, 200), last_message_at: now }).eq("id", lead.id);
       return { ok: sent.ok, note: sent.ok ? "Message sent" : sent.message };

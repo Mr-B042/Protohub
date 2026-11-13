@@ -7,6 +7,7 @@ import { runCampaignDroughtAlerts } from "./lib/campaign-drought-alerts.js";
 import { runAdFundsCheck } from "./lib/ad-funds.js";
 import socialLeadRoutes from "./routes/social-leads.js";
 import publicSocialLeadRoutes from "./routes/public-social-leads.js";
+import publicMetaDirectRoutes from "./routes/public-meta-direct.js";
 import { runSocialLeadsJob } from "./lib/social-leads.js";
 import "./lib/load-env.js";
 import express from "express";
@@ -295,6 +296,8 @@ app.use(rateLimit({
     req.path.startsWith("/api/public/branding/") ||
     // ManyChat posts every comment and message; the secret address guards it.
     req.path.startsWith("/api/public/social-leads/manychat/") ||
+    // Meta delivers comments/messages in bursts; the signature check guards it.
+    req.path.startsWith("/api/public/social-leads/meta/") ||
     req.path.startsWith("/api/public/pwa/")
 }));
 
@@ -314,6 +317,8 @@ const authRateLimit = rateLimit({
 // ── Body parsing ──────────────────────────────────────────
 // Package carousel images can be uploaded as data URLs. 10 MB files expand
 // after encoding, and admins may save several images at once.
+// Direct Meta checks Meta's signature on the exact bytes sent, so it reads the body itself.
+app.use("/api/public/social-leads/meta", publicMetaDirectRoutes);
 app.use(express.json({ limit: "90mb" }));
 
 // ── Request logger (before routes so every request is captured) ───
