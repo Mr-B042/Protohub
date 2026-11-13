@@ -2518,6 +2518,18 @@ const CART_NOT_INTERESTED_REASONS = [
   "Not available in their area", "Delivery concern", "Product concern", "Hung up / refused to talk"
 ] as const;
 
+// Bright, 13 Nov 2026: "Not interested" also needs the customer's words, not just
+// the picked reason. Same rule as backend/src/lib/cart-written-reason.ts.
+const squashReason = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+function writtenReasonProblem(note: string, pickedReason: string): string | null {
+  const plain = squashReason(note);
+  if (!plain) return "Write what the customer said. A picked reason alone is not enough.";
+  if (plain.split(" ").filter(Boolean).length < 3 || plain.replace(/ /g, "").length < 15) return "Write what the customer said in at least 3 words.";
+  const picked = squashReason(pickedReason);
+  if (plain === picked || ["not interested", "customer not interested", "he is not interested", "she is not interested"].includes(plain)) return "Don't repeat the reason. Write what the customer actually said.";
+  return null;
+}
+
 /**
  * ⚠️ A CART CANNOT BE CALLED UNRESPONSIVE ON THE FIRST TRY. Three logged
  * attempts, the third being this one. Without a floor, "Unresponsive" is a
@@ -45652,6 +45664,10 @@ ${waybillLineItems(w).length > 1
         && !(CART_NOT_INTERESTED_REASONS as readonly string[]).includes(cartAttemptDraft.customOutcome.trim())) {
       showToast("Cannot close as Not interested without a reason. Pick why the customer said no.");
       return;
+    }
+    if (cartAttemptDraft.outcomeCode === "Not interested") {
+      const problem = writtenReasonProblem(cartAttemptNoteRef.current || cartAttemptDraft.outcomeNote, cartAttemptDraft.customOutcome);
+      if (problem) { showToast(problem); return; }
     }
     if (cartAttemptDraft.outcomeCode === "Unresponsive"
         && (cartAttemptCart.attempts ?? 0) + 1 < CART_UNRESPONSIVE_MIN_ATTEMPTS) {
@@ -109551,8 +109567,9 @@ ${waybillLineItems(w).length > 1
 	                    </label>
 	                  )}
 	                  <label className="flex flex-col gap-1 sm:col-span-2">
-	                    <span className="text-xs font-bold text-gray-600">What did the customer say?</span>
-                    <textarea rows={2} defaultValue={cartAttemptDraft.outcomeNote} className="rounded-lg border border-gray-200 px-3 py-2 text-sm"
+	                    <span className="text-xs font-bold text-gray-600">What did the customer say?{cartAttemptDraft.outcomeCode === "Not interested" ? " *" : ""}</span>
+                    {cartAttemptDraft.outcomeCode === "Not interested" && <span className="text-[11px] text-gray-500">Required: write their reason in your own words (at least 3 words), for example "Said ₦39,500 is too much, will check back after payday".</span>}
+                    <textarea rows={2} defaultValue={cartAttemptDraft.outcomeNote} className={`rounded-lg border px-3 py-2 text-sm ${cartAttemptDraft.outcomeCode === "Not interested" ? "border-rose-200 bg-rose-50/40" : "border-gray-200"}`}
                       onChange={(e) => { cartAttemptNoteRef.current = e.target.value; }}
                       onBlur={(e) => setCartAttemptDraft((v) => {
                         const next = e.target.value;

@@ -1,4 +1,5 @@
 import { tidyOrderState } from "../lib/order-state.js";
+import { writtenReasonProblem } from "../lib/cart-written-reason.js";
 import { liteCart } from "../lib/lite-lists.js";
 import { fetchPagesTogether } from "../lib/paged-fetch.js";
 import { canSeeSilentOrders, silentHeldCartProductIds } from "../lib/product-launch.js";
@@ -1812,6 +1813,11 @@ const AttemptSchema = z.object({
   if (value.outcomeCode === "Not interested"
       && !(CART_NOT_INTERESTED_REASONS as readonly string[]).includes(value.customOutcome?.trim() ?? "")) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["customOutcome"], message: "Pick why the customer said no. If the app shows \"Other\", refresh the page." });
+  }
+  // Bright, 13 Nov 2026: a picked reason is not enough; write what the customer said.
+  if (value.outcomeCode === "Not interested") {
+    const problem = writtenReasonProblem(value.outcomeNote, value.customOutcome);
+    if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["outcomeNote"], message: problem });
   }
 });
 
