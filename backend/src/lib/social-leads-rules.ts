@@ -120,6 +120,15 @@ export type Inbound = {
   state: string | null; liveChatUrl: string | null;
   /** ManyChat's last interaction time: used to drop the same event sent twice. */
   sentAt: string | null;
+  /** Instagram account id (ManyChat contact data / Meta): keeps one lead across a ManyChat ⇄ Direct Meta switch. */
+  igId?: string | null;
+  /** Other contact ids this person may already have a lead under (the other channel's id). */
+  aliases?: string[];
+  /** Direct Meta only. */
+  channel?: "manychat" | "meta";
+  eventId?: string;
+  metaPageId?: string;
+  commentId?: string;
 };
 
 const str = (value: unknown) => {
@@ -151,7 +160,11 @@ export function parseInbound(body: unknown, query: Record<string, unknown> = {})
   const text = pick("text", "message", "last_input_text");
   const comment = event === "comment" ? (pick("comment", "comment_text") || text) : (pick("comment", "comment_text") || null);
   const phone = pick("phone", "optin_phone") || null;
+  const igId = str(b.ig_id) || pick("ig_id") || null;
+  // ManyChat's Facebook contact id is the Page-scoped id Direct Meta uses too.
+  const aliases = platform === "instagram" ? (igId ? [`ig_${igId}`] : []) : [`fb_${contactId}`];
   return {
+    igId, aliases, channel: "manychat",
     event, contactId, platform, name: name.slice(0, 160),
     profilePic: pick("profile_pic", "avatar") || null,
     instagramUsername: str(b.ig_username) || pick("ig_username", "instagram") || null,
@@ -168,6 +181,7 @@ export function parseInbound(body: unknown, query: Record<string, unknown> = {})
 
 /** Same event sent twice by ManyChat (retries): one row only. */
 export function dedupeKey(inbound: Inbound): string {
+  if (inbound.eventId) return `mt:${inbound.eventId}`;
   const text = `${inbound.event}|${inbound.text}|${inbound.comment ?? ""}`;
   let hash = 0;
   for (let i = 0; i < text.length; i += 1) hash = (hash * 31 + text.charCodeAt(i)) | 0;

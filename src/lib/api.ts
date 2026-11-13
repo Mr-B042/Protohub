@@ -5954,7 +5954,7 @@ export type SlLeadDetail = {
   followUps: Array<{ id: string; dueAt: string; note: string | null; status: string; doneAt: string | null; createdByName: string | null; auto: boolean; createdAt: string }>;
   product: { id: string; name: string; image: string | null; description: string | null } | null;
   packages: Array<{ id: string; name: string; price: number; currency: string; quantity: number }>;
-  connected: boolean;
+  connected: boolean; privateReply?: boolean; channel?: "meta" | "manychat" | null;
 };
 export type SlFollowUps = {
   kpis: Record<"total" | "dueToday" | "overdue" | "scheduled" | "completed" | "conversion", { value: number | null; change: number | null }>;
@@ -6038,5 +6038,18 @@ export const socialLeadsApi = {
   markNotificationsRead: (ids: string[] | "all") => post<{ ok: boolean }>(`${SL}/settings/notifications/read`, { ids: ids === "all" ? undefined : ids }),
   templateUsed: (id: string) => post<{ ok: boolean }>(`${SL}/templates/${encodeURIComponent(id)}/used`, {}),
   testWebhook: () => post<{ ok: boolean; ms: number }>(`${SL}/settings/test-webhook`, {}),
-  announce: (body: { title: string; message: string; roles: string[] }) => post<{ sent: number }>(`${SL}/announcements`, body)
+  announce: (body: { title: string; message: string; roles: string[] }) => post<{ sent: number }>(`${SL}/announcements`, body),
+  metaDirect: () => get<SlMetaDirect>(`${SL}/meta`),
+  saveMetaDirect: (body: { appId?: string; appSecret?: string; active?: boolean; commentReply?: Partial<SlCommentReply> }) => put<SlMetaDirect>(`${SL}/meta`, body),
+  metaConnectUrl: () => post<{ url: string }>(`${SL}/meta/connect-url`, {}),
+  metaToken: (token: string) => post<SlMetaDirect>(`${SL}/meta/token`, { token }),
+  metaResubscribe: (id: string) => post<SlMetaDirect>(`${SL}/meta/pages/${encodeURIComponent(id)}/resubscribe`, {}),
+  metaRemovePage: (id: string) => del<SlMetaDirect>(`${SL}/meta/pages/${encodeURIComponent(id)}`)
+};
+
+export type SlCommentReply = { enabled: boolean; keywords: string[]; message: string; publicReply: boolean; publicMessages: string[]; skipThreadReplies: boolean };
+export type SlMetaDirect = {
+  active: boolean; appId: string | null; hasSecret: boolean; webhookUrl: string; verifyToken: string; redirectUri: string;
+  lastEventAt: string | null; lastError: string | null; commentReply: SlCommentReply; manychatConnected: boolean; scopes: string[];
+  pages: Array<{ id: string; pageId: string; name: string; igId: string | null; igUsername: string | null; subscribed: boolean; error: string | null; connectedAt: string; lastEventAt: string | null }>;
 };

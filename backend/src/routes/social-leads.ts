@@ -9,6 +9,7 @@ import {
   LEADERSHIP, SocialLeadError, addManualLead, announce, completeFollowUp, markRead, scheduleFollowUp, sendReply, settingsFor, transferLead, updateLead, loadLeadFor, type Actor
 } from "../lib/social-leads.js";
 import * as views from "../lib/social-leads-views.js";
+import * as direct from "../lib/meta-direct.js";
 import * as sections from "../lib/social-leads-settings.js";
 
 /**
@@ -265,6 +266,28 @@ router.post("/settings/test", requireRole(...SETUP), handle("Could not test Many
   if (!check.ok) throw new SocialLeadError(400, check.message);
   return { ok: true, pageName: check.data.name };
 }));
+// ── Direct Meta (free): Protohub talks to Facebook & Instagram itself (13 Nov 2026) ──
+router.get("/meta", requireRole(...SETUP), handle("Could not load Direct Meta.", (req) => direct.directView(actorOf(req))));
+const DirectSchema = z.object({
+  appId: z.string().max(40).optional(),
+  appSecret: z.string().max(200).optional(),
+  active: z.boolean().optional(),
+  commentReply: z.record(z.unknown()).optional()
+});
+router.put("/meta", requireRole(...SETUP), handle("Could not save Direct Meta.", (req) => {
+  const parsed = DirectSchema.safeParse(req.body);
+  if (!parsed.success) throw new SocialLeadError(400, "Settings not understood.");
+  return direct.saveDirect(actorOf(req), parsed.data);
+}));
+router.post("/meta/connect-url", requireRole(...SETUP), handle("Could not start the Facebook login.", (req) => direct.connectUrl(actorOf(req))));
+router.post("/meta/token", requireRole(...SETUP), handle("Could not connect with this token.", (req) => {
+  const token = String(req.body?.token ?? "").trim();
+  if (token.length < 20 || token.length > 1000) throw new SocialLeadError(400, "Paste the whole access token.");
+  return direct.connectWithToken(actorOf(req), token);
+}));
+router.post("/meta/pages/:id/resubscribe", requireRole(...SETUP), handle("Could not reconnect the Page.", (req) => direct.resubscribe(actorOf(req), String(req.params.id))));
+router.delete("/meta/pages/:id", requireRole(...SETUP), handle("Could not remove the Page.", (req) => direct.removePage(actorOf(req), String(req.params.id))));
+
 router.get("/events", requireRole(...SETUP), handle("Could not load the activity log.", (req) => views.events(actorOf(req))));
 
 const SECTIONS: Record<string, (actor: Actor, req: Request) => Promise<unknown>> = {

@@ -12,6 +12,7 @@ import { useLoad } from "./sl-data";
 import { LogsModal } from "./AutomationsTab";
 import { SlaSection, LeadConversationSection, NotificationsSection, TemplatesSection, WorkingHoursSection, AccessSection, AdvancedSection } from "./SettingsSections";
 import type { Shared } from "./SocialLeadsPage";
+import DirectMetaPanel from "./DirectMetaPanel";
 
 /** Settings: ten sections, each to Bright's design (12 Nov 2026). */
 
@@ -25,7 +26,7 @@ export type SectionKey = "general" | "integrations" | "team" | "sla" | "lead" | 
 
 const NAV: Array<{ key: SectionKey; title: string; sub: string; Icon: ComponentType<{ className?: string }> }> = [
   { key: "general", title: "General", sub: "Basic inbox and business settings", Icon: Settings },
-  { key: "integrations", title: "Integrations", sub: "Connect Manychat & social accounts", Icon: Puzzle },
+  { key: "integrations", title: "Integrations", sub: "Direct Meta, ManyChat & social accounts", Icon: Puzzle },
   { key: "team", title: "Team & Assignment", sub: "Manage call reps and lead routing", Icon: Users },
   { key: "sla", title: "Response & SLA", sub: "Set response time and escalations", Icon: MessageSquareText },
   { key: "lead", title: "Lead & Conversation", sub: "Statuses, tags and custom fields", Icon: Sparkles },
@@ -317,6 +318,7 @@ function IntegrationsSection({ ctx }: { ctx: Ctx }) {
         <KpiTile icon={RefreshCw} tone="green" value={(i?.kpis.dataSync.value ?? 0).toLocaleString()} label="Data Sync (Last 7 Days)" change={i?.kpis.dataSync.change ?? null} />
         <KpiTile icon={Zap} value={i?.kpis.health.value !== null && i ? `${i.kpis.health.value}%` : "—"} label="System Health" extra={i && <span className={`text-[12px] font-semibold ${i.kpis.health.failed ? "text-amber-600" : "text-emerald-600"}`}>{i.kpis.health.failed ? `${i.kpis.health.failed} event(s) failed this week` : i.kpis.dataSync.value ? "No failed event this week" : "No event yet"}</span>} />
       </div>
+      <DirectMetaPanel shared={shared} />
       <Box icon={InfinityIcon} title="ManyChat connection" sub={s.connected ? `Connected to ${s.pageName ?? "your Page"} · key ${s.keyHint}` : "Paste your ManyChat API key to send replies and read flows."} right={s.connected && <span className="flex gap-2">
         <button type="button" className={`${btn.ghost} !py-2`} onClick={async () => { try { const r = await socialLeadsApi.testConnection(); shared.onToast(`ManyChat answered: ${r.pageName}.`); } catch (e) { shared.onToast((e as Error).message); } }}>Test</button>
         <button type="button" className={`${btn.ghost} !py-2 !text-rose-600`} onClick={async () => { if (!window.confirm("Disconnect ManyChat? Replies stop until you connect it again.")) return; ctx.replace(await socialLeadsApi.saveSettings({ disconnect: true })); data.reload(); }}>Disconnect</button>

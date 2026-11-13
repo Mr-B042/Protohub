@@ -21,6 +21,15 @@ import {
 async function fire(key: "new_message" | "new_lead" | "tag_added" | "order_update" | "assigned", lead: any, ctx: Record<string, unknown> = {}) {
   try { const m = await import("./social-lead-automations.js"); await m.fireTrigger(key, lead, ctx as any); } catch { /* logged inside */ }
 }
+/** Send through the switched-on channel (Direct Meta or ManyChat): meta-direct.ts. */
+async function deliver(settings: SettingsRow, lead: any, messages: manychat.OutMessage[], opts: { humanAgent?: boolean; allowPrivateReply?: boolean } = {}) {
+  const m = await import("./meta-direct.js");
+  return m.deliver(settings, lead, messages, opts);
+}
+async function directOn(settings: SettingsRow) {
+  const m = await import("./meta-direct.js");
+  return m.directActive(settings.org_id, settings.branch_id);
+}
 const reload = async (id: string) => (await supabase.from("social_leads").select("*").eq("id", id).maybeSingle()).data as any;
 
 export class SocialLeadError extends Error {
@@ -77,7 +86,7 @@ export async function settingsFor(orgId: string, branchId: string): Promise<Sett
   return created.data as SettingsRow;
 }
 
-async function settingsBySecret(secret: string): Promise<SettingsRow | null> {
+export async function settingsBySecret(secret: string): Promise<SettingsRow | null> {
   if (!/^[a-f0-9]{32,80}$/.test(secret)) return null;
   const { data, error } = await supabase.from("social_lead_settings").select("*").eq("webhook_secret", secret).maybeSingle();
   if (error) throw error;
@@ -109,9 +118,27 @@ export async function receiveManychat(secret: string, body: unknown, query: Reco
     await logEvent(settings.org_id, settings.branch_id, "inbound", false, { error: inbound.error });
     throw new SocialLeadError(400, inbound.error);
   }
+  // Direct Meta is the live channel: ManyChat's copy of the same event would make a second lead.
+  const { data: direct } = await supabase.from("social_lead_meta").select("active").eq("org_id", settings.org_id).eq("branch_id", settings.branch_id).maybeSingle();
+  if ((direct as any)?.active) {
+    await logEvent(settings.org_id, settings.branch_id, `inbound.${inbound.event}`, true, { skipped: "Direct Meta is on: ManyChat events are not used." });
+    return { ok: true, skipped: "Direct Meta is on in Protohub (Settings › Direct Meta). Turn it off to use ManyChat." };
+  }
+  const flow = typeof query.flow === "string" ? query.flow.trim().slice(0, 80) : "";
+  // ManyChat sees only the outcome, never the lead record.
+  const { leadRow: _row, ...outcome } = await receiveInbound(settings, inbound, flow, nowMs);
+  return outcome;
+}
+
+/** One customer event from ManyChat or Direct Meta: lead, message, hand-out, automations. */
+export async function receiveInbound(settings: SettingsRow, inbound: Inbound, flow: string, nowMs = Date.now()): Promise<{ ok: true; lead?: string; created?: boolean; duplicate?: boolean; skipped?: string; leadRow?: any }> {
+  // Meta repeats deliveries: an event already saved changes nothing (checked before any lead is made).
+  if (inbound.eventId) {
+    const { data: seen } = await supabase.from("social_lead_messages").select("id").eq("org_id", settings.org_id).eq("dedupe_key", dedupeKey(inbound)).limit(1).maybeSingle();
+    if (seen) return { ok: true, duplicate: true };
+  }
   const nowIso = new Date(nowMs).toISOString();
   const prefs = cleanPrefs(settings.prefs);
-  const flow = typeof query.flow === "string" ? query.flow.trim().slice(0, 80) : "";
   let flowPaused = false;
   if (flow) {
     await trackFlow(settings, flow, inbound.event);
@@ -149,6 +176,11 @@ export async function receiveManychat(secret: string, body: unknown, query: Reco
     if (insert.error) { if ((insert.error as any).code === "23505") duplicate = true; else throw insert.error; }
   }
   if (duplicate) return { ok: true, lead: lead.ref, duplicate: true };
+  if (inbound.commentId) {
+    // Direct Meta: the newest unanswered comment can get one private reply (7 days).
+    await supabase.from("social_leads").update({ pending_comment_id: inbound.commentId, pending_comment_at: nowIso }).eq("id", lead.id);
+    lead.pending_comment_id = inbound.commentId; lead.pending_comment_at = nowIso;
+  }
 
   if (direction === "in") await afterCustomerMessage(settings, lead, inbound, nowIso, created);
   if (created) { const fresh = await reload(lead.id); if (fresh) await fire("new_lead", fresh, { message: body_ }); }
@@ -156,7 +188,7 @@ export async function receiveManychat(secret: string, body: unknown, query: Reco
     await supabase.from("social_leads").update({ last_message_preview: body_.slice(0, 200), last_message_at: nowIso, status: lead.status === "comment_captured" ? "dm_sent" : lead.status, updated_at: nowIso }).eq("id", lead.id);
   }
   await logEvent(settings.org_id, settings.branch_id, `inbound.${inbound.event}`, true, { lead: lead.ref, leadId: lead.id, name: lead.name, platform: inbound.platform, created, flow: flow || undefined });
-  return { ok: true, lead: lead.ref, created };
+  return { ok: true, lead: lead.ref, created, leadRow: lead };
 }
 
 const slug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "flow";
@@ -169,6 +201,19 @@ async function trackFlow(settings: SettingsRow, name: string, event: Inbound["ev
 async function upsertLead(settings: SettingsRow, inbound: Inbound, nowIso: string): Promise<{ lead: any; created: boolean }> {
   let { data: existing, error } = await supabase.from("social_leads").select("*").eq("org_id", settings.org_id).eq("manychat_contact_id", inbound.contactId).maybeSingle();
   if (error) throw error;
+  const channel = inbound.channel ?? "manychat";
+  if (!existing) {
+    // The same person under the other channel's id (ManyChat ⇄ Direct Meta switch): keep that lead and its history.
+    const ids = [...new Set(inbound.aliases ?? [])].filter((x) => x && x !== inbound.contactId);
+    let other: any = null;
+    if (ids.length) other = (await supabase.from("social_leads").select("*").eq("org_id", settings.org_id).in("manychat_contact_id", ids).order("last_message_at", { ascending: false }).limit(1).maybeSingle()).data;
+    if (!other) other = (await supabase.from("social_leads").select("*").eq("org_id", settings.org_id).eq("meta_alt_id", inbound.contactId).limit(1).maybeSingle()).data;
+    if (!other && inbound.igId) other = (await supabase.from("social_leads").select("*").eq("org_id", settings.org_id).eq("ig_id", inbound.igId).order("last_message_at", { ascending: false }).limit(1).maybeSingle()).data;
+    if (other) {
+      const moved = await supabase.from("social_leads").update({ manychat_contact_id: inbound.contactId, channel, ...(inbound.metaPageId ? { meta_page_id: inbound.metaPageId } : {}) }).eq("id", other.id).select("*").single();
+      existing = moved.data ?? other;
+    }
+  }
   // Settings › Advanced › Lead Deduplication by phone: the same number on another account is the same customer.
   const dprefs = cleanPrefs(settings.prefs);
   const last10 = String(inbound.phone ?? "").replace(/\D/g, "").slice(-10);
@@ -192,8 +237,11 @@ async function upsertLead(settings: SettingsRow, inbound: Inbound, nowIso: strin
     email: existing?.email || inbound.email || null,
     state: existing?.state || inbound.state || null,
     manychat_inbox_url: inbound.liveChatUrl ?? existing?.manychat_inbox_url ?? null,
+    ig_id: inbound.igId ?? existing?.ig_id ?? null,
     updated_at: nowIso
   };
+  if (existing && existing.channel !== "manual" && existing.channel !== channel) patch.channel = channel;
+  if (inbound.metaPageId) patch.meta_page_id = inbound.metaPageId;
   if (product && !existing?.product_id) { patch.product_id = product.id; patch.product_interest = product.name; }
   else if (inbound.product && !existing?.product_interest) patch.product_interest = inbound.product;
   if (inbound.campaign && !existing?.campaign_name) { patch.campaign_name = inbound.campaign; patch.source_label = `${inbound.platform === "instagram" ? "Instagram" : "Facebook"} Ad (${inbound.campaign})`; }
@@ -206,7 +254,7 @@ async function upsertLead(settings: SettingsRow, inbound: Inbound, nowIso: strin
     return { lead: data, created: false };
   }
   const insert = await supabase.from("social_leads").insert({
-    ...patch, org_id: settings.org_id, branch_id: settings.branch_id, manychat_contact_id: inbound.contactId,
+    ...patch, org_id: settings.org_id, branch_id: settings.branch_id, manychat_contact_id: inbound.contactId, channel,
     // A Facebook customer who only wrote in Messenger (no ad comment) is a Messenger lead.
     platform: inbound.platform === "facebook" && inbound.event !== "comment" ? "messenger" : inbound.platform,
     status: inbound.event === "comment" ? "comment_captured" : inbound.event === "bot" ? "dm_sent" : "new",
@@ -264,11 +312,11 @@ async function afterCustomerMessage(settings: SettingsRow, lead: any, inbound: I
 
 /** Settings › Working Hours › After-Hours: one automatic reply per quiet spell (12 hours). */
 async function offHoursReply(settings: SettingsRow, lead: any, prefs: Prefs) {
-  if (!prefs.offHoursReply || prefs.pauseAllAutomations || !settings.manychat_api_key || !prefs.offHoursMessage.trim()) return;
+  if (!prefs.offHoursReply || prefs.pauseAllAutomations || !prefs.offHoursMessage.trim()) return;
   if (lead.off_hours_reply_at && Date.now() - Date.parse(lead.off_hours_reply_at) < 12 * 3_600_000) return;
   const { rules } = await hoursFor(settings);
   if (openNow(rules)) return;
-  const sent = await manychat.sendContent(settings.manychat_api_key, { subscriberId: lead.manychat_contact_id, platform: lead.platform, messages: [{ type: "text", text: prefs.offHoursMessage }] });
+  const sent = await deliver(settings, lead, [{ type: "text", text: prefs.offHoursMessage }]);
   const nowIso = new Date().toISOString();
   await supabase.from("social_leads").update({ off_hours_reply_at: nowIso }).eq("id", lead.id);
   await supabase.from("social_lead_messages").insert({ org_id: lead.org_id, branch_id: lead.branch_id, lead_id: lead.id, direction: "bot", kind: "text", body: prefs.offHoursMessage, sender_name: "After-hours reply", status: sent.ok ? "ok" : "failed", error: sent.ok ? null : sent.message });
@@ -311,7 +359,7 @@ export async function assignLead(settings: SettingsRow, lead: any, by: "auto" | 
   if (error) throw error;
   if (!claimed) return null; // another run took it first
   await systemMessage(claimed, by === "auto" ? `Assigned to ${rep.name} (next in turn).` : `Moved to ${rep.name}: no reply in time.`);
-  if (prefs.pauseBotOnAssign && settings.manychat_api_key && !claimed.bot_paused) {
+  if (prefs.pauseBotOnAssign && settings.manychat_api_key && !claimed.bot_paused && !(await directOn(settings))) {
     const paused = await manychat.setHumanHandling(settings.manychat_api_key, claimed.manychat_contact_id, true);
     if (paused.ok) await supabase.from("social_leads").update({ bot_paused: true }).eq("id", claimed.id);
   }
@@ -536,7 +584,10 @@ export async function sendReply(actor: Actor, leadId: string, input: { kind: "te
   }
   const settings = await settingsFor(lead.org_id, lead.branch_id);
   const window = messagingWindow(lead.last_customer_message_at, Date.now());
-  if (window.state === "none") throw new SocialLeadError(409, "This customer only commented. Meta allows a message only after they write to the page (ManyChat's private reply asks them to).");
+  // Direct Meta: someone who only commented can get ONE private reply to their comment (7 days).
+  const privateReply = window.state === "none" && Boolean(lead.pending_comment_id) && lead.channel === "meta";
+  if (window.state === "none" && !privateReply) throw new SocialLeadError(409, "This customer only commented. Meta allows a message only after they write to the page (a private reply to the comment asks them to).");
+  if (privateReply && input.kind !== "text") throw new SocialLeadError(409, "Someone who only commented can first get one text message (a private reply). Pictures and product cards can follow once they answer.");
   if (window.state === "closed") throw new SocialLeadError(409, "Over 7 days since the customer last wrote: Meta no longer allows a message. Call them if you have their number.");
   let messages: manychat.OutMessage[] = [];
   let payload: Record<string, unknown> = {};
@@ -559,11 +610,7 @@ export async function sendReply(actor: Actor, leadId: string, input: { kind: "te
     org_id: lead.org_id, branch_id: lead.branch_id, lead_id: lead.id, direction: "out", kind, body, payload, sender_id: actor.id, sender_name: actor.name, status: "sending"
   }).select("*").single();
   if (error) throw error;
-  if (!settings.manychat_api_key) {
-    await supabase.from("social_lead_messages").update({ status: "failed", error: "ManyChat is not connected yet (Settings)." }).eq("id", row.id);
-    throw new SocialLeadError(409, "ManyChat is not connected yet. The Owner connects it in Social Leads Inbox › Settings.");
-  }
-  const sent = await manychat.sendContent(settings.manychat_api_key, { subscriberId: lead.manychat_contact_id, platform: lead.platform, messages, humanAgentTag: window.state === "human_only" });
+  const sent = await deliver(settings, lead, messages, { humanAgent: window.state === "human_only", allowPrivateReply: privateReply });
   if (!sent.ok) {
     await supabase.from("social_lead_messages").update({ status: "failed", error: sent.message }).eq("id", row.id);
     await logEvent(lead.org_id, lead.branch_id, "send", false, { lead: lead.ref, error: sent.message });
@@ -581,7 +628,7 @@ export async function sendReply(actor: Actor, leadId: string, input: { kind: "te
     updated_at: nowIso
   }).eq("id", lead.id);
   // A person is talking: keep the bot quiet (best effort; needs the protohub_human field in ManyChat).
-  if (!lead.bot_paused) {
+  if (!lead.bot_paused && sent.via === "manychat" && settings.manychat_api_key) {
     const paused = await manychat.setHumanHandling(settings.manychat_api_key, lead.manychat_contact_id, true);
     if (paused.ok) await supabase.from("social_leads").update({ bot_paused: true }).eq("id", lead.id);
   }
