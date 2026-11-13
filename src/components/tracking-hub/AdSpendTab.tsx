@@ -621,6 +621,8 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
           </div>
         ) : null}
 
+        {view === "account" || view === "business" ? <AccountRanking rows={data.rows.filter((row) => row.id !== UNMAPPED)} noun={viewInfo.noun} plural={viewInfo.plural} dateLabel={dateLabel} onOpen={drill} /> : null}
+
         <div className="mt-2 overflow-x-auto">
           <table className={tableCls}>
             <thead className="text-gray-600 dark:text-slate-400">
@@ -703,5 +705,76 @@ function Chip({ children, onClear }: { children: ReactNode; onClear: () => void 
       {children}
       <button type="button" aria-label="Clear" onClick={onClear} className="!min-h-0 rounded-full p-0.5 hover:bg-blue-100"><X className="h-3 w-3" /></button>
     </span>
+  );
+}
+
+/**
+ * Best → worst ad accounts (Bright, 13 Nov 2026): ranked by cost per order for
+ * the chosen dates (spend ÷ orders, lower = better). Spending with no order
+ * ranks last, biggest spend first. "Share of orders vs share of spend" shows
+ * who earns their budget. Orders are the ones carrying the account's Meta IDs.
+ */
+function AccountRanking({ rows, noun, plural, dateLabel, onOpen }: { rows: HubAdSpendRow[]; noun: string; plural: string; dateLabel: string; onOpen: (row: HubAdSpendRow) => void }) {
+  const [open, setOpen] = useState(true);
+  const ranked = rows.filter((row) => row.spend > 0).sort((a, b) => {
+    if ((a.orders > 0) !== (b.orders > 0)) return a.orders > 0 ? -1 : 1;
+    if (a.orders === 0) return b.spend - a.spend;
+    return a.spend / a.orders - b.spend / b.orders || b.orders - a.orders;
+  });
+  if (ranked.length < 2) return null;
+  const totalSpend = ranked.reduce((sum, row) => sum + row.spend, 0);
+  const totalOrders = ranked.reduce((sum, row) => sum + row.orders, 0);
+  const best = ranked[0].orders > 0 ? ranked[0] : null;
+  const worst = ranked[ranked.length - 1];
+  const pct = (part: number, whole: number) => (whole > 0 ? (part / whole) * 100 : 0);
+  return (
+    <div className="mt-3 rounded-xl border border-gray-200 dark:border-slate-700">
+      <button type="button" onClick={() => setOpen(!open)} className="!min-h-0 flex w-full flex-wrap items-center justify-between gap-2 px-4 py-3 text-left">
+        <span>
+          <strong className="block text-[15px] font-black text-gray-900 dark:text-slate-100">Best to worst {plural}: orders for the money spent</strong>
+          <span className="block text-[12px] text-gray-500">{dateLabel} · ranked by cost per order (ad spend ÷ orders). Lower is better.</span>
+        </span>
+        <ChevronDown className={`h-4 w-4 text-gray-500 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open ? (
+        <div className="border-t border-gray-100 px-4 pb-4 pt-3 dark:border-slate-800">
+          <div className="mb-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+            {best ? (
+              <p className="m-0 rounded-lg bg-emerald-50 px-3 py-2 text-[13px] text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">
+                <strong>Best: {best.name}</strong> · {naira(best.spend / best.orders)} per order · {nf(best.orders)} order{best.orders === 1 ? "" : "s"} from {naira(best.spend)}
+              </p>
+            ) : <span />}
+            <p className="m-0 rounded-lg bg-rose-50 px-3 py-2 text-[13px] text-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+              <strong>Worst: {worst.name}</strong> · {worst.orders === 0 ? `${naira(worst.spend)} spent, no order` : `${naira(worst.spend / worst.orders)} per order · ${nf(worst.orders)} order${worst.orders === 1 ? "" : "s"} from ${naira(worst.spend)}`}
+            </p>
+          </div>
+          <div className="space-y-2.5">
+            {ranked.map((row, index) => {
+              const spendShare = pct(row.spend, totalSpend), orderShare = pct(row.orders, totalOrders);
+              const earns = row.orders > 0 && orderShare >= spendShare;
+              return (
+                <button key={row.id} type="button" onClick={() => onOpen(row)} title={`See ${row.name}'s ${noun === "Business Account" ? "ad accounts" : "campaigns"}`}
+                  className="!min-h-0 grid w-full grid-cols-[28px_minmax(0,1.3fr)_minmax(0,1fr)_210px] items-center gap-3 rounded-lg px-1 py-1 text-left hover:bg-gray-50 dark:hover:bg-slate-800/40 max-md:grid-cols-[28px_minmax(0,1fr)_auto]">
+                  <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-[12px] font-black ${index === 0 && best ? "bg-emerald-600 text-white" : index === ranked.length - 1 ? "bg-rose-600 text-white" : "bg-gray-100 text-gray-700 dark:bg-slate-800 dark:text-slate-200"}`}>{index + 1}</span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-[13px] font-semibold text-gray-900 dark:text-slate-100">{row.name}</span>
+                    <span className="block truncate text-[11.5px] text-gray-500">{naira(row.spend)} spent · {nf(row.orders)} order{row.orders === 1 ? "" : "s"} · {nf(row.delivered)} delivered{row.orders > 0 && row.orders < 3 ? " · few orders, early read" : ""}</span>
+                  </span>
+                  <span className="min-w-0 space-y-1 max-md:hidden" aria-label={`${Math.round(orderShare)}% of orders for ${Math.round(spendShare)}% of spend`}>
+                    <span className="flex items-center gap-2 text-[11px] text-gray-500"><span className="w-12 shrink-0">Orders</span><span className="h-2 flex-1 rounded-full bg-gray-100 dark:bg-slate-800"><span className="block h-2 rounded-full bg-emerald-500" style={{ width: `${Math.max(orderShare, row.orders ? 2 : 0)}%` }} /></span><span className="w-9 shrink-0 text-right font-semibold text-gray-700 dark:text-slate-300">{Math.round(orderShare)}%</span></span>
+                    <span className="flex items-center gap-2 text-[11px] text-gray-500"><span className="w-12 shrink-0">Spend</span><span className="h-2 flex-1 rounded-full bg-gray-100 dark:bg-slate-800"><span className="block h-2 rounded-full bg-blue-600" style={{ width: `${Math.max(spendShare, 2)}%` }} /></span><span className="w-9 shrink-0 text-right font-semibold text-gray-700 dark:text-slate-300">{Math.round(spendShare)}%</span></span>
+                  </span>
+                  <span className="text-right">
+                    <strong className={`block whitespace-nowrap text-[14px] ${row.orders === 0 ? "text-rose-600" : "text-gray-900 dark:text-slate-100"}`}>{row.orders === 0 ? "No order" : `${naira(row.spend / row.orders)}`}</strong>
+                    <span className={`block whitespace-nowrap text-[11px] font-semibold ${row.orders === 0 ? "text-rose-600" : earns ? "text-emerald-600" : "text-amber-600"}`}>{row.orders === 0 ? "spending, nothing back" : earns ? "per order · earns its share" : "per order · costs more than its share"}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <p className="m-0 mt-3 text-[11.5px] text-gray-500">"Earns its share" = its share of orders is at least its share of spend. {plural[0].toUpperCase() + plural.slice(1)} with orders but no spend in these dates are left out of the ranking.</p>
+        </div>
+      ) : null}
+    </div>
   );
 }
