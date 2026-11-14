@@ -1856,8 +1856,8 @@ router.post("/ad-funds/check", async (req, res) => {
 
 router.get("/campaign-alerts", async (req, res) => {
   try {
-    const { droughts, unchecked, checkedAt } = await droughtsFor(req.user!.orgId, branchOf(req), { fresh: req.query.fresh === "1" });
-    res.json({ droughts, unchecked, checkedAt, rules: DROUGHT_RULES });
+    const { droughts, money, unchecked, checkedAt } = await droughtsFor(req.user!.orgId, branchOf(req), { fresh: req.query.fresh === "1" });
+    res.json({ droughts, money, unchecked, checkedAt, rules: DROUGHT_RULES });
   } catch (error: any) { fail(res, error, "Could not check the campaigns."); }
 });
 

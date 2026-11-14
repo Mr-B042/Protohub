@@ -11727,7 +11727,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => {
     if (currentRole !== "Owner" || isPreviewing) { setCampaignAlertCount(0); return; }
     let live = true;
-    const check = () => { void trackingHubApi.campaignAlerts().then((result) => { if (live) setCampaignAlertCount(result.droughts.length); }).catch(() => undefined); };
+    const check = () => { void trackingHubApi.campaignAlerts().then((result) => { if (live) setCampaignAlertCount(new Set([...result.droughts.map((d) => d.campaignId), ...(result.money ?? []).map((m) => m.campaignId)]).size); }).catch(() => undefined); };
     check();
     const timer = window.setInterval(check, 15 * 60_000);
     return () => { live = false; window.clearInterval(timer); };

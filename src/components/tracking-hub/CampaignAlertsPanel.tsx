@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { AlertOctagon, ChevronDown, Eye, Loader2, RefreshCw, Wrench } from "lucide-react";
-import { trackingHubApi, type CampaignDrought, type CampaignDroughtGroup } from "../../lib/api";
+import { AlertOctagon, ChevronDown, Eye, Flame, Loader2, RefreshCw, TrendingDown, Wrench } from "lucide-react";
+import { trackingHubApi, type CampaignDrought, type CampaignDroughtGroup, type CampaignMoneyAlert } from "../../lib/api";
 
 /**
  * Campaigns with no order for 3 days (Bright, 5 Nov 2026), on top of Ad
@@ -18,6 +18,7 @@ const money = (value: number) => `₦${Math.round(value).toLocaleString("en-NG")
 
 export default function CampaignAlertsPanel({ focus }: { focus?: string | null }) {
   const [droughts, setDroughts] = useState<CampaignDrought[] | null>(null);
+  const [moneyAlerts, setMoneyAlerts] = useState<CampaignMoneyAlert[]>([]);
   const [meta, setMeta] = useState<{ checkedAt: string; unchecked: number } | null>(null);
   const [open, setOpen] = useState(true);
   const [error, setError] = useState("");
@@ -28,7 +29,7 @@ export default function CampaignAlertsPanel({ focus }: { focus?: string | null }
     let live = true;
     setBusy(true);
     trackingHubApi.campaignAlerts(tick > 0)
-      .then((result) => { if (live) { setDroughts(result.droughts); setMeta({ checkedAt: result.checkedAt, unchecked: result.unchecked ?? 0 }); setError(""); } })
+      .then((result) => { if (live) { setDroughts(result.droughts); setMoneyAlerts(result.money ?? []); setMeta({ checkedAt: result.checkedAt, unchecked: result.unchecked ?? 0 }); setError(""); } })
       .catch((err: Error) => { if (live) setError(err.message || "Could not check the campaigns."); })
       .finally(() => { if (live) setBusy(false); });
     return () => { live = false; };
@@ -47,15 +48,21 @@ export default function CampaignAlertsPanel({ focus }: { focus?: string | null }
 
   if (error) return <p className="m-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-[13px] text-rose-800">Could not check campaigns for missing orders: {error}</p>;
   if (!droughts) return null;
+  const moneyBox = moneyAlerts.length > 0 && <MoneyAlerts alerts={moneyAlerts} focus={focus} />;
   if (droughts.length === 0) {
     return (
-      <div className="space-y-1.5 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-2.5 dark:border-emerald-500/30 dark:bg-emerald-500/10">
-        <p className="m-0 text-[13px] font-semibold text-emerald-800 dark:text-emerald-200">Every campaign delivering right now has had an order in the last 3 full days.</p>
-        {footer}
+      <div className="space-y-3">
+        {moneyBox}
+        <div className="space-y-1.5 rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-2.5 dark:border-emerald-500/30 dark:bg-emerald-500/10">
+          <p className="m-0 text-[13px] font-semibold text-emerald-800 dark:text-emerald-200">Every campaign delivering right now has had an order in the last 3 full days.</p>
+          {footer}
+        </div>
       </div>
     );
   }
   return (
+    <div className="space-y-3">
+    {moneyBox}
     <section className="rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
       <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}
         className="!min-h-0 flex w-full flex-wrap items-center justify-between gap-2 px-5 py-3.5 text-left">
@@ -103,6 +110,43 @@ export default function CampaignAlertsPanel({ focus }: { focus?: string | null }
           })}
         </div>
       )}
+    </section>
+    </div>
+  );
+}
+
+/**
+ * Money alerts (Bright, 14 Nov 2026): a campaign can burn ₦30,000+ in two
+ * days before the 3-day no-order rule speaks. Rules: campaign-drought.ts.
+ */
+function MoneyAlerts({ alerts, focus }: { alerts: CampaignMoneyAlert[]; focus?: string | null }) {
+  const burn = alerts.filter((m) => m.kind === "burn"), pricey = alerts.filter((m) => m.kind === "pricey");
+  const campaigns = new Set(alerts.map((m) => m.campaignId)).size;
+  const block = (rows: CampaignMoneyAlert[], title: string, rule: string, Icon: typeof Flame, tone: string, head: string) => rows.length > 0 && (
+    <div className={`rounded-xl border p-3 ${tone}`}>
+      <div className={`flex items-center gap-1.5 text-[13px] font-extrabold ${head}`}><Icon className="h-4 w-4" />{title} · {rows.length}</div>
+      <p className="m-0 mt-0.5 text-[11.5px] text-gray-500 dark:text-slate-400">{rule}</p>
+      <ul className="m-0 mt-2 grid list-none grid-cols-1 gap-2 p-0 lg:grid-cols-2">
+        {rows.map((row) => (
+          <li key={row.episodeKey} className={`rounded-lg bg-white p-2.5 text-[12.5px] shadow-sm dark:bg-slate-900 ${focus && row.episodeKey === focus ? "ring-2 ring-blue-500" : ""}`}>
+            <b className="block break-words text-[13px] text-gray-900 dark:text-slate-50">{row.campaignName}</b>
+            <span className="block text-[11.5px] text-gray-500 dark:text-slate-400">{row.accountName}{row.productName ? ` · ${row.productName}` : ""}{row.platform === "tiktok" ? " · TikTok" : ""}</span>
+            <span className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 font-semibold text-gray-800 dark:text-slate-200">
+              {row.kind === "burn"
+                ? <><span className="text-rose-600">{money(row.spend)} spent, no order</span>{row.todaySpend >= 1 && <span>today {money(row.todaySpend)} so far</span>}</>
+                : <><span className="text-rose-600">{money(row.costPerOrder ?? 0)} per order</span><span>{money(row.spend)} for {row.orders} order{row.orders === 1 ? "" : "s"}</span></>}
+            </span>
+            <span className="mt-1 block text-gray-600 dark:text-slate-400">{row.advice}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+  return (
+    <section className="space-y-3 rounded-2xl border border-rose-200 bg-white p-4 shadow-sm dark:border-rose-500/30 dark:bg-slate-900">
+      <b className="flex items-center gap-2 text-[15px] text-gray-900 dark:text-slate-50"><span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-rose-500 px-2 text-[12px] font-extrabold text-white">{campaigns}</span>Campaign{campaigns === 1 ? "" : "s"} spending too much per order</b>
+      {block(burn, "Spending with no order", "Over ₦7,500 spent since the last order (or since it was switched on), today included", Flame, "border-rose-200 bg-rose-50/60 dark:border-rose-500/30 dark:bg-rose-500/10", "text-rose-700 dark:text-rose-300")}
+      {block(pricey, "Too expensive", "Over ₦7,500 per order over the last 2 full days, even with orders", TrendingDown, "border-amber-200 bg-amber-50/60 dark:border-amber-500/30 dark:bg-amber-500/10", "text-amber-700 dark:text-amber-300")}
     </section>
   );
 }

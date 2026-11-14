@@ -118,3 +118,34 @@ test("running days: a one-day dip does not restart; days before the data count a
   assert.equal(runningDays(spend, "2026-11-01", "2026-11-05"), 3);              // the 2nd: one quiet day, the 3rd still counts
   assert.equal(runningDays(days([["2026-11-01", 100], ["2026-11-02", 100]]), "2026-10-20", "2026-11-05", "2026-11-01"), 14); // 20-31 Oct unknown (12) + 1st and 2nd
 });
+
+test("money alerts: Multi Corner Shelf 2026 (restarted 11 Nov, 1 order on the 12th, then spending with none)", async () => {
+  const { campaignMoneyAlerts } = await import("./campaign-drought.js");
+  const camp = { campaignId: "C1", campaignName: "Multi Corner Shelf 2026", platform: "meta", accountName: "A", running: true, start: "2026-07-21", spend: 1_640_000, orders: 300, cpa: 5_400, productName: "Shelf" };
+  const spend = new Map([["C1", new Map([["2026-10-20", 5000], ["2026-11-11", 90], ["2026-11-12", 16860], ["2026-11-13", 16488], ["2026-11-14", 7628]])]]);
+  const ordersByDay = new Map([["C1", new Map([["2026-11-12", 1]])]]);
+  const lastOrderDay = new Map([["C1", "2026-11-12"]]);
+  // 13 Nov afternoon: burn (₦16,488 since the order) and pricey (11-12 Nov: ₦16,950 for 1).
+  const on13 = campaignMoneyAlerts({ today: "2026-11-13", campaigns: [camp], lastOrderDay, ordersByDay, spendByDay: spend, spendFrom: "2026-10-08" });
+  assert.deepEqual(on13.map((a) => a.kind), ["burn", "pricey"]);
+  assert.equal(Math.round(on13[0].spend), 16488);
+  assert.equal(on13[0].episodeKey, "C1:burn-2026-11-13");
+  assert.equal(Math.round(on13[1].costPerOrder!), 16950);
+  // 14 Nov: same dry spell -> same burn key (no second alert), pricey key moves a day.
+  const on14 = campaignMoneyAlerts({ today: "2026-11-14", campaigns: [camp], lastOrderDay, ordersByDay, spendByDay: spend, spendFrom: "2026-10-08" });
+  assert.equal(on14[0].episodeKey, "C1:burn-2026-11-13");
+  assert.equal(Math.round(on14[0].spend), 24116);
+  assert.equal(on14[1].episodeKey, "C1:pricey-2026-11-13");
+});
+
+test("money alerts: under the limit, switched off, and a restart after a pause", async () => {
+  const { campaignMoneyAlerts } = await import("./campaign-drought.js");
+  const camp = { campaignId: "C2", campaignName: "X", platform: "meta", accountName: "A", running: true, start: null, spend: 0, orders: 0, cpa: null, productName: null };
+  const cheap = new Map([["C2", new Map([["2026-11-12", 4000], ["2026-11-13", 3000]])]]);
+  const orders = new Map([["C2", new Map([["2026-11-12", 1], ["2026-11-13", 1]])]]);
+  assert.equal(campaignMoneyAlerts({ today: "2026-11-14", campaigns: [camp], lastOrderDay: new Map([["C2", "2026-11-13"]]), ordersByDay: orders, spendByDay: cheap }).length, 0);
+  assert.equal(campaignMoneyAlerts({ today: "2026-11-14", campaigns: [{ ...camp, running: false }], lastOrderDay: new Map(), ordersByDay: new Map(), spendByDay: new Map([["C2", new Map([["2026-11-13", 50000]])]]) }).length, 0);
+  // Old spend before a 2-week pause doesn't count: only ₦3,000 since it was switched back on.
+  const paused = new Map([["C2", new Map([["2026-10-20", 9000], ["2026-11-13", 3000]])]]);
+  assert.equal(campaignMoneyAlerts({ today: "2026-11-14", campaigns: [camp], lastOrderDay: new Map([["C2", "2026-10-15"]]), ordersByDay: new Map(), spendByDay: paused, spendFrom: "2026-10-08" }).length, 0);
+});

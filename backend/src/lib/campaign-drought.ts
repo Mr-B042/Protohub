@@ -149,3 +149,82 @@ export function campaignDroughts(input: {
   }
   return out.sort((a, b) => DROUGHT_ORDER.indexOf(a.group) - DROUGHT_ORDER.indexOf(b.group) || b.spendSinceLastOrder - a.spendSinceLastOrder);
 }
+
+// ── Money alerts (Bright, 14 Nov 2026) ───────────────────────────────────────
+// "Multi Corner Shelf 2026" restarted 11 Nov, got 1 order on the 12th for
+// ₦16,860, then spent ₦16,488 on the 13th and more on the 14th with none: the
+// 3-whole-days rule could not speak before the 16th. Bright chose BOTH:
+//  - burn:   spent over ₦7,500 since the last order (or since it was switched
+//            back on / first spent) with no new order. Today's spend counts:
+//            money is the point, not whole days. One alert per dry spell.
+//  - pricey: cost per order over the last 2 WHOLE days over ₦7,500 while it
+//            did get orders. One alert per campaign per day at most.
+
+export const MONEY_RULES = { burnAbove: DROUGHT_RULES.offAbove, priceyAbove: DROUGHT_RULES.offAbove, priceyDays: 2 };
+
+export type MoneyAlert = {
+  kind: "burn" | "pricey";
+  campaignId: string; campaignName: string; platform: string; accountName: string; productName: string | null;
+  /** burn: spent since the last order / restart. pricey: spent in the 2 whole days. */
+  spend: number;
+  /** pricey: orders in the 2 whole days. burn: 0. */
+  orders: number;
+  costPerOrder: number | null;
+  todaySpend: number;
+  since: string | null;
+  advice: string;
+  episodeKey: string;
+};
+
+export function campaignMoneyAlerts(input: {
+  today: string;
+  campaigns: DroughtCampaign[];
+  lastOrderDay: Map<string, string>;
+  /** Orders per campaign per Lagos day. */
+  ordersByDay: Map<string, Map<string, number>>;
+  spendByDay: Map<string, Map<string, number>>;
+  spendFrom?: string;
+}): MoneyAlert[] {
+  const out: MoneyAlert[] = [];
+  const windowFrom = addDays(input.today, -MONEY_RULES.priceyDays);
+  for (const campaign of input.campaigns) {
+    if (!campaign.running) continue;
+    const days = input.spendByDay.get(campaign.campaignId) ?? new Map<string, number>();
+    const todaySpend = days.get(input.today) ?? 0;
+    const last = input.lastOrderDay.get(campaign.campaignId) ?? null;
+    const base = { campaignId: campaign.campaignId, campaignName: campaign.campaignName, platform: campaign.platform, accountName: campaign.accountName, productName: campaign.productName, todaySpend };
+
+    // burn: from the day after the last order, or the restart after a pause, whichever is later.
+    const spentDays = [...days.entries()].filter(([, s]) => s > 0).map(([d]) => d).sort();
+    const firstSpent = spentDays[0] ?? null;
+    let from = last ? addDays(last, 1) : firstSpent;
+    if (from) {
+      const restart = lastRestartDay(days, from > (input.spendFrom ?? "") ? from : (input.spendFrom ?? from), input.today);
+      if (restart && restart > from) from = restart;
+      const spent = [...days.entries()].filter(([d]) => d >= from! && d <= input.today).reduce((sum, [, s]) => sum + s, 0);
+      if (spent > MONEY_RULES.burnAbove) {
+        out.push({
+          ...base, kind: "burn", spend: spent, orders: 0, costPerOrder: null, since: from,
+          advice: `${naira(spent)} spent since ${last ? "the last order" : "it started spending"}${todaySpend >= 1 ? ` (today's ${naira(todaySpend)} included)` : ""} and no order. That is more than one order is worth (${naira(MONEY_RULES.burnAbove)}). Turn it off or fix it now.`,
+          episodeKey: `${campaign.campaignId}:burn-${from}`
+        });
+      }
+    }
+
+    // pricey: the last 2 whole days.
+    let spend2 = 0, orders2 = 0;
+    for (let d = windowFrom; d < input.today; d = addDays(d, 1)) {
+      spend2 += days.get(d) ?? 0;
+      orders2 += input.ordersByDay.get(campaign.campaignId)?.get(d) ?? 0;
+    }
+    if (orders2 > 0 && spend2 / orders2 > MONEY_RULES.priceyAbove) {
+      const cpo = spend2 / orders2;
+      out.push({
+        ...base, kind: "pricey", spend: spend2, orders: orders2, costPerOrder: cpo, since: windowFrom,
+        advice: `${naira(cpo)} per order over the last ${MONEY_RULES.priceyDays} full days (${naira(spend2)} for ${orders2} order${orders2 === 1 ? "" : "s"}), over the ${naira(MONEY_RULES.priceyAbove)} limit. Cut the budget, change the ad, or turn it off.`,
+        episodeKey: `${campaign.campaignId}:pricey-${addDays(input.today, -1)}`
+      });
+    }
+  }
+  return out.sort((a, b) => (a.kind === b.kind ? b.spend - a.spend : a.kind === "burn" ? -1 : 1));
+}
