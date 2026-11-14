@@ -4779,6 +4779,11 @@ export type CampaignDrought = {
   group: CampaignDroughtGroup; daysWithoutOrder: number; lastOrderDay: string | null; recentSpend: number; spendSinceLastOrder: number;
   todaySpend?: number; advice: string; episodeKey: string;
 };
+/** Bright, 14 Nov 2026: spent over ₦7,500 since the last order ("burn") or over ₦7,500 per order in 2 full days ("pricey"). */
+export type CampaignMoneyAlert = {
+  kind: "burn" | "pricey"; campaignId: string; campaignName: string; platform: string; accountName: string; productName: string | null;
+  spend: number; orders: number; costPerOrder: number | null; todaySpend: number; since: string | null; advice: string; episodeKey: string;
+};
 export type HubSinceStart = {
   rows: HubSinceStartRow[]; ordersFrom: string; linkedShare: number | null; lastLifetimeAt: string | null;
   rules: { minDays: number; minSpendTimesTarget: number; winningBelow: number; hookWeak: number; hookStrong: number; breakEvenMinOrders: number };
@@ -4876,7 +4881,7 @@ export const trackingHubApi = {
   adFunds: () => get<AdFundsView>("/api/tracking-hub/ad-funds"),
   saveAdFundsSettings: (body: { enabled?: boolean; threshold?: number }) => put<AdFundsView>("/api/tracking-hub/ad-funds/settings", body),
   checkAdFunds: () => post<AdFundsView>("/api/tracking-hub/ad-funds/check", {}),
-  campaignAlerts: (fresh = false) => get<{ droughts: CampaignDrought[]; unchecked: number; checkedAt: string }>(`/api/tracking-hub/campaign-alerts${fresh ? "?fresh=1" : ""}`),
+  campaignAlerts: (fresh = false) => get<{ droughts: CampaignDrought[]; money?: CampaignMoneyAlert[]; unchecked: number; checkedAt: string }>(`/api/tracking-hub/campaign-alerts${fresh ? "?fresh=1" : ""}`),
   setAdSpendTarget: (productId: string, targetCpa: number | null) => put<{ ok: true }>("/api/tracking-hub/ad-spend/targets", { productId, targetCpa }),
   tiktokConnections: () => get<{ connections: HubTikTokConnection[]; urlParameters: string }>("/api/tracking-hub/tiktok-connections"),
   connectTikTok: (body: { name: string; accessToken: string; advertiserIds: string }) => post<HubTikTokConnection>("/api/tracking-hub/tiktok-connections", body),
