@@ -5,6 +5,7 @@ import { z } from "zod";
 import { applyInventoryMovements, InventoryMovementError } from "../lib/inventory-movements.js";
 import { notifyWaybillEvent } from "../lib/waybill-notifications.js";
 import { supabase } from "../lib/supabase.js";
+import { lagosTodayKey } from "../lib/salary-spread.js";
 import { applyBranchScope, requireAuth, requireRole } from "../middleware/auth.js";
 
 const router = Router();
@@ -623,7 +624,9 @@ router.patch("/:id/status",
     }
 
     const updates: Record<string, unknown> = { status };
-    if (status === "Received" && receivedDate) updates.received_date = receivedDate;
+    // Every receipt keeps its date (Bright, 14 Nov 2026: 431 received waybills had none
+    // because the screen never sent one). No date given = today in Lagos.
+    if (status === "Received") updates.received_date = /^\d{4}-\d{2}-\d{2}$/.test(receivedDate ?? "") ? receivedDate : lagosTodayKey();
     if (notes !== undefined) updates.notes = notes;
     const { data, error } = await supabase
       .from("waybill_records")
