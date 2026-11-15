@@ -1,3 +1,4 @@
+import { currencySymbol, money as branchMoney } from "../../lib/money-privacy";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -36,7 +37,10 @@ const PER_PAGE = 5;
 const todayInLagos = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Lagos" }).format(new Date());
 
 const DAY_MS = 86_400_000;
-export const OFFER_TEMPLATES: Array<{ key: string; name: string; hint: string; input: () => EmOfferInput }> = [
+// Naira-valued presets only in naira branches (Zambia types its own amounts, 15 Nov 2026).
+export const offerTemplates = () => ALL_OFFER_TEMPLATES.filter((t) => currencySymbol().trim() === "₦" || !NAIRA_PRESETS.has(t.key));
+const NAIRA_PRESETS = new Set(["naira500", "big"]);
+const ALL_OFFER_TEMPLATES: Array<{ key: string; name: string; hint: string; input: () => EmOfferInput }> = [
   { key: "save10", name: "10% Off Coupon", hint: "10% off any order", input: () => blank({ name: "10% Off", type: "discount", benefit: "percent", value: 10, code: "SAVE10" }) },
   { key: "naira500", name: "₦500 Off", hint: "₦500 off orders of ₦10,000+", input: () => blank({ name: "₦500 Off", type: "fixed", benefit: "fixed", value: 500, code: "NAIRA500", minOrder: 10000 }) },
   { key: "flash", name: "Weekend Flash Sale", hint: "10% off for 3 days", input: () => blank({ name: "Weekend Flash Sale", type: "flash", benefit: "percent", value: 10, code: "FLASH10", endsAt: new Date(Date.now() + 3 * DAY_MS).toISOString() }) },
@@ -112,7 +116,7 @@ export default function OffersPage({ onToast, refreshKey }: { onToast: (message:
     try {
       const { rows: list } = await emailMarketingApi.offerUsage({ from: window_.start, to: window_.end });
       if (!list.length) { onToast("No order used an offer in these days."); return; }
-      downloadCsv(`offer-usage-${window_.start}-to-${window_.end}.csv`, ["Date", "Offer", "Code", "Order", "Customer", "Phone", "Order status", "Before (₦)", "Discount (₦)", "Paid (₦)"],
+      downloadCsv(`offer-usage-${window_.start}-to-${window_.end}.csv`, ["Date", "Offer", "Code", "Order", "Customer", "Phone", "Order status", `Before (${currencySymbol().trim()})`, `Discount (${currencySymbol().trim()})`, `Paid (${currencySymbol().trim()})`],
         list.map((row) => [lagosDate(row.at, true), row.offer, row.code, row.orderId, row.customer, row.phone, row.status, row.before, row.discount, row.paid]));
     } catch (err) { onToast((err as Error).message || "Could not build the report."); }
   };
@@ -153,7 +157,7 @@ export default function OffersPage({ onToast, refreshKey }: { onToast: (message:
           <div className="grid flex-1 grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
             {([
               { type: "discount", label: "Discount Coupon", hint: "% off order value", icon: Percent, run: () => void openEditor(null, blank({ type: "discount", benefit: "percent", value: 10 })) },
-              { type: "fixed", label: "Fixed Discount", hint: "₦ off order value", icon: Tag, run: () => void openEditor(null, blank({ type: "fixed", benefit: "fixed", value: 500 })) },
+              { type: "fixed", label: "Fixed Discount", hint: `${currencySymbol().trim()} off order value`, icon: Tag, run: () => void openEditor(null, blank({ type: "fixed", benefit: "fixed", value: 500 })) },
               { type: "bundle", label: "Bundle Offer", hint: "Buy more, save more", icon: Layers, off: "Comes next, with Free Gift: the free pieces come out of stock." },
               { type: "flash", label: "Flash Sale", hint: "Limited-time deal", icon: Zap, run: () => void openEditor(null, blank({ type: "flash", benefit: "percent", value: 10, endsAt: new Date(Date.now() + 3 * DAY_MS).toISOString() })) },
               { type: "gift", label: "Free Gift", hint: "Gift with purchase", icon: Gift, off: "Comes next, with Bundle: the gift comes out of stock and its cost counts." },
@@ -226,7 +230,7 @@ export default function OffersPage({ onToast, refreshKey }: { onToast: (message:
                             </td>
                             <td className="px-2 py-2.5"><span className="inline-flex items-center gap-1 rounded-lg bg-gray-100 px-2 py-1 font-mono text-[12px] font-bold text-gray-800 dark:bg-slate-800 dark:text-slate-200">{row.code}<button type="button" aria-label={`Copy ${row.code}`} onClick={() => void copyCode(row.code)} className="!min-h-0 text-gray-500 hover:text-[#5B3FD9]"><Copy className="h-3.5 w-3.5" /></button></span></td>
                             <td className="px-2 py-2.5"><Pill tone={look.tone}><look.icon className="h-3.5 w-3.5" />{look.label}</Pill></td>
-                            <td className="px-2 py-2.5 font-semibold text-gray-900 dark:text-slate-50">{row.benefitText}{row.minOrder > 0 && <span className="block text-[11.5px] font-normal text-gray-500">on ₦{Math.round(row.minOrder).toLocaleString("en-NG")}+</span>}</td>
+                            <td className="px-2 py-2.5 font-semibold text-gray-900 dark:text-slate-50">{row.benefitText}{row.minOrder > 0 && <span className="block text-[11.5px] font-normal text-gray-500">on {branchMoney(row.minOrder)}+</span>}</td>
                             <td className="px-2 py-2.5 text-right font-semibold">{count(row.redemptions)}</td>
                             <td className="px-2 py-2.5 text-right font-bold">{naira(row.revenue)}</td>
                             <td className="px-2 py-2.5"><Pill tone={st.tone}>{st.label}</Pill></td>
@@ -316,7 +320,7 @@ export default function OffersPage({ onToast, refreshKey }: { onToast: (message:
       {templates && (
         <ModalShell title="Offer Templates" sub="Ready-made offers. Pick one and change anything before saving." onClose={() => setTemplates(false)} footer={<button type="button" onClick={() => setTemplates(false)} className={btn.ghost}>Close</button>}>
           <div className="space-y-2">
-            {OFFER_TEMPLATES.map((row) => (
+            {offerTemplates().map((row) => (
               <button key={row.key} type="button" onClick={() => { setTemplates(false); void openEditor(null, row.input()); }} className="!min-h-0 flex w-full items-center gap-3 rounded-xl border border-gray-200 px-3 py-2.5 text-left hover:border-[#8B74EE] hover:bg-[#F7F4FF] dark:border-slate-700">
                 <IconTile size="sm"><Ticket className="h-4 w-4" /></IconTile>
                 <span className="min-w-0 flex-1"><span className="block text-[14px] font-bold text-gray-900 dark:text-slate-50">{row.name}</span><span className="block text-[12.5px] text-gray-600 dark:text-slate-400">{row.hint}</span></span>
@@ -438,14 +442,14 @@ function OfferModal({ id, initial, designer, onClose, onDone }: { id: string | n
             <div className="mt-1.5 flex gap-2">
               {form.type !== "discount" && form.type !== "fixed" && (
                 <select value={form.benefit} onChange={(event) => set({ benefit: event.target.value as "percent" | "fixed" })} className={`${select} !w-[120px]`} aria-label="Kind">
-                  <option value="percent">% off</option><option value="fixed">₦ off</option>
+                  <option value="percent">% off</option><option value="fixed">{currencySymbol().trim()} off</option>
                 </select>
               )}
               <input type="number" min={1} max={form.benefit === "percent" ? 90 : undefined} value={form.value} onChange={(event) => set({ value: Number(event.target.value) || 0 })} className={input} aria-label="Value" />
-              <span className="self-center text-[13px] font-semibold text-gray-600">{form.benefit === "percent" ? "%" : "₦"}</span>
+              <span className="self-center text-[13px] font-semibold text-gray-600">{form.benefit === "percent" ? "%" : currencySymbol().trim()}</span>
             </div>
           </div>
-          <label className={label}>Minimum Order (₦)<input type="number" min={0} value={form.minOrder || ""} onChange={(event) => set({ minOrder: Number(event.target.value) || 0 })} placeholder="No minimum" className={`${input} mt-1.5`} /></label>
+          <label className={label}>Minimum Order ({currencySymbol().trim()})<input type="number" min={0} value={form.minOrder || ""} onChange={(event) => set({ minOrder: Number(event.target.value) || 0 })} placeholder="No minimum" className={`${input} mt-1.5`} /></label>
           <label className={label}>Starts<input type="datetime-local" value={toLocal(form.startsAt)} onChange={(event) => set({ startsAt: fromLocal(event.target.value) })} className={`${input} mt-1.5`} /><span className="block text-[11.5px] font-normal text-gray-500">Empty = straight away (Lagos time)</span></label>
           <label className={label}>Ends {form.type === "flash" ? "*" : ""}<input type="datetime-local" value={toLocal(form.endsAt)} onChange={(event) => set({ endsAt: fromLocal(event.target.value) })} className={`${input} mt-1.5`} /><span className="block text-[11.5px] font-normal text-gray-500">{form.type === "flash" ? "A flash sale needs an end" : "Empty = ongoing"}</span></label>
           <label className={label}>Total Uses (optional)<input type="number" min={1} value={form.usageLimit ?? ""} onChange={(event) => set({ usageLimit: event.target.value ? Math.max(1, Math.round(Number(event.target.value))) : null })} placeholder="No limit" className={`${input} mt-1.5`} /></label>

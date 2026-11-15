@@ -1,3 +1,4 @@
+import { currencySymbol, money as branchMoney } from "../../lib/money-privacy";
 import { useMemo, useState } from "react";
 import { Area, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
@@ -129,7 +130,7 @@ export default function TabOverview({ data, onNavigate, onCreate, onCreateAutoma
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="m-0 text-[17px] font-bold text-gray-900 dark:text-slate-50">Customer Retention &amp; LTV Trend</h3>
                 <div className="flex items-center gap-4 text-[12.5px] text-gray-600 dark:text-slate-400">
-                  <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#6D4AFF]" />LTV (₦)</span>
+                  <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#6D4AFF]" />LTV ({currencySymbol().trim()})</span>
                   <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#2F6BFF]" />Retention Rate</span>
                 </div>
               </div>
@@ -141,7 +142,7 @@ export default function TabOverview({ data, onNavigate, onCreate, onCreateAutoma
                     </defs>
                     <CartesianGrid stroke="#E5E7EB" strokeDasharray="3 3" vertical={false} />
                     <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#6B7280" }} axisLine={false} tickLine={false} />
-                    <YAxis yAxisId="ltv" domain={[0, Math.ceil(ltvMax * 1.15)]} tickFormatter={(v: number) => `₦${v >= 1000 ? `${Math.round(v / 1000)}K` : v}`} tick={{ fontSize: 11, fill: "#6B7280" }} axisLine={false} tickLine={false} width={48} />
+                    <YAxis yAxisId="ltv" domain={[0, Math.ceil(ltvMax * 1.15)]} tickFormatter={(v: number) => `${currencySymbol().trim()}${v >= 1000 ? `${Math.round(v / 1000)}K` : v}`} tick={{ fontSize: 11, fill: "#6B7280" }} axisLine={false} tickLine={false} width={48} />
                     <YAxis yAxisId="ret" orientation="right" domain={[0, Math.max(5, Math.ceil(retentionMax * 1.2))]} tickFormatter={(v: number) => `${v}%`} tick={{ fontSize: 11, fill: "#6B7280" }} axisLine={false} tickLine={false} width={40} />
                     <Tooltip formatter={(value: number, name: string) => (name === "ltv" ? [naira(value), "LTV"] : [`${value}%`, "Retention"])} labelFormatter={(label: string) => { const row = data.trend.find((item) => item.label === label); return row ? `${label} ${row.key.slice(0, 4)}` : label; }} />
                     <Area yAxisId="ltv" type="monotone" dataKey="ltv" stroke="#6D4AFF" strokeWidth={2.5} fill="url(#emLtvFill)" dot={{ r: 3.5, fill: "#fff", stroke: "#6D4AFF", strokeWidth: 2 }} />

@@ -5588,7 +5588,7 @@ export type EmDesigner = {
   sender: { ready: boolean; reason?: string; fromName: string; fromEmail: string };
   /** The logo every email shows. */
   brand?: { name: string; logoUrl: string | null };
-  settings: { dailyLimit: number; footerNote: string };
+  settings: { dailyLimit: number; footerNote: string; whatsapp?: string };
   segments: Array<{ id: string; name: string; kind: "auto" | "fixed"; status: string; icon: string; list: boolean; builtIn?: string | null }>;
   tags: Array<{ id: string; name: string; kind: "system" | "custom"; color: string; icon: string }>;
   fields: Array<{ id: string; key: string; name: string; type: string; options: string[]; system: boolean }>;
@@ -5885,8 +5885,8 @@ export const emailMarketingApi = {
   act: (id: string, action: "pause" | "resume" | "cancel" | "archive" | "unarchive") => post<{ ok: boolean; status: string }>(`${EM}/campaigns/${encodeURIComponent(id)}/${action}`, {}),
   sendTest: (id: string, emails: string[]) => post<{ results: Array<{ email: string; ok: boolean; error?: string }> }>(`${EM}/campaigns/${encodeURIComponent(id)}/test`, { emails }),
   report: (id: string) => get<EmReport>(`${EM}/campaigns/${encodeURIComponent(id)}/report`),
-  settings: () => get<{ dailyLimit: number; footerNote: string; sender: { ready: boolean; reason?: string; fromName: string; fromEmail: string } }>(`${EM}/settings`),
-  saveSettings: (body: { dailyLimit?: number; footerNote?: string; autoSync?: boolean; defaultListId?: string | null; updateExisting?: boolean }) => patch<{ ok: boolean }>(`${EM}/settings`, body),
+  settings: () => get<{ dailyLimit: number; footerNote: string; fromName?: string; replyTo?: string; whatsapp?: string; sender: { ready: boolean; reason?: string; fromName: string; fromEmail: string } }>(`${EM}/settings`),
+  saveSettings: (body: { dailyLimit?: number; footerNote?: string; fromName?: string; replyTo?: string; whatsapp?: string; autoSync?: boolean; defaultListId?: string | null; updateExisting?: boolean }) => patch<{ ok: boolean }>(`${EM}/settings`, body),
   health: (range: { from: string; to: string }) => get<EmHealth>(`${EM}/health?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`),
   cleaningPlan: () => get<EmCleaningPlan>(`${EM}/health/cleaning`),
   cleanList: (body: { neverOpened: boolean; duplicates: boolean; bounced: boolean }) => post<EmCleaningPlan>(`${EM}/health/clean`, body),

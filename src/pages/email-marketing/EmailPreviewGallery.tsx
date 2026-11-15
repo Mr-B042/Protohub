@@ -1,3 +1,4 @@
+import { money as branchMoney } from "../../lib/money-privacy";
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { Monitor, Pencil, Smartphone, X } from "lucide-react";
@@ -61,7 +62,7 @@ export default function EmailPreviewGallery({ title, flows, campaigns, onClose, 
   }, [onClose]);
 
   const sample = designer?.products.find((row) => row.image && row.links.length) ?? designer?.products[0];
-  const theirs: TheirProduct | null = sample ? { name: sample.name, price: sample.priceMin ? `From ₦${Math.round(sample.priceMin).toLocaleString("en-NG")}` : "", imageUrl: sample.image, link: sample.links[0]?.url ?? "" } : null;
+  const theirs: TheirProduct | null = sample ? { name: sample.name, price: sample.priceMin ? `From ${branchMoney(sample.priceMin)}` : "", imageUrl: sample.image, link: sample.links[0]?.url ?? "" } : null;
 
   const items = useMemo<Item[]>(() => {
     const out: Item[] = [];

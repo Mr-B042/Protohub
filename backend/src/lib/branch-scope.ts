@@ -11,6 +11,11 @@ export const runWithBranchScope = <T>(branchId: string, callback: () => T): T =>
 // and the table reads as empty. Every table below was backfilled from its
 // parent in migration 258 and verified at 0 nulls before being added.
 const BRANCH_TABLES = new Set([
+  // ⚠️ NOT here (15 Nov 2026 audit): settings stored ONCE per company (unique on
+  // org_id) — embed_settings, sms_settings, whatsapp_settings, email_settings and
+  // the bonus / KPI settings. Scoping them hid the company row from every other
+  // branch (blank screens) and a save there overwrote the company's settings.
+
   // The records a branch owns outright.
   "orders", "agents", "agent_stock", "stock_movements", "abandoned_carts",
   // Product Trend stock decisions (migration 307).
@@ -88,18 +93,16 @@ const BRANCH_TABLES = new Set([
   // People, targets and bonuses. A Ghana rep must not be measured against a
   // Nigerian target, and a bonus rule written in naira must not pay in cedi.
   "sales_teams", "sales_leads", "sales_bonus_programs", "sales_bonus_rules",
-  "sales_closer_bonus_settings", "sales_closer_bonus_monthly_records",
-  "manager_bonus_settings", "manager_product_challenges",
+  "sales_closer_bonus_monthly_records",
+  "manager_product_challenges",
   "manager_product_challenge_allocations", "manager_activity_logs",
-  "head_of_sales_settings", "head_of_sales_weekly_reports",
+  "head_of_sales_weekly_reports",
   "head_of_sales_bonus_weekly_records", "sales_scripts", "order_script_uses", "head_of_sales_bonus_releases",
   "sales_script_items", "sales_script_versions", "sales_script_uses", "sales_script_views", "sales_script_settings", "sales_script_audit", "meta_capi_events",
   "tracking_data_sources", "tracking_websites", "tracking_profiles", "tracking_browser_events", "tracking_meta_insights", "tracking_settings", "tracking_meta_ad_insights", "tracking_meta_campaigns", "tracking_reconciliation_notes", "tracking_audit", "tracking_alert_log", "tracking_meta_connections", "tracking_meta_ad_accounts", "tracking_extra_pixel_sends",
   "rep_weekly_targets", "rep_coaching_plans", "rep_coaching_action_items",
   "target_periods", "daily_target_snapshots", "incentive_rules",
-  "upsell_bonus_settings", "sales_expansion_settings",
-  "sales_expansion_compliance_waivers", "recovery_rep_kpi_settings",
-  "recovery_templates", "sales_initiatives", "sales_initiative_learnings",
+  "sales_expansion_compliance_waivers", "recovery_templates", "sales_initiatives", "sales_initiative_learnings",
   // Weekly Report approvals (migration 269). branch_id is NOT NULL from the
   // first row and every key is per branch, so these are safe to list at once.
   "rep_weekly_reports", "company_weekly_reports",
@@ -117,7 +120,6 @@ const BRANCH_TABLES = new Set([
   // Retention and marketing.
   "customer_retention_touchpoints", "customer_retention_action_events",
   "customer_retention_tasks", "customer_retention_referrals",
-  "customer_retention_bonus_settings",
   "marketing_spend_records", "marketing_link_variants",
 
   // Personal delivery agents: people holding a branch's stock and its cash.
@@ -129,7 +131,7 @@ const BRANCH_TABLES = new Set([
   "pda_documents", "pda_earning_payouts", "pda_fee_negotiations", "pda_fee_rules",
   "pda_guarantors", "pda_incidents", "pda_inventory_baselines", "pda_kyc_items",
   "pda_notes", "pda_order_assignments", "pda_remittance_allocations",
-  "pda_remittances", "pda_reports", "pda_settings", "pda_stock_discrepancies",
+  "pda_remittances", "pda_reports", "pda_stock_discrepancies",
   "pda_stock_ledger", "pda_stock_transfers",
 
   // Messaging, and the settings that drive it. Ghana sends from its own
@@ -140,11 +142,12 @@ const BRANCH_TABLES = new Set([
   // no request scope, so branchScopedFetch leaves them alone - a customer
   // filling in the form is never inside a branch session.
   "system_notifications", "short_links",
-  "sms_messages", "sms_inbound_messages", "sms_opt_outs", "sms_settings",
-  "email_messages", "email_settings",
+  "sms_messages", "sms_inbound_messages", "sms_opt_outs", "email_messages",
+  // email_settings is NOT here: it is ONE row per company (the email account), so a
+  // Zambia screen must see the account saved under Nigeria (15 Nov 2026).
   "whatsapp_messages", "whatsapp_inbox_messages", "whatsapp_opt_outs",
-  "whatsapp_settings", "whatsapp_user_accounts", "whatsapp_user_destinations",
-  "embed_settings", "meta_capi_configs",
+  "whatsapp_user_accounts", "whatsapp_user_destinations",
+  "meta_capi_configs",
 
   // The catalogue. A full split, chosen deliberately: one shared price list
   // cannot hold naira, cedi and shilling at once.

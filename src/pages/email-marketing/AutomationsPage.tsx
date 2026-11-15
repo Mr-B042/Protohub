@@ -1,3 +1,4 @@
+import { getActiveCurrency } from "../../lib/money-privacy";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -414,7 +415,9 @@ function AutopilotModal({ existing, onClose, onToast, onDone }: { existing: Arra
       try {
         const [designer, { sales }] = await Promise.all([emailMarketingApi.designer(), emailMarketingApi.autopilotSales()]);
         if (!designer.sender.ready) setSenderProblem(designer.sender.reason ?? "Email sending is not set up.");
-        setPlan(autopilotPlan(designer, sales));
+        // Branch: store only where there is one (Nigeria); a brand-new branch's products go live like Nigeria's.
+        const storeOn = getActiveCurrency().code === "NGN";
+        setPlan(autopilotPlan(designer, sales, { storeOn, newBranch: !storeOn && sales.every((row) => !row.orders) }));
       } catch (err) { setError((err as Error).message || "Could not prepare the plan."); }
     })();
   }, []);

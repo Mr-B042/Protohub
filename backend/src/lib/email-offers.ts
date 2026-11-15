@@ -1,4 +1,5 @@
 import { supabase } from "./supabase.js";
+import { branchLocale } from "./branch-locale.js";
 import { logger } from "./logger.js";
 import { fetchAllRowsOrThrow, selectByIdBatches } from "./query-limits.js";
 import { DAY_MS } from "./email-marketing-rules.js";
@@ -80,6 +81,7 @@ export async function deleteOffer(orgId: string, branchId: string, id: string) {
 // ── The page (design 54) ──────────────────────────────────────────────
 
 export async function offersPage(orgId: string, branchId: string, range: { fromMs: number; toMs: number }) {
+  const { currency } = await branchLocale(branchId);
   const nowMs = Date.now();
   const length = Math.max(DAY_MS, range.toMs - range.fromMs);
   const before = { fromMs: range.fromMs - length, toMs: range.fromMs };
@@ -136,7 +138,7 @@ export async function offersPage(orgId: string, branchId: string, range: { fromM
       const mine = now.filter((row) => row.offer_id === offer.id);
       const single = offer.productIds.length === 1 ? productOf.get(offer.productIds[0]) : null;
       return {
-        ...offer, state: offerState(offer, nowMs), benefitText: benefitText(offer),
+        ...offer, state: offerState(offer, nowMs), benefitText: benefitText(offer, currency),
         // allTime counts every redemption (it decides whether the offer can still be deleted).
         redemptions: mine.length, revenue: revenueOf(mine), allTime: redemptions.filter((row) => row.offer_id === offer.id).length,
         imageUrl: single?.image_url && /^https:\/\//.test(single.image_url) ? single.image_url : null,
@@ -201,7 +203,7 @@ export async function publicOfferForToken(token: string, productId: string | nul
   if (problem) return null;
   return {
     code: found.offer.code, name: found.offer.name, benefit: found.offer.benefit, value: found.offer.value, minOrder: found.offer.minOrder,
-    endsAt: found.offer.endsMs ? new Date(found.offer.endsMs).toISOString() : null, text: benefitText(found.offer)
+    endsAt: found.offer.endsMs ? new Date(found.offer.endsMs).toISOString() : null, text: benefitText(found.offer, (await branchLocale(found.offer.branchId)).currency)
   };
 }
 

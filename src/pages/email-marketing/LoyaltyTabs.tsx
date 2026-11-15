@@ -1,3 +1,4 @@
+import { currencySymbol, money as branchMoney } from "../../lib/money-privacy";
 import { useCallback, useEffect, useState } from "react";
 import { Archive, ChevronLeft, ChevronRight, Coins, Crown, Download, Gift, Pause, Pencil, Play, Plus, Search, Ticket, Trash2, Undo2, UserPlus, Users, Wallet } from "lucide-react";
 import DateWindowNav from "../../components/DateWindowNav";
@@ -431,7 +432,7 @@ function RewardModal({ id, initial, onClose, onDone }: { id: string | null; init
       <div className="grid gap-3 sm:grid-cols-2">
         <label className={`${label} sm:col-span-2`}>Name<input value={form.name} maxLength={60} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder={`${naira(form.value)} off`} className={`${input} mt-1.5`} /></label>
         <label className={label}>Points needed *<input type="number" min={1} value={form.points || ""} onChange={(event) => setForm({ ...form, points: Math.max(0, Math.round(Number(event.target.value) || 0)) })} className={`${input} mt-1.5`} /></label>
-        <label className={label}>Takes off (₦) *<input type="number" min={1} value={form.value || ""} onChange={(event) => setForm({ ...form, value: Math.max(0, Math.round(Number(event.target.value) || 0)) })} className={`${input} mt-1.5`} /></label>
+        <label className={label}>Takes off ({currencySymbol().trim()}) *<input type="number" min={1} value={form.value || ""} onChange={(event) => setForm({ ...form, value: Math.max(0, Math.round(Number(event.target.value) || 0)) })} className={`${input} mt-1.5`} /></label>
         <p className="m-0 text-[12px] text-gray-500 sm:col-span-2">{form.points > 0 && form.value > 0 ? `Each point is worth ${naira(form.value / form.points)} on this reward.` : " "}</p>
       </div>
     </ModalShell>

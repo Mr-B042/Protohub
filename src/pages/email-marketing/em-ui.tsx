@@ -3,6 +3,7 @@ import {
   AlertTriangle, Archive, ArrowDown, ArrowUp, Ban, Box, CalendarClock, CalendarDays, Clock, Crown, FileText, Gift, Heart, Hourglass, Layers, Mail, MapPin, PauseCircle, RefreshCw, Rocket, Send, ShoppingCart,
   Sparkles, Star, Tag, TrendingUp, Truck, Upload, UserPlus, Users, Zap, type LucideIcon
 } from "lucide-react";
+import { money as branchMoney } from "../../lib/money-privacy";
 import { spaceNaira } from "../../lib/naira-glyph";
 
 /** Shared pieces of the Email Marketing pages (Bright's designs, 8 Nov 2026). */
@@ -52,7 +53,8 @@ export const btn = {
 export const input = "!min-h-0 w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-[14px] text-gray-900 outline-none focus:border-[#8B74EE] focus:ring-2 focus:ring-[#5B3FD9]/15 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100";
 export const select = `${input} !h-auto !font-normal pr-8`;
 
-export const naira = (value: number) => spaceNaira(`₦${Math.round(Number(value) || 0).toLocaleString("en-NG")}`);
+// The open branch's currency (₦ in Nigeria, K in Zambia: 15 Nov 2026).
+export const naira = (value: number) => branchMoney(value);
 export const count = (value: number) => Math.round(Number(value) || 0).toLocaleString("en-NG");
 export const pct = (value: number | null | undefined, digits = 1) => (value === null || value === undefined || !Number.isFinite(value) ? "—" : `${(Math.round(value * 10 ** digits) / 10 ** digits).toFixed(digits)}%`);
 export const rate = (part: number, whole: number) => (whole > 0 ? (part / whole) * 100 : null);

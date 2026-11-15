@@ -1,3 +1,4 @@
+import { currencySymbol, money as branchMoney } from "../../lib/money-privacy";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BarChart3, Camera, Check, CheckCircle2, ChevronLeft, ChevronRight, Clock, Copy, Gift, Image as ImageIcon, Mail, Pencil, Play, Plus, Search, Send, Settings, Star, ThumbsUp,
@@ -374,7 +375,7 @@ function IncentivesTab({ amounts, onToast, onSaved }: { amounts: ReviewAmounts; 
       <p className="m-0 mt-1 text-[13.5px] text-gray-600 dark:text-slate-400">Paid to the order's rep once per order, at the highest level approved, on the weekly report of the week it is approved. Reviews customers send through their link pay the rep too. Customers get no money.</p>
       <div className="mt-4 grid gap-3 sm:grid-cols-4">
         {([["written", "Written"], ["photo", "Photo"], ["video", "Video"], ["premium", "Premium video"]] as Array<[keyof ReviewAmounts, string]>).map(([key, label]) => (
-          <label key={key} className="block text-[13px] font-semibold text-gray-800 dark:text-slate-200">{label} (₦)
+          <label key={key} className="block text-[13px] font-semibold text-gray-800 dark:text-slate-200">{label} ({currencySymbol().trim()})
             <input type="number" min={0} disabled={!canEdit} value={form[key]} onChange={(event) => setForm({ ...form, [key]: Math.max(0, Math.round(Number(event.target.value) || 0)) })} className={`${input} mt-1.5`} />
           </label>
         ))}

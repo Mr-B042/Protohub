@@ -1,3 +1,4 @@
+import { currencySymbol, money as branchMoney } from "../../lib/money-privacy";
 import { Ban, CalendarDays, CalendarPlus, ChevronDown, Coins, Info, MailOpen, MapPin, Plus, RefreshCw, ShoppingCart, Tag, Trash2, Users } from "lucide-react";
 import type { EmCondition, EmConditionField, EmDesigner, EmDesignerProduct } from "../../lib/api";
 import { select } from "./em-ui";
@@ -168,7 +169,7 @@ function ValueInput({ field, op, value, options, onChange }: { field: EmConditio
   if (field.value === "none") return <span className="text-[12.5px] text-gray-500">—</span>;
   return (
     <span className="flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 dark:border-slate-700 dark:bg-slate-950">
-      {field.value === "money" && <span className="text-[13px] text-gray-500">₦</span>}
+      {field.value === "money" && <span className="text-[13px] text-gray-500">{currencySymbol().trim()}</span>}
       <input aria-label="Value" type="number" min={0} value={String(value)} onChange={(event) => onChange(Math.max(0, Number(event.target.value) || 0))}
         className="!min-h-0 w-full min-w-0 border-0 bg-transparent py-2 text-[13px] font-semibold text-gray-900 outline-none dark:text-slate-100" />
       {field.unit && field.value === "number" && <span className="text-[12.5px] text-gray-500">{field.unit}</span>}

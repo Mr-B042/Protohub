@@ -1,3 +1,4 @@
+import { currencySymbol } from "../../lib/money-privacy";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -645,7 +646,7 @@ export function FieldsTab({ fields, onChanged, onToast }: { fields: EmField[]; o
               {rows.slice((safe - 1) * size, safe * size).map((field) => (
                 <tr key={field.id} className="border-b border-gray-100 last:border-0 dark:border-slate-800 [&>td]:align-middle [&>td]:text-gray-800 dark:[&>td]:text-slate-200">
                   <td className="px-4 py-3"><input type="checkbox" aria-label={`Pick ${field.name}`} /></td>
-                  <td className="px-3 py-3"><span className="flex items-center gap-3"><span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-[#F5F2FE] text-[#5B3FD9] dark:bg-slate-800">{field.icon === "naira" ? <span className="text-[15px] font-black">₦</span> : <SegmentIcon name={field.icon} />}</span><span className="font-bold text-gray-900 dark:text-slate-50">{field.name}</span></span></td>
+                  <td className="px-3 py-3"><span className="flex items-center gap-3"><span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-[#F5F2FE] text-[#5B3FD9] dark:bg-slate-800">{field.icon === "naira" ? <span className="text-[15px] font-black">{currencySymbol().trim()}</span> : <SegmentIcon name={field.icon} />}</span><span className="font-bold text-gray-900 dark:text-slate-50">{field.name}</span></span></td>
                   <td className="px-3 py-3"><span className="inline-flex items-center gap-1 rounded-lg border border-[#C9BEF5] px-2.5 py-1 text-[12.5px] font-bold text-[#5B3FD9] dark:border-violet-500/40">{TYPE_LABEL[field.type] ?? field.type}<ChevronRight className="h-3 w-3 rotate-90" /></span></td>
                   <td className="max-w-[260px] px-3 py-3 text-[13px]">{field.description || "—"}{field.systemKey && <span className="block text-[11.5px] text-gray-500">Filled from orders</span>}</td>
                   <td className="px-3 py-3 text-center">{field.required ? <Pill tone="purple">Yes</Pill> : <Pill tone="slate">No</Pill>}</td>

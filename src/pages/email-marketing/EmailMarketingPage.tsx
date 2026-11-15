@@ -158,18 +158,22 @@ export default function EmailMarketingPage({ section, onNavigate, onToast, onOpe
 
 /** No design was sent for Settings; sending needs these two numbers, so they live here. */
 function SettingsTab({ onToast }: { onToast: (message: string) => void }) {
-  const [data, setData] = useState<{ dailyLimit: number; footerNote: string; sender: { ready: boolean; reason?: string; fromName: string; fromEmail: string } } | null>(null);
+  const [data, setData] = useState<{ dailyLimit: number; footerNote: string; fromName?: string; replyTo?: string; sender: { ready: boolean; reason?: string; fromName: string; fromEmail: string } } | null>(null);
   const [limit, setLimit] = useState("150");
   const [footer, setFooter] = useState("");
+  const [fromName, setFromName] = useState("");
+  const [replyTo, setReplyTo] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
-    emailMarketingApi.settings().then((result) => { setData(result); setLimit(String(result.dailyLimit)); setFooter(result.footerNote); }).catch((err) => setError((err as Error).message));
+    emailMarketingApi.settings().then((result) => { setData(result); setLimit(String(result.dailyLimit)); setFooter(result.footerNote); setFromName(result.fromName ?? ""); setReplyTo(result.replyTo ?? ""); setWhatsapp(result.whatsapp ?? ""); }).catch((err) => setError((err as Error).message));
   }, []);
   const save = async () => {
     setBusy(true);
     try {
-      await emailMarketingApi.saveSettings({ dailyLimit: Math.round(Number(limit)), footerNote: footer });
+      await emailMarketingApi.saveSettings({ dailyLimit: Math.round(Number(limit)), footerNote: footer, fromName, replyTo, whatsapp });
+      const fresh = await emailMarketingApi.settings(); setData(fresh);
       onToast("Settings saved.");
     } catch (err) {
       setError((err as Error).message || "Could not save.");
@@ -186,8 +190,19 @@ function SettingsTab({ onToast }: { onToast: (message: string) => void }) {
           <div>
             <p className="m-0 text-[13px] font-bold text-gray-900 dark:text-slate-50">Emails come from</p>
             <p className="m-0 text-[14px] text-gray-700 dark:text-slate-300">{data.sender.fromName || "—"} &lt;{data.sender.fromEmail || "no address"}&gt;</p>
-            <p className="m-0 text-[12px] text-gray-500">{data.sender.ready ? "Change it in Settings › Email." : data.sender.reason}</p>
+            <p className="m-0 text-[12px] text-gray-500">{data.sender.ready ? "The address and email account are shared by every branch (Settings › Email)." : data.sender.reason}</p>
           </div>
+          <label className="block text-[13px] font-bold text-gray-900 dark:text-slate-50">Sender name for this branch (optional)
+            <input value={fromName} onChange={(event) => setFromName(event.target.value.slice(0, 80))} className={`${input} mt-1.5`} placeholder="e.g. Protohub Zambia" />
+            <span className="mt-1 block text-[12px] font-normal text-gray-500">This branch's campaign, automation and order emails show this name. Empty = the account's own name.</span>
+          </label>
+          <label className="block text-[13px] font-bold text-gray-900 dark:text-slate-50">Customer WhatsApp number for this branch
+            <input inputMode="tel" value={whatsapp} onChange={(event) => setWhatsapp(event.target.value.slice(0, 30))} className={`${input} mt-1.5`} placeholder="e.g. +260 97 123 4567" />
+            <span className="mt-1 block text-[12px] font-normal text-gray-500">Used in "WhatsApp us on …" lines and the add-to-delivery buttons. Start with + and the country code (e.g. +260). Empty = emails say "reply to this email" instead.</span>
+          </label>
+          <label className="block text-[13px] font-bold text-gray-900 dark:text-slate-50">Reply-to for this branch (optional)
+            <input type="email" value={replyTo} onChange={(event) => setReplyTo(event.target.value.slice(0, 200))} className={`${input} mt-1.5`} placeholder="e.g. zambia@yourdomain.com" />
+          </label>
           <label className="block text-[13px] font-bold text-gray-900 dark:text-slate-50">Campaign emails a day (at most)
             <input type="number" min={1} max={100000} value={limit} onChange={(event) => setLimit(event.target.value)} className={`${input} mt-1.5 max-w-[200px]`} />
             <span className="mt-1 block text-[12px] font-normal text-gray-500">The rest wait for the next day. Your email service also has its own daily limit for order and staff emails, so keep room for those.</span>

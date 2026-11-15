@@ -1,3 +1,4 @@
+import { money as branchMoney } from "../../lib/money-privacy";
 import type { EmAudience, EmCampaign, EmCampaignInput, EmDelivery, EmDesigner, EmDesignerProduct, EmOptions, EmPreview } from "../../lib/api";
 import { buildTemplateDesign, type CampaignFields, type EmailDesign } from "../../lib/email-render";
 
@@ -58,7 +59,7 @@ export function defaultSendAt(nowMs = Date.now()) {
 
 export const priceText = (product: EmDesignerProduct | undefined) => {
   if (!product || product.priceMin === null) return "";
-  const n = (value: number) => `₦${Math.round(value).toLocaleString("en-NG")}`;
+  const n = (value: number) => branchMoney(value);
   return product.priceMax !== null && product.priceMax !== product.priceMin ? `${n(product.priceMin)} – ${n(product.priceMax)}` : n(product.priceMin);
 };
 

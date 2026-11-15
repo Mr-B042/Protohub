@@ -287,11 +287,14 @@ export function durationDays(nodes: WorkflowNode[]): number {
 // ── Sending hours (Lagos) ─────────────────────────────────────────────
 
 const LAGOS_MS = 3_600_000;
-const lagosParts = (ms: number) => { const d = new Date(ms + LAGOS_MS); return { day: d.getUTCDay(), hour: d.getUTCHours() }; };
+/** Hours ahead of UTC for a branch's timezone (Zambia sends in Lusaka time, 15 Nov 2026). No daylight saving in these countries. */
+export const TZ_OFFSET_MS: Record<string, number> = { "Africa/Lagos": 3_600_000, "Africa/Lusaka": 7_200_000, "Africa/Accra": 0, "Africa/Nairobi": 10_800_000 };
+export const offsetFor = (timezone?: string | null) => TZ_OFFSET_MS[timezone ?? ""] ?? LAGOS_MS;
+const lagosParts = (ms: number, offset = LAGOS_MS) => { const d = new Date(ms + offset); return { day: d.getUTCDay(), hour: d.getUTCHours() }; };
 
-export function inSendWindow(ms: number, window: SendWindow) {
+export function inSendWindow(ms: number, window: SendWindow, offset = LAGOS_MS) {
   if (!window.on) return true;
-  const { day, hour } = lagosParts(ms);
+  const { day, hour } = lagosParts(ms, offset);
   return window.days.includes(day) && hour >= window.from && hour < window.to;
 }
 
@@ -300,20 +303,20 @@ export function inSendWindow(ms: number, window: SendWindow) {
  * to the 7th, so a selling email due on the 8th–24th (Lagos) waits for the
  * 25th at 9am. Returns `ms` itself when it is already payday time.
  */
-export function nextPaydayMs(ms: number) {
-  const lagos = new Date(ms + LAGOS_MS);
+export function nextPaydayMs(ms: number, offset = LAGOS_MS) {
+  const lagos = new Date(ms + offset);
   const day = lagos.getUTCDate();
   if (day < 8 || day >= 25) return ms;
-  return Date.UTC(lagos.getUTCFullYear(), lagos.getUTCMonth(), 25, 9) - LAGOS_MS;
+  return Date.UTC(lagos.getUTCFullYear(), lagos.getUTCMonth(), 25, 9) - offset;
 }
 
 /** The next moment the window is open, from `ms` (itself when already open). */
-export function nextWindowStart(ms: number, window: SendWindow) {
-  if (inSendWindow(ms, window)) return ms;
-  const lagos = new Date(ms + LAGOS_MS);
+export function nextWindowStart(ms: number, window: SendWindow, offset = LAGOS_MS) {
+  if (inSendWindow(ms, window, offset)) return ms;
+  const lagos = new Date(ms + offset);
   for (let add = 0; add <= 7; add += 1) {
-    const start = Date.UTC(lagos.getUTCFullYear(), lagos.getUTCMonth(), lagos.getUTCDate() + add, window.from) - LAGOS_MS;
-    if (start >= ms && inSendWindow(start, window)) return start;
+    const start = Date.UTC(lagos.getUTCFullYear(), lagos.getUTCMonth(), lagos.getUTCDate() + add, window.from) - offset;
+    if (start >= ms && inSendWindow(start, window, offset)) return start;
   }
   return ms + DAY_MS;
 }

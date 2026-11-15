@@ -161,3 +161,20 @@ test("personal note is signed by the person it comes from", async () => {
   const note = r.asPersonalNote(r.buildLetterDesign(f, { title: "T", intro: "I", tips: ["a"], close: "C" }, "pod"), "Bright from ProTools");
   assert.ok(note.blocks.some((b) => b.type === "text" && b.text === "Warmly,\nBright, ProTools"));
 });
+
+test("branch without a store: store blocks and store links come out; WhatsApp follows the branch", async () => {
+  const r = await import("./email-render.js");
+  const design = { blocks: [
+    { id: "1", type: "storePicks", mode: "value", count: 4, title: "Great buys", buttonText: "Shop" },
+    { id: "2", type: "button", text: "Visit Our Store", link: "https://protoolshardwareventures.com.ng/", style: "primary", size: "medium", align: "center", color: "#000" },
+    { id: "3", type: "button", text: "Order now", link: "https://protohub-zeta.vercel.app/#/order-form/embed?product=x", style: "primary", size: "medium", align: "center", color: "#000" },
+    { id: "4", type: "text", text: "Hello", size: 14, align: "left", color: "#000", bold: false }
+  ] } as any;
+  const out = r.withoutStore(design);
+  assert.deepEqual(out.blocks.map((b: any) => b.id), ["3", "4"]);
+  assert.equal(r.needsStore(design), true);
+  assert.equal(r.needsStore(out), false);
+  assert.equal(r.waDigits(undefined), "2347083515972");
+  assert.equal(r.waDigits("+260 97 123 4567"), "260971234567");
+  assert.equal(r.waDigits("0803 000 0000"), "2348030000000");
+});

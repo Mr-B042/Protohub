@@ -1,3 +1,4 @@
+import { moneyText } from "./money-text.js";
 /**
  * Coupons & Offers (Bright's design 54, 8 Nov 2026): when an offer applies to
  * an order and how much it takes off. Pure; tested in email-offers-rules.test.ts.
@@ -41,10 +42,12 @@ export function discountFor(offer: Pick<Offer, "benefit" | "value">, amount: num
   return Math.max(0, Math.min(amount, Math.round(raw)));
 }
 
-export const benefitText = (offer: Pick<Offer, "benefit" | "value">) => (offer.benefit === "percent" ? `${offer.value}% OFF` : `₦${Math.round(offer.value).toLocaleString("en-NG")} OFF`);
+export const benefitText = (offer: Pick<Offer, "benefit" | "value">, currency = "NGN") => (offer.benefit === "percent" ? `${offer.value}% OFF` : `${moneyText(offer.value, currency)} OFF`);
 
 export type OfferCheck = {
   productId: string | null;
+  /** The branch's currency for the message (default naira). */
+  currency?: string;
   /** The order before the discount (main package and add-ons). */
   amount: number;
   nowMs: number;
@@ -61,7 +64,7 @@ export function offerProblem(offer: Offer, check: OfferCheck): string | null {
   if (state === "scheduled") return "The offer has not started yet.";
   if (state !== "live") return "The offer is not running.";
   if (offer.productIds.length && (!check.productId || !offer.productIds.includes(check.productId))) return "The offer is for other products.";
-  if (offer.minOrder > 0 && check.amount < offer.minOrder) return `The offer needs an order of ₦${Math.round(offer.minOrder).toLocaleString("en-NG")} or more.`;
+  if (offer.minOrder > 0 && check.amount < offer.minOrder) return `The offer needs an order of ${moneyText(offer.minOrder, check.currency ?? "NGN")} or more.`;
   if (check.usedBySend) return "This email's offer was already used.";
   if (offer.usageLimit !== null && check.usedTotal >= offer.usageLimit) return "The offer has been used up.";
   if (check.usedByCustomer >= offer.perCustomerLimit) return "The customer already used this offer.";

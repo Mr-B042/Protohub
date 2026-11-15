@@ -1,4 +1,7 @@
 import { supabase } from "./supabase.js";
+import { branchLocale } from "./branch-locale.js";
+import { moneyText, roundFriendly } from "./money-text.js";
+import { rateFor } from "./currency-rates.js";
 import { logger } from "./logger.js";
 import { fetchAllRowsOrThrow, selectByIdBatches } from "./query-limits.js";
 import { DAY_MS, lagosDay, phoneKey } from "./email-marketing-rules.js";
@@ -19,7 +22,7 @@ import {
 const change = (now: number, before: number) => (before > 0 ? Math.round(((now - before) / before) * 1000) / 10 : null);
 const pct = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : null);
 const ANY_AMOUNT = Number.MAX_SAFE_INTEGER;
-const naira = (value: number) => `₦${Math.round(value).toLocaleString("en-NG")}`;
+const naira = (value: number, currency = "NGN") => moneyText(value, currency);
 
 /**
  * orders.delivered_date is a calendar day: the start of that day in Lagos.
@@ -62,11 +65,13 @@ async function ensureLoyaltyDefaults(orgId: string, branchId: string) {
     { org_id: orgId, branch_id: branchId, type: "points", name: "Points Rewards", description: "Earn points on every delivered order.", status: "draft", config: { rate: 1, productIds: [] } }
   ]);
   if (programError) logger.warn("loyalty: setting up the starter programs failed", { branchId, error: programError.message });
-  const { error: rewardError } = await supabase.from("loyalty_rewards").insert([
-    { org_id: orgId, branch_id: branchId, name: "₦500 off", points: 50, value: 500 },
-    { org_id: orgId, branch_id: branchId, name: "₦1,000 off", points: 100, value: 1_000 },
-    { org_id: orgId, branch_id: branchId, name: "₦2,500 off", points: 250, value: 2_500 }
-  ]);
+  // Starter rewards in the branch's currency: naira amounts converted at the booking rate (Zambia: ₦65.80 = K1).
+  const { currency } = await branchLocale(branchId);
+  const rate = currency === "NGN" ? null : await rateFor(orgId, "NGN", currency).catch(() => null);
+  const local = (ngn: number) => (rate ? roundFriendly(ngn / rate.fromPerTo) : ngn);
+  const { error: rewardError } = await supabase.from("loyalty_rewards").insert([500, 1_000, 2_500].map((ngn, i) => ({
+    org_id: orgId, branch_id: branchId, name: `${moneyText(local(ngn), currency)} off`, points: [50, 100, 250][i], value: local(ngn)
+  })));
   if (rewardError) logger.warn("loyalty: setting up the starter rewards failed", { branchId, error: rewardError.message });
 }
 
@@ -168,7 +173,8 @@ async function buildWorld(orgId: string, branchId: string) {
   }
   return {
     nowMs, orders, members, programs, points, tier, levels, rewards, pointsLive, tierLive,
-    minOrder: Number(settingsResult.data?.min_order) || 0, earnings, redemptions, adjustments
+    minOrder: Number(settingsResult.data?.min_order) || 0, earnings, redemptions, adjustments,
+    currency: (await branchLocale(branchId)).currency
   };
 }
 type World = Awaited<ReturnType<typeof buildWorld>>;
@@ -258,7 +264,7 @@ export async function loyaltyPage(orgId: string, branchId: string, range: Range)
       };
     }),
     levels: world.levels.map((level, i) => ({
-      ...level, members: members.filter((member) => member.levelIndex === i).length, spendText: spendText(world.levels, i), lines: levelLines(level, world.points?.rate ?? 1)
+      ...level, members: members.filter((member) => member.levelIndex === i).length, spendText: spendText(world.levels, i, world.currency), lines: levelLines(level, world.points?.rate ?? 1, world.currency)
     })),
     impact: {
       revenue: { value: repeatRevenue((ms) => inRange(ms, range)), change: change(repeatRevenue((ms) => inRange(ms, range)), repeatRevenue((ms) => inRange(ms, before))) },
@@ -330,7 +336,7 @@ function ledgerRows(world: World): LedgerRow[] {
     const label = row.kind === "reward" ? `reward for ${row.points} points${rewardName.get(row.reward_id) && !/^₦/.test(rewardName.get(row.reward_id)!) ? ` (${rewardName.get(row.reward_id)})` : ""}` : `${levelName(row.level_key) ?? "Level"} ${row.kind === "welcome" ? "welcome" : "monthly"} voucher`;
     rows.push({
       id: `r:${row.order_id}`, at: row.created_at, kind: "used", key: row.phone_key, points: Number(row.points) > 0 ? -Number(row.points) : 0, discount: Number(row.discount) || 0, orderId: String(row.order_id),
-      note: back ? `${label}. Given back: the order ${order ? `is ${order.status.toLowerCase()}` : "was deleted"}` : `${naira(Number(row.discount) || 0)} off: ${label}`, counted: !back
+      note: back ? `${label}. Given back: the order ${order ? `is ${order.status.toLowerCase()}` : "was deleted"}` : `${naira(Number(row.discount) || 0, world.currency)} off: ${label}`, counted: !back
     });
   }
   for (const row of world.adjustments) {
@@ -617,7 +623,7 @@ export async function applyLoyalty(input: { orgId: string; productId: string | n
     if (!best) return null;
     return {
       orgId: input.orgId, branchId, key, kind: best.kind, rewardId: best.rewardId, programId: best.kind === "reward" ? state.points?.id ?? null : state.tier?.id ?? null,
-      levelKey: best.levelKey, month: best.month, points: best.points, discount: best.discount, note: voucherNote(best)
+      levelKey: best.levelKey, month: best.month, points: best.points, discount: best.discount, note: voucherNote(best, (await branchLocale(branchId)).currency)
     };
   } catch (error) {
     logger.warn("loyalty check failed: order saved at full price", { error: (error as Error).message });
@@ -645,7 +651,7 @@ export async function loyaltyTagsFor(orgId: string, branchId: string, phone: unk
     if (!key) return null;
     const state = await memberStateFor(orgId, branchId, key, Date.now());
     if (!state) return null;
-    return loyaltyTagText({ balance: state.balance, levelName: state.levels[state.levelIndex]?.name ?? null, voucher: state.best, next: nextLevel(state.spend, state.levels) });
+    return loyaltyTagText({ balance: state.balance, levelName: state.levels[state.levelIndex]?.name ?? null, voucher: state.best, next: nextLevel(state.spend, state.levels) }, (await branchLocale(branchId)).currency);
   } catch (error) {
     logger.warn("loyalty: email tags failed", { error: (error as Error).message });
     return null;
