@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { BookOpen, CheckCircle2, ExternalLink, Globe, Infinity as InfinityIcon, Play, Plus, RefreshCw, Server, Trash2, TriangleAlert, X } from "lucide-react";
 import { ConnectModal, ConnectionsSection } from "./MetaConnections";
 import TikTokConnections from "./TikTokConnections";
+import SharedAdAccounts from "./SharedAdAccounts";
 import { trackingHubApi, type HubDataSource, type HubPlatform } from "../../lib/api";
 import {
   LoadState,
@@ -72,6 +73,8 @@ export default function DataSourcesTab({ tabBar, onToast }: { tabBar: ReactNode;
       <ConnectionsSection connections={data.connections} onToast={onToast} onChanged={reload} onConnect={() => setConnecting(true)} onAddManually={() => setEditing("new")} onOpenPixel={(id) => { setSelected(id); setClosed(false); }} />
 
       <TikTokConnections onToast={onToast} />
+
+      <SharedAdAccounts onToast={onToast} />
 
       <SplitLayout
         list={

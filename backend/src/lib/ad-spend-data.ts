@@ -8,6 +8,7 @@ import { TIKTOK_PREFIX, linkEvidence, nameKey, tiktokOrderIds, type AccountInfo,
 import { tiktokAdLifetime, tiktokAdSpend, tiktokCampaignStarts } from "./tiktok-ads.js";
 import { pixelAdAccounts, adLifetime, adLinks, campaignsByIds, deliveringCampaigns } from "./meta-graph.js";
 import { autoProducts, pageKey, pageProducts } from "./ad-auto-product.js";
+import { branchShareView } from "./ad-account-shares.js";
 import { breakEvenCpa, sinceStart, type LifetimeRow } from "./ad-since-start.js";
 import { mappingIndex } from "./ad-spend.js";
 
@@ -16,13 +17,29 @@ import { mappingIndex } from "./ad-spend.js";
 
 const PAGE = 1000;
 
-async function insightsBetween(orgId: string, branchId: string, from: string, to: string): Promise<SpendInsight[]> {
+async function insightsBetween(orgId: string, branchId: string, from: string, to: string, ignoreShares = false): Promise<SpendInsight[]> {
+  // Shared ad accounts (Bright, 15 Nov 2026): each campaign counts in ONE branch.
+  // Booked expenses ignore sharing: they stay in the home branch in its currency.
+  const share = ignoreShares ? null : await branchShareView(orgId, branchId);
+  const own = await insightRows(orgId, branchId, from, to);
+  if (!share) return own;
+  const rows = own.filter((row) => !share.claimedAway.has(row.campaign_id));
+  if (share.claimedHere.length) {
+    for (const { homeBranchId } of share.sharedIn.filter((s, i, all) => all.findIndex((x) => x.homeBranchId === s.homeBranchId) === i)) {
+      for (let i = 0; i < share.claimedHere.length; i += 200) rows.push(...await insightRows(orgId, homeBranchId, from, to, share.claimedHere.slice(i, i + 200)));
+    }
+  }
+  return rows;
+}
+
+async function insightRows(orgId: string, branchId: string, from: string, to: string, campaignIds?: string[]): Promise<SpendInsight[]> {
   const rows: SpendInsight[] = [];
   for (let page = 0; page < 60; page += 1) {
-    const { data, error } = await supabase.from("tracking_meta_ad_insights")
+    let query = supabase.from("tracking_meta_ad_insights")
       .select("id, day, spend, ad_account_id, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name, link_clicks, impressions, purchases, landing_page_views")
-      .eq("org_id", orgId).eq("branch_id", branchId).gte("day", from).lte("day", to)
-      .order("id").range(page * PAGE, page * PAGE + PAGE - 1);
+      .eq("org_id", orgId).eq("branch_id", branchId).gte("day", from).lte("day", to);
+    if (campaignIds) query = query.in("campaign_id", campaignIds);
+    const { data, error } = await query.order("id").range(page * PAGE, page * PAGE + PAGE - 1);
     if (error) throw error;
     rows.push(...((data ?? []) as any[]).map((row) => ({
       ...row, platform: "meta" as const, day: String(row.day).slice(0, 10), spend: Number(row.spend) || 0,
@@ -112,7 +129,7 @@ export async function loadTikTokConnections(orgId: string, branchId: string) {
   return (data ?? []) as any[];
 }
 
-export async function loadAdSpendInputs(orgId: string, branchId: string, from: string, to: string) {
+export async function loadAdSpendInputs(orgId: string, branchId: string, from: string, to: string, opts: { ignoreShares?: boolean } = {}) {
   const [tiktokInsights, tiktokConnections] = await Promise.all([tiktokInsightsBetween(orgId, branchId, from, to), loadTikTokConnections(orgId, branchId)]);
   // TikTok campaign name -> id (null when two campaigns share a name: then no match).
   const campaignByName = new Map<string, string | null>();
@@ -123,7 +140,7 @@ export async function loadAdSpendInputs(orgId: string, branchId: string, from: s
     campaignByName.set(key, seen === undefined || seen === row.campaign_id ? row.campaign_id : null);
   }
   const [basics, metaInsights, orders, mappingsRes, stateRes, daysRes, journey] = await Promise.all([
-    loadBasics(orgId, branchId), insightsBetween(orgId, branchId, from, to), ordersBetween(orgId, branchId, from, to, campaignByName),
+    loadBasics(orgId, branchId), insightsBetween(orgId, branchId, from, to, opts.ignoreShares), ordersBetween(orgId, branchId, from, to, campaignByName),
     supabase.from("tracking_ad_spend_mappings").select("level, meta_id, ad_account_id, label, splits, created_by_name, updated_at").eq("org_id", orgId).eq("branch_id", branchId),
     supabase.from("tracking_ad_spend_state").select("*").eq("org_id", orgId).eq("branch_id", branchId).maybeSingle(),
     supabase.from("tracking_ad_spend_days").select("day").eq("org_id", orgId).eq("branch_id", branchId).gte("day", from).lte("day", to),
@@ -158,7 +175,7 @@ export async function loadAdSpendInputs(orgId: string, branchId: string, from: s
     tiktokConnections, connected,
     basics, insights, orders, mappings: (mappingsRes.data ?? []) as Array<SpendMapping & { ad_account_id: string | null; label: string; created_by_name: string | null; updated_at: string }>,
     state: stateRes.data as any, finalDays: new Set((daysRes.data ?? []).map((row: any) => String(row.day).slice(0, 10))),
-    evidence, accounts: addTikTokAccounts(accountsOf(basics), tiktokConnections)
+    evidence, accounts: addTikTokAccounts(await withSharedAccounts(orgId, branchId, basics, opts.ignoreShares), tiktokConnections)
   };
 }
 
@@ -239,6 +256,19 @@ export async function syncAdSpend(orgId: string, branchId: string, opts: { from:
   const { syncAdSpendExpenses } = await import("./ad-spend-expenses.js");
   await syncAdSpendExpenses(orgId, branchId, { from: opts.from, to: opts.to }).catch((err: any) => console.warn("[ad-spend] expense rows failed:", err?.message ?? err));
   return { ok, accounts: report.length, failed: failed.map((row) => row.source), message };
+}
+
+/** Account names for accounts shared into this branch from their home branch. */
+async function withSharedAccounts(orgId: string, branchId: string, basics: Basics, ignore?: boolean) {
+  const own = accountsOf(basics);
+  if (ignore) return own;
+  const share = await branchShareView(orgId, branchId);
+  if (!share?.sharedIn.length) return own;
+  for (const home of new Set(share.sharedIn.map((s) => s.homeBranchId))) {
+    const ids = new Set(share.sharedIn.filter((s) => s.homeBranchId === home).map((s) => s.accountId));
+    for (const [id, info] of accountsOf(await loadBasics(orgId, home))) if (ids.has(String(id).replace(/^act_/, "")) && !own.has(id)) own.set(id, info);
+  }
+  return own;
 }
 
 /** Each ad's landing page, read once per ad (re-read after 14 days), at most 500 a run. */
@@ -352,7 +382,19 @@ export async function loadSinceStart(orgId: string, branchId: string, today: str
 
 /** Since Start plus the inputs it was built from (the no-order alerts need the orders and daily spend). */
 export async function sinceStartCore(orgId: string, branchId: string, today: string) {
-  const { data: lifetimeRows, error } = await supabase.from("tracking_ad_lifetime").select("*").eq("org_id", orgId).eq("branch_id", branchId).limit(20000);
+  const { data: ownLifetime, error } = await supabase.from("tracking_ad_lifetime").select("*").eq("org_id", orgId).eq("branch_id", branchId).limit(20000);
+  // Shared ad accounts: drop campaigns another branch claims, add the ones claimed here.
+  const share = await branchShareView(orgId, branchId);
+  let lifetimeRows = (ownLifetime ?? []) as any[];
+  if (share) {
+    lifetimeRows = lifetimeRows.filter((row) => !share.claimedAway.has(String(row.campaign_id)));
+    for (const home of new Set(share.sharedIn.map((s) => s.homeBranchId))) {
+      for (let i = 0; i < share.claimedHere.length; i += 200) {
+        const { data } = await supabase.from("tracking_ad_lifetime").select("*").eq("org_id", orgId).eq("branch_id", home).in("campaign_id", share.claimedHere.slice(i, i + 200));
+        lifetimeRows.push(...((data ?? []) as any[]));
+      }
+    }
+  }
   if (error) throw error;
   const lifetime = ((lifetimeRows ?? []) as any[]).map((row) => ({ ...row, campaign_start: row.campaign_start ? String(row.campaign_start).slice(0, 10) : null, first_day: row.first_day ? String(row.first_day).slice(0, 10) : null, last_day: row.last_day ? String(row.last_day).slice(0, 10) : null, spend: Number(row.spend) || 0, platform_purchases: Number(row.platform_purchases) || 0, impressions: Number(row.impressions) || 0, link_clicks: Number(row.link_clicks) || 0, video_hook: Number(row.video_hook) || 0, video_full: Number(row.video_full) || 0 })) as LifetimeRow[];
   // Orders from each campaign's start, but at most 180 days back.
@@ -383,7 +425,12 @@ export async function sinceStartCore(orgId: string, branchId: string, today: str
   // Accounts Meta did not answer for, with its reason (was silent before 15 Nov 2026: "40 could not be checked").
   const liveFailures: Array<{ accountId: string; name: string; message: string }> = [];
   const lifetimeAccounts = new Set(lifetime.filter((row) => row.platform === "meta").map((row) => String(row.account_id ?? "").replace(/^act_/, "")));
-  await Promise.all(refreshTargets(data.basics).filter((target) => lifetimeAccounts.has(String(target.account).replace(/^act_/, ""))).map(async (target) => {
+  const liveTargets = refreshTargets(data.basics);
+  if (share) for (const home of new Set(share.sharedIn.map((s) => s.homeBranchId))) {
+    const shared = new Set(share.sharedIn.filter((s) => s.homeBranchId === home).map((s) => s.accountId));
+    liveTargets.push(...refreshTargets(await loadBasics(orgId, home)).filter((t) => shared.has(String(t.account).replace(/^act_/, ""))));
+  }
+  await Promise.all(liveTargets.filter((target) => lifetimeAccounts.has(String(target.account).replace(/^act_/, ""))).map(async (target) => {
     const result = await deliveringCampaigns(target.account, target.token).catch((err: any) => ({ ok: false as const, message: String(err?.message ?? "no answer") }));
     if (!result.ok) {
       const accountId = String(target.account).replace(/^act_/, "");
@@ -416,7 +463,8 @@ export async function runAdSpendAutoSync(now = new Date()) {
   for (const result of [accounts, sources, states, tiktok]) if (result.error) throw result.error;
   const off = new Set((states.data ?? []).filter((row: any) => row.auto_sync === false).map((row: any) => `${row.org_id}|${row.branch_id}`));
   const branches = new Map<string, { orgId: string; branchId: string }>();
-  for (const row of [...(accounts.data ?? []), ...(tiktok.data ?? []), ...(sources.data ?? []).filter((item: any) => (item.ad_account_ids ?? []).length)] as any[]) {
+  const shared = await supabase.from("tracking_ad_account_shares").select("org_id, branch_id");
+  for (const row of [...(accounts.data ?? []), ...(tiktok.data ?? []), ...(shared.data ?? []), ...(sources.data ?? []).filter((item: any) => (item.ad_account_ids ?? []).length)] as any[]) {
     const key = `${row.org_id}|${row.branch_id}`;
     if (!off.has(key)) branches.set(key, { orgId: row.org_id, branchId: row.branch_id });
   }
