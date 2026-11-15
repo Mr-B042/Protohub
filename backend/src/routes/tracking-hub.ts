@@ -92,6 +92,19 @@ router.get("/overview", async (req, res) => {
 
 // ============================================================ DATA SOURCES
 
+/** Meta Businesses connected in other branches and not here yet (Bright, 15 Nov 2026: "Use in Zambia too"). */
+async function otherBranchConnections(orgId: string, branchId: string, here: any[]) {
+  const [{ data: conns }, { data: branches }] = await Promise.all([
+    supabase.from("tracking_meta_connections").select("id, name, business_id, branch_id").eq("org_id", orgId).neq("branch_id", branchId).not("access_token", "is", null),
+    supabase.from("branches").select("id, name").eq("org_id", orgId)
+  ]);
+  const have = new Set(here.map((c: any) => String(c.business_id)));
+  const branchName = new Map(((branches ?? []) as any[]).map((b) => [b.id, b.name]));
+  const seen = new Set<string>();
+  return ((conns ?? []) as any[]).filter((c) => !have.has(String(c.business_id)) && !seen.has(String(c.business_id)) && seen.add(String(c.business_id)))
+    .map((c) => ({ id: c.id, name: c.name, businessId: c.business_id, branchName: branchName.get(c.branch_id) ?? "another branch" }));
+}
+
 const PLATFORMS = ["meta", "tiktok", "google", "snapchat", "other"] as const;
 const presentProfile = (row: any) => ({ id: row.id, name: row.name, dataSourceId: row.data_source_id, defaultWebsiteId: row.default_website_id, strategy: row.strategy, adAccountLabel: row.ad_account_label, status: row.status });
 
@@ -102,6 +115,8 @@ router.get("/data-sources", async (req, res) => {
     const monthAgo = new Date(Date.now() - 30 * 86_400_000).toISOString();
     const live = rows.filter((row: any) => row.active);
     const disconnected = live.filter((row: any) => row.health === "no_token" || row.health === "disconnected" || row.health === "error").length;
+    const { data: shareRows } = await supabase.from("tracking_ad_account_shares").select("account_id").eq("org_id", req.user!.orgId).eq("branch_id", branchOf(req));
+    const sharedHere = new Set(((shareRows ?? []) as any[]).map((r) => String(r.account_id)));
     const healthy = live.filter((row: any) => row.health === "healthy").length;
     res.json({
       kpis: {
@@ -112,7 +127,8 @@ router.get("/data-sources", async (req, res) => {
       },
       platformCounts: Object.fromEntries(PLATFORMS.map((platform) => [platform, rows.filter((row: any) => row.platform === platform).length])),
       dataSources: rows,
-      connections: assessment.basics.connections.map((connection: any) => presentConnection(connection, rows, assessment.basics.adAccounts)),
+      connections: assessment.basics.connections.map((connection: any) => presentConnection(connection, rows, assessment.basics.adAccounts, sharedHere)),
+      otherBranchConnections: await otherBranchConnections(req.user!.orgId, branchOf(req), assessment.basics.connections),
       profiles: assessment.basics.profiles.map(presentProfile),
       websites: assessment.basics.websites.map((site: any) => ({ id: site.id, domain: site.domain })),
       issues: assessment.issues.filter((issue) => issue.tab === "sources")
@@ -273,7 +289,7 @@ router.post("/data-sources/:id/refresh", async (req, res) => {
 // (Bright, 2 Oct 2026) Connect a Meta Business once; Sync Assets finds its
 // Pixels and ad accounts; each is switched on or off here.
 
-function presentConnection(connection: any, sourceRows: any[], adAccounts: any[]) {
+function presentConnection(connection: any, sourceRows: any[], adAccounts: any[], sharedHere: Set<string> = new Set()) {
   const pixels = sourceRows.filter((row: any) => row.connectionId === connection.id);
   return {
     id: connection.id, name: connection.name, businessId: connection.business_id, systemUserName: connection.system_user_name,
@@ -283,7 +299,7 @@ function presentConnection(connection: any, sourceRows: any[], adAccounts: any[]
     lastSyncAt: connection.last_sync_at, lastSyncOk: connection.last_sync_ok, lastSyncMessage: connection.last_sync_message,
     status: !connection.access_token ? "disconnected" : connection.last_check_ok === false ? "error" : connection.last_sync_ok === false ? "sync_failed" : "connected",
     pixels: pixels.map((row: any) => ({ sourceId: row.id, pixelId: row.pixelId, name: row.name, active: row.active, hasAccess: row.hasAccess, lastFiredAt: row.metaLastFiredAt, health: row.health, ownToken: row.ownToken })),
-    adAccounts: adAccounts.filter((row: any) => row.connection_id === connection.id).map((row: any) => ({ id: row.id, accountId: row.account_id, name: row.name, currency: row.currency, active: row.active, hasAccess: row.has_access, status: row.account_status }))
+    adAccounts: adAccounts.filter((row: any) => row.connection_id === connection.id).map((row: any) => ({ id: row.id, accountId: row.account_id, name: row.name, currency: row.currency, active: row.active || sharedHere.has(String(row.account_id)), shared: !row.active && sharedHere.has(String(row.account_id)), hasAccess: row.has_access, status: row.account_status }))
   };
 }
 
@@ -308,6 +324,15 @@ async function syncConnection(orgId: string, branchId: string, connection: any) 
   // First sync switches on everything the token can use; later syncs add new
   // finds switched off, for the Owner to switch on.
   const firstSync = !connection.last_sync_at;
+  // Already used by another branch (Bright, 15 Nov 2026: one business connected
+  // in Nigeria AND Zambia): an ad account becomes a share here, never a second
+  // read; a Pixel arrives switched off, for the Owner to choose.
+  const [elsewhereAccounts, elsewherePixels] = await Promise.all([
+    supabase.from("tracking_meta_ad_accounts").select("account_id, branch_id").eq("org_id", orgId).eq("active", true).neq("branch_id", branchId),
+    supabase.from("tracking_data_sources").select("pixel_id").eq("org_id", orgId).eq("active", true).neq("branch_id", branchId)
+  ]);
+  const accountHome = new Map(((elsewhereAccounts.data ?? []) as any[]).map((row) => [String(row.account_id), String(row.branch_id)]));
+  const pixelElsewhere = new Set(((elsewherePixels.data ?? []) as any[]).map((row) => String(row.pixel_id)));
   let newPixels = 0;
   let newAccounts = 0;
   if (pixels.ok) {
@@ -322,7 +347,7 @@ async function syncConnection(orgId: string, branchId: string, connection: any) 
         const { error } = await supabase.from("tracking_data_sources").insert({
           org_id: orgId, branch_id: branchId, connection_id: connection.id, name: pixel.name || `Pixel ${pixel.id}`, platform: "meta", pixel_id: pixel.id,
           business_name: connection.name, dataset_name: pixel.name || null, has_access: pixel.hasAccess, meta_last_fired_at: pixel.lastFiredAt,
-          active: firstSync && pixel.hasAccess, status: "production", currency: connection.currency, timezone: connection.timezone
+          active: firstSync && pixel.hasAccess && !pixelElsewhere.has(String(pixel.id)), status: "production", currency: connection.currency, timezone: connection.timezone
         });
         if (error) throw error;
       }
@@ -341,8 +366,13 @@ async function syncConnection(orgId: string, branchId: string, connection: any) 
       if (found) await supabase.from("tracking_meta_ad_accounts").update(fields).eq("id", found.id);
       else {
         newAccounts += 1;
-        const { error } = await supabase.from("tracking_meta_ad_accounts").insert({ org_id: orgId, branch_id: branchId, connection_id: connection.id, account_id: account.accountId, active: firstSync && account.hasAccess, ...fields });
+        const home = accountHome.get(String(account.accountId));
+        const { error } = await supabase.from("tracking_meta_ad_accounts").insert({ org_id: orgId, branch_id: branchId, connection_id: connection.id, account_id: account.accountId, active: firstSync && account.hasAccess && !home, ...fields });
         if (error) throw error;
+        if (home && firstSync && account.hasAccess) {
+          await supabase.from("tracking_ad_account_shares").upsert({ org_id: orgId, branch_id: branchId, account_id: String(account.accountId), home_branch_id: home }, { onConflict: "org_id,branch_id,account_id" });
+          forgetShares();
+        }
       }
     }
   }
@@ -435,6 +465,27 @@ router.post("/connections", async (req, res) => {
     try { sync = await syncConnection(orgId, branchId, connection); } catch (err: any) { syncError = err?.message ?? "Could not read the business's assets."; }
     res.status(201).json({ id: connection.id, name: businessName, sync, syncError });
   } catch (error: any) { fail(res, error, "Could not connect the business."); }
+});
+
+/** Copy a business connected in another branch to this one; the token never leaves the server. */
+router.post("/connections/copy/:id", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId, branchId = branchOf(req);
+    const { data: from } = await supabase.from("tracking_meta_connections").select("*").eq("org_id", orgId).eq("id", String(req.params.id)).neq("branch_id", branchId).maybeSingle();
+    if (!from) throw httpError(404, "That business connection was not found in another branch.");
+    const { data: branchRow } = await supabase.from("branches").select("currency, timezone").eq("id", branchId).maybeSingle();
+    const { data: connection, error } = await supabase.from("tracking_meta_connections").insert({
+      org_id: orgId, branch_id: branchId, name: (from as any).name, business_id: (from as any).business_id, system_user_id: (from as any).system_user_id, system_user_name: (from as any).system_user_name,
+      access_token: (from as any).access_token, currency: (branchRow as any)?.currency ?? (from as any).currency, timezone: (branchRow as any)?.timezone ?? (from as any).timezone,
+      last_check_at: (from as any).last_check_at, last_check_ok: (from as any).last_check_ok, last_check_message: (from as any).last_check_message, created_by: req.user!.id
+    }).select("*").single();
+    if (error) throw error.code === "23505" ? httpError(409, "This Meta Business is already connected in this branch.") : error;
+    await hubAudit(orgId, branchId, actorOf(req), "connection_added", { type: "connection", id: connection.id, label: `${(from as any).name} (copied)` });
+    let sync: Awaited<ReturnType<typeof syncConnection>> | null = null, syncError: string | null = null;
+    try { sync = await syncConnection(orgId, branchId, connection); } catch (err: any) { syncError = err?.message ?? "Could not read the business's assets."; }
+    await rebookMonth(orgId, [branchId, (from as any).branch_id]);
+    res.status(201).json({ id: connection.id, name: (from as any).name, sync, syncError });
+  } catch (error: any) { fail(res, error, "Could not use this business here."); }
 });
 
 router.put("/connections/:id", async (req, res) => {
@@ -534,6 +585,22 @@ router.put("/ad-accounts/:id/active", async (req, res) => {
   const parsed = z.object({ active: z.boolean() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "On or off?" }); return; }
   try {
+    // Used by another branch already: share it (read once there) instead of reading it twice.
+    const { data: row } = await supabase.from("tracking_meta_ad_accounts").select("account_id, name").eq("org_id", req.user!.orgId).eq("branch_id", branchOf(req)).eq("id", String(req.params.id)).maybeSingle();
+    if (row) {
+      const accountId = String((row as any).account_id);
+      const { data: home } = await supabase.from("tracking_meta_ad_accounts").select("branch_id").eq("org_id", req.user!.orgId).eq("account_id", accountId).eq("active", true).neq("branch_id", branchOf(req)).limit(1).maybeSingle();
+      const { data: shared } = await supabase.from("tracking_ad_account_shares").select("account_id").eq("org_id", req.user!.orgId).eq("branch_id", branchOf(req)).eq("account_id", accountId).maybeSingle();
+      if (home || shared) {
+        if (parsed.data.active && home) await supabase.from("tracking_ad_account_shares").upsert({ org_id: req.user!.orgId, branch_id: branchOf(req), account_id: accountId, home_branch_id: (home as any).branch_id, created_by: req.user!.id }, { onConflict: "org_id,branch_id,account_id" });
+        if (!parsed.data.active) await supabase.from("tracking_ad_account_shares").delete().eq("org_id", req.user!.orgId).eq("branch_id", branchOf(req)).eq("account_id", accountId);
+        forgetShares();
+        await rebookMonth(req.user!.orgId, [branchOf(req), ...(home ? [(home as any).branch_id] : [])]);
+        await hubAudit(req.user!.orgId, branchOf(req), actorOf(req), parsed.data.active ? "ad_account_on" : "ad_account_off", { type: "ad_account", id: accountId, label: `${(row as any).name || `act_${accountId}`} (shared)` });
+        res.json({ ok: true, shared: parsed.data.active });
+        return;
+      }
+    }
     const { data, error } = await supabase.from("tracking_meta_ad_accounts").update({ active: parsed.data.active }).eq("org_id", req.user!.orgId).eq("branch_id", branchOf(req)).eq("id", String(req.params.id)).select("name, account_id").maybeSingle();
     if (error) throw error;
     if (!data) throw httpError(404, "Ad account not found.");

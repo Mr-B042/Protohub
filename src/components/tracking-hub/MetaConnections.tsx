@@ -114,6 +114,7 @@ function ConnectionCard({ connection, onToast, onChanged, onAddManually, onOpenP
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13.5px] font-semibold text-gray-900 dark:text-slate-100">{account.name || "Ad account"}</span>
                   <span className="block text-[11.5px] text-gray-500">act_{account.accountId}{account.currency ? ` · ${account.currency}` : ""}</span>
+                  {account.shared ? <span className="block text-[11.5px] text-blue-600">Shared: its spend is read once in the branch that owns it; only this branch's campaigns count here</span> : null}
                   {!account.hasAccess ? <span className="block text-[11.5px] text-amber-600">No access: give it to the System User, then Sync</span> : null}
                 </span>
               </li>

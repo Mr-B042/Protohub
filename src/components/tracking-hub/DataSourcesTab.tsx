@@ -27,6 +27,7 @@ export default function DataSourcesTab({ tabBar, onToast }: { tabBar: ReactNode;
   const [guide, setGuide] = useState(false);
   const [testing, setTesting] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [copying, setCopying] = useState("");
 
   const rows = useMemo(() => (data?.dataSources ?? []).filter((row) =>
     (filter === "all" || (filter === "other" ? row.platform === "other" || row.platform === "snapchat" : row.platform === filter))
@@ -74,7 +75,26 @@ export default function DataSourcesTab({ tabBar, onToast }: { tabBar: ReactNode;
 
       <TikTokConnections onToast={onToast} />
 
-      <SharedAdAccounts onToast={onToast} />
+      {(data.otherBranchConnections ?? []).length > 0 && (
+        <Card className="p-5">
+          <h2 className="m-0 text-[16px] font-black text-gray-900 dark:text-slate-100">Meta Businesses connected in other branches</h2>
+          <p className="m-0 mt-0.5 text-[12.5px] text-gray-600 dark:text-slate-400">Use one here too: it shows like the others, with its Pixels and ad accounts. No token to paste. An ad account another branch already uses is shared, never read twice; Pixels another branch uses start switched off here.</p>
+          <ul className="m-0 mt-3 list-none space-y-2 p-0">
+            {(data.otherBranchConnections ?? []).map((c) => (
+              <li key={c.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-gray-200 px-3 py-2.5 dark:border-slate-700">
+                <span className="min-w-0 flex-1"><b className="block text-[13.5px] text-gray-900 dark:text-slate-100">{c.name}</b><span className="block text-[11.5px] text-gray-500">Business ID {c.businessId} · connected in {c.branchName}</span></span>
+                <button type="button" className={smallButton} disabled={copying === c.id} onClick={async () => {
+                  setCopying(c.id);
+                  try { const r = await trackingHubApi.copyConnection(c.id); onToast(r.syncError ? `${r.name} added, but: ${r.syncError}` : `${r.name} is now connected here too.`); reload(); }
+                  catch (err: any) { onToast(err?.message ?? "Could not add it."); } finally { setCopying(""); }
+                }}>{copying === c.id ? "Adding…" : "Use here too"}</button>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      <SharedAdAccounts onToast={onToast} localAccountIds={new Set(data.connections.flatMap((c) => c.adAccounts.map((a) => String(a.accountId))))} />
 
       <SplitLayout
         list={
