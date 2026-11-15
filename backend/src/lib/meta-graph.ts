@@ -450,3 +450,29 @@ export async function adAccountFunds(adAccountId: string, token: string) {
     balance?: string; amount_spent?: string; spend_cap?: string; funding_source_details?: { id?: string; display_string?: string; type?: number } | null;
   }>(`act_${id}`, token, { fields: "name,currency,is_prepay_account,account_status,disable_reason,balance,amount_spent,spend_cap,funding_source_details" });
 }
+
+/**
+ * Each ad's destination link (Bright, 15 Nov 2026: tell an ad's product from
+ * its landing page). 50 ads per call; an ad Meta shows no link for gets null.
+ */
+export async function adLinks(adIds: string[], token: string): Promise<{ ok: true; links: Map<string, string | null> } | { ok: false; message: string }> {
+  const links = new Map<string, string | null>();
+  const fields = "creative{object_story_spec,asset_feed_spec,link_url,object_url,template_url}";
+  const pick = (value: unknown, out: string[]) => {
+    if (typeof value === "string") { if (/^https?:\/\//i.test(value)) out.push(value); return; }
+    if (Array.isArray(value)) { for (const v of value) pick(v, out); return; }
+    if (value && typeof value === "object") for (const [k, v] of Object.entries(value)) if (/link|url|website/i.test(k) || typeof v === "object") pick(v, out);
+  };
+  for (let i = 0; i < adIds.length; i += 50) {
+    const batch = adIds.slice(i, i + 50);
+    const result = await graphGet<Record<string, { creative?: unknown }>>("", token, { ids: batch.join(","), fields });
+    if (!result.ok) return { ok: false, message: result.message };
+    for (const id of batch) {
+      const found: string[] = [];
+      pick(result.data[id]?.creative, found);
+      // The first link that isn't Facebook's own (image/video files live on fbcdn).
+      links.set(id, found.find((url) => !/fbcdn|facebook\.com|fb\.me|instagram\.com/i.test(url)) ?? null);
+    }
+  }
+  return { ok: true, links };
+}

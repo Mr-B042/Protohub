@@ -64,8 +64,8 @@ const compact = (value: number) => {
 const money = (value: number | null | undefined) => (value === null || value === undefined ? "—" : naira(value));
 const roasText = (value: number | null) => (value === null ? "—" : `${Number(value.toFixed(1))}x`);
 const pctChange = (now: number | null, before: number | null) => (now === null || before === null || before === 0 ? null : ((now - before) / before) * 100);
-const sourceText = (row: HubAdSpendRow) =>
-  row.mappingSource === "link" ? "from tracking link" : row.mappingSource === "mixed" ? "mixed" : row.mappingSource ? "set by you" : null;
+const SOURCE_WORDS: Record<string, string> = { link: "from tracking link", ad_link: "from the ad's page", siblings: "from its campaign", name: "from the name", mixed: "mixed" };
+const sourceText = (row: HubAdSpendRow) => (row.mappingSource ? SOURCE_WORDS[row.mappingSource] ?? "set by you" : null);
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const monthStart = (day: string) => `${day.slice(0, 8)}01`;
 
@@ -542,7 +542,7 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900 dark:bg-amber-950/30">
           <span className="flex items-center gap-2.5 text-[13.5px] text-amber-900 dark:text-amber-200">
             <AlertTriangle className="h-5 w-5 shrink-0 text-amber-500" />
-            <span><strong>{naira(data.unmapped.spend)} Unmapped Spend.</strong> {plural(data.unmapped.campaigns, "campaign")} {data.unmapped.campaigns === 1 ? "needs" : "need"} a product. Protohub won't guess.</span>
+            <span><strong>{naira(data.unmapped.spend)} Unmapped Spend.</strong> {plural(data.unmapped.campaigns, "campaign")} {data.unmapped.campaigns === 1 ? "needs" : "need"} a product. Protohub couldn't tell it from the ad's page, its campaign's other ads or its name.</span>
           </span>
           <button type="button" onClick={() => setUnmappedOpen(true)} className={smallButton}>Assign products</button>
         </div>

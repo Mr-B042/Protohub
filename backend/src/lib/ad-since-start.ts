@@ -66,7 +66,7 @@ export function judge(input: { days: number; spend: number; orders: number; plat
 export type SinceStartInput = {
   today: string; ordersFrom: string;
   lifetime: LifetimeRow[]; orders: SpendOrder[];
-  mappings: Map<string, Split[]>; evidence: Map<string, string>;
+  mappings: Map<string, Split[]>; evidence: import("./ad-spend.js").Evidence;
   /** product id -> { cpa, source } */
   targets: Map<string, { cpa: number; source: "worked_out" | "set_by_you" }>;
   products: Map<string, { name: string }>; accountNames: Map<string, string>;
