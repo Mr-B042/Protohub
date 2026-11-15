@@ -1,3 +1,4 @@
+import { currencySymbol, money as branchMoney } from "../../lib/money-privacy";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Area, Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -54,7 +55,7 @@ export function Tile({ icon: Icon, label, value, chip, note }: { icon: LucideIco
 
 const MONTH = new Intl.DateTimeFormat("en-US", { month: "short", timeZone: "UTC" });
 export const monthLabel = (month: string) => MONTH.format(new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 1, 15)));
-const compactNaira = (value: number) => (value >= 1e6 ? `₦${(value / 1e6).toFixed(value >= 1e7 ? 0 : 1)}M` : value >= 1e3 ? `₦${Math.round(value / 1e3)}k` : `₦${Math.round(value)}`);
+const compactNaira = (value: number) => { const c = currencySymbol().trim(); return value >= 1e6 ? `${c}${(value / 1e6).toFixed(value >= 1e7 ? 0 : 1)}M` : value >= 1e3 ? `${c}${Math.round(value / 1e3)}k` : `${c}${Math.round(value)}`; };
 
 export type MonthSeries = { key: string; label: string; color: string; kind: "area" | "bar" | "line"; unit: "naira" | "count" | "percent" };
 
@@ -147,15 +148,15 @@ export function LevelsEditor({ levels, baseRate, onChange }: { levels: EmLoyalty
             )}
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <label className={label}>Starts at spend (₦)
+            <label className={label}>Starts at spend ({currencySymbol().trim()})
               {index === 0 ? <input value="0" disabled className={`${input} mt-1 !py-2 opacity-70`} /> : numberBox(level.minSpend, (n) => set(index, { minSpend: n }))}
             </label>
             <label className={label}>Points × (multiplier)
               <input type="number" min={0.5} max={10} step={0.5} value={level.multiplier} onChange={(event) => set(index, { multiplier: Number(event.target.value) || 1 })} className={`${input} mt-1 !py-2`} />
-              <span className="block text-[11px] font-normal text-gray-500">{`${Math.round(baseRate * level.multiplier * 10) / 10} per ₦1,000`}</span>
+              <span className="block text-[11px] font-normal text-gray-500">{`${Math.round(baseRate * level.multiplier * 10) / 10} per ${currencySymbol().trim()}1,000`}</span>
             </label>
-            <label className={label}>Welcome voucher (₦){numberBox(level.welcomeVoucher, (n) => set(index, { welcomeVoucher: n }))}<span className="block text-[11px] font-normal text-gray-500">Once, on reaching it</span></label>
-            <label className={label}>Monthly voucher (₦){numberBox(level.monthlyVoucher, (n) => set(index, { monthlyVoucher: n }))}<span className="block text-[11px] font-normal text-gray-500">One order a month</span></label>
+            <label className={label}>Welcome voucher ({currencySymbol().trim()}){numberBox(level.welcomeVoucher, (n) => set(index, { welcomeVoucher: n }))}<span className="block text-[11px] font-normal text-gray-500">Once, on reaching it</span></label>
+            <label className={label}>Monthly voucher ({currencySymbol().trim()}){numberBox(level.monthlyVoucher, (n) => set(index, { monthlyVoucher: n }))}<span className="block text-[11px] font-normal text-gray-500">One order a month</span></label>
           </div>
           <label className={`${label} mt-2`}>Other perks you offer (one per line, optional)
             <textarea rows={2} value={level.perks.join("\n")} maxLength={400} onChange={(event) => set(index, { perks: event.target.value.split("\n").slice(0, 6) })} placeholder="e.g. Priority delivery" className={`${input} mt-1 !py-2`} />

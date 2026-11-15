@@ -30,7 +30,8 @@ const SETTINGS = {
 function fields(designer: EmDesigner, product: EmDesignerProduct | undefined): CampaignFields {
   return {
     brand: designer.sender.fromName || "Our Store", goal: "retention", offerType: "custom", productId: product?.id ?? "", productName: product?.name ?? "",
-    productImage: product?.image ?? "", productLink: product?.links[0]?.url ?? "", productPrice: priceText(product), offerOn: false, offerTitle: "", offerBenefit: ""
+    productImage: product?.image ?? "", productLink: product?.links[0]?.url ?? "", productPrice: priceText(product), offerOn: false, offerTitle: "", offerBenefit: "",
+    whatsapp: designer.settings.whatsapp
   };
 }
 const wait = (amount: number, unit: "hours" | "days" = "days"): EmFlowNode => ({ id: newId("w"), type: "wait", amount, unit });
@@ -199,8 +200,17 @@ function draft(name: string, description: string, template: string, goal: string
 }
 
 /** The whole plan. `sales` = delivered-or-placed orders per product in the last 60 days. */
-export function autopilotPlan(designer: EmDesigner, sales: Array<{ productId: string; orders: number }>): PlanItem[] {
+/**
+ * Branch options (Bright, 15 Nov 2026: Zambia "like Nigeria, A to Z").
+ * storeOn: false where the branch has no online store (only Nigeria): every
+ * store flow is left out. newBranch: no sales yet anywhere, so a product with
+ * a photo and an order page counts as selling and its flows go live.
+ */
+export type AutopilotOptions = { storeOn: boolean; newBranch: boolean };
+
+export function autopilotPlan(designer: EmDesigner, sales: Array<{ productId: string; orders: number }>, options: AutopilotOptions = { storeOn: true, newBranch: false }): PlanItem[] {
   const count = new Map(sales.map((row) => [row.productId, row.orders]));
+  if (options.newBranch) for (const row of designer.products) if (row.image && row.links.length && !(count.get(row.id) ?? 0)) count.set(row.id, 1);
   const products = designer.products.filter((row) => (count.get(row.id) ?? 0) > 0).sort((a, b) => (count.get(b.id) ?? 0) - (count.get(a.id) ?? 0));
   const best = products.find((row) => row.image && row.links.length) ?? products[0];
   // Products with an order page but no sales yet: drafts, ready to switch on later.
@@ -292,7 +302,21 @@ export function autopilotPlan(designer: EmDesigner, sales: Array<{ productId: st
     });
   }
   plan.push(...segmentFlows(designer, products, best, storeNeeds));
-  return plan;
+  // No online store in this branch: the store flows don't apply (Store Club, store win-back, store segments).
+  const kept = options.storeOn ? plan : plan.filter((item) => !/^store|^seg/.test(item.key) && !/Store/.test(item.draft.name));
+  // The branch's own WhatsApp in every line (Nigeria's 07083515972 is written into the texts above).
+  const wa = designer.settings.whatsapp;
+  if (wa === undefined || wa === "07083515972") return kept;
+  return kept.map((item) => {
+    const text = JSON.stringify(item.draft)
+      .replace(/ or WhatsApp us on 07083515972/g, wa ? ` or WhatsApp us on ${wa}` : "")
+      .replace(/ or WhatsApp 07083515972/g, wa ? ` or WhatsApp ${wa}` : "")
+      .replace(/WhatsApp us on 07083515972/g, wa ? `WhatsApp us on ${wa}` : "reply to this email")
+      .replace(/07083515972/g, wa || "this email");
+    // The add-to-delivery flow works only through WhatsApp: it waits until the branch has a number.
+    const needsWa = item.key === "add_on" && !wa;
+    return { ...item, draft: JSON.parse(text), ready: item.ready && !needsWa, needs: needsWa ? [...item.needs, "this branch's WhatsApp number (Email Marketing › Settings)"] : item.needs };
+  });
 }
 
 // ── Stay in touch, by segment (Bright, 9 Nov 2026) ───────────────────

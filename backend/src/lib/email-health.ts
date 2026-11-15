@@ -96,7 +96,7 @@ export async function healthFor(orgId: string, branchId: string, range: Range, o
   const length = Math.max(DAY_MS, range.toMs - range.fromMs);
   const previous: Range = { fromMs: range.fromMs - length, toMs: range.fromMs };
   const [world, rows, settings, sender, auth, embed] = await Promise.all([
-    loadWorld(orgId, branchId), loadHealthRows(orgId, branchId), settingsFor(orgId, branchId), marketingSender(orgId), authFor(orgId).catch(() => null),
+    loadWorld(orgId, branchId), loadHealthRows(orgId, branchId), settingsFor(orgId, branchId), marketingSender(orgId, branchId), authFor(orgId).catch(() => null),
     supabase.from("embed_settings").select("show_email").eq("org_id", orgId).limit(1).maybeSingle()
   ]);
   const { contacts, sends } = rows;

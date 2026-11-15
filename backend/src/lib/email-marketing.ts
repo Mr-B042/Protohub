@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
 import { supabase } from "./supabase.js";
+import { branchLocale } from "./branch-locale.js";
+import { moneyText } from "./money-text.js";
 import { logger } from "./logger.js";
 import { fetchAllRowsOrThrow, selectByIdBatches } from "./query-limits.js";
 import { marketingSender, sendMarketingEmail } from "./mailer.js";
@@ -12,8 +14,8 @@ import {
   type OrderLite, type Person, type SavedSegment, type SegmentRule
 } from "./email-marketing-rules.js";
 import { emailBrand } from "./email-brand.js";
-import { asPersonalNote, applyTags, collectLinks, fillTheirProduct, unfilledGaps, usesStorePicks, withStorePicks, type StorePickItem, normalizeDesign, renderEmailHtml, renderEmailText, usesLoyaltyTags, usesTheirProduct, withTheirProduct, type EmailDesign, type RenderOptions, type TheirProduct } from "./email-render.js";
-import { inSendWindow } from "./email-automation-rules.js";
+import { asPersonalNote, applyTags, collectLinks, fillTheirProduct, unfilledGaps, usesStorePicks, withStorePicks, type StorePickItem, normalizeDesign, renderEmailHtml, renderEmailText, usesLoyaltyTags, usesTheirProduct, withTheirProduct, type EmailDesign, type RenderOptions, type TheirProduct, withoutStore } from "./email-render.js";
+import { inSendWindow, offsetFor } from "./email-automation-rules.js";
 
 /**
  * Email Marketing (Bright, 8 Nov 2026), part 1: the email list, saved
@@ -31,26 +33,35 @@ const newToken = () => crypto.randomBytes(18).toString("base64url");
 
 // ── Settings ──────────────────────────────────────────────────────────
 
-export type MarketingSettings = { dailyLimit: number; footerNote: string; seededAt: string | null; autoSync: boolean; defaultListId: string | null; updateExisting: boolean; bounceHookOnAt: string | null };
+export type MarketingSettings = { dailyLimit: number; footerNote: string; seededAt: string | null; autoSync: boolean; defaultListId: string | null; updateExisting: boolean; bounceHookOnAt: string | null; fromName: string; replyTo: string; whatsapp: string };
+
+/** Nigeria keeps its customer WhatsApp line; other branches start with none (they add their own). */
+async function defaultWhatsapp(branchId: string) {
+  return (await branchLocale(branchId)).countryCode === "NG" ? "07083515972" : "";
+}
 
 export async function settingsFor(orgId: string, branchId: string): Promise<MarketingSettings> {
-  const { data, error } = await supabase.from("email_marketing_settings").select("daily_limit, footer_note, seeded_at, auto_sync, default_list_id, update_existing, bounce_hook_on_at").eq("branch_id", branchId).maybeSingle();
+  const { data, error } = await supabase.from("email_marketing_settings").select("daily_limit, footer_note, seeded_at, auto_sync, default_list_id, update_existing, bounce_hook_on_at, from_name, reply_to, whatsapp").eq("branch_id", branchId).maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) {
     await supabase.from("email_marketing_settings").upsert({ branch_id: branchId, org_id: orgId }, { onConflict: "branch_id", ignoreDuplicates: true });
-    return { dailyLimit: 150, footerNote: "", seededAt: null, autoSync: true, defaultListId: null, updateExisting: true, bounceHookOnAt: null };
+    return { dailyLimit: 150, footerNote: "", seededAt: null, autoSync: true, defaultListId: null, updateExisting: true, bounceHookOnAt: null, fromName: "", replyTo: "", whatsapp: await defaultWhatsapp(branchId) };
   }
   return {
     dailyLimit: Number(data.daily_limit) || 150, footerNote: data.footer_note ?? "", seededAt: data.seeded_at ?? null,
     autoSync: data.auto_sync !== false, defaultListId: data.default_list_id ?? null, updateExisting: data.update_existing !== false,
-    bounceHookOnAt: data.bounce_hook_on_at ?? null
+    bounceHookOnAt: data.bounce_hook_on_at ?? null, fromName: (data as any).from_name ?? "", replyTo: (data as any).reply_to ?? "", whatsapp: (data as any).whatsapp ?? await defaultWhatsapp(branchId)
   };
 }
 
-export async function saveSettings(orgId: string, branchId: string, userId: string, input: { dailyLimit?: number; footerNote?: string; autoSync?: boolean; defaultListId?: string | null; updateExisting?: boolean }) {
+export async function saveSettings(orgId: string, branchId: string, userId: string, input: { dailyLimit?: number; footerNote?: string; autoSync?: boolean; defaultListId?: string | null; updateExisting?: boolean; fromName?: string; replyTo?: string; whatsapp?: string }) {
   const patch: Record<string, unknown> = { branch_id: branchId, org_id: orgId, updated_by: userId, updated_at: new Date().toISOString() };
   if (input.dailyLimit !== undefined) patch.daily_limit = Math.min(100000, Math.max(1, Math.round(input.dailyLimit)));
   if (input.footerNote !== undefined) patch.footer_note = input.footerNote.trim().slice(0, 300);
+  // This branch's sender name / reply-to on the company's one email account (empty = the account's own).
+  if (input.fromName !== undefined) patch.from_name = input.fromName.trim().slice(0, 80) || null;
+  if (input.replyTo !== undefined) patch.reply_to = input.replyTo.trim().slice(0, 200) || null;
+  if (input.whatsapp !== undefined) patch.whatsapp = input.whatsapp.replace(/[^\d+]/g, "").slice(0, 20);
   if (input.autoSync !== undefined) patch.auto_sync = input.autoSync;
   if (input.updateExisting !== undefined) patch.update_existing = input.updateExisting;
   if (input.defaultListId !== undefined) {
@@ -460,7 +471,7 @@ export async function overviewFor(orgId: string, branchId: string) {
     const match = autos.filter((row) => row.template === template);
     return match.some((row) => row.status === "active") ? "active" : match.length ? "paused" : "off";
   };
-  const sender = await marketingSender(orgId);
+  const sender = await marketingSender(orgId, branchId);
   const { data: embed } = await supabase.from("embed_settings").select("show_email").eq("org_id", orgId).limit(1).maybeSingle();
 
   return {
@@ -770,7 +781,9 @@ export async function productsForDesigner(orgId: string, branchId: string) {
       id: product.id, name: product.name,
       image: https(product.image_url) || photos[0]?.url || packagePicture || "",
       priceMin: prices.length ? Math.min(...prices) : null, priceMax: prices.length ? Math.max(...prices) : null,
-      links: pages.map((row) => ({ label: row.label || row.landing_page_url, url: row.landing_page_url }))
+      // No landing page yet (a new branch like Zambia, 15 Nov 2026): its own Protohub order form.
+      links: pages.length ? pages.map((row) => ({ label: row.label || row.landing_page_url, url: row.landing_page_url }))
+        : [{ label: "Order form", url: `${(process.env.FRONTEND_URL || "https://protohub-zeta.vercel.app").split(",")[0].trim().replace(/\/+$/, "")}/#/order-form/embed?product=${encodeURIComponent(product.id)}` }]
     };
   });
 }
@@ -853,20 +866,21 @@ export function renderForSend(campaign: any, rawDesign: EmailDesign, send: { tok
 
 /** A test email: same HTML, links go straight to their pages, nothing is counted. */
 export async function sendTest(orgId: string, branchId: string, campaign: any, emails: string[], senderName: string) {
-  const design = normalizeDesign(campaign.design);
+  let design = normalizeDesign(campaign.design);
   if (!design || !design.blocks.length) throw new EmailMarketingError(400, "The email has no content yet. Add blocks in Design Email first.");
   if (!String(campaign.subject ?? "").trim()) throw new EmailMarketingError(400, "Add an email subject first.");
-  const sender = await marketingSender(orgId);
+  const sender = await marketingSender(orgId, branchId);
   if (!sender.ready) throw new EmailMarketingError(409, sender.reason ?? "Email sending is not set up.");
   const settings = await settingsFor(orgId, branchId);
   const links = campaignLinks({ slug: campaign.slug ?? "test", options: campaign.options }, design);
   const linkFor = (url: string) => links.find((link) => link.original === url)?.url ?? url;
   const results: Array<{ email: string; ok: boolean; error?: string }> = [];
   for (const email of emails) {
+    if ((await branchLocale(branchId)).countryCode !== "NG") design = withoutStore(design);
     const html = renderEmailHtml(usesStorePicks(design) ? await fillStorePicks(design, { product: null, seed: email, slug: campaign.slug ?? "test", utm: false, nowMs: Date.now() }) : design, { logoUrl: (await emailBrand(orgId)).logoUrl ?? undefined, firstName: senderName, preheader: campaign.preheader || undefined, brand: sender.fromName, footerNote: settings.footerNote, unsubscribeUrl: `${PUBLIC_BACKEND_URL}/e/u/test`, plain: !!campaign.options?.plainText, linkFor });
     const text = renderEmailText(design, { firstName: senderName, unsubscribeUrl: `${PUBLIC_BACKEND_URL}/e/u/test`, linkFor });
     try {
-      await sendMarketingEmail(orgId, { to: { email }, subject: `[Test] ${campaign.subject}`, html, text });
+      await sendMarketingEmail(orgId, { to: { email }, subject: `[Test] ${campaign.subject}`, html, text }, branchId);
       results.push({ email, ok: true });
     } catch (error) {
       results.push({ email, ok: false, error: (error as Error).message });
@@ -965,11 +979,13 @@ async function sendQueued(nowMs: number) {
   const dayStart = new Date(Date.parse(`${lagosDay(nowMs)}T00:00:00+01:00`)).toISOString();
   let sentCount = 0;
   for (const row of rows) {
-    if (!senders.has(row.org_id)) {
-      const sender = await marketingSender(row.org_id);
-      senders.set(row.org_id, { ready: sender.ready, brand: sender.fromName, reason: sender.reason, logoUrl: (await emailBrand(row.org_id)).logoUrl });
+    // Per branch: a branch may send under its own name (Zambia, 15 Nov 2026).
+    const senderKey = `${row.org_id}|${row.branch_id}`;
+    if (!senders.has(senderKey)) {
+      const sender = await marketingSender(row.org_id, row.branch_id);
+      senders.set(senderKey, { ready: sender.ready, brand: sender.fromName, reason: sender.reason, logoUrl: (await emailBrand(row.org_id)).logoUrl });
     }
-    const sender = senders.get(row.org_id)!;
+    const sender = senders.get(senderKey)!;
     if (!sender.ready) continue;
     if (!allowance.has(row.branch_id)) {
       const settings = await settingsFor(row.org_id, row.branch_id);
@@ -987,7 +1003,7 @@ async function sendQueued(nowMs: number) {
     if (!campaign || !["sending", "active"].includes(campaign.status)) continue;
     // Automation emails wait for their sending hours (a daily limit can push one past them).
     const window = campaign.options?.sendWindow;
-    if (window?.on && Array.isArray(window.days) && !inSendWindow(nowMs, window)) continue;
+    if (window?.on && Array.isArray(window.days) && !inSendWindow(nowMs, window, offsetFor((await branchLocale(row.branch_id)).timezone))) continue;
     const contact = row.contact_id ? await supabase.from("email_contacts").select("status").eq("id", row.contact_id).maybeSingle() : { data: { status: "subscribed" } };
     if (contact.data?.status !== "subscribed") {
       await supabase.from("email_campaign_sends").update({ status: "skipped", error: "Unsubscribed before sending" }).eq("id", row.id).eq("status", "queued");
@@ -1011,15 +1027,16 @@ async function sendQueued(nowMs: number) {
       ? await theirProductFor(row.org_id, row.branch_id, row.phone, campaign, productCache)
       : undefined;
     // Store Picks: Our Store's products for this customer, with today's prices and stock (lib/store-catalog.ts).
-    let ready = design;
-    if (usesStorePicks(design)) {
+    // No online store in this branch (only Nigeria has one): the store parts come out.
+    let ready = (await branchLocale(row.branch_id)).countryCode !== "NG" ? withoutStore(design) : design;
+    if (usesStorePicks(ready)) {
       const bought = theirs?.name ?? (await theirProductFor(row.org_id, row.branch_id, row.phone, campaign, productCache))?.name ?? null;
-      ready = await fillStorePicks(design, { product: bought, seed: row.email, slug: campaign.slug, utm: campaign.options?.utm !== false, nowMs });
+      ready = await fillStorePicks(ready, { product: bought, seed: row.email, slug: campaign.slug, utm: campaign.options?.utm !== false, nowMs });
     }
     const { html, text, subject } = renderForSend(campaign, ready, { ...row, loyalty, theirs }, { brand: sender.brand, footerNote: footers.get(row.branch_id) ?? "", logoUrl: sender.logoUrl }, nowMs);
     try {
       const result = await sendMarketingEmail(row.org_id, { to: { email: row.email, name: row.name || undefined }, subject, html, text, unsubscribeUrl: trackingUrl("u", row.token), customId: row.token, replyTo: campaign.options?.replyTo || undefined,
-        ...(row.variant === "b" && campaign.options?.abTest && campaign.options?.fromNameB ? { fromName: String(campaign.options.fromNameB) } : {}) });
+        ...(row.variant === "b" && campaign.options?.abTest && campaign.options?.fromNameB ? { fromName: String(campaign.options.fromNameB) } : {}) }, row.branch_id);
       const at = new Date().toISOString();
       await supabase.from("email_campaign_sends").update({ status: "sent", sent_at: at, provider: result.provider, provider_message_id: result.messageId ?? null, error: null }).eq("id", row.id);
       if (row.contact_id) await supabase.from("email_contacts").update({ last_emailed_at: at }).eq("id", row.contact_id);
@@ -1035,7 +1052,7 @@ async function sendQueued(nowMs: number) {
   return sentCount;
 }
 
-const naira = (n: number) => `₦${Math.round(n).toLocaleString("en-NG")}`;
+const naira = (n: number, currency = "NGN") => moneyText(n, currency);
 
 /** The product of this phone's latest order, with its photo, price and order page (links carry the email's utm tags). */
 export async function theirProductFor(orgId: string, branchId: string, phone: unknown, campaign: any, cache: Map<string, Promise<Awaited<ReturnType<typeof productsForDesigner>>>>): Promise<TheirProduct | null> {
@@ -1051,7 +1068,8 @@ export async function theirProductFor(orgId: string, branchId: string, phone: un
   const product = (await cache.get(branchId)!).find((row) => row.id === order.product_id);
   if (!product) return null;
   const page = product.links[0]?.url ?? "";
-  const price = product.priceMin === null ? "" : product.priceMax !== null && product.priceMax > product.priceMin ? `From ${naira(product.priceMin)}` : naira(product.priceMin);
+  const cur = (await branchLocale(branchId)).currency;
+  const price = product.priceMin === null ? "" : product.priceMax !== null && product.priceMax > product.priceMin ? `From ${naira(product.priceMin, cur)}` : naira(product.priceMin, cur);
   return {
     name: product.name, price, imageUrl: product.image,
     link: page && campaign.options?.utm !== false ? withUtm(page, { utm_source: "email", utm_medium: "email", utm_campaign: campaign.slug }) : page

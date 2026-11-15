@@ -472,23 +472,33 @@ function buildEmailContent(
 }
 
 // ── Load org email settings from DB ───────────────────────
-async function loadSettings(orgId: string): Promise<EmailSettings | null> {
-  const [{ data, error }, { data: org }] = await Promise.all([
+async function loadSettings(orgId: string, branchId?: string | null): Promise<EmailSettings | null> {
+  // ONE email account per company (email_settings has one row per org). A
+  // branch may send under its own name / reply-to (email_marketing_settings,
+  // Bright 15 Nov 2026: "Protohub Zambia" on the same address).
+  const [{ data, error }, { data: org }, branchRow] = await Promise.all([
     supabase
       .from("email_settings")
       .select("*")
       .eq("org_id", orgId)
-      .single(),
+      .limit(1)
+      .maybeSingle(),
     supabase
       .from("organizations")
       .select("timezone, working_schedule_enabled, working_days, working_day_start, working_day_end")
       .eq("id", orgId)
-      .single()
+      .single(),
+    branchId
+      ? supabase.from("email_marketing_settings").select("from_name, reply_to").eq("branch_id", branchId).maybeSingle().then((r) => r.data as { from_name: string | null; reply_to: string | null } | null)
+      : Promise.resolve(null)
   ]);
 
   if (error || !data) return null;
+  const own = branchRow ?? null;
   return applyEnvFallbacks({
     ...(data as EmailSettings),
+    ...(own?.from_name?.trim() ? { from_name: own.from_name.trim() } : {}),
+    ...(own?.reply_to?.trim() ? { reply_to: own.reply_to.trim() } : {}),
     timezone: typeof org?.timezone === "string" && org.timezone.trim() ? org.timezone.trim() : "Africa/Lagos",
     working_schedule_enabled: !!org?.working_schedule_enabled,
     working_days: normalizeWorkingDays(org?.working_days),
@@ -770,9 +780,9 @@ export async function sendEmail(
   trigger: EmailTrigger,
   vars: Record<string, string>,
   to: { email: string; name?: string },
-  options?: DeliverEmailOptions
+  options?: DeliverEmailOptions & { branchId?: string | null }
 ): Promise<void> {
-  const settings = await loadSettings(orgId);
+  const settings = await loadSettings(orgId, options?.branchId ?? null);
   if (!settings || !settings.enabled) return;
   if (!settings.triggers[trigger]) return;
   if (!hasValidKeys(settings)) return;
@@ -915,7 +925,7 @@ export async function sendOrderStatusEmail(
   if (await customerEmailAlreadySent(orgId, trigger, order.id, order.email, toStatus)) return;
   // Delivered: the "Thank You" e-receipt (Bright, 9 Nov 2026); plain text only if it can't be made.
   if (trigger === "order_delivered" && await sendReceiptEmail(orgId, "order_delivered", order.id, "thank_you", { email: order.email, name: order.customer }, vars)) return;
-  await sendEmail(orgId, trigger, vars, { email: order.email, name: order.customer });
+  await sendEmail(orgId, trigger, vars, { email: order.email, name: order.customer }, { branchId: await orderBranch(order.id) });
 }
 
 /**
@@ -924,8 +934,15 @@ export async function sendOrderStatusEmail(
  * (Settings › Email triggers). Returns false when nothing was sent so the
  * caller can fall back to the plain email.
  */
+/** The branch an order belongs to (its customer emails go out under that branch's sender name). */
+async function orderBranch(orderId: string): Promise<string | null> {
+  // launch-safe: reads only the branch of an order already being emailed; shows nothing.
+  const { data } = await supabase.from("orders").select("branch_id").eq("id", orderId).maybeSingle();
+  return ((data as any)?.branch_id as string | undefined) ?? null;
+}
+
 async function sendReceiptEmail(orgId: string, trigger: EmailTrigger, orderId: string, kind: "confirmation" | "thank_you", to: { email: string; name?: string }, vars: Record<string, string>): Promise<boolean> {
-  const settings = await loadSettings(orgId);
+  const settings = await loadSettings(orgId, await orderBranch(orderId));
   if (!settings || !settings.enabled || !settings.triggers[trigger] || !hasValidKeys(settings) || !settings.from_email || !to.email) return true;
   let built: Awaited<ReturnType<typeof import("./receipt-email.js")["buildReceiptEmail"]>>;
   try {
@@ -1003,7 +1020,7 @@ export async function sendNewOrderEmail(
   if (await customerEmailAlreadySent(orgId, "order_new", order.id, order.email, null)) return;
   // The "Order Confirmation" e-receipt; plain text only if it can't be made.
   if (await sendReceiptEmail(orgId, "order_new", order.id, "confirmation", { email: order.email, name: order.customer }, vars)) return;
-  await sendEmail(orgId, "order_new", vars, { email: order.email, name: order.customer });
+  await sendEmail(orgId, "order_new", vars, { email: order.email, name: order.customer }, { branchId: await orderBranch(order.id) });
 }
 
 // ── Staff: new order alert → owner + admins ───────────────
@@ -1507,8 +1524,8 @@ export type MarketingEmail = {
 export type MarketingSender = { fromName: string; fromEmail: string; ready: boolean; reason?: string };
 
 /** Who campaign emails come from, and whether sending can work at all. */
-export async function marketingSender(orgId: string): Promise<MarketingSender> {
-  const settings = await loadSettings(orgId);
+export async function marketingSender(orgId: string, branchId?: string | null): Promise<MarketingSender> {
+  const settings = await loadSettings(orgId, branchId);
   if (!settings) return { fromName: "", fromEmail: "", ready: false, reason: "Email is not set up. Open Settings › Email first." };
   const base = { fromName: brandName(settings), fromEmail: settings.from_email };
   if (!settings.enabled) return { ...base, ready: false, reason: "Email sending is switched off in Settings › Email." };
@@ -1517,8 +1534,8 @@ export async function marketingSender(orgId: string): Promise<MarketingSender> {
   return { ...base, ready: true };
 }
 
-export async function sendMarketingEmail(orgId: string, message: MarketingEmail): Promise<{ provider: EmailProvider; messageId?: string }> {
-  const settings = await loadSettings(orgId);
+export async function sendMarketingEmail(orgId: string, message: MarketingEmail, branchId?: string | null): Promise<{ provider: EmailProvider; messageId?: string }> {
+  const settings = await loadSettings(orgId, branchId);
   if (!settings || !settings.enabled || !hasValidKeys(settings) || !settings.from_email) {
     throw new EmailDispatchError(settings?.provider ?? DEFAULT_EMAIL_PROVIDER, "Email sending is not set up.");
   }

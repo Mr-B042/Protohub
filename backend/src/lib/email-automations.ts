@@ -1,6 +1,7 @@
 import { unfilledGaps } from "./email-render.js";
 import crypto from "node:crypto";
 import { supabase } from "./supabase.js";
+import { branchLocale } from "./branch-locale.js";
 import { logger } from "./logger.js";
 import { fetchAllRowsOrThrow, selectByIdBatches } from "./query-limits.js";
 import { marketingSender } from "./mailer.js";
@@ -11,8 +12,7 @@ import { EmailMarketingError, audienceLabel, campaignLinks, forgetWorld, loadWor
 import {
   PRIORITY_RANK, STAGES, branchNodeId, defaultStage, checkMet, durationDays, emailNodes, findNode, firstNodeId, inSendWindow, mayEnter, nextNodeId, nextWindowStart, nextPaydayMs,
   QUIET_REASON_LABELS, normalizeSettings, normalizeTrigger, normalizeWorkflow, quietReason, waitMs,
-  type AutomationSettings, type Stage, type Trigger, type Workflow, type WorkflowNode
-} from "./email-automation-rules.js";
+  type AutomationSettings, type Stage, type Trigger, type Workflow, type WorkflowNode, offsetFor } from "./email-automation-rules.js";
 
 /**
  * Automations (Bright's designs 50, 51 and steps 2-4, 8 Nov 2026).
@@ -125,7 +125,7 @@ async function readyToLaunch(orgId: string, branchId: string, trigger: Trigger, 
     const { data } = await supabase.from("email_segments").select("id").eq("org_id", orgId).eq("branch_id", branchId).eq("id", trigger.segmentId || "00000000-0000-0000-0000-000000000000").eq("status", "active").maybeSingle();
     if (!data) throw new EmailMarketingError(400, "Pick the group (segment) this flow is for.");
   }
-  const sender = await marketingSender(orgId);
+  const sender = await marketingSender(orgId, branchId);
   if (!sender.ready) throw new EmailMarketingError(409, sender.reason ?? "Email sending is not set up.");
 }
 
@@ -607,9 +607,11 @@ async function advanceRun(run: any, auto: Automation, world: () => Promise<World
       break;
     }
     if (node.type === "email") {
-      if (!inSendWindow(nowMs, auto.settings.sendWindow)) { nextAt = nextWindowStart(nowMs, auto.settings.sendWindow); break; }
-      if (auto.settings.payday && nextPaydayMs(nowMs) > nowMs) {
-        nextAt = nextPaydayMs(nowMs);
+      // The branch's own clock (Lusaka for Zambia).
+      const offset = offsetFor((await branchLocale(run.branch_id)).timezone);
+      if (!inSendWindow(nowMs, auto.settings.sendWindow, offset)) { nextAt = nextWindowStart(nowMs, auto.settings.sendWindow, offset); break; }
+      if (auto.settings.payday && nextPaydayMs(nowMs, offset) > nowMs) {
+        nextAt = nextPaydayMs(nowMs, offset);
         note(`"${node.name}" waits for payday (the 25th)`);
         break;
       }

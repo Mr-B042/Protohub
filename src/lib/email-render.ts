@@ -83,6 +83,8 @@ export type EmailDesign = {
 /** What the setup step knows, used to fill a template. */
 export type CampaignFields = {
   brand: string;
+  /** The branch's customer WhatsApp (Zambia's own, 15 Nov 2026); empty = "reply to this email" only. Undefined = Nigeria's. */
+  whatsapp?: string;
   goal: string;
   offerType: string;
   productId: string;
@@ -620,19 +622,25 @@ export function buildLetterDesign(f: CampaignFields, letter: LetterSpec, version
 // The team checks stock in their area and confirms before adding anything;
 // no fee or price promise is made.
 export const SUPPORT_WHATSAPP = "2347083515972";
-export const whatsappLink = (text: string) => `https://wa.me/${SUPPORT_WHATSAPP}?text=${encodeURIComponent(text)}`;
+/** "0803 …" / "+260 …" → wa.me digits (a leading 0 is Nigeria's 234 unless the branch number says otherwise). */
+export const waDigits = (number?: string) => {
+  if (number === undefined) return SUPPORT_WHATSAPP;
+  const d = number.replace(/[^\d]/g, "");
+  return number.trim().startsWith("+") ? d : d.startsWith("0") ? `234${d.slice(1)}` : d;
+};
+export const whatsappLink = (text: string, number?: string) => `https://wa.me/${waDigits(number)}?text=${encodeURIComponent(text)}`;
 export function buildAddOnDesign(f: CampaignFields, addOns: Array<{ id: string; name: string; price: string; image: string }>): EmailDesign {
   const cover: EmailBlock = { ...designed({ slug: "recommended-for-you", tone: "lavender", title: "Want To Add Something? 🛍️", subtitle: "Your order is being prepared. Add more to the same delivery.", button: "Add To My Delivery", buttonTone: "purple" }, { ...f, productImage: "" }),
-    buttonLink: whatsappLink("Hi, I just placed an order. I'd like to add something to the same delivery."), theirs: true } as EmailBlock;
+    buttonLink: whatsappLink("Hi, I just placed an order. I'd like to add something to the same delivery.", f.whatsapp), theirs: true } as EmailBlock;
   const blocks: EmailBlock[] = [
     B.header(f), cover, hi(),
     p("Thank you for your order of {{Their Product}}! Our team will call you to confirm it."),
     p("While it's being prepared, you can add more to the same delivery: one trip, one rider, everything arrives together."),
     p("Tap \"Add To My Delivery\" on anything below (it opens WhatsApp), or simply reply to this email. We'll check it's available in your area and confirm with you before adding it."),
     ...addOns.map((item): EmailBlock => ({ id: blockId(), type: "product", productId: item.id, name: item.name, price: item.price, imageUrl: item.image, buttonText: "Add To My Delivery",
-      link: whatsappLink(`Hi, I just placed an order. Please add ${item.name} to the same delivery.`) })),
+      link: whatsappLink(`Hi, I just placed an order. Please add ${item.name} to the same delivery.`, f.whatsapp) })),
     B.features(POD),
-    p("💬 Questions? WhatsApp us on 07083515972 or reply to this email."),
+    p(f.whatsapp === undefined ? "💬 Questions? WhatsApp us on 07083515972 or reply to this email." : f.whatsapp ? `💬 Questions? WhatsApp us on ${f.whatsapp} or reply to this email.` : "💬 Questions? Just reply to this email."),
     signOff(f), B.footer()
   ];
   return { version: 1, template: "addon:same-delivery", touched: true, styles: { ...DEFAULT_STYLES }, blocks };
@@ -1067,3 +1075,23 @@ export function normalizeDesign(raw: unknown): EmailDesign | null {
     blocks: value.blocks.filter((block): block is EmailBlock => !!block && typeof block === "object" && known.has((block as EmailBlock).type) && typeof (block as EmailBlock).id === "string")
   };
 }
+
+/**
+ * A branch with no online store (Zambia, 15 Nov 2026: "leave the store out"):
+ * store product blocks go, and buttons / pictures / covers that link to the
+ * store lose the link (a button pointing only at the store is removed).
+ */
+export function withoutStore(design: EmailDesign, storeHost = "protoolshardwareventures.com.ng"): EmailDesign {
+  const toStore = (url: unknown) => typeof url === "string" && url.toLowerCase().includes(storeHost);
+  const blocks = design.blocks.filter((block) => block.type !== "storePicks" && !(block.type === "button" && toStore(block.link))).map((block) => {
+    if (block.type === "image" && toStore(block.link)) return { ...block, link: "" };
+    if (block.type === "product" && toStore(block.link)) return { ...block, link: "" };
+    if (block.type === "cover" && toStore((block as any).buttonLink)) return { ...block, buttonText: "", buttonLink: "" } as typeof block;
+    if (block.type === "hero" && toStore((block as any).buttonLink)) return { ...block, buttonText: "", buttonLink: "" } as typeof block;
+    return block;
+  });
+  return { ...design, blocks };
+}
+/** Does this design depend on the store (so it makes no sense where there is none)? */
+export const needsStore = (design: EmailDesign, storeHost = "protoolshardwareventures.com.ng") =>
+  design.blocks.some((block) => block.type === "storePicks") || JSON.stringify(design.blocks).toLowerCase().includes(storeHost);

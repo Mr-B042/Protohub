@@ -12,7 +12,9 @@ export const lagosMonth = (ms: number) => new Date(ms + LAGOS_OFFSET_MS).toISOSt
 /** Midnight in Lagos of the day `ms` falls on. */
 export const lagosDayStart = (ms: number) => Date.parse(`${new Date(ms + LAGOS_OFFSET_MS).toISOString().slice(0, 10)}T00:00:00+01:00`);
 
-const naira = (value: number) => `₦${Math.round(value).toLocaleString("en-NG")}`;
+import { currencySymbol, moneyText } from "./money-text.js";
+// The branch's currency (₦ / K): every text helper below takes it (15 Nov 2026).
+const naira = (value: number, currency = "NGN") => moneyText(value, currency);
 const pointsText = (value: number) => (Number.isInteger(value) ? String(value) : value.toFixed(1));
 
 // ── Levels ────────────────────────────────────────────────────────────
@@ -79,18 +81,18 @@ export function levelIndexFor(spend: number, levels: Level[]) {
 }
 
 /** "Spend ₦50,000 – ₦199,999" (the last level: "Spend ₦200,000+"). */
-export function spendText(levels: Level[], index: number) {
+export function spendText(levels: Level[], index: number, currency = "NGN") {
   const next = levels[index + 1];
-  return next ? `Spend ${naira(levels[index].minSpend)} – ${naira(next.minSpend - 1)}` : `Spend ${naira(levels[index].minSpend)}+`;
+  return next ? `Spend ${naira(levels[index].minSpend, currency)} – ${naira(next.minSpend - 1, currency)}` : `Spend ${naira(levels[index].minSpend, currency)}+`;
 }
 
 /** The card lines: what the numbers give, then the business's own lines. */
-export function levelLines(level: Level, baseRate: number) {
+export function levelLines(level: Level, baseRate: number, currency = "NGN") {
   const lines: string[] = [];
   const rate = baseRate * level.multiplier;
-  if (rate > 0) lines.push(`Earn ${pointsText(rate)} ${rate === 1 ? "point" : "points"} per ₦1,000`);
-  if (level.welcomeVoucher > 0) lines.push(`${naira(level.welcomeVoucher)} welcome voucher`);
-  if (level.monthlyVoucher > 0) lines.push(`${naira(level.monthlyVoucher)} monthly voucher`);
+  if (rate > 0) lines.push(`Earn ${pointsText(rate)} ${rate === 1 ? "point" : "points"} per ${currencySymbol(currency).trim()}1,000`);
+  if (level.welcomeVoucher > 0) lines.push(`${naira(level.welcomeVoucher, currency)} welcome voucher`);
+  if (level.monthlyVoucher > 0) lines.push(`${naira(level.monthlyVoucher, currency)} monthly voucher`);
   return [...lines, ...level.perks];
 }
 
@@ -196,14 +198,14 @@ export function bestVoucher(options: VoucherOption[], amount: number, minOrder: 
 }
 
 /** The line on the order the rep reads out: "₦1,000 off: Silver welcome voucher". */
-export const voucherNote = (voucher: { discount: number; label: string }) => `${naira(voucher.discount)} off: ${voucher.label}`;
+export const voucherNote = (voucher: { discount: number; label: string }, currency = "NGN") => `${naira(voucher.discount, currency)} off: ${voucher.label}`;
 
 /** {{Points}}, {{Level}}, {{Voucher}}, {{Next Level}} in an email. */
-export function loyaltyTagText(state: { balance: number; levelName: string | null; voucher: VoucherOption | null; next: { name: string; gap: number } | null }) {
+export function loyaltyTagText(state: { balance: number; levelName: string | null; voucher: VoucherOption | null; next: { name: string; gap: number } | null }, currency = "NGN") {
   return {
     points: Math.max(0, Math.round(state.balance)).toLocaleString("en-NG"),
     level: state.levelName ?? "Member",
-    voucher: state.voucher ? `${naira(state.voucher.value)} off` : "no voucher yet",
-    nextLevel: state.next ? `${naira(state.next.gap)} more to reach ${state.next.name}` : "already at the top level"
+    voucher: state.voucher ? `${naira(state.voucher.value, currency)} off` : "no voucher yet",
+    nextLevel: state.next ? `${naira(state.next.gap, currency)} more to reach ${state.next.name}` : "already at the top level"
   };
 }

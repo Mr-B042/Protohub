@@ -421,7 +421,7 @@ router.get("/designer", async (req, res) => {
       productsForDesigner(orgOf(req), branchOf(req)),
       reviewsForDesigner(orgOf(req), branchOf(req)),
       supabase.from("email_saved_blocks").select("id, kind, name, content, created_by, created_by_name, created_at, visibility, status").eq("org_id", orgOf(req)).eq("branch_id", branchOf(req)).order("created_at", { ascending: false }).limit(100),
-      marketingSender(orgOf(req)),
+      marketingSender(orgOf(req), branchOf(req)),
       settingsFor(orgOf(req), branchOf(req)),
       loadWorld(orgOf(req), branchOf(req)),
       supabase.from("email_offers").select("*").eq("org_id", orgOf(req)).eq("branch_id", branchOf(req)).in("status", ["active", "paused"]).order("created_at", { ascending: false }).limit(200),
@@ -436,7 +436,7 @@ router.get("/designer", async (req, res) => {
       products, reviews,
       // Templates: drafts and other people's private ones stay out of Create Campaign.
       saved: (saved.data ?? []).filter((row: any) => row.kind !== "template" || (row.status !== "draft" && (row.visibility !== "private" || row.created_by === req.user!.id)))
-        .map(({ created_by: _by, visibility: _v, status: _s, ...row }: any) => row), sender, settings: { dailyLimit: settings.dailyLimit, footerNote: settings.footerNote }, offers,
+        .map(({ created_by: _by, visibility: _v, status: _s, ...row }: any) => row), sender, settings: { dailyLimit: settings.dailyLimit, footerNote: settings.footerNote, whatsapp: settings.whatsapp }, offers,
       segments: world.segmentRows.filter((row) => row.status !== "archived").map((row) => ({ id: row.id, name: row.name, kind: row.kind, status: row.status, icon: row.icon, list: row.kind === "fixed" || !!row.builtIn?.startsWith("list_"), builtIn: row.builtIn ?? null })),
       tags: world.tagRows.filter((row) => row.status === "active").map((row) => ({ id: row.id, name: row.name, kind: row.kind, color: row.color, icon: row.icon })),
       fields: world.fieldRows.filter((row) => row.status === "active").map((row) => ({ id: row.id, key: row.key, name: row.name, type: row.type, options: row.options, system: !!row.systemKey })),
@@ -720,8 +720,8 @@ router.get("/campaigns/:id/report", async (req, res) => {
 
 router.get("/settings", async (req, res) => {
   try {
-    const [settings, sender] = await Promise.all([settingsFor(orgOf(req), branchOf(req)), marketingSender(orgOf(req))]);
-    res.json({ dailyLimit: settings.dailyLimit, footerNote: settings.footerNote, sender });
+    const [settings, sender] = await Promise.all([settingsFor(orgOf(req), branchOf(req)), marketingSender(orgOf(req), branchOf(req))]);
+    res.json({ dailyLimit: settings.dailyLimit, footerNote: settings.footerNote, fromName: settings.fromName, replyTo: settings.replyTo, whatsapp: settings.whatsapp, sender });
   } catch (error) { sendError(res, error, "Could not load the settings."); }
 });
 
@@ -729,7 +729,8 @@ router.patch("/settings", async (req, res) => {
   try {
     const body = z.object({
       dailyLimit: z.number().int().min(1).max(100000).optional(), footerNote: z.string().max(300).optional(),
-      autoSync: z.boolean().optional(), defaultListId: z.string().regex(UUID).nullable().optional(), updateExisting: z.boolean().optional()
+      autoSync: z.boolean().optional(), defaultListId: z.string().regex(UUID).nullable().optional(), updateExisting: z.boolean().optional(),
+      fromName: z.string().max(80).optional(), whatsapp: z.string().max(30).optional(), replyTo: z.string().max(200).refine((v) => !v.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()), "Reply-to must be an email address.").optional()
     }).parse(req.body);
     await saveSettings(orgOf(req), branchOf(req), req.user!.id, body);
     res.json({ ok: true });

@@ -1,3 +1,4 @@
+import { currencySymbol, money as branchMoney } from "../../lib/money-privacy";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity, Archive, Cake, Check, ChevronRight, Coins, Crown, FileBarChart, Gift, Layers, Mail, Pause, Pencil, Play, Plus, RefreshCw, Search, Settings, Star, Ticket, Trash2,
@@ -95,7 +96,7 @@ export default function LoyaltyPage({ onToast, refreshKey, onCreateAutomation }:
     try {
       const { rows } = await emailMarketingApi.loyaltyMembers({ all: true, sort: "spend" });
       if (!rows.length) { onToast("No members yet: a customer becomes one with their first delivered order."); return; }
-      downloadCsv(`loyalty-members-${todayKey}.csv`, ["Customer", "Phone", "Level", "Delivered orders", "Total spend (₦)", "Points", "Voucher ready", "First delivery", "Last delivery"],
+      downloadCsv(`loyalty-members-${todayKey}.csv`, ["Customer", "Phone", "Level", "Delivered orders", `Total spend (${currencySymbol().trim()})`, "Points", "Voucher ready", "First delivery", "Last delivery"],
         rows.map((row) => [row.name, row.phone, row.levelName, row.delivered, row.spend, row.balance, row.voucher ? row.voucher.label : "", lagosDate(row.firstAt), lagosDate(row.lastAt)]));
     } catch (err) { onToast((err as Error).message || "Could not build the report."); }
   };
@@ -369,9 +370,9 @@ function ProgramModal({ id, initial, designer, hasTier, hasPoints, defaultLevels
           <label className={label}>Description<input value={form.description} maxLength={200} onChange={(event) => set({ description: event.target.value })} className={`${input} mt-1.5`} /></label>
           {form.type === "points" && (
             <>
-              <label className={label}>Points per ₦1,000 delivered *
+              <label className={label}>Points per {currencySymbol().trim()}1,000 delivered *
                 <input type="number" min={0.1} max={100} step={0.5} value={form.rate} onChange={(event) => set({ rate: Number(event.target.value) || 0 })} className={`${input} mt-1.5`} />
-                <span className="block text-[11.5px] font-normal text-gray-500">{`A ₦30,500 order earns ${Math.floor(30 * (form.rate || 0))} points at the first level. Higher levels multiply it.`}</span>
+                <span className="block text-[11.5px] font-normal text-gray-500">{`A ${currencySymbol().trim()}30,500 order earns ${Math.floor(30 * (form.rate || 0))} points at the first level. Higher levels multiply it.`}</span>
               </label>
               <label className={label}>Ends (optional)
                 <input type="date" value={form.endsAt ? form.endsAt.slice(0, 10) : ""} onChange={(event) => set({ endsAt: event.target.value ? new Date(`${event.target.value}T23:59:00+01:00`).toISOString() : null })} className={`${input} mt-1.5`} />
@@ -420,7 +421,7 @@ function SettingsModal({ minOrder, onClose, onCreateAutomation, onDone }: { minO
       footer={<><button type="button" onClick={onClose} className={btn.ghost}>Cancel</button><button type="button" disabled={busy} onClick={() => void save()} className={btn.primary}>{busy ? "Saving…" : "Save Settings"}</button></>}>
       <ErrorNote message={error} />
       <div className="space-y-4">
-        <label className="block text-[13px] font-semibold text-gray-800 dark:text-slate-200">Smallest order a voucher comes off (₦)
+        <label className="block text-[13px] font-semibold text-gray-800 dark:text-slate-200">Smallest order a voucher comes off ({currencySymbol().trim()})
           <input type="number" min={0} value={value || ""} placeholder="Any order" onChange={(event) => setValue(Math.max(0, Number(event.target.value) || 0))} className={`${input} mt-1.5`} />
           <span className="block text-[11.5px] font-normal text-gray-500">Smaller orders pay full price, and the voucher waits for a bigger one.</span>
         </label>
