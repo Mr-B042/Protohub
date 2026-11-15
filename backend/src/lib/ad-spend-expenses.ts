@@ -60,7 +60,8 @@ export async function syncAdSpendExpenses(orgId: string, branchId: string, windo
   const from = window.from && window.from > AUTO_AD_SPEND_FROM ? window.from : AUTO_AD_SPEND_FROM;
   const to = window.to && window.to < today ? window.to : today;
   if (from > to) return { written: 0, removed: 0 };
-  const data = await loadAdSpendInputs(orgId, branchId, from, to);
+  // Shared ad accounts stay booked in their home branch, in its currency (15 Nov 2026).
+  const data = await loadAdSpendInputs(orgId, branchId, from, to, { ignoreShares: true });
   const pieces = allocate(data.insights, mappingIndex(data.mappings), data.evidence, data.accounts);
   const currencyOf = new Map<string, string>();
   for (const account of data.basics.adAccounts as any[]) if (account.currency) currencyOf.set(String(account.account_id), String(account.currency));
@@ -113,7 +114,8 @@ export async function releaseHeldAdSpend(orgId: string, fromDay: string) {
     supabase.from("tracking_tiktok_connections").select("branch_id").eq("org_id", orgId).not("access_token", "is", null)
   ]);
   const branches = new Set<string>();
-  for (const row of [...(accounts.data ?? []), ...(tiktok.data ?? []), ...((sources.data ?? []) as any[]).filter((item) => (item.ad_account_ids ?? []).length)] as any[]) {
+  const shared = await supabase.from("tracking_ad_account_shares").select("branch_id").eq("org_id", orgId);
+  for (const row of [...(accounts.data ?? []), ...(tiktok.data ?? []), ...(shared.data ?? []), ...((sources.data ?? []) as any[]).filter((item) => (item.ad_account_ids ?? []).length)] as any[]) {
     if (row.branch_id) branches.add(String(row.branch_id));
   }
   let written = 0;

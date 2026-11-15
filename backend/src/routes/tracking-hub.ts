@@ -17,6 +17,7 @@ import { AD_SPEND_VIEWS, allocate, buildReport, mappingIndex, validSplits, type 
 import { refreshPixelAdAccountsNow, loadAdSpendInputs, loadSinceStart, loadTikTokConnections, suggestProduct, syncAdSpend } from "../lib/ad-spend-data.js";
 import { RULES as SINCE_START_RULES, VERDICT_ORDER } from "../lib/ad-since-start.js";
 import { droughtsFor, VERDICT_RULES } from "../lib/campaign-drought-alerts.js";
+import { campaignClaims, forgetShares } from "../lib/ad-account-shares.js";
 import { syncAdSpendExpenses } from "../lib/ad-spend-expenses.js";
 import { adFundsView, runAdFundsCheck, saveFundsSettings } from "../lib/ad-funds.js";
 import { TIKTOK_URL_PARAMETERS, tiktokAdvertisers } from "../lib/tiktok-ads.js";
@@ -538,6 +539,53 @@ router.put("/ad-accounts/:id/active", async (req, res) => {
     await hubAudit(req.user!.orgId, branchOf(req), actorOf(req), parsed.data.active ? "ad_account_on" : "ad_account_off", { type: "ad_account", id: String(req.params.id), label: data.name || `act_${data.account_id}` });
     res.json({ ok: true });
   } catch (error: any) { fail(res, error, "Could not change the ad account."); }
+});
+
+/**
+ * Shared ad accounts (Bright, 15 Nov 2026): an ad account switched on in
+ * another branch can be used here too. Spend is still read once (its home
+ * branch); a campaign counts here only on proof (orders, landing page,
+ * mapped by hand). Booked expenses stay in the home branch.
+ */
+router.get("/ad-account-shares", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId, branchId = branchOf(req);
+    const [accounts, branches, shares] = await Promise.all([
+      supabase.from("tracking_meta_ad_accounts").select("account_id, name, currency, branch_id").eq("org_id", orgId).eq("active", true).neq("branch_id", branchId),
+      supabase.from("branches").select("id, name").eq("org_id", orgId),
+      supabase.from("tracking_ad_account_shares").select("account_id").eq("org_id", orgId).eq("branch_id", branchId)
+    ]);
+    for (const r of [accounts, branches, shares]) if (r.error) throw r.error;
+    const branchName = new Map(((branches.data ?? []) as any[]).map((b) => [b.id, b.name]));
+    const on = new Set(((shares.data ?? []) as any[]).map((r) => String(r.account_id)));
+    const claims = on.size ? await campaignClaims(orgId) : new Map<string, string>();
+    const claimedHere = [...claims.values()].filter((b) => b === branchId).length;
+    const seen = new Set<string>();
+    const rows = ((accounts.data ?? []) as any[]).filter((a) => !seen.has(String(a.account_id)) && seen.add(String(a.account_id))).map((a) => ({
+      accountId: String(a.account_id), name: a.name || `act_${a.account_id}`, currency: a.currency ?? null, homeBranch: branchName.get(a.branch_id) ?? "another branch", shared: on.has(String(a.account_id))
+    }));
+    res.json({ accounts: rows, campaignsHere: claimedHere });
+  } catch (error: any) { fail(res, error, "Could not load ad accounts from other branches."); }
+});
+
+router.put("/ad-account-shares/:accountId", async (req, res) => {
+  const parsed = z.object({ on: z.boolean() }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "On or off?" }); return; }
+  try {
+    const orgId = req.user!.orgId, branchId = branchOf(req), accountId = String(req.params.accountId).replace(/^act_/, "");
+    const { data: home } = await supabase.from("tracking_meta_ad_accounts").select("branch_id, name").eq("org_id", orgId).eq("account_id", accountId).eq("active", true).neq("branch_id", branchId).limit(1).maybeSingle();
+    if (parsed.data.on) {
+      if (!home) throw httpError(404, "That ad account is not switched on in another branch.");
+      const { error } = await supabase.from("tracking_ad_account_shares").upsert({ org_id: orgId, branch_id: branchId, account_id: accountId, home_branch_id: (home as any).branch_id, created_by: req.user!.id }, { onConflict: "org_id,branch_id,account_id" });
+      if (error) throw error;
+    } else {
+      const { error } = await supabase.from("tracking_ad_account_shares").delete().eq("org_id", orgId).eq("branch_id", branchId).eq("account_id", accountId);
+      if (error) throw error;
+    }
+    forgetShares();
+    await hubAudit(orgId, branchId, actorOf(req), parsed.data.on ? "ad_account_on" : "ad_account_off", { type: "ad_account", id: accountId, label: `${(home as any)?.name ?? `act_${accountId}`} (shared)` });
+    res.json({ ok: true });
+  } catch (error: any) { fail(res, error, "Could not change the shared ad account."); }
 });
 
 /** Header "Test Event": a test Purchase to Meta's Test Events tab. */

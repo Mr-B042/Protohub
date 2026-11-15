@@ -89,7 +89,8 @@ async function adBranches() {
   if (accounts.error) throw accounts.error;
   if (tiktok.error) throw tiktok.error;
   const out = new Map<string, { orgId: string; branchId: string }>();
-  for (const row of [...(accounts.data ?? []), ...(tiktok.data ?? [])] as any[]) out.set(`${row.org_id}|${row.branch_id}`, { orgId: row.org_id, branchId: row.branch_id });
+  const shared = await supabase.from("tracking_ad_account_shares").select("org_id, branch_id");
+  for (const row of [...(accounts.data ?? []), ...(tiktok.data ?? []), ...(shared.data ?? [])] as any[]) out.set(`${row.org_id}|${row.branch_id}`, { orgId: row.org_id, branchId: row.branch_id });
   return [...out.values()];
 }
 
