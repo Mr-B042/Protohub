@@ -87946,7 +87946,7 @@ ${waybillLineItems(w).length > 1
                               <div className="text-xs text-gray-500">{displayDateFromKey(expense.date)}</div>
                               {expense.createdAt && <div className="text-xs text-gray-400">{formatMoment(expense.createdAt)}</div>}
                             </div>
-                            <span className="text-base font-bold text-gray-900 whitespace-nowrap">{formatMoney(expense.amount)}</span>
+                            <span className="text-base font-bold text-gray-900 whitespace-nowrap">{formatMoney(expense.amount)}{(expense as any).sourceCurrency && (expense as any).sourceAmount != null ? <span className="block text-[11px] font-medium text-gray-500">≈ {formatProductMoney(Number((expense as any).sourceAmount), (expense as any).sourceCurrency)}</span> : null}</span>
                           </div>
                           <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 flex flex-col gap-2 text-xs">
                             <div className="flex flex-col gap-0.5">
@@ -87997,7 +87997,7 @@ ${waybillLineItems(w).length > 1
                             </td>
                             <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-700">{expense.type}</span></td>
                             <td className="px-4 py-4 text-gray-700">{expense.productName}</td>
-                            <td className="px-4 py-4 font-bold text-gray-900">{formatMoney(expense.amount)}</td>
+                            <td className="px-4 py-4 font-bold text-gray-900">{formatMoney(expense.amount)}{(expense as any).sourceCurrency && (expense as any).sourceAmount != null ? <span className="block text-[11px] font-medium text-gray-500">≈ {formatProductMoney(Number((expense as any).sourceAmount), (expense as any).sourceCurrency)}</span> : null}</td>
                             <td className="px-4 py-4 text-gray-500 text-xs">{expense.description}{expense.waybillId && <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-50 text-blue-600">from Waybill</span>}{expense.walletPaid ? <span className="mt-1 block text-[11px] font-semibold text-blue-700">Includes {formatMoney(expense.walletPaid)} paid from the manager's wallet{(expense.walletCount ?? 0) > 1 ? ` (${expense.walletCount} payments)` : ""}</span> : null}</td>
                             <td className="px-4 py-4">
                               <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openAdminExpenseDetail(expense.id)}>Details</button>
@@ -92638,7 +92638,7 @@ ${waybillLineItems(w).length > 1
                                 <div className="truncate font-black text-gray-900 dark:text-slate-100">{expense.productName}</div>
                                 <div className="mt-0.5 text-xs font-semibold text-gray-500 dark:text-slate-400">{displayDateFromKey(expense.date)} · {expense.description}</div>
                               </div>
-                              <strong className="shrink-0 text-rose-700 dark:text-rose-200">{formatMoney(expense.amount)}</strong>
+                              <strong className="shrink-0 text-rose-700 dark:text-rose-200">{formatMoney(expense.amount)}{(expense as any).sourceCurrency && (expense as any).sourceAmount != null ? <span className="block text-[11px] font-medium text-gray-500">≈ {formatProductMoney(Number((expense as any).sourceAmount), (expense as any).sourceCurrency)}</span> : null}</strong>
                             </div>
                           </div>
                         ))}
@@ -113802,7 +113802,7 @@ ${waybillLineItems(w).length > 1
                   <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div className="min-w-0">
                       <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Expense · {expense.id}</p>
-                      <h3 className="text-2xl font-extrabold text-gray-900 m-0 mt-1">{formatMoney(expense.amount)}</h3>
+                      <h3 className="text-2xl font-extrabold text-gray-900 m-0 mt-1">{formatMoney(expense.amount)}</h3>{(expense as any).sourceCurrency && (expense as any).sourceAmount != null ? <span className="block text-[11px] font-medium text-gray-500">≈ {formatProductMoney(Number((expense as any).sourceAmount), (expense as any).sourceCurrency)}</span> : null}
                       <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold border ${toneClass[tone]}`}>{expense.type}</span>
                         <span className="text-xs text-gray-500">{formatDateOnly(expense.date)}</span>

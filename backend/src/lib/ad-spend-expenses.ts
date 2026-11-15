@@ -1,4 +1,5 @@
 import { supabase } from "./supabase.js";
+import { rateFor } from "./currency-rates.js";
 import { lagosDateKey } from "./sales-bonus-engine.js";
 import { allocate, mappingIndex, type AdPlatform } from "./ad-spend.js";
 import { loadAdSpendInputs } from "./ad-spend-data.js";
@@ -60,11 +61,23 @@ export async function syncAdSpendExpenses(orgId: string, branchId: string, windo
   const from = window.from && window.from > AUTO_AD_SPEND_FROM ? window.from : AUTO_AD_SPEND_FROM;
   const to = window.to && window.to < today ? window.to : today;
   if (from > to) return { written: 0, removed: 0 };
-  // Shared ad accounts stay booked in their home branch, in its currency (15 Nov 2026).
-  const data = await loadAdSpendInputs(orgId, branchId, from, to, { ignoreShares: true });
+  // Shared ad accounts (15 Nov 2026): each campaign is booked in the branch it
+  // counts in. Spend in another currency (a naira account booked in Zambia) is
+  // converted at the org's rate, the original amount kept underneath.
+  const data = await loadAdSpendInputs(orgId, branchId, from, to);
+  const { data: branchRow } = await supabase.from("branches").select("currency").eq("id", branchId).maybeSingle();
+  const bookIn = String((branchRow as any)?.currency ?? "NGN");
+  const rates = new Map<string, Awaited<ReturnType<typeof rateFor>>>();
   const pieces = allocate(data.insights, mappingIndex(data.mappings), data.evidence, data.accounts);
   const currencyOf = new Map<string, string>();
   for (const account of data.basics.adAccounts as any[]) if (account.currency) currencyOf.set(String(account.account_id), String(account.currency));
+  // Accounts shared into this branch: their currency from the home branch.
+  const { data: sharedRows } = await supabase.from("tracking_ad_account_shares").select("account_id").eq("org_id", orgId).eq("branch_id", branchId);
+  if ((sharedRows ?? []).length) {
+    const ids = ((sharedRows ?? []) as any[]).map((r) => String(r.account_id));
+    const { data: homeAccounts } = await supabase.from("tracking_meta_ad_accounts").select("account_id, currency").eq("org_id", orgId).in("account_id", ids);
+    for (const a of (homeAccounts ?? []) as any[]) if (a.currency && !currencyOf.has(String(a.account_id))) currencyOf.set(String(a.account_id), String(a.currency));
+  }
   for (const connection of data.tiktokConnections) for (const adv of (connection.advertisers ?? []) as any[]) if (adv.currency) currencyOf.set(`tt:${adv.id}`, String(adv.currency));
   const productName = new Map(data.basics.products.map((row) => [row.id, row.name]));
   const heldSince = await silentHeldSince(orgId);
@@ -76,16 +89,21 @@ export async function syncAdSpendExpenses(orgId: string, branchId: string, windo
     // those days is removed below as stale and comes back at the release.
     if (isHeldAdSpend(piece.productId, piece.day, heldSince)) continue;
     const id = autoExpenseId(piece.platform, branchId, piece.productId, piece.day);
+    const spendCurrency = currencyOf.get(piece.accountId) ?? currencyOf.get(String(piece.accountId).replace(/^act_/, "")) ?? "NGN";
+    if (!rates.has(spendCurrency)) rates.set(spendCurrency, spendCurrency === bookIn ? null : await rateFor(orgId, spendCurrency, bookIn));
+    const rate = rates.get(spendCurrency) ?? null;
     const row = rows.get(id) ?? {
       id, org_id: orgId, branch_id: branchId, date: piece.day, category: "Ad Spend", amount: 0,
-      currency: currencyOf.get(piece.accountId) ?? "NGN", product_id: piece.productId,
+      currency: rate ? bookIn : spendCurrency, product_id: piece.productId,
+      source_amount: rate ? 0 : null, source_currency: rate ? spendCurrency : null,
       paid_by: piece.platform === "tiktok" ? "TikTok (automatic)" : "Meta (automatic)",
       description: `${piece.platform === "tiktok" ? "TikTok" : "Meta"} ad spend (automatic) – ${piece.productId ? productName.get(piece.productId) ?? "Product" : "Not assigned to a product"} – ${piece.day}`
     };
-    row.amount += piece.spend;
+    if (rate) { row.amount += piece.spend / rate.fromPerTo; row.source_amount += piece.spend; }
+    else row.amount += piece.spend;
     rows.set(id, row);
   }
-  const keep = Array.from(rows.values()).map((row) => ({ ...row, amount: Math.round(row.amount * 100) / 100 })).filter((row) => row.amount > 0);
+  const keep = Array.from(rows.values()).map((row) => ({ ...row, amount: Math.round(row.amount * 100) / 100, source_amount: row.source_amount === null ? null : Math.round(row.source_amount * 100) / 100 })).filter((row) => row.amount > 0);
   for (let i = 0; i < keep.length; i += 200) {
     const { error } = await supabase.from("expenses").upsert(keep.slice(i, i + 200), { onConflict: "id" });
     if (error) throw error;

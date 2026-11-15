@@ -4894,6 +4894,8 @@ export const trackingHubApi = {
   checkAdFunds: () => post<AdFundsView>("/api/tracking-hub/ad-funds/check", {}),
   adAccountShares: () => get<{ accounts: Array<{ accountId: string; name: string; currency: string | null; homeBranch: string; shared: boolean }>; campaignsHere: number }>("/api/tracking-hub/ad-account-shares"),
   setAdAccountShare: (accountId: string, on: boolean) => put<{ ok: boolean }>(`/api/tracking-hub/ad-account-shares/${encodeURIComponent(accountId)}`, { on }),
+  currencyRate: (from = "NGN", to = "ZMW") => get<{ rate: { from: string; to: string; fromPerTo: number; source: string; setBy: string | null; updatedAt: string | null; isDefault: boolean } | null }>(`/api/tracking-hub/currency-rate?from=${from}&to=${to}`),
+  setCurrencyRate: (from: string, to: string, fromPerTo: number) => put<{ rate: { from: string; to: string; fromPerTo: number; source: string; setBy: string | null; updatedAt: string | null; isDefault: boolean } | null }>("/api/tracking-hub/currency-rate", { from, to, fromPerTo }),
   campaignAlerts: (fresh = false) => get<{ verdicts: CampaignVerdict[]; unchecked: number; uncheckedAccounts?: Array<{ name: string; message: string }>; checkedAt: string }>(`/api/tracking-hub/campaign-alerts${fresh ? "?fresh=1" : ""}`),
   setAdSpendTarget: (productId: string, targetCpa: number | null) => put<{ ok: true }>("/api/tracking-hub/ad-spend/targets", { productId, targetCpa }),
   tiktokConnections: () => get<{ connections: HubTikTokConnection[]; urlParameters: string }>("/api/tracking-hub/tiktok-connections"),
