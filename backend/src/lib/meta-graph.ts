@@ -176,11 +176,18 @@ export async function campaignInfo(adAccountId: string, token: string) {
  * for its ads made Meta answer 500).
  */
 export async function deliveringCampaigns(adAccountId: string, token: string): Promise<{ ok: true; ids: Set<string> } | { ok: false; message: string }> {
+  // Big pages make Meta fail on large accounts (15 Nov 2026: 40 campaigns
+  // "could not be checked"): ask 100 at a time, then once more with 25.
+  const first = await deliveringCampaignsPaged(adAccountId, token, 100);
+  return first.ok ? first : deliveringCampaignsPaged(adAccountId, token, 25);
+}
+
+async function deliveringCampaignsPaged(adAccountId: string, token: string, pageSize: number): Promise<{ ok: true; ids: Set<string> } | { ok: false; message: string }> {
   const account = adAccountId.startsWith("act_") ? adAccountId : `act_${adAccountId}`;
   const ids = new Set<string>();
   let path = `${account}/ads`;
-  let params: Record<string, string> = { fields: "campaign_id", effective_status: JSON.stringify(["ACTIVE"]), limit: "500" };
-  for (let page = 0; page < 20; page += 1) {
+  let params: Record<string, string> = { fields: "campaign_id", effective_status: JSON.stringify(["ACTIVE"]), limit: String(pageSize) };
+  for (let page = 0; page < 200; page += 1) {
     const result = await graphGet<{ data?: Array<{ campaign_id?: string }>; paging?: { next?: string } }>(path, token, params);
     if (!result.ok) return { ok: false, message: result.message };
     for (const ad of result.data.data ?? []) if (ad.campaign_id) ids.add(String(ad.campaign_id));

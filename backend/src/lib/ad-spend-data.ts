@@ -1,3 +1,4 @@
+import { logger } from "./logger.js";
 import { supabase } from "./supabase.js";
 import { addDaysToDateKey, lagosDateKey } from "./sales-bonus-engine.js";
 import { orderAdIds, otherAdPlatform, productFromName } from "./tracking-hub.js";
@@ -18,14 +19,15 @@ async function insightsBetween(orgId: string, branchId: string, from: string, to
   const rows: SpendInsight[] = [];
   for (let page = 0; page < 60; page += 1) {
     const { data, error } = await supabase.from("tracking_meta_ad_insights")
-      .select("id, day, spend, ad_account_id, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name, link_clicks, impressions")
+      .select("id, day, spend, ad_account_id, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name, link_clicks, impressions, purchases")
       .eq("org_id", orgId).eq("branch_id", branchId).gte("day", from).lte("day", to)
       .order("id").range(page * PAGE, page * PAGE + PAGE - 1);
     if (error) throw error;
     rows.push(...((data ?? []) as any[]).map((row) => ({
       ...row, platform: "meta" as const, day: String(row.day).slice(0, 10), spend: Number(row.spend) || 0,
       linkClicks: row.link_clicks === null || row.link_clicks === undefined ? null : Number(row.link_clicks),
-      impressions: row.impressions === null || row.impressions === undefined ? null : Number(row.impressions)
+      impressions: row.impressions === null || row.impressions === undefined ? null : Number(row.impressions),
+      purchases: row.purchases === null || row.purchases === undefined ? null : Number(row.purchases)
     })));
     if ((data ?? []).length < PAGE) break;
   }
@@ -324,10 +326,17 @@ export async function sinceStartCore(orgId: string, branchId: string, today: str
   const accountNames = new Map(Array.from(data.accounts.values()).map((row) => [row.accountId, row.name]));
   // Running = an ad delivering right now, asked live per ad account (one call each).
   const live = { delivering: new Set<string>(), accounts: new Set<string>() };
+  // Accounts Meta did not answer for, with its reason (was silent before 15 Nov 2026: "40 could not be checked").
+  const liveFailures: Array<{ accountId: string; name: string; message: string }> = [];
   const lifetimeAccounts = new Set(lifetime.filter((row) => row.platform === "meta").map((row) => String(row.account_id ?? "").replace(/^act_/, "")));
   await Promise.all(refreshTargets(data.basics).filter((target) => lifetimeAccounts.has(String(target.account).replace(/^act_/, ""))).map(async (target) => {
-    const result = await deliveringCampaigns(target.account, target.token).catch(() => ({ ok: false as const, message: "no answer" }));
-    if (!result.ok) return;
+    const result = await deliveringCampaigns(target.account, target.token).catch((err: any) => ({ ok: false as const, message: String(err?.message ?? "no answer") }));
+    if (!result.ok) {
+      const accountId = String(target.account).replace(/^act_/, "");
+      liveFailures.push({ accountId, name: accountNames.get(accountId) ?? accountNames.get(`act_${accountId}`) ?? accountId, message: result.message });
+      logger.warn("live delivering check failed", { orgId, accountId, message: result.message });
+      return;
+    }
     live.accounts.add(String(target.account).replace(/^act_/, ""));
     for (const id of result.ids) live.delivering.add(id);
   }));
@@ -336,7 +345,7 @@ export async function sinceStartCore(orgId: string, branchId: string, today: str
   const recent = data.orders.filter((order) => order.day >= addDaysToDateKey(today, -29) && !order.otherPlatform);
   const linked = recent.filter((order) => order.campaignId).length;
   const { data: state } = await supabase.from("tracking_ad_spend_state").select("last_lifetime_at").eq("org_id", orgId).eq("branch_id", branchId).maybeSingle();
-  return { rows, ordersFrom, targets: targetList.filter((row) => row.breakEven !== null || row.own !== null || rows.some((campaign) => campaign.productId === row.productId)), linkedShare: recent.length ? linked / recent.length : null, lastLifetimeAt: state?.last_lifetime_at ?? null, data };
+  return { rows, ordersFrom, targets: targetList.filter((row) => row.breakEven !== null || row.own !== null || rows.some((campaign) => campaign.productId === row.productId)), linkedShare: recent.length ? linked / recent.length : null, lastLifetimeAt: state?.last_lifetime_at ?? null, data, liveFailures };
 }
 
 /**
