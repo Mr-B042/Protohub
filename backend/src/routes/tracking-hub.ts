@@ -18,6 +18,7 @@ import { refreshPixelAdAccountsNow, loadAdSpendInputs, loadSinceStart, loadTikTo
 import { RULES as SINCE_START_RULES, VERDICT_ORDER } from "../lib/ad-since-start.js";
 import { droughtsFor, VERDICT_RULES } from "../lib/campaign-drought-alerts.js";
 import { campaignClaims, forgetShares } from "../lib/ad-account-shares.js";
+import { rateFor } from "../lib/currency-rates.js";
 import { syncAdSpendExpenses } from "../lib/ad-spend-expenses.js";
 import { adFundsView, runAdFundsCheck, saveFundsSettings } from "../lib/ad-funds.js";
 import { TIKTOK_URL_PARAMETERS, tiktokAdvertisers } from "../lib/tiktok-ads.js";
@@ -583,9 +584,42 @@ router.put("/ad-account-shares/:accountId", async (req, res) => {
       if (error) throw error;
     }
     forgetShares();
+    // Costs move to the right books for this month straight away.
+    await rebookMonth(orgId, [branchId, ...(home ? [(home as any).branch_id] : [])]);
     await hubAudit(orgId, branchId, actorOf(req), parsed.data.on ? "ad_account_on" : "ad_account_off", { type: "ad_account", id: accountId, label: `${(home as any)?.name ?? `act_${accountId}`} (shared)` });
     res.json({ ok: true });
   } catch (error: any) { fail(res, error, "Could not change the shared ad account."); }
+});
+
+/** Re-book this month's ad spend expenses for these branches (after a share or rate change). */
+async function rebookMonth(orgId: string, branchIds: string[]) {
+  const { syncAdSpendExpenses } = await import("../lib/ad-spend-expenses.js");
+  const today = new Date(Date.now() + 3_600_000).toISOString().slice(0, 10);
+  for (const branchId of new Set(branchIds)) await syncAdSpendExpenses(orgId, branchId, { from: `${today.slice(0, 8)}01`, to: today }).catch((err: any) => console.warn("[ad-spend] rebook failed:", err?.message ?? err));
+}
+
+/** The rate used to book naira ad spend in kwacha (Bright, 15 Nov 2026). */
+router.get("/currency-rate", async (req, res) => {
+  try {
+    const from = String(req.query.from ?? "NGN").toUpperCase().slice(0, 3), to = String(req.query.to ?? "ZMW").toUpperCase().slice(0, 3);
+    res.json({ rate: await rateFor(req.user!.orgId, from, to) });
+  } catch (error: any) { fail(res, error, "Could not load the rate."); }
+});
+router.put("/currency-rate", async (req, res) => {
+  const parsed = z.object({ from: z.string().length(3), to: z.string().length(3), fromPerTo: z.number().positive().max(1_000_000) }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Type how many naira make one kwacha, e.g. 65.80." }); return; }
+  try {
+    const orgId = req.user!.orgId;
+    const { error } = await supabase.from("currency_rates").upsert({
+      org_id: orgId, from_currency: parsed.data.from.toUpperCase(), to_currency: parsed.data.to.toUpperCase(), from_per_to: parsed.data.fromPerTo,
+      source: "Set by you", updated_by: req.user!.id, updated_by_name: req.user!.name, updated_at: new Date().toISOString()
+    }, { onConflict: "org_id,from_currency,to_currency" });
+    if (error) throw error;
+    const { data: shares } = await supabase.from("tracking_ad_account_shares").select("branch_id").eq("org_id", orgId);
+    await rebookMonth(orgId, ((shares ?? []) as any[]).map((r) => r.branch_id));
+    await hubAudit(orgId, branchOf(req), actorOf(req), "settings_changed", { type: "currency_rate", id: `${parsed.data.from}>${parsed.data.to}`, label: `${parsed.data.from} ${parsed.data.fromPerTo} = 1 ${parsed.data.to}` });
+    res.json({ rate: await rateFor(orgId, parsed.data.from.toUpperCase(), parsed.data.to.toUpperCase()) });
+  } catch (error: any) { fail(res, error, "Could not save the rate."); }
 });
 
 /** Header "Test Event": a test Purchase to Meta's Test Events tab. */
