@@ -4750,7 +4750,7 @@ export type HubAdSpendMetrics = { spend: number; orders: number; delivered: numb
 export type HubAdSpendRow = HubAdSpendMetrics & {
   id: string; name: string; image: string | null; campaigns: number; adsets: number; ads: number; accounts: number;
   platform: "meta" | "tiktok" | null; accountId: string | null; accountName: string | null; campaignId: string | null; campaignName: string | null; adsetId: string | null; adsetName: string | null;
-  products: Array<{ id: string; name: string }>; mappingSource: HubAdSpendLevel | "link" | "mixed" | null; unassignedSpend: number;
+  products: Array<{ id: string; name: string }>; mappingSource: HubAdSpendLevel | "link" | "ad_link" | "siblings" | "name" | "mixed" | null; unassignedSpend: number;
   spendChange: number | null; trend: number[];
 };
 export type HubAdPlatformChoice = "meta" | "tiktok" | "all";

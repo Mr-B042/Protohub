@@ -4,9 +4,10 @@ import { addDaysToDateKey, lagosDateKey } from "./sales-bonus-engine.js";
 import { orderAdIds, otherAdPlatform, productFromName } from "./tracking-hub.js";
 import { dayOfIso, endIso, journeyCounts, loadBasics, startIso, type Basics } from "./tracking-hub-data.js";
 import { refreshAccount, refreshTargets } from "./tracking-meta-refresh.js";
-import { TIKTOK_PREFIX, linkEvidence, nameKey, tiktokOrderIds, type AccountInfo, type AdPlatform, type SpendInsight, type SpendMapping, type SpendOrder } from "./ad-spend.js";
+import { TIKTOK_PREFIX, linkEvidence, nameKey, tiktokOrderIds, type AccountInfo, type AdPlatform, type Evidence, type SpendInsight, type SpendMapping, type SpendOrder } from "./ad-spend.js";
 import { tiktokAdLifetime, tiktokAdSpend, tiktokCampaignStarts } from "./tiktok-ads.js";
-import { pixelAdAccounts, adLifetime, campaignsByIds, deliveringCampaigns } from "./meta-graph.js";
+import { pixelAdAccounts, adLifetime, adLinks, campaignsByIds, deliveringCampaigns } from "./meta-graph.js";
+import { autoProducts, pageKey, pageProducts } from "./ad-auto-product.js";
 import { breakEvenCpa, sinceStart, type LifetimeRow } from "./ad-since-start.js";
 import { mappingIndex } from "./ad-spend.js";
 
@@ -135,13 +136,29 @@ export async function loadAdSpendInputs(orgId: string, branchId: string, from: s
   const visits = journey.filter((row) => row.event_type === "form_opened" && row.ad_id).map((row) => ({ adId: row.ad_id!, productId: row.product_id, visits: row.visits }));
   for (const order of orders) if (order.adId && order.productId) visits.push({ adId: order.adId, productId: order.productId, visits: 1 });
   const insights = [...metaInsights, ...tiktokInsights];
+  // Products worked out without mapping (Bright, 15 Nov 2026): the ad's page, its campaign's other ads, its name.
+  const evidence: Evidence = linkEvidence(visits);
+  try {
+    const metaAds = [...new Set(metaInsights.map((row) => row.ad_id))];
+    const adPage = new Map<string, string | null>();
+    for (let i = 0; i < metaAds.length; i += 300) {
+      const { data } = await supabase.from("tracking_meta_ad_links").select("ad_id, page").eq("org_id", orgId).eq("branch_id", branchId).in("ad_id", metaAds.slice(i, i + 300));
+      for (const row of (data ?? []) as any[]) adPage.set(String(row.ad_id), row.page ?? null);
+    }
+    const auto = autoProducts({
+      ads: insights.map((row) => ({ adId: row.ad_id, campaignId: row.campaign_id, campaignName: row.campaign_name, adsetName: row.adset_name, adName: row.ad_name })),
+      linkEvidence: evidence as Map<string, string>, adPage, pageProduct: adPage.size ? await learnedPages(orgId, branchId, to) : new Map(),
+      products: basics.products.map((p: any) => ({ id: p.id, name: p.name }))
+    });
+    for (const [adId, found] of auto) if (!evidence.has(adId)) evidence.set(adId, found);
+  } catch (err: any) { logger.warn("ad auto product failed", { orgId, error: err?.message ?? String(err) }); }
   const connected: AdPlatform[] = ["meta"];
   if (tiktokConnections.some((row) => row.access_token && (row.advertisers ?? []).some((adv: any) => adv.active !== false))) connected.push("tiktok");
   return {
     tiktokConnections, connected,
     basics, insights, orders, mappings: (mappingsRes.data ?? []) as Array<SpendMapping & { ad_account_id: string | null; label: string; created_by_name: string | null; updated_at: string }>,
     state: stateRes.data as any, finalDays: new Set((daysRes.data ?? []).map((row: any) => String(row.day).slice(0, 10))),
-    evidence: linkEvidence(visits), accounts: addTikTokAccounts(accountsOf(basics), tiktokConnections)
+    evidence, accounts: addTikTokAccounts(accountsOf(basics), tiktokConnections)
   };
 }
 
@@ -224,6 +241,41 @@ export async function syncAdSpend(orgId: string, branchId: string, opts: { from:
   return { ok, accounts: report.length, failed: failed.map((row) => row.source), message };
 }
 
+/** Each ad's landing page, read once per ad (re-read after 14 days), at most 500 a run. */
+async function saveAdLinks(orgId: string, branchId: string, target: { account: string; token: string }, adIds: string[]) {
+  if (!adIds.length) return;
+  const known = new Set<string>();
+  const freshAfter = new Date(Date.now() - 14 * 86_400_000).toISOString();
+  for (let i = 0; i < adIds.length; i += 300) {
+    const { data, error } = await supabase.from("tracking_meta_ad_links").select("ad_id").eq("org_id", orgId).eq("branch_id", branchId).in("ad_id", adIds.slice(i, i + 300)).gte("fetched_at", freshAfter);
+    if (error) throw error;
+    for (const row of (data ?? []) as any[]) known.add(String(row.ad_id));
+  }
+  const missing = adIds.filter((id) => !known.has(id)).slice(0, 500);
+  if (!missing.length) return;
+  const result = await adLinks(missing, target.token);
+  if (!result.ok) { console.warn("[ad-spend] ad links:", result.message); return; }
+  const now = new Date().toISOString();
+  const rows = missing.map((adId) => { const link = result.links.get(adId) ?? null; return { org_id: orgId, branch_id: branchId, ad_id: adId, account_id: String(target.account), link: link ? link.slice(0, 1000) : null, page: pageKey(link), fetched_at: now }; });
+  const { error } = await supabase.from("tracking_meta_ad_links").upsert(rows, { onConflict: "org_id,branch_id,ad_id" });
+  if (error) throw error;
+}
+
+/** Landing page -> product, learned from the last 60 days of orders (form_context.landingPageUrl). */
+async function learnedPages(orgId: string, branchId: string, to: string) {
+  const rows: Array<{ page: string | null; productId: string | null }> = [];
+  for (let page = 0; page < 30; page += 1) {
+    // launch-safe: Owner-only ad spend, product of each order's landing page.
+    const { data, error } = await supabase.from("orders").select("id, product_id, lp:form_context->>landingPageUrl")
+      .eq("org_id", orgId).eq("branch_id", branchId).gte("created_at", startIso(addDaysToDateKey(to, -59))).not("product_id", "is", null)
+      .order("id").range(page * PAGE, page * PAGE + PAGE - 1);
+    if (error) throw error;
+    for (const row of (data ?? []) as any[]) rows.push({ page: pageKey(row.lp), productId: row.product_id });
+    if ((data ?? []).length < PAGE) break;
+  }
+  return pageProducts(rows);
+}
+
 const lagosDay = (iso: string | null | undefined) => (iso ? lagosDateKey(new Date(iso).toISOString()) : null);
 
 /**
@@ -274,6 +326,7 @@ async function syncLifetime(orgId: string, branchId: string, opts: { targets: Re
       adset_id: row.adsetId, adset_name: row.adsetName, ad_id: row.adId, ad_name: row.adName, first_day: row.firstDay, last_day: row.lastDay,
       spend: row.spend, impressions: row.impressions, link_clicks: row.linkClicks, video_hook: row.video3s, video_full: row.thruplays, platform_purchases: row.purchases
     })), ids);
+    await saveAdLinks(orgId, branchId, target, [...new Set(result.rows.map((row) => row.adId))]).catch((err: any) => console.warn("[ad-spend] ad links:", target.label, err?.message ?? err));
   }
   for (const { connection, advertiser } of opts.tiktokTargets) {
     const [ads, starts] = await Promise.all([tiktokAdLifetime(connection.access_token, advertiser.id), tiktokCampaignStarts(connection.access_token, advertiser.id)]);

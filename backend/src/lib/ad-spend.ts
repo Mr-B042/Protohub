@@ -27,7 +27,9 @@ export type AdSpendLevel = "account" | "campaign" | "adset" | "ad";
 export type AdSpendView = "product" | "campaign" | "adset" | "ad" | "account" | "business";
 export const AD_SPEND_VIEWS: AdSpendView[] = ["product", "campaign", "adset", "ad", "account", "business"];
 export type Split = { productId: string; share: number };
-export type MappingSource = AdSpendLevel | "link" | null;
+export type MappingSource = AdSpendLevel | "link" | "ad_link" | "siblings" | "name" | null;
+/** Ad -> product: a string = from form visits / orders ("link"); an object = worked out (ad-auto-product.ts). */
+export type Evidence = Map<string, string | { productId: string; source: "ad_link" | "siblings" | "name" }>;
 
 export type AdPlatform = "meta" | "tiktok";
 export type PlatformChoice = AdPlatform | "all";
@@ -126,18 +128,21 @@ export function mappingIndex(mappings: SpendMapping[]) {
 }
 
 /** Which product(s) one insight's spend belongs to, and why. */
-export function resolveSplits(insight: Pick<SpendInsight, "ad_id" | "adset_id" | "campaign_id" | "ad_account_id">, index: Map<string, Split[]>, evidence: Map<string, string>): { splits: Split[]; source: MappingSource } {
+export function resolveSplits(insight: Pick<SpendInsight, "ad_id" | "adset_id" | "campaign_id" | "ad_account_id">, index: Map<string, Split[]>, evidence: Evidence): { splits: Split[]; source: MappingSource } {
   const manual = (level: AdSpendLevel, id: string) => (id ? index.get(`${level}:${id}`) : undefined);
   const ad = manual("ad", insight.ad_id); if (ad) return { splits: ad, source: "ad" };
   const adset = manual("adset", insight.adset_id); if (adset) return { splits: adset, source: "adset" };
   const campaign = manual("campaign", insight.campaign_id); if (campaign) return { splits: campaign, source: "campaign" };
-  const linked = evidence.get(insight.ad_id); if (linked) return { splits: [{ productId: linked, share: 100 }], source: "link" };
+  const linked = evidence.get(insight.ad_id);
+  if (typeof linked === "string") return { splits: [{ productId: linked, share: 100 }], source: "link" };
+  // Worked out without mapping (Bright, 15 Nov 2026): the ad's page, its campaign's other ads, or the name.
+  if (linked) return { splits: [{ productId: linked.productId, share: 100 }], source: linked.source };
   const account = manual("account", insight.ad_account_id); if (account) return { splits: account, source: "account" };
   return { splits: [], source: null };
 }
 
 /** Insights cut into pieces, one per product share (or one unmapped piece). */
-export function allocate(insights: SpendInsight[], index: Map<string, Split[]>, evidence: Map<string, string>, accounts: Map<string, AccountInfo>): SpendPiece[] {
+export function allocate(insights: SpendInsight[], index: Map<string, Split[]>, evidence: Evidence, accounts: Map<string, AccountInfo>): SpendPiece[] {
   const pieces: SpendPiece[] = [];
   for (const row of insights) {
     const spend = money(row.spend);
