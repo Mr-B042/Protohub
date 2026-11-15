@@ -665,6 +665,18 @@ async function rebookMonth(orgId: string, branchIds: string[]) {
   for (const branchId of new Set(branchIds)) await syncAdSpendExpenses(orgId, branchId, { from: `${today.slice(0, 8)}01`, to: today }).catch((err: any) => console.warn("[ad-spend] rebook failed:", err?.message ?? err));
 }
 
+/** Re-book this month's ad expenses now: this branch and every branch it shares an account with. */
+router.post("/ad-spend/rebook-month", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId, branchId = branchOf(req);
+    const { data: shares } = await supabase.from("tracking_ad_account_shares").select("branch_id, home_branch_id").eq("org_id", orgId);
+    const linked = ((shares ?? []) as any[]).filter((r) => r.branch_id === branchId || r.home_branch_id === branchId).flatMap((r) => [r.branch_id, r.home_branch_id]);
+    forgetShares();
+    await rebookMonth(orgId, [branchId, ...linked]);
+    res.json({ ok: true });
+  } catch (error: any) { fail(res, error, "Could not re-book this month."); }
+});
+
 /** The rate used to book naira ad spend in kwacha (Bright, 15 Nov 2026). */
 router.get("/currency-rate", async (req, res) => {
   try {

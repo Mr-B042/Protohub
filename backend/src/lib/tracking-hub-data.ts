@@ -126,7 +126,9 @@ export async function loadBasics(orgId: string, branchId: string) {
     supabase.from("tracking_websites").select("*").eq("org_id", orgId).eq("branch_id", branchId).order("domain"),
     supabase.from("tracking_profiles").select("*").eq("org_id", orgId).eq("branch_id", branchId).order("name"),
     supabase.from("meta_capi_configs").select("*").eq("org_id", orgId).order("label"),
-    supabase.from("products").select("id, name, image_url, sku").eq("org_id", orgId),
+    // This branch's products only: background jobs have no request scope, and an
+    // org-wide list let Nigeria's ad spend match Zambia's product (15 Nov 2026).
+    supabase.from("products").select("id, name, image_url, sku").eq("org_id", orgId).eq("branch_id", branchId),
     supabase.from("tracking_meta_connections").select("*").eq("org_id", orgId).eq("branch_id", branchId).order("created_at"),
     supabase.from("tracking_meta_ad_accounts").select("*").eq("org_id", orgId).eq("branch_id", branchId).order("name")
   ]);
