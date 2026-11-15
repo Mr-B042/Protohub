@@ -125,7 +125,7 @@ export async function datasetQuality(pixelId: string, token: string): Promise<Re
   return Object.keys(scores).length ? scores : null;
 }
 
-export type AdDay = CampaignDay & { adsetId: string; adsetName: string; adId: string; adName: string; linkClicks: number; impressions: number };
+export type AdDay = CampaignDay & { adsetId: string; adsetName: string; adId: string; adName: string; linkClicks: number; impressions: number; landingPageViews: number };
 
 /** Purchases Meta attributes to each AD per day (Reconciliation views). */
 export async function adPurchases(adAccountId: string, token: string, since: string, until: string): Promise<{ ok: true; rows: AdDay[] } | { ok: false; message: string }> {
@@ -146,7 +146,9 @@ export async function adPurchases(adAccountId: string, token: string, since: str
         adsetId: String(row.adset_id ?? ""), adsetName: String(row.adset_name ?? ""), adId: String(row.ad_id), adName: String(row.ad_name ?? ""),
         purchases: pickAction(row.actions), purchaseValue: pickAction(row.action_values), spend: Number(row.spend) || 0,
         // CPC on the Weekly Check-up (Bright, 5 Nov 2026).
-        linkClicks: Number(row.inline_link_clicks) || 0, impressions: Number(row.impressions) || 0
+        linkClicks: Number(row.inline_link_clicks) || 0, impressions: Number(row.impressions) || 0,
+        // Funnel (Bright, 15 Nov 2026): people whose page actually loaded after the click.
+        landingPageViews: Number(((row.actions ?? []) as Array<{ action_type: string; value: string }>).find((a) => a.action_type === "landing_page_view")?.value) || 0
       });
     }
     const next = result.data.paging?.next;

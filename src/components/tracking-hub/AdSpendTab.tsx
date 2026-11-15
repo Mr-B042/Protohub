@@ -31,8 +31,14 @@ const LEVEL_OF_VIEW: Partial<Record<HubAdSpendView, HubAdSpendLevel>> = { campai
 const LEVEL_LABEL: Record<HubAdSpendLevel, string> = { campaign: "Campaign", adset: "Ad set", ad: "Ad", account: "Ad account" };
 const DONUT_COLORS = ["#2563eb", "#22c55e", "#f59e0b", "#8b5cf6", "#f43f5e", "#06b6d4", "#94a3b8"];
 
-type ColumnKey = "orders" | "confirmed" | "confirmRate" | "delivered" | "deliveryRate" | "cpa" | "cpco" | "cpdo" | "deliveredAov" | "roas" | "profit" | "trend";
+type ColumnKey = "cpm" | "ctr" | "cpc" | "landingPageViews" | "loadRate" | "convRate" | "orders" | "confirmed" | "confirmRate" | "delivered" | "deliveryRate" | "cpa" | "cpco" | "cpdo" | "deliveredAov" | "roas" | "profit" | "breaks" | "trend";
 const COLUMNS: Array<{ key: ColumnKey; label: string; title: string }> = [
+  { key: "cpm", label: "CPM", title: "Cost per 1,000 views: what reaching people costs" },
+  { key: "ctr", label: "CTR", title: "Link clicks ÷ views: how attractive the ad is" },
+  { key: "cpc", label: "CPC", title: "Ad spend ÷ link clicks. On its own it never decides anything" },
+  { key: "landingPageViews", label: "Page Views", title: "People whose order page actually loaded after clicking (read from Meta from 15 Nov 2026)" },
+  { key: "loadRate", label: "Load %", title: "Page views ÷ link clicks: low = slow or broken page" },
+  { key: "convRate", label: "Conv %", title: "Orders ÷ page views: low = offer, price or form problem" },
   { key: "orders", label: "Orders", title: "Orders placed in the period" },
   { key: "confirmed", label: "Confirmed", title: "Orders the customer confirmed: past New and not cancelled (today's new orders aren't confirmed yet)" },
   { key: "confirmRate", label: "Confirm %", title: "Confirmed ÷ orders placed" },
@@ -44,6 +50,7 @@ const COLUMNS: Array<{ key: ColumnKey; label: string; title: string }> = [
   { key: "deliveredAov", label: "Delivered AOV", title: "Average value of a delivered order" },
   { key: "roas", label: "ROAS", title: "Delivered revenue ÷ ad spend" },
   { key: "profit", label: "Profit (After Ads)", title: "Delivered revenue − product cost − delivery fees − ad spend" },
+  { key: "breaks", label: "Where It Breaks", title: "The first stage clearly behind this period's average: views, clicks, page loads, orders, confirmations, deliveries" },
   { key: "trend", label: "Trend", title: "Ad spend, last 7 days" }
 ];
 const COLUMN_STORE = "protohub.adSpend.columns";
@@ -274,8 +281,11 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
       const saved = JSON.parse(localStorage.getItem(COLUMN_STORE) ?? "null");
       if (Array.isArray(saved)) {
         // Columns added 15 Nov 2026 show once for people who saved a choice before.
-        const added: ColumnKey[] = localStorage.getItem(`${COLUMN_STORE}.v2`) ? [] : ["confirmed", "confirmRate", "deliveryRate", "cpco"];
-        try { localStorage.setItem(`${COLUMN_STORE}.v2`, "1"); } catch { /* storage off */ }
+        const added: ColumnKey[] = [
+          ...(localStorage.getItem(`${COLUMN_STORE}.v2`) ? [] : ["confirmed", "confirmRate", "deliveryRate", "cpco"] as ColumnKey[]),
+          ...(localStorage.getItem(`${COLUMN_STORE}.v3`) ? [] : ["cpm", "ctr", "cpc", "landingPageViews", "loadRate", "convRate", "breaks"] as ColumnKey[])
+        ];
+        try { localStorage.setItem(`${COLUMN_STORE}.v2`, "1"); localStorage.setItem(`${COLUMN_STORE}.v3`, "1"); } catch { /* storage off */ }
         return new Set([...(saved as ColumnKey[]), ...added]);
       }
     } catch { /* storage off */ }
@@ -415,8 +425,8 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
   const exportCsv = () => {
     const list = selected.size ? rows.filter((row) => selected.has(row.id)) : rows;
     const cell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
-    const lines = [[viewInfo.noun, "Meta ID", "Ad spend", "Orders", "Confirmed", "Confirm %", "Delivered", "Delivery %", "Cost per order", "Cost per confirmed order", "Cost per delivered order", "Delivered average order", "Return on ad spend", "Profit after ads"].map(cell).join(",")];
-    for (const row of list) lines.push([row.name, row.id === UNMAPPED ? "" : row.id, Math.round(row.spend), row.orders, row.confirmed ?? "", row.confirmRate == null ? "" : Math.round(row.confirmRate), row.delivered, row.deliveryRate == null ? "" : Math.round(row.deliveryRate), row.cpa === null ? "" : Math.round(row.cpa), row.cpco == null ? "" : Math.round(row.cpco), row.cpdo === null ? "" : Math.round(row.cpdo), row.deliveredAov === null ? "" : Math.round(row.deliveredAov), roasOf(row) === null ? "" : roasOf(row)!.toFixed(2), row.delivered ? Math.round(row.profit) : ""].map(cell).join(","));
+    const lines = [[viewInfo.noun, "Meta ID", "Ad spend", "Orders", "Confirmed", "Confirm %", "Delivered", "Delivery %", "Cost per order", "Cost per confirmed order", "Cost per delivered order", "Delivered average order", "Return on ad spend", "Profit after ads", "CPM", "CTR %", "CPC", "Page views", "Load %", "Conversion %", "Where it breaks"].map(cell).join(",")];
+    for (const row of list) lines.push([row.name, row.id === UNMAPPED ? "" : row.id, Math.round(row.spend), row.orders, row.confirmed ?? "", row.confirmRate == null ? "" : Math.round(row.confirmRate), row.delivered, row.deliveryRate == null ? "" : Math.round(row.deliveryRate), row.cpa === null ? "" : Math.round(row.cpa), row.cpco == null ? "" : Math.round(row.cpco), row.cpdo === null ? "" : Math.round(row.cpdo), row.deliveredAov === null ? "" : Math.round(row.deliveredAov), roasOf(row) === null ? "" : roasOf(row)!.toFixed(2), row.delivered ? Math.round(row.profit) : "", row.cpm == null ? "" : Math.round(row.cpm), row.ctr == null ? "" : row.ctr.toFixed(2), row.cpc == null ? "" : Math.round(row.cpc), row.landingPageViews ?? "", row.loadRate == null ? "" : Math.round(row.loadRate), row.convRate == null ? "" : row.convRate.toFixed(1), row.breaks ?? ""].map(cell).join(","));
     downloadCsv(`ad-spend-${view}-${range.from}${range.from === range.to ? "" : `-to-${range.to}`}.csv`, lines.join("\n"));
   };
   const dayWeekMonth = (kind: "day" | "week" | "month") => {
@@ -666,6 +676,12 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
                       <strong className="block text-[13px] text-gray-900 dark:text-slate-100">{naira(row.spend)}</strong>
                       {compare === "previous" ? <Delta value={row.spendChange === null ? null : Math.round(row.spendChange)} /> : null}
                     </td>
+                    {on("cpm") ? <td className="whitespace-nowrap">{money(row.cpm ?? null)}</td> : null}
+                    {on("ctr") ? <td className="whitespace-nowrap">{row.ctr == null ? "—" : `${row.ctr.toFixed(2)}%`}</td> : null}
+                    {on("cpc") ? <td className="whitespace-nowrap">{money(row.cpc ?? null)}</td> : null}
+                    {on("landingPageViews") ? <td>{row.landingPageViews == null ? "—" : nf(row.landingPageViews)}</td> : null}
+                    {on("loadRate") ? <td className="whitespace-nowrap">{row.loadRate == null ? "—" : `${Math.round(row.loadRate)}%`}</td> : null}
+                    {on("convRate") ? <td className="whitespace-nowrap">{unmapped || row.convRate == null ? "—" : `${row.convRate.toFixed(1)}%`}</td> : null}
                     {on("orders") ? <td>{unmapped ? "—" : nf(row.orders)}</td> : null}
                     {on("confirmed") ? <td>{unmapped ? "—" : nf(row.confirmed ?? 0)}</td> : null}
                     {on("confirmRate") ? <td className="whitespace-nowrap">{unmapped || row.confirmRate == null ? "—" : `${Math.round(row.confirmRate)}%`}</td> : null}
@@ -681,6 +697,7 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
                         {unmapped || waiting ? "—" : `${row.profit < 0 ? "−" : ""}${naira(Math.abs(row.profit))}`}
                       </td>
                     ) : null}
+                    {on("breaks") ? <td className="min-w-[220px] max-w-[320px] text-[11.5px] leading-snug">{row.breaks ? <span className="text-amber-800 dark:text-amber-300">{row.breaks}</span> : <span className="text-gray-400">{unmapped ? "—" : "Nothing stands out"}</span>}</td> : null}
                     {on("trend") ? <td><Sparkline points={row.trend} width={64} height={24} color={trendColor(row)} /></td> : null}
                     <td className="text-center" onClick={(event) => event.stopPropagation()}><ActionMenu items={actions(row)} /></td>
                   </tr>
