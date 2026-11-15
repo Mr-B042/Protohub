@@ -1,6 +1,7 @@
 import { unfilledGaps } from "./email-render.js";
 import crypto from "node:crypto";
 import { supabase } from "./supabase.js";
+import { orderCreators } from "./order-creator.js";
 import { branchLocale } from "./branch-locale.js";
 import { logger } from "./logger.js";
 import { fetchAllRowsOrThrow, selectByIdBatches } from "./query-limits.js";
@@ -300,7 +301,7 @@ export async function automationReport(orgId: string, branchId: string, id: stri
     supabase.from("email_campaigns").select("id, step_id").eq("automation_id", id)
   ]);
   const campaignOf = new Map((steps ?? []).map((row: any) => [row.step_id, row.id]));
-  const sends = (steps ?? []).length ? await selectByIdBatches<any>((steps ?? []).map((row: any) => row.id), (batch) => supabase.from("email_campaign_sends").select("campaign_id, status, first_opened_at, first_clicked_at, order_id, unsubscribed_at").in("campaign_id", batch)) : [];
+  const sends = (steps ?? []).length ? await selectByIdBatches<any>((steps ?? []).map((row: any) => row.id), (batch) => supabase.from("email_campaign_sends").select("campaign_id, status, first_opened_at, first_clicked_at, order_id, rep_order_id, unsubscribed_at").in("campaign_id", batch)) : [];
   const orderAmount = new Map(world.orders.filter((order) => order.status === "Delivered").map((order) => [order.id, order.amount]));
   const reasons = new Map<string, number>();
   for (const run of runs) if (run.status === "exited") reasons.set(run.exit_reason ?? "Left the flow", (reasons.get(run.exit_reason ?? "Left the flow") ?? 0) + 1);
@@ -315,6 +316,8 @@ export async function automationReport(orgId: string, branchId: string, id: stri
         stepId: node.id, name: node.name, subject: node.email.subject, sent: sent.length, waiting: mine.filter((send) => send.status === "queued").length,
         openRate: pct(sent.filter((send) => send.first_opened_at || send.first_clicked_at).length, sent.length), clickRate: pct(sent.filter((send) => send.first_clicked_at).length, sent.length),
         orders: sent.filter((send) => send.order_id).length, revenue: sent.reduce((sum, send) => sum + (send.order_id ? orderAmount.get(send.order_id) ?? 0 : 0), 0),
+        // A rep made these orders from a cart after the email: shown apart, not the email's sale.
+        repOrders: sent.filter((send) => send.rep_order_id).length, repRevenue: sent.reduce((sum, send) => sum + (send.rep_order_id ? orderAmount.get(send.rep_order_id) ?? 0 : 0), 0),
         unsubscribed: sent.filter((send) => send.unsubscribed_at).length
       };
     }),
@@ -591,7 +594,13 @@ async function advanceRun(run: any, auto: Automation, world: () => Promise<World
 
   // Ways out before the next step.
   if (auto.settings.exit.onUnsubscribe && contact && contact.status !== "subscribed") { status = "exited"; exitReason = "Unsubscribed"; }
-  else if (auto.settings.exit.onPurchase && newOrders().length) { status = "exited"; exitReason = "Made a new purchase"; }
+  else if (auto.settings.exit.onPurchase && newOrders().length) {
+    status = "exited";
+    // Say who made it: the customer, or a rep from the cart (Bright, 15 Nov 2026).
+    const order = newOrders()[0];
+    const who = (await orderCreators([order.id])).get(order.id);
+    exitReason = who?.staff ? `A rep made an order for them${who.name ? ` (${who.name})` : ""}` : "Made a new purchase";
+  }
   else if (auto.trigger.kind === "in_segment" && person && (() => { const row = w.segmentRows.find((item) => item.id === auto.trigger.segmentId); return !row || row.status !== "active" || !inGroup(w, row, person); })()) { status = "exited"; exitReason = "Left the group"; }
   else if (auto.trigger.kind === "went_quiet" && triggerOrder && w.orders.some((order) => order.id === triggerOrder && order.status === "Delivered")) { status = "exited"; exitReason = "Their order was delivered"; }
   else if (auto.settings.exit.afterDays && nowMs - enteredMs >= auto.settings.exit.afterDays * DAY_MS) { status = "exited"; exitReason = `Reached the ${auto.settings.exit.afterDays}-day limit`; }

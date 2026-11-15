@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { supabase } from "./supabase.js";
+import { orderCreators } from "./order-creator.js";
 import { branchLocale } from "./branch-locale.js";
 import { moneyText } from "./money-text.js";
 import { logger } from "./logger.js";
@@ -310,9 +311,11 @@ export async function syncContacts(orgId: string) {
 export type CampaignStats = {
   queued: number; sent: number; failed: number; skipped: number; opened: number; clicked: number; orders: number; deliveredOrders: number; revenue: number;
   unsubscribed: number; a: { sent: number; opened: number; clicked: number }; b: { sent: number; opened: number; clicked: number }; lastSentAt: string | null;
+  /** Orders a rep created after the email (kept apart from the email's own, 15 Nov 2026). */
+  repOrders: number; repDeliveredOrders: number; repRevenue: number;
 };
 
-const EMPTY_STATS: CampaignStats = { queued: 0, sent: 0, failed: 0, skipped: 0, opened: 0, clicked: 0, orders: 0, deliveredOrders: 0, revenue: 0, unsubscribed: 0, a: { sent: 0, opened: 0, clicked: 0 }, b: { sent: 0, opened: 0, clicked: 0 }, lastSentAt: null };
+const EMPTY_STATS: CampaignStats = { queued: 0, sent: 0, failed: 0, skipped: 0, opened: 0, clicked: 0, orders: 0, deliveredOrders: 0, revenue: 0, unsubscribed: 0, a: { sent: 0, opened: 0, clicked: 0 }, b: { sent: 0, opened: 0, clicked: 0 }, lastSentAt: null , repOrders: 0, repDeliveredOrders: 0, repRevenue: 0 };
 
 export async function statsFor(campaignIds: string[]): Promise<Map<string, CampaignStats>> {
   const out = new Map<string, CampaignStats>();
@@ -325,7 +328,8 @@ export async function statsFor(campaignIds: string[]): Promise<Map<string, Campa
         queued: row.queued, sent: row.sent, failed: row.failed, skipped: row.skipped, opened: row.opened, clicked: row.clicked,
         orders: row.orders, deliveredOrders: row.delivered_orders, revenue: Number(row.revenue) || 0, unsubscribed: row.unsubscribed,
         a: { sent: row.sent_a, opened: row.opened_a, clicked: row.clicked_a }, b: { sent: row.sent_b, opened: row.opened_b, clicked: row.clicked_b },
-        lastSentAt: row.last_sent_at
+        lastSentAt: row.last_sent_at,
+        repOrders: Number(row.rep_orders) || 0, repDeliveredOrders: Number(row.rep_delivered_orders) || 0, repRevenue: Number(row.rep_revenue) || 0
       });
     }
   }
@@ -1115,8 +1119,8 @@ export async function attributeOrders(nowMs: number) {
     const orders = await fetchAllRowsOrThrow<any>(() => supabase.from("orders").select("id, phone, email, created_at, utm_source, utm_campaign, utm_content")
       // launch-safe: Silent Test orders are left out of email results.
       .eq("org_id", orgId).eq("branch_id", branchId).neq("launch_stage", "silent").gte("created_at", since).order("created_at", { ascending: true }));
-    const { data: used } = await supabase.from("email_campaign_sends").select("order_id").eq("org_id", orgId).eq("branch_id", branchId).not("order_id", "is", null).gte("queued_at", since);
-    const taken = new Set((used ?? []).map((row) => row.order_id));
+    const { data: used } = await supabase.from("email_campaign_sends").select("order_id, rep_order_id").eq("org_id", orgId).eq("branch_id", branchId).or("order_id.not.is.null,rep_order_id.not.is.null").gte("queued_at", since);
+    const taken = new Set((used ?? []).flatMap((row: any) => [row.order_id, row.rep_order_id]).filter(Boolean));
     // 1) Exact: the link carried the campaign and this person's token.
     for (const order of orders) {
       if (taken.has(order.id) || order.utm_source !== "email" || !slugs.has(order.utm_campaign)) continue;
@@ -1130,13 +1134,21 @@ export async function attributeOrders(nowMs: number) {
     }
     // 2) Same phone or email within 7 days of clicking, when the tags were lost.
     const clicked = await fetchAllRowsOrThrow<any>(() => supabase.from("email_campaign_sends").select("id, phone, email, first_clicked_at")
-      .eq("org_id", orgId).eq("branch_id", branchId).is("order_id", null).not("first_clicked_at", "is", null).gte("first_clicked_at", new Date(nowMs - 8 * DAY_MS).toISOString()));
+      .eq("org_id", orgId).eq("branch_id", branchId).is("order_id", null).is("rep_order_id", null).not("first_clicked_at", "is", null).gte("first_clicked_at", new Date(nowMs - 8 * DAY_MS).toISOString()));
     for (const send of clicked) {
       const clickMs = Date.parse(send.first_clicked_at);
       const phone = phoneKey(send.phone);
       const order = orders.find((row) => !taken.has(row.id) && Date.parse(row.created_at) >= clickMs && Date.parse(row.created_at) - clickMs <= 7 * DAY_MS
         && ((phone && phoneKey(row.phone) === phone) || (cleanEmail(row.email) && cleanEmail(row.email) === send.email)));
       if (!order) continue;
+      // A rep created this order (from the cart, a call…): it is the rep's sale, shown
+      // apart as "Rep closed after the email", never as the email's (15 Nov 2026).
+      const creator = (await orderCreators([order.id])).get(order.id);
+      if (creator?.staff) {
+        await supabase.from("email_campaign_sends").update({ rep_order_id: order.id, rep_converted_at: order.created_at }).eq("id", send.id).is("order_id", null).is("rep_order_id", null);
+        taken.add(order.id);
+        continue;
+      }
       await supabase.from("email_campaign_sends").update({ order_id: order.id, converted_at: order.created_at }).eq("id", send.id).is("order_id", null);
       taken.add(order.id);
       matched += 1;

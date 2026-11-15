@@ -5509,7 +5509,7 @@ export type EmDelivery = {
 };
 export type EmOptions = { abTest: boolean; plainText: boolean; utm: boolean; resendNonOpeners: boolean; resendHours: number; fromNameB?: string; noteB?: boolean };
 export type EmStats = {
-  queued: number; sent: number; failed: number; skipped: number; opened: number; clicked: number; orders: number; deliveredOrders: number; revenue: number;
+  queued: number; sent: number; failed: number; skipped: number; opened: number; clicked: number; orders: number; deliveredOrders: number; revenue: number; repOrders?: number; repDeliveredOrders?: number; repRevenue?: number;
   unsubscribed: number; a: { sent: number; opened: number; clicked: number }; b: { sent: number; opened: number; clicked: number }; lastSentAt: string | null;
 };
 export type EmCampaignStatus = "draft" | "scheduled" | "sending" | "active" | "paused" | "completed" | "cancelled" | "archived";
@@ -5768,7 +5768,7 @@ export type EmAutomationReport = {
   automation: EmAutomation;
   runs: { total: number; active: number; completed: number; exited: number };
   exitReasons: Array<{ reason: string; count: number }>;
-  emails: Array<{ stepId: string; name: string; subject: string; sent: number; waiting: number; openRate: number | null; clickRate: number | null; orders: number; revenue: number; unsubscribed: number }>;
+  emails: Array<{ stepId: string; name: string; subject: string; sent: number; waiting: number; openRate: number | null; clickRate: number | null; orders: number; revenue: number; repOrders?: number; repRevenue?: number; unsubscribed: number }>;
   recent: Array<{ email: string; name: string; status: string; exitReason: string | null; enteredAt: string; finishedAt: string | null; nextAt: string | null; step: string | null; stepName: string | null }>;
 };
 
