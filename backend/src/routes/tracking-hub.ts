@@ -16,8 +16,7 @@ import { refreshAccount, refreshTargets } from "../lib/tracking-meta-refresh.js"
 import { AD_SPEND_VIEWS, allocate, buildReport, mappingIndex, validSplits, type AdSpendView, type PlatformChoice } from "../lib/ad-spend.js";
 import { refreshPixelAdAccountsNow, loadAdSpendInputs, loadSinceStart, loadTikTokConnections, suggestProduct, syncAdSpend } from "../lib/ad-spend-data.js";
 import { RULES as SINCE_START_RULES, VERDICT_ORDER } from "../lib/ad-since-start.js";
-import { droughtsFor } from "../lib/campaign-drought-alerts.js";
-import { DROUGHT_RULES } from "../lib/campaign-drought.js";
+import { droughtsFor, VERDICT_RULES } from "../lib/campaign-drought-alerts.js";
 import { syncAdSpendExpenses } from "../lib/ad-spend-expenses.js";
 import { adFundsView, runAdFundsCheck, saveFundsSettings } from "../lib/ad-funds.js";
 import { TIKTOK_URL_PARAMETERS, tiktokAdvertisers } from "../lib/tiktok-ads.js";
@@ -1856,8 +1855,8 @@ router.post("/ad-funds/check", async (req, res) => {
 
 router.get("/campaign-alerts", async (req, res) => {
   try {
-    const { droughts, money, unchecked, checkedAt } = await droughtsFor(req.user!.orgId, branchOf(req), { fresh: req.query.fresh === "1" });
-    res.json({ droughts, money, unchecked, checkedAt, rules: DROUGHT_RULES });
+    const { verdicts, unchecked, uncheckedAccounts, checkedAt } = await droughtsFor(req.user!.orgId, branchOf(req), { fresh: req.query.fresh === "1" });
+    res.json({ verdicts, unchecked, uncheckedAccounts, checkedAt, rules: VERDICT_RULES });
   } catch (error: any) { fail(res, error, "Could not check the campaigns."); }
 });
 

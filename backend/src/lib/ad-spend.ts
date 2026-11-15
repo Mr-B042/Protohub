@@ -38,6 +38,8 @@ export type SpendInsight = {
   day: string; spend: number; ad_account_id: string;
   /** Meta link clicks / impressions (null before 5 Nov 2026 and for TikTok). */
   linkClicks?: number | null; impressions?: number | null;
+  /** Meta's own purchase count for the day (tracking check). */
+  purchases?: number | null;
   campaign_id: string; campaign_name: string; adset_id: string; adset_name: string; ad_id: string; ad_name: string;
 };
 const TIKTOK_ID = /^\d{8,22}$/;
