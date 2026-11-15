@@ -29,7 +29,7 @@ export default function CampaignReport({ id, onClose, onEdit }: { id: string; on
     { icon: MailOpen, label: "Opened", value: pct(rate(s.opened, s.sent)), sub: `${count(s.opened)} people` },
     { icon: MousePointerClick, label: "Clicked", value: pct(rate(s.clicked, s.sent)), sub: `${count(s.clicked)} people` },
     { icon: ShoppingCart, label: "Orders", value: count(s.orders), sub: `${count(s.deliveredOrders)} delivered` },
-    { icon: Coins, label: "Revenue", value: naira(s.revenue), sub: "Delivered orders only" },
+    { icon: Coins, label: "Revenue", value: naira(s.revenue), sub: s.repOrders ? `Delivered only · rep closed after the email: ${count(s.repOrders)} (${naira(s.repRevenue ?? 0)})` : "Delivered orders only" },
     { icon: UserMinus, label: "Unsubscribed", value: count(s.unsubscribed), sub: "" }
   ] : [];
 

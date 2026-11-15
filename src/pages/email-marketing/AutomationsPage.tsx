@@ -373,7 +373,7 @@ export function AutomationReport({ id, onClose }: { id: string; onClose: () => v
                     <td className="px-3 py-2"><span className="block font-semibold text-gray-900 dark:text-slate-50">{row.name}</span><span className="block max-w-[260px] truncate text-[12px] text-gray-500">{row.subject}</span></td>
                     <td className="px-2 py-2 text-right">{count(row.sent)}</td><td className="px-2 py-2 text-right">{count(row.waiting)}</td>
                     <td className="px-2 py-2 text-right">{pct(row.openRate)}</td><td className="px-2 py-2 text-right">{pct(row.clickRate)}</td>
-                    <td className="px-2 py-2 text-right">{count(row.orders)}</td><td className="px-3 py-2 text-right font-bold">{naira(row.revenue)}</td>
+                    <td className="px-2 py-2 text-right">{count(row.orders)}{row.repOrders ? <span className="block text-[11px] font-normal text-gray-500" title="A rep made these orders from a cart after the email. Not counted as the email's sale.">+{count(row.repOrders)} by a rep</span> : null}</td><td className="px-3 py-2 text-right font-bold">{naira(row.revenue)}{row.repOrders ? <span className="block text-[11px] font-normal text-gray-500">+{naira(row.repRevenue ?? 0)} rep closed</span> : null}</td>
                   </tr>
                 ))}
               </tbody>
