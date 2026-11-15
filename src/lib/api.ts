@@ -4576,7 +4576,7 @@ export type HubConnection = {
   lastCheckAt: string | null; lastCheckOk: boolean | null; lastCheckMessage: string | null; human: { title: string; action: string } | null;
   lastSyncAt: string | null; lastSyncOk: boolean | null; lastSyncMessage: string | null; status: "connected" | "error" | "disconnected" | "sync_failed";
   pixels: Array<{ sourceId: string; pixelId: string; name: string; active: boolean; hasAccess: boolean | null; lastFiredAt: string | null; health: HubDataSource["health"]; ownToken: boolean }>;
-  adAccounts: Array<{ id: string; accountId: string; name: string; currency: string | null; active: boolean; hasAccess: boolean; status: number | null }>;
+  adAccounts: Array<{ id: string; accountId: string; name: string; currency: string | null; active: boolean; shared?: boolean; hasAccess: boolean; status: number | null }>;
 };
 export type HubSyncResult = { ok: boolean; message: string; pixels: number; newPixels: number; accounts: number; newAccounts: number; noAccess: number };
 export type HubIssue = {
@@ -4833,7 +4833,8 @@ export type HubWebsitePage = { id: string; wpPageId: number; title: string; slug
 
 export const trackingHubApi = {
   overview: (query: HubQuery) => get<HubOverview>(`/api/tracking-hub/overview${hubQuery(query)}`),
-  dataSources: () => get<{ kpis: { total: number; newThisMonth: number; healthy: number; healthyPct: number; needAttention: number; needAttentionPct: number; disconnected: number; disconnectedPct: number; off: number }; platformCounts: Record<HubPlatform, number>; dataSources: HubDataSource[]; connections: HubConnection[]; profiles: HubProfile[]; websites: Array<{ id: string; domain: string }>; issues: HubIssue[] }>("/api/tracking-hub/data-sources"),
+  dataSources: () => get<{ kpis: { total: number; newThisMonth: number; healthy: number; healthyPct: number; needAttention: number; needAttentionPct: number; disconnected: number; disconnectedPct: number; off: number }; platformCounts: Record<HubPlatform, number>; dataSources: HubDataSource[]; connections: HubConnection[]; otherBranchConnections?: Array<{ id: string; name: string; businessId: string; branchName: string }>; profiles: HubProfile[]; websites: Array<{ id: string; domain: string }>; issues: HubIssue[] }>("/api/tracking-hub/data-sources"),
+  copyConnection: (id: string) => post<{ id: string; name: string; sync: HubSyncResult | null; syncError: string | null }>(`/api/tracking-hub/connections/copy/${hubId(id)}`, {}),
   dataSource: (id: string) => get<HubDataSourceDetail>(`/api/tracking-hub/data-sources/${hubId(id)}`),
   saveDataSource: (id: string | null, body: Record<string, unknown>) => id ? put<{ id: string; name: string }>(`/api/tracking-hub/data-sources/${hubId(id)}`, body) : post<{ id: string; name: string }>("/api/tracking-hub/data-sources", body),
   deleteDataSource: (id: string) => del<{ ok: true }>(`/api/tracking-hub/data-sources/${hubId(id)}`),

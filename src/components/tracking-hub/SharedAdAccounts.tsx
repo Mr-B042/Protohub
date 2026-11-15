@@ -41,12 +41,16 @@ function RateEditor({ onToast }: { onToast: (text: string) => void }) {
   );
 }
 
-export default function SharedAdAccounts({ onToast }: { onToast: (text: string) => void }) {
+export default function SharedAdAccounts({ onToast, localAccountIds }: { onToast: (text: string) => void; localAccountIds?: Set<string> }) {
   const [data, setData] = useState<Awaited<ReturnType<typeof trackingHubApi.adAccountShares>> | null>(null);
   const [busy, setBusy] = useState("");
   const load = () => trackingHubApi.adAccountShares().then(setData).catch(() => setData({ accounts: [], campaignsHere: 0 }));
   useEffect(() => { void load(); }, []);
   if (!data || data.accounts.length === 0) return null;
+  // Accounts of a business connected here are switched on in that business's card instead.
+  const list = data.accounts.filter((a) => !localAccountIds?.has(a.accountId));
+  const ngnShared = data.accounts.some((a) => a.shared && a.currency === "NGN") || list.some((a) => a.currency === "NGN");
+  if (!list.length && !ngnShared) return null;
   const toggle = async (accountId: string, on: boolean, name: string) => {
     setBusy(accountId);
     try { await trackingHubApi.setAdAccountShare(accountId, on); onToast(on ? `${name} is now used here. Its campaigns count here once this branch's orders or pages prove them.` : `${name} is no longer used here.`); await load(); }
@@ -63,8 +67,8 @@ export default function SharedAdAccounts({ onToast }: { onToast: (text: string) 
             Use an ad account that runs campaigns for this branch too. Its spend is read once; each campaign counts in one branch only. Here it counts when this branch's orders carry it, its landing page sells one of this branch's products, or you map it to one by hand. Everything else stays in its home branch. Ad expenses are booked in the branch each campaign counts in; naira spend booked in a kwacha branch is converted at the rate below, the naira amount kept underneath.
           </p>
           {data.campaignsHere > 0 && <p className="m-0 mt-1 text-[12.5px] font-semibold text-emerald-700 dark:text-emerald-300">{data.campaignsHere} campaign{data.campaignsHere === 1 ? "" : "s"} from shared accounts count here now.</p>}
-          <ul className="m-0 mt-3 list-none space-y-2 p-0">
-            {data.accounts.map((a) => (
+          {list.length > 0 && <ul className="m-0 mt-3 list-none space-y-2 p-0">
+            {list.map((a) => (
               <li key={a.accountId} className="flex flex-wrap items-center gap-3 rounded-xl border border-gray-200 px-3 py-2.5 dark:border-slate-700">
                 <span className="min-w-0 flex-1">
                   <b className="block text-[13.5px] text-gray-900 dark:text-slate-100">{a.name}</b>
@@ -73,8 +77,8 @@ export default function SharedAdAccounts({ onToast }: { onToast: (text: string) 
                 <span className="flex items-center gap-2 text-[12.5px] text-gray-700 dark:text-slate-300">{a.shared ? "Used here" : "Not used here"}<Toggle checked={a.shared} disabled={busy === a.accountId} onChange={(on) => void toggle(a.accountId, on, a.name)} /></span>
               </li>
             ))}
-          </ul>
-          {data.accounts.some((a) => a.currency === "NGN") && <RateEditor onToast={onToast} />}
+          </ul>}
+          {ngnShared && <RateEditor onToast={onToast} />}
         </div>
       </div>
     </Card>
