@@ -19,7 +19,7 @@ async function insightsBetween(orgId: string, branchId: string, from: string, to
   const rows: SpendInsight[] = [];
   for (let page = 0; page < 60; page += 1) {
     const { data, error } = await supabase.from("tracking_meta_ad_insights")
-      .select("id, day, spend, ad_account_id, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name, link_clicks, impressions, purchases")
+      .select("id, day, spend, ad_account_id, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name, link_clicks, impressions, purchases, landing_page_views")
       .eq("org_id", orgId).eq("branch_id", branchId).gte("day", from).lte("day", to)
       .order("id").range(page * PAGE, page * PAGE + PAGE - 1);
     if (error) throw error;
@@ -27,7 +27,8 @@ async function insightsBetween(orgId: string, branchId: string, from: string, to
       ...row, platform: "meta" as const, day: String(row.day).slice(0, 10), spend: Number(row.spend) || 0,
       linkClicks: row.link_clicks === null || row.link_clicks === undefined ? null : Number(row.link_clicks),
       impressions: row.impressions === null || row.impressions === undefined ? null : Number(row.impressions),
-      purchases: row.purchases === null || row.purchases === undefined ? null : Number(row.purchases)
+      purchases: row.purchases === null || row.purchases === undefined ? null : Number(row.purchases),
+      landingPageViews: row.landing_page_views === null || row.landing_page_views === undefined ? null : Number(row.landing_page_views)
     })));
     if ((data ?? []).length < PAGE) break;
   }

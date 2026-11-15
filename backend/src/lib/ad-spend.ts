@@ -1,3 +1,4 @@
+import { funnelOf, whereItBreaks } from "./ad-funnel.js";
 // Tracking Hub -> Ad Spend (Bright, 8 Oct 2026).
 //
 // Meta gives the COST (tracking_meta_ad_insights: spend per ad per day, from
@@ -40,6 +41,8 @@ export type SpendInsight = {
   linkClicks?: number | null; impressions?: number | null;
   /** Meta's own purchase count for the day (tracking check). */
   purchases?: number | null;
+  /** Meta landing-page views (null = day read before 15 Nov 2026 / TikTok). */
+  landingPageViews?: number | null;
   campaign_id: string; campaign_name: string; adset_id: string; adset_name: string; ad_id: string; ad_name: string;
 };
 const TIKTOK_ID = /^\d{8,22}$/;
@@ -76,7 +79,7 @@ export type AccountInfo = { accountId: string; name: string; businessKey: string
 export type SpendPiece = {
   platform: AdPlatform;
   day: string; spend: number; productId: string | null; source: MappingSource;
-  linkClicks?: number | null; impressions?: number | null;
+  linkClicks?: number | null; impressions?: number | null; landingPageViews?: number | null;
   accountId: string; businessKey: string; campaignId: string; campaignName: string; adsetId: string; adsetName: string; adId: string; adName: string;
 };
 
@@ -147,8 +150,8 @@ export function allocate(insights: SpendInsight[], index: Map<string, Split[]>, 
     };
     const { splits, source } = resolveSplits(row, index, evidence);
     const part = (value: number | null | undefined, share: number) => (value === null || value === undefined ? null : (value * share) / 100);
-    if (!splits.length) { pieces.push({ ...base, spend, productId: null, source: null, linkClicks: part(row.linkClicks, 100), impressions: part(row.impressions, 100) }); continue; }
-    for (const split of splits) pieces.push({ ...base, spend: (spend * split.share) / 100, productId: split.productId, source, linkClicks: part(row.linkClicks, split.share), impressions: part(row.impressions, split.share) });
+    if (!splits.length) { pieces.push({ ...base, spend, productId: null, source: null, linkClicks: part(row.linkClicks, 100), impressions: part(row.impressions, 100), landingPageViews: part(row.landingPageViews, 100) }); continue; }
+    for (const split of splits) pieces.push({ ...base, spend: (spend * split.share) / 100, productId: split.productId, source, linkClicks: part(row.linkClicks, split.share), impressions: part(row.impressions, split.share), landingPageViews: part(row.landingPageViews, split.share) });
   }
   return pieces;
 }
@@ -307,11 +310,16 @@ export function buildReport(input: ReportInput) {
       // "ad" / "adset" / "campaign" / "account" = set by the Owner at that level; "link" = from the tracking link; "mixed" = parts differ.
       mappingSource: sources.length === 1 ? sources[0] : "mixed", unassignedSpend: unassigned,
       ...metrics,
+      ...funnelOf(group.pieces, metrics.orders),
       spendChange: group.prevSpend > 0 ? ((metrics.spend - group.prevSpend) / group.prevSpend) * 100 : null,
       trend: group.trend
     };
   }).filter((row) => !q || `${row.name} ${row.id} ${row.campaignName ?? ""} ${row.accountName ?? ""}`.toLowerCase().includes(q))
     .sort((a, b) => (a.id === UNMAPPED ? 1 : b.id === UNMAPPED ? -1 : b.spend - a.spend || b.orders - a.orders));
+  // "Where it breaks" against this period's own average (Bright, 15 Nov 2026).
+  const kpiFunnel = funnelOf(nowPieces, kpis.orders);
+  const average = { ...kpiFunnel, orders: kpis.orders, confirmed: kpis.confirmed, confirmRate: kpis.confirmRate, deliveryRate: kpis.deliveryRate };
+  const rowsOut = rows.map((row) => ({ ...row, breaks: row.id === UNMAPPED ? null : whereItBreaks(row, average) }));
 
   // ------------------------------------------------ charts
   const chartIndex = new Map(input.chartDays.map((day, index) => [day, index]));
@@ -328,7 +336,7 @@ export function buildReport(input: ReportInput) {
 
   const unmappedPieces = nowPieces.filter((piece) => piece.productId === null);
   return {
-    kpis, previous, rows, chart, byProduct,
+    kpis: { ...kpis, ...kpiFunnel }, previous, rows: rowsOut, chart, byProduct,
     leftOut: Array.from(leftOutByPlatform.entries()).map(([platform, orders]) => ({ platform, orders })).sort((a, b) => b.orders - a.orders),
     unmapped: { spend: sum(unmappedPieces), campaigns: distinct(unmappedPieces, (piece) => piece.campaignId) }
   };
