@@ -176,7 +176,8 @@ import {
   branchesApi, setApiSpyUserId, type ApprovedPayoutChange, type CartAssignmentPanel, type CartHandOutRules,
   setApiPreviewReadOnly, pageVisitsApi, fineAppealsApi, trackingHubApi, socialLeadsApi,
   PreviewReadOnlyError, type BranchWorkspace,
-  customerReviewsApi
+  customerReviewsApi,
+  readActiveBranch, writeActiveBranch,
 } from "./lib/api";
 import { NIGERIA_STATES, canonicalOrderState, UNPLACED_ORDER_STATE } from "./lib/nigeria";
 import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid,CartRecoverySummary, CartGridRow, CartLogPenaltiesView, CartLogRangePreset, RecoveryCalendarView, RecoveryFollowUpPairs, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, TargetPeriod, TargetProgressView, TargetSuggestion, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, CostChangeImpact, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView, UpsellPerformanceLog } from "./lib/api";
@@ -9143,7 +9144,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [branchOptions, setBranchOptions] = useState<BranchWorkspace[]>([]);
   const [activeBranchId, setActiveBranchId] = useState(() => {
     if (typeof window === "undefined") return "ng-main";
-    return window.localStorage.getItem("protohub.activeBranch") ?? "";
+    return readActiveBranch();
   });
   const activeBranch = branchOptions.find((branch) => branch.id === activeBranchId) ?? branchOptions[0] ?? null;
   // The live feed subscribes once and never re-subscribes, so a value captured
@@ -9182,7 +9183,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const selected = branches.some((branch) => branch.id === activeBranchId) ? activeBranchId : home.id;
       if (selected !== activeBranchId) {
         setActiveBranchId(selected);
-        try { window.localStorage.setItem("protohub.activeBranch", selected); } catch { /* private mode */ }
+        writeActiveBranch(selected);
         // Reload only when a branch was already stored and we are LEAVING it,
         // because the data on screen was fetched under the old one. With
         // nothing stored, the requests carried no branch at all and the server
@@ -9277,7 +9278,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const changeBranch = (branchId: string) => {
     setActiveBranchId(branchId);
-    try { window.localStorage.setItem("protohub.activeBranch", branchId); } catch { /* private mode */ }
+    writeActiveBranch(branchId);
     const next = branchOptions.find((branch) => branch.id === branchId);
     if (next) showToast(`${next.countryName} · ${next.name} selected.`);
     window.location.reload();

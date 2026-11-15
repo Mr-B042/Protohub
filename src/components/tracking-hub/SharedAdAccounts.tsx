@@ -36,6 +36,11 @@ function RateEditor({ onToast }: { onToast: (text: string) => void }) {
         <span className="font-semibold">= K1</span>
         {n > 0 && <span className="text-[12px] text-gray-500">(₦10,000 = K{(10000 / n).toLocaleString("en", { maximumFractionDigits: 2 })})</span>}
         <button type="button" className={smallButton} disabled={saving || !(n > 0) || n === rate.fromPerTo} onClick={() => void save()}>{saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}Save rate</button>
+        <button type="button" className={smallButton} disabled={saving} title="Rebuild this month's ad expenses in this branch and the branch it shares with" onClick={async () => {
+          setSaving(true);
+          try { await trackingHubApi.rebookAdSpendMonth(); onToast("This month's ad expenses were re-booked in the right branches."); }
+          catch (err: any) { onToast(err?.message ?? "Could not re-book."); } finally { setSaving(false); }
+        }}>Re-book this month now</button>
       </div>
     </div>
   );

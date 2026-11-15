@@ -79,6 +79,16 @@ export async function campaignClaims(orgId: string): Promise<Map<string, string>
   }
   const pageOfCampaign = new Map<string, Set<string>>();
   for (const l of (links ?? []) as any[]) { const c = adCampaign.get(String(l.ad_id)); if (c && l.page) { const s = pageOfCampaign.get(c) ?? new Set<string>(); s.add(l.page); pageOfCampaign.set(c, s); } }
+  // An ad linking straight to a branch's product form is proof (15 Nov 2026).
+  const directIds = [...new Set([...pageOfCampaign.values()].flatMap((ps) => [...ps]).filter((p) => p.startsWith("product:")).map((p) => p.slice(8)))];
+  if (directIds.length) {
+    const { data: prods } = await supabase.from("products").select("id, branch_id").eq("org_id", orgId).in("id", directIds);
+    const branchOfProduct = new Map(((prods ?? []) as any[]).map((r) => [String(r.id), String(r.branch_id)]));
+    for (const [c, ps] of pageOfCampaign) for (const p of ps) {
+      const b = p.startsWith("product:") ? branchOfProduct.get(p.slice(8)) : undefined;
+      if (b) { const set = ev.pageBranches.get(c) ?? new Set<string>(); set.add(b); ev.pageBranches.set(c, set); }
+    }
+  }
   if (pageOfCampaign.size) {
     for (const branchId of branches) {
       const rows: Array<{ page: string | null; productId: string | null }> = [];

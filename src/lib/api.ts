@@ -312,7 +312,9 @@ async function request<T>(
   let res: Response;
   let branchId: string | null = null;
   try {
-    const storedBranchId = localStorage.getItem("protohub.activeBranch");
+    // This TAB's branch first (Bright, 15 Nov 2026: a Zambia tab saved into
+    // Nigeria because another tab had switched the shared setting).
+    const storedBranchId = readActiveBranch();
     // The initial selector uses temporary labels until /api/branches has
     // hydrated real database UUIDs. Never send a placeholder as scope.
     branchId = storedBranchId && /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(storedBranchId) ? storedBranchId : null;
@@ -4895,6 +4897,7 @@ export const trackingHubApi = {
   checkAdFunds: () => post<AdFundsView>("/api/tracking-hub/ad-funds/check", {}),
   adAccountShares: () => get<{ accounts: Array<{ accountId: string; name: string; currency: string | null; homeBranch: string; shared: boolean }>; campaignsHere: number }>("/api/tracking-hub/ad-account-shares"),
   setAdAccountShare: (accountId: string, on: boolean) => put<{ ok: boolean }>(`/api/tracking-hub/ad-account-shares/${encodeURIComponent(accountId)}`, { on }),
+  rebookAdSpendMonth: () => post<{ ok: boolean }>("/api/tracking-hub/ad-spend/rebook-month", {}),
   currencyRate: (from = "NGN", to = "ZMW") => get<{ rate: { from: string; to: string; fromPerTo: number; source: string; setBy: string | null; updatedAt: string | null; isDefault: boolean } | null }>(`/api/tracking-hub/currency-rate?from=${from}&to=${to}`),
   setCurrencyRate: (from: string, to: string, fromPerTo: number) => put<{ rate: { from: string; to: string; fromPerTo: number; source: string; setBy: string | null; updatedAt: string | null; isDefault: boolean } | null }>("/api/tracking-hub/currency-rate", { from, to, fromPerTo }),
   campaignAlerts: (fresh = false) => get<{ verdicts: CampaignVerdict[]; unchecked: number; uncheckedAccounts?: Array<{ name: string; message: string }>; checkedAt: string }>(`/api/tracking-hub/campaign-alerts${fresh ? "?fresh=1" : ""}`),
@@ -6074,3 +6077,20 @@ export type SlMetaDirect = {
   lastEventAt: string | null; lastError: string | null; commentReply: SlCommentReply; manychatConnected: boolean; scopes: string[];
   pages: Array<{ id: string; pageId: string; name: string; igId: string | null; igUsername: string | null; subscribed: boolean; error: string | null; connectedAt: string; lastEventAt: string | null }>;
 };
+
+/**
+ * The branch this tab works in. Each tab keeps its own (sessionStorage), so
+ * switching branch in one tab never changes where another tab saves; the
+ * last choice (localStorage) is only where a NEW tab starts.
+ */
+export function readActiveBranch(): string {
+  try {
+    return window.sessionStorage.getItem(TAB_BRANCH_KEY) ?? window.localStorage.getItem(LAST_BRANCH_KEY) ?? "";
+  } catch { return ""; }
+}
+export function writeActiveBranch(branchId: string) {
+  try { window.sessionStorage.setItem(TAB_BRANCH_KEY, branchId); } catch { /* private mode */ }
+  try { window.localStorage.setItem(LAST_BRANCH_KEY, branchId); } catch { /* private mode */ }
+}
+const TAB_BRANCH_KEY = "protohub.tabBranch";
+const LAST_BRANCH_KEY = "protohub.activeBranch";
