@@ -4745,7 +4745,7 @@ export type HubAuditEntry = { at: string; action: string; subjectType: string | 
 export type HubAdSpendView = "product" | "campaign" | "adset" | "ad" | "account" | "business";
 export type HubAdSpendLevel = "account" | "campaign" | "adset" | "ad";
 export type HubSpendSplit = { productId: string; share: number };
-export type HubAdSpendMetrics = { spend: number; orders: number; delivered: number; revenue: number; profit: number; cpa: number | null; cpdo: number | null; deliveredAov: number | null; roas: number | null };
+export type HubAdSpendMetrics = { spend: number; orders: number; delivered: number; revenue: number; profit: number; cpa: number | null; cpdo: number | null; deliveredAov: number | null; roas: number | null; confirmed?: number; cpco?: number | null; confirmRate?: number | null; deliveryRate?: number | null };
 export type HubAdSpendRow = HubAdSpendMetrics & {
   id: string; name: string; image: string | null; campaigns: number; adsets: number; ads: number; accounts: number;
   platform: "meta" | "tiktok" | null; accountId: string | null; accountName: string | null; campaignId: string | null; campaignName: string | null; adsetId: string | null; adsetName: string | null;

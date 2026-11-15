@@ -156,16 +156,27 @@ export function allocate(insights: SpendInsight[], index: Map<string, Split[]>, 
 // ---------------------------------------------------------------- report
 
 export type ReportFilters = { platform?: PlatformChoice; productId?: string; campaignId?: string; adsetId?: string; accountId?: string; businessKey?: string; q?: string };
-export type Metrics = { spend: number; orders: number; delivered: number; revenue: number; profit: number; cpa: number | null; cpdo: number | null; deliveredAov: number | null; roas: number | null };
+export type Metrics = {
+  spend: number; orders: number; delivered: number; revenue: number; profit: number; cpa: number | null; cpdo: number | null; deliveredAov: number | null; roas: number | null;
+  /** Bright, 15 Nov 2026: confirmed = got past New and not cancelled. */
+  confirmed: number; cpco: number | null; confirmRate: number | null; deliveryRate: number | null;
+};
+
+/** Confirmed = the customer confirmed: every status after New except Cancelled. */
+export const CONFIRMED_STATUSES = new Set(["Confirmed", "In Process", "Dispatched", "Postponed", "Delivered", "Failed"]);
 
 function metricsOf(spend: number, orders: SpendOrder[]): Metrics {
   const delivered = orders.filter((order) => order.status === "Delivered");
+  const confirmed = orders.filter((order) => CONFIRMED_STATUSES.has(order.status)).length;
   const revenue = delivered.reduce((sum, order) => sum + order.amount, 0);
   const margin = delivered.reduce((sum, order) => sum + order.amount - order.productCost - order.deliveryFee, 0);
   return {
     spend, orders: orders.length, delivered: delivered.length, revenue, profit: margin - spend,
     cpa: orders.length ? spend / orders.length : null, cpdo: delivered.length ? spend / delivered.length : null,
-    deliveredAov: delivered.length ? revenue / delivered.length : null, roas: spend > 0 ? revenue / spend : null
+    deliveredAov: delivered.length ? revenue / delivered.length : null, roas: spend > 0 ? revenue / spend : null,
+    confirmed, cpco: confirmed ? spend / confirmed : null,
+    confirmRate: orders.length ? (confirmed / orders.length) * 100 : null,
+    deliveryRate: confirmed ? (delivered.length / confirmed) * 100 : null
   };
 }
 

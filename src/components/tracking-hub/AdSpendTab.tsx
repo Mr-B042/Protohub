@@ -31,11 +31,15 @@ const LEVEL_OF_VIEW: Partial<Record<HubAdSpendView, HubAdSpendLevel>> = { campai
 const LEVEL_LABEL: Record<HubAdSpendLevel, string> = { campaign: "Campaign", adset: "Ad set", ad: "Ad", account: "Ad account" };
 const DONUT_COLORS = ["#2563eb", "#22c55e", "#f59e0b", "#8b5cf6", "#f43f5e", "#06b6d4", "#94a3b8"];
 
-type ColumnKey = "orders" | "delivered" | "cpa" | "cpdo" | "deliveredAov" | "roas" | "profit" | "trend";
+type ColumnKey = "orders" | "confirmed" | "confirmRate" | "delivered" | "deliveryRate" | "cpa" | "cpco" | "cpdo" | "deliveredAov" | "roas" | "profit" | "trend";
 const COLUMNS: Array<{ key: ColumnKey; label: string; title: string }> = [
   { key: "orders", label: "Orders", title: "Orders placed in the period" },
+  { key: "confirmed", label: "Confirmed", title: "Orders the customer confirmed: past New and not cancelled (today's new orders aren't confirmed yet)" },
+  { key: "confirmRate", label: "Confirm %", title: "Confirmed ÷ orders placed" },
   { key: "delivered", label: "Delivered", title: "Orders placed in the period that are now delivered" },
+  { key: "deliveryRate", label: "Delivery %", title: "Delivered ÷ confirmed (recent orders are still on the way)" },
   { key: "cpa", label: "CPA", title: "Cost per order: ad spend ÷ orders" },
+  { key: "cpco", label: "Cost/Confirmed", title: "Cost per confirmed order: ad spend ÷ confirmed orders" },
   { key: "cpdo", label: "CPDO", title: "Cost per delivered order: ad spend ÷ delivered orders" },
   { key: "deliveredAov", label: "Delivered AOV", title: "Average value of a delivered order" },
   { key: "roas", label: "ROAS", title: "Delivered revenue ÷ ad spend" },
@@ -266,7 +270,15 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
   const [mapping, setMapping] = useState<{ level: HubAdSpendLevel; metaId: string; name: string; adAccountId?: string | null; spend?: number } | null>(null);
   const [unmappedOpen, setUnmappedOpen] = useState(false);
   const [columns, setColumns] = useState<Set<ColumnKey>>(() => {
-    try { const saved = JSON.parse(localStorage.getItem(COLUMN_STORE) ?? "null"); if (Array.isArray(saved)) return new Set(saved as ColumnKey[]); } catch { /* storage off */ }
+    try {
+      const saved = JSON.parse(localStorage.getItem(COLUMN_STORE) ?? "null");
+      if (Array.isArray(saved)) {
+        // Columns added 15 Nov 2026 show once for people who saved a choice before.
+        const added: ColumnKey[] = localStorage.getItem(`${COLUMN_STORE}.v2`) ? [] : ["confirmed", "confirmRate", "deliveryRate", "cpco"];
+        try { localStorage.setItem(`${COLUMN_STORE}.v2`, "1"); } catch { /* storage off */ }
+        return new Set([...(saved as ColumnKey[]), ...added]);
+      }
+    } catch { /* storage off */ }
     return new Set(COLUMNS.map((column) => column.key));
   });
   useEffect(() => { const timer = setTimeout(() => setQ(search), 300); return () => clearTimeout(timer); }, [search]);
@@ -403,8 +415,8 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
   const exportCsv = () => {
     const list = selected.size ? rows.filter((row) => selected.has(row.id)) : rows;
     const cell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
-    const lines = [[viewInfo.noun, "Meta ID", "Ad spend", "Orders", "Delivered", "Cost per order", "Cost per delivered order", "Delivered average order", "Return on ad spend", "Profit after ads"].map(cell).join(",")];
-    for (const row of list) lines.push([row.name, row.id === UNMAPPED ? "" : row.id, Math.round(row.spend), row.orders, row.delivered, row.cpa === null ? "" : Math.round(row.cpa), row.cpdo === null ? "" : Math.round(row.cpdo), row.deliveredAov === null ? "" : Math.round(row.deliveredAov), roasOf(row) === null ? "" : roasOf(row)!.toFixed(2), row.delivered ? Math.round(row.profit) : ""].map(cell).join(","));
+    const lines = [[viewInfo.noun, "Meta ID", "Ad spend", "Orders", "Confirmed", "Confirm %", "Delivered", "Delivery %", "Cost per order", "Cost per confirmed order", "Cost per delivered order", "Delivered average order", "Return on ad spend", "Profit after ads"].map(cell).join(",")];
+    for (const row of list) lines.push([row.name, row.id === UNMAPPED ? "" : row.id, Math.round(row.spend), row.orders, row.confirmed ?? "", row.confirmRate == null ? "" : Math.round(row.confirmRate), row.delivered, row.deliveryRate == null ? "" : Math.round(row.deliveryRate), row.cpa === null ? "" : Math.round(row.cpa), row.cpco == null ? "" : Math.round(row.cpco), row.cpdo === null ? "" : Math.round(row.cpdo), row.deliveredAov === null ? "" : Math.round(row.deliveredAov), roasOf(row) === null ? "" : roasOf(row)!.toFixed(2), row.delivered ? Math.round(row.profit) : ""].map(cell).join(","));
     downloadCsv(`ad-spend-${view}-${range.from}${range.from === range.to ? "" : `-to-${range.to}`}.csv`, lines.join("\n"));
   };
   const dayWeekMonth = (kind: "day" | "week" | "month") => {
@@ -655,8 +667,12 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
                       {compare === "previous" ? <Delta value={row.spendChange === null ? null : Math.round(row.spendChange)} /> : null}
                     </td>
                     {on("orders") ? <td>{unmapped ? "—" : nf(row.orders)}</td> : null}
+                    {on("confirmed") ? <td>{unmapped ? "—" : nf(row.confirmed ?? 0)}</td> : null}
+                    {on("confirmRate") ? <td className="whitespace-nowrap">{unmapped || row.confirmRate == null ? "—" : `${Math.round(row.confirmRate)}%`}</td> : null}
                     {on("delivered") ? <td>{unmapped ? "—" : nf(row.delivered)}</td> : null}
+                    {on("deliveryRate") ? <td className="whitespace-nowrap">{unmapped || row.deliveryRate == null ? "—" : `${Math.round(row.deliveryRate)}%`}</td> : null}
                     {on("cpa") ? <td className="whitespace-nowrap">{money(row.cpa)}</td> : null}
+                    {on("cpco") ? <td className="whitespace-nowrap">{money(row.cpco ?? null)}</td> : null}
                     {on("cpdo") ? <td className="whitespace-nowrap">{money(row.cpdo)}</td> : null}
                     {on("deliveredAov") ? <td className="whitespace-nowrap">{money(row.deliveredAov)}</td> : null}
                     {on("roas") ? <td className={`whitespace-nowrap font-semibold ${roasOf(row) === null ? "text-gray-400" : "text-emerald-600"}`}>{roasText(roasOf(row))}</td> : null}
