@@ -691,7 +691,8 @@ router.get("/", async (req, res) => {
   // frontline rep and fall through to the unscoped path. Their portal reads
   // my-orders instead, which is scoped to their own assignments, so returning
   // nothing here costs them nothing.
-  if (scopeRole === "Delivery Agent") {
+  // An Accountant works on expenses only and needs no orders (16 Nov 2026).
+  if (scopeRole === "Delivery Agent" || scopeRole === "Accountant") {
     res.json({ rows: [], total: 0, page: 1, pageSize: 0 });
     return;
   }

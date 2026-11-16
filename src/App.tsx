@@ -1,6 +1,8 @@
 import OurStorePage from "./pages/OurStorePage";
 import { type Dispatch, type ReactNode, type SetStateAction, Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { mergeWaybillWeeks } from "./lib/waybill-expense-lines";
+import ExpenseIntelPage from "./pages/expense-intel/ExpenseIntelPage";
+import type { EiCtx } from "./pages/expense-intel/context";
 import { isCompleteOrderChunk, isCompleteWorkspaceHistory, mergeOlderRows, settleBootstrapResource } from "./lib/bootstrap-resource";
 import { createPortal } from "react-dom";
 import type { EmSection } from "./pages/email-marketing/em-ui";
@@ -633,7 +635,7 @@ const RETENTION_TASK_TYPES: Array<{ key: RetentionTaskTypeKey; label: string; ic
 type OrderWorkspacePage = "Orders" | "Follow-up Queue" | "Closed Orders";
 type ExpenseType = "Ad Spend" | "Delivery" | "Failed Delivery" | "Salary" | "Bonuses & Incentives" | "Clearing & Shipping" | "Waybill" | "Airtime & Data" | "Stock Loss" | "Other";
 type ExpenseFilter = "All Types" | ExpenseType;
-type UserRole = "All Roles" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Inventory Manager & Logistics Operations" | "Marketer" | "Viewer" | "Recovery Rep" | "Delivery Agent" | "Sales Closer";
+type UserRole = "All Roles" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Inventory Manager & Logistics Operations" | "Marketer" | "Viewer" | "Recovery Rep" | "Delivery Agent" | "Sales Closer" | "Accountant";
 type UserStatus = "All Status" | "Active" | "Inactive";
 type RoundRobinTab = "Active Sequence" | "Temporarily Excluded" | "Dedicated Products";
 type EmbedTab = "Create Order Form" | "Extra Offers" | "Generate" | "Meta & Ads" | "Links & Tracking";
@@ -914,7 +916,7 @@ type SmsInboundMessage = {
 type RepOrderStatusTab = "All Orders" | "Pending" | "Confirmed" | "Follow-up";
 type CreateOrderContext = "admin" | "rep" | "closer";
 type DateRange = { start: string; end: string };
-type EditableUserRole = "Owner" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Inventory Manager & Logistics Operations" | "Marketer" | "Viewer" | "Recovery Rep" | "Delivery Agent" | "Sales Closer";
+type EditableUserRole = "Owner" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Inventory Manager & Logistics Operations" | "Marketer" | "Viewer" | "Recovery Rep" | "Delivery Agent" | "Sales Closer" | "Accountant";
 type UserPermission =
   | "create_orders" | "edit_orders" | "delete_orders" | "change_order_status" | "reassign_orders"
   | "manage_inventory" | "manage_products"
@@ -1818,6 +1820,14 @@ type ExpenseRecord = {
   waybillId?: string;
   /** Wallet waybill ticked "its own cost": never folded into the week's waybill line. */
   waybillOwnCost?: boolean;
+  /** Expense & Cost Intelligence (16 Nov 2026). */
+  paidBy?: string;
+  checkStatus?: "auto" | "verified" | "unchecked";
+  recordedByName?: string;
+  checkedByName?: string;
+  checkedAt?: string;
+  receiptUrl?: string;
+  requestId?: string;
 };
 type ManagerBonusTier = {
   id?: string;
@@ -2667,8 +2677,8 @@ const financeLensToneClasses: Record<FinanceLens, string> = {
 };
 const expenseTypes: ExpenseType[] = ["Ad Spend", "Delivery", "Failed Delivery", "Salary", "Bonuses & Incentives", "Clearing & Shipping", "Waybill", "Airtime & Data", "Stock Loss", "Other"];
 const expenseFilters: ExpenseFilter[] = ["All Types", ...expenseTypes];
-const userRoles: UserRole[] = ["All Roles", "Admin", "Manager", "Sales Rep", "Inventory Manager & Logistics Operations", "Marketer", "Viewer", "Recovery Rep", "Delivery Agent", "Sales Closer"];
-const editableUserRoles: EditableUserRole[] = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager & Logistics Operations", "Marketer", "Viewer", "Recovery Rep", "Delivery Agent", "Sales Closer"];
+const userRoles: UserRole[] = ["All Roles", "Admin", "Manager", "Sales Rep", "Inventory Manager & Logistics Operations", "Marketer", "Viewer", "Recovery Rep", "Delivery Agent", "Sales Closer", "Accountant"];
+const editableUserRoles: EditableUserRole[] = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager & Logistics Operations", "Marketer", "Viewer", "Recovery Rep", "Delivery Agent", "Sales Closer", "Accountant"];
 const userStatuses: UserStatus[] = ["All Status", "Active", "Inactive"];
 const roundRobinTabs: RoundRobinTab[] = ["Active Sequence", "Temporarily Excluded", "Dedicated Products"];
 // Meta & Ads and Links & Tracking moved to the Tracking Hub (2 Oct 2026).
@@ -2989,6 +2999,8 @@ const defaultPermsByRole: Record<EditableUserRole, UserPermission[]> = {
   "Delivery Agent":    [],
   // Converts her own leads into orders through the normal create-order flow.
   "Sales Closer":      ["create_orders"],
+  // Works on expenses only (requests wait for approval); no order access.
+  "Accountant":        [],
 };
 
 const defaultPermissionsForRole = (role: EditableUserRole | undefined): UserPermission[] =>
@@ -3024,7 +3036,7 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   ],
   "Manager": [
     "Products & Stock", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Social Leads Inbox", "Scheduled Deliveries", "Deliveries",
-    "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Weekend Stock Summary", "Customers", "Personal Delivery Agents", "Product Trend", "Round-Robin", "Notifications", "Settings", "WhatsApp"
+    "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Weekend Stock Summary", "Customers", "Expenses", "Personal Delivery Agents", "Product Trend", "Round-Robin", "Notifications", "Settings", "WhatsApp"
   ],
   // "Head of Sales Rep" is NOT listed here - a Sales Rep only gets it at
   // runtime when currentManagedUser?.isHeadOfSalesRep is true (see
@@ -3040,6 +3052,12 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   ],
   "Inventory Manager & Logistics Operations": [
     "Inventory & Logistics Operations", "Inventory", "Products & Stock", "Weekend Stock Summary", "Agents", "Waybill", "Notifications"
+  ],
+  // Accountant (Bright, 16 Nov 2026): records expenses as requests that wait
+  // for Owner/Admin/Manager; sees the expense list and their own requests,
+  // no orders, customers or profit.
+  "Accountant": [
+    "Expenses", "Notifications", "Settings"
   ],
   "Marketer": [
     "Orders", "Marketing", "Embed Form", "Notifications", "Settings", "WhatsApp"
@@ -3079,7 +3097,8 @@ const defaultLandingByRole: Record<EditableUserRole, AccessiblePage> = {
   "Viewer":            "Orders",
   "Recovery Rep":      "Recovery Rep Dashboard",
   "Delivery Agent":    "My Deliveries",
-  "Sales Closer":      "Sales Closer Workspace"
+  "Sales Closer":      "Sales Closer Workspace",
+  "Accountant":        "Expenses"
 };
 
 /**
@@ -7785,7 +7804,14 @@ const normalizeExpenseRecord = (value: any): ExpenseRecord => {
     productName: row.productName ?? "",
     description: row.description ?? "",
     waybillId: row.waybillId ?? undefined,
-    waybillOwnCost: row.waybillOwnCost === true
+    waybillOwnCost: row.waybillOwnCost === true,
+    paidBy: row.paidBy ?? undefined,
+    checkStatus: row.checkStatus === "auto" || row.checkStatus === "unchecked" ? row.checkStatus : "verified",
+    recordedByName: row.recordedByName ?? undefined,
+    checkedByName: row.checkedByName ?? undefined,
+    checkedAt: row.checkedAt ?? undefined,
+    receiptUrl: row.receiptUrl ?? undefined,
+    requestId: row.requestId ?? undefined
   };
 };
 
@@ -22937,6 +22963,47 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const canonical = canonicalStateByToken.get(normalizeStateToken(raw));
     return canonical ?? titleCaseStateLabel(raw) ?? "Unknown";
   };
+  // Expense & Cost Intelligence page (Bright's 10 designs, 16 Nov 2026): it
+  // gets the app's own orders, expenses and profit helper so every figure
+  // matches the Dashboard and Finance pages.
+  const expenseIntelProfit = (from: string, to: string, productId?: string) => {
+    const inR = (key?: string) => { const v = normalizeDateKey(key); return Boolean(v) && v >= from && v <= to; };
+    const delivered = deliveredOrderRows.filter((o) => inR(orderDeliveredKey(o)) && (!productId || o.productId === productId));
+    const rows = expenses.filter((e) => inR(e.date) && (!productId || e.productId === productId));
+    const placed = trackedOrders.filter((o) => !o.reviewHold && inR(orderCreatedKey(o)) && (!productId || o.productId === productId));
+    if (productId) return summarizeRecognizedProfit(delivered, rows, { placedRows: placed });
+    // A month owns its Sunday weeks (as Finance's This Month / Last Month do), counted up to the range's end.
+    const isMonth = from.endsWith("-01") && from.slice(0, 7) === to.slice(0, 7);
+    const last = to < todayKey() ? to : todayKey();
+    const weeks = isMonth ? monthWeekAnchors(from.slice(0, 7)).filter((a) => a <= last).map(weekFromAnchor) : sundayWeeksForExplicitRange({ start: from, end: to });
+    return summarizeRecognizedProfit(delivered, rows, { placedRows: placed, includeManagerBonus: true, managerBonusWeeks: weeks });
+  };
+  // Memoised on the data it reads: rebuilt on every App render it would
+  // re-run every profit sum on the page each time anything else changed.
+  const expenseIntelCtx = useMemo<EiCtx>(() => ({
+    role: currentRole,
+    userName: currentManagedUser?.name ?? "",
+    today: todayKey(),
+    orders: trackedOrders.filter((o) => !o.reviewHold).map((o) => ({
+      id: o.id, status: o.status ?? "New", amount: o.amount, productId: o.productId ?? null, productName: o.productName ?? "",
+      createdKey: orderCreatedKey(o), deliveredKey: (o.status ?? "New") === "Delivered" ? orderDeliveredKey(o) : "",
+      state: financeStateNameForOrder(o), agentName: (o as any).agentName ?? (o as any).agentNameSnapshot ?? "",
+      logistics: effectiveLogisticsCost(o), cogs: (o.status ?? "New") === "Delivered" ? costForOrder(o) : 0, units: quantityForOrder(o)
+    })),
+    expenses: expenses.map((e) => ({ ...e, category: e.type, date: normalizeDateKey(e.date), checkStatus: e.checkStatus ?? "verified" })),
+    products: products.map((pr) => ({
+      id: pr.id, name: pr.name, image: packageCarouselImages(pr.packages?.[0] ?? { imageUrl: "", imageUrls: [] } as any)[0] ?? null,
+      stock: (pr.warehouseStock ?? 0) + (pr.agentStock ?? 0), unitCost: unitCostForProductInCurrency(pr.id, "NGN", todayKey())
+    })),
+    profit: expenseIntelProfit,
+    money: formatMoney,
+    onAddExpense: () => openAdminExpenseCreateRoute(),
+    onOpenOrder: (id) => openOrderDetailPopup(id),
+    refresh: () => retryLoadData.current(),
+    toast: (message) => showToast(message),
+    mergeWaybills: (rows) => mergeWaybillWeeks(rows.map((r) => ({ ...r, type: r.category }))).map((r) => ({ ...r, category: r.type })) as any
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [trackedOrders, expenses, products, currentRole, currentManagedUser?.name]);
 
   // Product filter helpers - applied across all finance computations
   const productFilterActive = financeProductFilter.length > 0;
@@ -87750,299 +87817,8 @@ ${waybillLineItems(w).length > 1
               </div>
             </div>
           ) : activePage === "Expenses" ? (
-            <div className="space-y-6">
-              <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-                <div className="flex flex-col gap-1">
-                  <h1 className="text-2xl font-bold text-[#1F8FE0]">Expense Management</h1>
-                  <p className="text-sm font-medium text-gray-500">Monitor and manage your e-commerce operational costs</p>
-                </div>
-                {/* Desktop-only action buttons - on mobile these appear below the controls */}
-                <div className="hidden sm:flex items-center gap-2">
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => { retryLoadData.current(); showToast("Refreshing expenses…"); }}>
-                    <RefreshCw className="w-4 h-4" /> Refresh
-                  </button>
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={openAdminExpenseCreateRoute}>
-                    <Plus className="w-4 h-4" /> Add Expense
-                  </button>
-                </div>
-              </header>
-
-              <DataErrorBanner />
-              {dataLoading && <TableSkeleton cols={6} rows={5} />}
-              <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
-              <div className="flex flex-col gap-2">
-                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
-                  {/* Period pills - 4-column grid on mobile, inline strip on desktop */}
-                  <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
-                    {periods.map((item) => (
-                      <button className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${expensePeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleExpensePeriodChange(item)} key={item}>{item}</button>
-                    ))}
-                  </div>
-                  {/* Date range - full width on mobile */}
-                  <div className="relative w-full sm:w-auto">
-                    <button className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowExpenseDateRange((value) => !value)}>
-                      <CalendarDays className="w-4 h-4" /> {expensePeriod === "Custom" ? "Edit date range" : "Pick a date range"}
-                    </button>
-                    {showExpenseDateRange && renderDateRangeCalendar("expense-date-range-panel", expenseDateRange, setExpenseDateRange, applyExpenseDateRange, () => setShowExpenseDateRange(false))}
-                  </div>
-                  
-                  {/* Mobile-only: Add Expense + Refresh stacked full-width */}
-                  <div className="flex flex-col gap-2 w-full sm:hidden">
-                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={openAdminExpenseCreateRoute}>
-                      <Plus className="w-4 h-4" /> Add Expense
-                    </button>
-                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => { retryLoadData.current(); showToast("Refreshing expenses…"); }}>
-                      <RefreshCw className="w-4 h-4" /> Refresh
-                    </button>
-                  </div>
-                </div>
-                {renderWeekNav(expenseNavStart, setExpenseNavStart, expenseNavSpan, setExpenseNavSpan, setExpensePeriod, setExpenseDateRange, expensePeriod, expenseDateRange)}
-              </div>
-
-              <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Expense summary">
-                {[
-                  { title: "Total Expenses", value: formatMoney(totalExpenses), helper: `${filteredExpenses.length} records`, icon: Archive, tone: "blue" },
-                  { title: "Product-Linked", value: formatMoney(productLinkedExpenses), helper: `${totalExpenses === 0 ? 0 : Math.round((productLinkedExpenses / totalExpenses) * 100)}% of total`, icon: EmptyProductsIcon, tone: "purple" },
-                  { title: "General Expenses", value: formatMoney(generalExpenses), helper: "Operations & Overhead", icon: History, tone: "orange" },
-                  { title: "Daily Burn Rate", value: formatMoney(dailyBurnRate), helper: "Average this period", icon: Flame, tone: "red" }
-                ].map((metric) => {
-                  const Icon = metric.icon;
-                  return (
-                    <article className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm hover:shadow-md transition-shadow" key={metric.title}>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className={`w-10 h-10 rounded-full flex items-center justify-center ${metric.tone === "blue" ? "bg-blue-50 text-blue-500" : metric.tone === "purple" ? "bg-purple-50 text-purple-500" : metric.tone === "orange" ? "bg-orange-50 text-orange-500" : "bg-red-50 text-red-500"}`}>
-                          <Icon className="w-5 h-5" />
-                        </span>
-                      </div>
-                      <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{metric.title}</h2>
-                      <strong className="text-2xl font-bold text-gray-900 block my-1">{metric.value}</strong>
-                      <p className="text-[10px] text-gray-400 font-medium">{metric.helper}</p>
-                    </article>
-                  );
-                })}
-              </section>
-
-              <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5" aria-label="Profit impact report">
-                <h2 className="text-sm font-bold text-gray-800 mb-4">Profit Impact Report</h2>
-                <div className="flex flex-wrap items-center gap-3 mb-4">
-                  {[
-                    { label: "Gross Revenue", value: formatMoney(expenseRevenue), color: "text-green-600" },
-                    { label: "Cost of Goods", value: formatMoney(expenseCogs), color: "text-red-500", op: "-" },
-                    { label: "Logistics", value: formatMoney(expenseLogistics), color: "text-red-500", op: "-" },
-                    { label: "Operating Expenses", value: formatMoney(expenseOperatingExpense), color: "text-red-500", op: "-" },
-                    { label: "Net Profit", value: formatMoney(expenseNetProfit), color: "text-[#1F8FE0]", op: "=" },
-                  ].map(({ label, value, color, op }, idx) => (
-                    <div key={label} className="flex items-center gap-3">
-                      {op && <span className="text-lg font-bold text-gray-400">{op}</span>}
-                      <div className={`bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 flex flex-col gap-1 ${idx === 3 ? "bg-blue-50 border-blue-200" : ""}`}>
-                        <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">{label}</span>
-                        <strong className={`text-lg font-bold ${color}`}>{value}</strong>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex flex-wrap gap-4 text-xs text-gray-500">
-                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-400 inline-block" /> COGS ({expenseRevenue === 0 ? 0 : Math.round((expenseCogs / expenseRevenue) * 100)}%)</span>
-                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400 inline-block" /> Logistics ({expenseRevenue === 0 ? 0 : Math.round((expenseLogistics / expenseRevenue) * 100)}%)</span>
-                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400 inline-block" /> Operating Expenses ({expenseRevenue === 0 ? 0 : Math.round((expenseOperatingExpense / expenseRevenue) * 100)}%{expenseBonusEstimate > 0 ? ` · incl. ${formatMoney(expenseBonusEstimate)} bonus est.` : ""})</span>
-                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-400 inline-block" /> Profit Margin ({expenseMargin}%)</span>
-                </div>
-              </section>
-
-              {(() => {
-                const topProducts = Object.entries(
-                  filteredExpenses.filter((e) => e.productId).reduce<Record<string, { name: string; total: number }>>((acc, e) => {
-                    const key = e.productId!;
-                    acc[key] = { name: e.productName, total: (acc[key]?.total ?? 0) + e.amount };
-                    return acc;
-                  }, {})
-                ).sort((a, b) => b[1].total - a[1].total).slice(0, 5);
-                const now = new Date();
-                const monthlyData = Array.from({ length: 6 }, (_, i) => {
-                  const d = new Date(now.getFullYear(), now.getMonth() - 5 + i, 1);
-                  const mk = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-                  const total = expenses.filter((e) => normalizeDateKey(e.date).startsWith(mk)).reduce((s, e) => s + e.amount, 0);
-                  return { label: d.toLocaleString("en-US", { month: "short" }), total, isCurrentMonth: i === 5 };
-                });
-                const monthMax = Math.max(...monthlyData.map((d) => d.total), 1);
-                return (
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    <article className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-                      <h2 className="text-sm font-bold text-gray-800 mb-3">Top 5 Products by Expense</h2>
-                      {topProducts.length === 0 ? (
-                        <div className="flex items-center justify-center h-24 text-sm text-gray-400 italic">No product-linked expenses this period</div>
-                      ) : (
-                        <div className="flex flex-col gap-2">
-                          {topProducts.map(([, item], idx) => (
-                            <div key={idx} className="flex items-center justify-between text-sm">
-                              <span className="text-gray-700 truncate flex-1">{item.name}</span>
-                              <strong className="text-gray-900 shrink-0 ml-2">{formatMoney(item.total)}</strong>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </article>
-                    <article className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-                      <div className="flex items-center justify-between mb-3">
-                        <h2 className="text-sm font-bold text-gray-800">Monthly Expense Trend</h2>
-                        <span className="text-xs text-gray-400">Last 6 months</span>
-                      </div>
-                      <div className="flex items-end gap-1 h-20">
-                        {monthlyData.map((m) => (
-                          <div key={m.label} className="flex-1 flex flex-col items-center gap-1">
-                            <div className="w-full flex items-end justify-center" style={{ height: "60px" }}>
-                              <div
-                                className={`w-full rounded-t-sm transition-all ${m.isCurrentMonth ? "bg-[#1F8FE0]" : "bg-blue-200"}`}
-                                style={{ height: m.total === 0 ? "2px" : `${Math.max(4, Math.round((m.total / monthMax) * 60))}px` }}
-                                title={formatMoney(m.total)}
-                              />
-                            </div>
-                            <span className={`text-[9px] font-medium ${m.isCurrentMonth ? "text-[#1F8FE0] font-bold" : "text-gray-400"}`}>{m.label}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </article>
-                  </div>
-                );
-              })()}
-
-              <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
-                <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:flex-1 sm:max-w-xs min-w-0">
-                  <Search className="w-4 h-4 text-gray-400 shrink-0" />
-                  <span className="sr-only">Search expenses</span>
-                  <DraftTextarea as="input" className="bg-transparent outline-none text-sm w-full min-w-0" value={expenseSearch} onCommit={(value) => setExpenseSearch(value)} placeholder="Search descriptions or references..." />
-                </label>
-                <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors w-full sm:w-auto" onClick={exportExpensesCsv}>
-                  <Download className="w-4 h-4" /> Export
-                </button>
-                <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Expense type filter" value={expenseFilter} onChange={(event) => {
-                  setExpenseFilter(event.target.value as ExpenseFilter);
-                  showToast(`Expense filter set to ${event.target.value}.`);
-                }}>
-                  {expenseFilters.map((filter) => <option key={filter}>{filter}</option>)}
-                </select>
-              </div>
-
-              {(() => {
-                const EXP_PAGE_SIZE = 25;
-                // One line per product-week for waybills (display only; amounts add up the same).
-                const listedExpenses = mergeWaybillWeeks(filteredExpenses);
-                const expTotalPages = Math.max(1, Math.ceil(listedExpenses.length / EXP_PAGE_SIZE));
-                const expPageClamped = Math.min(expensePage, expTotalPages);
-                const pagedExpenses = listedExpenses.slice((expPageClamped - 1) * EXP_PAGE_SIZE, expPageClamped * EXP_PAGE_SIZE);
-                const filteredExpenseTotal = filteredExpenses.reduce((sum, expense) => sum + expense.amount, 0);
-                const pagedExpenseTotal = pagedExpenses.reduce((sum, expense) => sum + expense.amount, 0);
-                return (
-              <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Expenses table">
-                <div className="sm:hidden divide-y divide-gray-100">
-                  {pagedExpenses.length === 0 ? (
-                    <div className="px-4 py-12 text-center text-gray-400 font-medium italic">No expenses found</div>
-                  ) : (
-                    <>
-                      {pagedExpenses.map((expense) => (
-                        <article key={expense.id} className="px-4 py-4 flex flex-col gap-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="text-sm font-bold text-gray-900">{expense.type}</div>
-                              <div className="text-xs text-gray-500">{displayDateFromKey(expense.date)}</div>
-                              {expense.createdAt && <div className="text-xs text-gray-400">{formatMoment(expense.createdAt)}</div>}
-                            </div>
-                            <span className="text-base font-bold text-gray-900 whitespace-nowrap">{formatMoney(expense.amount)}{(expense as any).sourceCurrency && (expense as any).sourceAmount != null ? <span className="block text-[11px] font-medium text-gray-500">≈ {formatProductMoney(Number((expense as any).sourceAmount), (expense as any).sourceCurrency)}</span> : null}</span>
-                          </div>
-                          <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 flex flex-col gap-2 text-xs">
-                            <div className="flex flex-col gap-0.5">
-                              <span className="font-semibold uppercase tracking-wide text-gray-400">Product / Reference</span>
-                              <span className="text-gray-700">{expense.productName}</span>
-                            </div>
-                            <div className="flex flex-col gap-0.5">
-                              <span className="font-semibold uppercase tracking-wide text-gray-400">Description</span>
-                              <span className="text-gray-600">{expense.description || "No description"}</span>
-                              {expense.walletPaid ? <span className="mt-1 block text-[11px] font-semibold text-blue-700">Includes {formatMoney(expense.walletPaid)} paid from the manager's wallet{(expense.walletCount ?? 0) > 1 ? ` (${expense.walletCount} payments)` : ""}</span> : null}
-                            </div>
-                            {expense.waybillId && <span className="inline-flex items-center self-start px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-600">from Waybill</span>}
-                          </div>
-                          <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openAdminExpenseDetail(expense.id)}>
-                            Details
-                          </button>
-                        </article>
-                      ))}
-                      <div className="bg-gray-50 px-4 py-4 text-sm">
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="font-bold text-gray-900">Filtered total</span>
-                          <strong className="text-gray-900">{formatMoney(filteredExpenseTotal)}</strong>
-                        </div>
-                        {expTotalPages > 1 && <p className="m-0 mt-1 text-xs font-semibold text-gray-400">This page: {formatMoney(pagedExpenseTotal)}</p>}
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                <div className="hidden sm:block overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                        {["Date", "Type", "Product / Ref", "Amount", "Description", "Actions"].map((h) => (
-                          <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {pagedExpenses.length === 0 ? (
-                        <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400 font-medium italic">No expenses found</td></tr>
-                      ) : (
-                        pagedExpenses.map((expense) => (
-                          <tr key={expense.id} className="hover:bg-gray-50 transition-colors">
-                            <td className="px-4 py-4 text-gray-600">
-                              <span className="block">{displayDateFromKey(expense.date)}</span>
-                              {expense.createdAt && <span className="block text-xs text-gray-400 mt-0.5">{formatMoment(expense.createdAt)}</span>}
-                            </td>
-                            <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-700">{expense.type}</span></td>
-                            <td className="px-4 py-4 text-gray-700">{expense.productName}</td>
-                            <td className="px-4 py-4 font-bold text-gray-900">{formatMoney(expense.amount)}{(expense as any).sourceCurrency && (expense as any).sourceAmount != null ? <span className="block text-[11px] font-medium text-gray-500">≈ {formatProductMoney(Number((expense as any).sourceAmount), (expense as any).sourceCurrency)}</span> : null}</td>
-                            <td className="px-4 py-4 text-gray-500 text-xs">{expense.description}{expense.waybillId && <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-50 text-blue-600">from Waybill</span>}{expense.walletPaid ? <span className="mt-1 block text-[11px] font-semibold text-blue-700">Includes {formatMoney(expense.walletPaid)} paid from the manager's wallet{(expense.walletCount ?? 0) > 1 ? ` (${expense.walletCount} payments)` : ""}</span> : null}</td>
-                            <td className="px-4 py-4">
-                              <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openAdminExpenseDetail(expense.id)}>Details</button>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                    {filteredExpenses.length > 0 && (
-                      <tfoot>
-                        <tr className="border-t border-gray-200 bg-gray-50 font-bold">
-                          <td className="px-4 py-3 text-gray-900">Filtered total</td>
-                          <td className="px-4 py-3 text-gray-700">{listedExpenses.length} expense{listedExpenses.length === 1 ? "" : "s"}</td>
-                          <td className="px-4 py-3 text-gray-400">{expTotalPages > 1 ? `This page: ${formatMoney(pagedExpenseTotal)}` : "All rows shown"}</td>
-                          <td className="px-4 py-3 text-gray-900">{formatMoney(filteredExpenseTotal)}</td>
-                          <td className="px-4 py-3 text-gray-400">-</td>
-                          <td className="px-4 py-3 text-gray-400">-</td>
-                        </tr>
-                      </tfoot>
-                    )}
-                  </table>
-                </div>
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
-                  <span>{listedExpenses.length} expense{listedExpenses.length === 1 ? "" : "s"} · {formatMoney(filteredExpenseTotal)}</span>
-                  {expTotalPages > 1 && (
-                    <div className="flex items-center gap-1">
-                      <button disabled={expPageClamped <= 1} className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40" onClick={() => setExpensePage(expPageClamped - 1)}>&laquo; Prev</button>
-                      {Array.from({ length: expTotalPages }, (_, i) => i + 1)
-                        .filter((p) => p === 1 || p === expTotalPages || Math.abs(p - expPageClamped) <= 2)
-                        .map((p, idx, arr) => (
-                          <span key={p}>
-                            {idx > 0 && arr[idx - 1]! < p - 1 && <span className="px-1 text-gray-400">…</span>}
-                            <button className={`px-2 py-1 rounded border ${p === expPageClamped ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 hover:bg-gray-50"}`} onClick={() => setExpensePage(p)}>{p}</button>
-                          </span>
-                        ))}
-                      <button disabled={expPageClamped >= expTotalPages} className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40" onClick={() => setExpensePage(expPageClamped + 1)}>Next &raquo;</button>
-                    </div>
-                  )}
-                </div>
-              </section>
-                );
-              })()}
-              </div>
-            </div>
+            // Expense & Cost Intelligence (Bright's 10 designs, 16 Nov 2026) replaced the old Expenses page.
+            <ExpenseIntelPage ctx={expenseIntelCtx} />
           ) : activePage === "Finance & Accounting" ? (
             <div className="space-y-6">
               <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
@@ -108758,7 +108534,8 @@ ${waybillLineItems(w).length > 1
                 "Admin": "Full access except billing - can manage users, products, payroll.",
                 "Inventory Manager": "Legacy inventory role with stock and waybill access.",
                 "Inventory Manager & Logistics Operations": "Runs inventory coverage, transfers, logistics, reconciliation, alerts, and reporting.",
-                "Sales Closer": "Logs social-DM leads, works them through her own funnel, and converts them into orders. Different from Sales Rep, who only works orders already in the system."
+                "Sales Closer": "Logs social-DM leads, works them through her own funnel, and converts them into orders. Different from Sales Rep, who only works orders already in the system.",
+                "Accountant": "Records expenses as requests: each waits for Owner, Admin or Manager to approve before it counts. Sees the expense list, not orders, customers or profit."
               };
               return (
                 <div className="px-6 py-5 flex flex-col gap-5">
