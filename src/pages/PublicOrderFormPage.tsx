@@ -1300,6 +1300,11 @@ function buildPublicFormHiddenContext(params: URLSearchParams | null): PublicFor
   return context;
 }
 
+/** An email typed in the name box (order 6160, 16 Nov 2026): the name is what the rider and rep call the customer. */
+function nameProblem(name: string): string | null {
+  return name.includes("@") ? "Please type your name here, not your email." : null;
+}
+
 export default function PublicOrderFormPage() {
   const hash = typeof window === "undefined" ? "" : window.location.hash;
   const params = useMemo(
@@ -1779,6 +1784,7 @@ export default function PublicOrderFormPage() {
     const whatsappDigits = sanitizePhoneDigitsInput(orderFormWhatsapp);
     const nextErrors: Partial<Record<PublicOrderFieldKey, string>> = {};
     if (!orderFormName.trim()) nextErrors.name = "Customer name is required.";
+    else if (nameProblem(orderFormName)) nextErrors.name = nameProblem(orderFormName)!;
     if (!orderFormPhone.trim()) {
       nextErrors.phone = "Phone number is required.";
     } else if (phoneProblemFor(formCountry, orderFormPhone)) {
@@ -3369,7 +3375,8 @@ export default function PublicOrderFormPage() {
     if (firstInvalidField) {
       switch (firstInvalidField) {
         case "name":
-          trackSubmitBlocked("submit_blocked_missing_name", "Customer name is required.");
+          // Same event type for both (a new type needs a DB migration); the message tells them apart.
+          trackSubmitBlocked("submit_blocked_missing_name", orderFormName.trim() ? "Name was an email address." : "Customer name is required.");
           break;
         case "phone":
           trackSubmitBlocked(
@@ -4754,6 +4761,10 @@ export default function PublicOrderFormPage() {
                     onChange={(event) => {
                       setOrderFormName(event.target.value);
                       clearFieldError("name");
+                    }}
+                    onBlur={() => {
+                      const problem = nameProblem(orderFormName);
+                      if (problem) setFieldErrors((current) => ({ ...current, name: problem }));
                     }}
                     placeholder="Your Name *"
                     aria-invalid={Boolean(fieldErrors.name)}
