@@ -1,18 +1,20 @@
 import { useMemo, useState } from "react";
 import {
-  AlertTriangle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Columns3, Download, Grid2X2, List, Plus, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Upload, Wallet, X
+  AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Columns3, Download, Grid2X2, List, Plus, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Upload, Wallet, X
 } from "lucide-react";
 import { expenseIntelApi } from "../../lib/api";
+import DateWindowNav from "../../components/DateWindowNav";
+import { PRESET_LABEL, presetRange, type DateWindow, type PresetKey } from "../../lib/date-window";
 import type { TabProps } from "./context";
-import { addMonths, budgetRows, inRange, labelOf, monthEnd, monthKey, monthStart, sum, type EExpense } from "./model";
+import { budgetRows, inRange, labelOf, monthEnd, monthKey, monthStart, sum, type EExpense } from "./model";
 import { spentFor } from "./data";
 import { CategoryPill, ExpenseDrawer, SourcePill, StatusPill, dateTime, useRowFacts } from "./rows";
 import { RequestForm } from "./ApprovalsTab";
 import { C, Card, Empty, Field, Kpi, Modal, btn, delta, downloadCsv, input, select, td, th } from "./ui";
 
 type Row = EExpense & { pendingRequestId?: string };
-const PRESETS = ["Today", "Yesterday", "This Week", "This Month", "Last Month", "Custom"] as const;
-type Preset = (typeof PRESETS)[number];
+// The same date bar as My Orders: shortcuts with counts, then the day stepper.
+const SHORTCUTS: PresetKey[] = ["today", "yesterday", "thisWeek", "lastWeek", "thisMonth", "lastMonth"];
 const COLUMNS = ["Date & Time", "Expense ID", "Category", "Product / Reference", "Amount", "Payment Source", "Description", "Status"] as const;
 type Col = (typeof COLUMNS)[number];
 const addDays = (day: string, n: number) => { const d = new Date(`${day}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
@@ -24,8 +26,14 @@ export default function AllExpensesTab(p: TabProps & { focus: Record<string, str
   const approver = state.me.approver;
   const isAccountant = ctx.role === "Accountant";
   const today = ctx.today;
-  const [preset, setPreset] = useState<Preset>("This Month");
-  const [range, setRange] = useState({ from: monthStart(monthKey(today)), to: today });
+  // Opens on This Month, as before. "All Expenses" is not a range, so it is its own toggle.
+  const [win, setWin] = useState<DateWindow>(() => presetRange("thisMonth", today));
+  const [showAll, setShowAll] = useState(false);
+  const firstDay = useMemo(() => ctx.expenses.reduce((m, e) => (e.date && e.date < m ? e.date : m), today), [ctx.expenses, today]);
+  const lastDay = useMemo(() => ctx.expenses.reduce((m, e) => (e.date && e.date > m ? e.date : m), today), [ctx.expenses, today]);
+  // Days after today hold nothing yet; stopping at today keeps "vs the same days before" like for like.
+  const range = useMemo(() => showAll ? { from: firstDay, to: lastDay }
+    : { from: win.start, to: win.start <= today && win.end > today ? today : win.end }, [showAll, firstDay, lastDay, win, today]);
   const [f, setF] = useState({ search: "", category: p.focus.category ?? "", product: "", source: "", status: p.focus.status ?? "", person: "", state: "", min: "", max: "", receipt: "" });
   const [advanced, setAdvanced] = useState(false);
   const [sort, setSort] = useState<"new" | "old" | "high" | "low">("new");
@@ -40,16 +48,9 @@ export default function AllExpensesTab(p: TabProps & { focus: Record<string, str
   const [requestOpen, setRequestOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const choose = (next: Preset) => {
-    setPreset(next); setPage(1);
-    const sunday = addDays(today, -new Date(`${today}T00:00:00Z`).getUTCDay());
-    const lm = addMonths(monthKey(today), -1);
-    if (next === "Today") setRange({ from: today, to: today });
-    if (next === "Yesterday") setRange({ from: addDays(today, -1), to: addDays(today, -1) });
-    if (next === "This Week") setRange({ from: sunday, to: today });
-    if (next === "This Month") setRange({ from: monthStart(monthKey(today)), to: today });
-    if (next === "Last Month") setRange({ from: monthStart(lm), to: monthEnd(lm) });
-  };
+  const pendingIn = (from: string, to: string) => state.requests.filter((r) => r.status === "pending" && inRange(r.expenseDate, from, to)).length;
+  // Counted as LINES, like the list below, so a button never promises more rows than it shows.
+  const countFor = (from: string, to: string) => ctx.mergeWaybills(p.expensesIn(from, to)).length + pendingIn(from, to);
 
   const inPeriod = useMemo(() => p.expensesIn(range.from, range.to), [p, range]);
   const lines: Row[] = useMemo(() => {
@@ -146,24 +147,46 @@ export default function AllExpensesTab(p: TabProps & { focus: Record<string, str
         {overBudget !== null && <Kpi icon={AlertTriangle} tone={C.red} label="Over Budget" value={`${overBudget} categor${overBudget === 1 ? "y" : "ies"}`} sub={`In ${new Date(`${m}-01T00:00:00Z`).toLocaleString("en-GB", { month: "long", timeZone: "UTC" })}`} onClick={() => p.go("budgets")} />}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="inline-flex h-10 items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 text-[13px] font-bold text-gray-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-50">
-          <CalendarDays className="h-4 w-4 text-gray-500" />
-          <input type="date" aria-label="From" value={range.from} max={range.to} onChange={(e) => { setPreset("Custom"); setRange({ ...range, from: e.target.value }); }} className="bg-transparent outline-none" />–
-          <input type="date" aria-label="To" value={range.to} min={range.from} onChange={(e) => { setPreset("Custom"); setRange({ ...range, to: e.target.value }); }} className="bg-transparent outline-none" />
-        </span>
-        <div className="inline-flex flex-wrap rounded-xl border border-gray-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-900">
-          {PRESETS.map((x) => <button key={x} type="button" onClick={() => choose(x)} className={`!min-h-0 rounded-lg px-3 py-1.5 text-[12.5px] font-semibold ${preset === x ? "bg-gray-100 text-gray-900 dark:bg-slate-700 dark:text-white" : "text-gray-600 dark:text-slate-300"}`}>{x}</button>)}
+      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+        <div className="flex flex-wrap items-center gap-1 border-b border-gray-200/80 bg-slate-50/60 px-4 py-3 dark:border-slate-700 dark:bg-slate-900">
+          {SHORTCUTS.map((preset) => {
+            const r = presetRange(preset, today);
+            const on = !showAll && win.start === r.start && win.end === r.end;
+            return (
+              <button key={preset} type="button" onClick={() => { setShowAll(false); setWin(r); setPage(1); }}
+                className={`!min-h-0 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold transition-all ${on ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200" : "text-slate-500 hover:bg-white hover:text-slate-900 dark:text-slate-300"}`}>
+                {PRESET_LABEL[preset]}
+                <span className={`rounded-md px-1.5 py-0.5 text-[11px] font-black tabular-nums ${on ? "bg-emerald-100 text-emerald-800" : "bg-slate-200/70 text-slate-600"}`}>{countFor(r.start, r.end)}</span>
+              </button>
+            );
+          })}
+          <button type="button" onClick={() => { setShowAll(true); setPage(1); }}
+            className={`!min-h-0 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold transition-all ${showAll ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200" : "text-slate-500 hover:bg-white hover:text-slate-900 dark:text-slate-300"}`}>
+            All Expenses
+            <span className={`rounded-md px-1.5 py-0.5 text-[11px] font-black tabular-nums ${showAll ? "bg-emerald-100 text-emerald-800" : "bg-slate-200/70 text-slate-600"}`}>{countFor(firstDay, lastDay)}</span>
+          </button>
         </div>
-        <button type="button" className={btn.outline} onClick={() => setAdvanced(true)}><SlidersHorizontal className="h-4 w-4" />Advanced Filters{advancedCount > 0 && <span className="rounded-full bg-[#2F6BFF] px-1.5 text-[11px] text-white">{advancedCount}</span>}</button>
-        <label className="relative min-w-[220px] flex-1"><Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-gray-400" /><input className={`${input} !pl-9`} placeholder="Search by ID, description, product, agent…" value={f.search} onChange={(e) => { setF({ ...f, search: e.target.value }); setPage(1); }} /></label>
+        <div className="flex flex-wrap items-center gap-2 border-b border-gray-200/80 bg-slate-50/60 px-4 py-3 dark:border-slate-700 dark:bg-slate-900">
+          <label className="relative w-full sm:w-64"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input className={`${input} !pl-9`} placeholder="Search ID, description, product, agent…" value={f.search} onChange={(e) => { setF({ ...f, search: e.target.value }); setPage(1); }} /></label>
+          <select aria-label="Status" value={f.status} onChange={(e) => { setF({ ...f, status: e.target.value }); setPage(1); }} className={`${select} min-w-[150px]`}>
+            <option value="">All Statuses</option><option value="verified">Verified</option><option value="auto">Reconciled</option><option value="unchecked">Not checked</option><option value="pending">Pending approval</option>
+          </select>
+          <select aria-label="Sort" value={sort} onChange={(e) => setSort(e.target.value as typeof sort)} className={`${select} min-w-[170px]`}>
+            <option value="new">Newest First</option><option value="old">Oldest First</option><option value="high">Highest Amount</option><option value="low">Lowest Amount</option>
+          </select>
+        </div>
+        {!showAll && (
+          <div className="bg-slate-50/60 px-4 py-3 dark:bg-slate-900">
+            <DateWindowNav value={win} onChange={(next) => { setWin(next); setPage(1); }} todayKey={today} />
+          </div>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
+        <button type="button" className={btn.outline} onClick={() => setAdvanced(true)}><SlidersHorizontal className="h-4 w-4" />Advanced Filters{advancedCount > 0 && <span className="rounded-full bg-[#2F6BFF] px-1.5 text-[11px] text-white">{advancedCount}</span>}</button>
         {chip("Category", f.category, (v) => setF({ ...f, category: v }), categories.map((c) => [c, labelOf(c)]))}
         {chip("Product", f.product, (v) => setF({ ...f, product: v }), ctx.products.map((x) => [x.id, x.name]))}
         {chip("Payment Source", f.source, (v) => setF({ ...f, source: v }), state.paymentSources.map((x) => [x, x]))}
-        {chip("Status", f.status, (v) => setF({ ...f, status: v }), [["verified", "Verified"], ["auto", "Reconciled"], ["unchecked", "Not checked"], ["pending", "Pending approval"]])}
         {chip("Agent/Staff", f.person, (v) => setF({ ...f, person: v }), people.map((x) => [x, x]))}
         {chip("State", f.state, (v) => setF({ ...f, state: v }), states.map((x) => [x, x]))}
         {(chipCount + advancedCount > 0 || f.search) && <button type="button" className={`${btn.link} !text-[13px]`} onClick={clear}><X className="h-4 w-4" />Clear Filters</button>}
@@ -172,7 +195,7 @@ export default function AllExpensesTab(p: TabProps & { focus: Record<string, str
       <Card>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <span className="text-[13.5px] font-bold text-gray-800 dark:text-slate-200">Showing {filtered.length ? (at - 1) * perPage + 1 : 0} – {Math.min(at * perPage, filtered.length)} of {filtered.length} expenses
-            {lines.length !== inPeriod.length + state.requests.filter((r) => r.status === "pending" && inRange(r.expenseDate, range.from, range.to)).length && <span className="ml-1 text-[12px] font-normal text-gray-500">(a product's waybill payments in one week show as one line)</span>}
+            {lines.length !== inPeriod.length + pendingIn(range.from, range.to) && <span className="ml-1 text-[12px] font-normal text-gray-500">(a product's waybill payments in one week show as one line)</span>}
           </span>
           <div className="flex flex-wrap items-center gap-2">
             {picked.size > 0 && (
@@ -186,9 +209,6 @@ export default function AllExpensesTab(p: TabProps & { focus: Record<string, str
               <button type="button" aria-label="List view" onClick={() => setView("list")} className={`${btn.icon} ${view === "list" ? "!bg-blue-50 !text-[#2F6BFF]" : ""}`}><List className="h-4 w-4" /></button>
               <button type="button" aria-label="Grid view" onClick={() => setView("grid")} className={`${btn.icon} ${view === "grid" ? "!bg-blue-50 !text-[#2F6BFF]" : ""}`}><Grid2X2 className="h-4 w-4" /></button>
             </div>
-            <label className="inline-flex h-10 items-center gap-1 rounded-xl border border-gray-200 pl-3 text-[12.5px] font-semibold text-gray-700 dark:border-slate-700 dark:text-slate-200">Sort:
-              <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)} className="h-full border-0 bg-transparent pr-2 text-[12.5px] font-bold outline-none"><option value="new">Date (Newest)</option><option value="old">Date (Oldest)</option><option value="high">Amount (Highest)</option><option value="low">Amount (Lowest)</option></select>
-            </label>
             <div className="relative">
               <button type="button" className={btn.outline} onClick={() => setColsOpen(!colsOpen)}><Columns3 className="h-4 w-4" />Columns</button>
               {colsOpen && (
