@@ -417,7 +417,7 @@ export async function sinceStartCore(orgId: string, branchId: string, today: str
     const own = overrideOf.get(product.id);
     if (own) targets.set(product.id, { cpa: Number(own.target_cpa), source: "set_by_you" });
     else if (be.cpa) targets.set(product.id, { cpa: be.cpa, source: "worked_out" });
-    return { productId: product.id, name: product.name, breakEven: be.cpa, deliveryRate: be.deliveryRate, margin: be.margin, basedOn: be.orders, own: own ? Number(own.target_cpa) : null, ownBy: own?.updated_by_name ?? null };
+    return { productId: product.id, name: product.name, breakEven: be.cpa, deliveryRate: be.deliveryRate, margin: be.margin, basedOn: be.orders, averages: be.averages, deliveredRate: byProduct.get(product.id)?.length ? (byProduct.get(product.id) ?? []).filter((o) => o.status === "Delivered").length / (byProduct.get(product.id) ?? []).length : null, own: own ? Number(own.target_cpa) : null, ownBy: own?.updated_by_name ?? null };
   });
   const accountNames = new Map(Array.from(data.accounts.values()).map((row) => [row.accountId, row.name]));
   // Running = an ad delivering right now, asked live per ad account (one call each).
