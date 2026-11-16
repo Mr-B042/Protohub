@@ -9173,6 +9173,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return readActiveBranch();
   });
   const activeBranch = branchOptions.find((branch) => branch.id === activeBranchId) ?? branchOptions[0] ?? null;
+  // Phone branch list, opened from the top bar (Bright, 16 Nov 2026: switched to
+  // Zambia in the app and could not get back).
+  const [phoneBranchOpen, setPhoneBranchOpen] = useState(false);
   // The live feed subscribes once and never re-subscribes, so a value captured
   // in that effect would still hold whichever branch was open at sign-in. This
   // ref always reads the branch on screen right now.
@@ -77286,6 +77289,44 @@ ${waybillLineItems(w).length > 1
           )}
 
           <div className="ml-auto flex items-center gap-4">
+            {/* Phone: the branch is always one tap away in the top bar, as a plain
+                list of buttons. The only way back used to be a dropdown inside
+                the ☰ menu, and the phone's own dropdown picker is the least
+                reliable control inside the Android app. */}
+            {currentRole === "Owner" && branchOptions.length > 1 && (
+              <div className="relative sm:hidden">
+                <button type="button" onClick={() => setPhoneBranchOpen((open) => !open)} aria-expanded={phoneBranchOpen}
+                  aria-label={`Branch: ${activeBranch ? `${activeBranch.countryName} · ${activeBranch.name}` : "loading"}. Tap to switch.`}
+                  className="!min-h-0 inline-flex max-w-[120px] items-center gap-1 rounded-full border border-blue-200 bg-blue-50/70 px-2.5 py-1 text-[11px] font-bold text-blue-900">
+                  <Globe className="h-3.5 w-3.5 shrink-0 text-[#1F8FE0]" />
+                  <span className="truncate">{activeBranch?.countryName ?? "Branch"}</span>
+                  <ChevronDown className="h-3 w-3 shrink-0" />
+                </button>
+                {phoneBranchOpen && (
+                  <>
+                    <button type="button" aria-label="Close branch list" className="fixed inset-0 z-40 cursor-default bg-black/10" onClick={() => setPhoneBranchOpen(false)} />
+                    <div className="fixed inset-x-4 top-16 z-50 rounded-xl border border-gray-200 bg-white p-1.5 shadow-xl" role="menu">
+                      <p className="m-0 px-2.5 pb-1 pt-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Branch you are working in</p>
+                      {branchOptions.map((branch) => {
+                        const on = branch.id === activeBranch?.id;
+                        return (
+                          <button key={branch.id} type="button" role="menuitem"
+                            onClick={() => { setPhoneBranchOpen(false); if (!on) changeBranch(branch.id); }}
+                            className={`!min-h-0 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2.5 text-left text-sm font-semibold ${on ? "bg-blue-50 text-blue-900" : "text-gray-800 hover:bg-gray-50"}`}>
+                            <span className="truncate">{branch.countryName} · {branch.name}</span>
+                            {on && <Check className="h-4 w-4 shrink-0 text-[#1F8FE0]" />}
+                          </button>
+                        );
+                      })}
+                      <button type="button" role="menuitem" onClick={() => { setPhoneBranchOpen(false); openAddBranch(); }}
+                        className="!min-h-0 mt-1 flex w-full items-center gap-2 rounded-lg border-t border-gray-100 px-2.5 py-2.5 text-left text-sm font-semibold text-[#1F8FE0]">
+                        + Add a country…
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
             {currentRole === "Owner" && (
               <label className="hidden items-center gap-2 rounded-lg border border-blue-200 bg-blue-50/60 px-2.5 py-1.5 sm:flex" title="Choose the country and branch you are working in">
                 <Globe className="h-4 w-4 shrink-0 text-[#1F8FE0]" />
