@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
-import { ArrowUpDown, ChevronDown, ChevronRight, Lightbulb, Target } from "lucide-react";
+import { ArrowUpDown, Calculator, ChevronDown, ChevronRight, Lightbulb, Target } from "lucide-react";
+import AdCalculator from "./AdCalculator";
 import { trackingHubApi, type HubSinceStart, type HubSinceStartRow, type HubVerdict2 } from "../../lib/api";
 import { Card, LoadState, Modal, PlatformIcon, SearchBox, ago, longDay, naira, nf, outlineButton, primaryButton, rowCls, selectCls, smallButton, tableCls, useLoad, type Toast } from "./HubParts";
 
@@ -92,6 +93,7 @@ export default function SinceStartView({ platform, refreshKey, onToast }: { plat
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "verdict", dir: 1 });
   const [targetsOpen, setTargetsOpen] = useState(false);
+  const [calcOpen, setCalcOpen] = useState(false);
   if (!data) return <LoadState text="Judging every campaign since it started…" error={error} onRetry={reload} />;
 
   const bandTest = DAY_BANDS.find((row) => row.key === band)!.test;
@@ -136,7 +138,8 @@ export default function SinceStartView({ platform, refreshKey, onToast }: { plat
         <select value={band} onChange={(event) => setBand(event.target.value)} className={`${selectCls} w-[140px]`}>{DAY_BANDS.map((row) => <option key={row.key} value={row.key}>{row.key ? `Running ${row.label}` : "Any length"}</option>)}</select>
         <select value={status} title="Running now = at least one ad delivering right now, checked live with Meta" onChange={(event) => setStatus(event.target.value as typeof status)} className={`${selectCls} w-[150px]`}><option value="running">Running now</option><option value="off">Switched off</option><option value="">Running or off</option></select>
         <select value={productId} onChange={(event) => setProductId(event.target.value)} className={`${selectCls} w-[160px]`}><option value="">All Products</option>{productOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>
-        <button type="button" onClick={() => setTargetsOpen(true)} className={`${smallButton} ml-auto !h-10`}><Target className="h-4 w-4" /> Targets</button>
+        <button type="button" onClick={() => setCalcOpen(true)} className={`${smallButton} ml-auto !h-10`}><Calculator className="h-4 w-4" /> Break-even calculator</button>
+        <button type="button" onClick={() => setTargetsOpen(true)} className={`${smallButton} !h-10`}><Target className="h-4 w-4" /> Targets</button>
       </div>
 
       <p className="m-0 text-[12px] text-gray-500">
@@ -221,6 +224,7 @@ export default function SinceStartView({ platform, refreshKey, onToast }: { plat
         </table>
       </Card>
       <p className="m-0 px-1 text-[12.5px] text-gray-500">Showing {rows.length} of {base.length} campaign{base.length === 1 ? "" : "s"}.</p>
+      {calcOpen ? <AdCalculator data={data} onClose={() => setCalcOpen(false)} /> : null}
       {targetsOpen ? <TargetsModal data={data} onToast={onToast} onClose={() => setTargetsOpen(false)} onSaved={() => { setTargetsOpen(false); reload(); }} /> : null}
     </div>
   );

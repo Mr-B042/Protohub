@@ -28,13 +28,18 @@ const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T
  * Spend more than this per order and the product loses money on ads.
  * Uses orders old enough to have been delivered or not (placed 7-37 days ago).
  */
-export function breakEvenCpa(orders: SpendOrder[]): { cpa: number | null; deliveryRate: number | null; margin: number | null; orders: number } {
+/** Averages per delivered order, for the break-even calculator (null = no delivered order). */
+export type DeliveredAverages = { price: number; productCost: number; deliveryFee: number } | null;
+
+export function breakEvenCpa(orders: SpendOrder[]): { cpa: number | null; deliveryRate: number | null; margin: number | null; orders: number; averages: DeliveredAverages } {
   const closedOrders = orders.length;
   const delivered = orders.filter((order) => order.status === "Delivered");
-  if (closedOrders < RULES.breakEvenMinOrders || delivered.length === 0) return { cpa: null, deliveryRate: null, margin: null, orders: closedOrders };
+  const avg = (pick: (order: SpendOrder) => number) => delivered.reduce((sum, order) => sum + pick(order), 0) / delivered.length;
+  const averages: DeliveredAverages = delivered.length ? { price: avg((o) => o.amount), productCost: avg((o) => o.productCost), deliveryFee: avg((o) => o.deliveryFee) } : null;
+  if (closedOrders < RULES.breakEvenMinOrders || delivered.length === 0) return { cpa: null, deliveryRate: null, margin: null, orders: closedOrders, averages };
   const margin = delivered.reduce((sum, order) => sum + order.amount - order.productCost - order.deliveryFee, 0) / delivered.length;
   const deliveryRate = delivered.length / closedOrders;
-  return { cpa: margin > 0 ? margin * deliveryRate : null, deliveryRate, margin, orders: closedOrders };
+  return { cpa: margin > 0 ? margin * deliveryRate : null, deliveryRate, margin, orders: closedOrders, averages };
 }
 
 export type Judgement = { verdict: Verdict; reason: string; advice: string[] };

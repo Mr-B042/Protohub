@@ -4800,7 +4800,7 @@ export type CampaignMoneyAlert = {
 export type HubSinceStart = {
   rows: HubSinceStartRow[]; ordersFrom: string; linkedShare: number | null; lastLifetimeAt: string | null;
   rules: { minDays: number; minSpendTimesTarget: number; winningBelow: number; hookWeak: number; hookStrong: number; breakEvenMinOrders: number };
-  targets: Array<{ productId: string; name: string; breakEven: number | null; deliveryRate: number | null; margin: number | null; basedOn: number; own: number | null; ownBy: string | null }>;
+  targets: Array<{ productId: string; name: string; breakEven: number | null; deliveryRate: number | null; margin: number | null; basedOn: number; averages?: { price: number; productCost: number; deliveryFee: number } | null; deliveredRate?: number | null; own: number | null; ownBy: string | null }>;
 };
 export type HubTikTokConnection = {
   id: string; name: string; hasToken: boolean; lastCheckAt: string | null; lastCheckOk: boolean | null; lastCheckMessage: string | null;
