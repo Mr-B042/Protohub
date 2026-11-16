@@ -5,11 +5,15 @@ import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { checkStatusFor } from "../lib/expense-intel-rules.js";
 
 const router = Router();
 router.use(requireAuth);
 
-router.get("/", requireRole("Owner", "Admin"), async (req, res) => {
+// Expense & Cost Intelligence (16 Nov 2026): the list also opens for Manager
+// (approves), legacy Inventory Manager (keeps the list) and Accountant
+// (records). The Logistics role stays money-free (no list).
+router.get("/", requireRole("Owner", "Admin", "Manager", "Inventory Manager", "Accountant"), async (req, res) => {
   const { from, to } = req.query;
   // Rebuilt per page: a PostgREST query builder is single-use, so the paging
   // helper needs a fresh one for every .range() call.
@@ -82,7 +86,9 @@ const AdSpendBatchSchema = z.object({
   entries: z.array(AdSpendBatchEntrySchema).max(5000)
 });
 
-router.post("/", requireRole("Owner", "Admin", "Sales Rep"), async (req, res) => {
+// Owner/Admin/Manager record with no approval (Bright, 16 Nov 2026). An
+// Accountant sends a request instead (routes/expense-intel.ts).
+router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (req, res) => {
   const parsed = ExpenseSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: humanFieldErrors(parsed.error) });
@@ -101,10 +107,13 @@ router.post("/", requireRole("Owner", "Admin", "Sales Rep"), async (req, res) =>
 
   // Upsert by id so callers (e.g. order delivery-fee sync, waybill creation)
   // can call this repeatedly with the same id when state changes.
+  // Who recorded it and whether it counts as checked. A re-save (delivery-fee
+  // sync) keeps the first recorder and never un-checks a row.
+  const recorder = existing ? {} : { recorded_by: req.user!.id, recorded_by_name: req.user!.name ?? null, check_status: checkStatusFor(d.id, req.user!.role) };
   const { data, error } = await supabase
     .from("expenses")
     .upsert(
-      { id: d.id, org_id: req.user!.orgId, date: d.date, category: d.category, description: d.description, amount: d.amount, currency: d.currency, paid_by: d.paidBy, product_id: d.productId ?? null },
+      { id: d.id, org_id: req.user!.orgId, date: d.date, category: d.category, description: d.description, amount: d.amount, currency: d.currency, paid_by: d.paidBy, product_id: d.productId ?? null, ...recorder },
       { onConflict: "id" }
     )
     .select().single();

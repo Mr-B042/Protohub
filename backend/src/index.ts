@@ -111,6 +111,8 @@ import deliveredStockReconciliationRoutes from "./routes/delivered-stock-reconci
 import stateReplenishmentNoteRoutes from "./routes/state-replenishment-notes.js";
 import branchRoutes from "./routes/branches.js";
 import expenseRoutes  from "./routes/expenses.js";
+import expenseIntelRoutes from "./routes/expense-intel.js";
+import { runExpenseReportEmails } from "./lib/expense-report-email.js";
 import payrollRoutes  from "./routes/payroll.js";
 import customerRoutes from "./routes/customers.js";
 import notifRoutes         from "./routes/notifications.js";
@@ -435,6 +437,7 @@ app.use("/api/delivered-stock-reconciliation", deliveredStockReconciliationRoute
 app.use("/api/state-replenishment-notes", stateReplenishmentNoteRoutes);
 app.use("/api/branches", branchRoutes);
 app.use("/api/expenses",      expenseRoutes);
+app.use("/api/expense-intel", expenseIntelRoutes);
 app.use("/api/payroll",       payrollRoutes);
 app.use("/api/customers",     customerRoutes);
 app.use("/api/notifications",  notifRoutes);
@@ -912,6 +915,17 @@ cron.schedule("* * * * *", async () => {
 });
 
 // ── Campaigns with no order for 3 days (Bright, 5 Nov 2026) ──
+// Scheduled expense reports (Reports & Forecasts): Mondays for last week,
+// the 1st for last month, 7:30am Lagos (lib/expense-report-email.ts).
+cron.schedule("30 7 * * *", async () => {
+  try {
+    const { sent } = await runExpenseReportEmails();
+    if (sent) logger.info("cron: expense report emails", { sent });
+  } catch (e) {
+    logger.error("cron: expense report emails crashed", { error: (e as Error).message });
+  }
+}, { timezone: "Africa/Lagos" });
+
 // After the :13 ad spend sync, four times a day (Lagos): one alert per
 // campaign per dry spell (lib/campaign-drought-alerts.ts).
 cron.schedule("20 9,13,17,20 * * *", async () => {

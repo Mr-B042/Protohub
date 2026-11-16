@@ -6094,3 +6094,49 @@ export function writeActiveBranch(branchId: string) {
 }
 const TAB_BRANCH_KEY = "protohub.tabBranch";
 const LAST_BRANCH_KEY = "protohub.activeBranch";
+
+// Expense & Cost Intelligence (Bright, 16 Nov 2026): what the page saves.
+export type EiRequest = {
+  id: string; code: string; category: string; productId: string | null; amount: number; purpose: string; department: string; paymentSource: string;
+  expenseDate: string; hasReceipt: boolean; requestedBy: string; requestedByName: string; requestedByRole: string;
+  status: "pending" | "approved" | "rejected"; decidedByName: string | null; decidedAt: string | null; decisionNote: string | null; expenseId: string | null; createdAt: string;
+};
+export type EiApprovalRule = { upTo: number | null; role: "Owner" | "Admin" | "Manager" };
+export type EiPlan = {
+  id: string; title: string; target: string; expectedSavings: number; realizedSavings: number; ownerDepartment: string; ownerUser: string | null; ownerName: string | null;
+  dueDate: string | null; status: "not_started" | "pending" | "in_progress" | "approved" | "done"; sourceKey: string | null; createdByName: string; createdAt: string; updatedAt: string;
+};
+export type EiState = {
+  me: { id: string; role: string; full: boolean; approver: boolean };
+  settings: { approvalRules: EiApprovalRule[]; budgetAlertSteps: number[]; departments: Record<string, string> };
+  departmentsList: string[]; paymentSources: string[];
+  requests: EiRequest[];
+  budgets: Array<{ id: string; month: string; category: string; amount: number; recurring: boolean; updatedByName: string | null; updatedAt: string }>;
+  alertActions: Array<{ key: string; action: "resolved" | "dismissed" | "assigned"; assignedToName: string | null; note: string | null; byName: string; at: string }>;
+  plans: EiPlan[];
+  schedules: Array<{ id: string; report: string; frequency: "weekly" | "monthly"; emails: string[]; active: boolean; lastSentAt: string | null; createdByName: string }>;
+  people: Array<{ id: string; name: string; role: string }>;
+};
+export const expenseIntelApi = {
+  state: () => get<EiState>("/api/expense-intel/state"),
+  uploadReceipt: (dataUrl: string) => post<{ path: string }>("/api/expense-intel/receipts", { dataUrl }),
+  receiptLink: (path: string) => get<{ url: string }>(`/api/expense-intel/receipts/link?path=${encodeURIComponent(path)}`),
+  requestReceipt: (id: string) => get<{ url: string }>(`/api/expense-intel/requests/${id}/receipt`),
+  createRequest: (body: { category: string; productId?: string | null; amount: number; purpose: string; department: string; paymentSource: string; expenseDate: string; receiptPath?: string | null }) =>
+    post<EiRequest>("/api/expense-intel/requests", body),
+  decide: (id: string, decision: "approved" | "rejected", note?: string) => post<EiRequest>(`/api/expense-intel/requests/${id}/decide`, { decision, note }),
+  withdraw: (id: string) => del<{ ok: true }>(`/api/expense-intel/requests/${id}`),
+  saveSettings: (body: Partial<EiState["settings"]>) => put<EiState["settings"]>("/api/expense-intel/settings", body),
+  saveBudgets: (month: string, items: Array<{ category: string; amount: number; recurring: boolean }>, remove?: string[]) => put<{ ok: true }>("/api/expense-intel/budgets", { month, items, remove }),
+  alertAction: (key: string, action: "resolved" | "dismissed" | "assigned" | "reopen", assignedTo?: string, note?: string) => post<{ ok: true }>("/api/expense-intel/alerts/action", { key, action, assignedTo, note }),
+  createPlan: (body: Partial<EiPlan>) => post<{ id: string }>("/api/expense-intel/plans", body),
+  updatePlan: (id: string, body: Partial<EiPlan>) => patch<{ ok: true }>(`/api/expense-intel/plans/${id}`, body),
+  deletePlan: (id: string) => del<{ ok: true }>(`/api/expense-intel/plans/${id}`),
+  createSchedule: (body: { report: string; frequency: "weekly" | "monthly"; emails: string[] }) => post<{ ok: true }>("/api/expense-intel/schedules", body),
+  deleteSchedule: (id: string) => del<{ ok: true }>(`/api/expense-intel/schedules/${id}`),
+  checkExpenses: (ids: string[]) => post<{ checked: number }>("/api/expense-intel/expenses/check", { ids }),
+  attachReceipt: (id: string, path: string) => post<{ ok: true }>(`/api/expense-intel/expenses/${encodeURIComponent(id)}/receipt`, { path }),
+  importCsv: (csv: string) => post<{ imported: number; total: number }>("/api/expense-intel/expenses/import", { csv }),
+  saveExpense: (body: { id: string; date: string; category: string; description?: string; amount: number; currency?: string; paidBy?: string; productId?: string }) => post<unknown>("/api/expenses", body),
+  deleteExpense: (id: string) => del<unknown>(`/api/expenses/${encodeURIComponent(id)}`)
+};
