@@ -34,6 +34,7 @@
  */
 
 import { supabase } from "./supabase.js";
+import { userIdsInBranch } from "./branch-membership.js";
 import { logger } from "./logger.js";
 import { notifyCartAssignedToRep } from "./cart-notifications.js";
 import { isWorkingDay, lagosDateKey } from "./follow-up-kpi.js";
@@ -247,7 +248,10 @@ export async function eligibleReps(orgId: string, branchId?: string | null): Pro
     .order("round_robin_position", { ascending: true, nullsFirst: false })
     .order("name", { ascending: true });
   if (error) throw new Error(error.message);
-  const rows = reps ?? [];
+  // Only reps who work in the cart's branch - never a Nigeria rep for a Zambia
+  // cart (Bright, 17 Nov 2026). Nobody in the branch = the cart waits.
+  const members = branchId ? await userIdsInBranch(branchId) : null;
+  const rows = (reps ?? []).filter((rep: any) => !members || members.has(rep.id));
   if (rows.length === 0) return [];
 
   // Two things about each rep: how many open carts they are carrying (shown on

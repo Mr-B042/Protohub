@@ -1,4 +1,5 @@
 import { supabase } from "./supabase.js";
+import { userIdsInBranch } from "./branch-membership.js";
 
 export type OrderAssignment = {
   assignedRepId: string | null;
@@ -10,7 +11,7 @@ export type OrderAssignment = {
 // off users.round_robin_position (the Active Sequence tab). Unchanged
 // semantics from before weighted dedicated handlers existed: used whenever a
 // product has no dedicated handler set, or its set has nobody eligible.
-async function pickAndAdvance(orgId: string): Promise<string | null> {
+async function pickAndAdvance(orgId: string, branchId: string | null): Promise<string | null> {
   const { data: reps } = await supabase
     .from("users")
     .select("id, round_robin_position, name")
@@ -28,7 +29,11 @@ async function pickAndAdvance(orgId: string): Promise<string | null> {
     // with which rep this actually picks.
     .order("name", { ascending: true });
 
-  const rep = (reps ?? [])[0] ?? null;
+  // Only reps who work in the order's branch. ⚠️ No fallback to the whole
+  // company: a Zambia order went to a Nigeria rep, who was then fined for it.
+  const members = branchId ? await userIdsInBranch(branchId) : null;
+  const inBranch = (reps ?? []).filter((r) => !members || members.has(r.id));
+  const rep = inBranch[0] ?? null;
   if (!rep) return null;
 
   const maxPos = (reps ?? []).reduce((m, r) => Math.max(m, r.round_robin_position ?? 0), 0);
@@ -61,9 +66,16 @@ async function pickWeightedDedicatedHandler(orgId: string, productId: string): P
 // has none, or its set has nobody eligible right now, so an order is never
 // dropped.
 export async function assignOrderRep(orgId: string, productId: string): Promise<OrderAssignment> {
-  const pick = await pickWeightedDedicatedHandler(orgId, productId);
-  if (pick) return { assignedRepId: pick, assignedByLabel: "Dedicated handler" };
+  // The order lands in its product's branch, so that is the branch whose reps may take it.
+  const { data: product } = await supabase.from("products").select("branch_id").eq("id", productId).maybeSingle();
+  const branchId = ((product as any)?.branch_id as string | null) ?? null;
+  const members = branchId ? await userIdsInBranch(branchId) : null;
 
-  const fallback = await pickAndAdvance(orgId);
+  const pick = await pickWeightedDedicatedHandler(orgId, productId);
+  // A dedicated handler from another branch is skipped. (Fine to advance their
+  // turn: they cannot take this product's orders anyway.)
+  if (pick && (!members || members.has(pick))) return { assignedRepId: pick, assignedByLabel: "Dedicated handler" };
+
+  const fallback = await pickAndAdvance(orgId, branchId);
   return fallback ? { assignedRepId: fallback, assignedByLabel: "Round-robin" } : { assignedRepId: null, assignedByLabel: null };
 }

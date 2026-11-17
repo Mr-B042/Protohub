@@ -15,6 +15,18 @@ import { supabase } from "./supabase.js";
  * two accounts and two passwords.
  */
 
+/**
+ * Who works in a branch (Bright, 17 Nov 2026: Zambia orders and carts were
+ * handed to Nigeria reps, and one was fined for a Zambia order). The automatic
+ * hand-out may only pick a rep from this list. An empty list means nobody yet:
+ * the order or cart waits unassigned until the branch has its own reps.
+ */
+export async function userIdsInBranch(branchId: string): Promise<Set<string>> {
+  const { data, error } = await supabase.from("branch_memberships").select("user_id").eq("branch_id", branchId);
+  if (error) throw new Error(error.message);
+  return new Set((data ?? []).map((row: any) => row.user_id as string));
+}
+
 export type BranchMembershipRow = {
   branchId: string;
   name: string;
