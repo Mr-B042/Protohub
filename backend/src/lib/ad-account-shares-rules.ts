@@ -28,3 +28,15 @@ export function decideClaims(campaigns: Array<{ campaignId: string; homeBranchId
   return out;
 }
 
+
+/**
+ * A branch whose only ad accounts are shared into it (Zambia, 18 Nov 2026)
+ * reads nothing from Meta itself - the home branch does - but still books its
+ * claimed campaigns' spend as its own expenses. The first time, it books back
+ * to the day the share began (spend before the fix was booked nowhere);
+ * after that, only the days asked for.
+ */
+export function sharedOnlyFrom(from: string, lastSyncAt: string | null | undefined, sharedSinceDay: string | null): string {
+  if (lastSyncAt || !sharedSinceDay) return from;
+  return sharedSinceDay < from ? sharedSinceDay : from;
+}
