@@ -7,7 +7,7 @@ import {
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { productMediaApi, type ProductMedia } from "../lib/api";
 import { PRESET_LABEL, presetRange, shiftDay, shiftWindow, weekStart, windowSize, type DateWindow, type PresetKey } from "../lib/date-window";
-import { money } from "../lib/money-privacy";
+import { money, payMoney } from "../lib/money-privacy";
 import { Avatar, ProductThumb, SidePanel, downloadCsv, useClickAway } from "./product-trend/parts";
 import RepProductOverview, { type OverviewBucket, type OverviewProduct, type OverviewRep } from "./RepProductOverview";
 import { Card, KpiCard, RankBadge, type AddOnMoney, type FunnelFigures, type RppCtx } from "./rpp-ui";
@@ -401,7 +401,7 @@ export default function RepProductPerformancePage({ orders, reps, todayKey, targ
           <KpiCard icon={<Percent className="h-5 w-5" />} tone="bg-rose-100 text-rose-600" value={rate === null ? "—" : `${Math.round(rate)}%`} label="Delivery Rate" compare={compareLabel(preset)} delta={rate === null || priorRate === null ? null : rate - priorRate} points />
           <KpiCard icon={<CirclePercent className="h-5 w-5" />} tone="bg-emerald-100 text-emerald-600" value={aov === null ? "—" : money(aov)} label="Delivered AOV" compare={compareLabel(preset)} delta={aov === null || priorAov === null ? null : change(aov, priorAov)} />
           <KpiCard icon={<BarChart3 className="h-5 w-5" />} tone="bg-blue-100 text-blue-600" value={money(total.revenue)} label="Revenue (Delivered)" compare={compareLabel(preset)} delta={change(total.revenue, prior.revenue)} />
-          <KpiCard icon={<Trophy className="h-5 w-5" />} tone="bg-amber-100 text-amber-600" value={money(bonus)} label="Total Rep Bonus" />
+          <KpiCard icon={<Trophy className="h-5 w-5" />} tone="bg-amber-100 text-amber-600" value={payMoney(bonus)} label="Total Rep Bonus" />
         </div>}
 
         {total.placed === 0 ? (

@@ -1,7 +1,7 @@
 import { History, ScrollText } from "lucide-react";
 import { AuditTable, CompanyStatusPill, Panel, RepStatusPill, WeekPicker, longDate, nf, pctText, shortDateTime } from "../components/WeeklyReportParts";
 import type { WeeklyCompanyReport, WeeklyRepReport, WeeklyReportAuditEntry } from "../lib/api";
-import { currencySymbol } from "../lib/money-privacy";
+import { currencySymbol, paySymbol } from "../lib/money-privacy";
 
 /**
  * The history views under Weekly Reports: a rep's own past weeks, the company
@@ -43,7 +43,7 @@ export function MyReportsHistoryPage({ rows, loading, error, onOpenWeek }: {
           <table className="w-full !min-w-[820px] text-left text-[12px]">
             <thead className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-slate-400 [&_th]:[color:inherit]">
               <tr className="bg-gray-50 dark:bg-slate-800/60 [&>th]:bg-transparent [&>th]:[color:inherit]">
-                {["Week", "Orders", "Delivered", "Delivery Rate", `Final Bonus (${sym})`, "Status", "Submitted", ""].map((h) => <th key={h} className="px-3 py-2.5 font-bold">{h}</th>)}
+                {["Week", "Orders", "Delivered", "Delivery Rate", `Final Bonus (${paySymbol()})`, "Status", "Submitted", ""].map((h) => <th key={h} className="px-3 py-2.5 font-bold">{h}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -106,7 +106,7 @@ export function CompanyReportHistoryPage({ rows, loading, error, onOpenWeek, onB
           <table className="w-full !min-w-[900px] text-left text-[12px]">
             <thead className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-slate-400 [&_th]:[color:inherit]">
               <tr className="bg-gray-50 dark:bg-slate-800/60 [&>th]:bg-transparent [&>th]:[color:inherit]">
-                {["Week", "Rep reports", "Orders", "Delivered", `Total Bonus (${sym})`, "Status", "Submitted to owner", "Locked", ""].map((h) => <th key={h} className="px-3 py-2.5 font-bold">{h}</th>)}
+                {["Week", "Rep reports", "Orders", "Delivered", `Total Bonus (${paySymbol()})`, "Status", "Submitted to owner", "Locked", ""].map((h) => <th key={h} className="px-3 py-2.5 font-bold">{h}</th>)}
               </tr>
             </thead>
             <tbody>

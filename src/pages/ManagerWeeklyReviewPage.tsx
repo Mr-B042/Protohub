@@ -23,7 +23,7 @@ import {
 import type {
   LogMissDispute, FineAppeal, ManagerFundTotals, WeeklyBonusQuery, WeeklyPayoutChange, WeeklyCompanyReport, WeeklyRepReport, WeeklyReportAuditEntry, WeeklyReportCorrection, WeeklyReportResponseInput, WeeklyReportQuestion
 } from "../lib/api";
-import { currencySymbol } from "../lib/money-privacy";
+import { currencySymbol, paySymbol } from "../lib/money-privacy";
 
 type RepFilter = "all" | "pending" | "sent" | "awaiting" | "approved" | "returned";
 
@@ -151,6 +151,7 @@ export default function ManagerWeeklyReviewPage({
   onEditManagerBonus?: () => void;
 }) {
   const sym = currencySymbol();
+  const paySym = paySymbol();
   const [topTab, setTopTab] = useState<TopTab>(initialTab ?? "overview");
   const [answering, setAnswering] = useState<WeeklyBonusQuery | null>(null);
   const openQueries = bonusQueries.filter((query) => query.status === "open").length;
@@ -403,10 +404,10 @@ export default function ManagerWeeklyReviewPage({
         {managerBonus ? (
           <table className="!min-w-0 w-full text-[12px]">
             <tbody className="text-gray-800 dark:text-slate-200 [&_td]:[color:inherit]">
-              <tr className="border-b border-gray-100 dark:border-slate-800"><td className="whitespace-nowrap py-2.5 pr-2">Performance Bonus</td><td className="whitespace-nowrap py-2.5 pr-3 font-bold">{sym}{nf(managerBonus.performanceBonus)}</td><td className="py-2.5 min-w-[100px] text-[11px] text-gray-500 dark:text-slate-400">{managerBonus.performanceNote}</td></tr>
-              <tr className="border-b border-gray-100 dark:border-slate-800"><td className="whitespace-nowrap py-2.5 pr-2">Weekly Support Bonus</td><td className="whitespace-nowrap py-2.5 pr-3 font-bold">{sym}{nf(managerBonus.supportBonus)}</td><td className="py-2.5 min-w-[100px] text-[11px] text-gray-500 dark:text-slate-400">{managerBonus.supportNote}</td></tr>
-              {managerBonus.upsellBonus !== undefined || managerBonus.upsellNote ? <tr className="border-b border-gray-100 dark:border-slate-800"><td className="whitespace-nowrap py-2.5 pr-2">Manager Upsell Bonus</td><td className="whitespace-nowrap py-2.5 pr-3 font-bold">{sym}{nf(managerBonus.upsellBonus ?? 0)}</td><td className="py-2.5 min-w-[100px] text-[11px] text-gray-500 dark:text-slate-400">{managerBonus.upsellNote}</td></tr> : null}
-              <tr className="bg-violet-50 font-bold text-violet-900 dark:bg-violet-500/10 dark:text-violet-100 [&>td]:[color:inherit]"><td className="whitespace-nowrap px-2 py-3 text-[13px]">Total Manager Bonus</td><td className="py-3 text-[17px]" colSpan={2}>{sym}{nf(managerBonus.total)}</td></tr>
+              <tr className="border-b border-gray-100 dark:border-slate-800"><td className="whitespace-nowrap py-2.5 pr-2">Performance Bonus</td><td className="whitespace-nowrap py-2.5 pr-3 font-bold">{paySym}{nf(managerBonus.performanceBonus)}</td><td className="py-2.5 min-w-[100px] text-[11px] text-gray-500 dark:text-slate-400">{managerBonus.performanceNote}</td></tr>
+              <tr className="border-b border-gray-100 dark:border-slate-800"><td className="whitespace-nowrap py-2.5 pr-2">Weekly Support Bonus</td><td className="whitespace-nowrap py-2.5 pr-3 font-bold">{paySym}{nf(managerBonus.supportBonus)}</td><td className="py-2.5 min-w-[100px] text-[11px] text-gray-500 dark:text-slate-400">{managerBonus.supportNote}</td></tr>
+              {managerBonus.upsellBonus !== undefined || managerBonus.upsellNote ? <tr className="border-b border-gray-100 dark:border-slate-800"><td className="whitespace-nowrap py-2.5 pr-2">Manager Upsell Bonus</td><td className="whitespace-nowrap py-2.5 pr-3 font-bold">{paySym}{nf(managerBonus.upsellBonus ?? 0)}</td><td className="py-2.5 min-w-[100px] text-[11px] text-gray-500 dark:text-slate-400">{managerBonus.upsellNote}</td></tr> : null}
+              <tr className="bg-violet-50 font-bold text-violet-900 dark:bg-violet-500/10 dark:text-violet-100 [&>td]:[color:inherit]"><td className="whitespace-nowrap px-2 py-3 text-[13px]">Total Manager Bonus</td><td className="py-3 text-[17px]" colSpan={2}>{paySym}{nf(managerBonus.total)}</td></tr>
             </tbody>
           </table>
         ) : (
@@ -414,7 +415,7 @@ export default function ManagerWeeklyReviewPage({
         )}
       </div>
     </Panel>
-    {shownIncentive ? <MonthlyIncentiveSection report={shownIncentive} sym={sym} /> : null}
+    {shownIncentive ? <MonthlyIncentiveSection report={shownIncentive} sym={paySym} /> : null}
     </>
   );
 
@@ -558,7 +559,7 @@ export default function ManagerWeeklyReviewPage({
             <KpiCard tone="blue" icon={ShoppingCart} label="Company Total Orders" value={nf(totals.orders)} delta={deltaPct(totals.orders, prev?.orders)} sub={`vs previous week (${nf(prev?.orders ?? 0)})`} />
             <KpiCard tone="green" icon={Box} label="Delivered Orders" value={nf(totals.delivered)} delta={deltaPct(totals.delivered, prev?.delivered)} sub={`vs previous week (${nf(prev?.delivered ?? 0)})`} />
             <KpiCard tone="orange" icon={Target} label="Delivery Rate" value={pctText(totals.deliveryRate)} delta={prev ? Math.round(totals.deliveryRate - prev.deliveryRate) : null} sub={`vs previous week (${pctText(prev?.deliveryRate ?? 0)})`} />
-            <KpiCard tone="purple" icon={Wallet} label="Total Bonus Payable" labelTone="text-violet-700 dark:text-violet-300" value={`${sym}${nf(totals.totalBonus)}`} delta={deltaPct(totals.totalBonus, prev?.totalBonus)} sub={`vs previous week (${sym}${nf(prev?.totalBonus ?? 0)})`} />
+            <KpiCard tone="purple" icon={Wallet} label="Total Bonus Payable" labelTone="text-violet-700 dark:text-violet-300" value={`${paySym}${nf(totals.totalBonus)}`} delta={deltaPct(totals.totalBonus, prev?.totalBonus)} sub={`vs previous week (${paySym}${nf(prev?.totalBonus ?? 0)})`} />
           </div>
           )}
 
@@ -645,7 +646,7 @@ export default function ManagerWeeklyReviewPage({
                     <table className="w-full !min-w-[820px] text-left text-[12px]">
                       <thead className="text-[11px] text-gray-600 dark:text-slate-400 [&_th]:[color:inherit]">
                         <tr className="bg-gray-50 dark:bg-slate-800/60 [&>th]:bg-transparent [&>th]:[color:inherit]">
-                          {["#", "Sales Rep", "Report Status", "Orders", "Delivered", "Delivery Rate", `Cross-Sell (${sym})`, `Upsell (${sym})`, `Base (${sym})`, `Initial (${sym})`, `Taken off (${sym})`, `Final (${sym})`, "Actions"].map((h) => (
+                          {["#", "Sales Rep", "Report Status", "Orders", "Delivered", "Delivery Rate", `Cross-Sell (${paySym})`, `Upsell (${paySym})`, `Base (${paySym})`, `Initial (${paySym})`, `Taken off (${paySym})`, `Final (${paySym})`, "Actions"].map((h) => (
                             // ⚠️ Actions stays pinned to the right edge (12 Oct 2026). On a
                             // laptop the table is wider than its box, and Review / Approve
                             // sat past the edge where nobody scrolled to.
@@ -695,7 +696,7 @@ export default function ManagerWeeklyReviewPage({
                                 {snap && (snap.totals.carryOverOrders ?? 0) > 0 && (
                                   <button type="button" onClick={() => setBreakdownFor(row.repId)}
                                     className="!min-h-0 mt-0.5 block whitespace-nowrap text-left text-[10.5px] font-semibold text-blue-700 underline decoration-dotted underline-offset-2 hover:text-blue-900 dark:text-blue-300">
-                                    incl. {nf(snap.totals.carryOverOrders ?? 0)} from earlier weeks · {sym}{nf(snap.totals.carryOverBonus ?? 0)}
+                                    incl. {nf(snap.totals.carryOverOrders ?? 0)} from earlier weeks · {paySym}{nf(snap.totals.carryOverBonus ?? 0)}
                                     <span className="block font-bold no-underline">How it adds up →</span>
                                   </button>
                                 )}
@@ -707,7 +708,7 @@ export default function ManagerWeeklyReviewPage({
                               <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap ? bonusComponentsFull(snap).crossSell : 0)}</td>
                               <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap ? bonusComponentsFull(snap).upsell : 0)}</td>
                               <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap ? bonusComponentsFull(snap).base : 0)}</td>
-                              {snap ? <BonusInitialCells info={bonusInitialFinal(snap)} sym={sym} /> : <><td className="px-2 py-3">-</td><td className="px-2 py-3">-</td></>}
+                              {snap ? <BonusInitialCells info={bonusInitialFinal(snap)} sym={paySym} /> : <><td className="px-2 py-3">-</td><td className="px-2 py-3">-</td></>}
                               <td className="px-2 py-3 font-bold text-gray-900 dark:text-slate-100">
                                 <span className="flex items-center gap-1">
                                   {nf(snap ? bonusInitialFinal(snap).final : 0)}
@@ -720,11 +721,11 @@ export default function ManagerWeeklyReviewPage({
                                 {snap && (snap.totals.carryOverBonus ?? 0) > 0 && (() => {
                                   const earned = Math.round(snap.totals.baseBonus + snap.totals.upsellBonus + snap.totals.crossSellBonus);
                                   const carry = Math.round(snap.totals.carryOverBonus ?? 0);
-                                  return <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-gray-500"><span className="text-emerald-700">{sym}{nf(earned - carry)} this week</span> + <span className="text-blue-700">{sym}{nf(carry)} carry-over</span></span>;
+                                  return <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-gray-500"><span className="text-emerald-700">{paySym}{nf(earned - carry)} this week</span> + <span className="text-blue-700">{paySym}{nf(carry)} carry-over</span></span>;
                                 })()}
-                                {row.payoutChange && <PayoutChangeNote change={row.payoutChange} sym={sym} />}
-                                {snap?.missingFeeDetail && <MissingFeeNote detail={snap.missingFeeDetail} sym={sym} onOpen={() => setDecisionsFor({ repId: row.repId, kind: "missing_fee" })} />}
-                                <LateSendNote detail={row.lateSend} sym={sym} onOpen={() => setDecisionsFor({ repId: row.repId, kind: "late_send" })} />
+                                {row.payoutChange && <PayoutChangeNote change={row.payoutChange} sym={paySym} />}
+                                {snap?.missingFeeDetail && <MissingFeeNote detail={snap.missingFeeDetail} sym={paySym} onOpen={() => setDecisionsFor({ repId: row.repId, kind: "missing_fee" })} />}
+                                <LateSendNote detail={row.lateSend} sym={paySym} onOpen={() => setDecisionsFor({ repId: row.repId, kind: "late_send" })} />
                               </td>
                               <td className={`px-2 py-3 ${pinnedCell}`}>
                                 <span className="flex items-center gap-1">
@@ -757,7 +758,7 @@ export default function ManagerWeeklyReviewPage({
                           <td className="px-2 py-3">{nf(totals.orders)}</td>
                           <td className="px-2 py-3">
                             {nf(totals.delivered)}
-                            {carryOver.orders > 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-blue-700 dark:text-blue-300">incl. {nf(carryOver.orders)} from earlier weeks · {sym}{nf(carryOver.bonus)}<span className="block text-gray-500">already in the bonus</span></span>}
+                            {carryOver.orders > 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-blue-700 dark:text-blue-300">incl. {nf(carryOver.orders)} from earlier weeks · {paySym}{nf(carryOver.bonus)}<span className="block text-gray-500">already in the bonus</span></span>}
                           </td>
                           <td className="px-2 py-3">{pctText(totals.deliveryRate)}</td>
                           <td className="px-2 py-3">{nf(splitTotals.crossSell)}</td>
@@ -767,7 +768,7 @@ export default function ManagerWeeklyReviewPage({
                           <td className="px-2 py-3 text-rose-600">{splitTotals.takenOff > 0 ? `-${nf(splitTotals.takenOff)}` : "0"}</td>
                           <td className="px-2 py-3">
                             {nf(splitTotals.final)}
-                            {(totals.payoutChanges ?? 0) !== 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-amber-700 dark:text-amber-300">incl. {(totals.payoutChanges ?? 0) < 0 ? "-" : "+"}{sym}{nf(Math.abs(totals.payoutChanges ?? 0))} payout changes</span>}
+                            {(totals.payoutChanges ?? 0) !== 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-amber-700 dark:text-amber-300">incl. {(totals.payoutChanges ?? 0) < 0 ? "-" : "+"}{paySym}{nf(Math.abs(totals.payoutChanges ?? 0))} payout changes</span>}
                           </td>
                           <td />
                         </tr>
@@ -796,7 +797,7 @@ export default function ManagerWeeklyReviewPage({
                           <span className="flex items-center gap-2 font-semibold text-gray-900 dark:text-slate-100"><Avatar name={repNameById(query.repId)} size={28} />{repNameById(query.repId)} <span className="text-[12px] font-normal text-gray-500">· week of {longDate(query.weekStart)} · {shortDateTime(query.createdAt)}</span></span>
                           <span className="flex items-center gap-2">
                             <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${query.sentDespiteAccurate ? "bg-blue-50 text-blue-700" : "bg-amber-50 text-amber-700"}`}>{query.sentDespiteAccurate ? "System says accurate · rep disagrees" : `System found ${issues.length} problem${issues.length === 1 ? "" : "s"}`}</span>
-                            <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${query.status === "open" ? "bg-rose-50 text-rose-700" : query.status === "corrected" ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-600"}`}>{query.status === "open" ? "Open" : query.status === "corrected" ? `Corrected +${sym}${nf(query.correctionAmount)}` : "No change"}</span>
+                            <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${query.status === "open" ? "bg-rose-50 text-rose-700" : query.status === "corrected" ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-600"}`}>{query.status === "open" ? "Open" : query.status === "corrected" ? `Corrected +${paySym}${nf(query.correctionAmount)}` : "No change"}</span>
                           </span>
                         </div>
                         {query.orderRefs.length > 0 && <p className="m-0 mt-2 text-[12px] text-gray-600 dark:text-slate-300">Orders named: {query.orderRefs.map((ref) => `#${ref}`).join(", ")}</p>}
@@ -833,7 +834,7 @@ export default function ManagerWeeklyReviewPage({
               </div>
               <Panel>
                 <NumberedHeader title="Sales Rep Bonus Breakdown" subtitle="Every rep's bonus for the week." />
-                <RepBonusTable snaps={shown} sym={sym} />
+                <RepBonusTable snaps={shown} sym={paySym} />
               </Panel>
             </>
           )}
@@ -920,7 +921,7 @@ export default function ManagerWeeklyReviewPage({
         const breakdownRow = breakdownFor ? rows.find((row) => row.repId === breakdownFor) ?? null : null;
         const breakdownSnap = breakdownRow ? shownSnapshot(breakdownRow) : null;
         if (!breakdownRow || !breakdownSnap) return null;
-        return <BonusBreakdownModal snap={breakdownSnap} repName={breakdownRow.repName} sym={sym} onClose={() => setBreakdownFor(null)} lookupOrder={lookupOrder} detailSource={breakdownRow.live} />;
+        return <BonusBreakdownModal snap={breakdownSnap} repName={breakdownRow.repName} sym={paySym} onClose={() => setBreakdownFor(null)} lookupOrder={lookupOrder} detailSource={breakdownRow.live} />;
       })()}
       {(() => {
         const decisionRow = decisionsFor ? rows.find((row) => row.repId === decisionsFor.repId) ?? null : null;
@@ -929,7 +930,7 @@ export default function ManagerWeeklyReviewPage({
           <OrderDecisionsModal
             repName={decisionRow.repName}
             weekLabel={`${longDate(weekStart)} to ${longDate(weekEnd)}`}
-            sym={sym}
+            sym={paySym}
             lateSend={decisionRow.lateSend}
             missingFee={shownSnapshot(decisionRow)?.missingFeeDetail}
             startOn={decisionsFor?.kind}
@@ -945,7 +946,7 @@ export default function ManagerWeeklyReviewPage({
       {payoutRow && onSavePayoutChange && (
         <PayoutChangeForm
           repName={payoutRow.repName}
-          sym={sym}
+          sym={paySym}
           systemAmount={payoutRow.frozen?.totals.systemFinalBonus ?? payoutRow.frozen?.totals.finalBonus ?? 0}
           existing={payoutRow.payoutChange ? { amount: payoutRow.payoutChange.amount, reason: payoutRow.payoutChange.reason } : null}
           onCancel={closePayoutChange}
@@ -982,7 +983,7 @@ export default function ManagerWeeklyReviewPage({
                   <span className="text-[13px] font-bold text-gray-800 dark:text-slate-100">{approveRow.repName}</span>
                 </div>
                 <p className="m-0 text-[11px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">Bonus to be paid</p>
-                <p className="m-0 mt-1 text-[34px] font-extrabold leading-none text-gray-900 dark:text-slate-50">{sym}{nf(finalBonus)}</p>
+                <p className="m-0 mt-1 text-[34px] font-extrabold leading-none text-gray-900 dark:text-slate-50">{paySym}{nf(finalBonus)}</p>
                 <p className="m-0 mt-2 text-[12px] text-gray-600 dark:text-slate-300">{nf(t?.delivered ?? 0)} delivered of {nf(t?.orders ?? 0)} orders · {pctText(t?.deliveryRate ?? 0)} delivery rate</p>
               </div>
 
@@ -990,16 +991,16 @@ export default function ManagerWeeklyReviewPage({
                 {lines.map((line) => (
                   <div key={line.label} className="flex items-center justify-between px-4 py-2.5 text-[13px]">
                     <span className="text-gray-600 dark:text-slate-300">{line.label}</span>
-                    <span className={`font-bold ${line.minus ? "text-rose-600" : "text-gray-900 dark:text-slate-100"}`}>{line.minus ? "-" : ""}{sym}{nf(line.value)}</span>
+                    <span className={`font-bold ${line.minus ? "text-rose-600" : "text-gray-900 dark:text-slate-100"}`}>{line.minus ? "-" : ""}{paySym}{nf(line.value)}</span>
                   </div>
                 ))}
                 <div className="flex items-center justify-between bg-gray-50 px-4 py-2.5 text-[13px] dark:bg-slate-800/60">
                   <span className="font-bold text-gray-800 dark:text-slate-100">Bonus to be paid</span>
-                  <span className="font-extrabold text-emerald-700 dark:text-emerald-300">{sym}{nf(finalBonus)}</span>
+                  <span className="font-extrabold text-emerald-700 dark:text-emerald-300">{paySym}{nf(finalBonus)}</span>
                 </div>
               </div>
 
-              {approveRow.payoutChange && <PayoutChangeNote change={approveRow.payoutChange} sym={sym} />}
+              {approveRow.payoutChange && <PayoutChangeNote change={approveRow.payoutChange} sym={paySym} />}
 
               {approveRow.differences.length > 0 && (
                 <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-4 py-3 text-[12px] text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
@@ -1049,7 +1050,7 @@ export default function ManagerWeeklyReviewPage({
           row={reviewRow}
           weekStart={weekStart}
           weekEnd={weekEnd}
-          sym={sym}
+          sym={paySym}
           canAct={canAct && !frozenWeek}
           canFlag={canAct && companyStatus !== "locked"}
           corrections={corrections.filter((row) => reviewRow.report && row.repReportId === reviewRow.report.id)}
@@ -1067,7 +1068,7 @@ export default function ManagerWeeklyReviewPage({
       )}
 
       {answering && onResolveBonusQuery && (
-        <ResolveQueryModal query={answering} repName={repNameById(answering.repId)} sym={sym}
+        <ResolveQueryModal query={answering} repName={repNameById(answering.repId)} sym={paySym}
           onCancel={() => setAnswering(null)}
           onSubmit={async (body) => { await onResolveBonusQuery(answering.id, body); setAnswering(null); }} />
       )}
@@ -1205,7 +1206,7 @@ export function OrdersTable({ rows, sym }: { rows: Array<WeeklyReportSnapshot["o
       <table className="w-full !min-w-[960px] text-left text-[12px]">
         <thead className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-slate-400 [&_th]:[color:inherit]">
           <tr className="bg-gray-50 dark:bg-slate-800/60 [&>th]:bg-transparent [&>th]:[color:inherit]">
-            {["#", "Order ID", "Rep", "Date", "Customer", "Product", "Type", `Amount (${sym})`, "Status", `Bonus (${sym})`].map((h) => <th key={h} className="px-3 py-2.5 font-bold">{h}</th>)}
+            {["#", "Order ID", "Rep", "Date", "Customer", "Product", "Type", `Amount (${sym})`, "Status", `Bonus (${paySymbol()})`].map((h) => <th key={h} className="px-3 py-2.5 font-bold">{h}</th>)}
           </tr>
         </thead>
         <tbody>
