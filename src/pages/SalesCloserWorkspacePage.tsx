@@ -35,7 +35,7 @@ import {
 } from "lucide-react";
 // ⚠️ NOT A PRIVATE ₦ FORMATTER. A local one ignores both the branch's currency
 // and the hide-money toggle - it is how this page printed naira against cedi.
-import { money } from "../lib/money-privacy";
+import { money, payMoney } from "../lib/money-privacy";
 
 export type SalesCloserSection =
   | "overview"
@@ -1275,7 +1275,7 @@ function MyBonusesSection({
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <p className="text-xs font-bold uppercase tracking-wide text-gray-400">Total Earned (This Month)</p>
-          <p className="mt-2 text-xl font-black text-emerald-700">{money(data.summary.totalEarnedThisMonth)}</p>
+          <p className="mt-2 text-xl font-black text-emerald-700">{payMoney(data.summary.totalEarnedThisMonth)}</p>
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <p className="text-xs font-bold uppercase tracking-wide text-gray-400">Total Potential</p>
@@ -1283,11 +1283,11 @@ function MyBonusesSection({
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <p className="text-xs font-bold uppercase tracking-wide text-gray-400">Bonus Paid</p>
-          <p className="mt-2 text-xl font-black text-gray-950">{money(data.summary.bonusPaid)}</p>
+          <p className="mt-2 text-xl font-black text-gray-950">{payMoney(data.summary.bonusPaid)}</p>
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <p className="text-xs font-bold uppercase tracking-wide text-gray-400">Payout Pending</p>
-          <p className="mt-2 text-xl font-black text-amber-600">{money(data.summary.payoutPending)}</p>
+          <p className="mt-2 text-xl font-black text-amber-600">{payMoney(data.summary.payoutPending)}</p>
         </div>
       </div>
 

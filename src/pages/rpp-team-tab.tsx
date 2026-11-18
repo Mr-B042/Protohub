@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { MoreVertical } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, LabelList, Legend, Tooltip, XAxis, YAxis } from "recharts";
-import { money, shortMoney } from "../lib/money-privacy";
+import { money, payMoney, shortMoney } from "../lib/money-privacy";
 import { Avatar, useClickAway } from "./product-trend/parts";
 import { rateTone } from "./RepProductPerformancePage";
 import { ChartCard, LowerToolbar, RankBadge, SERIES, WaitingForDesign, nf, share, type RppCtx } from "./rpp-ui";
@@ -137,7 +137,7 @@ function SummaryTable({ rows, team, ctx }: { rows: RepRow[]; team: RepRow; ctx: 
         <td className={`${td} whitespace-nowrap ${b}`}>{row.delivered > 0 ? money(row.revenue / row.delivered) : "-"}</td>
         <td className={`${td} whitespace-nowrap ${b}`}>{money(row.revenue)}</td>
         <td className={`px-1.5 py-2.5 text-center text-[12px] font-bold whitespace-nowrap ${ctx.canSeeProfit ? (row.net < 0 ? "text-rose-600" : "text-emerald-600") : "text-gray-400"}`}>{ctx.canSeeProfit ? (row.net < 0 ? `-${money(-row.net)}` : money(row.net)) : "—"}</td>
-        <td className={`${td} whitespace-nowrap font-semibold`}>{money(row.bonus)}</td>
+        <td className={`${td} whitespace-nowrap font-semibold`}>{payMoney(row.bonus)}</td>
         <td className={`${td} ${b}`}>{row.upsells}</td>
         <td className={`${td} ${b}`}>{row.crossSells}</td>
         <td className={`${td} font-bold`}>{row.upsells + row.crossSells}</td>

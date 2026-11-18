@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { ClipboardList, Lightbulb, Target } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, LabelList, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { money, shortMoney } from "../lib/money-privacy";
+import { money, shortMoney, payMoney } from "../lib/money-privacy";
 import { Avatar, ProductThumb } from "./product-trend/parts";
 import { rateTone } from "./RepProductPerformancePage";
 
@@ -183,7 +183,7 @@ export default function RepProductOverview({ title, compare, buckets, products, 
                   <td className={`${td} whitespace-nowrap`}>{rep.delivered > 0 ? money(rep.revenue / rep.delivered) : "-"}</td>
                   <td className={`${td} whitespace-nowrap`}>{money(rep.revenue)}</td>
                   {profitCell(rep.net)}
-                  <td className={`${td} whitespace-nowrap font-semibold`}>{money(rep.bonus)}</td>
+                  <td className={`${td} whitespace-nowrap font-semibold`}>{payMoney(rep.bonus)}</td>
                 </tr>
               ))}
               <tr className="border-t-2 border-gray-200 dark:border-slate-700">
@@ -195,7 +195,7 @@ export default function RepProductOverview({ title, compare, buckets, products, 
                 <td className={`${td} whitespace-nowrap font-bold`}>{total.delivered > 0 ? money(total.revenue / total.delivered) : "-"}</td>
                 <td className={`${td} whitespace-nowrap font-bold`}>{money(total.revenue)}</td>
                 {profitCell(total.net)}
-                <td className={`${td} whitespace-nowrap font-bold`}>{money(total.bonus)}</td>
+                <td className={`${td} whitespace-nowrap font-bold`}>{payMoney(total.bonus)}</td>
               </tr>
             </tbody>
           </table>

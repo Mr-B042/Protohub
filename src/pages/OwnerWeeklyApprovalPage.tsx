@@ -16,7 +16,7 @@ import { OrderDecisionsModal, type DecisionKind } from "../components/OrderDecis
 import { HeadOfSalesBadge, headOfSalesBonusStatus } from "../components/HeadOfSalesParts";
 import { bonusComponentsFull, bonusInitialFinal, buildCompanySnapshot, type CompanyWeeklySnapshot, type ManagerBonusPreview, type MonthlyIncentiveReport, type WeeklyReportSnapshot } from "./weekly-report-model";
 import type { HeadOfSalesReview, LogMissDispute, FineAppeal, WeeklyLogMissRow, ManagerFundTotals, WeeklyBonusQuery, WeeklyCompanyReport, WeeklyReportAuditEntry, WeeklyReportCorrection } from "../lib/api";
-import { currencySymbol } from "../lib/money-privacy";
+import { currencySymbol, paySymbol } from "../lib/money-privacy";
 
 export type WeeklyFinancialSummary = {
   revenue: number;
@@ -89,6 +89,7 @@ export default function OwnerWeeklyApprovalPage({
   onBack: () => void;
 }) {
   const sym = currencySymbol();
+  const paySym = paySymbol();
   const [tab, setTab] = useState<"overview" | "reps" | "manager" | "headOfSales" | "bonus" | "funds" | "products" | "audit">("overview");
   const [viewing, setViewing] = useState<string | null>(null);
   // Read-only: the charge / skip on each "No fee" / "Late send" order.
@@ -126,7 +127,7 @@ export default function OwnerWeeklyApprovalPage({
   const prev = companySnap.previous;
   const frozenManagerBonus = (company?.managerBonusSnapshot as ManagerBonusPreview | null) ?? managerBonus;
   const shownIncentive = frozenCompany?.monthlyIncentive ?? monthlyIncentive;
-  const incentiveCard = shownIncentive ? <MonthlyIncentiveSection report={shownIncentive} sym={sym} /> : null;
+  const incentiveCard = shownIncentive ? <MonthlyIncentiveSection report={shownIncentive} sym={paySym} /> : null;
 
   // ── Exceptions & Red Flags ───────────────────────────────────────────────
   const redFlags = useMemo<RedFlag[]>(() => {
@@ -145,7 +146,7 @@ export default function OwnerWeeklyApprovalPage({
       flags.push({
         severity: "medium", repId: row.repId,
         title: `${row.repName}: payout changed${change.changedByName ? ` by ${change.changedByName}` : ""}`,
-        detail: `System ${sym}${nf(change.systemAmount)} → ${sym}${nf(change.systemAmount + change.amount)} (${change.amount < 0 ? "-" : "+"}${sym}${nf(Math.abs(change.amount))}). Reason: ${change.reason}`
+        detail: `System ${paySym}${nf(change.systemAmount)} → ${paySym}${nf(change.systemAmount + change.amount)} (${change.amount < 0 ? "-" : "+"}${paySym}${nf(Math.abs(change.amount))}). Reason: ${change.reason}`
       });
     }
     for (const row of expectedRows) {
@@ -153,7 +154,7 @@ export default function OwnerWeeklyApprovalPage({
         flags.push({
           severity: "high", repId: row.repId,
           title: `${row.repName}: submitted figures no longer match the system`,
-          detail: row.differences.slice(0, 4).map((item) => `${item.label} ${item.money ? sym + nf(item.submitted) : item.percent ? pctText(item.submitted) : nf(item.submitted)} → ${item.money ? sym + nf(item.now) : item.percent ? pctText(item.now) : nf(item.now)}`).join(" · ")
+          detail: row.differences.slice(0, 4).map((item) => `${item.label} ${item.money ? paySym + nf(item.submitted) : item.percent ? pctText(item.submitted) : nf(item.submitted)} → ${item.money ? paySym + nf(item.now) : item.percent ? pctText(item.now) : nf(item.now)}`).join(" · ")
         });
       }
       if (row.editedAfterSubmit.length > 0) {
@@ -169,7 +170,7 @@ export default function OwnerWeeklyApprovalPage({
       }
       const before = snap.previous?.finalBonus ?? null;
       if (before !== null && Math.abs(snap.totals.finalBonus - before) >= 2000 && (before === 0 || Math.abs(snap.totals.finalBonus - before) / before >= 0.5)) {
-        flags.push({ severity: "medium", repId: row.repId, title: `${row.repName}: bonus ${snap.totals.finalBonus > before ? "up" : "down"} sharply`, detail: `${sym}${nf(before)} last week → ${sym}${nf(snap.totals.finalBonus)} this week.` });
+        flags.push({ severity: "medium", repId: row.repId, title: `${row.repName}: bonus ${snap.totals.finalBonus > before ? "up" : "down"} sharply`, detail: `${paySym}${nf(before)} last week → ${paySym}${nf(snap.totals.finalBonus)} this week.` });
       }
     }
     const openFlags = corrections.filter((item) => item.kind === "flag" && item.status === "open");
@@ -184,13 +185,13 @@ export default function OwnerWeeklyApprovalPage({
     }
     const paidHere = rows.filter((row) => (shownSnapshot(row)?.totals.adjustments ?? 0) > 0);
     for (const row of paidHere) {
-      flags.push({ severity: "medium", repId: row.repId, title: `${row.repName}: bonus correction of ${sym}${nf(shownSnapshot(row)?.totals.adjustments ?? 0)} paid this week`, detail: (shownSnapshot(row)?.adjustments ?? []).map((item) => item.label).join("; ") });
+      flags.push({ severity: "medium", repId: row.repId, title: `${row.repName}: bonus correction of ${paySym}${nf(shownSnapshot(row)?.totals.adjustments ?? 0)} paid this week`, detail: (shownSnapshot(row)?.adjustments ?? []).map((item) => item.label).join("; ") });
     }
     const pendingMisses = logMisses.filter((miss) => miss.status === "pending");
     if (pendingMisses.length > 0) {
       const byRep = new Map<string, number>();
       for (const miss of pendingMisses) byRep.set(miss.repId, (byRep.get(miss.repId) ?? 0) + miss.amount);
-      flags.push({ severity: "medium", title: `${sym}${nf(pendingMisses.reduce((sum, miss) => sum + miss.amount, 0))} of missed-log charges wait for your approval`, detail: `${Array.from(byRep.entries()).map(([repId, amount]) => `${rows.find((row) => row.repId === repId)?.repName ?? "a rep"} ${sym}${nf(amount)}`).join(", ")}. Not deducted until you approve them (Follow-up Queue / Abandoned Carts).` });
+      flags.push({ severity: "medium", title: `${paySym}${nf(pendingMisses.reduce((sum, miss) => sum + miss.amount, 0))} of missed-log charges wait for your approval`, detail: `${Array.from(byRep.entries()).map(([repId, amount]) => `${rows.find((row) => row.repId === repId)?.repName ?? "a rep"} ${paySym}${nf(amount)}`).join(", ")}. Not deducted until you approve them (Follow-up Queue / Abandoned Carts).` });
     }
     const ownerDisputes = logMissDisputes.filter((dispute) => dispute.status === "awaiting_owner");
     if (ownerDisputes.length > 0) {
@@ -207,14 +208,14 @@ export default function OwnerWeeklyApprovalPage({
     }
     const hosStatus = headOfSalesBonusStatus(headOfSales);
     if (headOfSales?.head && hosStatus?.key === "held") {
-      flags.push({ severity: "high", title: `${headOfSales.head.name}'s Head of Sales bonus (${sym}${nf(headOfSales.evaluation?.amount ?? 0)}) is on hold`, detail: `${(headOfSales.hold?.reasons ?? []).join(" ")} Release or withhold it in the Head of Sales tab.` });
+      flags.push({ severity: "high", title: `${headOfSales.head.name}'s Head of Sales bonus (${paySym}${nf(headOfSales.evaluation?.amount ?? 0)}) is on hold`, detail: `${(headOfSales.hold?.reasons ?? []).join(" ")} Release or withhold it in the Head of Sales tab.` });
     } else if (headOfSales?.head && hosStatus?.key === "ready" && headOfSales.weekOver) {
-      flags.push({ severity: "medium", title: `${headOfSales.head.name}'s Head of Sales bonus (${sym}${nf(headOfSales.evaluation?.amount ?? 0)}) waits for your release`, detail: `Script submitted; used on ${nf(headOfSales.scriptUses ?? 0)} order${headOfSales.scriptUses === 1 ? "" : "s"} by other reps. See the Head of Sales tab.` });
+      flags.push({ severity: "medium", title: `${headOfSales.head.name}'s Head of Sales bonus (${paySym}${nf(headOfSales.evaluation?.amount ?? 0)}) waits for your release`, detail: `Script submitted; used on ${nf(headOfSales.scriptUses ?? 0)} order${headOfSales.scriptUses === 1 ? "" : "s"} by other reps. See the Head of Sales tab.` });
     }
     if (frozenCompany) {
       const liveTotal = liveCompany.totals.totalBonus;
       if (Math.abs(liveTotal - frozenCompany.totals.totalBonus) > 0.5 || liveCompany.totals.orders !== frozenCompany.totals.orders) {
-        flags.push({ severity: "high", title: "Company totals changed since the manager submitted", detail: `Orders ${nf(frozenCompany.totals.orders)} → ${nf(liveCompany.totals.orders)} · bonus ${sym}${nf(frozenCompany.totals.totalBonus)} → ${sym}${nf(liveTotal)}` });
+        flags.push({ severity: "high", title: "Company totals changed since the manager submitted", detail: `Orders ${nf(frozenCompany.totals.orders)} → ${nf(liveCompany.totals.orders)} · bonus ${paySym}${nf(frozenCompany.totals.totalBonus)} → ${paySym}${nf(liveTotal)}` });
       }
     }
     return flags.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "high" ? -1 : 1));
@@ -240,7 +241,7 @@ export default function OwnerWeeklyApprovalPage({
       <table className="w-full !min-w-[820px] text-left text-[12px]">
         <thead className="text-[11px] text-gray-600 dark:text-slate-400 [&_th]:[color:inherit]">
           <tr className="bg-gray-50 dark:bg-slate-800/60 [&>th]:bg-transparent [&>th]:[color:inherit]">
-            {["#", "Sales Rep", "Report Status", "Orders", "Delivered", "Delivery Rate", `Cross-Sell (${sym})`, `Upsell (${sym})`, `Base (${sym})`, `Initial (${sym})`, `Taken off (${sym})`, `Final (${sym})`, "Actions"].map((h) => <th key={h} className="whitespace-nowrap px-2 py-2.5 font-bold">{h}</th>)}
+            {["#", "Sales Rep", "Report Status", "Orders", "Delivered", "Delivery Rate", `Cross-Sell (${paySym})`, `Upsell (${paySym})`, `Base (${paySym})`, `Initial (${paySym})`, `Taken off (${paySym})`, `Final (${paySym})`, "Actions"].map((h) => <th key={h} className="whitespace-nowrap px-2 py-2.5 font-bold">{h}</th>)}
           </tr>
         </thead>
         <tbody>
@@ -263,12 +264,12 @@ export default function OwnerWeeklyApprovalPage({
                 <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap ? bonusComponentsFull(snap).crossSell : 0)}</td>
                 <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap ? bonusComponentsFull(snap).upsell : 0)}</td>
                 <td className="px-2 py-3 text-gray-800 dark:text-slate-200">{nf(snap ? bonusComponentsFull(snap).base : 0)}</td>
-                {snap ? <BonusInitialCells info={bonusInitialFinal(snap)} sym={sym} /> : <><td className="px-2 py-3">-</td><td className="px-2 py-3">-</td></>}
+                {snap ? <BonusInitialCells info={bonusInitialFinal(snap)} sym={paySym} /> : <><td className="px-2 py-3">-</td><td className="px-2 py-3">-</td></>}
                 <td className="px-2 py-3 font-bold text-gray-900 dark:text-slate-100">
                   {nf(snap ? bonusInitialFinal(snap).final : 0)}
-                  {row.payoutChange && <PayoutChangeNote change={row.payoutChange} sym={sym} />}
-                  {snap?.missingFeeDetail && <MissingFeeNote detail={snap.missingFeeDetail} sym={sym} onOpen={() => setDecisionsFor({ repId: row.repId, kind: "missing_fee" })} />}
-                  <LateSendNote detail={row.lateSend} sym={sym} onOpen={() => setDecisionsFor({ repId: row.repId, kind: "late_send" })} />
+                  {row.payoutChange && <PayoutChangeNote change={row.payoutChange} sym={paySym} />}
+                  {snap?.missingFeeDetail && <MissingFeeNote detail={snap.missingFeeDetail} sym={paySym} onOpen={() => setDecisionsFor({ repId: row.repId, kind: "missing_fee" })} />}
+                  <LateSendNote detail={row.lateSend} sym={paySym} onOpen={() => setDecisionsFor({ repId: row.repId, kind: "late_send" })} />
                 </td>
                 <td className="px-2 py-3">
                   <span className="flex items-center gap-1">
@@ -290,7 +291,7 @@ export default function OwnerWeeklyApprovalPage({
             <td className="px-2 py-3 text-rose-600">{splitTotals.takenOff > 0 ? `-${nf(splitTotals.takenOff)}` : "0"}</td>
             <td className="px-2 py-3">
               {nf(splitTotals.final)}
-              {(totals.payoutChanges ?? 0) !== 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-amber-700 dark:text-amber-300">incl. {(totals.payoutChanges ?? 0) < 0 ? "-" : "+"}{sym}{nf(Math.abs(totals.payoutChanges ?? 0))} payout changes</span>}
+              {(totals.payoutChanges ?? 0) !== 0 && <span className="mt-0.5 block whitespace-nowrap text-[10.5px] font-semibold text-amber-700 dark:text-amber-300">incl. {(totals.payoutChanges ?? 0) < 0 ? "-" : "+"}{paySym}{nf(Math.abs(totals.payoutChanges ?? 0))} payout changes</span>}
             </td><td />
           </tr>
         </tbody>
@@ -323,10 +324,10 @@ export default function OwnerWeeklyApprovalPage({
         {company?.managerNote && <p className="m-0 mt-3 rounded-lg bg-gray-50 px-3 py-2 text-[12px] text-gray-700 dark:bg-slate-800 dark:text-slate-200">"{company.managerNote}"</p>}
         <table className="!min-w-0 mt-3 w-full text-[12px]">
           <tbody className="text-gray-800 dark:text-slate-200 [&_td]:[color:inherit]">
-            <tr className="border-b border-gray-100 dark:border-slate-800"><td className="whitespace-nowrap py-2 pr-3">Manager Bonus</td><td className="py-2 font-bold">{sym}{nf(frozenManagerBonus?.performanceBonus ?? 0)}</td><td className="min-w-[140px] py-2 text-[11px] text-gray-500">{frozenManagerBonus?.performanceNote ?? ""}</td></tr>
-            <tr className="border-b border-gray-100 dark:border-slate-800"><td className="whitespace-nowrap py-2 pr-3">Weekly Support Bonus</td><td className="py-2 font-bold">{sym}{nf(frozenManagerBonus?.supportBonus ?? 0)}</td><td className="min-w-[140px] py-2 text-[11px] text-gray-500">{frozenManagerBonus?.supportNote ?? ""}</td></tr>
-            {frozenManagerBonus?.upsellBonus !== undefined ? <tr className="border-b border-gray-100 dark:border-slate-800"><td className="whitespace-nowrap py-2 pr-3">Manager Upsell Bonus</td><td className="py-2 font-bold">{sym}{nf(frozenManagerBonus.upsellBonus)}</td><td className="min-w-[140px] py-2 text-[11px] text-gray-500">{frozenManagerBonus.upsellNote ?? ""}</td></tr> : null}
-            <tr className="bg-violet-50 font-bold text-violet-900 dark:bg-violet-500/10 dark:text-violet-100 [&>td]:[color:inherit]"><td className="whitespace-nowrap px-2 py-2.5 text-[13px]">Total Manager Bonus</td><td className="py-2.5 text-[16px]" colSpan={2}>{sym}{nf(frozenManagerBonus?.total ?? 0)}</td></tr>
+            <tr className="border-b border-gray-100 dark:border-slate-800"><td className="whitespace-nowrap py-2 pr-3">Manager Bonus</td><td className="py-2 font-bold">{paySym}{nf(frozenManagerBonus?.performanceBonus ?? 0)}</td><td className="min-w-[140px] py-2 text-[11px] text-gray-500">{frozenManagerBonus?.performanceNote ?? ""}</td></tr>
+            <tr className="border-b border-gray-100 dark:border-slate-800"><td className="whitespace-nowrap py-2 pr-3">Weekly Support Bonus</td><td className="py-2 font-bold">{paySym}{nf(frozenManagerBonus?.supportBonus ?? 0)}</td><td className="min-w-[140px] py-2 text-[11px] text-gray-500">{frozenManagerBonus?.supportNote ?? ""}</td></tr>
+            {frozenManagerBonus?.upsellBonus !== undefined ? <tr className="border-b border-gray-100 dark:border-slate-800"><td className="whitespace-nowrap py-2 pr-3">Manager Upsell Bonus</td><td className="py-2 font-bold">{paySym}{nf(frozenManagerBonus.upsellBonus)}</td><td className="min-w-[140px] py-2 text-[11px] text-gray-500">{frozenManagerBonus.upsellNote ?? ""}</td></tr> : null}
+            <tr className="bg-violet-50 font-bold text-violet-900 dark:bg-violet-500/10 dark:text-violet-100 [&>td]:[color:inherit]"><td className="whitespace-nowrap px-2 py-2.5 text-[13px]">Total Manager Bonus</td><td className="py-2.5 text-[16px]" colSpan={2}>{paySym}{nf(frozenManagerBonus?.total ?? 0)}</td></tr>
           </tbody>
         </table>
       </div>
@@ -472,7 +473,7 @@ export default function OwnerWeeklyApprovalPage({
             <MiniTile tone="orange" icon={Target} label="Delivery Rate" value={pctText(totals.deliveryRate)} />
             <MiniTile tone="red" icon={BarChart3} label="Total Revenue" value={`${sym}${nf(financial?.revenue ?? 0)}`} />
             <MiniTile tone="green" icon={Box} label="Contribution Profit (Est.)" value={`${sym}${nf(financial?.contributionProfit ?? 0)}`} />
-            <MiniTile tone="purple" icon={Wallet} label="Total Bonus Payable" value={`${sym}${nf(totals.totalBonus)}`} />
+            <MiniTile tone="purple" icon={Wallet} label="Total Bonus Payable" value={`${paySym}${nf(totals.totalBonus)}`} />
           </div>
         </Panel>
         <Panel>
@@ -543,7 +544,7 @@ export default function OwnerWeeklyApprovalPage({
 
           {tab === "bonus" && (
             <div className="space-y-5">
-              <Panel><NumberedHeader title="Bonus Breakdown" subtitle="Each rep's bonus, as approved." /><RepBonusTable snaps={shown} sym={sym} /></Panel>
+              <Panel><NumberedHeader title="Bonus Breakdown" subtitle="Each rep's bonus, as approved." /><RepBonusTable snaps={shown} sym={paySym} /></Panel>
               <div className="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">{managerReportPanel}{financialPanel}</div>
             </div>
           )}
@@ -611,13 +612,13 @@ export default function OwnerWeeklyApprovalPage({
       {(() => {
         const decisionRow = decisionsFor ? rows.find((row) => row.repId === decisionsFor.repId) ?? null : null;
         return decisionRow ? (
-          <OrderDecisionsModal repName={decisionRow.repName} weekLabel={`${longDate(weekStart)} to ${longDate(weekEnd)}`} sym={sym}
+          <OrderDecisionsModal repName={decisionRow.repName} weekLabel={`${longDate(weekStart)} to ${longDate(weekEnd)}`} sym={paySym}
             lateSend={decisionRow.lateSend} missingFee={shownSnapshot(decisionRow)?.missingFeeDetail} startOn={decisionsFor?.kind}
             onClose={() => setDecisionsFor(null)} />
         ) : null;
       })()}
       {viewingRow && (
-        <RepReviewModal row={viewingRow} weekStart={weekStart} weekEnd={weekEnd} sym={sym} canAct={false} canFlag={false} ownerView
+        <RepReviewModal row={viewingRow} weekStart={weekStart} weekEnd={weekEnd} sym={paySym} canAct={false} canFlag={false} ownerView
           corrections={corrections.filter((item) => viewingRow.report && item.repReportId === viewingRow.report.id)} onClose={() => setViewing(null)}
           onOpenDecisions={(kind) => setDecisionsFor({ repId: viewingRow.repId, kind })} escapePaused={!!decisionsFor} />
       )}
@@ -626,7 +627,7 @@ export default function OwnerWeeklyApprovalPage({
           // Send back only some reps (Bright, 13 Oct 2026): the ones ticked go
           // back for the manager to put the actual bonus; the rest stay approved.
           reps={rows.filter((row) => row.report?.status === "manager_approved").map((row) => ({
-            id: row.repId, name: row.repName, amountLabel: `${sym}${nf((row.frozen ?? row.live)?.totals.finalBonus ?? 0)}`
+            id: row.repId, name: row.repName, amountLabel: `${paySym}${nf((row.frozen ?? row.live)?.totals.finalBonus ?? 0)}`
           }))}
           initialComment={requestChanges} onCancel={() => setReturning(false)}
           onSubmit={async (draft) => { await onReturnToManager(draft); setReturning(false); setRequestChanges(""); }} />

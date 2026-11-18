@@ -15,7 +15,7 @@ import { MyMissedLogsPanel } from "../components/LogMissParts";
 import { MyFinesPanel } from "../components/FineAppealParts";
 import { HeadOfSalesBadge } from "../components/HeadOfSalesParts";
 import { CheckCircle2, Info, SearchCheck } from "lucide-react";
-import { currencySymbol } from "../lib/money-privacy";
+import { currencySymbol, paySymbol } from "../lib/money-privacy";
 
 /**
  * Sales Rep -> Send Weekly Report (Bright's image 1, 1 Oct 2026).
@@ -147,6 +147,7 @@ export default function RepWeeklyReportPage({
   const prev = snap?.previous ?? null;
   const productRows = snap ? topProductsWithOthers(snap.products) : [];
   const sym = currencySymbol();
+  const paySym = paySymbol();
 
   return (
     <div className="space-y-5">
@@ -211,7 +212,7 @@ export default function RepWeeklyReportPage({
             <KpiCard tone="blue" icon={ShoppingCart} label="Total Orders" value={nf(totals?.orders ?? 0)} delta={deltaPct(totals?.orders ?? 0, prev?.orders)} sub={`vs previous week (${nf(prev?.orders ?? 0)})`} />
             <KpiCard tone="green" icon={Box} label="Delivered Orders" value={nf(totals?.delivered ?? 0)} delta={deltaPct(totals?.delivered ?? 0, prev?.delivered)} sub={`vs previous week (${nf(prev?.delivered ?? 0)})`} />
             <KpiCard tone="orange" icon={Target} label="Delivery Rate" value={pctText(totals?.deliveryRate ?? 0)} delta={prev ? Math.round(((totals?.deliveryRate ?? 0) - prev.deliveryRate) * 10) / 10 : null} sub={`vs previous week (${pctText(prev?.deliveryRate ?? 0)})`} />
-            <KpiCard tone="purple" icon={Wallet} label="Total Bonus Earned" labelTone="text-violet-700 dark:text-violet-300" value={`${sym}${nf(totals?.finalBonus ?? 0)}`} delta={null} sub={snap?.payoutChangeDetail ? `Changed by your manager (${signedMoney(snap.payoutChangeDetail.amount, sym)})` : "Calculated automatically"} />
+            <KpiCard tone="purple" icon={Wallet} label="Total Bonus Earned" labelTone="text-violet-700 dark:text-violet-300" value={`${paySym}${nf(totals?.finalBonus ?? 0)}`} delta={null} sub={snap?.payoutChangeDetail ? `Changed by your manager (${signedMoney(snap.payoutChangeDetail.amount, paySym)})` : "Calculated automatically"} />
           </div>
 
           <div className="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
@@ -284,7 +285,7 @@ export default function RepWeeklyReportPage({
                       <th className="px-2 py-2.5 text-center font-bold">Orders</th>
                       <th className="px-2 py-2.5 text-center font-bold">Delivered</th>
                       <th className="px-2 py-2.5 font-bold" colSpan={2}>Delivery Rate</th>
-                      <th className="whitespace-nowrap px-2 py-2.5 text-right font-bold">Bonus ({sym})</th>
+                      <th className="whitespace-nowrap px-2 py-2.5 text-right font-bold">Bonus ({paySym})</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -320,7 +321,7 @@ export default function RepWeeklyReportPage({
             {/* ── Weekly delivery bonus (Bright, 30 Oct 2026): progress while the
                 week runs and before sending; the result once sent. ────────── */}
             {snap?.deliveryBonus ? (
-              <DeliveryBonusCard bonus={snap.deliveryBonus} mode={showingFrozen ? "result" : "progress"} sym={sym} orders={snap.totals.orders} delivered={snap.totals.delivered} />
+              <DeliveryBonusCard bonus={snap.deliveryBonus} mode={showingFrozen ? "result" : "progress"} sym={paySym} orders={snap.totals.orders} delivered={snap.totals.delivered} />
             ) : null}
 
             {/* ── 4 Bonus Breakdown ──────────────────────────────── */}
@@ -336,7 +337,7 @@ export default function RepWeeklyReportPage({
                   <thead className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-slate-400 [&_th]:[color:inherit]">
                     <tr className="bg-gray-50 dark:bg-slate-800/60 [&>th]:bg-transparent [&>th]:[color:inherit]">
                       <th className="px-3 py-2.5 font-bold">Detail</th>
-                      <th className="px-3 py-2.5 text-right font-bold">Amount ({sym})</th>
+                      <th className="px-3 py-2.5 text-right font-bold">Amount ({paySym})</th>
                     </tr>
                   </thead>
                   <tbody className="text-gray-800 dark:text-slate-200 [&_td]:[color:inherit]">
@@ -388,13 +389,13 @@ export default function RepWeeklyReportPage({
                             Changed by {snap.payoutChangeDetail.changedByName ?? "your manager"}
                             <span className="block text-[11px] font-normal text-amber-800 dark:text-amber-200">Reason: {snap.payoutChangeDetail.reason}</span>
                           </td>
-                          <td className={`px-3 py-2 text-right font-semibold ${snap.payoutChangeDetail.amount < 0 ? "text-rose-600" : "text-emerald-700"}`}>{signedMoney(snap.payoutChangeDetail.amount, sym)}</td>
+                          <td className={`px-3 py-2 text-right font-semibold ${snap.payoutChangeDetail.amount < 0 ? "text-rose-600" : "text-emerald-700"}`}>{signedMoney(snap.payoutChangeDetail.amount, paySym)}</td>
                         </tr>
                       </>
                     )}
                     <tr className="bg-emerald-50 font-bold text-gray-900 dark:bg-emerald-500/10 dark:text-slate-50 [&>td]:[color:inherit]">
                       <td className="px-3 py-2.5">Final Bonus Payable</td>
-                      <td className="px-3 py-2.5 text-right text-[15px] text-emerald-700 dark:text-emerald-300">{sym}{nf(totals?.finalBonus ?? 0)}</td>
+                      <td className="px-3 py-2.5 text-right text-[15px] text-emerald-700 dark:text-emerald-300">{paySym}{nf(totals?.finalBonus ?? 0)}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -406,7 +407,7 @@ export default function RepWeeklyReportPage({
                 </p>
               </div>
             </Panel>
-            {snap?.monthlyIncentive ? <MonthlyIncentiveSection report={snap.monthlyIncentive} sym={sym} mine /> : null}
+            {snap?.monthlyIncentive ? <MonthlyIncentiveSection report={snap.monthlyIncentive} sym={paySym} mine /> : null}
           </div>
         </div>
 
@@ -552,7 +553,7 @@ export default function RepWeeklyReportPage({
                 <th className="px-3 py-2.5 font-bold">Type</th>
                 <th className="px-3 py-2.5 font-bold">Amount ({sym})</th>
                 <th className="px-3 py-2.5 font-bold">Status</th>
-                <th className="px-3 py-2.5 font-bold">Bonus ({sym})</th>
+                <th className="px-3 py-2.5 font-bold">Bonus ({paySym})</th>
                 <th className="w-8 px-3 py-2.5" />
               </tr>
             </thead>

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ComponentType, type ReactNode } from 
 import { createPortal } from "react-dom";
 import { DeferredCharts } from "./DeferredCharts";
 import { ArrowDown, ArrowUp, Calendar, Check, ChevronLeft, ChevronRight, X } from "lucide-react";
-import { money } from "../lib/money-privacy";
+import { money, payMoney } from "../lib/money-privacy";
 import {
   CORRECTION_PROBLEMS, CORRECTION_SECTION_LABEL, REP_STATUS_LABEL, COMPANY_STATUS_LABEL, AUDIT_ACTION_LABEL,
   type MissingFeeDetail, type OrderDecisionView, type WeeklyReportDayRow, type WeeklyReportProductRow
@@ -881,7 +881,7 @@ const auditDetailText = (entry: WeeklyReportAuditEntry) => {
   if (detail.section) parts.push(`${CORRECTION_SECTION_LABEL[detail.section] ?? detail.section}: ${detail.problem ?? ""}${detail.orderRef ? ` (${detail.orderRef})` : ""}`);
   if (detail.comment) parts.push(`"${detail.comment}"`);
   if (detail.orders !== undefined && detail.orders !== null) parts.push(`${detail.orders} orders, ${detail.delivered ?? 0} delivered`);
-  if (detail.finalBonus !== undefined && detail.finalBonus !== null) parts.push(`bonus ${money(Number(detail.finalBonus))}`);
+  if (detail.finalBonus !== undefined && detail.finalBonus !== null) parts.push(`bonus ${payMoney(Number(detail.finalBonus))}`);
   if (entry.action === "payout_changed" && detail.systemAmount !== undefined) {
     parts.push(`system ${money(Number(detail.systemAmount))} → ${money(Number(detail.newAmount ?? 0))} (${Number(detail.amount) < 0 ? "-" : "+"}${money(Math.abs(Number(detail.amount ?? 0)))})`);
     if (detail.previousAmount !== null && detail.previousAmount !== undefined) parts.push(`the change before was ${Number(detail.previousAmount) < 0 ? "-" : "+"}${money(Math.abs(Number(detail.previousAmount)))}`);
@@ -891,7 +891,7 @@ const auditDetailText = (entry: WeeklyReportAuditEntry) => {
     parts.push(`${Number(detail.amount) < 0 ? "-" : "+"}${money(Math.abs(Number(detail.amount ?? 0)))} removed, back to the system figure ${money(Number(detail.systemAmount))}`);
     if (detail.why) parts.push(String(detail.why));
   }
-  if (detail.totalBonus !== undefined && detail.totalBonus !== null) parts.push(`bonus ${money(Number(detail.totalBonus))}`);
+  if (detail.totalBonus !== undefined && detail.totalBonus !== null) parts.push(`bonus ${payMoney(Number(detail.totalBonus))}`);
   if (detail.repReportsLocked !== undefined) parts.push(`${detail.repReportsLocked} rep reports locked`);
   if (detail.reason) parts.push(`Reason: ${detail.reason}`);
   if (detail.note) parts.push(`Note: ${detail.note}`);

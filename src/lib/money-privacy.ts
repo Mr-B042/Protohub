@@ -134,3 +134,40 @@ export const shortMoney = (value: number): string => {
   if (abs >= 1_000) return spaceNaira(`${sign}${sym}${Math.round(abs / 1_000)}K`);
   return spaceNaira(`${sign}${sym}${Math.round(abs)}`);
 };
+
+// ── Staff pay is always naira ───────────────────────────────────────────────
+//
+// Bonuses, fines, salaries, commissions and incentives are set and paid in
+// naira in every branch (Bright, 18 Nov 2026: "same Nigeria value rather than
+// using 200 ZMW for 200 naira"). The helpers above print the BRANCH's symbol,
+// so in the Zambia branch a ₦200 bonus read "K200". Use these for staff pay;
+// keep money()/shortMoney() for order, sales and cash amounts.
+
+const PAY_SYMBOL = "₦";
+const payDigits = (value: number) => Math.round(Number(value) || 0).toLocaleString("en-NG");
+
+/** The naira sign, for column headings over staff-pay amounts. */
+export const paySymbol = () => PAY_SYMBOL;
+
+/** ₦1,234 in every branch — masked when privacy mode is on. */
+export const payMoney = (value: number): string =>
+  spaceNaira(isMoneyHidden() ? `${PAY_SYMBOL}••••` : `${PAY_SYMBOL}${payDigits(value)}`);
+
+/** Signed staff-pay change (+₦400 / −₦500), naira in every branch. */
+export const paySignedMoney = (value: number): string => {
+  const rounded = Math.round(Number(value) || 0);
+  if (isMoneyHidden()) return spaceNaira(rounded === 0 ? `${PAY_SYMBOL}••••` : `${rounded < 0 ? "−" : "+"}${PAY_SYMBOL}••••`);
+  if (rounded === 0) return spaceNaira(`${PAY_SYMBOL}0`);
+  return spaceNaira(`${rounded < 0 ? "−" : "+"}${PAY_SYMBOL}${Math.abs(rounded).toLocaleString("en-NG")}`);
+};
+
+/** ₦1.2M / ₦450K staff-pay amounts for tight cells. */
+export const payShortMoney = (value: number): string => {
+  if (isMoneyHidden()) return spaceNaira(`${PAY_SYMBOL}••`);
+  const amount = Number(value) || 0;
+  const abs = Math.abs(amount);
+  const sign = amount < 0 ? "−" : "";
+  if (abs >= 1_000_000) return spaceNaira(`${sign}${PAY_SYMBOL}${(abs / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`);
+  if (abs >= 1_000) return spaceNaira(`${sign}${PAY_SYMBOL}${Math.round(abs / 1_000)}K`);
+  return spaceNaira(`${sign}${PAY_SYMBOL}${Math.round(abs)}`);
+};

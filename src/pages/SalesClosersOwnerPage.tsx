@@ -4,7 +4,7 @@ import type { SalesCloserBonusComponent, SalesCloserCostProfitability, SalesClos
 import { LoadingState } from "../components/ui/loading-state";
 // ⚠️ NOT A PRIVATE ₦ FORMATTER. A local one ignores both the branch's currency
 // and the hide-money toggle - it is how this page printed naira against cedi.
-import { money, currencySymbol } from "../lib/money-privacy";
+import { money, currencySymbol, payMoney } from "../lib/money-privacy";
 
 type Props = {
   rows: SalesCloserLeaderboardRow[];
@@ -234,8 +234,8 @@ export function SalesClosersOwnerPage({ rows, loading, error, canEditCostSetting
               <div className="flex items-center justify-between py-3"><span className="text-sm font-semibold text-gray-600">Delivery Cost</span><span className="text-sm font-bold text-rose-600">-{money(cost.deliveryCost)}</span></div>
               <div className="flex items-center justify-between py-3"><span className="text-sm font-semibold text-gray-600">Packaging</span><span className="text-sm font-bold text-rose-600">-{money(cost.packaging)}</span></div>
               <div className="flex items-center justify-between py-3"><span className="text-sm font-semibold text-gray-600">Discounts</span><span className="text-sm font-bold text-rose-600">-{money(cost.discounts)}</span></div>
-              <div className="flex items-center justify-between py-3"><span className="text-sm font-semibold text-gray-600">Closer Bonus</span><span className="text-sm font-bold text-rose-600">-{money(cost.closerBonus)}</span></div>
-              <div className="flex items-center justify-between py-3"><span className="text-sm font-semibold text-gray-600">Allocated Salary</span><span className="text-sm font-bold text-rose-600">-{money(cost.allocatedSalary)}</span></div>
+              <div className="flex items-center justify-between py-3"><span className="text-sm font-semibold text-gray-600">Closer Bonus</span><span className="text-sm font-bold text-rose-600">-{payMoney(cost.closerBonus)}</span></div>
+              <div className="flex items-center justify-between py-3"><span className="text-sm font-semibold text-gray-600">Allocated Salary</span><span className="text-sm font-bold text-rose-600">-{payMoney(cost.allocatedSalary)}</span></div>
               <div className="flex items-center justify-between py-3">
                 <span className="flex items-center gap-1.5 text-sm font-semibold text-gray-500">Advertising <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold text-gray-500">Not tracked per closer</span></span>
                 <span className="text-sm font-bold text-gray-400">-</span>

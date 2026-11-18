@@ -261,7 +261,7 @@ import { indexCostChanges, ProductCostChange, unitCostAsOf } from "./lib/product
 import { spaceNaira } from "./lib/naira-glyph";
 import {
   isMoneyHidden, maskFormattedMoney, maskMoneyText, money, money as moneyAmount,
-  setActiveCurrency, setMoneyHiddenGlobal, shortMoney, subscribeMoneyHidden
+  setActiveCurrency, setMoneyHiddenGlobal, shortMoney, subscribeMoneyHidden, payMoney
 , currencySymbol } from "./lib/money-privacy";
 import { lazyPage } from "./lib/lazy-page";
 import TelegramConnectCard from "./components/TelegramConnectCard";
@@ -16916,13 +16916,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (!structure) return "Not set";
     switch (structure.type) {
       case "Per Delivered Order":
-        return `Per order @ ${formatMoney(structure.commissionRate)}`;
+        return `Per order @ ${payMoney(structure.commissionRate)}`;
       case "Fixed Salary":
-        return `Fixed: ${formatMoney(structure.fixedSalary)}/mo`;
+        return `Fixed: ${payMoney(structure.fixedSalary)}/mo`;
       case "Hybrid":
-        return `Hybrid: ${formatMoney(structure.fixedSalary)} + ${formatMoney(structure.commissionRate)}/order`;
+        return `Hybrid: ${payMoney(structure.fixedSalary)} + ${payMoney(structure.commissionRate)}/order`;
       case "Performance Bonus":
-        return `Performance: ${formatMoney(structure.fixedSalary)} + ${structure.bonusTiers?.length ?? 0} tier${(structure.bonusTiers?.length ?? 0) !== 1 ? "s" : ""}`;
+        return `Performance: ${payMoney(structure.fixedSalary)} + ${structure.bonusTiers?.length ?? 0} tier${(structure.bonusTiers?.length ?? 0) !== 1 ? "s" : ""}`;
       default:
         return "Not set";
     }
@@ -17309,7 +17309,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       };
       if (isCustomerSelectedCrossSell(line)) {
         return { ...base, addedBy: "customer" as const, bonus: CUSTOMER_SELECTED_CROSS_SELL_BONUS,
-          how: `The customer chose it on the order form: a flat ${formatMoney(CUSTOMER_SELECTED_CROSS_SELL_BONUS)}.` };
+          how: `The customer chose it on the order form: a flat ${payMoney(CUSTOMER_SELECTED_CROSS_SELL_BONUS)}.` };
       }
       if (isAutoIncludedCrossSell(line)) {
         return { ...base, addedBy: "auto" as const, bonus: 0, how: "Included with the order automatically: no bonus." };
@@ -17321,7 +17321,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           how: `Added by ${who}. No per-item rule for this product, so any pay comes from a weekly cross-sell rule.` };
       }
       return { ...base, addedBy: "rep" as const, bonus: paid.bonus,
-        how: `Added by ${who}. ${paid.percent}% of ${formatMoney(paid.value)}${paid.fixed ? ` + ${formatMoney(paid.fixed)}` : ""} = ${formatMoney(paid.bonus)}${paid.ruleSource === "main_product_fallback" ? " (main product's rule)" : ""}.` };
+        how: `Added by ${who}. ${paid.percent}% of ${formatMoney(paid.value)}${paid.fixed ? ` + ${formatMoney(paid.fixed)}` : ""} = ${payMoney(paid.bonus)}${paid.ruleSource === "main_product_fallback" ? " (main product's rule)" : ""}.` };
     });
     return { ...(upsellDetail ? { upsellDetail } : {}), crossSellItems };
   };
@@ -20919,7 +20919,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // the card only ever showed the legacy half of what a rep actually earns.
   const pfBonusEstimate = canViewOrderBonusEstimate ? recognizedBonusTotalForRows(pfDelivered) : 0;
   const orderWorkspaceFinancialMetric = canViewOrderBonusEstimate
-    ? { label: "Bonus est.", value: formatMoney(pfBonusEstimate), sub: "delivered orders only", icon: CircleDollarSign, color: "bg-emerald-50 text-emerald-500 dark:bg-emerald-500/12 dark:text-emerald-300" }
+    ? { label: "Bonus est.", value: payMoney(pfBonusEstimate), sub: "delivered orders only", icon: CircleDollarSign, color: "bg-emerald-50 text-emerald-500 dark:bg-emerald-500/12 dark:text-emerald-300" }
     : { label: "Revenue", value: formatMoney(pfRevenue), sub: "from delivered orders", icon: CircleDollarSign, color: "bg-emerald-50 text-emerald-500 dark:bg-emerald-500/12 dark:text-emerald-300" };
   const pfConversionLiftMax = Math.max(0, 100 - pfDeliveryRateExact);
   const pfTargetConversion = Math.min(100, pfDeliveryRateExact + ordersConversion);
@@ -34654,12 +34654,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <div className="mt-4 grid gap-4 sm:grid-cols-3">
                   <div>
                     <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Earned now</p>
-                    <p className="text-2xl font-black text-gray-900">{formatMoney(p.incentive.amount)}</p>
+                    <p className="text-2xl font-black text-gray-900">{payMoney(p.incentive.amount)}</p>
                     <p className="text-xs font-semibold text-gray-500">{p.incentive.tierLabel}</p>
                   </div>
                   <div>
                     <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Projected</p>
-                    <p className="text-2xl font-black text-indigo-700">{formatMoney(p.incentive.projectedAmount)}</p>
+                    <p className="text-2xl font-black text-indigo-700">{payMoney(p.incentive.projectedAmount)}</p>
                     <p className="text-xs font-semibold text-gray-500">If the current pace holds</p>
                   </div>
                   {p.incentive.nextTier && (
@@ -34667,10 +34667,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <p className="text-xs font-bold uppercase tracking-wide text-gray-500">
                         To reach {p.incentive.nextTier.name}
                       </p>
-                      <p className="text-2xl font-black text-gray-900">{formatMoney(p.incentive.nextTier.shortfall)}</p>
+                      <p className="text-2xl font-black text-gray-900">{payMoney(p.incentive.nextTier.shortfall)}</p>
                       <p className="text-xs font-semibold text-gray-500">
                         {p.incentive.nextTier.perDay > 0
-                          ? `${formatMoney(p.incentive.nextTier.perDay)} a day from here`
+                          ? `${payMoney(p.incentive.nextTier.perDay)} a day from here`
                           : "No days left in the period"}
                       </p>
                     </div>
@@ -45705,7 +45705,7 @@ ${waybillLineItems(w).length > 1
     const rate = Number(cartLogPenalties?.missAmount ?? 0);
     const atRisk = skipped.size * rate;
     showToast(skipped.size > 0
-      ? `${logged} logged. ${skipped.size} skipped — still at risk${rate > 0 ? `, ${money(atRisk)} today` : ""}.`
+      ? `${logged} logged. ${skipped.size} skipped — still at risk${rate > 0 ? `, ${payMoney(atRisk)} today` : ""}.`
       : `All ${logged} carts logged.`);
   };
 
@@ -54313,7 +54313,7 @@ ${waybillLineItems(w).length > 1
                 </div>
                 <div className="mt-4 flex items-end justify-between gap-3">
                   <div>
-                    <strong className="block text-2xl font-black text-emerald-700">{formatMoney(retentionBonusSummary?.breakdown?.total ?? summary.bonus.earned)}</strong>
+                    <strong className="block text-2xl font-black text-emerald-700">{payMoney(retentionBonusSummary?.breakdown?.total ?? summary.bonus.earned)}</strong>
                     <span className="text-xs text-gray-500">earned in selected period</span>
                   </div>
                   <span className="text-sm font-black text-gray-800">{summary.bonus.progressPct}%</span>
@@ -54321,7 +54321,7 @@ ${waybillLineItems(w).length > 1
                 <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-gray-100">
                   <div className="h-full rounded-full bg-emerald-600 transition-[width]" style={{ width: `${summary.bonus.progressPct}%` }} />
                 </div>
-                <p className="mt-2 text-xs font-semibold text-gray-500">Target: {formatMoney(summary.bonus.target)}</p>
+                <p className="mt-2 text-xs font-semibold text-gray-500">Target: {payMoney(summary.bonus.target)}</p>
                 {retentionBonusSummary && (
                   <>
                     <p className="mt-4 border-t border-gray-100 pt-3 text-[11px] leading-5 text-gray-500">
@@ -65819,12 +65819,12 @@ ${waybillLineItems(w).length > 1
                 <div className="flex shrink-0 gap-4 text-right">
                   <span>
                     <span className="block text-[10px] font-black uppercase tracking-wide text-rose-700">Pending</span>
-                    <span className="block text-base font-black text-rose-900">{money(penalties.totals.pendingAmount)}</span>
+                    <span className="block text-base font-black text-rose-900">{payMoney(penalties.totals.pendingAmount)}</span>
                     <span className="block text-[10px] font-semibold text-rose-700">{penalties.totals.pendingCount} miss{penalties.totals.pendingCount === 1 ? "" : "es"}</span>
                   </span>
                   <span>
                     <span className="block text-[10px] font-black uppercase tracking-wide text-rose-700">Approved</span>
-                    <span className="block text-base font-black text-rose-900">{money(penalties.totals.approvedAmount)}</span>
+                    <span className="block text-base font-black text-rose-900">{payMoney(penalties.totals.approvedAmount)}</span>
                     <span className="block text-[10px] font-semibold text-rose-700">{penalties.totals.approvedCount} charged</span>
                   </span>
                 </div>
@@ -65941,7 +65941,7 @@ ${waybillLineItems(w).length > 1
                     className="inline-flex items-center gap-1.5 rounded-full border border-rose-300 bg-white px-2.5 py-1 text-[11px] font-black text-rose-800">
                     {rep.repName}
                     <span className="font-semibold text-rose-600">
-                      {rep.missedCount} day{rep.missedCount === 1 ? "" : "s"} · {rep.missedCarts} cart{rep.missedCarts === 1 ? "" : "s"} · {money(rep.atRiskAmount)}
+                      {rep.missedCount} day{rep.missedCount === 1 ? "" : "s"} · {rep.missedCarts} cart{rep.missedCarts === 1 ? "" : "s"} · {payMoney(rep.atRiskAmount)}
                     </span>
                   </li>
                 ))}
@@ -66147,7 +66147,7 @@ ${waybillLineItems(w).length > 1
               </div>
             </div>
             {cartPenaltyShowFilters && <div className="mb-2 flex flex-wrap gap-2 rounded-xl border border-rose-100 bg-white p-2"><select value={cartPenaltySource} onChange={(event) => setCartPenaltySource(event.target.value)} className="rounded-lg border px-3 py-1.5 text-xs"><option>All sources</option>{actionSources.map((value) => <option key={value}>{value}</option>)}</select><select value={cartPenaltyLocation} onChange={(event) => setCartPenaltyLocation(event.target.value)} className="rounded-lg border px-3 py-1.5 text-xs"><option>All locations</option>{actionLocations.map((value) => <option key={value}>{value}</option>)}</select><button type="button" onClick={() => { setCartPenaltySource("All sources"); setCartPenaltyLocation("All locations"); }} className="text-xs font-bold text-rose-700">Clear filters</button></div>}
-            <div className="overflow-x-auto rounded-xl border border-rose-100 bg-white"><table className="w-full min-w-[1080px] text-left text-xs"><thead className="bg-rose-50/60 text-[10px] font-black uppercase tracking-wide text-gray-500"><tr><th className="px-3 py-2"><input type="checkbox" checked={visibleActionRows.length > 0 && visibleActionRows.every((row) => cartPenaltySelectedIds.has(row.id))} onChange={(event) => setCartPenaltySelectedIds(event.target.checked ? new Set(visibleActionRows.map((row) => row.id)) : new Set())} aria-label="Select all unlogged carts" /></th><th className="px-3 py-2">Cart / Customer</th><th className="px-3 py-2">Assigned time</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Item / Source</th><th className="px-3 py-2">Potential charge</th><th className="px-3 py-2" /></tr></thead><tbody>{visibleActionRows.map((row) => <tr key={`action-${row.id}`} className="border-t border-rose-50"><td className="px-3 py-2.5"><input type="checkbox" checked={cartPenaltySelectedIds.has(row.id)} onChange={(event) => setCartPenaltySelectedIds((current) => { const next = new Set(current); if (event.target.checked) next.add(row.id); else next.delete(row.id); return next; })} aria-label={`Select ${row.customer}`} /></td><td className="px-3 py-2.5"><b className="block">#{String(row.id).slice(0, 8)} · {row.customer || "No name given"}</b><span className="text-slate-400">{row.state || row.city || "—"}</span></td><td className="px-3 py-2.5 text-slate-600">{row.assignedAt ? new Date(row.assignedAt).toLocaleTimeString("en-NG", { hour: "numeric", minute: "2-digit" }) : "—"}</td><td className="px-3 py-2.5"><span className="rounded-full bg-rose-100 px-2 py-1 text-[10px] font-black uppercase text-rose-700">Unlogged</span><span className="block text-[11px] text-slate-500">No activity logged</span></td><td className="px-3 py-2.5 text-slate-600"><span className="block">{row.productName || "Cart"}{row.quantity ? ` (${row.quantity}pcs)` : ""}</span><span className="text-slate-400">Source: {row.source || "Unknown"}</span></td><td className="px-3 py-2.5 font-black text-rose-700">{money(penalties.missAmount)}</td><td className="px-3 py-2.5"><button type="button" onClick={() => openCartFollowUpFromGrid(row)} className="rounded-lg border border-gray-200 bg-white px-3 py-2 font-bold text-gray-700 hover:border-blue-300 hover:text-blue-600">Open &amp; Log Activity →</button></td></tr>)}</tbody></table>{visibleActionRows.length === 0 && <p className="m-0 p-6 text-center text-xs text-slate-500">No unlogged carts match these filters.</p>}</div>
+            <div className="overflow-x-auto rounded-xl border border-rose-100 bg-white"><table className="w-full min-w-[1080px] text-left text-xs"><thead className="bg-rose-50/60 text-[10px] font-black uppercase tracking-wide text-gray-500"><tr><th className="px-3 py-2"><input type="checkbox" checked={visibleActionRows.length > 0 && visibleActionRows.every((row) => cartPenaltySelectedIds.has(row.id))} onChange={(event) => setCartPenaltySelectedIds(event.target.checked ? new Set(visibleActionRows.map((row) => row.id)) : new Set())} aria-label="Select all unlogged carts" /></th><th className="px-3 py-2">Cart / Customer</th><th className="px-3 py-2">Assigned time</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Item / Source</th><th className="px-3 py-2">Potential charge</th><th className="px-3 py-2" /></tr></thead><tbody>{visibleActionRows.map((row) => <tr key={`action-${row.id}`} className="border-t border-rose-50"><td className="px-3 py-2.5"><input type="checkbox" checked={cartPenaltySelectedIds.has(row.id)} onChange={(event) => setCartPenaltySelectedIds((current) => { const next = new Set(current); if (event.target.checked) next.add(row.id); else next.delete(row.id); return next; })} aria-label={`Select ${row.customer}`} /></td><td className="px-3 py-2.5"><b className="block">#{String(row.id).slice(0, 8)} · {row.customer || "No name given"}</b><span className="text-slate-400">{row.state || row.city || "—"}</span></td><td className="px-3 py-2.5 text-slate-600">{row.assignedAt ? new Date(row.assignedAt).toLocaleTimeString("en-NG", { hour: "numeric", minute: "2-digit" }) : "—"}</td><td className="px-3 py-2.5"><span className="rounded-full bg-rose-100 px-2 py-1 text-[10px] font-black uppercase text-rose-700">Unlogged</span><span className="block text-[11px] text-slate-500">No activity logged</span></td><td className="px-3 py-2.5 text-slate-600"><span className="block">{row.productName || "Cart"}{row.quantity ? ` (${row.quantity}pcs)` : ""}</span><span className="text-slate-400">Source: {row.source || "Unknown"}</span></td><td className="px-3 py-2.5 font-black text-rose-700">{payMoney(penalties.missAmount)}</td><td className="px-3 py-2.5"><button type="button" onClick={() => openCartFollowUpFromGrid(row)} className="rounded-lg border border-gray-200 bg-white px-3 py-2 font-bold text-gray-700 hover:border-blue-300 hover:text-blue-600">Open &amp; Log Activity →</button></td></tr>)}</tbody></table>{visibleActionRows.length === 0 && <p className="m-0 p-6 text-center text-xs text-slate-500">No unlogged carts match these filters.</p>}</div>
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white/80 px-2 py-1.5 text-[11px] font-semibold text-slate-500"><span>🛡 Act now to avoid charges. Once logged, the charge is removed automatically.</span><span className="flex gap-3"><button type="button" onClick={() => setCartPenaltyShowHelp((value) => !value)} className="font-black text-rose-700">How it works</button><button type="button" onClick={() => setCartPenaltyShowPolicy((value) => !value)} className="font-black text-rose-700">View penalty policy →</button></span></div>
             {cartPenaltyShowHelp && <p className="m-0 mt-2 rounded-lg border border-rose-100 bg-white p-3 text-xs text-slate-600">Open each cart and record a call, WhatsApp, SMS, or outcome. The cart disappears from this risk list after a valid activity is saved. “Work through” walks the visible carts one at a time, oldest first — each still needs its own truthful outcome. Skip a cart you genuinely cannot reach and it comes back at the end of the run; skipping writes nothing and does not clear the charge.</p>}
           </div>
@@ -67715,7 +67715,7 @@ ${waybillLineItems(w).length > 1
             <button type="button" className="!min-h-0 mt-0.5 text-[11px] font-bold text-[#1F8FE0] hover:underline" onClick={() => setHeadOfSalesSubPage("Weekly Scorecard")}>
               View Scorecard →
             </button>)}
-          {kpi("Estimated Head Bonus", money(data.bonus.amount),
+          {kpi("Estimated Head Bonus", payMoney(data.bonus.amount),
             <button type="button" className="!min-h-0 mt-0.5 text-[11px] font-bold text-[#1F8FE0] hover:underline" onClick={() => setHeadOfSalesSubPage("Bonus & Payouts")}>
               View Bonus Rules →
             </button>)}
@@ -67986,7 +67986,7 @@ ${waybillLineItems(w).length > 1
             <h2 className="m-0 text-base font-bold text-gray-900">Weekly Bonus Status</h2>
             <div className="mt-3">
               <strong className="block text-lg font-black text-gray-900">{data.bonus.level === "none" ? "Below Level 1" : data.bonus.label}</strong>
-              <span className="text-sm text-gray-500">This Week's Bonus: {money(data.bonus.amount)}</span>
+              <span className="text-sm text-gray-500">This Week's Bonus: {payMoney(data.bonus.amount)}</span>
             </div>
             <ul className="m-0 mt-3 list-none space-y-1 p-0 text-sm text-gray-700">
               <li className="flex items-center gap-2">
@@ -69858,9 +69858,9 @@ ${waybillLineItems(w).length > 1
               <Info className="h-3.5 w-3.5 text-gray-300" />
             </div>
             <div className="mt-3 space-y-1.5 text-xs">
-              <div className="flex justify-between gap-4"><span className="text-gray-500">Total Earned</span><strong className="text-emerald-600">{money(summary.totalEarned)}</strong></div>
-              <div className="flex justify-between gap-4"><span className="text-gray-500">Highest Bonus</span><strong className="text-gray-900">{money(summary.highestBonus)}</strong></div>
-              <div className="flex justify-between gap-4"><span className="text-gray-500">Average Bonus</span><strong className="text-gray-900">{money(summary.averageBonus)}</strong></div>
+              <div className="flex justify-between gap-4"><span className="text-gray-500">Total Earned</span><strong className="text-emerald-600">{payMoney(summary.totalEarned)}</strong></div>
+              <div className="flex justify-between gap-4"><span className="text-gray-500">Highest Bonus</span><strong className="text-gray-900">{payMoney(summary.highestBonus)}</strong></div>
+              <div className="flex justify-between gap-4"><span className="text-gray-500">Average Bonus</span><strong className="text-gray-900">{payMoney(summary.averageBonus)}</strong></div>
               <div className="flex justify-between gap-4"><span className="text-gray-500">Weeks Paid</span><strong className="text-gray-900">{summary.weeksPaid} of {summary.weeksTotal}</strong></div>
             </div>
             <button type="button" className="!min-h-0 mt-3 text-xs font-bold text-[#1F8FE0] hover:underline" onClick={() => scrollToSection("bonus-history-section")}>
@@ -71768,17 +71768,17 @@ ${waybillLineItems(w).length > 1
                       </div>
                       <strong className={`mt-2 block text-5xl font-black leading-none tracking-tight ${
                         rec.gatesMet ? "text-emerald-600" : "text-slate-900 dark:text-slate-100"}`}>
-                        {formatMoney(rec.bonusValue)}
+                        {payMoney(rec.bonusValue)}
                       </strong>
                       <p className="m-0 mt-2 text-xs font-semibold text-slate-500">
-                        {rec.recoveredThisMonth} recovered × {formatMoney(rec.bonusPerOrder)} each
+                        {rec.recoveredThisMonth} recovered × {payMoney(rec.bonusPerOrder)} each
                       </p>
                       {!rec.gatesMet && (
                         <div className="mt-3 rounded-xl border border-amber-200/80 bg-amber-50/70 p-3 dark:border-amber-400/20 dark:bg-amber-500/10">
                           <p className="m-0 text-xs font-bold text-amber-900 dark:text-amber-200">{rec.note}</p>
                           {rec.bonusAtRisk > 0 && (
                             <p className="m-0 mt-1 text-sm font-black text-amber-900 dark:text-amber-100">
-                              {formatMoney(rec.bonusAtRisk)} is waiting on it.
+                              {payMoney(rec.bonusAtRisk)} is waiting on it.
                             </p>
                           )}
                         </div>
@@ -71844,7 +71844,7 @@ ${waybillLineItems(w).length > 1
                           return b ? { start: b.dateFrom, end: b.dateTo } : null;
                         })()}
                         loading={recoveryBonusLoading}
-                        formatMoney={formatMoney}
+                        formatMoney={payMoney}
                       />
                     ) : (
                       <p className="m-0 rounded-xl border border-slate-200/80 bg-white px-3 py-6 text-center text-[12px] font-semibold text-gray-500">
@@ -71893,13 +71893,13 @@ ${waybillLineItems(w).length > 1
                           <span className="inline-flex h-5 w-5 items-center justify-center rounded-md bg-emerald-100 text-[11px] text-emerald-800">1</span>
                           Recovering a dead order
                         </p>
-                        <p className="m-0 mt-1.5 text-sm font-black text-slate-900">{formatMoney(rec.bonusPerOrder)} for every order you get delivered</p>
+                        <p className="m-0 mt-1.5 text-sm font-black text-slate-900">{payMoney(rec.bonusPerOrder)} for every order you get delivered</p>
                         <p className="m-0 mt-1 text-xs font-medium leading-5 text-slate-600">
-                          Any order assigned to you that reaches <strong>Delivered</strong> counts as recovered. Claim a failed or cancelled order, work it, get it delivered — that&apos;s {formatMoney(rec.bonusPerOrder)}.
+                          Any order assigned to you that reaches <strong>Delivered</strong> counts as recovered. Claim a failed or cancelled order, work it, get it delivered — that&apos;s {payMoney(rec.bonusPerOrder)}.
                         </p>
                         <p className="m-0 mt-2.5 inline-flex items-center gap-1.5 rounded-lg border border-emerald-200/80 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700">
                           <BarChart3 className="h-3.5 w-3.5 text-emerald-600" />
-                          Example: {rec.monthlyTarget} recovered this month = {formatMoney(rec.monthlyTarget * rec.bonusPerOrder)}
+                          Example: {rec.monthlyTarget} recovered this month = {payMoney(rec.monthlyTarget * rec.bonusPerOrder)}
                         </p>
                       </div>
                     </div>
@@ -72012,7 +72012,7 @@ ${waybillLineItems(w).length > 1
                   <div>
                     <p className="m-0 text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">Your recovery bonus this month</p>
                     <strong className={`mt-1.5 block text-4xl font-black leading-none tracking-tight ${summary.surplusBonus.gatesMet ? "text-emerald-600" : "text-slate-900"}`}>
-                      {formatMoney(summary.surplusBonus.value)}
+                      {payMoney(summary.surplusBonus.value)}
                     </strong>
                     <p className="m-0 mt-2 text-xs font-semibold text-slate-500">
                       Surplus above {formatMoney(summary.netContribution.targetMin)}: <span className="font-black text-slate-900">{formatMoney(summary.surplusBonus.surplusBase)}</span> × {summary.surplusBonus.pct}%
@@ -72089,7 +72089,7 @@ ${waybillLineItems(w).length > 1
                     <ul className="m-0 mt-1.5 list-none space-y-1 p-0 text-[11px] font-medium text-gray-600">
                       <li>Monthly Net Contribution must be above {formatMoney(summary.netContribution.targetMin)}.</li>
                       <li>You earn {summary.surplusBonus.pct}% of the surplus above that floor.</li>
-                      <li>Floor already covers your salary ({formatMoney(summary.repMonthlySalary)}) + your share of staff cost.</li>
+                      <li>Floor already covers your salary ({payMoney(summary.repMonthlySalary)}) + your share of staff cost.</li>
                     </ul>
                   </div>
                 </div>
@@ -72220,7 +72220,7 @@ ${waybillLineItems(w).length > 1
                     {kpiCard({
                       label: "Rep Monthly Salary",
                   icon: UserRound, iconTone: "bg-sky-100 text-sky-600",
-                      value: formatMoney(summary.repMonthlySalary),
+                      value: payMoney(summary.repMonthlySalary),
                       targetLabel: "Company-level contribution after salary:",
                       met: null,
                       primaryNote: formatMoney(summary.companyLevelContribution.value),
@@ -80499,18 +80499,18 @@ ${waybillLineItems(w).length > 1
                                   <td className="px-4 py-3 text-right text-gray-700">{r.aov ? formatMoney(r.aov) : "-"}</td>
                                   <td className="px-4 py-3 text-right">
                                     <span className="font-semibold text-violet-700">{r.repUpsells}</span>
-                                    <span className="block text-[10px] text-gray-400">{formatMoney(r.upsellBonus)} earned</span>
+                                    <span className="block text-[10px] text-gray-400">{payMoney(r.upsellBonus)} earned</span>
                                   </td>
                                   <td className="px-4 py-3 text-right">
                                     <span className="font-semibold text-amber-700">{r.repXs}</span>
-                                    <span className="block text-[10px] text-gray-400">{formatMoney(r.repCrossSellBonus)} earned</span>
+                                    <span className="block text-[10px] text-gray-400">{payMoney(r.repCrossSellBonus)} earned</span>
                                   </td>
                                   <td className="px-4 py-3 text-right">
                                     <span className="font-semibold text-sky-700">{r.custAddOns}</span>
-                                    <span className="block text-[10px] text-gray-400">{formatMoney(r.customerAddOnBonus)} earned</span>
+                                    <span className="block text-[10px] text-gray-400">{payMoney(r.customerAddOnBonus)} earned</span>
                                   </td>
                                   <td className="px-4 py-3 text-right text-gray-700">{formatMoney(r.revenue)}</td>
-                                  <td className="px-4 py-3 text-right font-bold text-emerald-700">{formatMoney(r.bonus)}</td>
+                                  <td className="px-4 py-3 text-right font-bold text-emerald-700">{payMoney(r.bonus)}</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -80577,7 +80577,7 @@ ${waybillLineItems(w).length > 1
                           <div className="flex items-center gap-3">
                             <div className="text-right">
                               <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Total Team Bonus</p>
-                              <p className="text-lg font-extrabold text-violet-700 m-0">{formatMoney(totalTeamBonus)}</p>
+                              <p className="text-lg font-extrabold text-violet-700 m-0">{payMoney(totalTeamBonus)}</p>
                             </div>
                             <button
                               type="button"
@@ -87250,19 +87250,19 @@ ${waybillLineItems(w).length > 1
                             <div className="grid grid-cols-2 gap-3 text-xs">
                               <div>
                                 <p className="font-semibold uppercase tracking-wide text-gray-400">Fixed Salary</p>
-                                <p className="mt-1 font-semibold text-gray-800">{formatMoney(row.fixedSalary)}</p>
+                                <p className="mt-1 font-semibold text-gray-800">{payMoney(row.fixedSalary)}</p>
                               </div>
                               <div>
                                 <p className="font-semibold uppercase tracking-wide text-gray-400">Commission</p>
-                                <p className="mt-1 font-semibold text-gray-800">{formatMoney(row.commission)}</p>
+                                <p className="mt-1 font-semibold text-gray-800">{payMoney(row.commission)}</p>
                               </div>
                               <div>
                                 <p className="font-semibold uppercase tracking-wide text-gray-400">Auto-Bonus</p>
-                                <p className="mt-1 font-semibold text-emerald-700">{formatMoney(row.autoBonus ?? 0)}</p>
+                                <p className="mt-1 font-semibold text-emerald-700">{payMoney(row.autoBonus ?? 0)}</p>
                               </div>
                               <div>
                                 <p className="font-semibold uppercase tracking-wide text-gray-400">Deductions</p>
-                                <p className="mt-1 font-semibold text-red-600">{(row.deductions ?? 0) > 0 ? `−${formatMoney(row.deductions ?? 0)}` : formatMoney(0)}</p>
+                                <p className="mt-1 font-semibold text-red-600">{(row.deductions ?? 0) > 0 ? `−${payMoney(row.deductions ?? 0)}` : formatMoney(0)}</p>
                               </div>
                             </div>
                           </article>
@@ -87306,10 +87306,10 @@ ${waybillLineItems(w).length > 1
                               <tr key={row.userId} className="hover:bg-gray-50 transition-colors">
                                 <td className="px-4 py-4 font-semibold text-gray-900">{row.name}</td>
                                 <td className="px-4 py-4 text-gray-700">{row.delivered}</td>
-                                <td className="px-4 py-4 text-gray-700">{formatMoney(row.fixedSalary)}</td>
-                                <td className="px-4 py-4 text-gray-700">{formatMoney(row.commission)}</td>
-                                <td className="px-4 py-4 text-emerald-700 font-semibold">{formatMoney(row.autoBonus ?? 0)}</td>
-                                <td className="px-4 py-4 text-red-600 font-semibold">{(row.deductions ?? 0) > 0 ? `−${formatMoney(row.deductions ?? 0)}` : formatMoney(0)}</td>
+                                <td className="px-4 py-4 text-gray-700">{payMoney(row.fixedSalary)}</td>
+                                <td className="px-4 py-4 text-gray-700">{payMoney(row.commission)}</td>
+                                <td className="px-4 py-4 text-emerald-700 font-semibold">{payMoney(row.autoBonus ?? 0)}</td>
+                                <td className="px-4 py-4 text-red-600 font-semibold">{(row.deductions ?? 0) > 0 ? `−${payMoney(row.deductions ?? 0)}` : formatMoney(0)}</td>
                                 <td className="px-4 py-4 font-bold text-[#1F8FE0]">{formatMoney(row.total)}</td>
                               </tr>
                             ))
@@ -102555,7 +102555,7 @@ ${waybillLineItems(w).length > 1
                       <li key={rule.ruleId} className="flex items-center justify-between gap-2 text-[12px]">
                         <span className="min-w-0 truncate font-semibold text-gray-700" title={rule.helper}>{rule.name}</span>
                         <span className="shrink-0 inline-flex items-center gap-1.5">
-                          <span className="font-black text-gray-900">{formatMoney(rule.earnedAmount)}</span>
+                          <span className="font-black text-gray-900">{payMoney(rule.earnedAmount)}</span>
                           {rule.completed
                             ? <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-emerald-600"><CheckCircle2 className="w-3 h-3" /> Passed</span>
                             : <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-amber-600"><AlertTriangle className="w-3 h-3" /> Not met</span>}
@@ -110369,11 +110369,11 @@ ${waybillLineItems(w).length > 1
                 const payLabel = !repPay
                   ? "Not set"
                   : repPay.type === "Per Delivered Order"
-                    ? `${formatMoney(repPay.commissionRate)} per delivered`
+                    ? `${payMoney(repPay.commissionRate)} per delivered`
                     : repPay.type === "Fixed Salary"
-                      ? `${formatMoney(repPay.fixedSalary)} fixed`
+                      ? `${payMoney(repPay.fixedSalary)} fixed`
                       : repPay.type === "Hybrid"
-                        ? `${formatMoney(repPay.fixedSalary)} + ${formatMoney(repPay.commissionRate)} / delivered`
+                        ? `${payMoney(repPay.fixedSalary)} + ${payMoney(repPay.commissionRate)} / delivered`
                         : `${repPay.bonusTiers?.length ?? 0} bonus tier${(repPay.bonusTiers?.length ?? 0) === 1 ? "" : "s"}`;
                 const repAllOrders = trackedOrders.filter((o) => o.assignedRepId === selectedSalesRep.id);
                 const repAllDelivered = repAllOrders.filter((o) => (o.status ?? "New") === "Delivered");
@@ -112240,7 +112240,7 @@ ${waybillLineItems(w).length > 1
                       </div>
                       <div className="rounded-3xl border border-white/80 bg-white/90 px-5 py-4 text-right shadow-sm dark:border-slate-700/80 dark:bg-slate-900/70">
                         <p className="m-0 text-[11px] font-black uppercase tracking-[0.16em] text-gray-400 dark:text-slate-500">Total shown in table</p>
-                        <p className="m-0 mt-1 text-4xl font-black text-emerald-600 dark:text-emerald-300">{formatMoney(bonusBreakdownData.totalBonus)}</p>
+                        <p className="m-0 mt-1 text-4xl font-black text-emerald-600 dark:text-emerald-300">{payMoney(bonusBreakdownData.totalBonus)}</p>
                         <p className="m-0 mt-1 text-xs font-bold text-gray-500 dark:text-slate-400">{bonusBreakdownData.orders.length} delivered order{bonusBreakdownData.orders.length === 1 ? "" : "s"} counted</p>
                       </div>
                     </div>
@@ -112273,11 +112273,11 @@ ${waybillLineItems(w).length > 1
                       <>
                         <div className="mt-3 grid grid-cols-2 gap-2 lg:grid-cols-5">
                           {[
-                            { label: "Earned before compliance", value: formatMoney(salesBonusEarnedBeforeCompliance), tone: "text-emerald-700 dark:text-emerald-200" },
+                            { label: "Earned before compliance", value: payMoney(salesBonusEarnedBeforeCompliance), tone: "text-emerald-700 dark:text-emerald-200" },
                             { label: "Logging compliance", value: salesBonusCompliance ? `${salesBonusCompliance.compliancePct}%` : "-", tone: salesBonusCompliance && salesBonusCompliance.compliancePct >= 90 ? "text-emerald-700 dark:text-emerald-200" : "text-rose-700 dark:text-rose-200" },
-                            { label: "Bonus at risk", value: formatMoney(salesBonusComplianceAtRisk), tone: salesBonusComplianceAtRisk > 0 ? "text-amber-700 dark:text-amber-200" : "text-gray-700 dark:text-slate-200" },
-                            { label: "Compliance deduction", value: salesBonusComplianceReduction > 0 ? `-${formatMoney(salesBonusComplianceReduction)}` : formatMoney(0), tone: salesBonusComplianceReduction > 0 ? "text-rose-700 dark:text-rose-200" : "text-gray-700 dark:text-slate-200" },
-                            { label: "Engine payable", value: formatMoney(salesBonusEarned), tone: "text-violet-800 dark:text-violet-100" }
+                            { label: "Bonus at risk", value: payMoney(salesBonusComplianceAtRisk), tone: salesBonusComplianceAtRisk > 0 ? "text-amber-700 dark:text-amber-200" : "text-gray-700 dark:text-slate-200" },
+                            { label: "Compliance deduction", value: salesBonusComplianceReduction > 0 ? `-${payMoney(salesBonusComplianceReduction)}` : formatMoney(0), tone: salesBonusComplianceReduction > 0 ? "text-rose-700 dark:text-rose-200" : "text-gray-700 dark:text-slate-200" },
+                            { label: "Engine payable", value: payMoney(salesBonusEarned), tone: "text-violet-800 dark:text-violet-100" }
                           ].map((item) => (
                             <div key={item.label} className="rounded-xl border border-white/80 bg-white/85 px-3 py-3 dark:border-violet-400/15 dark:bg-slate-950/35">
                               <p className="m-0 text-[10px] font-black uppercase tracking-[0.12em] text-gray-400 dark:text-slate-500">{item.label}</p>
@@ -112330,7 +112330,7 @@ ${waybillLineItems(w).length > 1
                     <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                       <h4 className="m-0 text-sm font-black text-gray-900 dark:text-slate-100">Bonuses up for grabs this week</h4>
                       {!bonusBreakdownSalesBonusLoading && (
-                        <span className="text-sm font-black text-pink-700 dark:text-pink-200">{formatMoney(salesBonusEarned)} earned</span>
+                        <span className="text-sm font-black text-pink-700 dark:text-pink-200">{payMoney(salesBonusEarned)} earned</span>
                       )}
                     </div>
                     {bonusBreakdownSalesBonusLoading ? (
@@ -112354,8 +112354,8 @@ ${waybillLineItems(w).length > 1
                                 </div>
                               </div>
                               <div className="shrink-0 text-right">
-                                <strong className="block text-base font-black text-gray-900 dark:text-slate-100">{formatMoney(rule.earnedAmountBeforeCompliance ?? rule.earnedAmount)}</strong>
-                                {(rule.complianceReductionAmount ?? 0) > 0 && <span className="block text-[10px] font-bold text-rose-600 dark:text-rose-300">Payable {formatMoney(rule.earnedAmount)}</span>}
+                                <strong className="block text-base font-black text-gray-900 dark:text-slate-100">{payMoney(rule.earnedAmountBeforeCompliance ?? rule.earnedAmount)}</strong>
+                                {(rule.complianceReductionAmount ?? 0) > 0 && <span className="block text-[10px] font-bold text-rose-600 dark:text-rose-300">Payable {payMoney(rule.earnedAmount)}</span>}
                               </div>
                             </div>
                           );
@@ -112508,7 +112508,7 @@ ${waybillLineItems(w).length > 1
 
                   <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                     {[
-                      { label: "Total Team Bonus", value: formatMoney(totalBonus), helper: "Estimated total", icon: Wallet, tone: "text-violet-700 bg-violet-50" },
+                      { label: "Total Team Bonus", value: payMoney(totalBonus), helper: "Estimated total", icon: Wallet, tone: "text-violet-700 bg-violet-50" },
                       { label: "Base Bonus", value: formatMoney(totalBase), helper: `${pct(totalBase)}% of total`, icon: Users, tone: "text-indigo-700 bg-indigo-50" },
                       { label: "Upsell Bonus", value: formatMoney(totalUpsell), helper: `${pct(totalUpsell)}% of total`, icon: TrendingUp, tone: "text-violet-700 bg-violet-50" },
                       { label: "Cross-sell Bonus", value: formatMoney(totalCrossSell), helper: `${pct(totalCrossSell)}% of total`, icon: Gift, tone: "text-sky-700 bg-sky-50" },
