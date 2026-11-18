@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { nairaFactor, nairaRatesFor, ordersInNaira } from "../lib/pay-currency.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
@@ -102,7 +103,7 @@ const resolveBounds = (query: Record<string, unknown>) => {
 // (base product, package components, cross-sells, free gifts - mirrors
 // src/App.tsx's costForOrder) and cost it against that product's unit_cost
 // in the order's currency.
-async function costForOrders(orders: Array<{ id: string; currency?: string | null; product_id?: string | null; product_name?: string | null; quantity?: number | null; package_components_snapshot?: unknown; cross_sell_lines?: unknown; free_gift_lines?: unknown }>) {
+async function costForOrders(orgId: string, orders: Array<{ id: string; currency?: string | null; product_id?: string | null; product_name?: string | null; quantity?: number | null; package_components_snapshot?: unknown; cross_sell_lines?: unknown; free_gift_lines?: unknown }>) {
   const linesByOrder = new Map(orders.map((order) => [order.id, orderInventoryLinesFromRow(order)]));
   const productIds = new Set<string>();
   for (const lines of linesByOrder.values()) {
@@ -118,6 +119,8 @@ async function costForOrders(orders: Array<{ id: string; currency?: string | nul
       pricingByProductCurrency.set(`${row.product_id}::${row.currency}`, Number(row.unit_cost ?? 0));
     }
   }
+  // Costs are priced in the order's own currency, then turned into naira for pay (pay-currency.ts).
+  const rates = await nairaRatesFor(orgId, orders);
   const costByOrderId = new Map<string, number>();
   for (const order of orders) {
     const currency = order.currency ?? "NGN";
@@ -127,7 +130,7 @@ async function costForOrders(orders: Array<{ id: string; currency?: string | nul
       const unitCost = pricingByProductCurrency.get(`${line.productId}::${currency}`) ?? 0;
       total += Math.max(0, Number(line.quantity) || 0) * unitCost;
     }
-    costByOrderId.set(order.id, total);
+    costByOrderId.set(order.id, total * (nairaFactor(currency, rates) ?? 1));
   }
   return costByOrderId;
 }
@@ -179,7 +182,9 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
     ]);
     if (deliveredThisMonthResult.error) { res.status(500).json({ error: deliveredThisMonthResult.error.message }); return; }
     if (closedNonDeliveredResult.error) { res.status(500).json({ error: closedNonDeliveredResult.error.message }); return; }
-    const delivered = deliveredThisMonthResult.data ?? [];
+    const deliveredRaw = deliveredThisMonthResult.data ?? [];
+    // Zambia orders in naira: Recovery Rep pay is worked out from revenue and costs (pay-currency.ts).
+    const delivered = await ordersInNaira(orgId, deliveredRaw);
     const closedNonDelivered = closedNonDeliveredResult.data ?? [];
     // Documentation completeness scores every order that reached a final
     // outcome this month - the rep's full "did I leave a proper trail"
@@ -198,7 +203,7 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
     // silently folded into another line.
     const revenue = delivered.reduce((sum, order) => sum + Number(order.amount ?? 0), 0);
     const logisticsCost = delivered.reduce((sum, order) => sum + Number(order.logistics_cost ?? 0), 0);
-    const costByOrderId = await costForOrders(delivered);
+    const costByOrderId = await costForOrders(orgId, deliveredRaw);
     const productCost = Array.from(costByOrderId.values()).reduce((sum, cost) => sum + cost, 0);
 
     const { data: products } = await supabase
@@ -233,10 +238,11 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
       .gte("delivered_date", currentWeekStart)
       .lt("delivered_date", currentWeekEnd)
       .neq("review_hold", true);
-    const weekDelivered = weekOrders ?? [];
+    const weekDeliveredRaw = weekOrders ?? [];
+    const weekDelivered = await ordersInNaira(orgId, weekDeliveredRaw);
     const weekRevenue = weekDelivered.reduce((sum, order) => sum + Number(order.amount ?? 0), 0);
     const weekLogistics = weekDelivered.reduce((sum, order) => sum + Number(order.logistics_cost ?? 0), 0);
-    const weekCostByOrderId = await costForOrders(weekDelivered);
+    const weekCostByOrderId = await costForOrders(orgId, weekDeliveredRaw);
     const weekProductCost = Array.from(weekCostByOrderId.values()).reduce((sum, cost) => sum + cost, 0);
     const weekCommission = weekDelivered.reduce((sum, order) => {
       const bonus = computeOrderBonus(order as unknown as PayrollOrder, bonusConfigMap, deliveryRatePct, 0, weekDelivered.length);
