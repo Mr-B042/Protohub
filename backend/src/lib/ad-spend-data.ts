@@ -9,6 +9,7 @@ import { tiktokAdLifetime, tiktokAdSpend, tiktokCampaignStarts } from "./tiktok-
 import { pixelAdAccounts, adLifetime, adLinks, campaignsByIds, deliveringCampaigns } from "./meta-graph.js";
 import { autoProducts, pageKey, pageProducts } from "./ad-auto-product.js";
 import { branchShareView } from "./ad-account-shares.js";
+import { sharedOnlyFrom } from "./ad-account-shares-rules.js";
 import { breakEvenCpa, sinceStart, type LifetimeRow } from "./ad-since-start.js";
 import { mappingIndex } from "./ad-spend.js";
 
@@ -216,7 +217,24 @@ export async function syncAdSpend(orgId: string, branchId: string, opts: { from:
   const [basics, tiktokConnections] = await Promise.all([loadBasics(orgId, branchId), loadTikTokConnections(orgId, branchId)]);
   const targets = refreshTargets(basics);
   const tiktokTargets = tiktokConnections.filter((row) => row.access_token).flatMap((connection) => ((connection.advertisers ?? []) as any[]).filter((adv) => adv.active !== false).map((advertiser) => ({ connection, advertiser })));
-  if (targets.length + tiktokTargets.length === 0) return { ok: false, accounts: 0, failed: [] as string[], message: "No ad account is switched on. Connect your Meta Business or TikTok Ads in Data Sources and switch on its ad accounts." };
+  if (targets.length + tiktokTargets.length === 0) {
+    // Only accounts shared in from another branch (Zambia, 18 Nov 2026): the
+    // home branch reads Meta; this branch still books its claimed campaigns as
+    // expenses. Before, it stopped here and that spend was booked nowhere.
+    const { data: shares } = await supabase.from("tracking_ad_account_shares").select("created_at").eq("org_id", orgId).eq("branch_id", branchId);
+    if (!(shares ?? []).length) return { ok: false, accounts: 0, failed: [] as string[], message: "No ad account is switched on. Connect your Meta Business or TikTok Ads in Data Sources and switch on its ad accounts." };
+    const { data: state } = await supabase.from("tracking_ad_spend_state").select("last_sync_at").eq("org_id", orgId).eq("branch_id", branchId).maybeSingle();
+    const sharedSince = ((shares ?? []) as any[]).map((row) => lagosDateKey(String(row.created_at))).sort()[0] ?? null;
+    const from = sharedOnlyFrom(opts.from, (state as any)?.last_sync_at, sharedSince);
+    const { syncAdSpendExpenses } = await import("./ad-spend-expenses.js");
+    await syncAdSpendExpenses(orgId, branchId, { from, to: opts.to });
+    const message = `Booked spend from ${shares!.length} shared ad account${shares!.length === 1 ? "" : "s"} (read by the home branch).`;
+    const { error } = await supabase.from("tracking_ad_spend_state").upsert({
+      org_id: orgId, branch_id: branchId, last_sync_at: now.toISOString(), last_sync_ok: true, last_sync_message: message, last_sync_trigger: opts.trigger, updated_at: now.toISOString()
+    }, { onConflict: "org_id,branch_id" });
+    if (error) throw error;
+    return { ok: true, accounts: shares!.length, failed: [] as string[], message };
+  }
   const jobs: Array<() => Promise<{ source: string; account: string; ok: boolean; message: string; rows: number }>> = [
     ...targets.map((target) => () => refreshAccount(orgId, branchId, target, opts.from, opts.to)),
     ...tiktokTargets.map(({ connection, advertiser }) => () => refreshTikTokAdvertiser(orgId, branchId, connection, advertiser, opts.from, opts.to))

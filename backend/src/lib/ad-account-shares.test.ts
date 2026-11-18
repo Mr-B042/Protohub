@@ -28,3 +28,11 @@ test("a page proof never beats home orders", () => {
   e.pageBranches.set("x", new Set([ZM]));
   assert.equal(decideClaims([c("x")], e).has("x"), false);
 });
+
+test("a branch with only shared accounts books back to the share's start once, then just the days asked", async () => {
+  const { sharedOnlyFrom } = await import("./ad-account-shares-rules.js");
+  assert.equal(sharedOnlyFrom("2026-11-17", null, "2026-11-15"), "2026-11-15");          // first run: back-fill
+  assert.equal(sharedOnlyFrom("2026-11-17", "2026-11-18T00:13:00Z", "2026-11-15"), "2026-11-17"); // later runs
+  assert.equal(sharedOnlyFrom("2026-11-10", null, "2026-11-15"), "2026-11-10");          // asked for more: keep it
+  assert.equal(sharedOnlyFrom("2026-11-17", null, null), "2026-11-17");
+});
