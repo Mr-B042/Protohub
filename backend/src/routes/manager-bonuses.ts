@@ -8,6 +8,7 @@ import {
   type ManagerBonusSettings
 } from "../lib/manager-bonus.js";
 import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
+import { nairaFactor, nairaRatesFor, orderInNaira } from "../lib/pay-currency.js";
 import { supabase } from "../lib/supabase.js";
 import { resolveOrderCogs } from "../lib/order-cogs.js";
 import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
@@ -261,9 +262,12 @@ router.get("/summary", async (req, res) => {
     if (expensesResult.error) throw expensesResult.error;
 
     const cohortOrders = cohortOrdersResult.data ?? [];
-    const deliveredOrders = deliveredOrdersResult.data ?? [];
+    // Zambia money in naira for pay (pay-currency.ts): orders, product cost and expenses.
+    const deliveredOrdersRaw = deliveredOrdersResult.data ?? [];
+    const payRates = await nairaRatesFor(req.user!.orgId, [...deliveredOrdersRaw, ...((expensesResult.data ?? []) as Array<{ currency?: unknown }>)]);
+    const deliveredOrders = deliveredOrdersRaw.map((order) => orderInNaira(order, payRates));
     const productIds = Array.from(new Set(
-      deliveredOrders.flatMap((order) =>
+      deliveredOrdersRaw.flatMap((order) =>
         orderInventoryLinesFromRow(order).map((line) => line.productId)
       ).filter(Boolean)
     ));
@@ -278,9 +282,9 @@ router.get("/summary", async (req, res) => {
     // see on the Dashboard.
     const deliveryRate = cohortOrders.length > 0 ? Math.round((deliveredOrders.length / cohortOrders.length) * 1000) / 10 : 0;
     const revenue = deliveredOrders.reduce((sum, order) => sum + numericAmount(order.amount), 0);
-    const cogs = deliveredOrders.reduce((sum, order) => sum + cogsForOrder(order, pricingMap), 0);
+    const cogs = deliveredOrdersRaw.reduce((sum, order) => sum + cogsForOrder(order, pricingMap) * (nairaFactor(order.currency, payRates) ?? 1), 0);
     const logisticsFromOrders = deliveredOrders.reduce((sum, order) => sum + numericAmount(order.logistics_cost), 0);
-    const expenses = expensesResult.data ?? [];
+    const expenses = (expensesResult.data ?? []).map((expense) => orderInNaira(expense, payRates));
     const recordedDeliveryExpense = expenses
       .filter((expense) => String(expense.category ?? "") === "Delivery")
       .reduce((sum, expense) => sum + numericAmount(expense.amount), 0);

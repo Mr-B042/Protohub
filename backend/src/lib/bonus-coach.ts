@@ -8,6 +8,7 @@ import {
   type ProductRecord
 } from "./payroll-calculator.js";
 import { getSalesBonusProgress } from "./sales-bonus-engine.js";
+import { ordersInNaira } from "./pay-currency.js";
 import { supabase } from "./supabase.js";
 import { REPORT_ROW_CEILING } from "./query-limits.js";
 
@@ -310,7 +311,7 @@ export const buildRepBonusSnapshot = async (
       .maybeSingle(),
     supabase
       .from("orders")
-      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name").neq("launch_stage", "silent")
+      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name, currency").neq("launch_stage", "silent")
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .eq("status", "Delivered")
@@ -318,7 +319,7 @@ export const buildRepBonusSnapshot = async (
       .lt("delivered_date", nextWeekStart),
     supabase
       .from("orders")
-      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name").neq("launch_stage", "silent")
+      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name, currency").neq("launch_stage", "silent")
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .eq("status", "Delivered")
@@ -327,7 +328,7 @@ export const buildRepBonusSnapshot = async (
       .lt("updated_at", nextWeekStartTs),
     supabase
       .from("orders")
-      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name").neq("launch_stage", "silent")
+      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name, currency").neq("launch_stage", "silent")
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .eq("assigned_rep_id", repId)
@@ -336,7 +337,7 @@ export const buildRepBonusSnapshot = async (
       .lt("created_at", nextWeekStartTs),
     supabase
       .from("orders")
-      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name").neq("launch_stage", "silent")
+      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name, currency").neq("launch_stage", "silent")
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .eq("assigned_rep_id", repId)
@@ -360,13 +361,13 @@ export const buildRepBonusSnapshot = async (
   const orgSettings = (orgResult.data as OrgBonusSettings | null) ?? null;
 
   const deliveredMap = new Map<string, BonusCoachOrder>();
-  for (const order of [...(deliveredResult.data ?? []), ...(deliveredFallbackResult.data ?? [])] as BonusCoachOrder[]) {
+  for (const order of await ordersInNaira(orgId, [...(deliveredResult.data ?? []), ...(deliveredFallbackResult.data ?? [])] as BonusCoachOrder[])) {
     deliveredMap.set(order.id, order);
   }
   const allDeliveredThisWeek = Array.from(deliveredMap.values());
   const repDeliveredOrders = allDeliveredThisWeek.filter((order) => order.assigned_rep_id === repId);
-  const repPendingWeekOrders = (pendingWeekResult.data ?? []) as BonusCoachOrder[];
-  const openOrders = (openOrdersResult.data ?? []) as BonusCoachOrder[];
+  const repPendingWeekOrders = await ordersInNaira(orgId, (pendingWeekResult.data ?? []) as BonusCoachOrder[]);
+  const openOrders = await ordersInNaira(orgId, (openOrdersResult.data ?? []) as BonusCoachOrder[]);
 
   const repStats = buildWeeklyStats(repDeliveredOrders, repPendingWeekOrders);
   const currentRate = repStats.total > 0 ? (repStats.delivered / repStats.total) * 100 : 0;

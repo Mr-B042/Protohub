@@ -1,3 +1,4 @@
+import { ordersInNaira } from "./pay-currency.js";
 import { supabase } from "./supabase.js";
 import { TtlCache } from "./ttl-cache.js";
 import { salesExpansionComplianceForRepWeek, type SalesExpansionCompliance } from "./sales-expansion.js";
@@ -69,6 +70,7 @@ export type SalesBonusOrder = {
   phone?: string | null;
   status?: string | null;
   amount?: number | null;
+  currency?: string | null;
   quantity?: number | null;
   product_id?: string | null;
   product_name?: string | null;
@@ -816,7 +818,7 @@ export const getSalesBonusProgress = async (
       .eq("active", true),
     supabase
       .from("orders")
-      .select("id, assigned_rep_id, customer, phone, status, amount, quantity, product_id, product_name, package_id, package_name, source, embed_label, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, full_upfront_paid, full_upfront_paid_at, created_at, updated_at, delivered_date, review_hold").neq("launch_stage", "silent")
+      .select("id, assigned_rep_id, customer, phone, status, amount, quantity, product_id, product_name, package_id, package_name, source, embed_label, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, full_upfront_paid, full_upfront_paid_at, created_at, updated_at, delivered_date, review_hold, currency").neq("launch_stage", "silent")
       .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .gte("created_at", `${weekStart}T00:00:00`)
@@ -829,7 +831,8 @@ export const getSalesBonusProgress = async (
   const reps = ((usersResult.data ?? []) as SalesBonusRep[])
     .filter((rep) => !options.repId || rep.id === options.repId);
   const flattened = flattenPrograms(programs);
-  const orders = (ordersResult.data ?? []) as SalesBonusOrder[];
+  // Zambia orders in naira for pay (pay-currency.ts): the % and minimum-price rules read money.
+  const orders = await ordersInNaira(orgId, (ordersResult.data ?? []) as SalesBonusOrder[]);
   const repProgress = await Promise.all(reps.map(async (rep) => {
     const progress = computeSalesBonusForRep({
       rep,
@@ -1045,7 +1048,7 @@ export const perOrderBonusSettlementMapForDeliveredRange = async (
 
   const { data, error } = await supabase
     .from("orders")
-    .select("id, amount, created_at").neq("launch_stage", "silent")
+    .select("id, amount, currency, created_at").neq("launch_stage", "silent")
     .limit(REPORT_ROW_CEILING)
     .eq("org_id", orgId)
     .eq("status", "Delivered")
@@ -1053,7 +1056,7 @@ export const perOrderBonusSettlementMapForDeliveredRange = async (
     .lt("delivered_date", exclusiveTo);
   if (error) throw new Error(error.message);
 
-  const inRangeOrders = (data ?? []) as { id: string; amount: number | null; created_at: string | null }[];
+  const inRangeOrders = await ordersInNaira(orgId, (data ?? []) as { id: string; amount: number | null; currency?: string | null; created_at: string | null }[]);
   if (inRangeOrders.length === 0) return {};
   const inRangeIds = new Set(inRangeOrders.map((order) => order.id));
   const orderAmountById = new Map(inRangeOrders.map((order) => [order.id, positiveAmount(order.amount)]));
@@ -1133,7 +1136,7 @@ export const perOrderExpansionBonusBreakdownMapForDeliveredRange = async (
 
   const { data, error } = await supabase
     .from("orders")
-    .select("id, amount, created_at").neq("launch_stage", "silent")
+    .select("id, amount, currency, created_at").neq("launch_stage", "silent")
     .limit(REPORT_ROW_CEILING)
     .eq("org_id", orgId)
     .eq("status", "Delivered")
@@ -1141,7 +1144,7 @@ export const perOrderExpansionBonusBreakdownMapForDeliveredRange = async (
     .lt("delivered_date", exclusiveTo);
   if (error) throw new Error(error.message);
 
-  const inRangeOrders = (data ?? []) as { id: string; amount: number | null; created_at: string | null }[];
+  const inRangeOrders = await ordersInNaira(orgId, (data ?? []) as { id: string; amount: number | null; currency?: string | null; created_at: string | null }[]);
   if (inRangeOrders.length === 0) return {};
   const inRangeIds = new Set(inRangeOrders.map((order) => order.id));
   const orderAmountById = new Map(inRangeOrders.map((order) => [order.id, positiveAmount(order.amount)]));
@@ -1182,7 +1185,7 @@ export const perOrderSalesBonusBreakdown = async (
 ): Promise<SalesBonusOrderBreakdownItem[]> => {
   const { data: order, error } = await supabase
     .from("orders")
-    .select("id, assigned_rep_id, amount, created_at").neq("launch_stage", "silent")
+    .select("id, assigned_rep_id, amount, currency, created_at").neq("launch_stage", "silent")
     .eq("org_id", orgId)
     .eq("id", orderId)
     .maybeSingle();
@@ -1196,7 +1199,8 @@ export const perOrderSalesBonusBreakdown = async (
   const rep = progress.reps[0];
   if (!rep) return [];
 
-  const orderAmountById = new Map([[order.id, positiveAmount(order.amount)]]);
+  const [payOrder] = await ordersInNaira(orgId, [order as { id: string; amount: number | null; currency?: string | null }]);
+  const orderAmountById = new Map([[order.id, positiveAmount(payOrder.amount)]]);
   const items: SalesBonusOrderBreakdownItem[] = [];
   for (const rule of rep.rules) {
     if (!rule.qualifiedOrderIds.includes(order.id)) continue;

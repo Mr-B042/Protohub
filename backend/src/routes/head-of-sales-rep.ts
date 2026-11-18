@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { ordersInNaira } from "../lib/pay-currency.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import {
@@ -115,7 +116,7 @@ export async function loadOrdersSince(orgId: string, repIds: string[], sinceDate
     const from = page * ORDER_PAGE_SIZE;
     const { data, error } = await supabase
       .from("orders")
-      .select("id, assigned_rep_id, status, amount, quantity, created_at, delivered_date, review_hold, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines").neq("launch_stage", "silent")
+      .select("id, assigned_rep_id, status, amount, quantity, created_at, delivered_date, review_hold, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines, currency").neq("launch_stage", "silent")
       .eq("org_id", orgId)
       .in("assigned_rep_id", repIds)
       .gte("created_at", `${sinceDateKey}T00:00:00Z`)
@@ -124,7 +125,8 @@ export async function loadOrdersSince(orgId: string, repIds: string[], sinceDate
       .range(from, from + ORDER_PAGE_SIZE - 1);
     if (error) throw error;
     const rows = (data ?? []) as HeadOfSalesOrder[];
-    all.push(...rows);
+    // Zambia orders in naira: Head of Sales pay reads team AOV (pay-currency.ts).
+    all.push(...await ordersInNaira(orgId, rows));
     if (rows.length < ORDER_PAGE_SIZE) break;
     // Hard stop so a runaway range can never spin forever.
     if (page > 50) break;
