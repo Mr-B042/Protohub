@@ -1599,6 +1599,11 @@ export type WeeklyOverviewView = {
   openingCounted: boolean;
 };
 
+/** Naira per one unit of a branch currency (staff pay is naira; profit is branch money). */
+export const payRateApi = {
+  get: (currency: string) => get<{ currency: string; nairaPer: number | null }>(`/api/system/pay-rate?currency=${encodeURIComponent(currency)}`)
+};
+
 export const cashFlowApi = {
   summary: (from: string, to: string) =>
     get<CashFlowView>(`/api/cash-flow?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),

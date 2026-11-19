@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { probeRowCapDeep } from "../lib/row-cap-probe.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
+import { rateFor } from "../lib/currency-rates.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -15,6 +16,20 @@ router.use(requireAuth);
  * read-only queries. Owner-only because it reports schema-level facts (real
  * table sizes), not because it changes anything: it writes nothing.
  */
+// Naira per one unit of a branch's currency (Bright, 19 Nov 2026). Staff pay is
+// in naira in every branch; profit pages show it in the branch's own money, so
+// any role that sees profit needs the Owner's rate (Data Sources card).
+router.get("/pay-rate", async (req, res) => {
+  const currency = String(req.query.currency ?? "").toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) return res.status(400).json({ error: "Pick a currency code." });
+  try {
+    const rate = await rateFor(req.user!.orgId, "NGN", currency);
+    res.json({ currency, nairaPer: rate && rate.fromPerTo > 0 ? rate.fromPerTo : null });
+  } catch {
+    res.status(500).json({ error: "Could not load the exchange rate." });
+  }
+});
+
 router.get("/row-cap", requireRole("Owner"), async (_req, res) => {
   const probe = await probeRowCapDeep();
   const setting = "Supabase → Settings → API → Max rows";
