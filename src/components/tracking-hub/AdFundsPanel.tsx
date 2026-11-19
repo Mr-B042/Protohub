@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, Bell, BellOff, CheckCircle2, ChevronDown, CreditCard, Loader2, RefreshCw, Wallet } from "lucide-react";
+import { AlertTriangle, Bell, BellOff, CheckCircle2, ChevronDown, Clock, CreditCard, Loader2, RefreshCw, Wallet } from "lucide-react";
 import { trackingHubApi, type AdFundsAccount, type AdFundsView } from "../../lib/api";
 
 /**
@@ -44,6 +44,14 @@ function AccountCard({ row, threshold }: { row: AdFundsAccount; threshold: numbe
           </span>
         </>
       )}
+      {row.lastFundedAt ? (
+        <span className="mt-1 flex items-center gap-1 text-[11.5px] text-gray-500 dark:text-slate-400">
+          <Clock className="h-3 w-3" />Last funded {lagosTime(row.lastFundedAt)}
+          {row.lastFundedAmount !== null && <> · <b className="font-semibold text-gray-700 dark:text-slate-200">{row.currency === "NGN" ? naira(row.lastFundedAmount) : `${row.currency} ${row.lastFundedAmount.toLocaleString()}`}</b></>}
+        </span>
+      ) : row.source === "prepaid" ? (
+        <span className="mt-1 flex items-center gap-1 text-[11.5px] text-gray-400 dark:text-slate-500"><Clock className="h-3 w-3" />No top-up in Meta's recent history</span>
+      ) : null}
       {row.error && <p className="m-0 mt-1.5 text-[11.5px] text-amber-700 dark:text-amber-300">Last read failed: {row.error}{row.checkedAt ? ` (showing ${lagosTime(row.checkedAt)})` : ""}</p>}
     </div>
   );

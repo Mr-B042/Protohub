@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { alertDue, amountInWords, cleanFundsSettings, fundsLeft, lowReason } from "./ad-funds-rules.js";
+import { alertDue, amountInWords, cleanFundsSettings, fundingFromActivity, fundsLeft, lowReason } from "./ad-funds-rules.js";
 
 test("settings default to on at ₦5,000 and reject junk", () => {
   assert.deepEqual(cleanFundsSettings(undefined), { enabled: true, threshold: 5000 });
@@ -50,4 +50,12 @@ test("alert at once, then every 6 hours in the day only", () => {
   assert.equal(alertDue({ low: true, lowSince: "2026-11-12T08:00:00Z", lastAlertAt: "2026-11-12T08:00:00Z", nowMs: at("2026-11-12T14:00:00Z") }), "remind");
   // 11pm Lagos: no reminder at night.
   assert.equal(alertDue({ low: true, lowSince: "2026-11-12T08:00:00Z", lastAlertAt: "2026-11-12T08:00:00Z", nowMs: at("2026-11-12T22:00:00Z") }), null);
+});
+
+test("last top-up from Meta activity", () => {
+  const got = fundingFromActivity({ time: "2026-11-19T10:43:09+0000", extraData: '{"action":67,"amount":1000000,"currency":"NGN","fee":0,"network_id":"Pay by Bank Transfer"}' }, "NGN");
+  assert.deepEqual(got, { at: "2026-11-19T10:43:09.000Z", amount: 10000 });
+  assert.equal(fundingFromActivity(null, "NGN"), null);
+  assert.equal(fundingFromActivity({ time: "not a date", extraData: null }, "NGN"), null);
+  assert.deepEqual(fundingFromActivity({ time: "2026-11-18T05:34:18+0000", extraData: "broken" }, "NGN"), { at: "2026-11-18T05:34:18.000Z", amount: null });
 });

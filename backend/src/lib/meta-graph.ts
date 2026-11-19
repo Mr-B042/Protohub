@@ -452,6 +452,29 @@ export async function adAccountFunds(adAccountId: string, token: string) {
 }
 
 /**
+ * The account's most recent successful top-up (Bright, 19 Nov 2026: "last real
+ * time it was funded"). Meta logs every "Add funds" payment as an activity
+ * `funding_event_successful` with its time and amount. Newest first; `since`
+ * (unix seconds) skips history already read. At most 5 pages of 100.
+ */
+export async function lastFundingEvent(adAccountId: string, token: string, since?: number) {
+  const id = String(adAccountId).replace(/^act_/, "");
+  const params: Record<string, string> = { fields: "event_type,event_time,extra_data", limit: "100" };
+  if (since) params.since = String(since);
+  let after: string | undefined;
+  for (let page = 0; page < 5; page += 1) {
+    const result = await graphGet<{ data?: Array<{ event_type?: string; event_time?: string; extra_data?: string }>; paging?: { cursors?: { after?: string }; next?: string } }>(
+      `act_${id}/activities`, token, { ...params, ...(after ? { after } : {}) });
+    if (!result.ok) return { ok: false as const, message: result.message };
+    const hit = (result.data.data ?? []).find((row) => row.event_type === "funding_event_successful");
+    if (hit) return { ok: true as const, event: { time: String(hit.event_time ?? ""), extraData: hit.extra_data ?? null } };
+    after = result.data.paging?.next ? result.data.paging?.cursors?.after : undefined;
+    if (!after) break;
+  }
+  return { ok: true as const, event: null };
+}
+
+/**
  * Each ad's destination link (Bright, 15 Nov 2026: tell an ad's product from
  * its landing page). 50 ads per call; an ad Meta shows no link for gets null.
  */

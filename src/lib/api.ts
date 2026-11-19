@@ -4773,6 +4773,8 @@ export type AdFundsAccount = {
   accountId: string; name: string; currency: string; fundsLeft: number | null; source: "prepaid" | "spend_limit" | null;
   lowReason: "low" | "unpaid" | null; accountStatus: number | null; fundingText: string | null;
   checkedAt: string | null; error: string | null; lowSince: string | null; lastAlertAt: string | null;
+  /** Meta's most recent successful "Add funds" payment (19 Nov 2026). */
+  lastFundedAt: string | null; lastFundedAmount: number | null;
 };
 export type AdFundsView = { settings: { enabled: boolean; threshold: number }; accounts: AdFundsAccount[]; unchecked: number };
 export type CampaignDroughtGroup = "off" | "watch" | "adjust";
