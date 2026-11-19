@@ -91,3 +91,18 @@ export function alertDue(input: { low: boolean; lowSince: string | null; lastAle
 }
 
 export const naira = (value: number) => `₦${Math.round(value).toLocaleString("en-NG")}`;
+
+/**
+ * A Meta `funding_event_successful` activity → when and how much was added.
+ * extra_data is JSON text: {"amount":1000000,"currency":"NGN",...} (kobo).
+ * Null when the time is not a real date.
+ */
+export function fundingFromActivity(event: { time: string; extraData: string | null } | null, fallbackCurrency: string): { at: string; amount: number | null } | null {
+  if (!event) return null;
+  const ms = Date.parse(String(event.time).replace(/([+-]\d{2})(\d{2})$/, "$1:$2"));
+  if (!Number.isFinite(ms)) return null;
+  let extra: Record<string, unknown> = {};
+  try { extra = event.extraData ? JSON.parse(event.extraData) : {}; } catch { extra = {}; }
+  const currency = String(extra.currency ?? fallbackCurrency ?? "NGN");
+  return { at: new Date(ms).toISOString(), amount: minorToMajor(extra.amount as any, currency) };
+}

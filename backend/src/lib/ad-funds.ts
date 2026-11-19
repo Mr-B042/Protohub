@@ -1,12 +1,12 @@
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
-import { adAccountFunds } from "./meta-graph.js";
+import { adAccountFunds, lastFundingEvent } from "./meta-graph.js";
 import { humanMetaError } from "./tracking-hub.js";
 import { alertRecipients } from "./notification-routing.js";
 import { alertSeesAdSpend } from "./alert-privacy.js";
 import { getOrgPushBranding } from "./push-branding.js";
 import { sendPushToUser } from "./push.js";
-import { alertDue, cleanFundsSettings, fundsLeft, lowReason, naira, type FundsSettings, type LowReason } from "./ad-funds-rules.js";
+import { alertDue, cleanFundsSettings, fundingFromActivity, fundsLeft, lowReason, naira, type FundsSettings, type LowReason } from "./ad-funds-rules.js";
 
 // Low ad account funds (Bright, 12 Nov 2026). Every 30 minutes, after the ad
 // spend sync: each switched-on Meta ad account's money left, saved in
@@ -75,7 +75,7 @@ export async function runAdFundsCheck(opts: { orgId?: string; nowMs?: number } =
     try {
       if (!settingsByOrg.has(target.orgId)) settingsByOrg.set(target.orgId, await fundsSettingsFor(target.orgId));
       const settings = settingsByOrg.get(target.orgId)!;
-      const { data: before } = await supabase.from("tracking_ad_account_funds").select("low_since, last_alert_at")
+      const { data: before } = await supabase.from("tracking_ad_account_funds").select("low_since, last_alert_at, last_funded_at, last_funded_amount")
         .eq("org_id", target.orgId).eq("ad_account_id", target.account).maybeSingle();
       const result = await adAccountFunds(target.account, target.token);
       if (!result.ok) {
@@ -90,6 +90,13 @@ export async function runAdFundsCheck(opts: { orgId?: string; nowMs?: number } =
       const raw = result.data;
       const currency = String(raw.currency || target.currency);
       const { left, source } = fundsLeft({ ...raw, currency });
+      // Last top-up: only history newer than the one already saved is read; a
+      // failed read or nothing new keeps the saved one.
+      const savedFundedAt: string | null = (before as any)?.last_funded_at ?? null;
+      const savedFundedAmount = (before as any)?.last_funded_amount ?? null;
+      const funding = await lastFundingEvent(target.account, target.token, savedFundedAt ? Math.floor(Date.parse(savedFundedAt) / 1000) : undefined);
+      const latest = funding.ok ? fundingFromActivity(funding.event, currency) : null;
+      const funded = latest && (!savedFundedAt || Date.parse(latest.at) >= Date.parse(savedFundedAt)) ? latest : { at: savedFundedAt, amount: savedFundedAmount === null ? null : Number(savedFundedAmount) };
       const status = typeof raw.account_status === "number" ? raw.account_status : null;
       const reason = lowReason({ left, currency, accountStatus: status, threshold: settings.threshold });
       const due = settings.enabled ? alertDue({ low: Boolean(reason), lowSince: (before as any)?.low_since ?? null, lastAlertAt: (before as any)?.last_alert_at ?? null, nowMs }) : null;
@@ -98,7 +105,8 @@ export async function runAdFundsCheck(opts: { orgId?: string; nowMs?: number } =
         is_prepay: raw.is_prepay_account ?? null, account_status: status, disable_reason: raw.disable_reason ?? null,
         balance_minor: raw.balance ?? null, amount_spent_minor: raw.amount_spent ?? null, spend_cap_minor: raw.spend_cap ?? null,
         funding_type: raw.funding_source_details?.type ?? null, funding_display: raw.funding_source_details?.display_string ?? null,
-        funds_left: left, funds_source: source, low_reason: reason, checked_at: nowIso, error: null, error_at: null,
+        funds_left: left, funds_source: source, low_reason: reason, checked_at: nowIso,
+        last_funded_at: funded.at, last_funded_amount: funded.amount, error: null, error_at: null,
         low_since: reason ? ((before as any)?.low_since ?? nowIso) : null,
         // Marked alerted only once the alert is saved (below): a refused alert is tried again next run.
         last_alert_at: reason ? (before as any)?.last_alert_at ?? null : null
@@ -140,7 +148,7 @@ async function sendFundsAlert(target: Target, name: string, reason: LowReason, l
 export async function adFundsView(orgId: string) {
   const [settings, rows] = await Promise.all([
     fundsSettingsFor(orgId),
-    supabase.from("tracking_ad_account_funds").select("ad_account_id, name, currency, funds_left, funds_source, low_reason, account_status, is_prepay, funding_display, checked_at, error, error_at, low_since, last_alert_at").eq("org_id", orgId)
+    supabase.from("tracking_ad_account_funds").select("ad_account_id, name, currency, funds_left, funds_source, low_reason, account_status, is_prepay, funding_display, checked_at, error, error_at, low_since, last_alert_at, last_funded_at, last_funded_amount").eq("org_id", orgId)
   ]);
   if (rows.error) throw rows.error;
   const active = new Set((await targets(orgId)).map((target) => target.account));
@@ -148,7 +156,8 @@ export async function adFundsView(orgId: string) {
     accountId: String(row.ad_account_id), name: String(row.name ?? ""), currency: String(row.currency ?? "NGN"),
     fundsLeft: row.funds_left === null ? null : Number(row.funds_left), source: row.funds_source as "prepaid" | "spend_limit" | null,
     lowReason: row.low_reason as LowReason | null, accountStatus: row.account_status, fundingText: row.funding_display ?? null,
-    checkedAt: row.checked_at, error: row.error, lowSince: row.low_since, lastAlertAt: row.last_alert_at
+    checkedAt: row.checked_at, error: row.error, lowSince: row.low_since, lastAlertAt: row.last_alert_at,
+    lastFundedAt: row.last_funded_at ?? null, lastFundedAmount: row.last_funded_amount === null || row.last_funded_amount === undefined ? null : Number(row.last_funded_amount)
   })).sort((a, b) => Number(Boolean(b.lowReason)) - Number(Boolean(a.lowReason)) || (a.fundsLeft ?? Infinity) - (b.fundsLeft ?? Infinity) || a.name.localeCompare(b.name));
   return { settings, accounts, unchecked: [...active].filter((id) => !accounts.some((row) => row.accountId === id)).length };
 }
