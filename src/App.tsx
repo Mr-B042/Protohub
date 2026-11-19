@@ -176,7 +176,7 @@ import {
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, ordersExtraApi, productCostApi, stockApi as _stockApi,
   weeklyReportsApi, managerFundsApi, logMissApi, salesScriptApi, embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, upsellPerformanceApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, targetPeriodsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
   branchesApi, setApiSpyUserId, type ApprovedPayoutChange, type CartAssignmentPanel, type CartHandOutRules,
-  setApiPreviewReadOnly, pageVisitsApi, fineAppealsApi, trackingHubApi, socialLeadsApi,
+  setApiPreviewReadOnly, pageVisitsApi, payRateApi, fineAppealsApi, trackingHubApi, socialLeadsApi,
   PreviewReadOnlyError, type BranchWorkspace,
   customerReviewsApi,
   readActiveBranch, writeActiveBranch,
@@ -9882,6 +9882,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Dashboard/Finance/Weekly-Accounting/Reports each have different period
   // pickers - see central data loader.
   const [newEngineBonusByOrderId, setNewEngineBonusByOrderId] = useState<Record<string, number>>({});
+  // Staff pay is worked out in naira in every branch (#1022/#1023), but profit
+  // is in the branch's own money (Bright, 19 Nov 2026). Every bonus that comes
+  // off profit goes through payInBranch(), at the Owner's rate on the Data
+  // Sources card (₦61 per K1). Pay screens keep showing naira (payMoney).
+  const [payRateNairaPer, setPayRateNairaPer] = useState<number | null>(null);
+  useEffect(() => {
+    if (currency === "NGN") { setPayRateNairaPer(null); return; }
+    let live = true;
+    payRateApi.get(currency).then((result) => { if (live) setPayRateNairaPer(result.nairaPer && result.nairaPer > 0 ? result.nairaPer : null); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [currency]);
+  /** A naira staff-pay amount in the branch's money (unchanged in naira branches). */
+  const payInBranch = (nairaAmount: number) =>
+    currency === "NGN" || !payRateNairaPer ? nairaAmount : Math.round((nairaAmount / payRateNairaPer) * 100) / 100;
+  /** A branch-money amount in naira, for comparing with naira pay targets. */
+  const branchInNaira = (amount: number) =>
+    currency === "NGN" || !payRateNairaPer ? amount : amount * payRateNairaPer;
   // Payout changes the Owner approved on weekly reports (migration 299). The
   // bonus on record for a rep's week is the system figure plus this change,
   // so every company-level bonus cost below adds it. Empty for roles that do
@@ -19818,6 +19835,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     rows.reduce((sum, order) => sum + (newEngineBonusByOrderId[order.id] ?? 0), 0);
   const recognizedBonusTotalForRows = (rows: TrackedOrder[]) =>
     legacyBonusTotalForRows(rows) + newEngineBonusTotalForRows(rows);
+  /** The same bonus as a cost in the branch's money, for profit. */
+  const recognizedBonusInBranchForRows = (rows: TrackedOrder[]) => payInBranch(recognizedBonusTotalForRows(rows));
   const legacyBonusTotalForSalesBonusRep = (rep?: SalesBonusRepProgress | null) => {
     if (!rep) return 0;
     return legacyBonusTotalForRows(trackedOrders.filter((order) => {
@@ -19846,17 +19865,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const delivered = cohort.filter((order) => (order.status ?? "New") === "Delivered").length;
     return Math.round((delivered / cohort.length) * 1000) / 10;
   };
+  // Net profit comes in the branch's money; the gate and the amounts are naira
+  // pay rules, so the gate compares in naira and the cost goes back in branch money.
   const managerBonusExpenseForProfit = (netProfitBeforeManagerBonus: number, deliveryRate: number) => {
     const settings = managerBonusSettingsForProfit;
     if (!settings) return 0;
-    if (netProfitBeforeManagerBonus < settings.profitGateAmount) {
-      return Math.max(0, Math.round(settings.supportBonusAmount || 0));
+    if (branchInNaira(netProfitBeforeManagerBonus) < settings.profitGateAmount) {
+      return payInBranch(Math.max(0, Math.round(settings.supportBonusAmount || 0)));
     }
     const rate = Math.max(0, Math.min(100, Number.isFinite(deliveryRate) ? deliveryRate : 0));
     const tier = settings.tiers.find((item) =>
       rate >= item.minRate && (item.maxRate == null || rate <= item.maxRate)
     );
-    return Math.max(0, Math.round((tier?.amount ?? settings.belowTierAmount) || 0));
+    return payInBranch(Math.max(0, Math.round((tier?.amount ?? settings.belowTierAmount) || 0)));
   };
   /**
    * Owner-approved payout changes for the given Sunday weeks, added up.
@@ -19889,8 +19910,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const recognizedLogistics = logisticsFromOrders > 0 ? logisticsFromOrders : recordedDeliveryExpense;
     const expenseRowsExDelivery = periodExpenses.filter((expense) => expense.type !== "Delivery");
     const recordedOperatingExpense = expenseRowsExDelivery.reduce((sum, expense) => sum + expense.amount, 0);
-    const legacyBonusEstimate = legacyBonusTotalForRows(deliveredRows);
-    const newEngineBonusEstimate = newEngineBonusTotalForRows(deliveredRows);
+    // Bonuses are naira pay; profit is branch money (payInBranch).
+    const legacyBonusEstimate = payInBranch(legacyBonusTotalForRows(deliveredRows));
+    const newEngineBonusEstimate = payInBranch(newEngineBonusTotalForRows(deliveredRows));
     // Payout changes the Owner approved on the weekly reports (Bright, 11 Oct
     // 2026): the bonus on record is the system figure plus the change, so a
     // bonus the manager took off is not counted as paid. A change belongs to a
@@ -19899,7 +19921,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // only for the weeks the window owns.
     const payoutChangeWeeks = options?.payoutChangeWeeks ?? (options?.includeManagerBonus ? options?.managerBonusWeeks : undefined);
     const systemBonusEstimate = legacyBonusEstimate + newEngineBonusEstimate;
-    const approvedPayoutChange = Math.max(-systemBonusEstimate, approvedPayoutChangeForWeeks(payoutChangeWeeks));
+    const approvedPayoutChange = Math.max(-systemBonusEstimate, payInBranch(approvedPayoutChangeForWeeks(payoutChangeWeeks)));
     const bonusEstimate = systemBonusEstimate + approvedPayoutChange;
     const grossProfit = revenue - cogs - recognizedLogistics;
     const operatingExpenseBeforeManagerBonus = recordedOperatingExpense + bonusEstimate;
@@ -19929,8 +19951,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             const weekDeliveryExpense = weekExpenses.filter((expense) => expense.type === "Delivery").reduce((total, expense) => total + expense.amount, 0);
             const weekLogistics = weekLogisticsFromOrders > 0 ? weekLogisticsFromOrders : weekDeliveryExpense;
             const weekOperating = weekExpenses.filter((expense) => expense.type !== "Delivery").reduce((total, expense) => total + expense.amount, 0);
-            const weekSystemBonus = legacyBonusTotalForRows(weekDelivered) + newEngineBonusTotalForRows(weekDelivered);
-            const weekSalesBonus = weekSystemBonus + Math.max(-weekSystemBonus, payoutChangeWeeks ? approvedPayoutChangeForWeeks([week]) : 0);
+            const weekSystemBonus = payInBranch(legacyBonusTotalForRows(weekDelivered) + newEngineBonusTotalForRows(weekDelivered));
+            const weekSalesBonus = weekSystemBonus + Math.max(-weekSystemBonus, payoutChangeWeeks ? payInBranch(approvedPayoutChangeForWeeks([week])) : 0);
             const weekNetBefore = weekRevenue - weekCogs - weekLogistics - weekOperating - weekSalesBonus;
             return sum + managerBonusExpenseForProfit(weekNetBefore, deliveryRateForManagerBonus(weekPlaced));
           }, 0);
@@ -20326,7 +20348,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const revenue = order.amount;
     const cogs = costForOrder(order);
     const delivery = effectiveLogisticsCost(order);       // recorded fee, or the Owner-only accrual while unbilled
-    const bonus = recognizedBonusTotalForRows([order]);   // the order's own rep commission
+    const bonus = recognizedBonusInBranchForRows([order]);   // the order's own rep commission, in branch money
     const ownNet = revenue - cogs - delivery - bonus;
     const overheadShare = deliveriesWeekOverheadShare(order);
     return { revenue, cogs, delivery, bonus, ownNet, overheadShare, finalNet: ownNet - overheadShare };
@@ -23070,7 +23092,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const revenue = delivered.reduce((sum, order) => sum + order.amount, 0);
     const cogs = delivered.reduce((sum, order) => sum + costForOrder(order), 0);
     const logistics = delivered.reduce((sum, order) => sum + effectiveLogisticsCost(order), 0);
-    const commission = recognizedBonusTotalForRows(delivered);
+    const commission = recognizedBonusInBranchForRows(delivered);
     const contribution = revenue - cogs - logistics - commission;
     const directCost = cogs + logistics + commission;
     return {
@@ -27389,7 +27411,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const revenue = deliveredRows.reduce((sum, order) => sum + order.amount, 0);
       const cogs = deliveredRows.reduce((sum, order) => sum + costForOrder(order), 0);
       const logistics = deliveredRows.reduce((sum, order) => sum + (order.logisticsCost ?? 0), 0);
-      const commission = user?.role === "Sales Rep" ? recognizedBonusTotalForRows(deliveredRows) : 0;
+      const commission = user?.role === "Sales Rep" ? recognizedBonusInBranchForRows(deliveredRows) : 0;
       const directCost = cogs + logistics + commission;
       const directProfit = revenue - directCost;
       const cohortDelivered = assigned.filter((order) => (order.status ?? "New") === "Delivered").length;
@@ -80530,11 +80552,11 @@ ${waybillLineItems(w).length > 1
                                     <td className="px-4 py-3 text-right text-gray-900">{delivered}</td>
                                     <td className={`px-4 py-3 text-right ${rate >= 70 ? "text-emerald-600" : rate >= 50 ? "text-amber-600" : "text-rose-600"}`}>{placed ? `${rate}%` : "-"}</td>
                                     <td className="px-4 py-3 text-right text-gray-900">{delivered ? formatMoney(Math.round(revenue / delivered)) : "-"}</td>
-                                    <td className="px-4 py-3 text-right"><span className="text-violet-700">{sum((row) => row.repUpsells)}</span><span className="block text-[10px] font-semibold text-gray-500">{formatMoney(sum((row) => row.upsellBonus))} earned</span></td>
-                                    <td className="px-4 py-3 text-right"><span className="text-amber-700">{sum((row) => row.repXs)}</span><span className="block text-[10px] font-semibold text-gray-500">{formatMoney(sum((row) => row.repCrossSellBonus))} earned</span></td>
-                                    <td className="px-4 py-3 text-right"><span className="text-sky-700">{sum((row) => row.custAddOns)}</span><span className="block text-[10px] font-semibold text-gray-500">{formatMoney(sum((row) => row.customerAddOnBonus))} earned</span></td>
+                                    <td className="px-4 py-3 text-right"><span className="text-violet-700">{sum((row) => row.repUpsells)}</span><span className="block text-[10px] font-semibold text-gray-500">{payMoney(sum((row) => row.upsellBonus))} earned</span></td>
+                                    <td className="px-4 py-3 text-right"><span className="text-amber-700">{sum((row) => row.repXs)}</span><span className="block text-[10px] font-semibold text-gray-500">{payMoney(sum((row) => row.repCrossSellBonus))} earned</span></td>
+                                    <td className="px-4 py-3 text-right"><span className="text-sky-700">{sum((row) => row.custAddOns)}</span><span className="block text-[10px] font-semibold text-gray-500">{payMoney(sum((row) => row.customerAddOnBonus))} earned</span></td>
                                     <td className="px-4 py-3 text-right text-gray-900">{formatMoney(revenue)}</td>
-                                    <td className="px-4 py-3 text-right text-emerald-700">{formatMoney(sum((row) => row.bonus))}</td>
+                                    <td className="px-4 py-3 text-right text-emerald-700">{payMoney(sum((row) => row.bonus))}</td>
                                   </tr>
                                 </tfoot>
                               );
@@ -87245,7 +87267,7 @@ ${waybillLineItems(w).length > 1
                                 <h3 className="text-sm font-bold text-gray-900">{row.name}</h3>
                                 <p className="text-xs text-gray-500">{row.delivered} delivered order{row.delivered === 1 ? "" : "s"}</p>
                               </div>
-                              <span className="text-sm font-bold text-[#1F8FE0]">{formatMoney(row.total)}</span>
+                              <span className="text-sm font-bold text-[#1F8FE0]">{payMoney(row.total)}</span>
                             </div>
                             <div className="grid grid-cols-2 gap-3 text-xs">
                               <div>
@@ -87262,7 +87284,7 @@ ${waybillLineItems(w).length > 1
                               </div>
                               <div>
                                 <p className="font-semibold uppercase tracking-wide text-gray-400">Deductions</p>
-                                <p className="mt-1 font-semibold text-red-600">{(row.deductions ?? 0) > 0 ? `−${payMoney(row.deductions ?? 0)}` : formatMoney(0)}</p>
+                                <p className="mt-1 font-semibold text-red-600">{(row.deductions ?? 0) > 0 ? `−${payMoney(row.deductions ?? 0)}` : payMoney(0)}</p>
                               </div>
                             </div>
                           </article>
@@ -87270,7 +87292,7 @@ ${waybillLineItems(w).length > 1
                         <div className="px-4 py-4 bg-gray-50">
                           <div className="flex items-center justify-between text-xs text-gray-500">
                             <span className="font-semibold uppercase tracking-wide">Grand Total</span>
-                            <span className="text-sm font-bold text-[#1F8FE0]">{formatMoney(payrollGrandTotal)}</span>
+                            <span className="text-sm font-bold text-[#1F8FE0]">{payMoney(payrollGrandTotal)}</span>
                           </div>
                           <div className="mt-2 grid grid-cols-3 gap-3 text-xs">
                             <div>
@@ -87279,11 +87301,11 @@ ${waybillLineItems(w).length > 1
                             </div>
                             <div>
                               <p className="font-semibold uppercase tracking-wide text-gray-400">Bonus</p>
-                              <p className="mt-1 font-semibold text-emerald-700">{formatMoney(payrollPreviewRows.reduce((sum, row) => sum + (row.autoBonus ?? 0), 0))}</p>
+                              <p className="mt-1 font-semibold text-emerald-700">{payMoney(payrollPreviewRows.reduce((sum, row) => sum + (row.autoBonus ?? 0), 0))}</p>
                             </div>
                             <div>
                               <p className="font-semibold uppercase tracking-wide text-gray-400">Deductions</p>
-                              <p className="mt-1 font-semibold text-red-600">−{formatMoney(payrollPreviewRows.reduce((sum, row) => sum + (row.deductions ?? 0), 0))}</p>
+                              <p className="mt-1 font-semibold text-red-600">−{payMoney(payrollPreviewRows.reduce((sum, row) => sum + (row.deductions ?? 0), 0))}</p>
                             </div>
                           </div>
                         </div>
@@ -87309,19 +87331,19 @@ ${waybillLineItems(w).length > 1
                                 <td className="px-4 py-4 text-gray-700">{payMoney(row.fixedSalary)}</td>
                                 <td className="px-4 py-4 text-gray-700">{payMoney(row.commission)}</td>
                                 <td className="px-4 py-4 text-emerald-700 font-semibold">{payMoney(row.autoBonus ?? 0)}</td>
-                                <td className="px-4 py-4 text-red-600 font-semibold">{(row.deductions ?? 0) > 0 ? `−${payMoney(row.deductions ?? 0)}` : formatMoney(0)}</td>
-                                <td className="px-4 py-4 font-bold text-[#1F8FE0]">{formatMoney(row.total)}</td>
+                                <td className="px-4 py-4 text-red-600 font-semibold">{(row.deductions ?? 0) > 0 ? `−${payMoney(row.deductions ?? 0)}` : payMoney(0)}</td>
+                                <td className="px-4 py-4 font-bold text-[#1F8FE0]">{payMoney(row.total)}</td>
                               </tr>
                             ))
                           )}
                           <tr className="bg-gray-50 font-bold border-t border-gray-200">
                             <td className="px-4 py-4 text-gray-900">Grand Total</td>
                             <td className="px-4 py-4 text-gray-700">{payrollPreviewRows.reduce((sum, row) => sum + row.delivered, 0)}</td>
-                            <td className="px-4 py-4 text-gray-700">{formatMoney(payrollPreviewRows.reduce((sum, row) => sum + row.fixedSalary, 0))}</td>
-                            <td className="px-4 py-4 text-gray-700">{formatMoney(payrollPreviewRows.reduce((sum, row) => sum + row.commission, 0))}</td>
-                            <td className="px-4 py-4 text-emerald-700">{formatMoney(payrollPreviewRows.reduce((sum, row) => sum + (row.autoBonus ?? 0), 0))}</td>
-                            <td className="px-4 py-4 text-red-600">−{formatMoney(payrollPreviewRows.reduce((sum, row) => sum + (row.deductions ?? 0), 0))}</td>
-                            <td className="px-4 py-4 text-[#1F8FE0]">{formatMoney(payrollGrandTotal)}</td>
+                            <td className="px-4 py-4 text-gray-700">{payMoney(payrollPreviewRows.reduce((sum, row) => sum + row.fixedSalary, 0))}</td>
+                            <td className="px-4 py-4 text-gray-700">{payMoney(payrollPreviewRows.reduce((sum, row) => sum + row.commission, 0))}</td>
+                            <td className="px-4 py-4 text-emerald-700">{payMoney(payrollPreviewRows.reduce((sum, row) => sum + (row.autoBonus ?? 0), 0))}</td>
+                            <td className="px-4 py-4 text-red-600">−{payMoney(payrollPreviewRows.reduce((sum, row) => sum + (row.deductions ?? 0), 0))}</td>
+                            <td className="px-4 py-4 text-[#1F8FE0]">{payMoney(payrollGrandTotal)}</td>
                           </tr>
                         </tbody>
                       </table>
@@ -89202,11 +89224,17 @@ ${waybillLineItems(w).length > 1
                         ));
                         // Keep the two accounting sources separate here. The order card's
                         // payableTotal is presentation-only and already contains both.
-                        const legacyBonusEstimate = bonusOrderBreakdowns.reduce((s, o) => s + o.legacyTotal, 0);
-                        const newEngineBonusEstimate = cashOrders.reduce((s, o) => s + (newEngineBonusByOrderId[o.id] ?? 0), 0);
+                        // Naira pay, for the bonus breakdown window.
+                        const legacyBonusNaira = bonusOrderBreakdowns.reduce((s, o) => s + o.legacyTotal, 0);
+                        const newEngineBonusNaira = cashOrders.reduce((s, o) => s + (newEngineBonusByOrderId[o.id] ?? 0), 0);
+                        // The same pay as a cost in the branch's money (Zambia: kwacha).
+                        const legacyBonusEstimate = payInBranch(legacyBonusNaira);
+                        const newEngineBonusEstimate = payInBranch(newEngineBonusNaira);
                         const bonusEstimate = legacyBonusEstimate + newEngineBonusEstimate;
-                        const reportPay = weeklyAcctReportPay?.weekStart === startKey ? weeklyAcctReportPay.byRep[u.id] : undefined;
+                        const reportPayNaira = weeklyAcctReportPay?.weekStart === startKey ? weeklyAcctReportPay.byRep[u.id] : undefined;
+                        const reportPay = reportPayNaira === undefined ? undefined : payInBranch(reportPayNaira);
                         // The cost is what the sent report pays; the estimate only until it is sent.
+                        // Both are naira pay, shown here as a cost in the branch's money.
                         const bonusCost = reportPay ?? bonusEstimate;
                         const directCost = cogs + logistics + bonusCost;
                         const directProfit = revenue - directCost;
@@ -89225,6 +89253,9 @@ ${waybillLineItems(w).length > 1
                           cogs,
                           logistics,
                           bonusEstimate,
+                          // Naira, for the bonus breakdown window (a pay screen).
+                          bonusEstimateNaira: legacyBonusNaira + newEngineBonusNaira,
+                          newEngineBonusNaira,
                           reportPay,
                           bonusCost,
                           legacyBonusEstimate,
@@ -89365,8 +89396,8 @@ ${waybillLineItems(w).length > 1
                                               cohortRate: r.cohortRate,
                                               finalRate: r.finalRate,
                                               targetRate: target,
-                                              totalBonus: r.bonusEstimate,
-                                              newEngineBonusEstimate: r.newEngineBonusEstimate,
+                                              totalBonus: r.bonusEstimateNaira,
+                                              newEngineBonusEstimate: r.newEngineBonusNaira,
                                               orders: r.bonusOrderBreakdowns
                                             });
                                             setModal("bonusBreakdown");
