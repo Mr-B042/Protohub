@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import SinceStartView from "./SinceStartView";
+import OrderStreaksView from "./OrderStreaksView";
 import CampaignAlertsPanel from "./CampaignAlertsPanel";
 import AdFundsPanel from "./AdFundsPanel";
 import { Bar, CartesianGrid, Cell, ComposedChart, LabelList, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -257,6 +258,8 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
   const [view, setView] = useState<HubAdSpendView>("product");
   // "Since Start" judges whole campaign lives, so it has its own filters and ignores the date.
   const [sinceStart, setSinceStart] = useState(false);
+  // Order Streaks (Bright, 20 Nov 2026) sits beside Since Start; like it, it ignores the date filter.
+  const [streaks, setStreaks] = useState(false);
   const [syncCount, setSyncCount] = useState(0);
   const [chartDays, setChartDays] = useState(7);
   const [search, setSearch] = useState("");
@@ -549,7 +552,7 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
       ) : null}
 
       <Card className="p-4">
-        {!sinceStart ? (
+        {!sinceStart && !streaks ? (
           <>
         <div className="flex flex-wrap items-center gap-2.5">
           <SearchBox value={search} onChange={setSearch} placeholder="Search products, campaigns or ad accounts…" className="min-w-[180px] flex-1 xl:max-w-[220px]" />
@@ -606,13 +609,15 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
         <div className="mt-3 flex flex-wrap items-end justify-between gap-3 border-b border-gray-200 dark:border-slate-800">
           <div className="-mb-px flex min-w-0 overflow-x-auto">
             {VIEWS.map((item) => (
-              <button key={item.key} type="button" onClick={() => { setView(item.key); setSinceStart(false); }}
-                className={`!min-h-0 whitespace-nowrap border-b-2 px-3 py-3 text-[13px] font-semibold ${!sinceStart && view === item.key ? "border-blue-600 text-blue-600" : "border-transparent text-gray-600 hover:text-gray-900 dark:text-slate-300"}`}>{item.label}</button>
+              <button key={item.key} type="button" onClick={() => { setView(item.key); setSinceStart(false); setStreaks(false); }}
+                className={`!min-h-0 whitespace-nowrap border-b-2 px-3 py-3 text-[13px] font-semibold ${!sinceStart && !streaks && view === item.key ? "border-blue-600 text-blue-600" : "border-transparent text-gray-600 hover:text-gray-900 dark:text-slate-300"}`}>{item.label}</button>
             ))}
-            <button type="button" onClick={() => setSinceStart(true)}
+            <button type="button" onClick={() => { setSinceStart(true); setStreaks(false); }}
               className={`!min-h-0 whitespace-nowrap border-b-2 px-3 py-3 text-[13px] font-semibold ${sinceStart ? "border-blue-600 text-blue-600" : "border-transparent text-gray-600 hover:text-gray-900 dark:text-slate-300"}`}>Since Start</button>
+            <button type="button" onClick={() => { setStreaks(true); setSinceStart(false); }}
+              className={`!min-h-0 whitespace-nowrap border-b-2 px-3 py-3 text-[13px] font-semibold ${streaks ? "border-blue-600 text-blue-600" : "border-transparent text-gray-600 hover:text-gray-900 dark:text-slate-300"}`}>Order Streaks</button>
           </div>
-          <div className={`ml-auto flex flex-wrap items-center gap-3 pb-2 ${sinceStart ? "hidden" : ""}`}>
+          <div className={`ml-auto flex flex-wrap items-center gap-3 pb-2 ${sinceStart || streaks ? "hidden" : ""}`}>
             <span className="flex items-center gap-2 text-[13px] text-gray-700 dark:text-slate-300">Show Charts <Toggle checked={showCharts} onChange={setShowCharts} /></span>
             <div className="inline-flex rounded-lg border border-gray-200 p-0.5 dark:border-slate-700">
               {(["day", "week", "month"] as const).map((kind) => (
@@ -629,7 +634,7 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
           </div>
         </div>
 
-        {sinceStart ? <SinceStartView platform={data.platform} refreshKey={`${syncCount}:${data.lastSync?.at ?? ""}`} onToast={onToast} /> : (
+        {streaks ? <OrderStreaksView platform={data.platform} refreshKey={`${syncCount}:${data.lastSync?.at ?? ""}`} /> : sinceStart ? <SinceStartView platform={data.platform} refreshKey={`${syncCount}:${data.lastSync?.at ?? ""}`} onToast={onToast} /> : (
           <>
         {productId || campaign || adset || accountId || business ? (
           <div className="mt-3 flex flex-wrap items-center gap-2 text-[12.5px]">

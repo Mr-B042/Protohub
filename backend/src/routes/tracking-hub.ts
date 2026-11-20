@@ -14,7 +14,7 @@ import {
 } from "../lib/tracking-hub-data.js";
 import { refreshAccount, refreshTargets } from "../lib/tracking-meta-refresh.js";
 import { AD_SPEND_VIEWS, allocate, buildReport, mappingIndex, validSplits, type AdSpendView, type PlatformChoice } from "../lib/ad-spend.js";
-import { refreshPixelAdAccountsNow, loadAdSpendInputs, loadSinceStart, loadTikTokConnections, suggestProduct, syncAdSpend } from "../lib/ad-spend-data.js";
+import { refreshPixelAdAccountsNow, loadAdSpendInputs, loadOrderStreaks, loadSinceStart, loadTikTokConnections, suggestProduct, syncAdSpend } from "../lib/ad-spend-data.js";
 import { RULES as SINCE_START_RULES, VERDICT_ORDER } from "../lib/ad-since-start.js";
 import { droughtsFor, VERDICT_RULES } from "../lib/campaign-drought-alerts.js";
 import { campaignClaims, forgetShares } from "../lib/ad-account-shares.js";
@@ -2032,6 +2032,15 @@ router.get("/ad-spend/since-start", async (req, res) => {
       .sort((a, b) => VERDICT_ORDER.indexOf(a.verdict) - VERDICT_ORDER.indexOf(b.verdict) || b.spend - a.spend);
     res.json({ ...result, rows, rules: SINCE_START_RULES });
   } catch (error: any) { fail(res, error, "Could not load Since Start."); }
+});
+
+/** Order Streaks (Bright, 20 Nov 2026): ads that keep getting orders, and which to scale. */
+router.get("/ad-spend/streaks", async (req, res) => {
+  try {
+    const result = await loadOrderStreaks(req.user!.orgId, branchOf(req), lagosDateKey());
+    const platform = String(req.query.platform ?? "all");
+    res.json({ ...result, rows: result.rows.filter((row) => platform === "all" || row.platform === platform) });
+  } catch (error: any) { fail(res, error, "Could not load the order streaks."); }
 });
 
 router.put("/ad-spend/targets", async (req, res) => {
