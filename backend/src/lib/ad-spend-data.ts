@@ -11,7 +11,8 @@ import { autoProducts, pageKey, pageProducts } from "./ad-auto-product.js";
 import { branchShareView } from "./ad-account-shares.js";
 import { sharedOnlyFrom } from "./ad-account-shares-rules.js";
 import { breakEvenCpa, sinceStart, type LifetimeRow } from "./ad-since-start.js";
-import { mappingIndex } from "./ad-spend.js";
+import { mappingIndex, resolveSplits } from "./ad-spend.js";
+import { STREAK_RULES, orderStreaks, type StreakAd } from "./ad-streaks.js";
 
 // Loading and syncing for Tracking Hub -> Ad Spend (Bright, 8 Oct 2026). The
 // maths is in ad-spend.ts; this file reads the database and Meta.
@@ -398,6 +399,72 @@ export async function loadSinceStart(orgId: string, branchId: string, today: str
   return result;
 }
 
+/**
+ * Break-even cost per order per product (Since Start, Campaign Decisions and
+ * Order Streaks share it): from orders placed 7-37 days ago (old enough to be
+ * settled), or the Owner's own target. `orders` must cover those days.
+ */
+async function productTargets(orgId: string, branchId: string, today: string, orders: SpendOrder[], productRows: Array<{ id: string; name: string }>) {
+  const { data: overrides, error: overrideError } = await supabase.from("tracking_ad_spend_targets").select("product_id, target_cpa, updated_by_name, updated_at").eq("org_id", orgId).eq("branch_id", branchId);
+  if (overrideError) throw overrideError;
+  const settledFrom = addDaysToDateKey(today, -37);
+  const settledTo = addDaysToDateKey(today, -7);
+  const byProduct = new Map<string, SpendOrder[]>();
+  for (const order of orders) if (order.productId && order.day >= settledFrom && order.day <= settledTo) byProduct.set(order.productId, [...(byProduct.get(order.productId) ?? []), order]);
+  const overrideOf = new Map(((overrides ?? []) as any[]).map((row) => [row.product_id, row]));
+  const targets = new Map<string, { cpa: number; source: "worked_out" | "set_by_you" }>();
+  const targetList = productRows.map((product) => {
+    const be = breakEvenCpa(byProduct.get(product.id) ?? []);
+    const own = overrideOf.get(product.id);
+    if (own) targets.set(product.id, { cpa: Number(own.target_cpa), source: "set_by_you" });
+    else if (be.cpa) targets.set(product.id, { cpa: be.cpa, source: "worked_out" });
+    return { productId: product.id, name: product.name, breakEven: be.cpa, deliveryRate: be.deliveryRate, margin: be.margin, basedOn: be.orders, averages: be.averages, deliveredRate: byProduct.get(product.id)?.length ? (byProduct.get(product.id) ?? []).filter((o) => o.status === "Delivered").length / (byProduct.get(product.id) ?? []).length : null, own: own ? Number(own.target_cpa) : null, ownBy: own?.updated_by_name ?? null };
+  });
+  return { targets, targetList };
+}
+
+/**
+ * Order Streaks (Bright, 20 Nov 2026): every ad that ran in the last 7 days,
+ * how steadily it gets orders, and whether it is cheap enough to scale.
+ * Rules: ad-streaks.ts. Loads 37 days so break-even matches Since Start.
+ */
+export async function loadOrderStreaks(orgId: string, branchId: string, today: string) {
+  const data = await loadAdSpendInputs(orgId, branchId, addDaysToDateKey(today, -37), today);
+  const { targets, targetList } = await productTargets(orgId, branchId, today, data.orders, data.basics.products);
+  const index = mappingIndex(data.mappings);
+  const productName = new Map(data.basics.products.map((row) => [row.id, row.name]));
+  const windowFrom = addDaysToDateKey(today, -STREAK_RULES.window);
+  const spend = new Map<string, Map<string, number>>();
+  const ads = new Map<string, StreakAd>();
+  const namedOn = new Map<string, string>();
+  for (const row of data.insights) {
+    if (row.day < windowFrom || !row.ad_id) continue;
+    const byDay = spend.get(row.ad_id) ?? new Map<string, number>();
+    byDay.set(row.day, (byDay.get(row.day) ?? 0) + (Number(row.spend) || 0));
+    spend.set(row.ad_id, byDay);
+    // Newest row gives the names (a renamed ad keeps its id).
+    if ((namedOn.get(row.ad_id) ?? "") > row.day) continue;
+    namedOn.set(row.ad_id, row.day);
+    // One product only: an ad split across products has no single break-even.
+    const { splits } = resolveSplits(row, index, data.evidence);
+    const productId = splits.length === 1 ? splits[0].productId : null;
+    ads.set(row.ad_id, {
+      adId: row.ad_id, adName: row.ad_name || row.ad_id, campaignId: row.campaign_id, campaignName: row.campaign_name, adsetId: row.adset_id, adsetName: row.adset_name,
+      accountId: row.ad_account_id, accountName: data.accounts.get(row.ad_account_id)?.name ?? row.ad_account_id, platform: row.platform ?? "meta",
+      productId, productName: productId ? productName.get(productId) ?? null : null
+    });
+  }
+  const rows = orderStreaks({
+    today, ads: [...ads.values()], spend,
+    orders: data.orders.filter((order) => order.day >= windowFrom).map((order) => ({ day: order.day, adId: order.adId, status: order.status })),
+    targets: new Map([...targets].map(([id, target]) => [id, target.cpa]))
+  });
+  return {
+    rows, today, rules: STREAK_RULES, lastSyncAt: (data.state as any)?.last_sync_at ?? null,
+    targets: targetList.filter((row) => rows.some((ad) => ad.productId === row.productId)).map((row) => ({ productId: row.productId, name: row.name, target: row.own ?? row.breakEven, own: row.own !== null }))
+  };
+}
+
 /** Since Start plus the inputs it was built from (the no-order alerts need the orders and daily spend). */
 export async function sinceStartCore(orgId: string, branchId: string, today: string) {
   const { data: ownLifetime, error } = await supabase.from("tracking_ad_lifetime").select("*").eq("org_id", orgId).eq("branch_id", branchId).limit(20000);
@@ -420,23 +487,8 @@ export async function sinceStartCore(orgId: string, branchId: string, today: str
   const ordersFrom = [earliest, addDaysToDateKey(today, -180)].sort().pop()!;
   const loadFrom = [ordersFrom, addDaysToDateKey(today, -37)].sort()[0];
   const data = await loadAdSpendInputs(orgId, branchId, loadFrom, today);
-  const { data: overrides, error: overrideError } = await supabase.from("tracking_ad_spend_targets").select("product_id, target_cpa, updated_by_name, updated_at").eq("org_id", orgId).eq("branch_id", branchId);
-  if (overrideError) throw overrideError;
-  // Break-even per product from orders placed 7-37 days ago (old enough to be settled).
-  const settledFrom = addDaysToDateKey(today, -37);
-  const settledTo = addDaysToDateKey(today, -7);
-  const byProduct = new Map<string, SpendOrder[]>();
-  for (const order of data.orders) if (order.productId && order.day >= settledFrom && order.day <= settledTo) byProduct.set(order.productId, [...(byProduct.get(order.productId) ?? []), order]);
   const products = new Map(data.basics.products.map((row) => [row.id, { name: row.name }]));
-  const overrideOf = new Map(((overrides ?? []) as any[]).map((row) => [row.product_id, row]));
-  const targets = new Map<string, { cpa: number; source: "worked_out" | "set_by_you" }>();
-  const targetList = data.basics.products.map((product) => {
-    const be = breakEvenCpa(byProduct.get(product.id) ?? []);
-    const own = overrideOf.get(product.id);
-    if (own) targets.set(product.id, { cpa: Number(own.target_cpa), source: "set_by_you" });
-    else if (be.cpa) targets.set(product.id, { cpa: be.cpa, source: "worked_out" });
-    return { productId: product.id, name: product.name, breakEven: be.cpa, deliveryRate: be.deliveryRate, margin: be.margin, basedOn: be.orders, averages: be.averages, deliveredRate: byProduct.get(product.id)?.length ? (byProduct.get(product.id) ?? []).filter((o) => o.status === "Delivered").length / (byProduct.get(product.id) ?? []).length : null, own: own ? Number(own.target_cpa) : null, ownBy: own?.updated_by_name ?? null };
-  });
+  const { targets, targetList } = await productTargets(orgId, branchId, today, data.orders, data.basics.products);
   const accountNames = new Map(Array.from(data.accounts.values()).map((row) => [row.accountId, row.name]));
   // Running = an ad delivering right now, asked live per ad account (one call each).
   const live = { delivering: new Set<string>(), accounts: new Set<string>() };

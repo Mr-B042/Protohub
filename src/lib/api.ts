@@ -4804,6 +4804,21 @@ export type CampaignMoneyAlert = {
   kind: "burn" | "pricey"; campaignId: string; campaignName: string; platform: string; accountName: string; productName: string | null;
   spend: number; orders: number; costPerOrder: number | null; todaySpend: number; since: string | null; advice: string; episodeKey: string;
 };
+/** Order Streaks (Bright, 20 Nov 2026): backend lib/ad-streaks.ts. */
+export type HubStreakVerdict = "scale" | "steady_ok" | "steady_costly" | "steady_no_target" | "building" | "patchy";
+export type HubStreakRow = {
+  adId: string; adName: string; campaignId: string; campaignName: string; adsetId: string; adsetName: string;
+  accountId: string; accountName: string; platform: "meta" | "tiktok"; productId: string | null; productName: string | null;
+  days: Array<{ day: string; spend: number; orders: number }>;
+  run: number; activeDays14: number; orderDays14: number; activeDays7: number; orderDays7: number;
+  share14: number | null; share7: number | null; orders14: number; confirmed14: number; spend14: number; costPerOrder14: number | null;
+  ordersToday: number; spendToday: number; target: number | null; verdict: HubStreakVerdict; reason: string;
+};
+export type HubStreaks = {
+  rows: HubStreakRow[]; today: string; lastSyncAt: string | null;
+  rules: { window: number; recent: number; steadyShare: number; minActiveDays: number; scaleBelow: number; buildingShare: number };
+  targets: Array<{ productId: string; name: string; target: number | null; own: boolean }>;
+};
 export type HubSinceStart = {
   rows: HubSinceStartRow[]; ordersFrom: string; linkedShare: number | null; lastLifetimeAt: string | null;
   rules: { minDays: number; minSpendTimesTarget: number; winningBelow: number; hookWeak: number; hookStrong: number; breakEvenMinOrders: number };
@@ -4898,6 +4913,7 @@ export const trackingHubApi = {
   clearAdSpendMapping: (body: { level: HubAdSpendLevel; metaId: string; label: string }) => post<{ ok: true }>("/api/tracking-hub/ad-spend/mappings/clear", body),
   syncAdSpend: (period: { from: string; to: string }) => post<{ ok: boolean; accounts: number; failed: string[]; message: string }>("/api/tracking-hub/ad-spend/sync", period),
   setAdSpendAutoSync: (on: boolean) => put<{ ok: true; autoSync: boolean }>("/api/tracking-hub/ad-spend/auto-sync", { on }),
+  orderStreaks: (platform: string) => get<HubStreaks>(`/api/tracking-hub/ad-spend/streaks?platform=${encodeURIComponent(platform)}`),
   sinceStart: (platform: string) => get<HubSinceStart>(`/api/tracking-hub/ad-spend/since-start?platform=${encodeURIComponent(platform)}`),
   adFunds: () => get<AdFundsView>("/api/tracking-hub/ad-funds"),
   saveAdFundsSettings: (body: { enabled?: boolean; threshold?: number }) => put<AdFundsView>("/api/tracking-hub/ad-funds/settings", body),
