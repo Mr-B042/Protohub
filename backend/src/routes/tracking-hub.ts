@@ -2039,7 +2039,7 @@ router.get("/ad-spend/streaks", async (req, res) => {
   try {
     const result = await loadOrderStreaks(req.user!.orgId, branchOf(req), lagosDateKey());
     const platform = String(req.query.platform ?? "all");
-    res.json({ ...result, rows: result.rows.filter((row) => platform === "all" || row.platform === platform) });
+    res.json({ ...result, rows: result.rows.filter((row) => platform === "all" || row.platform === platform), campaigns: result.campaigns.filter((row) => platform === "all" || row.platform === platform) });
   } catch (error: any) { fail(res, error, "Could not load the order streaks."); }
 });
 

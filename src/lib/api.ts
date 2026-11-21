@@ -4816,7 +4816,15 @@ export type HubStreakRow = {
   share14: number | null; share7: number | null; orders14: number; confirmed14: number; spend14: number; costPerOrder14: number | null;
   ordersToday: number; spendToday: number; target: number | null; verdict: HubStreakVerdict; reason: string;
 };
+/** What to do with one ad of a 2+ ad campaign (21 Nov 2026): backend adActionIn. */
+export type HubAdAction = "best" | "keep" | "watch" | "turn_off_ad" | "already_off" | "too_soon";
+export type HubStreakCampaignAd = HubStreakRow & { action: HubAdAction; actionReason: string; orderShare: number | null };
+export type HubStreakCampaign = Omit<HubStreakRow, "adId" | "adName" | "adsetId" | "adsetName" | "adLive"> & {
+  campaignStatus: "live" | "off" | "unknown"; ads: HubStreakCampaignAd[]; adCount: number; liveAdCount: number; adsToTurnOff: number;
+};
 export type HubStreaks = {
+  /** By campaign: the campaign's verdict, each ad's own action inside it. */
+  campaigns: HubStreakCampaign[];
   rows: HubStreakRow[]; today: string; lastSyncAt: string | null;
   liveFailures?: Array<{ accountId: string; name: string; message: string }>; liveCheckedAt?: string;
   rules: { window: number; recent: number; steadyShare: number; minActiveDays: number; scaleBelow: number; buildingShare: number };

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { judgeStreak, orderStreaks, type StreakAd } from "./ad-streaks.js";
+import { campaignStreaks, judgeStreak, orderStreaks, type StreakAd } from "./ad-streaks.js";
 
 const today = "2026-11-20";
 const ad = (adId: string, productId: string | null = "p1"): StreakAd => ({
@@ -63,4 +63,46 @@ test("within a verdict, live campaigns come before off ones", () => {
   const orders = [...ordersOn("on", all14), ...ordersOn("off", all14)];
   const rows = orderStreaks({ today, ads: [{ ...ad("off"), campaignStatus: "off" }, { ...ad("on"), campaignStatus: "live", adLive: true }], spend, orders, targets: new Map([["p1", 10_000]]) });
   assert.deepEqual(rows.map((row) => [row.adId, row.campaignStatus]), [["on", "live"], ["off", "off"]]);
+});
+
+const inCampaign = (adId: string, campaignId: string, adLive: boolean | null = true): StreakAd => ({ ...ad(adId), campaignId, campaignName: campaignId, campaignStatus: "live", adLive });
+const withCampaign = (list: Array<{ day: string; adId: string; status: string }>, campaignId: string) => list.map((o) => ({ ...o, campaignId }));
+
+test("a strong campaign with one bad creative: campaign says scale, only that ad says turn off", () => {
+  const spend = new Map([["good", spendOn(all14, 2000)], ["bad", spendOn(all14, 2000)]]);
+  // good: an order every day; bad: 2 orders in 14 days at ₦14,000 each (break-even ₦10,000).
+  const orders = withCampaign([...ordersOn("good", all14), ...ordersOn("bad", [3, 9])], "c1");
+  const [row] = campaignStreaks({ today, ads: [inCampaign("good", "c1"), inCampaign("bad", "c1")], spend, orders, targets: new Map([["p1", 10_000]]) });
+  assert.equal(row.adCount, 2);
+  assert.equal(row.orders14, 16);
+  assert.equal(row.verdict, "scale"); // ₦56,000 / 16 = ₦3,500 an order
+  assert.equal(row.adsToTurnOff, 1);
+  assert.deepEqual(row.ads.map((a) => [a.adId, a.action]), [["bad", "turn_off_ad"], ["good", "best"]]);
+});
+
+test("an ad with no order after 2× break-even is turned off; at 1× it is watched", () => {
+  const ads = [inCampaign("a", "c"), inCampaign("b", "c"), inCampaign("z", "c")];
+  const spend = new Map([["a", spendOn(all14, 3000)], ["b", spendOn([1, 2, 3, 4], 3000)], ["z", spendOn([1, 2, 3, 4, 5, 6, 7], 3000)]]);
+  const [row] = campaignStreaks({ today, ads, spend, orders: withCampaign(ordersOn("a", all14), "c"), targets: new Map([["p1", 10_000]]) });
+  const action = Object.fromEntries(row.ads.map((a) => [a.adId, a.action]));
+  assert.equal(action.z, "turn_off_ad"); // ₦21,000 spent, no order
+  assert.equal(action.b, "watch");       // ₦12,000 spent, no order
+  assert.equal(action.a, "best");
+});
+
+test("a one-ad campaign is that ad: no ad action to take apart from the verdict", () => {
+  const [row] = campaignStreaks({ today, ads: [inCampaign("solo", "c9")], spend: new Map([["solo", spendOn(all14, 20000)]]), orders: withCampaign(ordersOn("solo", [1, 2]), "c9"), targets: new Map([["p1", 10_000]]) });
+  assert.equal(row.adCount, 1);
+  assert.equal(row.adsToTurnOff, 0);
+  assert.equal(row.ads[0].action, "keep");
+  assert.equal(row.verdict, "patchy");
+});
+
+test("campaign orders without an ad id still count for the campaign; switched-off ads say so", () => {
+  const ads = [inCampaign("on", "c2"), inCampaign("gone", "c2", false)];
+  const spend = new Map([["on", spendOn(all14, 1000)], ["gone", spendOn([1, 2], 1000)]]);
+  const orders = [...withCampaign(ordersOn("on", [1, 2]), "c2"), { day: day(3), adId: null, campaignId: "c2", status: "New" }];
+  const [row] = campaignStreaks({ today, ads, spend, orders, targets: new Map() });
+  assert.equal(row.orders14, 3);
+  assert.equal(row.ads.find((a) => a.adId === "gone")!.action, "already_off");
 });

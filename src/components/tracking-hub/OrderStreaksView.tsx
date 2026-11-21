@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, ArrowUp, ArrowUpDown, ChevronRight, Flame, HelpCircle, Layers, PowerOff } from "lucide-react";
-import { trackingHubApi, type HubStreakRow, type HubStreakVerdict } from "../../lib/api";
+import { AlertTriangle, ArrowUp, ArrowUpDown, ChevronRight, Eye, Flame, HelpCircle, Hourglass, Layers, PowerOff, Scissors, Square, ThumbsUp, Trophy } from "lucide-react";
+import { trackingHubApi, type HubAdAction, type HubStreakCampaign, type HubStreakCampaignAd, type HubStreakRow, type HubStreakVerdict } from "../../lib/api";
 import { LoadState, PlatformIcon, SearchBox, ago, naira, nf, rowCls, selectCls, shortDay, tableCls, useLoad } from "./HubParts";
 
 // Ad Spend -> Order Streaks (Bright, 20 Nov 2026: "ads that are consistently
@@ -19,7 +19,34 @@ const VERDICTS: Array<{ key: HubStreakVerdict; label: string; tone: string; dot:
 const verdictOf = (key: HubStreakVerdict) => VERDICTS.find((row) => row.key === key)!;
 type SortKey = "verdict" | "run" | "share14" | "share7" | "orders14" | "cost";
 type StatusFilter = "all" | "live" | "off";
-const statusOf = (row: HubStreakRow) => row.campaignStatus ?? "unknown";
+type HasStatus = { campaignStatus?: "live" | "off" | "unknown"; adLive?: boolean | null; platform: string };
+const statusOf = (row: HasStatus) => row.campaignStatus ?? "unknown";
+type AdsFilter = "" | "one" | "multi" | "turn_off";
+
+// One ad vs 2+ ads (Bright, 21 Nov 2026): don't switch off a good campaign
+// when only one of its creatives is weak. Each ad of a 2+ ad campaign gets
+// its own action (backend adActionIn); a one-ad campaign IS its ad.
+const ACTIONS: Record<HubAdAction, { label: string; tone: string; icon: ReactNode }> = {
+  turn_off_ad: { label: "Turn off this ad", tone: "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300", icon: <Scissors className="h-3 w-3" /> },
+  watch: { label: "Watch", tone: "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300", icon: <Eye className="h-3 w-3" /> },
+  best: { label: "Best ad", tone: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300", icon: <Trophy className="h-3 w-3" /> },
+  keep: { label: "Keep", tone: "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300", icon: <ThumbsUp className="h-3 w-3" /> },
+  too_soon: { label: "Too soon", tone: "border-gray-200 bg-gray-50 text-gray-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300", icon: <Hourglass className="h-3 w-3" /> },
+  already_off: { label: "Already off", tone: "border-gray-200 bg-gray-100 text-gray-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400", icon: <PowerOff className="h-3 w-3" /> }
+};
+
+/** "1 ad" (switching it off stops the campaign) or "3 ads · 1 to turn off". */
+function AdsBadge({ row }: { row: HubStreakCampaign }) {
+  if (row.adCount <= 1) {
+    return <span title="This campaign has one ad: turning the ad off turns the campaign off" className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-gray-200 bg-white px-1.5 py-0.5 text-[10.5px] font-semibold text-gray-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"><Square className="h-2.5 w-2.5" />1 ad</span>;
+  }
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1">
+      <span title={`${row.adCount} ads ran this week, ${row.liveAdCount} on now`} className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10.5px] font-bold text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300"><Layers className="h-2.5 w-2.5" />{row.adCount} ads</span>
+      {row.adsToTurnOff > 0 ? <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[10.5px] font-bold text-rose-700 motion-safe:animate-pulse dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300"><Scissors className="h-2.5 w-2.5" />{row.adsToTurnOff} to turn off</span> : null}
+    </span>
+  );
+}
 
 // Motion (Bright, 21 Nov 2026: "nice UX/UI, icon motions, animations"): rows
 // ease in when the list changes, live dots pulse. All of it is motion-safe:
@@ -82,7 +109,7 @@ function LiveDot({ size = "h-2 w-2" }: { size?: string }) {
 }
 
 /** Live / Off / not known, with this ad's own state when the campaign is live but the ad is not. */
-function StatusBadge({ row }: { row: HubStreakRow }) {
+function StatusBadge({ row }: { row: HasStatus }) {
   const status = statusOf(row);
   if (status === "live" && row.adLive === false) {
     return <span title="The campaign is running, but this ad is switched off" className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10.5px] font-bold text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"><LiveDot size="h-1.5 w-1.5" />Live · this ad off</span>;
@@ -144,7 +171,7 @@ function Share({ part, whole }: { part: number; whole: number }) {
   );
 }
 
-function CostCell({ row }: { row: HubStreakRow }) {
+function CostCell({ row }: { row: Pick<HubStreakRow, "costPerOrder14" | "target"> }) {
   if (row.costPerOrder14 === null) return <span className="text-gray-400">No order</span>;
   if (row.target === null) return <span>{naira(row.costPerOrder14)}<span className="block text-[11px] text-gray-400">break-even not known</span></span>;
   const ratio = row.costPerOrder14 / row.target;
@@ -165,6 +192,7 @@ export default function OrderStreaksView({ platform, refreshKey }: { platform: s
   }, [platform]); // eslint-disable-line react-hooks/exhaustive-deps
   const [verdict, setVerdict] = useState<HubStreakVerdict | "">("");
   const [status, setStatus] = useState<StatusFilter>("all");
+  const [adsFilter, setAdsFilter] = useState<AdsFilter>("");
   const [productId, setProductId] = useState("");
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState<Set<string>>(new Set());
@@ -200,7 +228,7 @@ export default function OrderStreaksView({ platform, refreshKey }: { platform: s
       if (delta < 0) scrollByTop(table, delta);
     });
   }, [topOffset, barHeight]);
-  const filterKey = `${status}|${verdict}|${productId}|${search.trim()}`;
+  const filterKey = `${status}|${verdict}|${productId}|${adsFilter}|${search.trim()}`;
   const lastFilterKey = useRef(filterKey);
   useEffect(() => {
     if (lastFilterKey.current === filterKey) return;
@@ -208,11 +236,14 @@ export default function OrderStreaksView({ platform, refreshKey }: { platform: s
     if (stuck) settleList();
   }, [filterKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const backToTop = () => { const sentinel = sentinelRef.current; if (sentinel) scrollByTop(sentinel, sentinel.getBoundingClientRect().top - topOffset - 140); };
-  if (!data) return <LoadState text="Checking which ads get orders day after day…" error={error} onRetry={reload} />;
+  if (!data) return <LoadState text="Checking which campaigns get orders day after day…" error={error} onRetry={reload} />;
 
+  const needle = search.trim().toLowerCase();
+  const campaigns = data.campaigns ?? [];
   const statusCounts: Record<StatusFilter, number> = { all: 0, live: 0, off: 0 };
-  const base = data.rows.filter((row) => (!productId || row.productId === productId)
-    && (!search.trim() || `${row.adName} ${row.adsetName} ${row.campaignName} ${row.accountName} ${row.productName ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())));
+  const base = campaigns.filter((row) => (!productId || row.productId === productId)
+    && (adsFilter === "" || (adsFilter === "one" ? row.adCount <= 1 : adsFilter === "multi" ? row.adCount >= 2 : row.adsToTurnOff > 0))
+    && (!needle || `${row.campaignName} ${row.accountName} ${row.productName ?? ""} ${row.ads.map((ad) => `${ad.adName} ${ad.adsetName}`).join(" ")}`.toLowerCase().includes(needle)));
   for (const row of base) {
     statusCounts.all += 1;
     if (statusOf(row) === "live") statusCounts.live += 1;
@@ -222,18 +253,61 @@ export default function OrderStreaksView({ platform, refreshKey }: { platform: s
   const counts = new Map<HubStreakVerdict, number>();
   for (const row of shown) counts.set(row.verdict, (counts.get(row.verdict) ?? 0) + 1);
   const order = VERDICTS.map((row) => row.key);
-  const value = (row: HubStreakRow): number => sort.key === "verdict" ? order.indexOf(row.verdict)
+  const value = (row: HubStreakCampaign): number => sort.key === "verdict" ? order.indexOf(row.verdict)
     : sort.key === "cost" ? row.costPerOrder14 ?? Number.MAX_SAFE_INTEGER : sort.key === "share14" ? row.share14 ?? -1 : sort.key === "share7" ? row.share7 ?? -1 : row[sort.key];
   const rows = shown.filter((row) => !verdict || row.verdict === verdict)
     .sort((a, b) => (value(a) - value(b)) * sort.dir || (b.share14 ?? 0) - (a.share14 ?? 0) || b.orders14 - a.orders14);
-  const productOptions = Array.from(new Map(data.rows.filter((row) => row.productId).map((row) => [row.productId!, row.productName ?? ""])).entries()).sort((a, b) => a[1].localeCompare(b[1]));
+  const productOptions = Array.from(new Map(campaigns.filter((row) => row.productId).map((row) => [row.productId!, row.productName ?? ""])).entries()).sort((a, b) => a[1].localeCompare(b[1]));
+  const multiCount = campaigns.filter((row) => row.adCount >= 2).length;
+  const turnOffCount = campaigns.filter((row) => row.adsToTurnOff > 0).length;
   const th = (key: SortKey, label: string, title?: string) => (
     <th key={key} title={title} className="cursor-pointer select-none whitespace-nowrap" onClick={() => setSort(sort.key === key ? { key, dir: sort.dir === 1 ? -1 : 1 } : { key, dir: key === "verdict" || key === "cost" ? 1 : -1 })}>
       <span className="inline-flex items-center gap-1">{label}<ArrowUpDown className={`h-3 w-3 ${sort.key === key ? "text-gray-700" : "text-gray-300"}`} /></span>
     </th>
   );
+  // Campaigns with an ad to turn off open by themselves; a click flips that.
+  const isOpen = (row: HubStreakCampaign) => (row.adsToTurnOff > 0 || adsFilter === "turn_off") !== open.has(row.campaignId);
   const toggle = (id: string) => { const next = new Set(open); if (next.has(id)) next.delete(id); else next.add(id); setOpen(next); };
   const r = data.rules;
+
+  const metricCells = (row: HubStreakRow | HubStreakCampaign, off: boolean) => (
+    <>
+      <td className={off ? "grayscale" : ""}><Strip days={row.days} /></td>
+      <td className="whitespace-nowrap">{row.run > 0 ? <span className="inline-flex items-center gap-1 font-bold text-orange-600"><Flame className="h-3.5 w-3.5" />{row.run} day{row.run === 1 ? "" : "s"}</span> : <span className="text-gray-400">0</span>}</td>
+      <td><Share part={row.orderDays14} whole={row.activeDays14} /></td>
+      <td><Share part={row.orderDays7} whole={row.activeDays7} /></td>
+    </>
+  );
+  const adRow = (ad: HubStreakCampaignAd, index: number) => {
+    const a = ACTIONS[ad.action];
+    const adOff = ad.adLive === false;
+    return (
+      <tr key={ad.adId} style={{ animationDelay: `${Math.min(index, 8) * 35}ms` }}
+        className={`streak-row-in border-t border-dashed border-gray-200 bg-slate-50/60 text-gray-800 dark:border-slate-700 dark:bg-slate-800/25 dark:text-slate-200 [&>td]:[color:inherit] ${adOff ? "[&>td]:opacity-55" : ""} ${ad.action === "turn_off_ad" ? "[&>td:first-child]:shadow-[inset_3px_0_0_0_rgb(244_63_94)]" : ""}`}>
+        <td />
+        <td className="min-w-[230px] max-w-[320px]">
+          <span className="flex items-center gap-2 pl-3">
+            <span aria-hidden className="h-6 w-3 shrink-0 rounded-bl-md border-b-2 border-l-2 border-gray-300 dark:border-slate-600" />
+            <span className="min-w-0">
+              <b className="block truncate text-[12.5px]" title={ad.adName}>{ad.adName}</b>
+              <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-gray-500">
+                {ad.adLive === true ? <span className="inline-flex items-center gap-1 font-semibold text-emerald-700 dark:text-emerald-300"><LiveDot size="h-1.5 w-1.5" />on</span> : adOff ? <span className="inline-flex items-center gap-1 font-semibold text-gray-500"><PowerOff className="h-3 w-3" />off</span> : null}
+                <span className="truncate">{ad.adsetName}</span>
+              </span>
+            </span>
+          </span>
+        </td>
+        {metricCells(ad, adOff)}
+        <td className="whitespace-nowrap"><b>{nf(ad.orders14)}</b>{ad.orderShare !== null ? <span className="block text-[11px] text-gray-500">{Math.round(ad.orderShare * 100)}% of campaign</span> : null}</td>
+        <td><CostCell row={ad} /></td>
+        <td className="whitespace-nowrap">{ad.ordersToday > 0 ? <b className="text-emerald-700">{ad.ordersToday} so far</b> : <span className="text-gray-400">{ad.spendToday > 0 ? "none yet" : "—"}</span>}</td>
+        <td className="max-w-[220px]">
+          <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11.5px] font-bold ${a.tone}`}>{a.icon}{a.label}</span>
+          <span className="mt-1 block text-[10.5px] leading-snug text-gray-500 dark:text-slate-400">{ad.actionReason}</span>
+        </td>
+      </tr>
+    );
+  };
 
   return (
     <div className="mt-3 space-y-3">
@@ -253,8 +327,14 @@ export default function OrderStreaksView({ platform, refreshKey }: { platform: s
         className={`sticky z-30 -mx-4 px-4 py-2 transition-[background-color,box-shadow,backdrop-filter] duration-300 ${stuck ? "border-b border-gray-200/80 bg-white/90 shadow-[0_8px_24px_-12px_rgba(15,23,42,0.25)] backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/90" : "bg-transparent"}`}>
         <div className="flex flex-wrap items-center gap-2.5">
           <StatusSwitch value={status} onChange={setStatus} counts={statusCounts} />
-          <SearchBox value={search} onChange={setSearch} placeholder="Search ads, ad sets, campaigns…" className="min-w-[200px] flex-1 xl:max-w-[280px]" />
-          <select value={productId} onChange={(event) => setProductId(event.target.value)} className={`${selectCls} w-[170px]`}><option value="">All Products</option>{productOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>
+          <SearchBox value={search} onChange={setSearch} placeholder="Search campaigns or ads…" className="min-w-[180px] flex-1 xl:max-w-[240px]" />
+          <select value={productId} onChange={(event) => setProductId(event.target.value)} className={`${selectCls} w-[160px]`}><option value="">All Products</option>{productOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>
+          <select value={adsFilter} onChange={(event) => setAdsFilter(event.target.value as AdsFilter)} className={`${selectCls} w-[175px]`} title="One ad: the campaign is that ad. 2+ ads: each ad judged on its own.">
+            <option value="">Any number of ads</option>
+            <option value="one">One ad</option>
+            <option value="multi">2+ ads ({multiCount})</option>
+            <option value="turn_off">Ads to turn off ({turnOffCount})</option>
+          </select>
           <span className="ml-auto flex flex-wrap items-center gap-3 text-[11.5px] text-gray-500 dark:text-slate-400">
             <span className="inline-flex items-center gap-1"><span className="h-3 w-2.5 rounded-[2px] bg-emerald-400" />order</span>
             <span className="inline-flex items-center gap-1"><span className="h-3 w-2.5 rounded-[2px] bg-gray-300 dark:bg-slate-600" />ran, no order</span>
@@ -274,7 +354,7 @@ export default function OrderStreaksView({ platform, refreshKey }: { platform: s
             <span className="ml-auto flex items-center gap-2 text-[11.5px] text-gray-500 dark:text-slate-400">
               <span className="tabular-nums">{nf(rows.length)} shown</span>
               <button type="button" tabIndex={stuck ? 0 : -1} onClick={backToTop} className="!min-h-0 inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 py-1 font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
-                <ArrowUp className="h-3 w-3 motion-safe:transition-transform motion-safe:group-hover:-translate-y-0.5" />Top
+                <ArrowUp className="h-3 w-3" />Top
               </button>
             </span>
           </div>
@@ -283,7 +363,7 @@ export default function OrderStreaksView({ platform, refreshKey }: { platform: s
 
       {data.liveFailures?.length ? (
         <p className="m-0 flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />Couldn't check live or off for {data.liveFailures.map((row) => row.name).join(", ")}. Their ads show "Not known".
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />Couldn't check live or off for {data.liveFailures.map((row) => row.name).join(", ")}. Their campaigns show "Not known".
         </p>
       ) : null}
 
@@ -292,11 +372,11 @@ export default function OrderStreaksView({ platform, refreshKey }: { platform: s
           <thead style={{ top: topOffset + barHeight }} className="text-gray-600 dark:text-slate-300 xl:sticky xl:z-20 [&_th]:bg-gray-50 dark:[&_th]:bg-slate-800 [&_th:first-child]:rounded-tl-xl [&_th:last-child]:rounded-tr-xl">
             <tr>
               <th className="w-6" />
-              <th>Ad</th>
+              <th>Campaign</th>
               <th className="whitespace-nowrap">Last 14 days</th>
-              {th("run", "Run", "Days in a row with an order, back from yesterday. Days the ad was off are skipped.")}
-              {th("share14", "14 days", "Days with an order ÷ days the ad ran")}
-              {th("share7", "7 days", "Days with an order ÷ days the ad ran, this past week")}
+              {th("run", "Run", "Days in a row with an order, back from yesterday. Days it was off are skipped.")}
+              {th("share14", "14 days", "Days with an order ÷ days it ran")}
+              {th("share7", "7 days", "Days with an order ÷ days it ran, this past week")}
               {th("orders14", "Orders")}
               {th("cost", "Cost / order", "14-day spend ÷ orders, against the product's break-even")}
               <th className="whitespace-nowrap">Today</th>
@@ -305,55 +385,64 @@ export default function OrderStreaksView({ platform, refreshKey }: { platform: s
           </thead>
           <tbody>
             {rows.length === 0 ? (
-              <tr><td colSpan={10} className="py-10 text-center text-gray-500">{data.rows.length ? "No ad matches these filters." : "No ad ran in the last 7 days."}</td></tr>
+              <tr><td colSpan={10} className="py-10 text-center text-gray-500">{campaigns.length ? "No campaign matches these filters." : "No campaign ran in the last 7 days."}</td></tr>
             ) : rows.map((row, index) => {
               const v = verdictOf(row.verdict);
-              const isOpen = open.has(row.adId);
+              const opened = isOpen(row);
               const off = statusOf(row) === "off";
+              const multi = row.adCount >= 2;
+              const solo = row.ads[0];
               return (
                 // The key carries the filter so rows ease in again when it changes; delay staggers the first dozen.
-                <Fragment key={`${row.adId}:${status}:${verdict}`}>
+                <Fragment key={`${row.campaignId}:${status}:${verdict}:${adsFilter}`}>
                   <tr style={{ animationDelay: `${Math.min(index, 12) * 28}ms` }}
-                    className={`${rowCls} streak-row-in group cursor-pointer transition-[background-color,opacity] duration-200 hover:bg-gray-50 dark:hover:bg-slate-800/40 ${off ? "bg-gray-50/40 dark:bg-slate-900/40 [&>td]:opacity-55 [&>td]:transition-opacity hover:[&>td]:opacity-100" : ""} ${statusOf(row) === "live" ? "[&>td:first-child]:shadow-[inset_3px_0_0_0_rgb(16_185_129)]" : ""}`} onClick={() => toggle(row.adId)}>
-                    <td><ChevronRight className={`h-4 w-4 text-gray-400 transition-transform duration-200 ${isOpen ? "rotate-90" : "group-hover:translate-x-0.5"}`} /></td>
+                    className={`${rowCls} streak-row-in group cursor-pointer transition-[background-color,opacity] duration-200 hover:bg-gray-50 dark:hover:bg-slate-800/40 ${off ? "bg-gray-50/40 dark:bg-slate-900/40 [&>td]:opacity-55 [&>td]:transition-opacity hover:[&>td]:opacity-100" : ""} ${statusOf(row) === "live" ? "[&>td:first-child]:shadow-[inset_3px_0_0_0_rgb(16_185_129)]" : ""}`} onClick={() => toggle(row.campaignId)}>
+                    <td><ChevronRight className={`h-4 w-4 text-gray-400 transition-transform duration-200 ${opened ? "rotate-90" : "group-hover:translate-x-0.5"}`} /></td>
                     <td className="min-w-[230px] max-w-[320px]">
                       <span className="flex items-center gap-2">
                         <PlatformIcon platform={row.platform} size="sm" />
                         <span className="min-w-0">
-                          {/* Campaign first: most ads are named alike ("New Sales ad"). */}
                           <b className="block truncate" title={row.campaignName}>{row.campaignName}</b>
-                          <span className="block truncate text-[11.5px] text-gray-500" title={`${row.adsetName} › ${row.adName}`}>{row.adsetName} › {row.adName}</span>
+                          <span className="mt-0.5 flex min-w-0 items-center gap-1.5">
+                            <AdsBadge row={row} />
+                            <span className="truncate text-[11.5px] text-gray-500" title={multi ? row.ads.map((ad) => ad.adName).join(", ") : solo ? `${solo.adsetName} › ${solo.adName}` : ""}>{multi ? `${row.liveAdCount} on now` : solo ? `${solo.adsetName} › ${solo.adName}` : ""}</span>
+                          </span>
                           <span className="mt-0.5 flex min-w-0 items-center gap-1.5"><StatusBadge row={row} /><span className="truncate text-[11px] text-gray-400">{row.accountName}{row.productName ? ` · ${row.productName}` : " · product not known"}</span></span>
                         </span>
                       </span>
                     </td>
-                    <td className={off ? "grayscale" : ""}><Strip days={row.days} /></td>
-                    <td className="whitespace-nowrap">{row.run > 0 ? <span className="inline-flex items-center gap-1 font-bold text-orange-600"><Flame className="h-3.5 w-3.5" />{row.run} day{row.run === 1 ? "" : "s"}</span> : <span className="text-gray-400">0</span>}</td>
-                    <td><Share part={row.orderDays14} whole={row.activeDays14} /></td>
-                    <td><Share part={row.orderDays7} whole={row.activeDays7} /></td>
+                    {metricCells(row, off)}
                     <td className="whitespace-nowrap"><b>{nf(row.orders14)}</b><span className="block text-[11px] text-gray-500">{nf(row.confirmed14)} confirmed</span></td>
                     <td><CostCell row={row} /></td>
                     <td className="whitespace-nowrap">{row.ordersToday > 0 ? <b className="text-emerald-700">{row.ordersToday} so far</b> : <span className="text-gray-400">{row.spendToday > 0 ? "none yet" : "—"}</span>}</td>
                     <td>
                       <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11.5px] font-bold ${v.tone}`}><span className={`h-1.5 w-1.5 rounded-full ${v.dot}`} />{v.label}</span>
                       {off && row.verdict === "scale" ? <span className="mt-1 block text-[10.5px] font-semibold text-emerald-700 dark:text-emerald-300">Was winning · turn it back on?</span> : null}
+                      {!off && multi && row.adsToTurnOff > 0 && (row.verdict === "scale" || row.verdict === "steady_ok" || row.verdict === "building") ? <span className="mt-1 block whitespace-nowrap text-[10.5px] font-semibold text-rose-700 dark:text-rose-300">Keep the campaign · cut {row.adsToTurnOff} ad{row.adsToTurnOff === 1 ? "" : "s"}</span> : null}
                     </td>
                   </tr>
-                  {isOpen ? (
-                    <tr className="streak-row-in border-t border-gray-100 bg-gray-50/70 dark:border-slate-800 dark:bg-slate-800/30">
-                      <td />
-                      <td colSpan={9} className="py-3 text-[12.5px] text-gray-700 dark:text-slate-300">
-                        <p className="m-0 font-semibold">{row.reason}</p>
-                        <p className="m-0 mt-1 text-gray-500">Spent {naira(row.spend14)} over the 14 days. Ad id {row.adId}.</p>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {row.days.map((cell) => (
-                            <span key={cell.day} className="rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] dark:border-slate-700 dark:bg-slate-900">
-                              <b>{shortDay(cell.day)}</b> · {cell.spend > 0 || cell.orders > 0 ? `${cell.orders} order${cell.orders === 1 ? "" : "s"} · ${naira(cell.spend)}` : "off"}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                    </tr>
+                  {opened ? (
+                    <>
+                      <tr className="streak-row-in border-t border-gray-100 bg-gray-50/70 dark:border-slate-800 dark:bg-slate-800/30">
+                        <td />
+                        <td colSpan={9} className="py-2.5 text-[12.5px] text-gray-700 dark:text-slate-300">
+                          <p className="m-0"><b>{multi ? "Campaign, all its ads together: " : ""}</b>{row.reason}</p>
+                          {multi
+                            ? <p className="m-0 mt-1 text-gray-500">Each ad below is judged on its own inside the campaign. Turn off only the ads marked <b className="text-rose-700">Turn off this ad</b>; the campaign keeps running on the rest.</p>
+                            : <p className="m-0 mt-1 text-gray-500">One ad ({solo ? `${solo.adsetName} › ${solo.adName}` : "—"}): turning it off turns the campaign off. Spent {naira(row.spend14)} over the 14 days.</p>}
+                          {!multi ? (
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              {row.days.map((cell) => (
+                                <span key={cell.day} className="rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] dark:border-slate-700 dark:bg-slate-900">
+                                  <b>{shortDay(cell.day)}</b> · {cell.spend > 0 || cell.orders > 0 ? `${cell.orders} order${cell.orders === 1 ? "" : "s"} · ${naira(cell.spend)}` : "off"}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                        </td>
+                      </tr>
+                      {multi ? row.ads.map((ad, adIndex) => adRow(ad, adIndex)) : null}
+                    </>
                   ) : null}
                 </Fragment>
               );
@@ -363,9 +452,10 @@ export default function OrderStreaksView({ platform, refreshKey }: { platform: s
       </div>
 
       <p className="m-0 text-[12px] text-gray-500 dark:text-slate-400">
-        Steady = an order on at least {Math.round(r.steadyShare * 100)}% of the days the ad ran, over the last {r.window} days and the last {r.recent}, after at least {r.minActiveDays} days running.
+        Each row is a campaign: all its ads together. Steady = an order on at least {Math.round(r.steadyShare * 100)}% of the days it ran, over the last {r.window} days and the last {r.recent}, after at least {r.minActiveDays} days running.
         {" "}Scale it = steady and costing at most {Math.round(r.scaleBelow * 100)}% of the product's break-even per order (the same target as Since Start).
-        {" "}Days the ad was off don't count against it. Today is shown on its own until the day is over.
+        {" "}In a campaign with 2+ ads, an ad is marked Turn off when it spent 2× break-even with no order, or costs more than break-even per order after {r.minActiveDays} days.
+        {" "}Days it was off don't count against it. Today is shown on its own until the day is over.
       </p>
     </div>
   );
