@@ -114,7 +114,7 @@ export default function CampaignDecisionDetail({ row, data, onClose, onToast }: 
 
   return createPortal(
     <div className="fixed inset-0 z-[80] flex justify-end bg-slate-950/45 backdrop-blur-[2px]" onClick={onClose}>
-      <div ref={scroller} role="dialog" aria-label={row.campaignName} onClick={(event) => event.stopPropagation()}
+      <div ref={scroller} data-smart-sticky="off" role="dialog" aria-label={row.campaignName} onClick={(event) => event.stopPropagation()}
         className="h-full w-full max-w-[1180px] overflow-y-auto bg-white shadow-2xl motion-safe:animate-[cdSlide_.28s_cubic-bezier(.2,.7,.2,1)] dark:bg-slate-950">
         <style>{"@keyframes cdSlide { from { transform: translateX(32px); opacity: .4 } to { transform: none; opacity: 1 } } @keyframes cdCardIn { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } } @media (prefers-reduced-motion: no-preference) { .cd-card-in { animation: cdCardIn .3s cubic-bezier(.2,.7,.2,1) both } }"}</style>
         <StickyCtx.Provider value={{ top: headH, scroller }}>

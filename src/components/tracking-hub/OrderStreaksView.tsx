@@ -310,7 +310,7 @@ export default function OrderStreaksView({ platform, refreshKey }: { platform: s
   };
 
   return (
-    <div className="mt-3 space-y-3">
+    <div className="mt-3 space-y-3" data-smart-sticky="off">
       <style>{MOTION_CSS}</style>
       <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
         {VERDICTS.map((item) => (
