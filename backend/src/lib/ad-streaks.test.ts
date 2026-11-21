@@ -57,3 +57,10 @@ test("too few days, slipped this week, patchy", () => {
   assert.match(slipped.reason, /slipped/);
   assert.equal(judgeStreak({ activeDays14: 10, orderDays14: 2, activeDays7: 7, orderDays7: 1, share14: 0.2, share7: 1 / 7, costPerOrder14: 1000, target: 9000 }).verdict, "patchy");
 });
+
+test("within a verdict, live campaigns come before off ones", () => {
+  const spend = new Map([["on", spendOn(all14, 3000)], ["off", spendOn(all14, 3000)]]);
+  const orders = [...ordersOn("on", all14), ...ordersOn("off", all14)];
+  const rows = orderStreaks({ today, ads: [{ ...ad("off"), campaignStatus: "off" }, { ...ad("on"), campaignStatus: "live", adLive: true }], spend, orders, targets: new Map([["p1", 10_000]]) });
+  assert.deepEqual(rows.map((row) => [row.adId, row.campaignStatus]), [["on", "live"], ["off", "off"]]);
+});

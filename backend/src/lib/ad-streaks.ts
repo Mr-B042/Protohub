@@ -39,7 +39,15 @@ export const STREAK_ORDER: StreakVerdict[] = ["scale", "steady_ok", "steady_no_t
 export type StreakAd = {
   adId: string; adName: string; campaignId: string; campaignName: string; adsetId: string; adsetName: string;
   accountId: string; accountName: string; platform: "meta" | "tiktok"; productId: string | null; productName: string | null;
+  /**
+   * Is the campaign delivering right now (asked live from Meta)? "unknown" when
+   * Meta did not answer for the account, and for TikTok. adLive: this ad itself
+   * (a live campaign can have this ad switched off); null when not known.
+   */
+  campaignStatus?: CampaignStatus; adLive?: boolean | null;
 };
+export type CampaignStatus = "live" | "off" | "unknown";
+const STATUS_ORDER: CampaignStatus[] = ["live", "unknown", "off"];
 export type StreakOrder = { day: string; adId: string | null; status: string };
 
 /** One day of the 14, oldest first: what the strip of squares shows. */
@@ -115,7 +123,9 @@ export function orderStreaks(input: {
       target, verdict, reason
     });
   }
+  // Within a verdict, live campaigns first: those are the ones budget can go to now.
   return rows.sort((a, b) => STREAK_ORDER.indexOf(a.verdict) - STREAK_ORDER.indexOf(b.verdict)
+    || STATUS_ORDER.indexOf(a.campaignStatus ?? "unknown") - STATUS_ORDER.indexOf(b.campaignStatus ?? "unknown")
     || (b.share14 ?? 0) - (a.share14 ?? 0) || b.orders14 - a.orders14);
 }
 

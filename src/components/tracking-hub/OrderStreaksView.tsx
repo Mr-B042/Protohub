@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useState } from "react";
-import { ArrowUpDown, ChevronDown, ChevronRight, Flame } from "lucide-react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { AlertTriangle, ArrowUpDown, ChevronRight, Flame, HelpCircle, Layers, PowerOff } from "lucide-react";
 import { trackingHubApi, type HubStreakRow, type HubStreakVerdict } from "../../lib/api";
 import { LoadState, PlatformIcon, SearchBox, ago, naira, nf, rowCls, selectCls, shortDay, tableCls, useLoad } from "./HubParts";
 
@@ -18,6 +18,66 @@ const VERDICTS: Array<{ key: HubStreakVerdict; label: string; tone: string; dot:
 ];
 const verdictOf = (key: HubStreakVerdict) => VERDICTS.find((row) => row.key === key)!;
 type SortKey = "verdict" | "run" | "share14" | "share7" | "orders14" | "cost";
+type StatusFilter = "all" | "live" | "off";
+const statusOf = (row: HubStreakRow) => row.campaignStatus ?? "unknown";
+
+// Motion (Bright, 21 Nov 2026: "nice UX/UI, icon motions, animations"): rows
+// ease in when the list changes, live dots pulse. All of it is motion-safe:
+// a phone set to reduce motion gets the same page without movement.
+const MOTION_CSS = `
+@keyframes streakRowIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes streakSoftPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(16,185,129,.35); } 50% { box-shadow: 0 0 0 5px rgba(16,185,129,0); } }
+@media (prefers-reduced-motion: no-preference) {
+  .streak-row-in { animation: streakRowIn .32s cubic-bezier(.2,.7,.2,1) both; }
+  .streak-live-pill { animation: streakSoftPulse 2.4s ease-in-out infinite; }
+}`;
+
+/** Green pulsing dot: the campaign is delivering right now. */
+function LiveDot({ size = "h-2 w-2" }: { size?: string }) {
+  return (
+    <span className={`relative inline-flex ${size}`}>
+      <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 motion-safe:animate-ping" />
+      <span className={`relative inline-flex ${size} rounded-full bg-emerald-500`} />
+    </span>
+  );
+}
+
+/** Live / Off / not known, with this ad's own state when the campaign is live but the ad is not. */
+function StatusBadge({ row }: { row: HubStreakRow }) {
+  const status = statusOf(row);
+  if (status === "live" && row.adLive === false) {
+    return <span title="The campaign is running, but this ad is switched off" className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10.5px] font-bold text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"><LiveDot size="h-1.5 w-1.5" />Live · this ad off</span>;
+  }
+  if (status === "live") {
+    return <span title="Delivering right now (checked live with Meta)" className="streak-live-pill inline-flex shrink-0 whitespace-nowrap items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10.5px] font-bold text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"><LiveDot size="h-1.5 w-1.5" />Live</span>;
+  }
+  if (status === "off") {
+    return <span title="Not delivering right now (checked live with Meta)" className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-gray-200 bg-gray-100 px-2 py-0.5 text-[10.5px] font-bold text-gray-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400"><PowerOff className="h-3 w-3" />Off</span>;
+  }
+  return <span title={row.platform === "tiktok" ? "TikTok doesn't say live, so this can't be checked" : "Meta didn't answer for this ad account"} className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-dashed border-gray-300 px-2 py-0.5 text-[10.5px] font-semibold text-gray-400 dark:border-slate-600"><HelpCircle className="h-3 w-3" />Not known</span>;
+}
+
+/** Live now / Off / All, with a highlight that slides between them. */
+function StatusSwitch({ value, onChange, counts }: { value: StatusFilter; onChange: (value: StatusFilter) => void; counts: Record<StatusFilter, number> }) {
+  const items: Array<{ key: StatusFilter; label: string; icon: ReactNode }> = [
+    { key: "all", label: "All", icon: <Layers className="h-3.5 w-3.5" /> },
+    { key: "live", label: "Live now", icon: <LiveDot /> },
+    { key: "off", label: "Off", icon: <PowerOff className="h-3.5 w-3.5" /> }
+  ];
+  const index = items.findIndex((item) => item.key === value);
+  return (
+    <div role="tablist" aria-label="Campaign status" className="relative grid h-10 grid-cols-3 rounded-xl border border-gray-200 bg-gray-50 p-1 dark:border-slate-700 dark:bg-slate-800/60">
+      <span aria-hidden className="absolute bottom-1 left-1 top-1 rounded-lg bg-white shadow-sm ring-1 ring-black/5 transition-transform duration-300 ease-out dark:bg-slate-900"
+        style={{ width: "calc((100% - 0.5rem) / 3)", transform: `translateX(${index * 100}%)` }} />
+      {items.map((item) => (
+        <button key={item.key} type="button" role="tab" aria-selected={value === item.key} onClick={() => onChange(item.key)}
+          className={`!min-h-0 relative z-10 inline-flex items-center justify-center gap-1.5 whitespace-nowrap px-3 text-[12.5px] font-semibold transition-colors ${value === item.key ? (item.key === "live" ? "text-emerald-700 dark:text-emerald-300" : "text-gray-900 dark:text-slate-100") : "text-gray-500 hover:text-gray-800 dark:text-slate-400"}`}>
+          {item.icon}{item.label}<span className="rounded-full bg-gray-200/70 px-1.5 text-[10.5px] tabular-nums text-gray-600 dark:bg-slate-700 dark:text-slate-300">{counts[item.key]}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
 
 /** 14 squares, oldest left: green = an order that day, grey = ran with no order, blank = off. */
 function Strip({ days }: { days: HubStreakRow["days"] }) {
@@ -65,20 +125,28 @@ export default function OrderStreaksView({ platform, refreshKey }: { platform: s
     return () => clearInterval(timer);
   }, [platform]); // eslint-disable-line react-hooks/exhaustive-deps
   const [verdict, setVerdict] = useState<HubStreakVerdict | "">("");
+  const [status, setStatus] = useState<StatusFilter>("all");
   const [productId, setProductId] = useState("");
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "verdict", dir: 1 });
   if (!data) return <LoadState text="Checking which ads get orders day after day…" error={error} onRetry={reload} />;
 
+  const statusCounts: Record<StatusFilter, number> = { all: 0, live: 0, off: 0 };
   const base = data.rows.filter((row) => (!productId || row.productId === productId)
     && (!search.trim() || `${row.adName} ${row.adsetName} ${row.campaignName} ${row.accountName} ${row.productName ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())));
+  for (const row of base) {
+    statusCounts.all += 1;
+    if (statusOf(row) === "live") statusCounts.live += 1;
+    if (statusOf(row) === "off") statusCounts.off += 1;
+  }
+  const shown = base.filter((row) => status === "all" || statusOf(row) === status);
   const counts = new Map<HubStreakVerdict, number>();
-  for (const row of base) counts.set(row.verdict, (counts.get(row.verdict) ?? 0) + 1);
+  for (const row of shown) counts.set(row.verdict, (counts.get(row.verdict) ?? 0) + 1);
   const order = VERDICTS.map((row) => row.key);
   const value = (row: HubStreakRow): number => sort.key === "verdict" ? order.indexOf(row.verdict)
     : sort.key === "cost" ? row.costPerOrder14 ?? Number.MAX_SAFE_INTEGER : sort.key === "share14" ? row.share14 ?? -1 : sort.key === "share7" ? row.share7 ?? -1 : row[sort.key];
-  const rows = base.filter((row) => !verdict || row.verdict === verdict)
+  const rows = shown.filter((row) => !verdict || row.verdict === verdict)
     .sort((a, b) => (value(a) - value(b)) * sort.dir || (b.share14 ?? 0) - (a.share14 ?? 0) || b.orders14 - a.orders14);
   const productOptions = Array.from(new Map(data.rows.filter((row) => row.productId).map((row) => [row.productId!, row.productName ?? ""])).entries()).sort((a, b) => a[1].localeCompare(b[1]));
   const th = (key: SortKey, label: string, title?: string) => (
@@ -91,6 +159,7 @@ export default function OrderStreaksView({ platform, refreshKey }: { platform: s
 
   return (
     <div className="mt-3 space-y-3">
+      <style>{MOTION_CSS}</style>
       <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
         {VERDICTS.map((item) => (
           <button key={item.key} type="button" onClick={() => setVerdict(verdict === item.key ? "" : item.key)}
@@ -102,6 +171,7 @@ export default function OrderStreaksView({ platform, refreshKey }: { platform: s
       </div>
 
       <div className="flex flex-wrap items-center gap-2.5">
+        <StatusSwitch value={status} onChange={setStatus} counts={statusCounts} />
         <SearchBox value={search} onChange={setSearch} placeholder="Search ads, ad sets, campaigns…" className="min-w-[200px] flex-1 xl:max-w-[280px]" />
         <select value={productId} onChange={(event) => setProductId(event.target.value)} className={`${selectCls} w-[170px]`}><option value="">All Products</option>{productOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>
         <span className="ml-auto flex flex-wrap items-center gap-3 text-[11.5px] text-gray-500 dark:text-slate-400">
@@ -111,6 +181,12 @@ export default function OrderStreaksView({ platform, refreshKey }: { platform: s
           {data.lastSyncAt ? <span>Spend read {ago(data.lastSyncAt)}</span> : null}
         </span>
       </div>
+
+      {data.liveFailures?.length ? (
+        <p className="m-0 flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />Couldn't check live or off for {data.liveFailures.map((row) => row.name).join(", ")}. Their ads show "Not known".
+        </p>
+      ) : null}
 
       <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         <table className={tableCls}>
@@ -131,13 +207,16 @@ export default function OrderStreaksView({ platform, refreshKey }: { platform: s
           <tbody>
             {rows.length === 0 ? (
               <tr><td colSpan={10} className="py-10 text-center text-gray-500">{data.rows.length ? "No ad matches these filters." : "No ad ran in the last 7 days."}</td></tr>
-            ) : rows.map((row) => {
+            ) : rows.map((row, index) => {
               const v = verdictOf(row.verdict);
               const isOpen = open.has(row.adId);
+              const off = statusOf(row) === "off";
               return (
-                <Fragment key={row.adId}>
-                  <tr className={`${rowCls} cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/40`} onClick={() => toggle(row.adId)}>
-                    <td>{isOpen ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}</td>
+                // The key carries the filter so rows ease in again when it changes; delay staggers the first dozen.
+                <Fragment key={`${row.adId}:${status}:${verdict}`}>
+                  <tr style={{ animationDelay: `${Math.min(index, 12) * 28}ms` }}
+                    className={`${rowCls} streak-row-in group cursor-pointer transition-[background-color,opacity] duration-200 hover:bg-gray-50 dark:hover:bg-slate-800/40 ${off ? "bg-gray-50/40 dark:bg-slate-900/40 [&>td]:opacity-55 [&>td]:transition-opacity hover:[&>td]:opacity-100" : ""} ${statusOf(row) === "live" ? "[&>td:first-child]:shadow-[inset_3px_0_0_0_rgb(16_185_129)]" : ""}`} onClick={() => toggle(row.adId)}>
+                    <td><ChevronRight className={`h-4 w-4 text-gray-400 transition-transform duration-200 ${isOpen ? "rotate-90" : "group-hover:translate-x-0.5"}`} /></td>
                     <td className="min-w-[230px] max-w-[320px]">
                       <span className="flex items-center gap-2">
                         <PlatformIcon platform={row.platform} size="sm" />
@@ -145,21 +224,24 @@ export default function OrderStreaksView({ platform, refreshKey }: { platform: s
                           {/* Campaign first: most ads are named alike ("New Sales ad"). */}
                           <b className="block truncate" title={row.campaignName}>{row.campaignName}</b>
                           <span className="block truncate text-[11.5px] text-gray-500" title={`${row.adsetName} › ${row.adName}`}>{row.adsetName} › {row.adName}</span>
-                          <span className="block truncate text-[11px] text-gray-400">{row.accountName}{row.productName ? ` · ${row.productName}` : " · product not known"}</span>
+                          <span className="mt-0.5 flex min-w-0 items-center gap-1.5"><StatusBadge row={row} /><span className="truncate text-[11px] text-gray-400">{row.accountName}{row.productName ? ` · ${row.productName}` : " · product not known"}</span></span>
                         </span>
                       </span>
                     </td>
-                    <td><Strip days={row.days} /></td>
+                    <td className={off ? "grayscale" : ""}><Strip days={row.days} /></td>
                     <td className="whitespace-nowrap">{row.run > 0 ? <span className="inline-flex items-center gap-1 font-bold text-orange-600"><Flame className="h-3.5 w-3.5" />{row.run} day{row.run === 1 ? "" : "s"}</span> : <span className="text-gray-400">0</span>}</td>
                     <td><Share part={row.orderDays14} whole={row.activeDays14} /></td>
                     <td><Share part={row.orderDays7} whole={row.activeDays7} /></td>
                     <td className="whitespace-nowrap"><b>{nf(row.orders14)}</b><span className="block text-[11px] text-gray-500">{nf(row.confirmed14)} confirmed</span></td>
                     <td><CostCell row={row} /></td>
                     <td className="whitespace-nowrap">{row.ordersToday > 0 ? <b className="text-emerald-700">{row.ordersToday} so far</b> : <span className="text-gray-400">{row.spendToday > 0 ? "none yet" : "—"}</span>}</td>
-                    <td><span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11.5px] font-bold ${v.tone}`}><span className={`h-1.5 w-1.5 rounded-full ${v.dot}`} />{v.label}</span></td>
+                    <td>
+                      <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11.5px] font-bold ${v.tone}`}><span className={`h-1.5 w-1.5 rounded-full ${v.dot}`} />{v.label}</span>
+                      {off && row.verdict === "scale" ? <span className="mt-1 block text-[10.5px] font-semibold text-emerald-700 dark:text-emerald-300">Was winning · turn it back on?</span> : null}
+                    </td>
                   </tr>
                   {isOpen ? (
-                    <tr className="border-t border-gray-100 bg-gray-50/70 dark:border-slate-800 dark:bg-slate-800/30">
+                    <tr className="streak-row-in border-t border-gray-100 bg-gray-50/70 dark:border-slate-800 dark:bg-slate-800/30">
                       <td />
                       <td colSpan={9} className="py-3 text-[12.5px] text-gray-700 dark:text-slate-300">
                         <p className="m-0 font-semibold">{row.reason}</p>

@@ -4809,6 +4809,8 @@ export type HubStreakVerdict = "scale" | "steady_ok" | "steady_costly" | "steady
 export type HubStreakRow = {
   adId: string; adName: string; campaignId: string; campaignName: string; adsetId: string; adsetName: string;
   accountId: string; accountName: string; platform: "meta" | "tiktok"; productId: string | null; productName: string | null;
+  /** Campaign delivering right now (asked live from Meta); adLive = this ad itself. */
+  campaignStatus?: "live" | "off" | "unknown"; adLive?: boolean | null;
   days: Array<{ day: string; spend: number; orders: number }>;
   run: number; activeDays14: number; orderDays14: number; activeDays7: number; orderDays7: number;
   share14: number | null; share7: number | null; orders14: number; confirmed14: number; spend14: number; costPerOrder14: number | null;
@@ -4816,6 +4818,7 @@ export type HubStreakRow = {
 };
 export type HubStreaks = {
   rows: HubStreakRow[]; today: string; lastSyncAt: string | null;
+  liveFailures?: Array<{ accountId: string; name: string; message: string }>; liveCheckedAt?: string;
   rules: { window: number; recent: number; steadyShare: number; minActiveDays: number; scaleBelow: number; buildingShare: number };
   targets: Array<{ productId: string; name: string; target: number | null; own: boolean }>;
 };
