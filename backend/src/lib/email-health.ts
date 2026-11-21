@@ -8,6 +8,7 @@ import { alertRecipients } from "./notification-routing.js";
 import { getOrgPushBranding } from "./push-branding.js";
 import { sendPushToUser } from "./push.js";
 import { DAY_MS, lagosDay, phoneKey, segmentMatches } from "./email-marketing-rules.js";
+import { SOFT_BOUNCE_LIMIT } from "./customer-email-words.js";
 import { EmailMarketingError, PUBLIC_BACKEND_URL, audienceLabel, forgetWorld, loadWorld, settingsFor, statsFor } from "./email-marketing.js";
 import {
   atRisk, classify, cohorts, dailyDelivery, dailyRates, daysBetween, delivery, deliveryGrade, detectIssues, engagement, gradeOf, growth, growthSeries, healthScore,
@@ -514,6 +515,12 @@ export async function receiveMailjetEvents(secret: string, body: unknown) {
       const hard = kind === "blocked" || event.hard_bounce === true || event.hard_bounce === "true";
       await supabase.from("email_campaign_sends").update({ bounced_at: at, bounce_kind: kind === "blocked" ? "blocked" : hard ? "hard" : "soft" }).eq("id", send.id);
       if (hard && send.contact_id) await supabase.from("email_contacts").update({ status: "bounced", status_changed_at: at, status_reason: `Email ${kind === "blocked" ? "blocked" : "bounced"}: ${String(event.error ?? event.error_related_to ?? "").slice(0, 80)}`, updated_at: at }).eq("id", send.contact_id).eq("status", "subscribed");
+      // Soft bounces (full inbox, server down) used to never stop anything: 13 addresses soft-bounced
+      // 40 times by 21 Nov 2026 and kept hurting our sender score. After SOFT_BOUNCE_LIMIT, stop.
+      if (!hard && send.contact_id) {
+        const { count } = await supabase.from("email_campaign_sends").select("id", { count: "exact", head: true }).eq("contact_id", send.contact_id).eq("bounce_kind", "soft");
+        if ((count ?? 0) >= SOFT_BOUNCE_LIMIT) await supabase.from("email_contacts").update({ status: "bounced", status_changed_at: at, status_reason: `Email bounced ${count} times (inbox full or not working)`, updated_at: at }).eq("id", send.contact_id).eq("status", "subscribed");
+      }
     }
     handled += 1;
   }
