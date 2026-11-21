@@ -15,7 +15,7 @@ import {
   type OrderLite, type Person, type SavedSegment, type SegmentRule
 } from "./email-marketing-rules.js";
 import { emailBrand } from "./email-brand.js";
-import { asPersonalNote, applyTags, collectLinks, fillTheirProduct, unfilledGaps, usesStorePicks, withStorePicks, type StorePickItem, normalizeDesign, renderEmailHtml, renderEmailText, usesLoyaltyTags, usesTheirProduct, withTheirProduct, type EmailDesign, type RenderOptions, type TheirProduct, withoutStore } from "./email-render.js";
+import { asPersonalNote, applyTags, collectLinks, fillTheirProduct, unfilledGaps, usesStorePicks, withStorePicks, type StorePickItem, normalizeDesign, renderEmailHtml, renderEmailText, usesLoyaltyTags, usesTheirProduct, withTheirProduct, type EmailDesign, type RenderOptions, type TheirProduct, withoutStore, withLivePrices } from "./email-render.js";
 import { inSendWindow, offsetFor } from "./email-automation-rules.js";
 import { quietContactIds, runReengage } from "./email-reengage.js";
 
@@ -889,6 +889,7 @@ export async function sendTest(orgId: string, branchId: string, campaign: any, e
   const results: Array<{ email: string; ok: boolean; error?: string }> = [];
   for (const email of emails) {
     if ((await branchLocale(branchId)).countryCode !== "NG") design = withoutStore(design);
+    design = await livePricesFor(design, orgId, branchId, new Map());
     const html = renderEmailHtml(usesStorePicks(design) ? await fillStorePicks(design, { product: null, seed: email, slug: campaign.slug ?? "test", utm: false, nowMs: Date.now() }) : design, { logoUrl: (await emailBrand(orgId)).logoUrl ?? undefined, firstName: senderName, preheader: campaign.preheader || undefined, brand: sender.fromName, footerNote: settings.footerNote, unsubscribeUrl: `${PUBLIC_BACKEND_URL}/e/u/test`, plain: !!campaign.options?.plainText, linkFor });
     const text = renderEmailText(design, { firstName: senderName, unsubscribeUrl: `${PUBLIC_BACKEND_URL}/e/u/test`, linkFor });
     try {
@@ -1052,6 +1053,8 @@ async function sendQueued(nowMs: number) {
       const bought = theirs?.name ?? (await theirProductFor(row.org_id, row.branch_id, row.phone, campaign, productCache))?.name ?? null;
       ready = await fillStorePicks(ready, { product: bought, seed: row.email, slug: campaign.slug, utm: campaign.options?.utm !== false, nowMs });
     }
+    // Product cards show today's prices, not the ones typed in when the email was made.
+    ready = await livePricesFor(ready, row.org_id, row.branch_id, productCache);
     const { html, text, subject } = renderForSend(campaign, ready, { ...row, loyalty, theirs }, { brand: sender.brand, footerNote: footers.get(row.branch_id) ?? "", logoUrl: sender.logoUrl }, nowMs);
     try {
       const result = await sendMarketingEmail(row.org_id, { to: { email: row.email, name: row.name || undefined }, subject, html, text, unsubscribeUrl: trackingUrl("u", row.token), customId: row.token, replyTo: campaign.options?.replyTo || undefined,
@@ -1072,6 +1075,14 @@ async function sendQueued(nowMs: number) {
 }
 
 const naira = (n: number, currency = "NGN") => moneyText(n, currency);
+
+/** Product cards with today's package prices (email-render withLivePrices). */
+async function livePricesFor(design: EmailDesign, orgId: string, branchId: string, cache: Map<string, Promise<Awaited<ReturnType<typeof productsForDesigner>>>>) {
+  if (!design.blocks.some((block) => block.type === "product" && block.productId && block.price?.trim())) return design;
+  if (!cache.has(branchId)) cache.set(branchId, productsForDesigner(orgId, branchId));
+  const currency = (await branchLocale(branchId)).currency;
+  return withLivePrices(design, await cache.get(branchId)!, (n) => naira(n, currency));
+}
 
 /** The product of this phone's latest order, with its photo, price and order page (links carry the email's utm tags). */
 export async function theirProductFor(orgId: string, branchId: string, phone: unknown, campaign: any, cache: Map<string, Promise<Awaited<ReturnType<typeof productsForDesigner>>>>): Promise<TheirProduct | null> {

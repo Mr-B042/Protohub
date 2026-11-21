@@ -638,6 +638,35 @@ export function asOneLinkNote(design: EmailDesign, signer?: string): EmailDesign
   return { ...design, blocks: out };
 }
 
+/**
+ * Live prices (Bright, 21 Nov 2026): a product card's price was typed in when
+ * the email was made and went stale ("₦39,500 – ₦133,500" after the Shelf
+ * moved to ₦42,500). At send, each card that names a product and shows a price
+ * gets today's package prices, in the card's own style. Blank stays blank;
+ * a product with no prices now keeps the old text.
+ */
+export type LivePrice = { id: string; priceMin: number | null; priceMax: number | null };
+export function livePriceText(old: string, min: number, max: number | null, money: (n: number) => string) {
+  const top = max !== null && max > min ? max : null;
+  if (/^\s*from\b/i.test(old)) return `From ${money(min)}`;
+  if (/[–—-]/.test(old.replace(/^\s*-/, ""))) return top !== null ? `${money(min)} – ${money(top)}` : money(min);
+  return top !== null ? `From ${money(min)}` : money(min);
+}
+export function withLivePrices(design: EmailDesign, products: LivePrice[], money: (n: number) => string): EmailDesign {
+  const byId = new Map(products.map((product) => [product.id, product]));
+  let changed = false;
+  const blocks = design.blocks.map((block) => {
+    if (block.type !== "product" || !block.productId || !block.price?.trim()) return block;
+    const live = byId.get(block.productId);
+    if (!live || live.priceMin === null) return block;
+    const price = livePriceText(block.price, live.priceMin, live.priceMax, money);
+    if (price === block.price) return block;
+    changed = true;
+    return { ...block, price };
+  });
+  return changed ? { ...design, blocks } : design;
+}
+
 // ── Helpful letters (Bright, 9 Nov 2026: "more plain text… tips to make their life easier") ──
 // A plain letter: the logo, a headline, numbered tips, a warm close. No pictures,
 // no big buttons, nothing to sell; one quiet line after the sign-off.
