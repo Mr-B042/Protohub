@@ -824,8 +824,15 @@ export async function uploadPicture(orgId: string, dataUrl: string) {
 
 // ── Sending ───────────────────────────────────────────────────────────
 
+/**
+ * Links and the open picture in emails. Gmail distrusts links on a shared host
+ * (*.up.railway.app) that doesn't match the sender's domain, so EMAIL_LINK_BASE_URL
+ * (e.g. https://go.protoolshardwareventures.com.ng, pointed at this server) wins when set.
+ * Only /e/... paths ride on it; Mailjet's bounce hook stays on the Railway address.
+ */
+export const EMAIL_LINK_BASE_URL = (process.env.EMAIL_LINK_BASE_URL || PUBLIC_BACKEND_URL).replace(/\/+$/, "");
 const trackingUrl = (kind: "o" | "c" | "u", token: string, index?: number) =>
-  kind === "c" ? `${PUBLIC_BACKEND_URL}/e/c/${token}/${index}` : kind === "o" ? `${PUBLIC_BACKEND_URL}/e/o/${token}.gif` : `${PUBLIC_BACKEND_URL}/e/u/${token}`;
+  kind === "c" ? `${EMAIL_LINK_BASE_URL}/e/c/${token}/${index}` : kind === "o" ? `${EMAIL_LINK_BASE_URL}/e/o/${token}.gif` : `${EMAIL_LINK_BASE_URL}/e/u/${token}`;
 
 /** The links a run sends, with utm tags when the campaign asks for them. */
 export function campaignLinks(campaign: { slug: string; options?: any }, design: EmailDesign) {

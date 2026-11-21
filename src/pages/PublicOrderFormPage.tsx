@@ -8,6 +8,7 @@ import { vagueAddressReason } from "../lib/nigeria";
 import { addressExampleFor, areaSuggestions, KNOWN_AREA_NAMES, STATE_AREAS } from "../lib/ng-areas";
 import { announceLandingPreviewLocked, insideLandingPreview } from "../lib/landing-preview";
 import type { ProductCurrencyCode } from "../types";
+import { suggestEmail } from "../lib/email-typo";
 
 type PublicPricing = {
   currency: ProductCurrencyCode;
@@ -4895,6 +4896,19 @@ export default function PublicOrderFormPage() {
                         {fieldErrors.email}
                       </span>
                     )}
+                    {(() => {
+                      const better = suggestEmail(orderFormEmail);
+                      if (!better) return null;
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => { setOrderFormEmail(better); clearFieldError("email"); }}
+                          style={{ marginTop: 6, display: "inline-block", borderRadius: 999, border: "1px solid #fcd34d", background: "#fffbeb", color: "#92400e", fontSize: 12, fontWeight: 700, padding: "6px 10px", cursor: "pointer", textAlign: "left" }}
+                        >
+                          Did you mean <span style={{ fontWeight: 800, textDecoration: "underline" }}>{better}</span>? Tap to fix.
+                        </button>
+                      );
+                    })()}
                   </label>
                 )}
 

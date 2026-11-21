@@ -1,6 +1,7 @@
 import { repeatWindow, sameStatusSave, takeLock } from "./message-once.js";
 import Mailjet from "node-mailjet";
 import { Resend } from "resend";
+import { deliveredSubject, firstNameOf, newOrderSubject, statusSubject } from "./customer-email-words.js";
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { DEFAULT_WORKING_DAYS, isWithinWorkingSchedule, nextWorkingScheduleAt, normalizeWorkingDays } from "./business-schedule.js";
@@ -127,13 +128,17 @@ const LEGACY_DEFAULT_EMAIL_TEMPLATE_MAP: Partial<Record<string, { subject: strin
   internal_order_rescheduled:   { subject: "Protohub rescheduled order {{order_id}}", body: "An order has been postponed and needs follow-up.\n\nOrder ID: {{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nScheduled Date: {{scheduled_date}}\nCall Outcome: {{call_outcome}}\nNotes: {{response}}\n\nPlease return to the workspace at the scheduled time." },
   internal_order_cancelled:     { subject: "Protohub cancelled order {{order_id}}", body: "An order has been cancelled.\n\nOrder ID: {{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nReason: {{response}}\n\nLog in for full context." },
   internal_order_failed:        { subject: "Protohub failed order {{order_id}}", body: "An order has been marked as failed.\n\nOrder ID: {{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nReason: {{response}}\n\nPlease review the case and decide the next step." },
-  internal_abandoned_cart_new:  { subject: "Protohub abandoned cart captured — {{cart_id}}", body: "A new abandoned cart has been captured.\n\nCart ID: {{cart_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nSource: {{source}}\n\nOpen Protohub to review and follow up quickly." }
-};
-
-const DEFAULT_EMAIL_TEMPLATE_MAP: Record<string, { subject: string; body: string }> = {
+  internal_abandoned_cart_new:  { subject: "Protohub abandoned cart captured — {{cart_id}}", body: "A new abandoned cart has been captured.\n\nCart ID: {{cart_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nSource: {{source}}\n\nOpen Protohub to review and follow up quickly." },
+  // Customer emails before 21 Nov 2026 ("Protohub update — …"): customers never knew the name Protohub.
   order_new:           { subject: "Protohub order confirmation — {{order_id}}", body: "Hello {{customer}},\n\nWe have received your order and our team is already reviewing it.\n\nOrder ID: {{order_id}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nPhone: {{phone}}\n\nWe will keep you updated as your order moves forward." },
   order_status_change: { subject: "Protohub update — order {{order_id}} is now {{status}}", body: "Hello {{customer}},\n\nYour order status has been updated.\n\nOrder ID: {{order_id}}\nPrevious Status: {{from_status}}\nCurrent Status: {{status}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\n\nThank you for choosing Protohub." },
   order_delivered:     { subject: "Protohub delivery confirmed — {{order_id}}", body: "Hello {{customer}},\n\nGreat news. Your order has been delivered successfully.\n\nOrder ID: {{order_id}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\n\nThank you for shopping with us." },
+};
+
+const DEFAULT_EMAIL_TEMPLATE_MAP: Record<string, { subject: string; body: string }> = {
+  order_new:           { subject: "{{friendly_subject}}", body: "Hello {{customer}},\n\nWe have received your order and our team is already reviewing it.\n\nOrder ID: {{order_id}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nPhone: {{phone}}\n\nWe will keep you updated as your order moves forward." },
+  order_status_change: { subject: "{{friendly_subject}}", body: "Hello {{customer}},\n\nYour order status has been updated.\n\nOrder ID: {{order_id}}\nPrevious Status: {{from_status}}\nCurrent Status: {{status}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\n\nThank you for choosing {{brand}}." },
+  order_delivered:     { subject: "{{friendly_subject}}", body: "Hello {{customer}},\n\nGreat news. Your order has been delivered successfully.\n\nOrder ID: {{order_id}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\n\nThank you for shopping with us." },
   payroll_approved:    { subject: "Protohub payroll approved — {{period}}", body: "Hello {{name}},\n\nYour payroll has been approved for the selected period.\n\nPeriod: {{period}}\nNet Amount: {{currency}} {{amount}}\n\nThe finance record is now ready for your review." },
   internal_order_new:           { subject: "New Order #{{order_id}}", body: "{{customer}} ({{phone}}) just placed a new order worth {{currency}} {{amount}}.\n\nProduct: {{product_name}}\nSource: {{source}}\nAssigned to: {{rep_name}}\n\nOpen the order to review and take the next step." },
   internal_order_assigned:      { subject: "Order #{{order_id}} assigned to you", body: "Hi {{recipient_name}},\n\nOrder #{{order_id}} has been assigned to you.\n\nCustomer: {{customer}} ({{phone}})\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nSource: {{source}}\n\nOpen the order to start follow-up." },
@@ -791,11 +796,13 @@ export async function sendEmail(
   const tpl = settings.templates?.[trigger];
   if (!tpl?.subject || !tpl?.body) return;
 
-  const subject = interpolate(tpl.subject, vars);
-  const body    = interpolate(tpl.body, vars);
+  // {{brand}} = the sender name customers see (e.g. "Bright Path Hub"), never "Protohub" unless nothing is set.
+  const customerVars: Record<string, string> = { brand: brandName(settings), first_name: firstNameOf(vars.customer), ...vars };
+  const subject = interpolate(tpl.subject, customerVars);
+  const body    = interpolate(tpl.body, customerVars);
 
   try {
-    await deliverAndLogEmail(orgId, settings, trigger, "customer", vars, to, subject, body, options);
+    await deliverAndLogEmail(orgId, settings, trigger, "customer", customerVars, to, subject, body, options);
   } catch {
     // already logged
   }
@@ -921,6 +928,7 @@ export async function sendOrderStatusEmail(
     currency: order.currency, from_status: fromStatus ?? "—", status: toStatus
   };
   const trigger: EmailTrigger = toStatus === "Delivered" ? "order_delivered" : "order_status_change";
+  vars.friendly_subject = trigger === "order_delivered" ? deliveredSubject(order.customer, order.product_name) : statusSubject(order.customer, order.product_name, toStatus);
   if (!takeLock(`${orgId}:email:${trigger}:${order.id}:${toStatus}:${days?.after ?? ""}`)) return;
   if (await customerEmailAlreadySent(orgId, trigger, order.id, order.email, toStatus)) return;
   // Delivered: the "Thank You" e-receipt (Bright, 9 Nov 2026); plain text only if it can't be made.
@@ -1013,7 +1021,8 @@ export async function sendNewOrderEmail(
     order_id: order.id, customer: order.customer, phone: order.phone,
     product_name: orderDisplayName(order), amount: String(order.amount),
     currency: order.currency, source: order.source ?? "—",
-    addons: buildAddonsEmailLine(order.cross_sell_lines, order.currency, order.additional_lines)
+    addons: buildAddonsEmailLine(order.cross_sell_lines, order.currency, order.additional_lines),
+    friendly_subject: newOrderSubject(order.customer, order.product_name)
   };
   // Once per order, ever (a double tap or a retried save never sends it twice).
   if (!takeLock(`${orgId}:email:order_new:${order.id}`)) return;
