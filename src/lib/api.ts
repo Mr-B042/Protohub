@@ -5841,11 +5841,15 @@ export type EmAutomationsPage = {
   };
 };
 export type EmAutomationInput = Pick<EmAutomation, "name" | "description" | "template" | "goal" | "trigger" | "audience" | "enrollment" | "settings" | "workflow" | "stage"> & { launch: boolean };
+export type EmPlainSide = { sent: number; opened: number; clicked: number };
+export type EmPlainTest = { designed: EmPlainSide; plain: EmPlainSide; verdict: { kind: "too_early" | "plain" | "designed" | "tie"; measure: "clicks" | "opens"; text: string } };
 export type EmAutomationReport = {
   automation: EmAutomation;
   runs: { total: number; active: number; completed: number; exited: number };
   exitReasons: Array<{ reason: string; count: number }>;
-  emails: Array<{ stepId: string; name: string; subject: string; sent: number; waiting: number; openRate: number | null; clickRate: number | null; orders: number; revenue: number; repOrders?: number; repRevenue?: number; unsubscribed: number }>;
+  emails: Array<{ stepId: string; name: string; subject: string; sent: number; waiting: number; openRate: number | null; clickRate: number | null; orders: number; revenue: number; repOrders?: number; repRevenue?: number; unsubscribed: number; plainTest?: EmPlainTest }>;
+  /** Designed vs plain one-link note, the whole flow (21 Nov 2026). */
+  plainTest?: EmPlainTest;
   recent: Array<{ email: string; name: string; status: string; exitReason: string | null; enteredAt: string; finishedAt: string | null; nextAt: string | null; step: string | null; stepName: string | null }>;
 };
 
