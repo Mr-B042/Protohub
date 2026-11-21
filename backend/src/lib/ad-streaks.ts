@@ -48,7 +48,7 @@ export type StreakAd = {
 };
 export type CampaignStatus = "live" | "off" | "unknown";
 const STATUS_ORDER: CampaignStatus[] = ["live", "unknown", "off"];
-export type StreakOrder = { day: string; adId: string | null; status: string };
+export type StreakOrder = { day: string; adId: string | null; campaignId?: string | null; status: string };
 
 /** One day of the 14, oldest first: what the strip of squares shows. */
 export type StreakDay = { day: string; spend: number; orders: number };
@@ -67,6 +67,69 @@ export type StreakRow = StreakAd & {
 
 const share = (part: number, whole: number) => (whole > 0 ? part / whole : null);
 
+type DayOrders = Map<string, { all: number; confirmed: number }>;
+type Metrics = Omit<StreakRow, keyof StreakAd>;
+
+const windowDays = (today: string) => Array.from({ length: STREAK_RULES.window }, (_, i) => addDaysToDateKey(today, i - STREAK_RULES.window)); // oldest -> yesterday
+
+/** Ran in the last 7 full days or today = still running (only those are listed). */
+function ranRecently(spendOf: Map<string, number>, today: string) {
+  const from = addDaysToDateKey(today, -STREAK_RULES.recent);
+  for (const [day, spend] of spendOf) if (spend > 0 && day >= from && day <= today) return true;
+  return false;
+}
+
+/** Everything the table shows for one strip of days (an ad, or a whole campaign). */
+function measure(spendOf: Map<string, number>, ordersOf: DayOrders, today: string, target: number | null): Metrics {
+  const days = windowDays(today);
+  const recentFrom = days[days.length - STREAK_RULES.recent];
+  const strip: StreakDay[] = days.map((day) => ({ day, spend: spendOf.get(day) ?? 0, orders: ordersOf.get(day)?.all ?? 0 }));
+  const active = (cell: StreakDay) => cell.spend > 0 || cell.orders > 0;
+  const recent = strip.filter((cell) => cell.day >= recentFrom);
+  const activeDays14 = strip.filter(active).length;
+  const orderDays14 = strip.filter((cell) => cell.orders > 0).length;
+  const activeDays7 = recent.filter(active).length;
+  const orderDays7 = recent.filter((cell) => cell.orders > 0).length;
+  let run = 0;
+  for (let i = strip.length - 1; i >= 0; i -= 1) {
+    const cell = strip[i];
+    if (cell.orders > 0) run += 1;
+    else if (cell.spend > 0) break;
+  }
+  const orders14 = strip.reduce((sum, cell) => sum + cell.orders, 0);
+  const confirmed14 = days.reduce((sum, day) => sum + (ordersOf.get(day)?.confirmed ?? 0), 0);
+  const spend14 = strip.reduce((sum, cell) => sum + cell.spend, 0);
+  const costPerOrder14 = orders14 > 0 ? spend14 / orders14 : null;
+  const share14 = share(orderDays14, activeDays14);
+  const share7 = share(orderDays7, activeDays7);
+  const { verdict, reason } = judgeStreak({ activeDays14, orderDays14, activeDays7, orderDays7, share14, share7, costPerOrder14, target });
+  return {
+    days: strip, run, activeDays14, orderDays14, activeDays7, orderDays7, share14, share7,
+    orders14, confirmed14, spend14, costPerOrder14, ordersToday: ordersOf.get(today)?.all ?? 0, spendToday: spendOf.get(today) ?? 0,
+    target, verdict, reason
+  };
+}
+
+function ordersByKey(orders: StreakOrder[], keyOf: (order: StreakOrder) => string | null | undefined) {
+  const map = new Map<string, DayOrders>();
+  for (const order of orders) {
+    const key = keyOf(order);
+    if (!key) continue;
+    const byDay = map.get(key) ?? new Map();
+    const cell = byDay.get(order.day) ?? { all: 0, confirmed: 0 };
+    cell.all += 1;
+    if (CONFIRMED_STATUSES.has(order.status)) cell.confirmed += 1;
+    byDay.set(order.day, cell);
+    map.set(key, byDay);
+  }
+  return map;
+}
+
+const byVerdictThenLive = <T extends { verdict: StreakVerdict; campaignStatus?: CampaignStatus; share14: number | null; orders14: number }>(a: T, b: T) =>
+  STREAK_ORDER.indexOf(a.verdict) - STREAK_ORDER.indexOf(b.verdict)
+  || STATUS_ORDER.indexOf(a.campaignStatus ?? "unknown") - STATUS_ORDER.indexOf(b.campaignStatus ?? "unknown")
+  || (b.share14 ?? 0) - (a.share14 ?? 0) || b.orders14 - a.orders14;
+
 export function orderStreaks(input: {
   today: string;
   ads: StreakAd[];
@@ -76,57 +139,99 @@ export function orderStreaks(input: {
   /** Break-even cost per order per product. */
   targets: Map<string, number>;
 }): StreakRow[] {
-  const { today } = input;
-  const days = Array.from({ length: STREAK_RULES.window }, (_, i) => addDaysToDateKey(today, i - STREAK_RULES.window)); // oldest -> yesterday
-  const recentFrom = days[days.length - STREAK_RULES.recent];
-  const ordersByAd = new Map<string, Map<string, { all: number; confirmed: number }>>();
-  for (const order of input.orders) {
-    if (!order.adId) continue;
-    const byDay = ordersByAd.get(order.adId) ?? new Map();
-    const cell = byDay.get(order.day) ?? { all: 0, confirmed: 0 };
-    cell.all += 1;
-    if (CONFIRMED_STATUSES.has(order.status)) cell.confirmed += 1;
-    byDay.set(order.day, cell);
-    ordersByAd.set(order.adId, byDay);
-  }
+  const ordersByAd = ordersByKey(input.orders, (order) => order.adId);
   const rows: StreakRow[] = [];
   for (const ad of input.ads) {
     const spendOf = input.spend.get(ad.adId) ?? new Map<string, number>();
-    const ordersOf = ordersByAd.get(ad.adId) ?? new Map<string, { all: number; confirmed: number }>();
-    const strip: StreakDay[] = days.map((day) => ({ day, spend: spendOf.get(day) ?? 0, orders: ordersOf.get(day)?.all ?? 0 }));
-    // Only ads still running: spent in the last 7 full days or today.
-    const ranRecently = strip.some((cell) => cell.day >= recentFrom && cell.spend > 0) || (spendOf.get(today) ?? 0) > 0;
-    if (!ranRecently) continue;
-    const active = (cell: StreakDay) => cell.spend > 0 || cell.orders > 0;
-    const recent = strip.filter((cell) => cell.day >= recentFrom);
-    const activeDays14 = strip.filter(active).length;
-    const orderDays14 = strip.filter((cell) => cell.orders > 0).length;
-    const activeDays7 = recent.filter(active).length;
-    const orderDays7 = recent.filter((cell) => cell.orders > 0).length;
-    let run = 0;
-    for (let i = strip.length - 1; i >= 0; i -= 1) {
-      const cell = strip[i];
-      if (cell.orders > 0) run += 1;
-      else if (cell.spend > 0) break;
-    }
-    const orders14 = strip.reduce((sum, cell) => sum + cell.orders, 0);
-    const confirmed14 = days.reduce((sum, day) => sum + (ordersOf.get(day)?.confirmed ?? 0), 0);
-    const spend14 = strip.reduce((sum, cell) => sum + cell.spend, 0);
-    const costPerOrder14 = orders14 > 0 ? spend14 / orders14 : null;
-    const share14 = share(orderDays14, activeDays14);
-    const share7 = share(orderDays7, activeDays7);
+    if (!ranRecently(spendOf, input.today)) continue;
     const target = ad.productId ? input.targets.get(ad.productId) ?? null : null;
-    const { verdict, reason } = judgeStreak({ activeDays14, orderDays14, activeDays7, orderDays7, share14, share7, costPerOrder14, target });
-    rows.push({
-      ...ad, days: strip, run, activeDays14, orderDays14, activeDays7, orderDays7, share14, share7,
-      orders14, confirmed14, spend14, costPerOrder14, ordersToday: ordersOf.get(today)?.all ?? 0, spendToday: spendOf.get(today) ?? 0,
-      target, verdict, reason
-    });
+    rows.push({ ...ad, ...measure(spendOf, ordersByAd.get(ad.adId) ?? new Map(), input.today, target) });
   }
   // Within a verdict, live campaigns first: those are the ones budget can go to now.
-  return rows.sort((a, b) => STREAK_ORDER.indexOf(a.verdict) - STREAK_ORDER.indexOf(b.verdict)
-    || STATUS_ORDER.indexOf(a.campaignStatus ?? "unknown") - STATUS_ORDER.indexOf(b.campaignStatus ?? "unknown")
-    || (b.share14 ?? 0) - (a.share14 ?? 0) || b.orders14 - a.orders14);
+  return rows.sort(byVerdictThenLive);
+}
+
+// ------------------------------------------------------------ by campaign
+//
+// Bright, 21 Nov 2026: "campaign with one ad creative and the ones with 2 or
+// more ... distinguish so we don't off the overall campaign that is doing
+// well, whereas one of the ad creatives needs to be off". The VERDICT is the
+// campaign's (all its ads together); each ad of a 2+ ad campaign gets its own
+// ACTION, judged inside the campaign. A one-ad campaign is that ad: one verdict.
+
+export type AdAction = "best" | "keep" | "watch" | "turn_off_ad" | "already_off" | "too_soon";
+export const AD_ACTION_ORDER: AdAction[] = ["turn_off_ad", "watch", "best", "keep", "too_soon", "already_off"];
+
+export type CampaignAdRow = StreakRow & { action: AdAction; actionReason: string; orderShare: number | null };
+export type CampaignStreakRow = Metrics & {
+  campaignId: string; campaignName: string; accountId: string; accountName: string; platform: "meta" | "tiktok";
+  productId: string | null; productName: string | null; campaignStatus: CampaignStatus;
+  /** Ads that ran in the last 7 days (newest work first: actions to take on top). */
+  ads: CampaignAdRow[];
+  adCount: number; liveAdCount: number; adsToTurnOff: number;
+};
+
+/** What to do with ONE ad of a campaign that has 2+ ads. */
+export function adActionIn(ad: StreakRow, campaign: { orders14: number; bestAdId: string | null }): { action: AdAction; reason: string } {
+  const R = STREAK_RULES;
+  const shareText = campaign.orders14 > 0 ? `${ad.orders14} of the campaign's ${campaign.orders14} orders` : "no order yet";
+  if (ad.adLive === false) return { action: "already_off", reason: `Already switched off. Brought ${shareText}.` };
+  const t = ad.target;
+  if (t !== null && ad.orders14 === 0 && ad.spend14 >= 2 * t) {
+    return { action: "turn_off_ad", reason: `Spent ${ngn(ad.spend14)} (over 2× break-even ${ngn(t)}) with no order. Turn off this ad; the campaign keeps running on its other ads.` };
+  }
+  if (t !== null && ad.costPerOrder14 !== null && ad.activeDays14 >= R.minActiveDays && ad.costPerOrder14 > t) {
+    return { action: "turn_off_ad", reason: `${ngn(ad.costPerOrder14)} an order, above break-even ${ngn(t)}, over ${ad.activeDays14} days. Turn off this ad, not the campaign.` };
+  }
+  if (t !== null && ad.orders14 === 0 && ad.spend14 >= t) return { action: "watch", reason: `Spent ${ngn(ad.spend14)} with no order yet (break-even ${ngn(t)}). Off at 2× if still nothing.` };
+  if (ad.orders14 === 0 && ad.activeDays14 >= R.minActiveDays) return { action: "watch", reason: `No order in ${ad.activeDays14} days (spent ${ngn(ad.spend14)}). The others carry the campaign; check this creative.` };
+  if (ad.adId === campaign.bestAdId) return { action: "best", reason: `Best ad here: ${shareText}${ad.costPerOrder14 !== null ? ` at ${ngn(ad.costPerOrder14)} an order` : ""}.` };
+  if (ad.activeDays14 < R.minActiveDays && ad.orders14 === 0) return { action: "too_soon", reason: `Ran ${ad.activeDays14} day${ad.activeDays14 === 1 ? "" : "s"}; too soon to judge.` };
+  return { action: "keep", reason: `Keep: ${shareText}${ad.costPerOrder14 !== null ? ` at ${ngn(ad.costPerOrder14)} an order` : ""}.` };
+}
+
+export function campaignStreaks(input: {
+  today: string; ads: StreakAd[]; spend: Map<string, Map<string, number>>; orders: StreakOrder[]; targets: Map<string, number>;
+}): CampaignStreakRow[] {
+  const ordersByAd = ordersByKey(input.orders, (order) => order.adId);
+  // Campaign orders: every order carrying the campaign, even without its ad id.
+  const ordersByCampaign = ordersByKey(input.orders, (order) => order.campaignId ?? null);
+  const groups = new Map<string, StreakAd[]>();
+  for (const ad of input.ads) groups.set(ad.campaignId, [...(groups.get(ad.campaignId) ?? []), ad]);
+  const rows: CampaignStreakRow[] = [];
+  for (const [campaignId, ads] of groups) {
+    const spendOf = new Map<string, number>();
+    for (const ad of ads) for (const [day, amount] of input.spend.get(ad.adId) ?? []) spendOf.set(day, (spendOf.get(day) ?? 0) + amount);
+    if (!ranRecently(spendOf, input.today)) continue;
+    const products = new Set(ads.map((ad) => ad.productId));
+    const productId = products.size === 1 ? ads[0].productId : null;
+    const target = productId ? input.targets.get(productId) ?? null : null;
+    // Orders with the campaign id; fall back to its ads' orders when none carry it.
+    const campaignOrders: DayOrders = ordersByCampaign.get(campaignId) ?? new Map();
+    if (!campaignOrders.size) for (const ad of ads) for (const [day, cell] of ordersByAd.get(ad.adId) ?? []) {
+      const c = campaignOrders.get(day) ?? { all: 0, confirmed: 0 };
+      campaignOrders.set(day, { all: c.all + cell.all, confirmed: c.confirmed + cell.confirmed });
+    }
+    const metrics = measure(spendOf, campaignOrders, input.today, target);
+    const adRows = ads.filter((ad) => ranRecently(input.spend.get(ad.adId) ?? new Map(), input.today))
+      .map((ad) => ({ ...ad, ...measure(input.spend.get(ad.adId) ?? new Map(), ordersByAd.get(ad.adId) ?? new Map(), input.today, ad.productId ? input.targets.get(ad.productId) ?? null : null) }));
+    const best = adRows.filter((ad) => ad.orders14 > 0 && ad.adLive !== false).sort((a, b) => b.orders14 - a.orders14 || (a.costPerOrder14 ?? Infinity) - (b.costPerOrder14 ?? Infinity))[0];
+    const multi = adRows.length >= 2;
+    const judged: CampaignAdRow[] = adRows.map((ad) => {
+      const { action, reason } = multi ? adActionIn(ad, { orders14: metrics.orders14, bestAdId: best?.adId ?? null }) : { action: "keep" as AdAction, reason: "The only ad: the campaign's verdict is this ad's." };
+      return { ...ad, action, actionReason: reason, orderShare: metrics.orders14 > 0 ? ad.orders14 / metrics.orders14 : null };
+    }).sort((a, b) => AD_ACTION_ORDER.indexOf(a.action) - AD_ACTION_ORDER.indexOf(b.action) || b.orders14 - a.orders14);
+    const first = ads[0];
+    const statuses = new Set(ads.map((ad) => ad.campaignStatus ?? "unknown"));
+    rows.push({
+      ...metrics, campaignId, campaignName: first.campaignName, accountId: first.accountId, accountName: first.accountName, platform: first.platform,
+      productId, productName: productId ? first.productName : null,
+      campaignStatus: statuses.has("live") ? "live" : statuses.has("off") ? "off" : "unknown",
+      ads: judged, adCount: judged.length, liveAdCount: judged.filter((ad) => ad.adLive === true).length,
+      adsToTurnOff: multi ? judged.filter((ad) => ad.action === "turn_off_ad").length : 0
+    });
+  }
+  return rows.sort(byVerdictThenLive);
 }
 
 const pct = (value: number) => `${Math.round(value * 100)}%`;

@@ -12,7 +12,7 @@ import { branchShareView } from "./ad-account-shares.js";
 import { sharedOnlyFrom } from "./ad-account-shares-rules.js";
 import { breakEvenCpa, sinceStart, type LifetimeRow } from "./ad-since-start.js";
 import { mappingIndex, resolveSplits } from "./ad-spend.js";
-import { STREAK_RULES, orderStreaks, type StreakAd } from "./ad-streaks.js";
+import { STREAK_RULES, campaignStreaks, orderStreaks, type StreakAd } from "./ad-streaks.js";
 
 // Loading and syncing for Tracking Hub -> Ad Spend (Bright, 8 Oct 2026). The
 // maths is in ad-spend.ts; this file reads the database and Meta.
@@ -463,13 +463,16 @@ export async function loadOrderStreaks(orgId: string, branchId: string, today: s
     ad.campaignStatus = !checked ? "unknown" : live.delivering.has(ad.campaignId) ? "live" : "off";
     ad.adLive = checked ? live.deliveringAds.has(ad.adId) : null;
   }
-  const rows = orderStreaks({
+  const streakInput = {
     today, ads: [...ads.values()], spend,
-    orders: data.orders.filter((order) => order.day >= windowFrom).map((order) => ({ day: order.day, adId: order.adId, status: order.status })),
+    orders: data.orders.filter((order) => order.day >= windowFrom).map((order) => ({ day: order.day, adId: order.adId, campaignId: order.campaignId, status: order.status })),
     targets: new Map([...targets].map(([id, target]) => [id, target.cpa]))
-  });
+  };
+  const rows = orderStreaks(streakInput);
+  // By campaign (21 Nov 2026): the campaign's verdict, each ad's own action inside it.
+  const campaigns = campaignStreaks(streakInput);
   return {
-    rows, today, rules: STREAK_RULES, lastSyncAt: (data.state as any)?.last_sync_at ?? null, liveFailures, liveCheckedAt: new Date().toISOString(),
+    rows, campaigns, today, rules: STREAK_RULES, lastSyncAt: (data.state as any)?.last_sync_at ?? null, liveFailures, liveCheckedAt: new Date().toISOString(),
     targets: targetList.filter((row) => rows.some((ad) => ad.productId === row.productId)).map((row) => ({ productId: row.productId, name: row.name, target: row.own ?? row.breakEven, own: row.own !== null }))
   };
 }
