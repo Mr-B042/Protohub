@@ -39,7 +39,7 @@ const CSS = `
 @keyframes ssIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 `;
 
-type Entry = { table: HTMLTableElement; bar: HTMLElement | null; head: HTMLDivElement | null; headTable: HTMLTableElement | null; scroller: HTMLElement | null; signature: string };
+type Entry = { content: HTMLElement; table: HTMLTableElement | null; bar: HTMLElement | null; head: HTMLDivElement | null; headTable: HTMLTableElement | null; scroller: HTMLElement | null; signature: string };
 
 const isOff = (el: Element) => Boolean(el.closest('[data-smart-sticky="off"]'));
 const visible = (el: HTMLElement) => el.offsetParent !== null || getComputedStyle(el).position === "fixed";
@@ -84,6 +84,7 @@ function topLine(scroller: HTMLElement | null): number {
   return line;
 }
 
+const SEARCHY = /search|order #|name|phone|find|filter|customer|campaign|product/i;
 const isControlRow = (el: HTMLElement) => {
   const inputs = el.querySelectorAll('input[type="search"], input[type="text"], input:not([type]), select, [role="combobox"]');
   const buttons = el.querySelectorAll("button");
@@ -115,9 +116,11 @@ function freeAncestors(bar: HTMLElement, scroller: HTMLElement | null) {
     const s = getComputedStyle(node);
     if (s.overflowX === "auto" || s.overflowX === "scroll" || s.overflowY === "auto" || s.overflowY === "scroll") return false;
     if (s.overflow === "hidden" || s.overflowX === "hidden" || s.overflowY === "hidden") {
-      // Only rounded cards are switched to clip (same look). Any other hidden box is
-      // a layout container: leave it alone and don't pin the bar.
-      if (parseFloat(s.borderTopLeftRadius) > 0 || parseFloat(s.borderTopRightRadius) > 0) node.style.overflow = "clip";
+      // Switched to clip (same look, doesn't trap sticky) when it is a rounded card, or
+      // when it hides nothing anyway. A box that really cuts content off (fixed height,
+      // e.g. a layout shell) is left alone and the bar is not pinned.
+      const hidesNothing = node.scrollHeight <= node.clientHeight + 1 && node.scrollWidth <= node.clientWidth + 1;
+      if (parseFloat(s.borderTopLeftRadius) > 0 || parseFloat(s.borderTopRightRadius) > 0 || hidesNothing) node.style.overflow = "clip";
       else return false;
     }
     node = node.parentElement;
@@ -151,7 +154,7 @@ export default function SmartSticky() {
     const style = document.createElement("style");
     style.textContent = CSS;
     document.head.appendChild(style);
-    const entries = new Map<HTMLTableElement, Entry>();
+    const entries = new Map<HTMLElement, Entry>();
     let frame = 0;
 
     const dropHead = (e: Entry) => { e.head?.remove(); e.head = null; e.headTable = null; e.signature = ""; };
@@ -162,7 +165,7 @@ export default function SmartSticky() {
 
     const scan = () => {
       const tables = Array.from(document.querySelectorAll("table")) as HTMLTableElement[];
-      const live = new Set<HTMLTableElement>();
+      const live = new Set<HTMLElement>();
       for (const table of tables) {
         if (!table.tHead || !visible(table) || isOff(table) || table.closest(".ss-head")) continue;
         const rows = table.tBodies[0]?.rows.length ?? 0;
@@ -171,23 +174,46 @@ export default function SmartSticky() {
         const th = table.tHead.rows[0]?.cells[0];
         if (th && (getComputedStyle(table.tHead).position === "sticky" || getComputedStyle(th).position === "sticky") && !horizontalScroller(table)) continue;
         live.add(table);
-        if (!entries.has(table)) entries.set(table, { table, bar: null, head: null, headTable: null, scroller: null, signature: "" });
+        if (!entries.has(table)) entries.set(table, { content: table, table, bar: null, head: null, headTable: null, scroller: null, signature: "" });
         const e = entries.get(table)!;
         e.scroller = verticalScroller(table);
         const bar = findBar(table);
         if (bar !== e.bar) { if (e.bar) release({ ...e, head: null }); e.bar = bar; }
       }
-      for (const [table, e] of entries) if (!live.has(table)) { release(e); entries.delete(table); }
+      // Card lists (no table: Orders on phones, leads, inboxes...): a search/filter
+      // bar right above a long list is pinned the same way (no headings to copy).
+      const vh = window.innerHeight;
+      const tableBars = new Set([...entries.values()].filter((e) => live.has(e.content)).map((e) => e.bar).filter(Boolean));
+      const inputs = Array.from(document.querySelectorAll('input[type="search"], input[placeholder]')) as HTMLInputElement[];
+      for (const input of inputs) {
+        if (!SEARCHY.test(`${input.type} ${input.placeholder}`) || !visible(input) || isOff(input) || input.closest(".ss-head")) continue;
+        let bar: HTMLElement | null = input;
+        let found: { bar: HTMLElement; list: HTMLElement } | null = null;
+        for (let depth = 0; depth < 6 && bar && bar.parentElement; depth += 1) {
+          bar = bar.parentElement;
+          if (bar.getBoundingClientRect().height > 180) break;
+          let next = bar.nextElementSibling as HTMLElement | null;
+          while (next && next.getBoundingClientRect().height === 0) next = next.nextElementSibling as HTMLElement | null;
+          if (next && next.getBoundingClientRect().height >= Math.max(600, vh * 1.1) && isControlRow(bar)) { found = { bar, list: next }; }
+        }
+        if (!found || tableBars.has(found.bar) || found.list.querySelector("table") && [...live].some((t) => found!.list.contains(t))) continue;
+        live.add(found.list);
+        if (!entries.has(found.list)) entries.set(found.list, { content: found.list, table: null, bar: null, head: null, headTable: null, scroller: null, signature: "" });
+        const e = entries.get(found.list)!;
+        e.scroller = verticalScroller(found.list);
+        if (found.bar !== e.bar) { if (e.bar) release({ ...e, head: null }); e.bar = found.bar; }
+      }
+      for (const [content, e] of entries) if (!live.has(content)) { release(e); entries.delete(content); }
       tick();
     };
 
     const buildHead = (e: Entry) => {
-      const real = e.table.tHead!;
+      const real = e.table!.tHead!;
       const wrap = document.createElement("div");
       wrap.className = "ss-head";
       wrap.setAttribute("aria-hidden", "true");
       const copy = document.createElement("table");
-      copy.className = e.table.className;
+      copy.className = e.table!.className;
       copy.style.tableLayout = "fixed";
       copy.style.margin = "0";
       copy.appendChild(real.cloneNode(true));
@@ -204,18 +230,19 @@ export default function SmartSticky() {
     };
 
     const syncWidths = (e: Entry) => {
-      const real = e.table.tHead!, copy = e.headTable!.tHead!;
+      const table = e.table!;
+      const real = table.tHead!, copy = e.headTable!.tHead!;
       const realCells = Array.from(real.querySelectorAll("th, td")) as HTMLElement[];
       const copyCells = Array.from(copy.querySelectorAll("th, td")) as HTMLElement[];
       const checks = (root: Element) => Array.from(root.querySelectorAll("input")).map((i) => (i.checked ? 1 : i.indeterminate ? 2 : 0)).join("");
-      const sig = `${e.table.offsetWidth}|${realCells.map((c) => Math.round(c.getBoundingClientRect().width)).join(",")}|${real.textContent ?? ""}|${checks(real)}`;
+      const sig = `${table.offsetWidth}|${realCells.map((c) => Math.round(c.getBoundingClientRect().width)).join(",")}|${real.textContent ?? ""}|${checks(real)}`;
       if (sig === e.signature) return;
       if (real.textContent !== copy.textContent || realCells.length !== copyCells.length || checks(real) !== checks(copy)) {
         // Headings changed (sort arrow, select-all state): copy again.
         copy.replaceWith(real.cloneNode(true));
       }
       const fresh = Array.from(e.headTable!.tHead!.querySelectorAll("th, td")) as HTMLElement[];
-      e.headTable!.style.width = `${e.table.offsetWidth}px`;
+      e.headTable!.style.width = `${table.offsetWidth}px`;
       realCells.forEach((cell, i) => { const w = cell.getBoundingClientRect().width; if (fresh[i]) { fresh[i].style.width = `${w}px`; fresh[i].style.minWidth = `${w}px`; fresh[i].style.maxWidth = `${w}px`; } });
       e.signature = sig;
     };
@@ -224,7 +251,7 @@ export default function SmartSticky() {
       frame = 0;
       const vh = window.innerHeight;
       for (const e of entries.values()) {
-        const tRect = e.table.getBoundingClientRect();
+        const tRect = e.content.getBoundingClientRect();
         if (tRect.bottom < -200 || tRect.top > vh + 200) { if (e.head) dropHead(e); if (e.bar?.hasAttribute(ATTR_STUCK)) e.bar.removeAttribute(ATTR_STUCK); continue; }
         let line = topLine(e.scroller);
         // 1. The filter bar.
@@ -246,6 +273,7 @@ export default function SmartSticky() {
           }
         }
         // 2. The column headings.
+        if (!e.table) continue;
         const thead = e.table.tHead;
         if (!thead) continue;
         const hRect = thead.getBoundingClientRect();
