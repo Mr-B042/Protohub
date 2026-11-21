@@ -285,6 +285,7 @@ const UpsellPerformancePage = lazyPage(() => import("./pages/UpsellPerformancePa
 const RepProductPerformancePage = lazyPage(() => import("./pages/RepProductPerformancePage"));
 const RepWeeklyReportPage = lazyPage(() => import("./pages/RepWeeklyReportPage"));
 const TrackingHubPage = lazyPage(() => import("./pages/TrackingHubPage"));
+import SmartSticky from "./components/SmartSticky";
 const TelegramCenterPage = lazyPage(() => import("./pages/telegram/TelegramCenterPage"));
 const SocialLeadsPage = lazyPage(() => import("./pages/social-leads/SocialLeadsPage"));
 const ReportBugPage = lazyPage(() => import("./pages/ReportBugPage"));
@@ -77535,6 +77536,8 @@ ${waybillLineItems(w).length > 1
         )}
 
         {/* Page Content Scrollable Area */}
+        {/* Smart sticky filter bars + column headings on every long table (Bright, 21 Nov 2026). */}
+        <SmartSticky />
         <main
           ref={mainScrollRef}
           className={`app-main-scroll flex-1 min-h-0 overscroll-y-contain overflow-y-auto px-4 pt-16 pb-2 sm:pb-3 lg:overflow-visible lg:overscroll-auto lg:px-8 lg:pb-8 lg:pt-[5.5rem] ${isSpying && repGoldHonorActive ? "!pt-[8.75rem] sm:!pt-[6.25rem] lg:!pt-[7.75rem]" : isSpying ? "!pt-[6.25rem] lg:!pt-[7.75rem]" : repGoldHonorActive ? "!pt-28 sm:!pt-16 lg:!pt-[5.5rem]" : ""}`}
