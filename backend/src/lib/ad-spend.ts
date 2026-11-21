@@ -72,6 +72,8 @@ export function tiktokOrderIds(order: { form_context?: Record<string, unknown> |
 export type SpendMapping = { level: AdSpendLevel; meta_id: string; splits: Split[] };
 export type SpendOrder = {
   id: string; day: string; productId: string | null; status: string; amount: number; productCost: number; deliveryFee: number;
+  /** Day it was delivered (Campaign Decisions' delivery-date view); absent in tests. */
+  deliveredDay?: string | null;
   campaignId: string | null; adsetId: string | null; adId: string | null;
   /** "TikTok", "Google"... when the order came from another ad platform. */
   otherPlatform?: string | null;

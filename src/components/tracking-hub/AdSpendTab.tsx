@@ -1,7 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import SinceStartView from "./SinceStartView";
 import OrderStreaksView from "./OrderStreaksView";
-import CampaignAlertsPanel from "./CampaignAlertsPanel";
 import AdFundsPanel from "./AdFundsPanel";
 import { Bar, CartesianGrid, Cell, ComposedChart, LabelList, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
@@ -458,7 +457,13 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
       {tabBar}
 
       {data.hasAccounts && <AdFundsPanel onToast={onToast} focus={new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("funds") === "1"} />}
-      {data.hasAccounts && <CampaignAlertsPanel focus={new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("alert")} />}
+      {/* Campaign decisions moved to their own tab (Bright, 21 Nov 2026). */}
+      {data.hasAccounts && (
+        <button type="button" onClick={() => onTab("decisions")} className="!min-h-0 flex w-full items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50/70 px-4 py-3 text-left text-[13.5px] text-indigo-900 hover:bg-indigo-50 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-200">
+          <b>Campaign Decisions</b> — what to scale, watch, pause or turn off, with each campaign's money, score and confidence.
+          <span className="ml-auto inline-flex items-center gap-1 font-semibold">Open<ChevronRight className="h-4 w-4" /></span>
+        </button>
+      )}
 
       {!data.hasAccounts ? (
         <Card className="flex flex-wrap items-center justify-between gap-3 border-amber-200 bg-amber-50/60 px-5 py-4 dark:border-amber-900 dark:bg-amber-950/20">

@@ -11774,7 +11774,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => {
     if (currentRole !== "Owner" || isPreviewing) { setCampaignAlertCount(0); return; }
     let live = true;
-    const check = () => { void trackingHubApi.campaignAlerts().then((result) => { if (live) setCampaignAlertCount((result.verdicts ?? []).filter((v) => v.verdict === "turn_off" || v.verdict === "pause" || v.verdict === "check_tracking").length); }).catch(() => undefined); };
+    const check = () => { void trackingHubApi.campaignAlerts().then((result) => { if (live) setCampaignAlertCount((result.verdicts ?? []).filter((v) => v.verdict === "turn_off" || v.verdict === "pause").length); }).catch(() => undefined); };
     check();
     const timer = window.setInterval(check, 15 * 60_000);
     return () => { live = false; window.clearInterval(timer); };
@@ -76950,8 +76950,8 @@ ${waybillLineItems(w).length > 1
                     ? <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-red-500" aria-label={`${socialLeadCount} social leads waiting`} />
                     : <span className="ml-auto rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white" title="Unread or waiting social leads">{socialLeadCount}</span>)}
                   {item.label === "Tracking Hub" && campaignAlertCount > 0 && (collapsed
-                    ? <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-red-500" aria-label={`${campaignAlertCount} campaigns with no order for 3 days`} />
-                    : <span className="ml-auto rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white" title="Campaigns with no order for 3+ days">{campaignAlertCount}</span>)}
+                    ? <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-red-500" aria-label={`${campaignAlertCount} campaigns to pause or turn off`} />
+                    : <span className="ml-auto rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white" title="Campaigns to pause or turn off (Campaign Decisions)">{campaignAlertCount}</span>)}
                 </button>
                 )}
                 {showEmailMarketingSubnav && (

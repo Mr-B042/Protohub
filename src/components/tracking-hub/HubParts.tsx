@@ -6,7 +6,7 @@ import type { HubDataSource, HubLedgerStatus, HubPlatform } from "../../lib/api"
 
 // Shared pieces for the Tracking Hub tabs (Bright's seven tab images, 2 Oct 2026; Ad Spend 8 Oct).
 
-export type HubTab = "overview" | "sources" | "websites" | "links" | "ledger" | "reconciliation" | "adspend" | "diagnostics" | "settings";
+export type HubTab = "overview" | "sources" | "websites" | "links" | "ledger" | "reconciliation" | "adspend" | "decisions" | "diagnostics" | "settings";
 export type Range = { from: string; to: string };
 export type Toast = (message: string) => void;
 
