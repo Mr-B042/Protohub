@@ -17,6 +17,7 @@ import {
 import { emailBrand } from "./email-brand.js";
 import { asPersonalNote, applyTags, collectLinks, fillTheirProduct, unfilledGaps, usesStorePicks, withStorePicks, type StorePickItem, normalizeDesign, renderEmailHtml, renderEmailText, usesLoyaltyTags, usesTheirProduct, withTheirProduct, type EmailDesign, type RenderOptions, type TheirProduct, withoutStore } from "./email-render.js";
 import { inSendWindow, offsetFor } from "./email-automation-rules.js";
+import { quietContactIds, runReengage } from "./email-reengage.js";
 
 /**
  * Email Marketing (Bright, 8 Nov 2026), part 1: the email list, saved
@@ -906,7 +907,12 @@ async function startRun(campaign: any, nowMs: number) {
   if (!design) throw new Error("no design");
   const world = await loadWorld(campaign.org_id, campaign.branch_id, true);
   const audience = (campaign.audience ?? { source: "all" }) as AudienceChoice;
-  const { recipients } = resolveAudience(world.people, audience, world.segments, world.ctx);
+  const { recipients: everyone } = resolveAudience(world.people, audience, world.segments, world.ctx);
+  // Engaged-first (21 Nov 2026): skip people who got 3+ emails in 60 days and opened none.
+  // They get the "Still want our emails?" check instead (email-reengage.ts).
+  const quiet = await quietContactIds(campaign.branch_id, nowMs);
+  const recipients = everyone.filter((person) => !quiet.has(person.contact!.id));
+  const quietSkipped = everyone.length - recipients.length;
   const runNo = (campaign.run_count ?? 0) + 1;
   const rows = assignVariants(recipients.map((person) => ({ email: person.contact!.email, name: person.contact!.name || "", phone: person.contact!.phone, contactId: person.contact!.id })), !!campaign.options?.abTest && !!campaign.subject_b?.trim());
   for (let i = 0; i < rows.length; i += 500) {
@@ -918,14 +924,16 @@ async function startRun(campaign: any, nowMs: number) {
   }
   const next = nextRepeatAt(campaign.delivery as Delivery, nowMs);
   await supabase.from("email_campaigns").update({
-    status: "sending", run_count: runNo, audience_count: rows.length, links: campaignLinks(campaign, design),
+    status: "sending", run_count: runNo, audience_count: rows.length, links: campaignLinks(campaign, design), options: { ...(campaign.options ?? {}), quietSkipped },
     next_run_at: next ? new Date(next).toISOString() : null, updated_at: new Date().toISOString()
   }).eq("id", campaign.id).eq("status", "scheduled");
-  logger.info("email campaign run queued", { campaignId: campaign.id, runNo, recipients: rows.length });
+  logger.info("email campaign run queued", { campaignId: campaign.id, runNo, recipients: rows.length, quietSkipped });
 }
 
 /** Automations: queue everyone who became due since the last check. */
 async function feedAutomation(campaign: any, nowMs: number) {
+  // The "Still want our emails?" check queues its own sends (email-reengage.ts).
+  if (campaign.options?.system) return 0;
   const design = normalizeDesign(campaign.design);
   if (!design) return 0;
   const world = await loadWorld(campaign.org_id, campaign.branch_id);
@@ -1194,6 +1202,7 @@ export async function runEmailMarketingJob() {
       if (!campaign.run_count) continue;
       try { await queueResends(campaign, nowMs); } catch (error) { logger.error("email resend failed", { campaignId: campaign.id, error: (error as Error).message }); }
     }
+    try { await runReengage(nowMs); } catch (error) { logger.error("email still-want check crashed", { error: (error as Error).message }); }
     await sendQueued(nowMs);
     await closeFinishedRuns();
     if (nowMs - lastAttributionMs >= 10 * 60_000) {
