@@ -4827,7 +4827,19 @@ export type CampaignDecisionsView = {
   daily: Array<{ day: string; orders: number; delivered: number; pending: number; failed: number; spend: number; revenue: number; grossProfit: number; netContribution: number; deliveryRate: number | null }>;
   bonusesPartial: boolean; unchecked: number; uncheckedAccounts: Array<{ name: string; message: string }>; linkedShare: number | null;
 };
-export type CdDayOrder = { id: string; customer: string; state: string; status: string; amount: number; product: string; deliveredDay: string | null };
+export type CdLine = { name: string; quantity: number; amount: number; by: string | null };
+/** One order on the detail view's order card (21 Nov 2026). */
+export type CdDayOrder = {
+  id: string; createdAt: string; customer: string; phone: string | null; state: string; city: string | null; address: string | null; status: string; source: string | null;
+  product: string; packageName: string | null; quantity: number; amount: number; originalAmount: number | null;
+  upsell: { from: number; to: number } | null; crossSells: CdLine[]; extras: CdLine[]; freeGifts: CdLine[];
+  rep: { id: string; name: string; role: string } | null; agent: { name: string; phone: string | null; zone: string | null } | null;
+  assignedAt: string | null; revealedAt: string | null; sentOutAt: string | null; sentOutStatus: string | null; groupSentAt: string | null; deliveredDay: string | null;
+  money: { productCost: number; deliveryFee: number; repBonus: number | null; failedFee: number; contributionBeforeAds: number };
+  ad: { id: string; adName: string; adsetName: string } | null;
+  timeline: Array<{ at: string; from: string | null; to: string | null; by: string | null; note: string | null }>;
+  notes: Array<{ text: string; by: string | null; at: string | null }>;
+};
 /** Bright, 14 Nov 2026: spent over ₦7,500 since the last order ("burn") or over ₦7,500 per order in 2 full days ("pricey"). */
 export type CampaignMoneyAlert = {
   kind: "burn" | "pricey"; campaignId: string; campaignName: string; platform: string; accountName: string; productName: string | null;

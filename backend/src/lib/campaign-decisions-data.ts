@@ -159,17 +159,93 @@ async function build(orgId: string, branchId: string, periodDays: number) {
   };
 }
 
-/** Orders of one campaign placed on one day (the detail view's daily rows open to these). */
+/** Naira -> the branch's money (rep bonuses are naira everywhere, #1022). */
+async function branchMoney(orgId: string, branchId: string) {
+  const { data } = await supabase.from("branches").select("currency").eq("id", branchId).maybeSingle();
+  const currency = String((data as any)?.currency ?? "NGN").toUpperCase();
+  const nairaPer = currency === "NGN" ? 1 : (await rateFor(orgId, "NGN", currency))?.fromPerTo ?? null;
+  return (naira: number) => (nairaPer ? naira / nairaPer : naira);
+}
+
+const lineOf = (line: any) => ({
+  name: String(line?.productName ?? line?.name ?? line?.label ?? "Item"),
+  quantity: Number(line?.quantity ?? line?.qty ?? 1) || 1,
+  amount: Number(line?.amount ?? line?.price ?? line?.total ?? 0) || 0,
+  by: line?.addedByName ? String(line.addedByName) : null
+});
+
+/**
+ * One campaign's orders placed on one day, each with everything the detail
+ * view's order card shows (Bright, 21 Nov 2026: "well detailed breakdown ...
+ * sales rep ... all info needed"): customer, items, rep and how fast they
+ * confirmed, delivery agent, the status timeline, notes, the order's own money
+ * (product cost, delivery, rep bonus, failed-delivery fee) and the ad it came from.
+ */
 export async function campaignDayOrders(orgId: string, branchId: string, campaignId: string, day: string) {
   const { data, error } = await supabase.from("orders")
-    .select("id, created_at, customer, state, status, amount, product_name, package_name, delivered_date, form_context, utm_campaign")
+    .select("id, created_at, customer, phone, state, city, address, status, amount, original_amount, product_name, package_name, quantity, source, assigned_rep_id, agent_id, assigned_at, revealed_at, sent_out_at, sent_out_status, group_sent_at, delivered_date, logistics_cost, cogs_snapshot, cross_sell_lines, additional_lines, free_gift_lines, upsell_from_qty, upsell_to_qty, notes, form_context, utm_campaign, utm_term, utm_content, review_hold")
     .eq("org_id", orgId).eq("branch_id", branchId)
     .gte("created_at", `${addDays(day, -1)}T23:00:00.000Z`).lt("created_at", `${day}T23:00:00.000Z`)
     .limit(2000);
   if (error) throw error;
-  const isId = (v: unknown) => typeof v === "string" && v.trim() === campaignId;
-  return ((data ?? []) as any[]).filter((o) => {
+  const bare = campaignId.startsWith(TIKTOK_PREFIX) ? campaignId.slice(TIKTOK_PREFIX.length) : campaignId;
+  const isThis = (v: unknown) => typeof v === "string" && v.trim() === bare;
+  const rows = ((data ?? []) as any[]).filter((o) => o.review_hold !== true && (() => { const c = o.form_context ?? {}; return [c.campaignId, c.campaign_id, c.utmId, o.utm_campaign].some(isThis); })());
+  if (rows.length === 0) return [];
+  const ids = rows.map((o) => String(o.id));
+  const adIds = [...new Set(rows.map((o) => { const c = o.form_context ?? {}; return String(c.adId ?? c.ad_id ?? o.utm_content ?? ""); }).filter(Boolean))];
+  const repIds = [...new Set(rows.map((o) => o.assigned_rep_id).filter(Boolean))];
+  const agentIds = [...new Set(rows.map((o) => o.agent_id).filter(Boolean))];
+  const [audit, reps, agents, ads, failed, bonuses, toBranch] = await Promise.all([
+    supabase.from("order_audit").select("order_id, changed_by, from_status, to_status, note, created_at").in("order_id", ids).order("created_at").limit(5000),
+    repIds.length ? supabase.from("users").select("id, name, role").in("id", repIds) : Promise.resolve({ data: [], error: null }),
+    agentIds.length ? supabase.from("agents").select("id, name, phone, zone").in("id", agentIds) : Promise.resolve({ data: [], error: null }),
+    adIds.length ? supabase.from("tracking_meta_ad_insights").select("ad_id, ad_name, adset_name, day").in("ad_id", adIds).order("day", { ascending: false }).limit(500) : Promise.resolve({ data: [], error: null }),
+    supabase.from("expenses").select("id, amount").in("id", ids.map((id) => `EXP-DEL-${id}`)).eq("category", "Failed Delivery"),
+    repBonusesForPlacedRange(orgId, branchId, day, day).catch(() => null),
+    branchMoney(orgId, branchId)
+  ]);
+  const changers = [...new Set(((audit.data ?? []) as any[]).map((a) => a.changed_by).filter(Boolean))].filter((id) => !repIds.includes(id));
+  const extraUsers = changers.length ? ((await supabase.from("users").select("id, name, role").in("id", changers)).data ?? []) : [];
+  const userOf = new Map([...(reps.data ?? []), ...extraUsers].map((u: any) => [String(u.id), { name: String(u.name ?? ""), role: String(u.role ?? "") }]));
+  const agentOf = new Map((agents.data ?? []).map((a: any) => [String(a.id), { name: String(a.name ?? ""), phone: a.phone ?? null, zone: a.zone ?? null }]));
+  const adOf = new Map<string, { adName: string; adsetName: string }>();
+  for (const a of (ads.data ?? []) as any[]) if (!adOf.has(String(a.ad_id))) adOf.set(String(a.ad_id), { adName: a.ad_name ?? "", adsetName: a.adset_name ?? "" });
+  const failedOf = new Map(((failed.data ?? []) as any[]).map((f) => [String(f.id).replace(/^EXP-DEL-/, ""), Number(f.amount) || 0]));
+  const auditOf = new Map<string, any[]>();
+  for (const a of (audit.data ?? []) as any[]) auditOf.set(String(a.order_id), [...(auditOf.get(String(a.order_id)) ?? []), a]);
+  const notesOf = (raw: unknown) => {
+    try {
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      const list = Array.isArray((parsed as any)?.timelineNotes) ? (parsed as any).timelineNotes : [];
+      return list.slice(-6).reverse().map((n: any) => ({ text: String(n.text ?? ""), by: n.by ? String(n.by) : null, at: n.date ? String(n.date) : null }));
+    } catch { return typeof raw === "string" && raw.trim() ? [{ text: raw.trim().slice(0, 400), by: null, at: null }] : []; }
+  };
+  return rows.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at))).map((o) => {
     const c = o.form_context ?? {};
-    return [c.campaignId, c.campaign_id, c.utmId, o.utm_campaign].some(isId) || [c.campaignId, c.campaign_id, c.utmId, o.utm_campaign].some((v) => typeof v === "string" && `${TIKTOK_PREFIX}${v.trim()}` === campaignId);
-  }).map((o) => ({ id: String(o.id), customer: o.customer ?? "", state: o.state ?? "", status: o.status ?? "", amount: Number(o.amount) || 0, product: o.package_name || o.product_name || "", deliveredDay: o.delivered_date ? String(o.delivered_date).slice(0, 10) : null }));
+    const adId = String(c.adId ?? c.ad_id ?? o.utm_content ?? "") || null;
+    const delivered = o.status === DELIVERED;
+    const productCost = Number(o.cogs_snapshot) || 0, deliveryFee = Number(o.logistics_cost) || 0;
+    const repBonus = delivered ? (bonuses ? toBranch(bonuses.byOrderId.get(String(o.id)) ?? 0) : null) : 0;
+    const failedFee = failedOf.get(String(o.id)) ?? 0;
+    const amount = Number(o.amount) || 0;
+    return {
+      id: String(o.id), createdAt: String(o.created_at), customer: o.customer ?? "", phone: o.phone ?? null,
+      state: o.state ?? "", city: o.city ?? null, address: o.address ?? null, status: o.status ?? "", source: o.source ?? null,
+      product: o.product_name ?? "", packageName: o.package_name ?? null, quantity: Number(o.quantity) || 1,
+      amount, originalAmount: o.original_amount === null || o.original_amount === undefined ? null : Number(o.original_amount),
+      upsell: o.upsell_from_qty && o.upsell_to_qty && o.upsell_to_qty > o.upsell_from_qty ? { from: Number(o.upsell_from_qty), to: Number(o.upsell_to_qty) } : null,
+      crossSells: Array.isArray(o.cross_sell_lines) ? o.cross_sell_lines.map(lineOf) : [],
+      extras: Array.isArray(o.additional_lines) ? o.additional_lines.map(lineOf) : [],
+      freeGifts: Array.isArray(o.free_gift_lines) ? o.free_gift_lines.map(lineOf) : [],
+      rep: o.assigned_rep_id ? { id: String(o.assigned_rep_id), ...(userOf.get(String(o.assigned_rep_id)) ?? { name: "Unknown rep", role: "" }) } : null,
+      agent: o.agent_id ? agentOf.get(String(o.agent_id)) ?? { name: "Unknown agent", phone: null, zone: null } : null,
+      assignedAt: o.assigned_at ?? null, revealedAt: o.revealed_at ?? null, sentOutAt: o.sent_out_at ?? null, sentOutStatus: o.sent_out_status ?? null, groupSentAt: o.group_sent_at ?? null,
+      deliveredDay: o.delivered_date ? String(o.delivered_date).slice(0, 10) : null,
+      money: { productCost, deliveryFee, repBonus, failedFee, contributionBeforeAds: delivered ? amount - productCost - deliveryFee - (repBonus ?? 0) - failedFee : -failedFee },
+      ad: adId ? { id: adId, ...(adOf.get(adId) ?? { adName: "", adsetName: "" }) } : null,
+      timeline: (auditOf.get(String(o.id)) ?? []).map((a) => ({ at: String(a.created_at), from: a.from_status ?? null, to: a.to_status ?? null, by: a.changed_by ? userOf.get(String(a.changed_by))?.name ?? null : null, note: a.note ?? null })),
+      notes: notesOf(o.notes)
+    };
+  });
 }
