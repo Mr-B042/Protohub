@@ -454,15 +454,53 @@ export async function loadOrderStreaks(orgId: string, branchId: string, today: s
       productId, productName: productId ? productName.get(productId) ?? null : null
     });
   }
+  // Live or off right now (Bright, 21 Nov 2026): one Meta call per ad account, as Since Start.
+  const accountNames = new Map(Array.from(data.accounts.values()).map((row) => [row.accountId, row.name]));
+  const metaAccounts = new Set([...ads.values()].filter((ad) => ad.platform === "meta").map((ad) => String(ad.accountId).replace(/^act_/, "")));
+  const { live, liveFailures } = await liveDelivering(orgId, data.basics, await branchShareView(orgId, branchId), metaAccounts, accountNames);
+  for (const ad of ads.values()) {
+    const checked = ad.platform === "meta" && live.accounts.has(String(ad.accountId).replace(/^act_/, ""));
+    ad.campaignStatus = !checked ? "unknown" : live.delivering.has(ad.campaignId) ? "live" : "off";
+    ad.adLive = checked ? live.deliveringAds.has(ad.adId) : null;
+  }
   const rows = orderStreaks({
     today, ads: [...ads.values()], spend,
     orders: data.orders.filter((order) => order.day >= windowFrom).map((order) => ({ day: order.day, adId: order.adId, status: order.status })),
     targets: new Map([...targets].map(([id, target]) => [id, target.cpa]))
   });
   return {
-    rows, today, rules: STREAK_RULES, lastSyncAt: (data.state as any)?.last_sync_at ?? null,
+    rows, today, rules: STREAK_RULES, lastSyncAt: (data.state as any)?.last_sync_at ?? null, liveFailures, liveCheckedAt: new Date().toISOString(),
     targets: targetList.filter((row) => rows.some((ad) => ad.productId === row.productId)).map((row) => ({ productId: row.productId, name: row.name, target: row.own ?? row.breakEven, own: row.own !== null }))
   };
+}
+
+/**
+ * Which campaigns and ads are delivering right now, asked live per Meta ad
+ * account (one call each; shared-in accounts use the home branch's token).
+ * Accounts Meta did not answer for are listed in liveFailures (was silent
+ * before 15 Nov 2026: "40 could not be checked"). Since Start + Order Streaks.
+ */
+async function liveDelivering(orgId: string, basics: Basics, share: Awaited<ReturnType<typeof branchShareView>>, accountIds: Set<string>, accountNames: Map<string, string>) {
+  const live = { delivering: new Set<string>(), deliveringAds: new Set<string>(), accounts: new Set<string>() };
+  const liveFailures: Array<{ accountId: string; name: string; message: string }> = [];
+  const liveTargets = refreshTargets(basics);
+  if (share) for (const home of new Set(share.sharedIn.map((s) => s.homeBranchId))) {
+    const shared = new Set(share.sharedIn.filter((s) => s.homeBranchId === home).map((s) => s.accountId));
+    liveTargets.push(...refreshTargets(await loadBasics(orgId, home)).filter((t) => shared.has(String(t.account).replace(/^act_/, ""))));
+  }
+  await Promise.all(liveTargets.filter((target) => accountIds.has(String(target.account).replace(/^act_/, ""))).map(async (target) => {
+    const result = await deliveringCampaigns(target.account, target.token).catch((err: any) => ({ ok: false as const, message: String(err?.message ?? "no answer") }));
+    const accountId = String(target.account).replace(/^act_/, "");
+    if (!result.ok) {
+      liveFailures.push({ accountId, name: accountNames.get(accountId) ?? accountNames.get(`act_${accountId}`) ?? accountId, message: result.message });
+      logger.warn("live delivering check failed", { orgId, accountId, message: result.message });
+      return;
+    }
+    live.accounts.add(accountId);
+    for (const id of result.ids) live.delivering.add(id);
+    for (const id of result.adIds) live.deliveringAds.add(id);
+  }));
+  return { live, liveFailures };
 }
 
 /** Since Start plus the inputs it was built from (the no-order alerts need the orders and daily spend). */
@@ -491,26 +529,8 @@ export async function sinceStartCore(orgId: string, branchId: string, today: str
   const { targets, targetList } = await productTargets(orgId, branchId, today, data.orders, data.basics.products);
   const accountNames = new Map(Array.from(data.accounts.values()).map((row) => [row.accountId, row.name]));
   // Running = an ad delivering right now, asked live per ad account (one call each).
-  const live = { delivering: new Set<string>(), accounts: new Set<string>() };
-  // Accounts Meta did not answer for, with its reason (was silent before 15 Nov 2026: "40 could not be checked").
-  const liveFailures: Array<{ accountId: string; name: string; message: string }> = [];
   const lifetimeAccounts = new Set(lifetime.filter((row) => row.platform === "meta").map((row) => String(row.account_id ?? "").replace(/^act_/, "")));
-  const liveTargets = refreshTargets(data.basics);
-  if (share) for (const home of new Set(share.sharedIn.map((s) => s.homeBranchId))) {
-    const shared = new Set(share.sharedIn.filter((s) => s.homeBranchId === home).map((s) => s.accountId));
-    liveTargets.push(...refreshTargets(await loadBasics(orgId, home)).filter((t) => shared.has(String(t.account).replace(/^act_/, ""))));
-  }
-  await Promise.all(liveTargets.filter((target) => lifetimeAccounts.has(String(target.account).replace(/^act_/, ""))).map(async (target) => {
-    const result = await deliveringCampaigns(target.account, target.token).catch((err: any) => ({ ok: false as const, message: String(err?.message ?? "no answer") }));
-    if (!result.ok) {
-      const accountId = String(target.account).replace(/^act_/, "");
-      liveFailures.push({ accountId, name: accountNames.get(accountId) ?? accountNames.get(`act_${accountId}`) ?? accountId, message: result.message });
-      logger.warn("live delivering check failed", { orgId, accountId, message: result.message });
-      return;
-    }
-    live.accounts.add(String(target.account).replace(/^act_/, ""));
-    for (const id of result.ids) live.delivering.add(id);
-  }));
+  const { live, liveFailures } = await liveDelivering(orgId, data.basics, share, lifetimeAccounts, accountNames);
   const rows = sinceStart({ today, ordersFrom, lifetime, orders: data.orders, mappings: mappingIndex(data.mappings), evidence: data.evidence, targets, products, accountNames, live });
   // How many Meta-side orders carry their campaign (orders without one can't be counted on a campaign).
   const recent = data.orders.filter((order) => order.day >= addDaysToDateKey(today, -29) && !order.otherPlatform);
