@@ -79,7 +79,7 @@ async function ordersBetween(orgId: string, branchId: string, from: string, to: 
   for (let page = 0; page < 60; page += 1) {
     // launch-safe: Owner-only Tracking Hub ad spend.
     const { data, error } = await supabase.from("orders")
-      .select("id, created_at, product_id, status, amount, cogs_snapshot, logistics_cost, form_context, utm_source, utm_campaign, utm_content, utm_term, review_hold")
+      .select("id, created_at, delivered_date, product_id, status, amount, cogs_snapshot, logistics_cost, form_context, utm_source, utm_campaign, utm_content, utm_term, review_hold")
       .eq("org_id", orgId).eq("branch_id", branchId).gte("created_at", startIso(from)).lte("created_at", endIso(to))
       .order("id").range(page * PAGE, page * PAGE + PAGE - 1);
     if (error) throw error;
@@ -88,7 +88,7 @@ async function ordersBetween(orgId: string, branchId: string, from: string, to: 
       const otherPlatform = otherAdPlatform(order);
       const ids = otherPlatform === "TikTok" ? tiktokOrderIds(order, campaignByName) : orderAdIds(order);
       rows.push({
-        id: String(order.id), day: dayOfIso(order.created_at), productId: order.product_id ?? null, status: String(order.status ?? ""),
+        id: String(order.id), day: dayOfIso(order.created_at), deliveredDay: order.delivered_date ? String(order.delivered_date).slice(0, 10) : null, productId: order.product_id ?? null, status: String(order.status ?? ""),
         amount: Number(order.amount) || 0, productCost: Number(order.cogs_snapshot) || 0, deliveryFee: Number(order.logistics_cost) || 0,
         campaignId: ids.campaignId, adsetId: ids.adsetId, adId: ids.adId, otherPlatform
       });

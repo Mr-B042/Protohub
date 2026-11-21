@@ -17,6 +17,7 @@ import { AD_SPEND_VIEWS, allocate, buildReport, mappingIndex, validSplits, type 
 import { refreshPixelAdAccountsNow, loadAdSpendInputs, loadOrderStreaks, loadSinceStart, loadTikTokConnections, suggestProduct, syncAdSpend } from "../lib/ad-spend-data.js";
 import { RULES as SINCE_START_RULES, VERDICT_ORDER } from "../lib/ad-since-start.js";
 import { droughtsFor, VERDICT_RULES } from "../lib/campaign-drought-alerts.js";
+import { campaignDayOrders, loadCampaignDecisions } from "../lib/campaign-decisions-data.js";
 import { campaignClaims, forgetShares } from "../lib/ad-account-shares.js";
 import { rateFor } from "../lib/currency-rates.js";
 import { syncAdSpendExpenses } from "../lib/ad-spend-expenses.js";
@@ -2012,6 +2013,23 @@ router.post("/ad-funds/check", async (req, res) => {
     await runAdFundsCheck({ orgId: req.user!.orgId });
     res.json(await adFundsView(req.user!.orgId));
   } catch (error: any) { fail(res, error, "Could not check the ad accounts."); }
+});
+
+/** Campaign Decisions tab (Bright, 21 Nov 2026): rules in lib/campaign-engine.ts. */
+router.get("/campaign-decisions", async (req, res) => {
+  try {
+    const result = await loadCampaignDecisions(req.user!.orgId, branchOf(req), { periodDays: Number(req.query.days) || 3, fresh: req.query.fresh === "1" });
+    const platform = String(req.query.platform ?? "all");
+    res.json({ ...result, rows: result.rows.filter((row) => platform === "all" || row.platform === platform) });
+  } catch (error: any) { fail(res, error, "Could not work out the campaign decisions."); }
+});
+
+/** One campaign's orders placed on one day (detail view's daily table). */
+router.get("/campaign-decisions/:campaignId/orders", async (req, res) => {
+  const day = String(req.query.day ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) { res.status(400).json({ error: "Pick a day." }); return; }
+  try { res.json({ orders: await campaignDayOrders(req.user!.orgId, branchOf(req), String(req.params.campaignId), day) }); }
+  catch (error: any) { fail(res, error, "Could not load that day's orders."); }
 });
 
 router.get("/campaign-alerts", async (req, res) => {

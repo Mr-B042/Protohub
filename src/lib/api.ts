@@ -4790,15 +4790,44 @@ export type CampaignDrought = {
   todaySpend?: number; advice: string; episodeKey: string;
 };
 /** ONE decision per running campaign by its product's break-even (Bright, 15 Nov 2026): backend lib/campaign-verdict.ts. */
-export type CampaignVerdictKind = "turn_off" | "pause" | "check_tracking" | "watch" | "scale" | "keep";
+/** Campaign Decisions (Bright, 21 Nov 2026): backend lib/campaign-engine.ts. */
+export type CampaignVerdictKind = "turn_off" | "pause" | "watch" | "scale" | "keep";
 export type CampaignVerdict = {
   campaignId: string; campaignName: string; platform: string; accountName: string; productName: string | null;
-  verdict: CampaignVerdictKind; reason: string; action: string;
-  yardstick: number; yardstickKnown: boolean; targetSource: "worked_out" | "set_by_you" | "mixed" | null;
-  spend: number; orders: number; delivered: number; marginPerDelivery: number | null;
-  recentSpend: number; recentOrders: number; recentCpo: number | null; lifetimeCpo: number | null; costPerDelivered: number | null;
-  spendSinceLastOrder: number; lastOrderDay: string | null; todaySpend: number; episodeKey: string;
+  verdict: CampaignVerdictKind; label: string; reason: string; action: string; episodeKey: string; score: number; confidence: string;
 };
+export type CdMoney = {
+  orders: number; delivered: number; pending: number; failed: number;
+  deliveredRevenue: number; productCost: number; logistics: number; repBonus: number; failedCost: number;
+  grossProfit: number; contributionBeforeAds: number; adSpend: number; netContribution: number;
+  expectedFinal: number; projectedFromPending: number;
+  deliveryRate: number | null; finalisedRate: number | null; costPerOrder: number | null; costPerDelivered: number | null; bonusesMissing: boolean;
+};
+export type CdDay = { day: string; spend: number; orders: number; delivered: number; pending: number; failed: number; revenue: number; grossProfit: number; netContribution: number; platformPurchases: number };
+export type CdScorePart = { key: "net" | "delivery" | "cpp" | "recent" | "volume" | "safety"; label: string; max: number; points: number; note: string };
+export type CdRow = {
+  campaignId: string; campaignName: string; platform: string; accountName: string; productId: string | null; productName: string | null; productImage: string | null;
+  target: number; targetKnown: boolean; targetSource: "worked_out" | "set_by_you" | "mixed" | null;
+  lifetimeSpend: number; lifetimeOrders: number; lifetimeDelivered: number;
+  period: CdMoney; previous: CdMoney; week: CdMoney;
+  recentSpend: number; recentOrders: number; recentCpo: number | null; priorCpo: number | null; lifetimeCpo: number | null;
+  spendSinceLastOrder: number; lastOrderDay: string | null; todaySpend: number; todayOrders: number;
+  matureRate: number | null; matureOrders: number; matureRateSource: "campaign" | "product" | null; deliveryTrend: { older: number; newer: number } | null; deliveryHealth: string | null;
+  score: number; rating: string; scoreParts: CdScorePart[];
+  days: CdDay[]; deliveryDays: Array<{ day: string; delivered: number; revenue: number; contribution: number }>;
+  decision: CampaignVerdictKind; confidence: "high" | "medium" | "low"; collectMoreData: boolean; escalate: boolean;
+  label: string; why: string; action: string; monitor: string; reconsider: string; budgetChangePct: number | null;
+  goingWell: string[]; goingWrong: string[]; episodeKey: string;
+  funnel: { impressions: number; linkClicks: number; landingPageViews: number; ctr: number | null; cpc: number | null; cpm: number | null; conversion: number | null } | null;
+};
+export type CampaignDecisionsView = {
+  today: string; periodDays: number; currency: string; checkedAt: string;
+  rules: { fallbackTarget: number; scaleDeliveryRate: number; scaleCpoAtMost: number; watchCpoFrom: number; pauseCpoFrom: number; scaleMinOrders: number; pauseNoOrderTimes: number; escalateNoOrderTimes: number; matureFromDays: number; matureToDays: number };
+  rows: CdRow[]; totals: CdMoney; previousTotals: CdMoney;
+  daily: Array<{ day: string; orders: number; delivered: number; pending: number; failed: number; spend: number; revenue: number; grossProfit: number; netContribution: number; deliveryRate: number | null }>;
+  bonusesPartial: boolean; unchecked: number; uncheckedAccounts: Array<{ name: string; message: string }>; linkedShare: number | null;
+};
+export type CdDayOrder = { id: string; customer: string; state: string; status: string; amount: number; product: string; deliveredDay: string | null };
 /** Bright, 14 Nov 2026: spent over ₦7,500 since the last order ("burn") or over ₦7,500 per order in 2 full days ("pricey"). */
 export type CampaignMoneyAlert = {
   kind: "burn" | "pricey"; campaignId: string; campaignName: string; platform: string; accountName: string; productName: string | null;
@@ -4934,6 +4963,8 @@ export const trackingHubApi = {
   rebookAdSpendMonth: () => post<{ ok: boolean }>("/api/tracking-hub/ad-spend/rebook-month", {}),
   currencyRate: (from = "NGN", to = "ZMW") => get<{ rate: { from: string; to: string; fromPerTo: number; source: string; setBy: string | null; updatedAt: string | null; isDefault: boolean } | null }>(`/api/tracking-hub/currency-rate?from=${from}&to=${to}`),
   setCurrencyRate: (from: string, to: string, fromPerTo: number) => put<{ rate: { from: string; to: string; fromPerTo: number; source: string; setBy: string | null; updatedAt: string | null; isDefault: boolean } | null }>("/api/tracking-hub/currency-rate", { from, to, fromPerTo }),
+  campaignDecisions: (days: number, platform = "all", fresh = false) => get<CampaignDecisionsView>(`/api/tracking-hub/campaign-decisions?days=${days}&platform=${encodeURIComponent(platform)}${fresh ? "&fresh=1" : ""}`),
+  campaignDayOrders: (campaignId: string, day: string) => get<{ orders: CdDayOrder[] }>(`/api/tracking-hub/campaign-decisions/${encodeURIComponent(campaignId)}/orders?day=${day}`),
   campaignAlerts: (fresh = false) => get<{ verdicts: CampaignVerdict[]; unchecked: number; uncheckedAccounts?: Array<{ name: string; message: string }>; checkedAt: string }>(`/api/tracking-hub/campaign-alerts${fresh ? "?fresh=1" : ""}`),
   setAdSpendTarget: (productId: string, targetCpa: number | null) => put<{ ok: true }>("/api/tracking-hub/ad-spend/targets", { productId, targetCpa }),
   tiktokConnections: () => get<{ connections: HubTikTokConnection[]; urlParameters: string }>("/api/tracking-hub/tiktok-connections"),

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Activity, Database, FileText, Globe, Link2, Monitor, RefreshCw, Settings as SettingsIcon, TrendingUp } from "lucide-react";
+import { Activity, Database, FileText, Gauge, Globe, Link2, Monitor, RefreshCw, Settings as SettingsIcon, TrendingUp } from "lucide-react";
 import { PRESETS, type HubTab, type Range } from "../components/tracking-hub/HubParts";
 import OverviewTab from "../components/tracking-hub/OverviewTab";
 import DataSourcesTab from "../components/tracking-hub/DataSourcesTab";
@@ -8,6 +8,7 @@ import LinksTab from "../components/tracking-hub/LinksTab";
 import LedgerTab from "../components/tracking-hub/LedgerTab";
 import ReconciliationTab from "../components/tracking-hub/ReconciliationTab";
 import AdSpendTab from "../components/tracking-hub/AdSpendTab";
+import CampaignDecisionsTab from "../components/tracking-hub/CampaignDecisionsTab";
 import DiagnosticsTab from "../components/tracking-hub/DiagnosticsTab";
 import SettingsTab from "../components/tracking-hub/SettingsTab";
 
@@ -26,6 +27,8 @@ const TABS: Array<{ key: HubTab; label: string; icon: typeof Monitor }> = [
   { key: "ledger", label: "Event Ledger", icon: FileText },
   { key: "reconciliation", label: "Reconciliation", icon: RefreshCw },
   { key: "adspend", label: "Ad Spend", icon: TrendingUp },
+  // Campaign Decisions (Bright, 21 Nov 2026): its own tab, built to his design.
+  { key: "decisions", label: "Campaign Decisions", icon: Gauge },
   { key: "diagnostics", label: "Diagnostics", icon: Activity },
   { key: "settings", label: "Settings", icon: SettingsIcon }
 ];
@@ -68,6 +71,7 @@ export default function TrackingHubPage({ onToast, renderMetaDefaults, onOpenOrd
   if (tab === "ledger") return <LedgerTab key={ledgerKey} tabBar={tabBar} onToast={onToast} range={range} onRange={setRange} initial={ledgerFilter} onOpenOrder={onOpenOrder} />;
   if (tab === "reconciliation") return <ReconciliationTab tabBar={tabBar} onToast={onToast} range={range} onRange={setRange} onOpenLedger={openLedger} />;
   if (tab === "adspend") return <AdSpendTab tabBar={tabBar} onToast={onToast} range={range} onRange={setRange} onTab={go} />;
+  if (tab === "decisions") return <CampaignDecisionsTab tabBar={tabBar} onToast={onToast} />;
   if (tab === "diagnostics") return <DiagnosticsTab tabBar={tabBar} onToast={onToast} range={range} onRange={setRange} onTab={go} onOpenLedger={openLedger} />;
   if (tab === "settings") return <SettingsTab tabBar={tabBar} onToast={onToast} onTab={go} renderMetaDefaults={renderMetaDefaults} />;
   return <OverviewTab tabBar={tabBar} range={range} onRange={setRange} onTab={go} onToast={onToast} onOpenLedger={openLedger} onCreateLink={() => { setTab("links"); setCreatingLink((value) => value + 1); }} />;
