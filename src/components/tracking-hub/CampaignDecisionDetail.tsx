@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { createContext, Fragment, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, CheckCircle2, ChevronRight, Compass, Loader2, X } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ComposedChart, Legend, Line, LineChart as RLineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -6,6 +6,7 @@ import { trackingHubApi, type CampaignDecisionsView, type CdDayOrder, type CdRow
 import { money } from "../../lib/money-privacy";
 import { shortDay, type Toast } from "./HubParts";
 import { DECISIONS } from "./CampaignDecisionsTab";
+import CampaignOrderCard from "./CampaignOrderCard";
 
 // Campaign detail (Bright's write-up, section 10, 21 Nov 2026; no picture was
 // supplied, so it follows the write-up's order in the main page's style):
@@ -26,13 +27,34 @@ function Tile({ label, value, note, tone }: { label: string; value: ReactNode; n
     </div>
   );
 }
+// Smart sticky (Bright, 21 Nov 2026: "let all these places have a smart
+// sticky"): the panel's own header is measured; each section's title bar
+// sticks under it and only casts a shadow once it is actually stuck; the
+// daily table's column headings stick under that, and the day you opened
+// sticks under them while you read its orders. Below lg the table scrolls
+// sideways, which a sticky row cannot cross, so only the bars stick there.
+const SECTION_BAR = 52;
+const StickyCtx = createContext<{ top: number; scroller: RefObject<HTMLDivElement | null> }>({ top: 0, scroller: { current: null } });
+
 function Section({ letter, title, children, right }: { letter: string; title: string; children: ReactNode; right?: ReactNode }) {
+  const { top, scroller } = useContext(StickyCtx);
+  const sentinel = useRef<HTMLDivElement | null>(null);
+  const [stuck, setStuck] = useState(false);
+  useEffect(() => {
+    const el = sentinel.current, root = scroller.current;
+    if (!el || !root || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(([e]) => setStuck(!e.isIntersecting && e.boundingClientRect.top < (e.rootBounds?.top ?? 0) + 1), { root, rootMargin: `-${top + 1}px 0px 0px 0px` });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [top, scroller]);
   return (
-    <section className="rounded-2xl border border-gray-200 bg-gray-50/60 p-4 dark:border-slate-800 dark:bg-slate-900/60">
-      <div className="mb-3 flex flex-wrap items-center gap-2">
+    <section className="rounded-2xl border border-gray-200 bg-gray-50 px-4 pb-4 dark:border-slate-800 dark:bg-slate-900">
+      <div ref={sentinel} aria-hidden className="h-px" />
+      <div style={{ top, height: SECTION_BAR }}
+        className={`sticky z-[6] -mx-4 mb-2 flex items-center gap-2 px-4 transition-[background-color,box-shadow] duration-200 ${stuck ? "rounded-none bg-white shadow-[0_6px_16px_-10px_rgba(15,23,42,0.35)] dark:bg-slate-950" : "rounded-t-2xl bg-gray-50 dark:bg-slate-900"}`}>
         <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-indigo-600 text-[12px] font-black text-white">{letter}</span>
-        <h3 className="m-0 text-[16px] font-extrabold text-gray-900 dark:text-slate-50">{title}</h3>
-        {right ? <div className="ml-auto">{right}</div> : null}
+        <h3 className="m-0 truncate text-[16px] font-extrabold text-gray-900 dark:text-slate-50">{title}</h3>
+        {right ? <div className="ml-auto shrink-0">{right}</div> : null}
       </div>
       {children}
     </section>
@@ -53,6 +75,17 @@ const short = (v: number) => (Math.abs(v) >= 1000 ? `${Math.round(v / 1000)}k` :
 export default function CampaignDecisionDetail({ row, data, onClose, onToast }: { row: CdRow; data: CampaignDecisionsView; onClose: () => void; onToast: Toast }) {
   const d = DECISIONS[row.decision];
   const [view, setView] = useState<"order" | "delivery">("order");
+  const scroller = useRef<HTMLDivElement | null>(null);
+  const headRef = useRef<HTMLDivElement | null>(null);
+  const [headH, setHeadH] = useState(124);
+  useLayoutEffect(() => {
+    const el = headRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setHeadH(Math.round(el.getBoundingClientRect().height)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const THEAD = 40;
   const [openDay, setOpenDay] = useState<string | null>(null);
   const [dayOrders, setDayOrders] = useState<Record<string, CdDayOrder[] | "loading">>({});
   useEffect(() => {
@@ -81,11 +114,12 @@ export default function CampaignDecisionDetail({ row, data, onClose, onToast }: 
 
   return createPortal(
     <div className="fixed inset-0 z-[80] flex justify-end bg-slate-950/45 backdrop-blur-[2px]" onClick={onClose}>
-      <div role="dialog" aria-label={row.campaignName} onClick={(event) => event.stopPropagation()}
+      <div ref={scroller} role="dialog" aria-label={row.campaignName} onClick={(event) => event.stopPropagation()}
         className="h-full w-full max-w-[1180px] overflow-y-auto bg-white shadow-2xl motion-safe:animate-[cdSlide_.28s_cubic-bezier(.2,.7,.2,1)] dark:bg-slate-950">
-        <style>{"@keyframes cdSlide { from { transform: translateX(32px); opacity: .4 } to { transform: none; opacity: 1 } }"}</style>
+        <style>{"@keyframes cdSlide { from { transform: translateX(32px); opacity: .4 } to { transform: none; opacity: 1 } } @keyframes cdCardIn { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } } @media (prefers-reduced-motion: no-preference) { .cd-card-in { animation: cdCardIn .3s cubic-bezier(.2,.7,.2,1) both } }"}</style>
+        <StickyCtx.Provider value={{ top: headH, scroller }}>
         {/* Header */}
-        <div className="sticky top-0 z-10 border-b border-gray-200 bg-white/95 px-6 py-4 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
+        <div ref={headRef} className="sticky top-0 z-10 border-b border-gray-200 bg-white/95 px-6 py-4 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
           <div className="flex items-start gap-4">
             <div className="min-w-0 flex-1">
               <h2 className="m-0 text-[22px] font-black leading-7 text-gray-900 dark:text-slate-50">{row.campaignName}</h2>
@@ -163,16 +197,17 @@ export default function CampaignDecisionDetail({ row, data, onClose, onToast }: 
             </div>
           }>
             {view === "order" ? (
-              <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+              <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white lg:overflow-visible dark:border-slate-700 dark:bg-slate-900">
                 <table className="!min-w-[860px] w-full text-[12.5px] [&_td]:!px-2.5 [&_th]:!px-2.5">
-                  <thead className="bg-gray-50 text-gray-600 dark:bg-slate-800/60"><tr><th className="w-6" /><th className="py-2 text-left">Date</th><th>Orders</th><th>Delivered</th><th>Pending</th><th>Failed</th><th>Revenue</th><th>Ad spend</th><th>Gross profit</th><th>Net contribution</th><th>Day</th></tr></thead>
+                  <thead style={{ top: headH + SECTION_BAR }} className="text-gray-600 lg:sticky lg:z-[5] [&_th]:bg-gray-50 dark:[&_th]:bg-slate-800 [&_th:first-child]:rounded-tl-xl [&_th:last-child]:rounded-tr-xl"><tr style={{ height: THEAD }}><th className="w-6" /><th className="py-2 text-left">Date</th><th>Orders</th><th>Delivered</th><th>Pending</th><th>Failed</th><th>Revenue</th><th>Ad spend</th><th>Gross profit</th><th>Net contribution</th><th>Day</th></tr></thead>
                   <tbody>
                     {[...row.days].reverse().map((day) => {
                       const v = dayVerdict(day.spend, day.orders);
                       const list = dayOrders[day.day];
                       return (
                         <Fragment key={day.day}>
-                          <tr onClick={() => day.orders && toggleDay(day.day)} className={`border-t border-gray-100 text-center dark:border-slate-800 ${day.orders ? "cursor-pointer hover:bg-indigo-50/40" : ""}`}>
+                          <tr onClick={() => day.orders && toggleDay(day.day)} style={openDay === day.day ? { top: headH + SECTION_BAR + THEAD } : undefined}
+                            className={`border-t border-gray-100 text-center dark:border-slate-800 ${day.orders ? "cursor-pointer hover:bg-indigo-50/40" : ""} ${openDay === day.day ? "lg:sticky lg:z-[4] bg-indigo-50 shadow-[0_6px_14px_-10px_rgba(79,70,229,0.5)] dark:bg-indigo-500/15 [&>td]:bg-indigo-50 dark:[&>td]:bg-transparent" : ""}`}>
                             <td>{day.orders ? <ChevronRight className={`h-3.5 w-3.5 text-gray-400 transition-transform ${openDay === day.day ? "rotate-90" : ""}`} /> : null}</td>
                             <td className="py-2 text-left">{shortDay(day.day)}{day.day === data.today ? <span className="ml-1 text-[11px] text-gray-400">(today)</span> : null}</td>
                             <td className="font-semibold">{day.orders}</td><td>{day.delivered}</td><td>{day.pending}</td><td>{day.failed}</td>
@@ -181,10 +216,13 @@ export default function CampaignDecisionDetail({ row, data, onClose, onToast }: 
                             <td className={`font-semibold ${v.c}`}>{v.t}</td>
                           </tr>
                           {openDay === day.day ? (
-                            <tr className="bg-gray-50/80 dark:bg-slate-800/30"><td /><td colSpan={10} className="py-2 text-left">
+                            <tr className="bg-gray-50/80 dark:bg-slate-800/30"><td colSpan={11} className="!px-3 py-3 text-left">
                               {list === "loading" || !list ? <span className="inline-flex items-center gap-2 text-gray-500"><Loader2 className="h-3.5 w-3.5 animate-spin" />Loading orders…</span>
                                 : list.length === 0 ? <span className="text-gray-500">No order carries this campaign that day.</span>
-                                : <div className="flex flex-wrap gap-1.5">{list.map((o) => <span key={o.id} className="rounded-md border border-gray-200 bg-white px-2 py-1 text-[11.5px] dark:border-slate-700 dark:bg-slate-900"><b>{o.customer || "Customer"}</b> · {o.state} · {o.product} · {money(o.amount)} · <span className={o.status === "Delivered" ? "font-semibold text-emerald-700" : ["Failed", "Cancelled", "Rejected", "Returned"].includes(o.status) ? "font-semibold text-rose-600" : "text-gray-600"}>{o.status}</span></span>)}</div>}
+                                : <div className="space-y-3">
+                                    <p className="m-0 text-[12px] font-semibold text-gray-600 dark:text-slate-400">{list.length} order{list.length === 1 ? "" : "s"} placed {shortDay(day.day)} from this campaign{day.orders ? ` · ad cost ${money(day.spend / day.orders)} each (the day's ${money(day.spend)} shared)` : ""}</p>
+                                    {list.map((o, i) => <CampaignOrderCard key={o.id} order={o} index={i} today={data.today} adCostShare={day.orders ? day.spend / day.orders : null} />)}
+                                  </div>}
                             </td></tr>
                           ) : null}
                         </Fragment>
@@ -252,6 +290,7 @@ export default function CampaignDecisionDetail({ row, data, onClose, onToast }: 
             </div>
           </Section>
         </div>
+        </StickyCtx.Provider>
       </div>
     </div>,
     document.body
