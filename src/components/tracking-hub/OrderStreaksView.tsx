@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useState, type ReactNode } from "react";
-import { AlertTriangle, ArrowUpDown, ChevronRight, Flame, HelpCircle, Layers, PowerOff } from "lucide-react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { AlertTriangle, ArrowUp, ArrowUpDown, ChevronRight, Flame, HelpCircle, Layers, PowerOff } from "lucide-react";
 import { trackingHubApi, type HubStreakRow, type HubStreakVerdict } from "../../lib/api";
 import { LoadState, PlatformIcon, SearchBox, ago, naira, nf, rowCls, selectCls, shortDay, tableCls, useLoad } from "./HubParts";
 
@@ -31,6 +31,45 @@ const MOTION_CSS = `
   .streak-row-in { animation: streakRowIn .32s cubic-bezier(.2,.7,.2,1) both; }
   .streak-live-pill { animation: streakSoftPulse 2.4s ease-in-out infinite; }
 }`;
+
+// Sticky filter bar (Bright, 21 Nov 2026: "let this be sticky so we don't
+// scroll up when we are down looking for it ... make it smart").
+
+/** Bottom edge of the app's fixed top bar (its height changes with banners), measured, not guessed. */
+function useTopBarOffset() {
+  const [offset, setOffset] = useState(64);
+  useEffect(() => {
+    const measure = () => {
+      let el = document.elementFromPoint(window.innerWidth / 2, 2) as HTMLElement | null;
+      while (el && el !== document.body) {
+        const position = getComputedStyle(el).position;
+        if (position === "fixed" || position === "sticky") { setOffset(Math.round(el.getBoundingClientRect().bottom)); return; }
+        el = el.parentElement;
+      }
+      setOffset(0);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    const timer = window.setTimeout(measure, 600); // banners can arrive after the first paint
+    return () => { window.removeEventListener("resize", measure); window.clearTimeout(timer); };
+  }, []);
+  return offset;
+}
+
+/** The element that actually scrolls (the app's main area on phones, the window on desktop). */
+function scrollerOf(node: HTMLElement | null): HTMLElement | Window {
+  let el = node?.parentElement ?? null;
+  while (el && el !== document.body) {
+    const overflowY = getComputedStyle(el).overflowY;
+    if ((overflowY === "auto" || overflowY === "scroll") && el.scrollHeight > el.clientHeight) return el;
+    el = el.parentElement;
+  }
+  return window;
+}
+const scrollByTop = (node: HTMLElement | null, delta: number) => {
+  const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  scrollerOf(node).scrollBy({ top: delta, behavior: reduce ? "auto" : "smooth" });
+};
 
 /** Green pulsing dot: the campaign is delivering right now. */
 function LiveDot({ size = "h-2 w-2" }: { size?: string }) {
@@ -130,6 +169,45 @@ export default function OrderStreaksView({ platform, refreshKey }: { platform: s
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "verdict", dir: 1 });
+  // Sticky bar: where it sits, how tall it is, and whether it has stuck.
+  const topOffset = useTopBarOffset();
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const tableRef = useRef<HTMLDivElement | null>(null);
+  const [barHeight, setBarHeight] = useState(56);
+  const [stuck, setStuck] = useState(false);
+  useLayoutEffect(() => {
+    const bar = barRef.current;
+    if (!bar || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => setBarHeight(Math.round(bar.getBoundingClientRect().height)));
+    observer.observe(bar);
+    return () => observer.disconnect();
+  }, [data !== null]);
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(([entry]) => setStuck(!entry.isIntersecting && entry.boundingClientRect.top < topOffset + 1),
+      { rootMargin: `-${topOffset + 1}px 0px 0px 0px`, threshold: [0, 1] });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [topOffset, data !== null]);
+  /** After a filter change while scrolled down, bring the first result up under the bar. */
+  const settleList = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      const table = tableRef.current;
+      if (!table) return;
+      const delta = table.getBoundingClientRect().top - (topOffset + barHeight + 8);
+      if (delta < 0) scrollByTop(table, delta);
+    });
+  }, [topOffset, barHeight]);
+  const filterKey = `${status}|${verdict}|${productId}|${search.trim()}`;
+  const lastFilterKey = useRef(filterKey);
+  useEffect(() => {
+    if (lastFilterKey.current === filterKey) return;
+    lastFilterKey.current = filterKey;
+    if (stuck) settleList();
+  }, [filterKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const backToTop = () => { const sentinel = sentinelRef.current; if (sentinel) scrollByTop(sentinel, sentinel.getBoundingClientRect().top - topOffset - 140); };
   if (!data) return <LoadState text="Checking which ads get orders day after day…" error={error} onRetry={reload} />;
 
   const statusCounts: Record<StatusFilter, number> = { all: 0, live: 0, off: 0 };
@@ -170,16 +248,37 @@ export default function OrderStreaksView({ platform, refreshKey }: { platform: s
         ))}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2.5">
-        <StatusSwitch value={status} onChange={setStatus} counts={statusCounts} />
-        <SearchBox value={search} onChange={setSearch} placeholder="Search ads, ad sets, campaigns…" className="min-w-[200px] flex-1 xl:max-w-[280px]" />
-        <select value={productId} onChange={(event) => setProductId(event.target.value)} className={`${selectCls} w-[170px]`}><option value="">All Products</option>{productOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>
-        <span className="ml-auto flex flex-wrap items-center gap-3 text-[11.5px] text-gray-500 dark:text-slate-400">
-          <span className="inline-flex items-center gap-1"><span className="h-3 w-2.5 rounded-[2px] bg-emerald-400" />order</span>
-          <span className="inline-flex items-center gap-1"><span className="h-3 w-2.5 rounded-[2px] bg-gray-300 dark:bg-slate-600" />ran, no order</span>
-          <span className="inline-flex items-center gap-1"><span className="h-3 w-2.5 rounded-[2px] border border-dashed border-gray-300" />off</span>
-          {data.lastSyncAt ? <span>Spend read {ago(data.lastSyncAt)}</span> : null}
-        </span>
+      <div ref={sentinelRef} aria-hidden className="h-px" />
+      <div ref={barRef} style={{ top: topOffset }}
+        className={`sticky z-30 -mx-4 px-4 py-2 transition-[background-color,box-shadow,backdrop-filter] duration-300 ${stuck ? "border-b border-gray-200/80 bg-white/90 shadow-[0_8px_24px_-12px_rgba(15,23,42,0.25)] backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/90" : "bg-transparent"}`}>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <StatusSwitch value={status} onChange={setStatus} counts={statusCounts} />
+          <SearchBox value={search} onChange={setSearch} placeholder="Search ads, ad sets, campaigns…" className="min-w-[200px] flex-1 xl:max-w-[280px]" />
+          <select value={productId} onChange={(event) => setProductId(event.target.value)} className={`${selectCls} w-[170px]`}><option value="">All Products</option>{productOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>
+          <span className="ml-auto flex flex-wrap items-center gap-3 text-[11.5px] text-gray-500 dark:text-slate-400">
+            <span className="inline-flex items-center gap-1"><span className="h-3 w-2.5 rounded-[2px] bg-emerald-400" />order</span>
+            <span className="inline-flex items-center gap-1"><span className="h-3 w-2.5 rounded-[2px] bg-gray-300 dark:bg-slate-600" />ran, no order</span>
+            <span className="inline-flex items-center gap-1"><span className="h-3 w-2.5 rounded-[2px] border border-dashed border-gray-300" />off</span>
+            {data.lastSyncAt ? <span>Spend read {ago(data.lastSyncAt)}</span> : null}
+          </span>
+        </div>
+        {/* Stuck: the verdict cards are out of sight, so a compact copy rides along. */}
+        <div className={`grid transition-[grid-template-rows,opacity,margin] duration-300 ease-out ${stuck ? "mt-2 grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`} aria-hidden={!stuck}>
+          <div className="flex min-h-0 flex-wrap items-center gap-1.5 overflow-hidden">
+            {VERDICTS.map((item) => (
+              <button key={item.key} type="button" tabIndex={stuck ? 0 : -1} onClick={() => setVerdict(verdict === item.key ? "" : item.key)}
+                className={`!min-h-0 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] font-semibold transition-transform active:scale-95 ${item.tone} ${verdict === item.key ? "ring-2 ring-blue-500" : ""}`}>
+                <span className={`h-1.5 w-1.5 rounded-full ${item.dot}`} />{item.label}<b className="tabular-nums">{nf(counts.get(item.key) ?? 0)}</b>
+              </button>
+            ))}
+            <span className="ml-auto flex items-center gap-2 text-[11.5px] text-gray-500 dark:text-slate-400">
+              <span className="tabular-nums">{nf(rows.length)} shown</span>
+              <button type="button" tabIndex={stuck ? 0 : -1} onClick={backToTop} className="!min-h-0 inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 py-1 font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                <ArrowUp className="h-3 w-3 motion-safe:transition-transform motion-safe:group-hover:-translate-y-0.5" />Top
+              </button>
+            </span>
+          </div>
+        </div>
       </div>
 
       {data.liveFailures?.length ? (
@@ -188,9 +287,9 @@ export default function OrderStreaksView({ platform, refreshKey }: { platform: s
         </p>
       ) : null}
 
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      <div ref={tableRef} className="overflow-x-auto xl:overflow-visible rounded-xl border border-gray-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         <table className={tableCls}>
-          <thead className="bg-gray-50 text-gray-600 dark:bg-slate-800/60 dark:text-slate-300">
+          <thead style={{ top: topOffset + barHeight }} className="text-gray-600 dark:text-slate-300 xl:sticky xl:z-20 [&_th]:bg-gray-50 dark:[&_th]:bg-slate-800 [&_th:first-child]:rounded-tl-xl [&_th:last-child]:rounded-tr-xl">
             <tr>
               <th className="w-6" />
               <th>Ad</th>
