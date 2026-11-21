@@ -1,4 +1,5 @@
 import { unfilledGaps } from "./email-render.js";
+import { plainTestVariant, plainVerdict, type SideStats } from "./plain-test-rules.js";
 import crypto from "node:crypto";
 import { supabase } from "./supabase.js";
 import { orderCreators } from "./order-creator.js";
@@ -59,7 +60,8 @@ async function syncStepCampaigns(orgId: string, branchId: string, automationId: 
   if (error) throw new Error(error.message);
   const byStep = new Map((existing ?? []).map((row: any) => [row.step_id, row]));
   const keep = new Set<string>();
-  const options = { abTest: false, plainText: false, utm: settings.utm, resendNonOpeners: false, resendHours: 48, track: settings.track, sendWindow: settings.sendWindow, replyTo: settings.replyTo };
+  // Designed vs plain one-link note on every Autopilot email (21 Nov 2026, plain-test-rules.ts).
+  const options = { abTest: false, noteB: true, oneLinkB: true, plainText: false, utm: settings.utm, resendNonOpeners: false, resendHours: 48, track: settings.track, sendWindow: settings.sendWindow, replyTo: settings.replyTo };
   const fill = async (nodes: WorkflowNode[]): Promise<WorkflowNode[]> => {
     const out: WorkflowNode[] = [];
     for (const node of nodes) {
@@ -293,6 +295,16 @@ export async function automationsPage(orgId: string, branchId: string) {
 }
 
 /** One automation's results: who is where, and each email's numbers. */
+/** Designed (A) vs plain one-link note (B) for some sent rows, with the verdict. */
+function plainTestFor(sent: Array<{ variant?: string | null; first_opened_at?: string | null; first_clicked_at?: string | null }>) {
+  const side = (variant: "a" | "b"): SideStats => {
+    const rows = sent.filter((send) => (send.variant ?? "a") === variant);
+    return { sent: rows.length, opened: rows.filter((send) => send.first_opened_at || send.first_clicked_at).length, clicked: rows.filter((send) => send.first_clicked_at).length };
+  };
+  const designed = side("a"), plain = side("b");
+  return { designed, plain, verdict: plainVerdict(designed, plain) };
+}
+
 export async function automationReport(orgId: string, branchId: string, id: string) {
   const auto = await getAutomation(orgId, branchId, id);
   const world = await loadWorld(orgId, branchId);
@@ -301,7 +313,7 @@ export async function automationReport(orgId: string, branchId: string, id: stri
     supabase.from("email_campaigns").select("id, step_id").eq("automation_id", id)
   ]);
   const campaignOf = new Map((steps ?? []).map((row: any) => [row.step_id, row.id]));
-  const sends = (steps ?? []).length ? await selectByIdBatches<any>((steps ?? []).map((row: any) => row.id), (batch) => supabase.from("email_campaign_sends").select("campaign_id, status, first_opened_at, first_clicked_at, order_id, rep_order_id, unsubscribed_at").in("campaign_id", batch)) : [];
+  const sends = (steps ?? []).length ? await selectByIdBatches<any>((steps ?? []).map((row: any) => row.id), (batch) => supabase.from("email_campaign_sends").select("campaign_id, status, variant, first_opened_at, first_clicked_at, order_id, rep_order_id, unsubscribed_at").in("campaign_id", batch)) : [];
   const orderAmount = new Map(world.orders.filter((order) => order.status === "Delivered").map((order) => [order.id, order.amount]));
   const reasons = new Map<string, number>();
   for (const run of runs) if (run.status === "exited") reasons.set(run.exit_reason ?? "Left the flow", (reasons.get(run.exit_reason ?? "Left the flow") ?? 0) + 1);
@@ -318,9 +330,11 @@ export async function automationReport(orgId: string, branchId: string, id: stri
         orders: sent.filter((send) => send.order_id).length, revenue: sent.reduce((sum, send) => sum + (send.order_id ? orderAmount.get(send.order_id) ?? 0 : 0), 0),
         // A rep made these orders from a cart after the email: shown apart, not the email's sale.
         repOrders: sent.filter((send) => send.rep_order_id).length, repRevenue: sent.reduce((sum, send) => sum + (send.rep_order_id ? orderAmount.get(send.rep_order_id) ?? 0 : 0), 0),
-        unsubscribed: sent.filter((send) => send.unsubscribed_at).length
+        unsubscribed: sent.filter((send) => send.unsubscribed_at).length,
+        plainTest: plainTestFor(sent)
       };
     }),
+    plainTest: plainTestFor(sends.filter((send) => send.status === "sent")),
     recent: runs.slice(0, 15).map((run) => ({
       email: run.email, name: run.name, status: run.status, exitReason: run.exit_reason, enteredAt: run.entered_at, finishedAt: run.finished_at,
       nextAt: run.status === "active" ? run.next_at : null, step: findNode(auto.workflow, run.node_id)?.type ?? null, stepName: stepName(findNode(auto.workflow, run.node_id))
@@ -628,7 +642,7 @@ async function advanceRun(run: any, auto: Automation, world: () => Promise<World
       if (!contact || contact.status !== "subscribed") { note(`Not emailed "${node.name}": no longer subscribed`); nodeId = nextNodeId(auto.workflow, node.id); continue; }
       const { data: sent, error } = await supabase.from("email_campaign_sends").upsert({
         org_id: run.org_id, branch_id: run.branch_id, campaign_id: node.campaignId, run_no: run.entry_no, kind: "main", contact_id: contact.id,
-        email: contact.email, name: contact.name || run.name || "", phone: contact.phone, variant: "a", token: newToken()
+        email: contact.email, name: contact.name || run.name || "", phone: contact.phone, variant: plainTestVariant(contact.email), token: newToken()
       }, { onConflict: "campaign_id,run_no,kind,email", ignoreDuplicates: true }).select("id").maybeSingle();
       if (error) throw new Error(error.message);
       if (sent?.id) patch.last_send_id = sent.id;

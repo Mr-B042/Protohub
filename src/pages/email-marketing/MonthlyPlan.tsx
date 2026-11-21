@@ -27,6 +27,9 @@ const PILLAR_STYLE: Record<PlanSlot["pillar"], string> = {
   Sales: "bg-amber-50 text-amber-800", Education: "bg-emerald-50 text-emerald-800", Proof: "bg-sky-50 text-sky-800", Community: "bg-pink-50 text-pink-800", Product: "bg-violet-50 text-violet-800"
 };
 
+
+/** Words that keep their capital letters in a small-letter subject. */
+const PROPER_WORDS = /\b(christmas|easter|sallah|ramadan|eid|valentine'?s|new year|nigeria|lagos|abuja|monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|april|june|july|august|september|october|november|december|i)\b/g;
 export default function MonthlyPlan({ campaigns, onClose, onDone, onToast }: { campaigns: EmCampaign[]; onClose: () => void; onDone: () => void; onToast: (message: string) => void }) {
   const today = lagosToday();
   const y = Number(today.slice(0, 4)), m = Number(today.slice(5, 7)) - 1;
@@ -81,9 +84,13 @@ export default function MonthlyPlan({ campaigns, onClose, onDone, onToast }: { c
     return { ...d, blocks: [...d.blocks.slice(0, -1), link, d.blocks[d.blocks.length - 1]] };
   };
   // A/B (Bright, 9 Nov 2026): B = short lowercase subject, from a person, as a plain note.
+  // Plain-note subjects are written small, like a friend's email, but names keep
+  // their capitals and every one greets the person (21 Nov 2026: "order today,
+  // pay when it arrives", "guests coming this christmas?").
   const subjectB = (slot: PlanSlot, subject: string) => {
-    const plain = (slot.tip ? slot.tip.title : subject.replace(/,?\s*\{\{First Name\}\}/, "")).replace(/[^\p{L}\p{N}\s',:?-]/gu, "").replace(/\s+/g, " ").trim().toLowerCase();
-    return slot.tip ? `{{First Name}}, ${plain}` : plain;
+    const plain = (slot.tip ? slot.tip.title : subject.replace(/,?\s*\{\{First Name\}\}/, "")).replace(/[^\p{L}\p{N}\s',:?-]/gu, "").replace(/\s+/g, " ").trim().toLowerCase()
+      .replace(PROPER_WORDS, (word) => word.replace(/\b\w/g, (c) => c.toUpperCase()));
+    return `{{First Name}}, ${plain}`;
   };
   const future = rows.map((row, index) => ({ ...row, index })).filter((row) => row.sendDay >= today);
   const todo = future.filter((row) => VERSIONS.some((v) => !has(row.index, v)));

@@ -576,7 +576,8 @@ export function buildStoreDesign(f: CampaignFields, spec: StoreEmailSpec): Email
  * words, without the logo header, colour band, pictures or product cards;
  * buttons become simple text links (the unsubscribe line stays).
  */
-export function asPersonalNote(design: EmailDesign, signer?: string): EmailDesign {
+export function asPersonalNote(design: EmailDesign, signer?: string, opts: { oneLink?: boolean } = {}): EmailDesign {
+  if (opts.oneLink) return asOneLinkNote(design, signer);
   // Signed by the person it comes from ("Bright from ProTools" signs as "Bright, ProTools").
   const sign = signer?.trim() ? signer.trim().replace(/\s+from\s+/i, ", ") : "";
   const drop = new Set(["header", "footer", "cover", "hero", "image", "video", "features", "offer", "social", "divider", "spacer", "timer", "html", "storePicks"]);
@@ -590,6 +591,51 @@ export function asPersonalNote(design: EmailDesign, signer?: string): EmailDesig
     }
     return [block];
   }) };
+}
+
+/**
+ * Plain note with ONE link (Autopilot A/B, Bright 21 Nov 2026: "short, plain
+ * emails, one link, fewer pictures"). Like asPersonalNote, but: the main link
+ * (the banner's button, else the first button, else the first product) is the
+ * only link; product cards become a plain list of names; other buttons go.
+ */
+const SIGN_OFF = /^(Warmly|Thanks for shopping with us|Thank you|Thanks),?\n/i;
+export function asOneLinkNote(design: EmailDesign, signer?: string): EmailDesign {
+  const sign = signer?.trim() ? signer.trim().replace(/\s+from\s+/i, ", ") : "";
+  const blocks = design.blocks;
+  let main: { text: string; link: string } | null = null;
+  for (const block of blocks) {
+    if ((block.type === "cover" || block.type === "hero") && block.buttonLink?.trim()) { main = { text: block.buttonText || "See it here", link: block.buttonLink }; break; }
+  }
+  if (!main) for (const block of blocks) {
+    if (block.type === "button" && block.link?.trim()) { main = { text: block.text, link: block.link }; break; }
+    if (block.type === "product" && block.link?.trim()) { main = { text: `${block.buttonText || "See it here"}: ${block.name}`, link: block.link }; break; }
+  }
+  const linkBlock = (): EmailBlock => ({ id: "one-link", type: "button", text: `${main!.text.replace(/\s*→\s*$/, "")} →`, link: main!.link, style: "link", size: "medium", align: "left", color: BRAND_PALETTE.blue, textColor: "#FFFFFF", radius: 0 });
+  const drop = new Set(["header", "footer", "cover", "hero", "image", "video", "features", "offer", "social", "divider", "spacer", "timer", "html", "storePicks", "button"]);
+  const out: EmailBlock[] = [];
+  let placed = false;
+  let list: string[] = [];
+  const flushList = () => {
+    if (list.length) out.push({ id: `one-list-${out.length}`, type: "text", text: list.map((name) => `• ${name}`).join("\n"), size: 15, align: "left", color: "", bold: false });
+    list = [];
+  };
+  const placeLink = () => { if (main && !placed) { out.push(linkBlock()); placed = true; } };
+  for (const block of blocks) {
+    if (block.type === "product") { if (block.name?.trim()) list.push(block.price?.trim() ? `${block.name} (${block.price})` : block.name); continue; }
+    if (list.length) { flushList(); placeLink(); }
+    if (block.type === "button" && block.link?.trim()) { placeLink(); continue; }
+    if (drop.has(block.type)) continue;
+    if (block.type === "text") {
+      if (SIGN_OFF.test(block.text)) placeLink();
+      out.push({ ...block, size: Math.min(block.size, 16), align: "left", ...(SIGN_OFF.test(block.text) && sign ? { text: `${block.text.split("\n")[0]}\n${sign}` } : {}) });
+      continue;
+    }
+    out.push(block);
+  }
+  flushList();
+  placeLink();
+  return { ...design, blocks: out };
 }
 
 // ── Helpful letters (Bright, 9 Nov 2026: "more plain text… tips to make their life easier") ──

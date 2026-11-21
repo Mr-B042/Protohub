@@ -5,7 +5,7 @@ import {
   Archive, BarChart3, ChevronRight, Clock, Coins, Copy, Filter, LayoutGrid, Layers, List, Mail, MoreHorizontal, Pause, Pencil, Play, Plus, Search, Send, Target, Trash2, Undo2, Users, Zap, Eye
 } from "lucide-react";
 import EmailPreviewGallery from "./EmailPreviewGallery";
-import { emailMarketingApi, type EmAutomationReport, type EmAutomationRow, type EmAutomationsPage, type EmDesigner } from "../../lib/api";
+import { emailMarketingApi, type EmAutomationReport, type EmAutomationRow, type EmAutomationsPage, type EmDesigner, type EmPlainSide, type EmPlainTest } from "../../lib/api";
 import { ModalShell } from "./AudiencePage";
 import { Card, Delta, ErrorNote, IconTile, Loading, Pill, Toggle, btn, count, input, lagosDate, naira, pct, select } from "./em-ui";
 import FlowDiagram, { TRIGGER_ICON } from "./FlowDiagram";
@@ -370,7 +370,7 @@ export function AutomationReport({ id, onClose }: { id: string; onClose: () => v
               <tbody>
                 {data.emails.map((row) => (
                   <tr key={row.stepId} className="border-b border-gray-100 last:border-0 dark:border-slate-800">
-                    <td className="px-3 py-2"><span className="block font-semibold text-gray-900 dark:text-slate-50">{row.name}</span><span className="block max-w-[260px] truncate text-[12px] text-gray-500">{row.subject}</span></td>
+                    <td className="px-3 py-2"><span className="block font-semibold text-gray-900 dark:text-slate-50">{row.name}</span><span className="block max-w-[260px] truncate text-[12px] text-gray-500">{row.subject}</span>{row.plainTest && row.plainTest.designed.sent + row.plainTest.plain.sent > 0 && <PlainTestLine test={row.plainTest} />}</td>
                     <td className="px-2 py-2 text-right">{count(row.sent)}</td><td className="px-2 py-2 text-right">{count(row.waiting)}</td>
                     <td className="px-2 py-2 text-right">{pct(row.openRate)}</td><td className="px-2 py-2 text-right">{pct(row.clickRate)}</td>
                     <td className="px-2 py-2 text-right">{count(row.orders)}{row.repOrders ? <span className="block text-[11px] font-normal text-gray-500" title="A rep made these orders from a cart after the email. Not counted as the email's sale.">+{count(row.repOrders)} by a rep</span> : null}</td><td className="px-3 py-2 text-right font-bold">{naira(row.revenue)}{row.repOrders ? <span className="block text-[11px] font-normal text-gray-500">+{naira(row.repRevenue ?? 0)} rep closed</span> : null}</td>
@@ -379,6 +379,7 @@ export function AutomationReport({ id, onClose }: { id: string; onClose: () => v
               </tbody>
             </table>
           </div>
+          {data.plainTest && <PlainTestCard test={data.plainTest} />}
           <div>
             <h4 className="m-0 mb-1.5 text-[14px] font-bold text-gray-900 dark:text-slate-50">Latest customers</h4>
             {!data.recent.length && <p className="m-0 text-[13px] text-gray-600 dark:text-slate-400">Nobody has entered yet. Customers enter when the trigger happens after launch.</p>}
@@ -493,5 +494,42 @@ function AutopilotModal({ existing, onClose, onToast, onDone }: { existing: Arra
         </div>
       )}
     </ModalShell>
+  );
+}
+
+// ── Designed vs plain note (21 Nov 2026) ─────────────────────────────
+const sideRate = (n: number, d: number) => (d ? `${Math.round((n / d) * 1000) / 10}%` : "—");
+const VERDICT_TONE: Record<EmPlainTest["verdict"]["kind"], string> = {
+  too_early: "bg-gray-100 text-gray-700 dark:bg-slate-800 dark:text-slate-300",
+  tie: "bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300",
+  plain: "bg-emerald-50 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-300",
+  designed: "bg-indigo-50 text-indigo-800 dark:bg-indigo-500/10 dark:text-indigo-300"
+};
+function PlainTestLine({ test }: { test: EmPlainTest }) {
+  return (
+    <span className="mt-1 block text-[11.5px] text-gray-500 dark:text-slate-400">
+      Designed {sideRate(test.designed.opened, test.designed.sent)} opened · Plain {sideRate(test.plain.opened, test.plain.sent)} opened
+      <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10.5px] font-semibold ${VERDICT_TONE[test.verdict.kind]}`}>{test.verdict.kind === "too_early" ? "Too early" : test.verdict.kind === "tie" ? "No winner yet" : test.verdict.kind === "plain" ? "Plain wins" : "Designed wins"}</span>
+    </span>
+  );
+}
+function PlainTestCard({ test }: { test: EmPlainTest }) {
+  const rows: Array<[string, EmPlainSide]> = [["Designed email", test.designed], ["Plain note, one link", test.plain]];
+  return (
+    <div className="rounded-xl border border-gray-100 p-3 dark:border-slate-800">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="m-0 text-[14px] font-bold text-gray-900 dark:text-slate-50">Designed vs plain note</h4>
+        <span className={`rounded-full px-2 py-0.5 text-[12px] font-semibold ${VERDICT_TONE[test.verdict.kind]}`}>{test.verdict.text}</span>
+      </div>
+      <p className="m-0 mt-1 text-[12px] text-gray-600 dark:text-slate-400">Half of the people get the designed email, half a plain note with one link. The same person always gets the same kind.</p>
+      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {rows.map(([label, side]) => (
+          <div key={label} className="rounded-lg bg-gray-50 px-3 py-2 dark:bg-slate-800/50">
+            <div className="text-[12px] font-semibold text-gray-700 dark:text-slate-300">{label}</div>
+            <div className="text-[13px] text-gray-900 dark:text-slate-100">{count(side.sent)} sent · <b>{sideRate(side.opened, side.sent)}</b> opened · <b>{sideRate(side.clicked, side.sent)}</b> clicked</div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

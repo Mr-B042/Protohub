@@ -853,7 +853,7 @@ type SenderContext = { brand: string; footerNote: string; logoUrl?: string | nul
 export function renderForSend(campaign: any, rawDesign: EmailDesign, send: { token: string; name: string; variant: string; loyalty?: RenderOptions["loyalty"] | null; theirs?: TheirProduct | null }, sender: SenderContext, nowMs: number) {
   const filledDesign = send.theirs === undefined ? rawDesign : withTheirProduct(rawDesign, send.theirs);
   // A/B: version B as a plain personal note (no logo, no colour band, buttons as simple links).
-  const design = send.variant === "b" && campaign.options?.noteB ? asPersonalNote(filledDesign, campaign.options?.fromNameB) : filledDesign;
+  const design = send.variant === "b" && campaign.options?.noteB ? asPersonalNote(filledDesign, campaign.options?.fromNameB, { oneLink: !!campaign.options?.oneLinkB }) : filledDesign;
   // Each link goes through the click counter, numbered by its place in the
   // run's link list (the same page twice counts as one link).
   const links: RunLink[] = Array.isArray(campaign.links) && campaign.links.length ? campaign.links : campaignLinks(campaign, design);
