@@ -165,7 +165,16 @@ export function allocate(insights: SpendInsight[], index: Map<string, Split[]>, 
 
 // ---------------------------------------------------------------- report
 
-export type ReportFilters = { platform?: PlatformChoice; productId?: string; campaignId?: string; adsetId?: string; accountId?: string; businessKey?: string; q?: string };
+/** Live now = the campaign has an ad delivering right now (asked live from Meta); off = it has none. */
+export type LiveFilter = "live" | "off";
+export type ReportFilters = { platform?: PlatformChoice; productId?: string; campaignId?: string; adsetId?: string; accountId?: string; businessKey?: string; q?: string; status?: LiveFilter };
+/**
+ * What Meta said is delivering right now (lib/ad-spend-data.ts liveNow).
+ * Only accounts in `checked` answered; everything else (TikTok, an account
+ * Meta did not answer for) is "unknown" and never counted as live or off.
+ */
+export type LiveState = { campaigns: Set<string>; ads: Set<string>; checked: Set<string> };
+export type RowLive = "live" | "off" | "unknown";
 export type Metrics = {
   spend: number; orders: number; delivered: number; revenue: number; profit: number; cpa: number | null; cpdo: number | null; deliveredAov: number | null; roas: number | null;
   /** Bright, 15 Nov 2026: confirmed = got past New and not cancelled. */
@@ -196,6 +205,8 @@ export type ReportInput = {
   accounts: Map<string, AccountInfo>; products: Map<string, { name: string; imageUrl: string | null }>;
   /** Platforms whose spend Protohub reads. "All" only counts orders of these. */
   connected?: AdPlatform[];
+  /** Live or off right now (Bright, 22 Nov 2026). Absent = not asked: no row is marked. */
+  live?: LiveState | null;
 };
 
 export function buildReport(input: ReportInput) {
@@ -221,21 +232,33 @@ export function buildReport(input: ReportInput) {
     if (platform === "tiktok") return from === "TikTok";
     return !from || (from === "TikTok" && connected.has("tiktok"));
   };
-  const pieceMatches = (piece: SpendPiece) =>
+  // Live or off right now, by CAMPAIGN (Bright, 22 Nov 2026: "so we don't get
+  // mixed info"). A campaign is live when one of its ads is delivering.
+  const live = input.live ?? null;
+  const campaignLive = (campaignId: string | null | undefined, accountId: string | null | undefined): RowLive => {
+    if (!live || !campaignId || !accountId || campaignId.startsWith(TIKTOK_PREFIX) || !live.checked.has(String(accountId).replace(/^act_/, ""))) return "unknown";
+    return live.campaigns.has(campaignId) ? "live" : "off";
+  };
+  const pieceLive = (piece: SpendPiece) => (piece.platform === "meta" ? campaignLive(piece.campaignId, piece.accountId) : "unknown");
+  const status = live ? filters.status : undefined;
+  const pieceMatchesOthers = (piece: SpendPiece) =>
     (platform === "all" || piece.platform === platform)
     && (!filters.productId || (filters.productId === UNMAPPED ? piece.productId === null : piece.productId === filters.productId))
     && (!filters.campaignId || piece.campaignId === filters.campaignId)
     && (!filters.adsetId || piece.adsetId === filters.adsetId)
     && (!filters.accountId || piece.accountId === filters.accountId)
     && (!filters.businessKey || piece.businessKey === filters.businessKey);
-  const metaFilter = Boolean(filters.campaignId || filters.adsetId || filters.accountId || filters.businessKey);
+  const pieceMatches = (piece: SpendPiece) => pieceMatchesOthers(piece) && (!status || pieceLive(piece) === status);
+  // With Live/Off chosen only orders carrying such a campaign can be counted, as with a campaign filter.
+  const metaFilter = Boolean(filters.campaignId || filters.adsetId || filters.accountId || filters.businessKey || status);
   // With a campaign / ad set / account / business filter, only orders carrying it can be counted.
   const orderMatches = (order: SpendOrder) =>
     (!filters.productId || order.productId === filters.productId)
     && (!filters.campaignId || orderCampaign(order) === filters.campaignId)
     && (!filters.adsetId || (order.adsetId ?? (order.adId ? adsetOfAd.get(order.adId) : null)) === filters.adsetId)
     && (!filters.accountId || orderAccount(order) === filters.accountId)
-    && (!filters.businessKey || orderBusiness(order) === filters.businessKey);
+    && (!filters.businessKey || orderBusiness(order) === filters.businessKey)
+    && (!status || campaignLive(orderCampaign(order), orderAccount(order)) === status);
 
   const pieces = input.pieces.filter(pieceMatches);
   const matched = filters.productId === UNMAPPED ? [] : input.orders.filter(orderMatches);
@@ -316,6 +339,10 @@ export function buildReport(input: ReportInput) {
       products: productIds.filter(Boolean).map((id) => ({ id: id!, name: input.products.get(id!)?.name ?? "Deleted product" })),
       // "ad" / "adset" / "campaign" / "account" = set by the Owner at that level; "link" = from the tracking link; "mixed" = parts differ.
       mappingSource: sources.length === 1 ? sources[0] : "mixed", unassignedSpend: unassigned,
+      // Campaign / ad set: the campaign's state. Ad: the ad's own (an ad can be off inside a live campaign).
+      live: !live || !first || !["campaign", "adset", "ad"].includes(view) ? null
+        : view === "ad" && pieceLive(first) !== "unknown" ? (live.ads.has(group.id) ? "live" : "off") as RowLive
+        : pieceLive(first),
       ...metrics,
       ...funnelOf(group.pieces, metrics.orders),
       spendChange: group.prevSpend > 0 ? ((metrics.spend - group.prevSpend) / group.prevSpend) * 100 : null,
@@ -342,7 +369,16 @@ export function buildReport(input: ReportInput) {
   })).sort((a, b) => b.spend - a.spend);
 
   const unmappedPieces = nowPieces.filter((piece) => piece.productId === null);
+  // The Live / Off switch: campaigns and spend this period on each side, whichever side is picked.
+  const sides = { live: { campaigns: new Set<string>(), spend: 0 }, off: { campaigns: new Set<string>(), spend: 0 }, unknown: { campaigns: new Set<string>(), spend: 0 } };
+  if (live) for (const piece of input.pieces) {
+    if (!inRange(piece.day, input.from, input.to) || !pieceMatchesOthers(piece)) continue;
+    const side = sides[pieceLive(piece)];
+    side.campaigns.add(piece.campaignId); side.spend += piece.spend;
+  }
+  const liveSummary = live ? Object.fromEntries(Object.entries(sides).map(([key, side]) => [key, { campaigns: side.campaigns.size, spend: side.spend }])) as Record<RowLive, { campaigns: number; spend: number }> : null;
   return {
+    liveSummary, status: status ?? null,
     kpis: { ...kpis, ...kpiFunnel }, previous, rows: rowsOut, chart, byProduct,
     leftOut: Array.from(leftOutByPlatform.entries()).map(([platform, orders]) => ({ platform, orders })).sort((a, b) => b.orders - a.orders),
     unmapped: { spend: sum(unmappedPieces), campaigns: distinct(unmappedPieces, (piece) => piece.campaignId) }

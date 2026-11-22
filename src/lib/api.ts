@@ -4759,7 +4759,10 @@ export type HubAdSpendRow = HubAdSpendMetrics & {
   platform: "meta" | "tiktok" | null; accountId: string | null; accountName: string | null; campaignId: string | null; campaignName: string | null; adsetId: string | null; adsetName: string | null;
   products: Array<{ id: string; name: string }>; mappingSource: HubAdSpendLevel | "link" | "ad_link" | "siblings" | "name" | "mixed" | null; unassignedSpend: number;
   spendChange: number | null; trend: number[];
+  /** Running right now (Bright, 22 Nov 2026): campaign / ad set = its campaign; ad = the ad itself. null = not a campaign-level view. */
+  live?: HubLive | null;
 };
+export type HubLive = "live" | "off" | "unknown";
 export type HubAdPlatformChoice = "meta" | "tiktok" | "all";
 export type HubVerdict2 = "winning" | "keep" | "learning" | "turn_off" | "check_tracking" | "no_target";
 export type HubSinceStartRates = { spend: number; impressions: number; linkClicks: number; platformPurchases: number; hookRate: number | null; holdRate: number | null; ctr: number | null; cpm: number | null };
@@ -4886,6 +4889,10 @@ export type HubAdSpend = {
   byProduct: Array<{ id: string; name: string; spend: number; share: number }>;
   unmapped: { spend: number; campaigns: number };
   leftOut: Array<{ platform: string; orders: number }>;
+  /** Live now / Off switch: campaigns + spend this period on each side; null = Meta could not be asked. */
+  liveSummary?: Record<HubLive, { campaigns: number; spend: number }> | null;
+  status?: "live" | "off" | null;
+  liveCheck?: { checkedAt: string; failures: Array<{ accountId: string; name: string; message: string }> } | null;
   final: boolean; autoSync: boolean; hasAccounts: boolean;
   lastSync: { at: string; ok: boolean; message: string | null; trigger: string | null } | null;
   mappings: Array<{ level: HubAdSpendLevel; metaId: string; label: string; splits: HubSpendSplit[]; by: string | null; at: string }>;

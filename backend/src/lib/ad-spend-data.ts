@@ -506,6 +506,25 @@ async function liveDelivering(orgId: string, basics: Basics, share: Awaited<Retu
   return { live, liveFailures };
 }
 
+/**
+ * Live or off right now for the Ad Spend period view (Bright, 22 Nov 2026).
+ * Same live Meta check as Since Start, kept 2 minutes per branch so changing
+ * filters does not ask Meta again each time.
+ */
+const liveCache = new Map<string, { at: number; value: { live: { campaigns: Set<string>; ads: Set<string>; checked: Set<string> }; liveFailures: Array<{ accountId: string; name: string; message: string }>; checkedAt: string } }>();
+const LIVE_CACHE_MS = 2 * 60_000;
+export async function liveNow(orgId: string, branchId: string, data: Pick<Awaited<ReturnType<typeof loadAdSpendInputs>>, "basics" | "insights" | "accounts">) {
+  const key = `${orgId}:${branchId}`;
+  const cached = liveCache.get(key);
+  if (cached && Date.now() - cached.at < LIVE_CACHE_MS) return cached.value;
+  const accountIds = new Set(data.insights.filter((row) => (row.platform ?? "meta") === "meta").map((row) => String(row.ad_account_id).replace(/^act_/, "")));
+  const accountNames = new Map(Array.from(data.accounts.values()).map((row) => [row.accountId, row.name]));
+  const { live, liveFailures } = await liveDelivering(orgId, data.basics, await branchShareView(orgId, branchId), accountIds, accountNames);
+  const value = { live: { campaigns: live.delivering, ads: live.deliveringAds, checked: live.accounts }, liveFailures, checkedAt: new Date().toISOString() };
+  liveCache.set(key, { at: Date.now(), value });
+  return value;
+}
+
 /** Since Start plus the inputs it was built from (the no-order alerts need the orders and daily spend). */
 export async function sinceStartCore(orgId: string, branchId: string, today: string) {
   const { data: ownLifetime, error } = await supabase.from("tracking_ad_lifetime").select("*").eq("org_id", orgId).eq("branch_id", branchId).limit(20000);

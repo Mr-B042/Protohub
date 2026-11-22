@@ -151,3 +151,61 @@ test("a TikTok order finds its campaign by id, else by an unshared campaign name
   assert.equal(tiktokOrderIds({ form_context: { utmId: "120218799456" }, utm_campaign: "Shelf Corner Group" }, byName).campaignId, "tt:1");
   assert.equal(tiktokOrderIds({ form_context: {}, utm_term: "1800000000000002", utm_content: "1800000000000003" }, byName).adId, "tt:1800000000000003");
 });
+
+// Live / Off (Bright, 22 Nov 2026): "differentiate active campaigns from off ones so we don't get mixed info".
+const liveReport = (filters: Record<string, unknown>, view: any = "campaign", checked = ["111"]) => buildReport({
+  view, from: "2026-10-08", to: "2026-10-08", compareFrom: "2026-10-07", compareTo: "2026-10-07", trendDays: ["2026-10-08"], chartDays: ["2026-10-08"],
+  pieces: allocate([
+    insight({ spend: 5000, campaign_id: "on", campaign_name: "Running", ad_id: "a-on", adset_id: "s-on" }),
+    insight({ spend: 3000, campaign_id: "on", campaign_name: "Running", ad_id: "a-on-old", adset_id: "s-on" }),
+    insight({ spend: 2000, campaign_id: "dead", campaign_name: "Switched off", ad_id: "a-dead", adset_id: "s-dead" }),
+    insight({ spend: 700, ad_account_id: "222", campaign_id: "nocheck", campaign_name: "Meta did not answer", ad_id: "a-x", adset_id: "s-x" })
+  ], new Map(), new Map([["a-on", "shelf"], ["a-on-old", "shelf"], ["a-dead", "shelf"], ["a-x", "shelf"]]), accounts),
+  orders: [
+    order({ id: "o1", campaignId: "on" }), order({ id: "o2", campaignId: "on" }),
+    order({ id: "o3", campaignId: "dead" }),
+    order({ id: "o4" }) // no Meta ids: can't be put on either side
+  ],
+  filters, accounts, products,
+  live: { campaigns: new Set(["on"]), ads: new Set(["a-on"]), checked: new Set(checked) }
+});
+
+test("Live now keeps only running campaigns' spend and orders, in the rows AND the totals", () => {
+  const result = liveReport({ status: "live" });
+  assert.deepEqual(result.rows.map((row) => row.id), ["on"]);
+  assert.equal(result.kpis.spend, 8000);
+  assert.equal(result.kpis.orders, 2);
+  assert.equal(result.status, "live");
+});
+
+test("Off keeps only switched-off campaigns; an account Meta did not answer for is on neither side", () => {
+  const result = liveReport({ status: "off" });
+  assert.deepEqual(result.rows.map((row) => row.id), ["dead"]);
+  assert.equal(result.kpis.spend, 2000);
+  assert.equal(result.kpis.orders, 1);
+  assert.deepEqual(result.liveSummary, { live: { campaigns: 1, spend: 8000 }, off: { campaigns: 1, spend: 2000 }, unknown: { campaigns: 1, spend: 700 } });
+});
+
+test("All shows everything, each row marked; the product view's totals follow the switch too", () => {
+  const all = liveReport({});
+  assert.deepEqual(Object.fromEntries(all.rows.map((row) => [row.id, row.live])), { on: "live", dead: "off", nocheck: "unknown" });
+  assert.equal(all.kpis.spend, 10700);
+  const product = liveReport({ status: "live" }, "product");
+  assert.equal(product.kpis.spend, 8000);
+  assert.equal(product.rows[0].orders, 2);
+});
+
+test("ad view marks each ad by itself: an old ad inside a live campaign shows off", () => {
+  const result = liveReport({}, "ad");
+  const byId = Object.fromEntries(result.rows.map((row) => [row.id, row.live]));
+  assert.equal(byId["a-on"], "live");
+  assert.equal(byId["a-on-old"], "off");
+  assert.equal(byId["a-dead"], "off");
+});
+
+test("without a live check nothing is marked and the switch does nothing", () => {
+  const result = report([insight({})], [], [], new Map([["a1", "shelf"]]), "campaign", { status: "live" });
+  assert.equal(result.rows[0].live, null);
+  assert.equal(result.liveSummary, null);
+  assert.equal(result.kpis.spend, 1000);
+});
