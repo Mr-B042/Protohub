@@ -6,7 +6,7 @@ import { Bar, CartesianGrid, Cell, ComposedChart, LabelList, Line, Pie, PieChart
 import {
   AlertTriangle, ArrowUpDown, BarChart3, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Columns3, Database, Download, Filter, Plus, RefreshCw, ShoppingCart, Trash2, Truck, Users, Wallet, X
 } from "lucide-react";
-import { trackingHubApi, type HubAdPlatformChoice, type HubAdSpend, type HubAdSpendLevel, type HubAdSpendRow, type HubAdSpendView, type HubSpendSplit, type HubUnmappedCampaign } from "../../lib/api";
+import { trackingHubApi, type HubAdPlatformChoice, type HubAdSpend, type HubAdSpendLevel, type HubAdSpendRow, type HubAdSpendView, type HubLive, type HubSpendSplit, type HubUnmappedCampaign } from "../../lib/api";
 import {
   ActionMenu, Card, CheckBox, DateRangeButton, Delta, EmptyRow, HubHeader, LoadState, Modal, PRESETS, ProductThumb, SearchBox, Sparkline, Toggle,
   compareWord, daysBetween, downloadCsv, labelCls, lagosToday, longDay, naira, nf, presetLabel, primaryButton, outlineButton, rowCls, selectCls, shift, shortDay, smallButton, tableCls,
@@ -54,6 +54,11 @@ const COLUMNS: Array<{ key: ColumnKey; label: string; title: string }> = [
   { key: "trend", label: "Trend", title: "Ad spend, last 7 days" }
 ];
 const COLUMN_STORE = "protohub.adSpend.columns";
+// Live now / Off / All (Bright, 22 Nov 2026). Opens on Live now; each viewer's choice is remembered.
+const LIVE_STORE = "protohub.adSpend.live";
+type LiveChoice = "live" | "off" | "all";
+const LIVE_DOT: Record<HubLive, string> = { live: "bg-emerald-500", off: "bg-gray-300 dark:bg-slate-600", unknown: "bg-amber-400" };
+const LIVE_WORD: Record<HubLive, string> = { live: "Live", off: "Off", unknown: "Can't check" };
 
 const compact = (value: number) => {
   const abs = Math.abs(value);
@@ -250,6 +255,42 @@ function UnmappedModal({ range, products, onClose, onSaved, onSplit, onToast }: 
   );
 }
 
+// ---------------------------------------------------------------- live now / off
+
+function LiveSwitch({ data, choice, onPick }: { data: HubAdSpend; choice: LiveChoice; onPick: (choice: LiveChoice) => void }) {
+  const summary = data.liveSummary;
+  if (!summary) {
+    return data.hasAccounts ? <p className="m-0 mt-3 text-[12.5px] text-amber-700 dark:text-amber-400">Couldn't ask Meta which campaigns are running right now, so live and switched-off campaigns are shown together.</p> : null;
+  }
+  const all = { campaigns: summary.live.campaigns + summary.off.campaigns + summary.unknown.campaigns, spend: summary.live.spend + summary.off.spend + summary.unknown.spend };
+  const options: Array<{ key: LiveChoice; label: string; side: { campaigns: number; spend: number }; dot?: string }> = [
+    { key: "live", label: "Live now", side: summary.live, dot: LIVE_DOT.live },
+    { key: "off", label: "Off", side: summary.off, dot: LIVE_DOT.off },
+    { key: "all", label: "All", side: all }
+  ];
+  const hidden = choice === "live" ? summary.off.spend + summary.unknown.spend : choice === "off" ? summary.live.spend + summary.unknown.spend : 0;
+  const failed = data.liveCheck?.failures ?? [];
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+      <div role="tablist" aria-label="Running now" className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-0.5 dark:border-slate-700 dark:bg-slate-800/60">
+        {options.map((option) => (
+          <button key={option.key} type="button" role="tab" aria-selected={choice === option.key} onClick={() => onPick(option.key)}
+            className={`!min-h-0 inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-[13px] font-semibold ${choice === option.key ? "bg-white text-gray-900 shadow-sm dark:bg-slate-900 dark:text-slate-50" : "text-gray-600 hover:text-gray-900 dark:text-slate-300"}`}>
+            {option.dot ? <span className={`h-2 w-2 rounded-full ${option.dot}`} /> : null}
+            {option.label}
+            <span className="rounded-full bg-gray-200/70 px-1.5 text-[11px] font-bold text-gray-600 dark:bg-slate-700 dark:text-slate-300">{nf(option.side.campaigns)}</span>
+          </button>
+        ))}
+      </div>
+      <span className="text-[12.5px] text-gray-500 dark:text-slate-400">
+        {choice === "live" ? "Only campaigns running right now. " : choice === "off" ? "Only campaigns switched off now. " : "Running and switched-off campaigns together. "}
+        {hidden > 0 ? <>Totals, rows and orders leave out <b className="text-gray-700 dark:text-slate-200">{naira(hidden)}</b> spent by the others in this period.</> : null}
+        {summary.unknown.campaigns > 0 ? <> {plural(summary.unknown.campaigns, "campaign")} can't be checked (TikTok{failed.length ? `, or ${failed.map((row) => row.name).join(", ")} didn't answer` : ""}) and only show under All.</> : null}
+      </span>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- the tab
 
 export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: { tabBar: ReactNode; range: Range; onRange: (range: Range) => void; onToast: Toast; onTab: (tab: HubTab) => void }) {
@@ -271,6 +312,11 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
   const [assigned, setAssigned] = useState<"all" | "assigned" | "unassigned">("all");
   // Empty = the page's default: every platform whose spend is read.
   const [platform, setPlatform] = useState<HubAdPlatformChoice | "">("");
+  const [liveChoice, setLiveChoice] = useState<LiveChoice>(() => {
+    try { const saved = localStorage.getItem(LIVE_STORE); if (saved === "live" || saved === "off" || saved === "all") return saved; } catch { /* storage off */ }
+    return "live";
+  });
+  const pickLive = (next: LiveChoice) => { setLiveChoice(next); try { localStorage.setItem(LIVE_STORE, next); } catch { /* storage off */ } };
   const [showCharts, setShowCharts] = useState(true);
   const [sort, setSort] = useState<{ key: "spend" | ColumnKey; dir: 1 | -1 }>({ key: "spend", dir: -1 });
   const [page, setPage] = useState(1);
@@ -294,7 +340,7 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
     return new Set(COLUMNS.map((column) => column.key));
   });
   useEffect(() => { const timer = setTimeout(() => setQ(search), 300); return () => clearTimeout(timer); }, [search]);
-  useEffect(() => { setPage(1); setSelected(new Set()); }, [platform, view, q, business, accountId, productId, campaign?.id, adset?.id, assigned, range.from, range.to]);
+  useEffect(() => { setPage(1); setSelected(new Set()); }, [liveChoice, platform, view, q, business, accountId, productId, campaign?.id, adset?.id, assigned, range.from, range.to]);
   const toggleColumn = (key: ColumnKey) => {
     const next = new Set(columns);
     if (next.has(key)) next.delete(key); else next.add(key);
@@ -305,7 +351,8 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
   const length = daysBetween(range.from, range.to);
   const query = {
     from: range.from, to: range.to, compareFrom: shift(range.from, -length), compareTo: shift(range.from, -1), view, chartDays, platform: platform || undefined,
-    q: q || undefined, business: business || undefined, accountId: accountId || undefined, productId: productId || undefined, campaignId: campaign?.id, adsetId: adset?.id
+    q: q || undefined, business: business || undefined, accountId: accountId || undefined, productId: productId || undefined, campaignId: campaign?.id, adsetId: adset?.id,
+    status: liveChoice === "all" ? undefined : liveChoice
   };
   const { data, error, reload, setData } = useLoad(() => trackingHubApi.adSpend(query), [JSON.stringify(query)]);
 
@@ -427,8 +474,8 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
   const exportCsv = () => {
     const list = selected.size ? rows.filter((row) => selected.has(row.id)) : rows;
     const cell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
-    const lines = [[viewInfo.noun, "Meta ID", "Ad spend", "Orders", "Confirmed", "Confirm %", "Delivered", "Delivery %", "Cost per order", "Cost per confirmed order", "Cost per delivered order", "Delivered average order", "Return on ad spend", "Profit after ads", "CPM", "CTR %", "CPC", "Page views", "Load %", "Conversion %", "Where it breaks"].map(cell).join(",")];
-    for (const row of list) lines.push([row.name, row.id === UNMAPPED ? "" : row.id, Math.round(row.spend), row.orders, row.confirmed ?? "", row.confirmRate == null ? "" : Math.round(row.confirmRate), row.delivered, row.deliveryRate == null ? "" : Math.round(row.deliveryRate), row.cpa === null ? "" : Math.round(row.cpa), row.cpco == null ? "" : Math.round(row.cpco), row.cpdo === null ? "" : Math.round(row.cpdo), row.deliveredAov === null ? "" : Math.round(row.deliveredAov), roasOf(row) === null ? "" : roasOf(row)!.toFixed(2), row.delivered ? Math.round(row.profit) : "", row.cpm == null ? "" : Math.round(row.cpm), row.ctr == null ? "" : row.ctr.toFixed(2), row.cpc == null ? "" : Math.round(row.cpc), row.landingPageViews ?? "", row.loadRate == null ? "" : Math.round(row.loadRate), row.convRate == null ? "" : row.convRate.toFixed(1), row.breaks ?? ""].map(cell).join(","));
+    const lines = [[viewInfo.noun, "Meta ID", "Running now", "Ad spend", "Orders", "Confirmed", "Confirm %", "Delivered", "Delivery %", "Cost per order", "Cost per confirmed order", "Cost per delivered order", "Delivered average order", "Return on ad spend", "Profit after ads", "CPM", "CTR %", "CPC", "Page views", "Load %", "Conversion %", "Where it breaks"].map(cell).join(",")];
+    for (const row of list) lines.push([row.name, row.id === UNMAPPED ? "" : row.id, row.live ? LIVE_WORD[row.live] : "", Math.round(row.spend), row.orders, row.confirmed ?? "", row.confirmRate == null ? "" : Math.round(row.confirmRate), row.delivered, row.deliveryRate == null ? "" : Math.round(row.deliveryRate), row.cpa === null ? "" : Math.round(row.cpa), row.cpco == null ? "" : Math.round(row.cpco), row.cpdo === null ? "" : Math.round(row.cpdo), row.deliveredAov === null ? "" : Math.round(row.deliveredAov), roasOf(row) === null ? "" : roasOf(row)!.toFixed(2), row.delivered ? Math.round(row.profit) : "", row.cpm == null ? "" : Math.round(row.cpm), row.ctr == null ? "" : row.ctr.toFixed(2), row.cpc == null ? "" : Math.round(row.cpc), row.landingPageViews ?? "", row.loadRate == null ? "" : Math.round(row.loadRate), row.convRate == null ? "" : row.convRate.toFixed(1), row.breaks ?? ""].map(cell).join(","));
     downloadCsv(`ad-spend-${view}-${range.from}${range.from === range.to ? "" : `-to-${range.to}`}.csv`, lines.join("\n"));
   };
   const dayWeekMonth = (kind: "day" | "week" | "month") => {
@@ -608,6 +655,7 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
             <button type="button" onClick={exportCsv} className={filterButton}><Download className="h-4 w-4" />Export</button>
           </div>
         </div>
+        <LiveSwitch data={data} choice={liveChoice} onPick={pickLive} />
 
           </>
         ) : null}
@@ -667,7 +715,7 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
               </tr>
             </thead>
             <tbody>
-              {shown.length === 0 ? <EmptyRow colSpan={colSpan} text={data.lastSync ? `No ${viewInfo.plural} with ad spend or orders in this period.` : "No spend loaded yet. Press Sync Now to read Meta's spend."} /> : shown.map((row) => {
+              {shown.length === 0 ? <EmptyRow colSpan={colSpan} text={data.lastSync ? `No ${viewInfo.plural} with ad spend or orders in this period${data.status === "live" ? " from campaigns running now. Pick All to see switched-off ones" : data.status === "off" ? " from switched-off campaigns" : ""}.` : "No spend loaded yet. Press Sync Now to read Meta's spend."} /> : shown.map((row) => {
                 const unmapped = row.id === UNMAPPED;
                 const waiting = row.delivered === 0;
                 return (
@@ -677,7 +725,11 @@ export default function AdSpendTab({ tabBar, range, onRange, onToast, onTab }: {
                       <span className="flex items-center gap-2.5">
                         {view === "product" ? (unmapped ? <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-600"><AlertTriangle className="h-5 w-5" /></span> : <ProductThumb src={row.image} size={40} />) : null}
                         <span className="min-w-0">
-                          <span className={`block truncate text-[13px] font-semibold ${unmapped ? "text-amber-800 dark:text-amber-300" : "text-gray-900 dark:text-slate-100"}`}>{row.name}</span>
+                          <span className={`flex items-center gap-1.5 truncate text-[13px] font-semibold ${unmapped ? "text-amber-800 dark:text-amber-300" : "text-gray-900 dark:text-slate-100"}`}>
+                            {row.live ? <span title={row.live === "unknown" ? "Can't check if this is running (TikTok, or Meta didn't answer)" : `${LIVE_WORD[row.live]} right now${view === "ad" ? "" : " (the campaign)"}`} className={`h-2 w-2 shrink-0 rounded-full ${LIVE_DOT[row.live]}`} /> : null}
+                            <span className="truncate">{row.name}</span>
+                            {row.live === "off" ? <span className="shrink-0 rounded bg-gray-100 px-1.5 py-px text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:bg-slate-800 dark:text-slate-400">Off</span> : null}
+                          </span>
                           <span className="block truncate text-[11.5px] text-gray-500">{subLine(row)}</span>
                         </span>
                       </span>

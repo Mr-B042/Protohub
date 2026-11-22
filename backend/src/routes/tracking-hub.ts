@@ -14,7 +14,7 @@ import {
 } from "../lib/tracking-hub-data.js";
 import { refreshAccount, refreshTargets } from "../lib/tracking-meta-refresh.js";
 import { AD_SPEND_VIEWS, allocate, buildReport, mappingIndex, validSplits, type AdSpendView, type PlatformChoice } from "../lib/ad-spend.js";
-import { refreshPixelAdAccountsNow, loadAdSpendInputs, loadOrderStreaks, loadSinceStart, loadTikTokConnections, suggestProduct, syncAdSpend } from "../lib/ad-spend-data.js";
+import { liveNow, refreshPixelAdAccountsNow, loadAdSpendInputs, loadOrderStreaks, loadSinceStart, loadTikTokConnections, suggestProduct, syncAdSpend } from "../lib/ad-spend-data.js";
 import { RULES as SINCE_START_RULES, VERDICT_ORDER } from "../lib/ad-since-start.js";
 import { droughtsFor, VERDICT_RULES } from "../lib/campaign-drought-alerts.js";
 import { campaignDayOrders, loadCampaignDecisions } from "../lib/campaign-decisions-data.js";
@@ -1887,16 +1887,21 @@ router.get("/ad-spend", async (req, res) => {
     // Default: every platform whose spend is read; Meta alone until TikTok is connected.
     const asked = String(req.query.platform ?? "");
     const platform = (["meta", "tiktok", "all"].includes(asked) ? asked : data.connected.includes("tiktok") ? "all" : "meta") as PlatformChoice;
+    // Live or off right now (Bright, 22 Nov 2026). Meta not answering never breaks the page: rows just show "can't check".
+    const liveCheck = await liveNow(orgId, branchId, data).catch((err: any) => { console.warn("[ad-spend] live check failed:", err?.message ?? err); return null; });
+    const askedStatus = String(req.query.status ?? "");
     const report = buildReport({
+      live: liveCheck?.live ?? null,
       view, from: period.from, to: period.to, compareFrom: period.compareFrom, compareTo: period.compareTo, trendDays, chartDays,
       pieces, orders: data.orders, accounts: data.accounts, products, connected: data.connected,
-      filters: { platform, productId: str("productId"), campaignId: str("campaignId"), adsetId: str("adsetId"), accountId: str("accountId")?.replace(/^act_/, ""), businessKey: str("business"), q: str("q") }
+      filters: { platform, productId: str("productId"), campaignId: str("campaignId"), adsetId: str("adsetId"), accountId: str("accountId")?.replace(/^act_/, ""), businessKey: str("business"), q: str("q"), status: askedStatus === "live" || askedStatus === "off" ? askedStatus : undefined }
     });
     const days: string[] = [];
     for (let day = period.from; day <= period.to; day = addDaysToDateKey(day, 1)) days.push(day);
     const accounts = Array.from(data.accounts.values());
     res.json({
       period, view, platform, connected: data.connected, ...report,
+      liveCheck: liveCheck ? { checkedAt: liveCheck.checkedAt, failures: liveCheck.liveFailures } : null,
       final: days.every((day) => data.finalDays.has(day)),
       autoSync: data.state?.auto_sync !== false,
       lastSync: data.state?.last_sync_at ? { at: data.state.last_sync_at, ok: data.state.last_sync_ok !== false, message: data.state.last_sync_message ?? null, trigger: data.state.last_sync_trigger ?? null } : null,
