@@ -6228,3 +6228,43 @@ export const expenseIntelApi = {
   saveExpense: (body: { id: string; date: string; category: string; description?: string; amount: number; currency?: string; paidBy?: string; productId?: string }) => post<unknown>("/api/expenses", body),
   deleteExpense: (id: string) => del<unknown>(`/api/expenses/${encodeURIComponent(id)}`)
 };
+
+// ── Stock Intelligence (Product Trend › Stock Intelligence, 23 Nov 2026) ────
+// Worked out on the server (backend/src/lib/stock-intel-model.ts) so the tab
+// and the stock alerts read the same figures. Keys are camelCase already.
+export type StockIntelStatus = "Critical" | "Restock Soon" | "Watch" | "Healthy";
+export type StockIntelSource = { kind: "warehouse" | "hub"; label: string; state: string | null; locationId?: string; agentId?: string; spare: number; units: number; priority: number; sameState?: boolean };
+export type StockIntelRow = {
+  key: string; locationId: string; agentId: string; agentName: string; hubName: string; state: string; productId: string;
+  onShelf: number; defective: number; missing: number; reserved: number; usable: number; inTransit: number;
+  delivered: number; deliveredPrev: number; deliveredOrders: number; daily: number[]; speed: number; streak: number; streakBefore: number; daysLeft: number | null;
+  leadDays: number; leadSource: "set" | "measured" | "default"; safetyDays: number; safetyUnits: number;
+  status: StockIntelStatus; restock: number; atRiskUnits: number; atRiskOrders: number; sources: StockIntelSource[]; primarySource: string;
+};
+export type StockIntelHubRisk = {
+  sourceState: string; productId: string; hubLabel: string; available: number; ownDemand: number; networkDemand: number; required: number; shortage: number;
+  dependents: Array<{ state: string; agentName: string; locationId: string; units: number }>; dependentStates: string[];
+};
+export type StockIntelFallback = { locationId: string; agentName: string; state: string; productId: string; need: number; from: StockIntelSource };
+export type StockIntelRoute = { id?: string; destState: string; productId: string | null; sourceState: string | null; priority: number };
+export type StockIntelSetting = { id: string; locationId: string | null; productId: string | null; leadTimeDays: number | null; safetyDays: number | null };
+export type StockIntelWaybill = {
+  id: string; status: string; toLocationId: string | null; toAgentId: string | null; fromLocationId: string | null; toLabel: string; fromLabel: string;
+  dispatched: string | null; received: string | null; createdAt: string; items: Array<{ productId: string; productName: string; quantity: number }>;
+};
+export type StockIntelData = {
+  today: string; windowDays: number; canEdit: boolean;
+  result: { rows: StockIntelRow[]; hubRisks: StockIntelHubRisk[]; fallbacks: StockIntelFallback[]; days: string[] };
+  products: Array<{ id: string; name: string; warehouse: number }>;
+  hubs: Array<{ locationId: string; agentId: string; agentName: string; hubName: string; state: string }>;
+  routes: StockIntelRoute[]; settings: StockIntelSetting[]; waybills: StockIntelWaybill[];
+  decisions: Array<{ id: string; productId: string; status: string; units: number; proposedAt: string; decidedAt: string | null; proposedBy: string | null }>;
+  received: Array<{ locationId: string; productId: string; units: number }>;
+  outcomes: Array<{ state: string; orders: number; delivered: number }>;
+};
+export const stockIntelApi = {
+  load: (args: { windowDays: number; productId?: string | null }) =>
+    get<StockIntelData>(`/api/stock-intel?windowDays=${args.windowDays}${args.productId ? `&productId=${encodeURIComponent(args.productId)}` : ""}`),
+  saveRoute: (body: { destState: string; productId: string | null; sources: Array<string | null> }) => put<{ ok: boolean }>("/api/stock-intel/routes", body),
+  saveSetting: (body: { locationId: string | null; productId: string | null; leadTimeDays: number | null; safetyDays: number | null }) => put<{ ok: boolean }>("/api/stock-intel/settings", body)
+};

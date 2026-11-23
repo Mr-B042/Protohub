@@ -673,6 +673,7 @@ export const FORWARD_GROUPS: Array<{ key: string; label: string; hint: string; k
   { key: "carts", label: "New abandoned carts", hint: "A customer left the order form without finishing (carts given to a rep are an Automation).", kinds: ["abandoned_cart_new"] },
   { key: "social_leads", label: "Social leads", hint: "New Facebook/Instagram leads, customer replies, late replies and follow-ups due.", kinds: ["social_lead_new", "social_lead_reply", "social_lead_overdue", "social_lead_follow_up"] },
   { key: "ads", label: "Ad alerts", hint: "A running campaign to turn off, pause or check (by its product's break-even), or an ad account is low on funds.", kinds: ["campaign_no_orders", "ad_account_low_funds"] },
+  { key: "stock", label: "Stock alerts", hint: "A supply hub short for the states it restocks, or stock that can come from a nearby agent.", kinds: ["stock_hub_risk", "stock_transfer_chance"] },
   { key: "other", label: "Everything else", hint: "Weekly reports, fines and appeals, challenges, bug reports and other phone alerts.", kinds: ["*"] }
 ];
 
@@ -689,7 +690,7 @@ export function forwardDedupeKey(kind: string | undefined, tag: string | undefin
 }
 
 /** Phone alerts about company-wide matters: never copied to a rep. */
-const NOT_FOR_REPS = new Set(["abandoned_cart_new", "campaign_no_orders", "ad_account_low_funds", "low_stock"]);
+const NOT_FOR_REPS = new Set(["abandoned_cart_new", "campaign_no_orders", "ad_account_low_funds", "low_stock", "stock_hub_risk", "stock_transfer_chance"]);
 
 /**
  * May this phone alert be copied to this person's Telegram? A rep gets only
