@@ -12,12 +12,13 @@ export type AlertKey =
   | "cart_new" | "cart_assigned"
   | "campaign_no_orders" | "ad_account_low_funds"
   | "email_list_issue"
+  | "stock_hub_risk" | "stock_transfer_chance"
   | "social_lead_new" | "social_lead_reply" | "social_lead_overdue" | "social_lead_follow_up";
 
 /** stay (Bright, 11 Nov 2026): the pop-up stays on screen until closed (Chrome/Edge; other browsers let it slide away). */
 export type AlertRoute = { roles: string[]; rep: boolean; push: boolean; stay: boolean };
 
-type AlertDef = { label: string; group: "Orders" | "Follow-ups" | "Abandoned carts" | "Social leads" | "Ads" | "Email"; hint: string; repApplies: boolean; defaults: AlertRoute };
+type AlertDef = { label: string; group: "Orders" | "Follow-ups" | "Abandoned carts" | "Social leads" | "Ads" | "Email" | "Stock"; hint: string; repApplies: boolean; defaults: AlertRoute };
 
 export const ALERTS: Record<AlertKey, AlertDef> = {
   order_new:         { group: "Orders", label: "New order", hint: "A new order comes in.", repApplies: true, defaults: { roles: ["Owner", "Admin"], rep: true, push: true, stay: false } },
@@ -41,6 +42,9 @@ export const ALERTS: Record<AlertKey, AlertDef> = {
   social_lead_overdue:   { group: "Social leads", label: "No reply in time", hint: "A customer waited 15 working minutes without a reply (changeable in Social Leads Inbox › Settings).", repApplies: true, defaults: { roles: ["Owner", "Admin", "Manager"], rep: true, push: true, stay: false } },
   social_lead_follow_up: { group: "Social leads", label: "Social lead follow-up due", hint: "A follow-up the rep scheduled is due.", repApplies: true, defaults: { roles: [], rep: true, push: true, stay: false } },
   // Email Marketing › Audience Health (Bright, 8 Nov 2026).
+  // Product Trend › Stock Intelligence (Bright, 23 Nov 2026). No money or customer details in either.
+  stock_hub_risk:        { group: "Stock", label: "Supply hub short for its network", hint: "A hub that restocks other states (Abuja for the north) cannot cover its own week and what the agents it supplies need.", repApplies: false, defaults: { roles: ["Owner", "Admin", "Inventory Manager", "Inventory Manager & Logistics Operations"], rep: false, push: true, stay: false } },
+  stock_transfer_chance: { group: "Stock", label: "Stock can come from a nearby agent", hint: "An agent is running short and a fallback hub (Ogun for Ibadan) can spare stock without running short itself.", repApplies: false, defaults: { roles: ["Owner", "Inventory Manager", "Inventory Manager & Logistics Operations"], rep: false, push: true, stay: false } },
   email_list_issue:  { group: "Email", label: "Email list problem", hint: "Audience Health found a new Critical or High problem (bounces, spam complaints, unsubscribes, sending set-up).", repApplies: false, defaults: { roles: ["Owner"], rep: false, push: false, stay: false } },
 };
 

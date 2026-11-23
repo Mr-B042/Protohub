@@ -23,6 +23,7 @@ import { runtimeDataProfile } from "./lib/local-safety.js";
 import { syncDueOrderFollowUpNotifications } from "./lib/order-follow-up-notifications.js";
 import { syncDueCartCallbacks, sendCartFollowUpDigest } from "./lib/cart-follow-up-notifications.js";
 import { runSmartStockAlerts } from "./lib/smart-stock-alerts.js";
+import { runStockIntelAlerts } from "./lib/stock-intel-alerts.js";
 import { runPhantomStockCheck } from "./lib/phantom-stock-check.js";
 import { getOrgPushBranding } from "./lib/push-branding.js";
 import { processQueuedSms, syncDueAbandonedCartSms, syncDueFollowUpSms, syncSmsDeliveryReports } from "./lib/sms.js";
@@ -72,6 +73,7 @@ import repWeeklyTargetRoutes from "./routes/rep-weekly-targets.js";
 import upsellPerformanceRoutes from "./routes/upsell-performance.js";
 import weeklyReportRoutes from "./routes/weekly-reports.js";
 import stockAllocationRoutes from "./routes/stock-allocations.js";
+import stockIntelRoutes from "./routes/stock-intel.js";
 import productPerformanceRoutes from "./routes/product-performance.js";
 import pageVisitRoutes from "./routes/page-visits.js";
 import storeActivityRoutes from "./routes/store-activity.js";
@@ -402,6 +404,7 @@ app.use("/api/rep-weekly-targets", repWeeklyTargetRoutes);
 app.use("/api/upsell-performance", upsellPerformanceRoutes);
 app.use("/api/weekly-reports", weeklyReportRoutes);
 app.use("/api/stock-allocations", stockAllocationRoutes);
+app.use("/api/stock-intel", stockIntelRoutes);
 app.use("/api/product-performance", productPerformanceRoutes);
 app.use("/api/page-visits", pageVisitRoutes);
 app.use("/api/store-activity", storeActivityRoutes);
@@ -817,6 +820,18 @@ cron.schedule("13,43 * * * *", async () => {
     logger.error("cron: ad funds check crashed", { error: (e as Error).message });
   }
 });
+
+// Stock Intelligence: supply hubs short for their network + stock a nearby
+// agent can spare. Morning and early afternoon, Lagos (each reads 60 days of
+// deliveries per branch, so not hourly).
+cron.schedule("40 7,13 * * *", async () => {
+  try {
+    const summary = await runStockIntelAlerts();
+    if (summary.alerts > 0) logger.info("cron: stock intelligence alerts", summary);
+  } catch (e) {
+    logger.error("cron: stock intelligence alerts crashed", { error: (e as Error).message });
+  }
+}, { timezone: "Africa/Lagos" });
 
 // ── Telegram Automation Center (Bright, 6 Nov 2026) ──
 // "5 min left" before the 15-minute send-out limit: every minute in working

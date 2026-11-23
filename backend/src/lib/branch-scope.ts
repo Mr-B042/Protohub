@@ -20,6 +20,8 @@ const BRANCH_TABLES = new Set([
   "orders", "agents", "agent_stock", "stock_movements", "abandoned_carts",
   // Product Trend stock decisions (migration 307).
   "stock_allocation_decisions", "stock_allocation_events",
+  // Stock Intelligence settings (migration 364, branch_id NOT NULL from day one).
+  "stock_supply_routes", "stock_lead_time_settings",
   "agent_locations", "agent_location_stock", "delivered_stock_reconciliation_lines",
 
   // An order's own history. Without these, Accra opens a Nigerian order's

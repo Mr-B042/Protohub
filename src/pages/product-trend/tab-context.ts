@@ -11,7 +11,7 @@ export type TrendModel = {
   productRows: ProductRow[]; stateRows: StateRow[];
 };
 
-export type TransferRequest = { productId?: string; quantity: number; toState?: string; toAgentId?: string; toAgentLocationId?: string };
+export type TransferRequest = { productId?: string; quantity: number; toState?: string; toAgentId?: string; toAgentLocationId?: string; fromAgentId?: string; fromAgentLocationId?: string };
 
 export type TabCtx = {
   model: TrendModel;

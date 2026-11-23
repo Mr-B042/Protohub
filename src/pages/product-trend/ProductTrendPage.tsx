@@ -18,6 +18,7 @@ import { StockRecommendationTab } from "./TabStock";
 import { WorstProducts } from "./WorstProducts";
 import { MonthlyPerformanceTab } from "./TabMonthly";
 import { WeeklyCheckupTab } from "./TabWeekly";
+import { StockIntelTab } from "./stock-intel/StockIntelTab";
 import { exportExcel, exportPdf, type ReportInput } from "./reports";
 import type { TabCtx, TransferRequest, TrendModel } from "./tab-context";
 
@@ -53,13 +54,15 @@ export type ProductTrendPageProps = {
   userId: string | null;
 };
 
-type TabKey = "trend" | "states" | "heatmap" | "agents" | "time" | "stock" | "monthly" | "weekly";
+type TabKey = "trend" | "states" | "heatmap" | "agents" | "time" | "intel" | "stock" | "monthly" | "weekly";
 const TABS: Array<{ key: TabKey; label: string; Icon: typeof BarChart3 }> = [
   { key: "trend", label: "Product Trend", Icon: BarChart3 },
   { key: "states", label: "State Breakdown", Icon: MapPin },
   { key: "heatmap", label: "Product × State Heatmap", Icon: Grid3x3 },
   { key: "agents", label: "Agent Performance", Icon: UserRound },
   { key: "time", label: "Trends Over Time", Icon: LineChartIcon },
+  // Bright's design puts Stock Intelligence just before Stock Recommendation.
+  { key: "intel", label: "Stock Intelligence", Icon: Package },
   { key: "stock", label: "Stock Recommendation", Icon: Boxes },
   { key: "monthly", label: "Monthly Performance", Icon: CalendarCheck },
   { key: "weekly", label: "Weekly Check-up", Icon: Stethoscope }
@@ -71,6 +74,7 @@ const SUBTITLE: Record<TabKey, string> = {
   agents: "See your best performing products and the states driving the most orders and deliveries. Use real data to plan stock, focus on high-demand states and make smarter decisions.",
   time: "See how your products, states and agents perform over time. Track trends, compare periods and forecast future demand.",
   stock: "See your best performing products and the states driving the most orders and deliveries. Use real data to plan stock, focus on high-demand states and make smarter decisions.",
+  intel: "Monitor agent stock, delivery streaks, state demand, and predict stockouts. Know where to restock before sales are affected.",
   monthly: "How each product did month by month after its ads, and what to do with it next month.",
   weekly: "Why each product had a good or bad week - ads, delivery, stock or money per order - and what to fix first."
 };
@@ -130,7 +134,13 @@ export default function ProductTrendPage(props: ProductTrendPageProps) {
   const allowedMetric = (metric: TrendMetric): TrendMetric => (!canSeeMoney && TREND_METRICS.find((m) => m.key === metric)?.money ? "delivered" : metric);
   const metricOptions = TREND_METRICS.filter((m) => canSeeMoney || !m.money).map((m) => ({ value: m.key, label: m.label }));
   const money = formatMoney;
-  const [tab, setTab] = useState<TabKey>("trend");
+  // A stock alert links here with ?tab=stock-intel: open that tab.
+  const [tab, setTab] = useState<TabKey>(() => (/[?&]tab=stock-intel\b/.test(window.location.hash) ? "intel" : "trend"));
+  useEffect(() => {
+    const onHash = () => { if (/[?&]tab=stock-intel\b/.test(window.location.hash)) setTab("intel"); };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
   const [compare, setCompare] = useState(true);
   const [applied, setApplied] = useState<Applied>(() => ({ ...defaultRange(), ...EMPTY_FILTERS, ...DEFAULT_EXTRAS, ...(loadSavedView() ?? {}) }));
   const [draft, setDraft] = useState<Applied>(applied);
@@ -283,6 +293,16 @@ export default function ProductTrendPage(props: ProductTrendPageProps) {
       )}
     </div>
   );
+
+  // Stock Intelligence has its own title row and KPI cards above the tabs
+  // (Bright's design) and loads its own figures from the server.
+  if (tab === "intel") {
+    return (
+      <div className="space-y-4 pb-10 text-gray-900 dark:text-slate-100" data-testid="product-trend-page">
+        <StockIntelTab tabBar={tabBar} products={products} canCreateTransfer={props.canCreateTransfer} onCreateTransfer={props.onCreateTransfer} />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4 pb-10 text-gray-900 dark:text-slate-100" data-testid="product-trend-page">
