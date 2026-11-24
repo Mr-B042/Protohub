@@ -199,7 +199,7 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
     return list.sort((a, b) => sort === "name" ? `${a.first}${a.second}`.localeCompare(`${b.first}${b.second}`) : sort === "fewest" ? a.pieces - b.pieces : b.pieces - a.pieces);
   }, [lines, cells, extras, pickProducts, groupBy, sort, search, ctx, agentName]);
 
-  // By Agent: each state's total first, highest to lowest (Bright, 24 Nov 2026).
+  // States and agents ranked highest to lowest, shown above every view (Bright, 24 Nov 2026).
   const stateSummary = useMemo(() => {
     const map = new Map<string, { state: string; pieces: number; orders: number; agents: Set<string> }>();
     for (const l of lines) {
@@ -217,7 +217,19 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
     for (const l of lines) { const m = map.get(l.agentId) ?? new Map<string, number>(); m.set(l.state, (m.get(l.state) ?? 0) + l.pieces); map.set(l.agentId, m); }
     return new Map([...map].map(([id, m]) => [id, [...m].sort((a, b) => b[1] - a[1]).map(([st]) => place(st)).join(", ")]));
   }, [lines]);
-  const byAgent = groupBy === "agent" || groupBy === "productAgent";
+  // Agents ranked by pieces sold (orders counted once each when no product is picked).
+  const agentSummary = useMemo(() => {
+    const map = new Map<string, { agentId: string; pieces: number; orders: number }>();
+    for (const l of lines) {
+      const e = map.get(l.agentId) ?? { agentId: l.agentId, pieces: 0, orders: 0 };
+      e.pieces += l.pieces;
+      if (pickProducts.length) e.orders += l.orders;
+      map.set(l.agentId, e);
+    }
+    if (!pickProducts.length) for (const c of cells) { const e = map.get(c.agentId); if (e) e.orders += c.orders; }
+    return [...map.values()].sort((a, b) => b.pieces - a.pieces || b.orders - a.orders);
+  }, [lines, cells, pickProducts]);
+  const toggleAgent = (id: string) => setPickAgents((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
   const toggleState = (state: string) => setPickStates((prev) => prev.includes(state) ? prev.filter((x) => x !== state) : [...prev, state]);
 
   const showDays = eachDay && days.length <= MAX_DAY_COLUMNS;
@@ -341,32 +353,14 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
             </div>
           )}
 
-          {byAgent && stateSummary.length > 0 && (
-            <div className="rounded-xl border border-gray-200 p-3 dark:border-slate-700">
-              <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-                <span className="text-[13px] font-bold text-gray-900 dark:text-slate-100">Sold by state <span className="font-medium text-gray-500">· highest to lowest</span></span>
-                <span className="text-[11.5px] text-gray-500">Click a state to see only its agents</span>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {stateSummary.map((st, i) => {
-                  const on = pickStates.includes(st.state);
-                  const share = totals.pieces ? (st.pieces / totals.pieces) * 100 : 0;
-                  return (
-                    <button key={st.state} type="button" onClick={() => toggleState(st.state)} aria-pressed={on}
-                      className={`!min-h-0 rounded-lg border px-3 py-2 text-left transition-colors ${on ? "border-sky-300 bg-sky-50 dark:bg-sky-500/10" : "border-gray-200 hover:bg-gray-50 dark:border-slate-700 dark:hover:bg-slate-800"}`}>
-                      <div className="flex items-baseline justify-between gap-2">
-                        <span className="min-w-0 truncate text-[13px] font-semibold text-gray-900 dark:text-slate-100"><span className="mr-1.5 text-[11px] font-bold text-gray-400">{i + 1}</span>{place(st.state)}</span>
-                        <span className="shrink-0 text-[15px] font-black tabular-nums text-gray-900 dark:text-slate-50">{nf(st.pieces)}</span>
-                      </div>
-                      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-gray-100 dark:bg-slate-800"><div className="h-full rounded-full bg-[#1F8FE0]" style={{ width: `${share}%` }} /></div>
-                      <div className="mt-1 flex justify-between text-[11px] text-gray-500">
-                        <span>{nf(st.orders)} order{st.orders === 1 ? "" : "s"} · {st.agents.size} agent{st.agents.size === 1 ? "" : "s"}</span>
-                        <span className="tabular-nums">{Math.round(share)}%</span>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+          {stateSummary.length > 0 && (
+            <div className="grid gap-3 lg:grid-cols-2">
+              <Ranking title="States" sub="highest to lowest" hint="Click to filter"
+                rows={stateSummary.map((st) => ({ key: st.state, label: place(st.state), pieces: st.pieces, orders: st.orders, note: `${st.agents.size} agent${st.agents.size === 1 ? "" : "s"}`, on: pickStates.includes(st.state) }))}
+                total={totals.pieces} onPick={toggleState} />
+              <Ranking title="Agents" sub="highest to lowest" hint="Click to filter"
+                rows={agentSummary.map((ag) => ({ key: ag.agentId, label: nameOfAgent(ag.agentId), pieces: ag.pieces, orders: ag.orders, note: agentStates.get(ag.agentId) ?? "", on: pickAgents.includes(ag.agentId) }))}
+                total={totals.pieces} onPick={toggleAgent} />
             </div>
           )}
 
@@ -531,5 +525,41 @@ function MultiPick({ label, all, options, value, onChange }: {
           </div>
         </div>, document.body)}
     </>
+  );
+}
+
+/** A ranked list (highest first): rank, name, share bar, pieces and orders. Clicking a row filters to it. */
+function Ranking({ title, sub, hint, rows, total, onPick }: {
+  title: string; sub: string; hint: string; total: number; onPick: (key: string) => void;
+  rows: Array<{ key: string; label: string; pieces: number; orders: number; note: string; on: boolean }>;
+}) {
+  return (
+    <div className="min-w-0 rounded-xl border border-gray-200 p-3 dark:border-slate-700">
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+        <span className="text-[13px] font-bold text-gray-900 dark:text-slate-100">{title} <span className="font-medium text-gray-500">· {sub} · {rows.length}</span></span>
+        <span className="text-[11.5px] text-gray-500">{hint}</span>
+      </div>
+      <div className="max-h-[320px] space-y-1 overflow-y-auto pr-1">
+        {rows.map((r, i) => {
+          const share = total ? (r.pieces / total) * 100 : 0;
+          return (
+            <button key={r.key || "none"} type="button" onClick={() => onPick(r.key)} aria-pressed={r.on}
+              className={`!min-h-0 grid w-full grid-cols-[22px_minmax(0,1fr)_minmax(60px,0.8fr)_44px_64px] items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] transition-colors ${r.on ? "bg-sky-50 ring-1 ring-sky-200 dark:bg-sky-500/10" : "hover:bg-gray-50 dark:hover:bg-slate-800"}`}>
+              <span className={`text-center text-[11px] font-bold ${i < 3 ? "text-[#1F8FE0]" : "text-gray-400"}`}>{i + 1}</span>
+              <span className="min-w-0">
+                <span className="block truncate font-semibold text-gray-900 dark:text-slate-100">{r.label}</span>
+                {r.note && <span className="block truncate text-[11px] text-gray-500">{r.note}</span>}
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-100 dark:bg-slate-800"><span className="block h-full rounded-full bg-[#1F8FE0]" style={{ width: `${share}%` }} /></span>
+                <span className="w-8 text-right text-[10.5px] tabular-nums text-gray-500">{Math.round(share)}%</span>
+              </span>
+              <span className="text-right text-[14px] font-black tabular-nums text-gray-900 dark:text-slate-50" title="Pieces sold">{nf(r.pieces)}</span>
+              <span className="text-right text-[11px] tabular-nums text-gray-500" title="Orders delivered">{nf(r.orders)} order{r.orders === 1 ? "" : "s"}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
