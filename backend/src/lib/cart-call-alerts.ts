@@ -68,19 +68,25 @@ const MANAGER_LINK = "/dashboard/admin/follow-up-queue";
 
 /**
  * Who hears about reps not calling: the branch's Head of Sales
- * (users.is_head_of_sales_rep) AND its Managers (Bright, 24 Nov 2026:
+ * (users.is_head_of_sales_rep) AND its Managers - or its Admins while the
+ * branch has no Manager (Bright, 24 Nov 2026:
  * "manager" - the Head of Sales was also a rep being chased).
  */
 async function supervisors(orgId: string, branchId: string) {
-  const [{ data: heads }, { data: managers }, { data: members }] = await Promise.all([
+  const [{ data: heads }, { data: managers }, { data: admins }, { data: members }] = await Promise.all([
     supabase.from("users").select("id, name").eq("org_id", orgId).eq("active", true).eq("is_head_of_sales_rep", true),
     supabase.from("users").select("id, name").eq("org_id", orgId).eq("active", true).eq("is_demo", false).eq("role", "Manager"),
+    supabase.from("users").select("id, name").eq("org_id", orgId).eq("active", true).eq("is_demo", false).eq("role", "Admin"),
     supabase.from("branch_memberships").select("user_id").eq("branch_id", branchId)
   ]);
   const inBranch = new Set((members ?? []).map((m: any) => String(m.user_id)));
   const out = new Map<string, { id: string; link: string }>();
   for (const h of heads ?? []) if (inBranch.has(String(h.id))) out.set(String(h.id), { id: String(h.id), link: HOS_LINK });
-  for (const m of managers ?? []) if (inBranch.has(String(m.id)) && !out.has(String(m.id))) out.set(String(m.id), { id: String(m.id), link: MANAGER_LINK });
+  const branchManagers = (managers ?? []).filter((m: any) => inBranch.has(String(m.id)));
+  // No Manager in the branch yet: its Admins get them instead (Bright chose
+  // Onyin, 24 Nov 2026). Adding a Manager switches it over by itself.
+  const backups = branchManagers.length > 0 ? branchManagers : (admins ?? []).filter((a: any) => inBranch.has(String(a.id)));
+  for (const m of backups) if (!out.has(String(m.id))) out.set(String(m.id), { id: String(m.id), link: MANAGER_LINK });
   return [...out.values()];
 }
 
