@@ -245,3 +245,46 @@ export function pickSpotChecks(logs: IntegrityLog[], weekStart: string, perRep =
   }
   return picks;
 }
+
+// ── Rescheduling needs a real date (Bright, 24 Nov 2026) ───────────────────
+// "Rescheduled against month ending" was being logged as Other, day after day.
+// A customer asking for a later time is a Rescheduled with the exact date.
+
+/** Max days ahead a reschedule may go. */
+export const RESCHEDULE_MAX_DAYS = 60;
+/** Outcomes whose words must not hide a reschedule. */
+const LATER_CHECKED_OUTCOMES = new Set(["Other", "Interested", "Asked to call back", "Price concern", "Wants to order now"]);
+/** Words that mean "call me another day". "Later today" is not one of them. */
+export const LATER_PATTERN = /\b(tomorrow|next\s+(week|month|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|month\s*(end|ending)|end\s+of\s+(the\s+)?(month|week)|(monday|tuesday|wednesday|thursday|friday|saturday|sunday)|weekend|after\s+(salary|payday|pay\s*day|the\s+\d{1,2}(st|nd|rd|th)?)|salary|payday|pay\s*day|call\s*back\s+(on|by|next|after|in)|in\s+\d+\s+(days?|weeks?)|\d{1,2}(st|nd|rd|th)\b|reschedul\w*)\b/i;
+
+/** Words describing a later day under a non-Rescheduled outcome. */
+export function laterProblem(outcome: string, custom: string | null | undefined, note: string | null | undefined): string | null {
+  if (!LATER_CHECKED_OUTCOMES.has(outcome)) return null;
+  const words = `${outcome === "Other" ? custom ?? "" : ""} ${note ?? ""}`;
+  if (!LATER_PATTERN.test(words)) return null;
+  return "The customer asked to be called another day. Choose \"Rescheduled\" and pick the exact date they gave.";
+}
+
+const addDayKeys = (key: string, n: number) => { const d = new Date(`${key}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+
+/** Rescheduled must carry the date the customer gave: tomorrow to 60 days ahead. */
+export function rescheduleDateProblem(outcome: string, nextActionAt: string | null | undefined, todayKey: string): string | null {
+  if (outcome !== "Rescheduled") return null;
+  const day = String(nextActionAt ?? "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return "Pick the exact date the customer asked you to call back.";
+  if (day <= todayKey) return "The callback date must be after today. If they asked for later today, choose \"Asked to call back\".";
+  if (day > addDayKeys(todayKey, RESCHEDULE_MAX_DAYS)) return `Pick a date within ${RESCHEDULE_MAX_DAYS} days. For longer, close the cart with the reason they gave.`;
+  return null;
+}
+
+export type RescheduleLog = { cartId: string; savedDay: string; outcome: string; callbackDay: string | null };
+
+/**
+ * Days a cart is paused by a dated reschedule: from the day it was logged up
+ * to (not including) the callback day. On the callback day it is due again.
+ * Old Rescheduled logs with no date are not handled here (they stay finished).
+ */
+export function pausedOn(logs: RescheduleLog[], cartId: string, dayKey: string) {
+  return logs.some((l) => l.cartId === cartId && l.outcome === "Rescheduled" && l.callbackDay
+    && l.savedDay <= dayKey && dayKey < l.callbackDay);
+}

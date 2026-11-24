@@ -65,3 +65,31 @@ test("spot checks: up to 3 per rep, one per cart, the same picks every time", ()
   assert.equal(new Set(a.map((l) => l.cartId)).size, 3);
   assert.deepEqual(a.map((l) => l.id), b.map((l) => l.id));
 });
+
+import { laterProblem, pausedOn, rescheduleDateProblem } from "./cart-log-integrity.js";
+
+test("a later day written as Other / Interested is sent to Rescheduled", () => {
+  assert.match(laterProblem("Other", "Rescheduled against month ending", "")!, /Rescheduled/);
+  assert.match(laterProblem("Interested", null, "will pay after salary")!, /Rescheduled/);
+  assert.match(laterProblem("Asked to call back", null, "call back next week")!, /Rescheduled/);
+  assert.match(laterProblem("Other", "Saturday", "Saturday")!, /Rescheduled/);
+  assert.equal(laterProblem("Asked to call back", null, "call back later today"), null);
+  assert.equal(laterProblem("Not interested", "Not ready yet / no money now", "maybe next month"), null);
+  assert.equal(laterProblem("Interested", null, "ready, waiting for rider"), null);
+});
+
+test("Rescheduled needs a date from tomorrow to 60 days", () => {
+  assert.match(rescheduleDateProblem("Rescheduled", "", "2026-11-24")!, /exact date/);
+  assert.match(rescheduleDateProblem("Rescheduled", "2026-11-24", "2026-11-24")!, /after today/);
+  assert.match(rescheduleDateProblem("Rescheduled", "2027-02-01", "2026-11-24")!, /within 60 days/);
+  assert.equal(rescheduleDateProblem("Rescheduled", "2026-11-30", "2026-11-24"), null);
+  assert.equal(rescheduleDateProblem("Interested", "", "2026-11-24"), null);
+});
+
+test("a dated reschedule pauses the cart until the callback day, then it is due", () => {
+  const logs = [{ cartId: "c", savedDay: "2026-11-24", outcome: "Rescheduled", callbackDay: "2026-11-30" }];
+  assert.equal(pausedOn(logs, "c", "2026-11-25"), true);
+  assert.equal(pausedOn(logs, "c", "2026-11-29"), true);
+  assert.equal(pausedOn(logs, "c", "2026-11-30"), false);
+  assert.equal(pausedOn(logs, "c", "2026-11-23"), false);
+});

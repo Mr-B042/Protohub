@@ -2528,6 +2528,10 @@ const orderLocations: OrderLocation[] = ["All Locations", "Lagos", "Abuja", "Por
 /** Keep in step with CONVERSATION_OUTCOMES / NO_CONTACT_OUTCOMES in backend/src/lib/cart-log-integrity.ts. */
 const CART_CONVERSATION_OUTCOMES = new Set(["Interested", "Not interested", "Wants to order now", "Price concern", "Asked to call back", "Rescheduled"]);
 const CART_NO_CONTACT_OUTCOMES = new Set(["Unresponsive", "Number not reachable"]);
+/** Keep in step with LATER_PATTERN / laterProblem in backend/src/lib/cart-log-integrity.ts (Bright, 24 Nov 2026). */
+const CART_LATER_PATTERN = /\b(tomorrow|next\s+(week|month|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|month\s*(end|ending)|end\s+of\s+(the\s+)?(month|week)|(monday|tuesday|wednesday|thursday|friday|saturday|sunday)|weekend|after\s+(salary|payday|pay\s*day|the\s+\d{1,2}(st|nd|rd|th)?)|salary|payday|pay\s*day|call\s*back\s+(on|by|next|after|in)|in\s+\d+\s+(days?|weeks?)|\d{1,2}(st|nd|rd|th)\b|reschedul\w*)\b/i;
+const CART_LATER_CHECKED = new Set(["Other", "Interested", "Asked to call back", "Price concern", "Wants to order now"]);
+const CART_RESCHEDULE_MAX_DAYS = 60;
 const CART_NOT_INTERESTED_REASONS = [
   "Price", "Not ready yet / no money now", "Was only checking / ordered by mistake",
   "Does not remember ordering", "No longer needs it", "Already bought elsewhere",
@@ -45782,6 +45786,17 @@ ${waybillLineItems(w).length > 1
     if (CART_NO_CONTACT_OUTCOMES.has(cartAttemptDraft.outcomeCode) && cartAttemptDraft.customerReached) {
       showToast(`"${cartAttemptDraft.outcomeCode}" means nobody answered. Choose No, or pick what they said.`);
       return;
+    }
+    // Bright, 24 Nov 2026: another day = Rescheduled with the exact date.
+    if (CART_LATER_CHECKED.has(cartAttemptDraft.outcomeCode)
+        && CART_LATER_PATTERN.test(`${cartAttemptDraft.outcomeCode === "Other" ? cartAttemptDraft.customOutcome : ""} ${cartAttemptNoteRef.current || cartAttemptDraft.outcomeNote}`)) {
+      showToast("The customer asked to be called another day. Choose \"Rescheduled\" and pick the exact date they gave.");
+      return;
+    }
+    if (cartAttemptDraft.outcomeCode === "Rescheduled") {
+      const lagosToday = new Date(Date.now() + 3_600_000).toISOString().slice(0, 10);
+      if (!cartAttemptDraft.nextActionAt) { showToast("Pick the exact date the customer asked you to call back."); return; }
+      if (cartAttemptDraft.nextActionAt <= lagosToday) { showToast("The callback date must be after today. If they asked for later today, choose \"Asked to call back\"."); return; }
     }
     if (cartAttemptDraft.outcomeCode === "Other" && !cartAttemptDraft.customOutcome.trim()) {
       showToast("Describe the outcome.");
@@ -109477,7 +109492,14 @@ ${waybillLineItems(w).length > 1
 	                    <label className="flex flex-col gap-1 sm:col-span-2">
 	                      <span className="text-xs font-bold text-gray-600">Describe the outcome *</span>
 	                      <DraftTextarea as="input" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={cartAttemptDraft.customOutcome}
-	                        onCommit={(value) => setCartAttemptDraft((v) => ({ ...v, customOutcome: value }))}
+	                        onCommit={(value) => setCartAttemptDraft((v) => {
+	                          // "Rescheduled against month ending" is a reschedule, not "Other".
+	                          if (CART_LATER_PATTERN.test(value)) {
+	                            showToast("The customer asked for another day: choose the exact date below.");
+	                            return { ...v, customOutcome: "", outcomeNote: v.outcomeNote || value, outcomeCode: "Rescheduled", customerReached: true };
+	                          }
+	                          return { ...v, customOutcome: value };
+	                        })}
 	                        placeholder="In your own words" />
 	                    </label>
 	                  )}
@@ -109488,22 +109510,29 @@ ${waybillLineItems(w).length > 1
                       onChange={(e) => { cartAttemptNoteRef.current = e.target.value; }}
                       onBlur={(e) => setCartAttemptDraft((v) => {
                         const next = e.target.value;
-                        const asksForLater = /\b(?:tomorrow|today|next\s+(?:week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|monday|tuesday|wednesday|thursday|friday|saturday|sunday|in\s+\d+\s+days?)\b/i.test(next);
-                        if (asksForLater && !["Rescheduled", "Not interested", "Wrong number"].includes(v.outcomeCode)) {
-	                          showToast("This sounds rescheduled — outcome changed to Rescheduled.");
-	                          return { ...v, outcomeNote: next, outcomeCode: "Rescheduled" };
+                        const asksForLater = CART_LATER_PATTERN.test(next);
+                        if (asksForLater && (!v.outcomeCode || CART_LATER_CHECKED.has(v.outcomeCode))) {
+	                          showToast("The customer asked for another day: outcome changed to Rescheduled. Pick the exact date below.");
+	                          return { ...v, outcomeNote: next, outcomeCode: "Rescheduled", customOutcome: "", customerReached: true };
 	                        }
 	                        return { ...v, outcomeNote: next };
                         return { ...v, outcomeNote: next };
                       })} />
 	                  </label>
-                  <label className="flex flex-col gap-1">
+                  <label className={`flex flex-col gap-1 ${cartAttemptDraft.outcomeCode === "Rescheduled" ? "rounded-lg border border-sky-300 bg-sky-50/60 p-2 sm:col-span-2" : ""}`}>
                     <span className="flex items-center gap-2 text-xs font-bold text-gray-700 dark:text-slate-200">
-                      Schedule callback reminder
+                      {cartAttemptDraft.outcomeCode === "Rescheduled" ? "Date the customer asked you to call *" : "Schedule callback reminder"}
                       {cartAttemptDraft.nextActionAt && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">Reminder scheduled</span>}
                     </span>
-                    <span className="text-[11px] text-gray-500 dark:text-slate-400">Choose a date if the customer asked you to call later.</span>
-                    <input type="date" aria-label="Schedule callback reminder date" className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100 dark:[color-scheme:dark]" value={cartAttemptDraft.nextActionAt}
+                    <span className="text-[11px] text-gray-500 dark:text-slate-400">
+                      {cartAttemptDraft.outcomeCode === "Rescheduled"
+                        ? "Ask the customer for the exact day. Until then this cart is paused (no ₦500, no daily log). On that day it is due again and you will be reminded at 9am."
+                        : "Choose a date if the customer asked you to call later."}
+                    </span>
+                    <input type="date" aria-label="Schedule callback reminder date"
+                      min={(() => { const d = new Date(Date.now() + 3_600_000); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); })()}
+                      max={(() => { const d = new Date(Date.now() + 3_600_000); d.setUTCDate(d.getUTCDate() + CART_RESCHEDULE_MAX_DAYS); return d.toISOString().slice(0, 10); })()}
+                      className={`rounded-lg border bg-white px-3 py-2 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100 dark:[color-scheme:dark] ${cartAttemptDraft.outcomeCode === "Rescheduled" && !cartAttemptDraft.nextActionAt ? "border-sky-400 ring-2 ring-sky-200" : "border-gray-200"}`} value={cartAttemptDraft.nextActionAt}
 	                      onChange={(e) => setCartAttemptDraft((v) => ({ ...v, nextActionAt: e.target.value }))} />
 	                  </label>
 	                  <fieldset className="m-0 flex flex-col gap-1 border-0 p-0">
