@@ -1,6 +1,6 @@
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
-import { adAccountFunds, lastFundingEvent } from "./meta-graph.js";
+import { activeCampaignCount, adAccountFunds, lastFundingEvent } from "./meta-graph.js";
 import { humanMetaError } from "./tracking-hub.js";
 import { alertRecipients } from "./notification-routing.js";
 import { alertSeesAdSpend } from "./alert-privacy.js";
@@ -75,7 +75,7 @@ export async function runAdFundsCheck(opts: { orgId?: string; nowMs?: number } =
     try {
       if (!settingsByOrg.has(target.orgId)) settingsByOrg.set(target.orgId, await fundsSettingsFor(target.orgId));
       const settings = settingsByOrg.get(target.orgId)!;
-      const { data: before } = await supabase.from("tracking_ad_account_funds").select("low_since, last_alert_at, last_funded_at, last_funded_amount")
+      const { data: before } = await supabase.from("tracking_ad_account_funds").select("low_since, last_alert_at, last_funded_at, last_funded_amount, active_campaigns, active_checked_at")
         .eq("org_id", target.orgId).eq("ad_account_id", target.account).maybeSingle();
       const result = await adAccountFunds(target.account, target.token);
       if (!result.ok) {
@@ -99,7 +99,12 @@ export async function runAdFundsCheck(opts: { orgId?: string; nowMs?: number } =
       const funded = latest && (!savedFundedAt || Date.parse(latest.at) >= Date.parse(savedFundedAt)) ? latest : { at: savedFundedAt, amount: savedFundedAmount === null ? null : Number(savedFundedAmount) };
       const status = typeof raw.account_status === "number" ? raw.account_status : null;
       const reason = lowReason({ left, currency, accountStatus: status, threshold: settings.threshold });
-      const due = settings.enabled ? alertDue({ low: Boolean(reason), lowSince: (before as any)?.low_since ?? null, lastAlertAt: (before as any)?.last_alert_at ?? null, nowMs }) : null;
+      // Live campaigns (25 Nov 2026): low funds only matter where ads are running.
+      // A failed read keeps the last count; never read = null (treated as running).
+      const live = await activeCampaignCount(target.account, target.token);
+      const activeCampaigns: number | null = live.ok ? live.count : ((before as any)?.active_campaigns ?? null);
+      const running = activeCampaigns === null || activeCampaigns > 0;
+      const due = settings.enabled && running ? alertDue({ low: Boolean(reason), lowSince: (before as any)?.low_since ?? null, lastAlertAt: (before as any)?.last_alert_at ?? null, nowMs }) : null;
       const row = {
         org_id: target.orgId, branch_id: target.branchId, ad_account_id: target.account, name: raw.name || target.name, currency,
         is_prepay: raw.is_prepay_account ?? null, account_status: status, disable_reason: raw.disable_reason ?? null,
@@ -107,6 +112,7 @@ export async function runAdFundsCheck(opts: { orgId?: string; nowMs?: number } =
         funding_type: raw.funding_source_details?.type ?? null, funding_display: raw.funding_source_details?.display_string ?? null,
         funds_left: left, funds_source: source, low_reason: reason, checked_at: nowIso,
         last_funded_at: funded.at, last_funded_amount: funded.amount, error: null, error_at: null,
+        active_campaigns: activeCampaigns, active_checked_at: live.ok ? nowIso : ((before as any)?.active_checked_at ?? null),
         low_since: reason ? ((before as any)?.low_since ?? nowIso) : null,
         // Marked alerted only once the alert is saved (below): a refused alert is tried again next run.
         last_alert_at: reason ? (before as any)?.last_alert_at ?? null : null
@@ -148,7 +154,7 @@ async function sendFundsAlert(target: Target, name: string, reason: LowReason, l
 export async function adFundsView(orgId: string) {
   const [settings, rows] = await Promise.all([
     fundsSettingsFor(orgId),
-    supabase.from("tracking_ad_account_funds").select("ad_account_id, name, currency, funds_left, funds_source, low_reason, account_status, is_prepay, funding_display, checked_at, error, error_at, low_since, last_alert_at, last_funded_at, last_funded_amount").eq("org_id", orgId)
+    supabase.from("tracking_ad_account_funds").select("ad_account_id, name, currency, funds_left, funds_source, low_reason, account_status, is_prepay, funding_display, checked_at, error, error_at, low_since, last_alert_at, last_funded_at, last_funded_amount, active_campaigns").eq("org_id", orgId)
   ]);
   if (rows.error) throw rows.error;
   const active = new Set((await targets(orgId)).map((target) => target.account));
@@ -157,7 +163,12 @@ export async function adFundsView(orgId: string) {
     fundsLeft: row.funds_left === null ? null : Number(row.funds_left), source: row.funds_source as "prepaid" | "spend_limit" | null,
     lowReason: row.low_reason as LowReason | null, accountStatus: row.account_status, fundingText: row.funding_display ?? null,
     checkedAt: row.checked_at, error: row.error, lowSince: row.low_since, lastAlertAt: row.last_alert_at,
-    lastFundedAt: row.last_funded_at ?? null, lastFundedAmount: row.last_funded_amount === null || row.last_funded_amount === undefined ? null : Number(row.last_funded_amount)
-  })).sort((a, b) => Number(Boolean(b.lowReason)) - Number(Boolean(a.lowReason)) || (a.fundsLeft ?? Infinity) - (b.fundsLeft ?? Infinity) || a.name.localeCompare(b.name));
+    lastFundedAt: row.last_funded_at ?? null, lastFundedAmount: row.last_funded_amount === null || row.last_funded_amount === undefined ? null : Number(row.last_funded_amount),
+    activeCampaigns: row.active_campaigns === null || row.active_campaigns === undefined ? null : Number(row.active_campaigns)
+  })).sort((a, b) => {
+    // Low AND running first (ads about to stop), then low but idle, then the rest.
+    const rank = (r: any) => (r.lowReason ? (r.activeCampaigns === 0 ? 1 : 0) : 2);
+    return rank(a) - rank(b) || (a.fundsLeft ?? Infinity) - (b.fundsLeft ?? Infinity) || a.name.localeCompare(b.name);
+  });
   return { settings, accounts, unchecked: [...active].filter((id) => !accounts.some((row) => row.accountId === id)).length };
 }

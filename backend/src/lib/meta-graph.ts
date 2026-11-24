@@ -457,6 +457,19 @@ export async function adAccountFunds(adAccountId: string, token: string) {
 }
 
 /**
+ * How many campaigns in the account are running right now (effective_status
+ * ACTIVE), capped at 100 - the funds panel only needs "none" vs "some".
+ */
+export async function activeCampaignCount(adAccountId: string, token: string) {
+  const id = String(adAccountId).replace(/^act_/, "");
+  const result = await graphGet<{ data?: Array<{ id: string }> }>(`act_${id}/campaigns`, token, {
+    fields: "id", limit: "100", effective_status: JSON.stringify(["ACTIVE"])
+  });
+  if (!result.ok) return { ok: false as const, message: result.message };
+  return { ok: true as const, count: (result.data.data ?? []).length };
+}
+
+/**
  * The account's most recent successful top-up (Bright, 19 Nov 2026: "last real
  * time it was funded"). Meta logs every "Add funds" payment as an activity
  * `funding_event_successful` with its time and amount. Newest first; `since`
