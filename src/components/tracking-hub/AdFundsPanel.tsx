@@ -20,28 +20,45 @@ function sourceText(row: AdFundsAccount) {
 }
 
 function AccountCard({ row, threshold }: { row: AdFundsAccount; threshold: number }) {
+  // Bright, 25 Nov 2026: low funds read differently with and without live campaigns.
+  const idle = row.activeCampaigns === 0;
   const low = row.lowReason === "low";
   const unpaid = row.lowReason === "unpaid";
-  const tone = unpaid || low ? "border-rose-200 bg-rose-50/70 dark:border-rose-500/30 dark:bg-rose-500/10" : "border-gray-200 bg-white dark:border-slate-700 dark:bg-slate-900";
+  const urgent = (unpaid || low) && !idle;
+  const tone = urgent ? "border-rose-300 bg-rose-50/70 dark:border-rose-500/30 dark:bg-rose-500/10"
+    : (unpaid || low) ? "border-dashed border-gray-300 bg-gray-50 dark:border-slate-600 dark:bg-slate-800/60"
+      : idle ? "border-gray-200 bg-gray-50/60 dark:border-slate-700 dark:bg-slate-900"
+        : "border-gray-200 bg-white dark:border-slate-700 dark:bg-slate-900";
   return (
     <div className={`rounded-xl border px-3.5 py-3 ${tone}`}>
       <div className="flex items-start justify-between gap-2">
         <b className="min-w-0 truncate text-[13.5px] text-gray-900 dark:text-slate-50" title={row.name}>{row.name}</b>
-        {unpaid ? <span className="shrink-0 rounded-md bg-rose-600 px-2 py-0.5 text-[11.5px] font-bold text-white">Ads stopped</span>
-          : low ? <span className="shrink-0 rounded-md bg-rose-600 px-2 py-0.5 text-[11.5px] font-bold text-white">Low · add funds</span>
+        {unpaid ? <span className={`shrink-0 rounded-md px-2 py-0.5 text-[11.5px] font-bold ${idle ? "bg-gray-200 text-gray-700 dark:bg-slate-700 dark:text-slate-200" : "bg-rose-600 text-white"}`}>{idle ? "Unpaid · no live ads" : "Ads stopped"}</span>
+          : low ? <span className={`shrink-0 rounded-md px-2 py-0.5 text-[11.5px] font-bold ${idle ? "bg-gray-200 text-gray-700 dark:bg-slate-700 dark:text-slate-200" : "animate-pulse bg-rose-600 text-white"}`}>{idle ? "Low · no live ads" : "Low · ads will stop"}</span>
             : row.fundsLeft !== null ? <span className="shrink-0 rounded-md bg-emerald-50 px-2 py-0.5 text-[11.5px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">OK</span> : null}
+      </div>
+      <div className="mt-1">
+        {row.activeCampaigns === null ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-500 dark:bg-slate-800">Live campaigns: checking…</span>
+        ) : idle ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-gray-200/70 px-2 py-0.5 text-[11px] font-semibold text-gray-600 dark:bg-slate-700 dark:text-slate-300"><span className="h-1.5 w-1.5 rounded-full bg-gray-400" />No active campaign</span>
+        ) : (
+          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />{row.activeCampaigns >= 100 ? "100+" : row.activeCampaigns} live campaign{row.activeCampaigns === 1 ? "" : "s"}</span>
+        )}
       </div>
       {unpaid ? (
         <p className="m-0 mt-1 text-[12.5px] text-rose-800 dark:text-rose-200">Meta could not take payment. Pay the bill in Ads Manager › Billing to restart the ads.</p>
       ) : (
         <>
-          <span className={`mt-1 block text-[22px] font-extrabold leading-7 ${low ? "text-rose-600 dark:text-rose-300" : "text-gray-900 dark:text-slate-50"}`}>
+          <span className={`mt-1 block text-[22px] font-extrabold leading-7 ${low && !idle ? "text-rose-600 dark:text-rose-300" : low ? "text-gray-500 dark:text-slate-400" : "text-gray-900 dark:text-slate-50"}`}>
             {row.fundsLeft === null ? <span className="text-[15px] font-semibold text-gray-500">{row.fundingText ? "No limit to run out of" : "Not set up for payment"}</span> : row.currency === "NGN" ? naira(row.fundsLeft) : `${row.currency} ${row.fundsLeft.toLocaleString()}`}
           </span>
           <span className="flex items-center gap-1 text-[11.5px] text-gray-500 dark:text-slate-400">
             {row.fundsLeft === null ? <CreditCard className="h-3 w-3" /> : <Wallet className="h-3 w-3" />}{sourceText(row)}
             {low && row.fundsLeft !== null && <> · {naira(threshold - row.fundsLeft)} under your level</>}
           </span>
+          {low && !idle && <span className="mt-0.5 block text-[11.5px] font-semibold text-rose-700 dark:text-rose-300">Ads are running on this account. Add funds now or they stop.</span>}
+          {low && idle && <span className="mt-0.5 block text-[11.5px] text-gray-500 dark:text-slate-400">Nothing is running here, so no alert is sent. Top up before you turn campaigns on.</span>}
         </>
       )}
       {row.lastFundedAt ? (
@@ -96,7 +113,9 @@ export default function AdFundsPanel({ onToast, focus }: { onToast: (message: st
   if (error) return <p className="m-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-[13px] text-rose-800">Could not load the ad account funds: {error}</p>;
   if (!view) return null;
   const { settings, accounts } = view;
-  const lowCount = accounts.filter((row) => row.lowReason).length;
+  // Only low accounts with live (or not yet read) campaigns are urgent.
+  const lowCount = accounts.filter((row) => row.lowReason && row.activeCampaigns !== 0).length;
+  const idleLow = accounts.filter((row) => row.lowReason && row.activeCampaigns === 0).length;
   const levelNumber = Math.round(Number(level.replace(/[^\d.]/g, "")));
   const levelChanged = Number.isFinite(levelNumber) && levelNumber >= 0 && levelNumber !== settings.threshold && level.trim() !== "";
   const lastRead = accounts.map((row) => row.checkedAt).filter(Boolean).sort().pop() ?? null;
@@ -111,7 +130,9 @@ export default function AdFundsPanel({ onToast, focus }: { onToast: (message: st
           <span className="min-w-0">
             <b className="block text-[15px] text-gray-900 dark:text-slate-50">Ad account funds</b>
             <span className={`block text-[12.5px] ${lowCount ? "font-semibold text-rose-700 dark:text-rose-300" : "text-gray-500 dark:text-slate-400"}`}>
-              {lowCount ? (lowCount === 1 ? "1 account needs funding" : `${lowCount} accounts need funding`) : accounts.length ? `All ${accounts.length} accounts above ${naira(settings.threshold)}` : "Not read yet"}
+              {lowCount ? (lowCount === 1 ? "1 account with live ads needs funding" : `${lowCount} accounts with live ads need funding`)
+                : idleLow ? "Every account with live ads has enough" : accounts.length ? `All ${accounts.length} accounts above ${naira(settings.threshold)}` : "Not read yet"}
+              {idleLow > 0 && <span className="font-normal text-gray-500 dark:text-slate-400"> · {idleLow} low with no live ads</span>}
             </span>
           </span>
           <ChevronDown className={`h-4 w-4 shrink-0 text-gray-400 transition-transform ${open ? "rotate-180" : ""}`} />
@@ -160,7 +181,7 @@ export default function AdFundsPanel({ onToast, focus }: { onToast: (message: st
             <span className="inline-flex items-center gap-1.5">
               <CheckCircle2 className="h-3.5 w-3.5" />
               {settings.enabled
-                ? `Checked with Meta every 30 minutes${lastRead ? `, last at ${lagosTime(lastRead)}` : ""}. You are alerted the moment an account goes under ${naira(settings.threshold)}, then reminded every 6 hours in the day until it is funded. Who gets it: Settings › Alert routing › Ad account low on funds.`
+                ? `Checked with Meta every 30 minutes${lastRead ? `, last at ${lagosTime(lastRead)}` : ""}. You are alerted the moment an account with live campaigns goes under ${naira(settings.threshold)}, then reminded every 6 hours in the day until it is funded. Who gets it: Settings › Alert routing › Ad account low on funds.`
                 : "Alerts are off: the numbers still update every 30 minutes, but nobody is told."}
             </span>
             <button type="button" onClick={check} disabled={busy !== ""}
