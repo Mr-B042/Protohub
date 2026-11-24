@@ -22,7 +22,7 @@ import { getOrgPushBranding } from "./push-branding.js";
 import { assignmentRulesForBranch } from "./cart-assignment.js";
 import { CART_LOG_MISS_AMOUNT, CART_LOG_PENALTY_START_DATE } from "./cart-log-penalty.js";
 import { selectByIdBatches } from "./query-limits.js";
-import { pausedOn, type RescheduleLog } from "./cart-log-integrity.js";
+import { INTERESTED_ESCALATE_HOURS, INTERESTED_REMIND_HOURS, INTERESTED_RULE_START, pausedOn, type RescheduleLog } from "./cart-log-integrity.js";
 import {
   chaseMessage, hosChaseMessage, isWorkingNow, lagosParts, stagesDue, workingMinutesBetween, type ChaseCart, type RepChase, type Stage
 } from "./cart-call-alerts-model.js";
@@ -279,6 +279,93 @@ export async function runCartChase(slot: "morning" | "afternoon", now = new Date
       }
     } catch (err) {
       logger.warn("cart chase: branch failed", { branchId: branch.id, error: (err as Error).message });
+    }
+  }
+  return { sent };
+}
+
+/**
+ * 4. "Interested" carts not turned into an order (Bright, 24 Nov 2026).
+ * 24 hours after the first Interested (logged from INTERESTED_RULE_START) the
+ * rep is told to convert or call; at 48 hours the rep AND the supervisors.
+ * A cart that became an order, was closed, or was rescheduled / said no
+ * since is left alone. Runs with the call escalations, in working hours.
+ */
+export async function runInterestedChasers(now = new Date()) {
+  const nowMs = now.getTime();
+  const since = new Date(Math.max(Date.parse(`${INTERESTED_RULE_START}T00:00:00+01:00`), nowMs - 14 * 86_400_000)).toISOString();
+  const { data: branches, error } = await supabase.from("branches").select("id, org_id").eq("active", true);
+  if (error) throw error;
+  let sent = 0;
+  for (const branch of branches ?? []) {
+    try {
+      const rules = await assignmentRulesForBranch(branch.id);
+      if (!isWorkingNow(nowMs, rules)) continue;
+      const { data: rows, error: attemptError } = await supabase.from("cart_contact_attempts")
+        .select("cart_id, created_at").eq("org_id", branch.org_id).eq("outcome_code", "Interested").gte("created_at", since).limit(5000);
+      if (attemptError) throw attemptError;
+      const first = new Map<string, number>();
+      for (const r of rows ?? []) { const t = Date.parse(r.created_at); const cur = first.get(String(r.cart_id)); if (!cur || t < cur) first.set(String(r.cart_id), t); }
+      const ids = [...first.keys()].filter((id) => nowMs - first.get(id)! >= INTERESTED_REMIND_HOURS * 3_600_000);
+      if (ids.length === 0) continue;
+      const [carts, orders, later] = await Promise.all([
+        selectByIdBatches<any>(ids, (batch) => supabase.from("abandoned_carts")
+          .select("id, customer, phone, product_name, package_name, amount, assigned_rep_id, status, branch_id").eq("org_id", branch.org_id).eq("branch_id", branch.id).in("id", batch)),
+        selectByIdBatches<any>(ids, (batch) => supabase.from("orders").select("source_cart_id").eq("org_id", branch.org_id).in("source_cart_id", batch)),
+        selectByIdBatches<any>(ids, (batch) => supabase.from("cart_contact_attempts").select("cart_id, created_at")
+          .in("cart_id", batch).in("outcome_code", ["Rescheduled", "Not interested", "Wrong number"]).gte("created_at", since))
+      ]);
+      const ordered = new Set(orders.map((o: any) => String(o.source_cart_id)));
+      const movedOn = new Set(later.filter((l: any) => Date.parse(l.created_at) > (first.get(String(l.cart_id)) ?? 0)).map((l: any) => String(l.cart_id)));
+      const live = carts.filter((c: any) => c.assigned_rep_id && !ordered.has(String(c.id)) && !movedOn.has(String(c.id))
+        && !["Converted", ...CLOSED_STATUSES].includes(String(c.status)));
+      if (live.length === 0) continue;
+      const wanted = live.flatMap((c: any) => {
+        const hours = (nowMs - first.get(String(c.id))!) / 3_600_000;
+        return [
+          { cart: c, stage: "interested24", hours },
+          ...(hours >= INTERESTED_ESCALATE_HOURS ? [{ cart: c, stage: "interested48", hours }] : [])
+        ];
+      });
+      const won = await claim(wanted.map((w) => ({ org_id: branch.org_id, branch_id: branch.id, cart_id: String(w.cart.id), rep_id: String(w.cart.assigned_rep_id), stage: w.stage })));
+      const top = new Map<string, { cart: any; stage: string; hours: number }>();
+      for (const w of wanted) {
+        if (!won.has(`${w.cart.id}|${w.cart.assigned_rep_id}|${w.stage}`)) continue;
+        const cur = top.get(String(w.cart.id));
+        if (!cur || w.stage === "interested48") top.set(String(w.cart.id), w);
+      }
+      if (top.size === 0) continue;
+      const { data: reps } = await supabase.from("users").select("id, name").in("id", [...new Set([...top.values()].map((w) => String(w.cart.assigned_rep_id)))]);
+      const repName = new Map((reps ?? []).map((r: any) => [String(r.id), String(r.name ?? "A rep")]));
+      const label = (w: { cart: any; hours: number }) => `${who(w.cart)}${what(w.cart) ? ` (${what(w.cart)})` : ""} ${Math.floor(w.hours)} hrs`;
+      const byRep = new Map<string, Array<{ cart: any; stage: string; hours: number }>>();
+      for (const w of top.values()) byRep.set(String(w.cart.assigned_rep_id), [...(byRep.get(String(w.cart.assigned_rep_id)) ?? []), w]);
+      for (const [repId, list] of byRep) {
+        const worst = list.some((w) => w.stage === "interested48");
+        await sendHeavy(branch.org_id, branch.id, repId, {
+          title: list.length === 1
+            ? `${worst ? "🚨" : "🛒"} ${who(list[0].cart)} said Interested ${Math.floor(list[0].hours)} hrs ago — no order yet`
+            : `${worst ? "🚨" : "🛒"} ${list.length} Interested carts with no order yet`,
+          message: `${list.length === 1 ? "" : `${list.map(label).join(" · ")}. `}Call now and press Convert to order, or log what changed (Rescheduled with a date, or Not interested). Until then the cart is on your daily list.${worst ? " Your supervisors have been told." : ""}`,
+          link: REP_LINK, kind: "cart_call_late", tag: `cart-interested-${repId}`
+        });
+        sent += 1;
+      }
+      const late = [...top.values()].filter((w) => w.stage === "interested48");
+      if (late.length > 0) {
+        const perRep = new Map<string, string[]>();
+        for (const w of late) perRep.set(String(w.cart.assigned_rep_id), [...(perRep.get(String(w.cart.assigned_rep_id)) ?? []), label(w)]);
+        for (const boss of await supervisors(branch.org_id, branch.id)) {
+          await sendHeavy(branch.org_id, branch.id, boss.id, {
+            title: `🚨 ${late.length} Interested cart${late.length === 1 ? "" : "s"} still not an order after 48 hrs`,
+            message: `${[...perRep].map(([id, list]) => `${repName.get(id) ?? "A rep"}: ${list.join(", ")}`).join(" · ")}. Push them to convert or close.`,
+            link: boss.link, kind: "hos_cart_not_called", tag: `hos-cart-interested-${branch.id}`
+          });
+          sent += 1;
+        }
+      }
+    } catch (err) {
+      logger.warn("interested chasers: branch failed", { branchId: branch.id, error: (err as Error).message });
     }
   }
   return { sent };

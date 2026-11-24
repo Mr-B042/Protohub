@@ -109488,6 +109488,12 @@ ${waybillLineItems(w).length > 1
 	                      </p>
 	                    </div>
 	                  )}
+	                  {cartAttemptDraft.outcomeCode === "Interested" && (
+	                    <p className="m-0 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11.5px] font-semibold text-emerald-900 sm:col-span-2">
+	                      Interested means you follow this customer up like a real order until it is delivered. Press <b>Convert to order</b> when they are ready.
+	                      If it is not an order by the end of the next working day, it comes back on your daily list every day (and your supervisors are told after 48 hours) until it is converted, rescheduled with a date, or they say no.
+	                    </p>
+	                  )}
 	                  {cartAttemptDraft.outcomeCode === "Other" && (
 	                    <label className="flex flex-col gap-1 sm:col-span-2">
 	                      <span className="text-xs font-bold text-gray-600">Describe the outcome *</span>

@@ -2,7 +2,7 @@ import { tidyOrderState } from "../lib/order-state.js";
 import { writtenReasonProblem } from "../lib/cart-written-reason.js";
 import { sendRepCallNow } from "../lib/cart-call-alerts.js";
 import {
-  TAP_WINDOW_HOURS, buildIntegrity, duplicateOf, laterProblem, pausedOn, pickSpotChecks, reachedProblem, repeatProblem, rescheduleDateProblem,
+  INTERESTED_RULE_START, TAP_WINDOW_HOURS, buildIntegrity, interestedPauses, duplicateOf, laterProblem, pausedOn, pickSpotChecks, reachedProblem, repeatProblem, rescheduleDateProblem,
   type IntegrityLog, type PastLog, type RescheduleLog
 } from "../lib/cart-log-integrity.js";
 import { liteCart } from "../lib/lite-lists.js";
@@ -2035,6 +2035,56 @@ router.get("/follow-up-integrity", requireRole(...INTEGRITY_VIEWERS), async (req
   }
 });
 
+// ── GET /api/carts/interested-not-ordered?days=60 ─────────
+// Carts a rep logged "Interested" that never became an order (by link or by
+// the customer's phone), still open. Bright, 24 Nov 2026: 136 such carts since
+// 29 Sep, ₦5.5M, most never touched again. Newest first, for calling back.
+router.get("/interested-not-ordered", requireRole(...INTEGRITY_VIEWERS), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const days = Math.min(120, Math.max(1, Number(req.query.days) || 60));
+    const from = addDays(lagosDateKey(new Date()), -(days - 1));
+    const logs = await loadAttemptsBetween(orgId, from, lagosDateKey(new Date()));
+    const first = new Map<string, any>();
+    for (const r of logs) if (r.outcome_code === "Interested" && !first.has(String(r.cart_id))) first.set(String(r.cart_id), r);
+    const ids = [...first.keys()];
+    if (ids.length === 0) { res.json({ days, rows: [] }); return; }
+    const [carts, linked, allLogs] = await Promise.all([
+      selectByIdBatches<any>(ids, (batch) => supabase.from("abandoned_carts")
+        .select("id, customer, phone, product_name, package_name, amount, currency, assigned_rep_id, status").eq("org_id", orgId).in("id", batch)),
+      selectByIdBatches<any>(ids, (batch) => supabase.from("orders").select("source_cart_id").eq("org_id", orgId).in("source_cart_id", batch)),
+      selectByIdBatches<any>(ids, (batch) => supabase.from(CART_ATTEMPTS).select("cart_id, created_at, outcome_code, custom_outcome").eq("org_id", orgId).in("cart_id", batch))
+    ]);
+    const { data: phoneOrders, error: phoneError } = await supabase.from("orders").select("phone").eq("org_id", orgId)
+      .gte("created_at", lagosStartOfDayUtc(addDays(from, -1))).limit(REPORT_ROW_CEILING);
+    if (phoneError) throw new Error(phoneError.message);
+    const last10 = (v: unknown) => String(v ?? "").replace(/\D/g, "").slice(-10);
+    const orderedPhones = new Set((phoneOrders ?? []).map((o: any) => last10(o.phone)).filter((p) => p.length === 10));
+    const ordered = new Set(linked.map((o: any) => String(o.source_cart_id)));
+    const repIds = [...new Set(carts.map((c: any) => c.assigned_rep_id).filter(Boolean))];
+    const { data: users } = repIds.length ? await supabase.from("users").select("id, name").in("id", repIds) : { data: [] as any[] };
+    const repName = new Map((users ?? []).map((u: any) => [String(u.id), String(u.name ?? "Sales rep")]));
+    const rows = carts
+      .filter((c: any) => !ordered.has(String(c.id)) && !orderedPhones.has(last10(c.phone))
+        && !["Converted", "Not interested", "No response"].includes(String(c.status)))
+      .map((c: any) => {
+        const f = first.get(String(c.id));
+        const mine = allLogs.filter((l: any) => String(l.cart_id) === String(c.id)).sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at)));
+        const after = mine.filter((l: any) => Date.parse(l.created_at) > Date.parse(f.created_at) + 10 * 60_000);
+        return {
+          cartId: String(c.id), customer: c.customer ?? null, phone: c.phone ?? null, product: c.product_name || c.package_name || null,
+          amount: Number(c.amount ?? 0), currency: c.currency ?? "NGN", repId: c.assigned_rep_id ?? null, repName: repName.get(String(c.assigned_rep_id)) ?? "Not assigned",
+          interestedAt: String(f.created_at), interestedNote: f.outcome_note ?? null, interestedBy: f.rep_name ?? null,
+          lastLogAt: mine[0] ? String(mine[0].created_at) : null, lastOutcome: mine[0]?.outcome_code ?? null, logsAfter: after.length
+        };
+      })
+      .sort((a: any, b: any) => b.interestedAt.localeCompare(a.interestedAt));
+    res.json({ days, rows });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load the interested carts." });
+  }
+});
+
 // ── Weekly spot-checks ────────────────────────────────────
 // GET  /api/carts/spot-checks?weekStart=YYYY-MM-DD (a Sunday; default this week)
 //      Picks up to 3 logged carts per rep the first time the week is opened,
@@ -2756,12 +2806,24 @@ export async function computeCartLogBoard(orgId: string, repFilter: string | nul
     // the cart: it is paused until the callback day, then due again. Old
     // Rescheduled logs without a date still finish it, so nothing already
     // decided starts charging after the fact.
-    const finishing = (row: any) => !(row.outcome_code === "Rescheduled" && row.next_action_at);
+    // ⚠️ Likewise an Interested logged from INTERESTED_RULE_START (24 Nov 2026)
+    // no longer finishes the cart: it is paused for its day and the next
+    // working day, then due again until it is turned into an order (a
+    // converted cart leaves the board by its status). Older Interested logs
+    // still finish it - those 136 carts are on the "Interested, never
+    // ordered" list instead of suddenly costing ₦500 a day.
+    const newInterested = (row: any) => row.outcome_code === "Interested" && lagosDateKey(row.attempted_at) >= INTERESTED_RULE_START;
+    const finishing = (row: any) => !(row.outcome_code === "Rescheduled" && row.next_action_at) && !newInterested(row);
     const terminalOutcomeCartIds = new Set((allOutcomeRows ?? []).filter(finishing).map((row: any) => String(row.cart_id).trim()));
-    const reschedules: RescheduleLog[] = (allOutcomeRows ?? []).filter((row: any) => !finishing(row)).map((row: any) => ({
-      cartId: String(row.cart_id).trim(), savedDay: lagosDateKey(row.attempted_at), outcome: "Rescheduled",
-      callbackDay: String(row.next_action_at).slice(0, 10)
-    }));
+    const reschedules: RescheduleLog[] = [
+      ...(allOutcomeRows ?? []).filter((row: any) => row.outcome_code === "Rescheduled" && row.next_action_at).map((row: any) => ({
+        cartId: String(row.cart_id).trim(), savedDay: lagosDateKey(row.attempted_at), outcome: "Rescheduled",
+        callbackDay: String(row.next_action_at).slice(0, 10)
+      })),
+      ...interestedPauses((allOutcomeRows ?? []).filter(newInterested).map((row: any) => ({
+        cartId: String(row.cart_id).trim(), savedAt: String(row.attempted_at), outcome: "Interested"
+      })))
+    ];
 
     const repName = new Map(((repRows ?? []) as any[]).map((row) => [row.id, row.name]));
     const deliveredCart = new Set(((orderRows ?? []) as any[])

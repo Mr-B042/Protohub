@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronRight, Loader2, PhoneCall, ShieldAlert, ShieldCheck } from "lucide-react";
-import { cartsApi, type CartIntegrityView, type CartSpotCheck } from "../../lib/api";
+import { cartsApi, type CartIntegrityView, type CartInterestedRow, type CartSpotCheck } from "../../lib/api";
 
 // ── Cart follow-up "Check this" panel (Bright, 24 Nov 2026 audit) ───────────
 // Shown above the cart charges so the Owner sees HOW the logs were made before
@@ -147,6 +147,7 @@ export function CartIntegrityPanel({ onViewCart }: { onViewCart: (cartId: string
           )}
           <p className="m-0 flex items-start gap-1.5 text-[11px] text-gray-500"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />A flag is a reason to look, not proof. Confirm with the spot-checks: if customers say nobody called, the logs were not real.</p>
           <SpotChecks />
+          <InterestedNotOrdered onViewCart={onViewCart} />
         </div>
       )}
     </section>
@@ -230,6 +231,84 @@ function SpotChecks() {
           </ul>
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * Carts logged "Interested" that never became an order (Bright, 24 Nov 2026:
+ * 136 of them since 29 Sep, ₦5.5M). Newest first: the recent ones are the
+ * ones still worth a call.
+ */
+function InterestedNotOrdered({ onViewCart }: { onViewCart: (cartId: string) => void }) {
+  const [days, setDays] = useState(30);
+  const [rows, setRows] = useState<CartInterestedRow[] | null>(null);
+  const [error, setError] = useState("");
+  const [rep, setRep] = useState("all");
+  const [onlyDropped, setOnlyDropped] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setRows(null); setError("");
+    cartsApi.interestedNotOrdered(days).then((r) => { if (!cancelled) setRows(r.rows); }).catch((e: any) => { if (!cancelled) setError(e?.message ?? "Could not load."); });
+    return () => { cancelled = true; };
+  }, [days]);
+  const reps = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of rows ?? []) m.set(r.repName, (m.get(r.repName) ?? 0) + 1);
+    return [...m].sort((a, b) => b[1] - a[1]);
+  }, [rows]);
+  const shown = (rows ?? []).filter((r) => (rep === "all" || r.repName === rep) && (!onlyDropped || r.logsAfter === 0));
+  const total = shown.reduce((s, r) => s + r.amount, 0);
+  const ago = (iso: string) => { const d = Math.floor((Date.now() - Date.parse(iso)) / 86_400_000); return d === 0 ? "today" : d === 1 ? "1 day ago" : `${d} days ago`; };
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-3 dark:border-amber-500/30 dark:bg-amber-500/5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[13px] font-black text-gray-900 dark:text-slate-100">🛒 Said "Interested", never ordered</span>
+        <span className="text-[11.5px] text-gray-600">Still open, no order linked or under their phone number. Call the newest first.</span>
+        <span className="ml-auto inline-flex gap-1">
+          {[7, 30, 60].map((d) => (
+            <button key={d} type="button" onClick={() => setDays(d)} className={`!min-h-0 rounded-md px-2 py-0.5 text-[12px] font-bold ${days === d ? "bg-slate-900 text-white" : "bg-white text-slate-600 ring-1 ring-slate-200"}`}>Last {d} days</button>
+          ))}
+        </span>
+      </div>
+      {error && <p className="m-0 mt-2 text-[12px] text-rose-700">{error}</p>}
+      {rows === null && !error && <p className="m-0 mt-2 flex items-center gap-1.5 text-[12px] text-gray-500"><Loader2 className="h-3.5 w-3.5 animate-spin" />Loading…</p>}
+      {rows && (
+        <>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <button type="button" onClick={() => setRep("all")} className={`!min-h-0 rounded-full px-2.5 py-0.5 text-[12px] font-semibold ring-1 ${rep === "all" ? "bg-amber-600 text-white ring-amber-600" : "bg-white text-gray-700 ring-gray-200"}`}>All reps · {rows.length}</button>
+            {reps.map(([name, n]) => (
+              <button key={name} type="button" onClick={() => setRep(name)} className={`!min-h-0 rounded-full px-2.5 py-0.5 text-[12px] font-semibold ring-1 ${rep === name ? "bg-amber-600 text-white ring-amber-600" : "bg-white text-gray-700 ring-gray-200"}`}>{name} · {n}</button>
+            ))}
+            <label className="ml-auto inline-flex items-center gap-1.5 text-[12px] font-semibold text-gray-700">
+              <input type="checkbox" checked={onlyDropped} onChange={(e) => setOnlyDropped(e.target.checked)} /> Only never touched again
+            </label>
+          </div>
+          <p className="m-0 mt-2 text-[12px] font-semibold text-gray-700">{shown.length} cart{shown.length === 1 ? "" : "s"} · ₦{Math.round(total).toLocaleString("en-NG")}</p>
+          {shown.length === 0 ? <p className="m-0 mt-1 text-[12px] text-gray-500">None in this period.</p> : (
+            <div className="mt-1.5 max-h-96 overflow-auto rounded-lg border border-gray-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+              <table className="w-full !min-w-[760px] text-[12px]">
+                <thead className="sticky top-0 bg-gray-50 text-left text-[10.5px] font-bold uppercase tracking-wide text-gray-500 dark:bg-slate-800">
+                  <tr><th className="px-2.5 py-1.5">Customer</th><th className="px-2 py-1.5">Product</th><th className="px-2 py-1.5 text-right">Value</th><th className="px-2 py-1.5">Rep</th><th className="px-2 py-1.5">Said Interested</th><th className="px-2 py-1.5">Since then</th><th className="px-2 py-1.5" /></tr>
+                </thead>
+                <tbody>
+                  {shown.map((r) => (
+                    <tr key={r.cartId} className="border-t border-gray-100 align-top dark:border-slate-800">
+                      <td className="px-2.5 py-1.5"><span className="font-semibold text-gray-900 dark:text-slate-100">{r.customer || "No name"}</span>{r.phone && <a href={`tel:${r.phone}`} className="block text-[#1F8FE0]">{r.phone}</a>}</td>
+                      <td className="px-2 py-1.5 text-gray-700">{r.product || "—"}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">₦{Math.round(r.amount).toLocaleString("en-NG")}</td>
+                      <td className="px-2 py-1.5 text-gray-700">{r.repName}</td>
+                      <td className="px-2 py-1.5 text-gray-700">{ago(r.interestedAt)}{r.interestedNote && <span className="block italic text-gray-500">“{r.interestedNote}”</span>}</td>
+                      <td className={`px-2 py-1.5 ${r.logsAfter === 0 ? "font-semibold text-rose-700" : "text-gray-700"}`}>{r.logsAfter === 0 ? "Never touched again" : `${r.logsAfter} log${r.logsAfter === 1 ? "" : "s"} · last ${r.lastOutcome ?? ""}${r.lastLogAt ? `, ${ago(r.lastLogAt)}` : ""}`}</td>
+                      <td className="px-2 py-1.5 text-right"><button type="button" onClick={() => onViewCart(r.cartId)} className="!min-h-0 text-[11.5px] font-semibold text-[#1F8FE0]">View cart</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
