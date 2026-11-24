@@ -3,15 +3,16 @@
 // each agent?" for any date range.
 //
 // Sold = DELIVERED (pay on delivery: a piece is sold when it is delivered),
-// counted on the order's delivered_date. Pieces come from the same line
-// expansion stock uses (orderInventoryLinesFromRow), so a 3-piece package
-// counts as its pieces, and cross-sell / extra / gift lines count too.
+// counted on the order's delivered_date. Each order counts under its MAIN
+// product only; free gifts, cross-sells, extras and other package parts are
+// sent apart as `extras` and shown inside the main product, never as products
+// of their own (Bright, 24 Nov 2026). See stock-sold-model.ts.
 // State = the order's state; agent = the order's delivery agent (inactive
 // agents included - past sales still happened). Silent-test orders are left
 // out, as everywhere else in Product Trend.
 
 import { supabase } from "./supabase.js";
-import { orderInventoryLinesFromRow } from "./order-inventory.js";
+import { orderInventoryLinesBySource } from "./order-inventory.js";
 import { lagosTodayKey } from "./salary-spread.js";
 import { tidyOrderState } from "./order-state.js";
 import { fetchAllRowsOrThrow, REPORT_ROW_CEILING } from "./query-limits.js";
@@ -19,7 +20,7 @@ import { daysBetweenKeys, shiftDay } from "./stock-intel-model.js";
 
 export const MAX_SOLD_RANGE_DAYS = 400;
 
-export { buildSold, type SoldDay, type SoldLine, type SoldOrderCell, type SoldRow } from "./stock-sold-model.js";
+export { buildSold, type SoldDay, type SoldExtra, type SoldLine, type SoldOrderCell, type SoldRow } from "./stock-sold-model.js";
 import { buildSold, type SoldRow } from "./stock-sold-model.js";
 
 const validKey = (value: unknown) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
@@ -51,7 +52,7 @@ export async function loadStockSold(args: { orgId: string; branchId: string; sta
   ]);
   if (agentsRes.error) throw new Error(`Could not load agents: ${agentsRes.error.message}`);
   const productIds = args.productId ? new Set([args.productId]) : null;
-  const built = buildSold(rows, (row) => orderInventoryLinesFromRow(row as any).map((l) => ({ productId: l.productId, quantity: Number(l.quantity) || 0 })), { start: from, end: to, productIds, tidyState: (state) => String(tidyOrderState(state) ?? "") });
+  const built = buildSold(rows, (row) => orderInventoryLinesBySource(row as any).map((l) => ({ productId: l.productId, quantity: Number(l.quantity) || 0, sourceType: l.sourceType, isFreeGift: l.isFreeGift })), { start: from, end: to, productIds, tidyState: (state) => String(tidyOrderState(state) ?? "") });
   const used = new Set(built.lines.map((l) => l.agentId));
   return {
     today, start, end, from, to,

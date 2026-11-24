@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Check, ChevronDown, Download, Filter, Loader2, Package, Search, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Download, Filter, Loader2, Package, Search, X } from "lucide-react";
 import DateWindowNav from "../../../components/DateWindowNav";
 import { PRESET_LABEL, presetRange, shiftDay, windowSize, type DateWindow, type PresetKey } from "../../../lib/date-window";
 import { stockIntelApi, type StockSoldData } from "../../../lib/api";
@@ -26,7 +26,13 @@ const shortDay = (key: string) => new Date(`${key}T12:00:00Z`).toLocaleDateStrin
 const dayName = (key: string) => new Date(`${key}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
 const daysOf = (w: DateWindow) => { const out: string[] = []; for (let d = w.start; d <= w.end && out.length < 400; d = shiftDay(d, 1)) out.push(d); return out; };
 
-type Group = { key: string; first: string; second: string | null; pieces: number; orders: number; byDay: Map<string, number> };
+type WithIt = { itemId: string; kind: "gift" | "cross_sell" | "extra" | "package"; pieces: number };
+type Group = { key: string; first: string; second: string | null; pieces: number; orders: number; byDay: Map<string, number>; withIt: WithIt[] };
+const KIND_TEXT: Record<WithIt["kind"], string> = { gift: "free gift", cross_sell: "cross-sell", extra: "extra item", package: "in the package" };
+const KIND_TONE: Record<WithIt["kind"], string> = {
+  gift: "bg-pink-50 text-pink-800 ring-pink-200", cross_sell: "bg-violet-50 text-violet-800 ring-violet-200",
+  extra: "bg-amber-50 text-amber-800 ring-amber-200", package: "bg-slate-50 text-slate-700 ring-slate-200"
+};
 
 export function SoldSection({ ctx }: { ctx: IntelCtx }) {
   const todayKey = ctx.data.today || lagosToday();
@@ -71,6 +77,14 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
   }, [sold, pickStates, pickAgents]);
   const lines = useMemo(() => kept.filter((l) => l.day >= range.start && l.day <= range.end), [kept, range]);
   const cells = useMemo(() => keptCells.filter((c) => c.day >= range.start && c.day <= range.end), [keptCells, range]);
+  // Gifts and add-ons: never products of their own, only shown inside the main product.
+  const extras = useMemo(() => {
+    const p = new Set(pickProducts), st = new Set(pickStates), a = new Set(pickAgents);
+    return (sold?.extras ?? []).filter((e) => e.day >= range.start && e.day <= range.end
+      && (!p.size || p.has(e.productId)) && (!st.size || st.has(e.state)) && (!a.size || a.has(e.agentId)));
+  }, [sold, range, pickProducts, pickStates, pickAgents]);
+  const [openRows, setOpenRows] = useState<Set<string>>(new Set());
+  const toggleRow = (key: string) => setOpenRows((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
 
   const chipCount = (preset: PresetKey) => {
     const r = presetRange(preset, todayKey);
@@ -125,7 +139,7 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
   const groups = useMemo(() => {
     const map = new Map<string, Group>();
     const add = (key: string, first: string, second: string | null, day: string, pieces: number, orders: number) => {
-      const g = map.get(key) ?? { key, first, second, pieces: 0, orders: 0, byDay: new Map() };
+      const g = map.get(key) ?? { key, first, second, pieces: 0, orders: 0, byDay: new Map(), withIt: [] };
       g.pieces += pieces; g.orders += orders; g.byDay.set(day, (g.byDay.get(day) ?? 0) + pieces);
       map.set(key, g);
     };
@@ -137,6 +151,15 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
       else if (groupBy === "state") add(l.state, place(l.state), null, l.day, l.pieces, pickProducts.length ? l.orders : 0);
       else add(l.agentId, nameOfAgent(l.agentId), null, l.day, l.pieces, pickProducts.length ? l.orders : 0);
     }
+    const keyOf = (x: { productId: string; state: string; agentId: string }) =>
+      groupBy === "product" ? x.productId : groupBy === "productState" ? `${x.productId}|${x.state}` : groupBy === "productAgent" ? `${x.productId}|${x.agentId}` : groupBy === "state" ? x.state : x.agentId;
+    for (const e of extras) {
+      const g = map.get(keyOf(e));
+      if (!g) continue;
+      const found = g.withIt.find((w) => w.itemId === e.itemId && w.kind === e.kind);
+      if (found) found.pieces += e.pieces; else g.withIt.push({ itemId: e.itemId, kind: e.kind, pieces: e.pieces });
+    }
+    for (const g of map.values()) g.withIt.sort((a, b) => b.pieces - a.pieces);
     // By state / agent, an order holding two products is still one order.
     if ((groupBy === "state" || groupBy === "agent") && !pickProducts.length) {
       for (const c of cells) { const g = map.get(groupBy === "state" ? c.state : c.agentId); if (g) g.orders += c.orders; }
@@ -144,7 +167,7 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
     const q = search.trim().toLowerCase();
     const list = [...map.values()].filter((g) => !q || `${g.first} ${g.second ?? ""}`.toLowerCase().includes(q));
     return list.sort((a, b) => sort === "name" ? `${a.first}${a.second}`.localeCompare(`${b.first}${b.second}`) : sort === "fewest" ? a.pieces - b.pieces : b.pieces - a.pieces);
-  }, [lines, cells, pickProducts, groupBy, sort, search, ctx, agentName]);
+  }, [lines, cells, extras, pickProducts, groupBy, sort, search, ctx, agentName]);
 
   const showDays = eachDay && days.length <= MAX_DAY_COLUMNS;
   const firstHead = groupBy === "state" ? "State" : groupBy === "agent" ? "Agent" : "Product";
@@ -152,8 +175,9 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
   const pastDays = days.filter((d) => d <= todayKey).length || 1;
 
   const exportCsv = () => downloadCsv(`pieces-sold-${range.start}-to-${range.end}.csv`, [
-    [firstHead, ...(secondHead ? [secondHead] : []), "Pieces sold", "Orders", "A day", ...days],
-    ...groups.map((g) => [g.first, ...(secondHead ? [g.second ?? ""] : []), g.pieces, g.orders, one(g.pieces / pastDays), ...days.map((d) => g.byDay.get(d) ?? 0)])
+    [firstHead, ...(secondHead ? [secondHead] : []), "Pieces sold", "Orders", "A day", "Came with", ...days],
+    ...groups.map((g) => [g.first, ...(secondHead ? [g.second ?? ""] : []), g.pieces, g.orders, one(g.pieces / pastDays),
+      g.withIt.map((w) => `${ctx.productName(w.itemId)} x${w.pieces} (${KIND_TEXT[w.kind]})`).join("; "), ...days.map((d) => g.byDay.get(d) ?? 0)])
   ]);
 
   const select = "!min-h-0 h-9 rounded-xl border border-slate-200/80 bg-white px-3 text-sm font-bold text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
@@ -161,8 +185,8 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
   return (
     <Card className="overflow-hidden">
       <div className="p-4 pb-3">
-        <CardHead Icon={Package} title="Pieces Sold" info="Pieces delivered, counted on the day they were delivered. A package counts as its pieces; extra items on an order count too."
-          sub={`Pieces delivered by product, state and agent${ctx.productId ? ` · ${ctx.productName(ctx.productId)}` : ""}`}
+        <CardHead Icon={Package} title="Pieces Sold" info="Pieces of the main product delivered, counted on the day they were delivered. Free gifts, cross-sells and extra items are not counted as products: open a row to see what came with it."
+          sub={`Main products delivered, by product, state and agent${ctx.productId ? ` · ${ctx.productName(ctx.productId)}` : ""}`}
           action={<button type="button" onClick={exportCsv} disabled={groups.length === 0} className="!min-h-0 inline-flex h-9 items-center gap-1.5 rounded-lg border border-gray-200 px-3 text-[12.5px] font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-200"><Download className="h-4 w-4" />CSV</button>} />
       </div>
 
@@ -284,8 +308,16 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
                 </thead>
                 <tbody>
                   {groups.map((g) => (
-                    <tr key={g.key} className="border-t border-gray-100 dark:border-slate-800">
-                      <td className="sticky left-0 bg-white px-3 py-2 font-semibold text-gray-900 dark:bg-slate-900 dark:text-slate-100">{g.first}</td>
+                    <Fragment key={g.key}>
+                    <tr className="border-t border-gray-100 dark:border-slate-800">
+                      <td className="sticky left-0 bg-white px-3 py-2 font-semibold text-gray-900 dark:bg-slate-900 dark:text-slate-100">
+                        {g.withIt.length > 0 ? (
+                          <button type="button" onClick={() => toggleRow(g.key)} aria-expanded={openRows.has(g.key)} className="!min-h-0 inline-flex items-start gap-1.5 text-left">
+                            <ChevronRight className={`mt-0.5 h-4 w-4 shrink-0 text-gray-400 transition-transform ${openRows.has(g.key) ? "rotate-90" : ""}`} />
+                            <span>{g.first}<span className="block text-[11px] font-medium text-gray-500">+ {g.withIt.length} item{g.withIt.length === 1 ? "" : "s"} with it</span></span>
+                          </button>
+                        ) : <span className="pl-[22px]">{g.first}</span>}
+                      </td>
                       {secondHead && <td className="px-3 py-2 text-gray-700 dark:text-slate-300">{g.second}</td>}
                       <td className="px-3 py-2 text-right font-bold tabular-nums">{nf(g.pieces)}</td>
                       <td className="px-3 py-2 text-right tabular-nums text-gray-600">{nf(g.orders)}</td>
@@ -300,6 +332,21 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
                       )}
                       {showDays && days.map((d) => { const n = g.byDay.get(d) ?? 0; return <td key={d} className={`px-2 py-2 text-right tabular-nums ${n ? "font-semibold text-gray-900 dark:text-slate-100" : "text-gray-300"}`}>{n || "·"}</td>; })}
                     </tr>
+                    {openRows.has(g.key) && g.withIt.length > 0 && (
+                      <tr className="bg-gray-50/70 dark:bg-slate-800/40">
+                        <td colSpan={showDays ? 4 + (secondHead ? 1 : 0) + days.length : 5 + (secondHead ? 1 : 0)} className="px-3 py-2.5 pl-[34px]">
+                          <div className="mb-1.5 text-[11px] font-semibold text-gray-500">Came with it (not counted as sold products)</div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {g.withIt.map((w) => (
+                              <span key={`${w.itemId}|${w.kind}`} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-semibold ring-1 ${KIND_TONE[w.kind]}`}>
+                                {ctx.productName(w.itemId)} <b className="tabular-nums">× {nf(w.pieces)}</b><span className="font-medium opacity-75">· {KIND_TEXT[w.kind]}</span>
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   ))}
                   {groups.length === 0 && !loading && (
                     <tr><td colSpan={showDays ? 4 + (secondHead ? 1 : 0) + days.length : 5 + (secondHead ? 1 : 0)} className="py-10 text-center text-gray-500">{search ? "Nothing matches the search." : filtering ? "No pieces delivered on these dates for these filters." : "No pieces delivered on these dates."}</td></tr>
