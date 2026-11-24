@@ -6266,6 +6266,8 @@ export type StockIntelData = {
 export type StockSoldData = {
   today: string; start: string; end: string; from: string; to: string;
   lines: Array<{ day: string; productId: string; state: string; agentId: string; pieces: number; orders: number }>;
+  /** Gifts / cross-sells / extras / package parts, each tied to the main product it shipped with. */
+  extras: Array<{ day: string; productId: string; itemId: string; kind: "gift" | "cross_sell" | "extra" | "package"; state: string; agentId: string; pieces: number }>;
   orderCells: Array<{ day: string; state: string; agentId: string; orders: number }>;
   days: Array<{ day: string; pieces: number; orders: number }>;
   agents: Array<{ id: string; name: string }>;

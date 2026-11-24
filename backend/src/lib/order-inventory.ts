@@ -250,7 +250,13 @@ export const collapseOrderInventoryLines = (lines: OrderInventoryLine[]) => {
   return Array.from(grouped.values());
 };
 
-export const orderInventoryLinesFromRow = (order: OrderInventoryLike) => {
+/**
+ * Every line an order ships, NOT merged by product, so each keeps where it came
+ * from (main item, package part, cross-sell, extra, free gift). Pieces Sold uses
+ * this to keep gifts and add-ons out of the main-product count.
+ * orderInventoryLinesFromRow() is this, merged by product, for stock.
+ */
+export const orderInventoryLinesBySource = (order: OrderInventoryLike): OrderInventoryLine[] => {
   const packageLines = normalizeSnapshotLines(order.package_components_snapshot);
   const baseProductLine = order.product_id && order.product_name && normalizePositiveInt(order.quantity, 0) > 0
     ? {
@@ -270,13 +276,16 @@ export const orderInventoryLinesFromRow = (order: OrderInventoryLike) => {
       ]
     : (baseProductLine ? [baseProductLine] : []);
 
-  return collapseOrderInventoryLines([
+  return [
     ...baseLines,
     ...normalizedCrossSellLines(order.cross_sell_lines),
     ...normalizedAdditionalLines(order.additional_lines),
     ...normalizedFreeGiftLines(order.free_gift_lines)
-  ]);
+  ];
 };
+
+export const orderInventoryLinesFromRow = (order: OrderInventoryLike) =>
+  collapseOrderInventoryLines(orderInventoryLinesBySource(order));
 
 export const primaryInventoryProductId = (
   lines: OrderInventoryLine[],
