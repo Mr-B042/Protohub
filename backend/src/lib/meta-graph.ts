@@ -457,16 +457,30 @@ export async function adAccountFunds(adAccountId: string, token: string) {
 }
 
 /**
- * How many campaigns in the account are running right now (effective_status
- * ACTIVE), capped at 100 - the funds panel only needs "none" vs "some".
+ * How many campaigns are really running: campaigns with at least one ad that
+ * is DELIVERING (the ad, its ad set and its campaign all switched on - Meta's
+ * ad effective_status ACTIVE). Bright, 25 Nov 2026: counting campaigns marked
+ * ACTIVE was wrong - a campaign stays ACTIVE when its ad sets or ads are
+ * switched off. Each ad's status is checked here too, never trusting the
+ * filter alone. At most 5 pages of 500 ads.
  */
 export async function activeCampaignCount(adAccountId: string, token: string) {
   const id = String(adAccountId).replace(/^act_/, "");
-  const result = await graphGet<{ data?: Array<{ id: string }> }>(`act_${id}/campaigns`, token, {
-    fields: "id", limit: "100", effective_status: JSON.stringify(["ACTIVE"])
-  });
-  if (!result.ok) return { ok: false as const, message: result.message };
-  return { ok: true as const, count: (result.data.data ?? []).length };
+  const live = new Set<string>();
+  let after: string | undefined;
+  for (let page = 0; page < 5; page += 1) {
+    const result = await graphGet<{ data?: Array<{ id: string; campaign_id?: string; effective_status?: string }>; paging?: { cursors?: { after?: string }; next?: string } }>(
+      `act_${id}/ads`, token, {
+        fields: "campaign_id,effective_status", limit: "500",
+        filtering: JSON.stringify([{ field: "effective_status", operator: "IN", value: ["ACTIVE"] }]),
+        ...(after ? { after } : {})
+      });
+    if (!result.ok) return { ok: false as const, message: result.message };
+    for (const ad of result.data.data ?? []) if (ad.effective_status === "ACTIVE" && ad.campaign_id) live.add(String(ad.campaign_id));
+    after = result.data.paging?.next ? result.data.paging?.cursors?.after : undefined;
+    if (!after) break;
+  }
+  return { ok: true as const, count: live.size };
 }
 
 /**
