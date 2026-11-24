@@ -227,6 +227,7 @@ import ChargeRiskBanner from "./components/ChargeRiskBanner";
 import CartLogOwedBanner from "./components/CartLogOwedBanner";
 import OrderHistoryModal from "./components/OrderHistoryModal";
 import DateWindowNav from "./components/DateWindowNav";
+import { CartIntegrityPanel } from "./pages/cart-integrity/CartIntegrityPanel";
 import type { UpsellPerfOrder } from "./pages/UpsellPerformancePage";
 import type { RepProductOrder } from "./pages/RepProductPerformancePage";
 import type { ManagerFundTxn, WeeklyLogMissRow } from "./lib/api";
@@ -2524,6 +2525,9 @@ const orderLocations: OrderLocation[] = ["All Locations", "Lagos", "Abuja", "Por
 // No "Other" (Bright, 23 Oct 2026): it had become the way to close customers
 // nobody reached. The server refuses anything not on this list - keep it in
 // step with CART_NOT_INTERESTED_REASONS in backend/src/routes/carts.ts.
+/** Keep in step with CONVERSATION_OUTCOMES / NO_CONTACT_OUTCOMES in backend/src/lib/cart-log-integrity.ts. */
+const CART_CONVERSATION_OUTCOMES = new Set(["Interested", "Not interested", "Wants to order now", "Price concern", "Asked to call back", "Rescheduled"]);
+const CART_NO_CONTACT_OUTCOMES = new Set(["Unresponsive", "Number not reachable"]);
 const CART_NOT_INTERESTED_REASONS = [
   "Price", "Not ready yet / no money now", "Was only checking / ordered by mistake",
   "Does not remember ordering", "No longer needs it", "Already bought elsewhere",
@@ -9512,10 +9516,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [cartAttemptCart, setCartAttemptCart] = useState<CartFollowUpRow | null>(null);
   const [cartAttemptHistory, setCartAttemptHistory] = useState<CartAttemptRow[]>([]);
   const [cartAttemptHistoryLoading, setCartAttemptHistoryLoading] = useState(false);
+  // ⚠️ Starts BLANK (Bright, 24 Nov 2026 audit). It used to start as
+  // "Interested" + "not reached", so an untouched Save logged a call that
+  // never happened. Outcome and "did you speak to them?" must be chosen.
   const [cartAttemptDraft, setCartAttemptDraft] = useState({
-    channel: "Call", outcomeCode: "Interested", customOutcome: "", outcomeNote: "",
-    customerReached: false, nextActionAt: ""
+    channel: "Call", outcomeCode: "", customOutcome: "", outcomeNote: "",
+    customerReached: null as boolean | null, nextActionAt: ""
   });
+  /** Locks Save while a save is on its way: a second click wrote a second row. */
+  const [cartAttemptSaving, setCartAttemptSaving] = useState(false);
+  /** The Call / WhatsApp tap made in this window (a log needs one). */
+  const [cartAttemptTap, setCartAttemptTap] = useState<{ channel: "call" | "whatsapp"; at: string } | null>(null);
   const cartAttemptNoteRef = useRef("");
   const [cartEmbedFilter, setCartEmbedFilter] = useState<string>("All forms");
   const [scheduleRange, setScheduleRange] = useState<ScheduleRange>(() =>
@@ -45689,9 +45700,11 @@ ${waybillLineItems(w).length > 1
     setCartFollowUpRunActive(inRun);
     setCartAttemptCart(cart);
     setCartAttemptDraft({
-      channel: "Call", outcomeCode: "Interested", customOutcome: "", outcomeNote: "",
-      customerReached: false, nextActionAt: ""
+      channel: "Call", outcomeCode: "", customOutcome: "", outcomeNote: "",
+      customerReached: null, nextActionAt: ""
     });
+    setCartAttemptTap(null);
+    setCartAttemptSaving(false);
     cartAttemptNoteRef.current = "";
     // Every previous call, so nobody repeats a conversation the customer has
     // already had - and so a supervisor can read the whole thread in one place.
@@ -45746,8 +45759,30 @@ ${waybillLineItems(w).length > 1
     advanceCartRun(queue, cartFollowUpLogged, skipped);
   };
 
-  const saveCartFollowUp = async () => {
+  /** Records the tap (a log needs one), then the phone / WhatsApp opens as normal. */
+  const tapCartContact = (channel: "call" | "whatsapp") => {
     if (!cartAttemptCart) return;
+    const cartId = cartAttemptCart.id;
+    setCartAttemptTap({ channel, at: new Date().toISOString() });
+    setCartAttemptDraft((v) => ({ ...v, channel: channel === "call" ? "Call" : "WhatsApp" }));
+    void cartsApi.tapContact(cartId, channel).catch((err: any) => {
+      setCartAttemptTap(null);
+      showToast(err?.message ? `The tap was not recorded: ${err.message}` : "The tap was not recorded. Tap again before saving.");
+    });
+  };
+
+  const saveCartFollowUp = async () => {
+    if (!cartAttemptCart || cartAttemptSaving) return;
+    if (!cartAttemptDraft.outcomeCode) { showToast("Choose what happened on the call."); return; }
+    if (cartAttemptDraft.customerReached === null) { showToast("Say whether you spoke to the customer: Yes or No."); return; }
+    if (CART_CONVERSATION_OUTCOMES.has(cartAttemptDraft.outcomeCode) && !cartAttemptDraft.customerReached) {
+      showToast(`"${cartAttemptDraft.outcomeCode}" means you spoke to them. Choose Yes, or pick what really happened (Unresponsive, Number not reachable…).`);
+      return;
+    }
+    if (CART_NO_CONTACT_OUTCOMES.has(cartAttemptDraft.outcomeCode) && cartAttemptDraft.customerReached) {
+      showToast(`"${cartAttemptDraft.outcomeCode}" means nobody answered. Choose No, or pick what they said.`);
+      return;
+    }
     if (cartAttemptDraft.outcomeCode === "Other" && !cartAttemptDraft.customOutcome.trim()) {
       showToast("Describe the outcome.");
       return;
@@ -45769,6 +45804,7 @@ ${waybillLineItems(w).length > 1
       showToast(`Cannot close as Unresponsive yet — this is attempt ${done} of ${CART_UNRESPONSIVE_MIN_ATTEMPTS}. Log the call with what happened, and try again later.`);
       return;
     }
+    setCartAttemptSaving(true);
     try {
       const result = await cartsApi.logContactAttempt(cartAttemptCart.id, {
         channel: cartAttemptDraft.channel,
@@ -45778,6 +45814,7 @@ ${waybillLineItems(w).length > 1
         customerReached: cartAttemptDraft.customerReached,
         nextActionAt: cartAttemptDraft.nextActionAt || undefined
       });
+      setCartAttemptSaving(false);
       if (cartFollowUpRunActive) {
         const logged = cartFollowUpLogged + 1;
         setCartFollowUpLogged(logged);
@@ -45801,7 +45838,7 @@ ${waybillLineItems(w).length > 1
           : cart));
       }
       await loadCartFollowUps();
-    } catch (err: any) { showToast(err?.message ?? "Could not log that follow-up."); }
+    } catch (err: any) { setCartAttemptSaving(false); showToast(err?.message ?? "Could not log that follow-up."); }
   };
 
   const openCartModal = (cart: AbandonedCartRecord, nextModal: ModalType) => {
@@ -65950,6 +65987,10 @@ ${waybillLineItems(w).length > 1
               onViewCart={(cartId) => { setSelectedCartId(cartId); setModal("cartDetails"); }}
               onViewPolicy={() => setCartPenaltyShowPolicy((value) => !value)}
             />
+            {/* Bright, 24 Nov 2026 audit: HOW the logs were made, above the charges. */}
+            {(currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager") && (
+              <CartIntegrityPanel onViewCart={(cartId) => { setSelectedCartId(cartId); setModal("cartDetails"); }} />
+            )}
             {cartPenaltyShowPolicy && (
               <div className="mt-2 rounded-xl border border-rose-200 bg-white p-3 text-xs leading-relaxed text-slate-600">
                 <b className="text-rose-800">Daily cart-log penalty policy</b>
@@ -109305,7 +109346,7 @@ ${waybillLineItems(w).length > 1
 	                <section className="rounded-xl border border-gray-200 bg-gray-50/70 p-4">
 	                  <div className="grid gap-x-5 gap-y-3 sm:grid-cols-3">
 	                    {detail("Customer", cart.customer || "No name given")}
-	                    {detail("Phone", <a href={`tel:${cart.phone}`} className="text-[#1F8FE0] hover:underline">{cart.phone}</a>)}
+	                    {detail("Phone", <a href={`tel:${cart.phone}`} onClick={() => tapCartContact("call")} className="text-[#1F8FE0] hover:underline">{cart.phone}</a>)}
 	                    {detail("WhatsApp", altWhatsapp ?? <span className="font-normal text-gray-400">same as phone</span>)}
 	                    {detail("Product", cart.productName || <span className="font-normal text-gray-400">not captured</span>)}
 	                    {detail("Cart value", <span className="text-[15px] font-black text-gray-900">{cartRowMoney(cart.amount, cart.currency)}</span>)}
@@ -109353,6 +109394,26 @@ ${waybillLineItems(w).length > 1
 	                  )}
 	                </section>
 
+	                {/* A log needs a tap here first (Bright, 24 Nov 2026): it is the only
+	                    trace that a call or chat was actually started. */}
+	                <section className={`rounded-xl border p-3 ${cartAttemptTap ? "border-emerald-200 bg-emerald-50/60" : "border-amber-200 bg-amber-50/60"}`}>
+	                  <div className="flex flex-wrap items-center gap-2">
+	                    <a href={`tel:${cart.phone}`} onClick={() => tapCartContact("call")}
+	                      className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg bg-[#1F8FE0] px-3 py-2 text-sm font-bold text-white hover:bg-[#1a7dc4]">
+	                      <Phone className="h-4 w-4" /> Call {cart.phone}
+	                    </a>
+	                    <a href={`https://wa.me/${String(cart.whatsapp || cart.phone).replace(/\D/g, "").replace(/^0/, "234")}`} target="_blank" rel="noreferrer" onClick={() => tapCartContact("whatsapp")}
+	                      className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-700">
+	                      <MessageCircle className="h-4 w-4" /> WhatsApp
+	                    </a>
+	                    <span className={`text-[12px] font-semibold ${cartAttemptTap ? "text-emerald-800" : "text-amber-800"}`}>
+	                      {cartAttemptTap
+	                        ? `${cartAttemptTap.channel === "call" ? "Call" : "WhatsApp"} started at ${new Date(cartAttemptTap.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. Now log what happened.`
+	                        : "Start the call or chat from here first. A log is only accepted after you tap Call or WhatsApp on this cart."}
+	                    </span>
+	                  </div>
+	                </section>
+
 	                <p className="m-0 text-xs text-gray-500">
 	                  Record what actually happened on this call. The cart's status follows the outcome, so the next person can see where it stands without reading every note.
 	                </p>
@@ -109366,8 +109427,9 @@ ${waybillLineItems(w).length > 1
 	                  </label>
 	                  <label className="flex flex-col gap-1">
 	                    <span className="text-xs font-bold text-gray-600">Outcome *</span>
-	                    <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={cartAttemptDraft.outcomeCode}
+	                    <select className={`rounded-lg border px-3 py-2 text-sm ${cartAttemptDraft.outcomeCode ? "border-gray-200" : "border-amber-300 bg-amber-50/50 text-gray-500"}`} value={cartAttemptDraft.outcomeCode}
 	                      onChange={(e) => setCartAttemptDraft((v) => ({ ...v, outcomeCode: e.target.value, customOutcome: "" }))}>
+	                      <option value="" disabled>Choose what happened…</option>
 	                      {["Interested", "Wants to order now", "Asked to call back", "Price concern",
                         "Rescheduled", "Unresponsive", "Number not reachable", "Wrong number", "Not interested", "Other"].map((o) => {
                           const attemptsAfterSave = (cartAttemptCart?.attempts ?? 0) + 1;
@@ -109444,11 +109506,20 @@ ${waybillLineItems(w).length > 1
                     <input type="date" aria-label="Schedule callback reminder date" className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100 dark:[color-scheme:dark]" value={cartAttemptDraft.nextActionAt}
 	                      onChange={(e) => setCartAttemptDraft((v) => ({ ...v, nextActionAt: e.target.value }))} />
 	                  </label>
-	                  <label className="flex items-center gap-2 self-end text-xs font-semibold text-gray-700">
-	                    <input type="checkbox" checked={cartAttemptDraft.customerReached}
-	                      onChange={(e) => setCartAttemptDraft((v) => ({ ...v, customerReached: e.target.checked }))} />
-	                    I actually spoke to them
-	                  </label>
+	                  <fieldset className="m-0 flex flex-col gap-1 border-0 p-0">
+	                    <legend className="mb-1 text-xs font-bold text-gray-600">Did you speak to the customer? *</legend>
+	                    <div className="flex gap-2">
+	                      {([[true, "Yes, I spoke to them"], [false, "No, I did not"]] as const).map(([value, label]) => (
+	                        <button key={label} type="button" aria-pressed={cartAttemptDraft.customerReached === value}
+	                          onClick={() => setCartAttemptDraft((v) => ({ ...v, customerReached: value }))}
+	                          className={`!min-h-0 flex-1 rounded-lg border px-3 py-2 text-sm font-semibold ${cartAttemptDraft.customerReached === value
+	                            ? (value ? "border-emerald-400 bg-emerald-50 text-emerald-800" : "border-slate-400 bg-slate-100 text-slate-800")
+	                            : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
+	                          {label}
+	                        </button>
+	                      ))}
+	                    </div>
+	                  </fieldset>
 	                </div>
 	                <p className="m-0 rounded-lg bg-blue-50/70 px-3 py-2 text-[11px] text-gray-600">
 	                  When they are ready to buy, use <strong>Convert to order</strong> on the cart — that creates the real order and links it back here, so the recovery is credited.
@@ -109461,8 +109532,8 @@ ${waybillLineItems(w).length > 1
 	                      Skip for now
 	                    </button>
 	                  )}
-	                  <button className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-medium text-white" onClick={saveCartFollowUp}>
-	                    Save follow-up
+	                  <button className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-medium text-white disabled:opacity-60" onClick={saveCartFollowUp} disabled={cartAttemptSaving}>
+	                    {cartAttemptSaving ? "Saving…" : "Save follow-up"}
 	                  </button>
 	                </div>
 	              </div>
