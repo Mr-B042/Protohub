@@ -241,3 +241,12 @@ test("only logs against DUE carts clear the board", () => {
 test("a busy day on carts that were never due clears nothing", () => {
   assert.equal(missedCartCount(day({ cartsDue: 11, logsMade: 37, cartsLogged: 0 })), 11);
 });
+
+import { CART_INTERESTED_MISS_AMOUNT } from "./cart-log-penalty.js";
+test("Interested follow-ups missed are charged ₦50, other carts ₦500 (Bright, 24 Nov 2026)", () => {
+  const input = { repId: "r", repName: "R", dateKey: "2026-11-25", cartsDue: 5, logsMade: 1, cartsLogged: 1, lowRateMissed: 2 };
+  assert.equal(CART_INTERESTED_MISS_AMOUNT, 50);
+  assert.equal(dayPenaltyAmount(input), 2 * 500 + 2 * 50);
+  assert.equal(dayPenaltyAmount({ ...input, lowRateMissed: 9 }), 4 * 50);
+  assert.equal(dayPenaltyAmount({ ...input, lowRateMissed: undefined }), 4 * 500);
+});

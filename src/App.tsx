@@ -65881,12 +65881,12 @@ ${waybillLineItems(w).length > 1
               <div className="min-w-0">
                 <p className={`m-0 text-[13px] font-black ${penalties.phase.active ? "text-rose-900" : "text-amber-900"}`}>
                   {penalties.phase.active
-                    ? `Daily log penalty is live — ₦${penalties.missAmount} per cart, per day`
-                    : `${penalties.phase.label} — ₦${penalties.missAmount} per cart, per day`}
+                    ? `Daily log penalty is live — ₦${penalties.missAmount} per cart, per day (₦50 for an Interested follow-up)`
+                    : `${penalties.phase.label} — ₦${penalties.missAmount} per cart, per day (₦50 for an Interested follow-up)`}
                 </p>
                 <p className={`m-0 mt-0.5 text-[12px] font-medium leading-4 ${penalties.phase.active ? "text-rose-800" : "text-amber-800"}`}>
                   {penalties.phase.active
-                    ? `Every assigned cart left unlogged costs ₦${penalties.missAmount} for that day — a board of 40 is ₦${(40 * penalties.missAmount).toLocaleString("en-NG")}. Clearing a cart removes its charge, so partial work counts. Sundays are off, and nothing is charged until the Owner approves it.`
+                    ? `Every assigned cart left unlogged costs ₦${penalties.missAmount} for that day — a board of 40 is ₦${(40 * penalties.missAmount).toLocaleString("en-NG")}. Clearing a cart removes its charge, so partial work counts. A cart you logged Interested is charged like an order follow-up instead: ₦50 a day until it becomes an order, is rescheduled with a date, or is closed. Sundays are off, and nothing is charged until the Owner approves it.`
                     : `Starts Monday ${new Date(`${penalties.phase.startDate}T12:00:00Z`).toLocaleDateString("en-NG", { day: "numeric", month: "long" })}, counting from the carts assigned that day. Nothing before then is charged — this is a practice run so everyone can see what is coming.`}
                 </p>
               </div>
@@ -65921,7 +65921,7 @@ ${waybillLineItems(w).length > 1
                   <ChargeRiskBanner
                     label={penalties.today.rehearsal ? "Cart log charge risk — practice run" : "Cart log charge risk"}
                     amount={exposure}
-                    detail={`${remaining} cart${remaining === 1 ? "" : "s"} still unlogged. Each unlogged cart is ₦${penalties.missAmount.toLocaleString("en-NG")}. Log the carts marked below before midnight Lagos.`}
+                    detail={`${remaining} cart${remaining === 1 ? "" : "s"} still unlogged. Each unlogged cart is ₦${penalties.missAmount.toLocaleString("en-NG")} (₦50 for an Interested follow-up). Log the carts marked below before midnight Lagos.`}
                     cutoffHour={24}
                     cutoffLabel="midnight"
                     rehearsal={penalties.today.rehearsal}

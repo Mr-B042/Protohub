@@ -52,7 +52,7 @@ export function stagesDue(waited: number, callMinutes: number): Stage[] {
   return out;
 }
 
-export type ChaseCart = { id: string; customer: string; product: string; neverCalled: boolean; loggedToday: boolean; callbackToday?: boolean };
+export type ChaseCart = { id: string; customer: string; product: string; neverCalled: boolean; loggedToday: boolean; callbackToday?: boolean; /** This cart's charge if not logged today (₦50 for an Interested follow-up). */ fine?: number };
 
 /** What one rep is told at the 9am / 2pm chase. null = nothing to chase. */
 export function chaseMessage(slot: "morning" | "afternoon", carts: ChaseCart[], finePerCart: number) {
@@ -70,7 +70,12 @@ export function chaseMessage(slot: "morning" | "afternoon", carts: ChaseCart[], 
   const parts = [
     callbacks > 0 ? `📅 ${callbacks} callback${callbacks === 1 ? "" : "s"} the customer asked for today` : null,
     never > 0 ? `${never} never called` : null,
-    finePerCart > 0 ? `₦${finePerCart.toLocaleString("en-NG")} each if not logged today (₦${(finePerCart * due.length).toLocaleString("en-NG")})` : null,
+    finePerCart > 0 ? (() => {
+      const total = due.reduce((s, c) => s + (c.fine ?? finePerCart), 0);
+      return due.every((c) => (c.fine ?? finePerCart) === finePerCart)
+        ? `₦${finePerCart.toLocaleString("en-NG")} each if not logged today (₦${total.toLocaleString("en-NG")})`
+        : `₦${total.toLocaleString("en-NG")} if not logged today`;
+    })() : null,
     `Start with: ${first.join(", ")}${due.length > first.length ? ` +${due.length - first.length} more` : ""}`
   ].filter(Boolean);
   return { title, message: `${parts.join(". ")}.`, due: due.length, never };

@@ -2873,6 +2873,14 @@ export async function computeCartLogBoard(orgId: string, repFilter: string | nul
         .filter((row) => !pausedOn(reschedules, String(row.id).trim(), dateKey))
         .map((row) => row.id as string)
     );
+    // Interested follow-ups (new Interested, not yet an order) are charged ₦50, not ₦500.
+    const interestedFollow = new Set(reschedules.filter((r) => r.outcome === "Interested").map((r) => r.cartId));
+    const lowRateMissedFor = (repId: string, dateKey: string, dueIds: Set<string>, touched?: Set<string>) => {
+      const done = touched ?? loggedCarts.get(`${repId}|${dateKey}`);
+      let count = 0;
+      dueIds.forEach((cartId) => { if (interestedFollow.has(String(cartId).trim()) && !done?.has(cartId)) count += 1; });
+      return count;
+    };
     const loggedDueCount = (repId: string, dateKey: string, dueIds: Set<string>) => {
       const touched = loggedCarts.get(`${repId}|${dateKey}`);
       if (!touched) return 0;
@@ -2947,7 +2955,8 @@ export async function computeCartLogBoard(orgId: string, repFilter: string | nul
           dateKey,
           cartsDue: dueIds.size,
           logsMade: logged.get(`${repId}|${dateKey}`) ?? 0,
-          cartsLogged: loggedDueCount(repId, dateKey, dueIds)
+          cartsLogged: loggedDueCount(repId, dateKey, dueIds),
+          lowRateMissed: lowRateMissedFor(repId, dateKey, dueIds)
         });
       });
     });
@@ -2984,7 +2993,7 @@ export async function computeCartLogBoard(orgId: string, repFilter: string | nul
       })
       .sort((left, right) => right.missDate.localeCompare(left.missDate));
 
-    return { days, openCarts, repIds, repName, decisions, dueCartIdsFor, affectedCartsFor, loggedThatDayFor, logged, loggedDueCount, misses, inputs };
+    return { days, openCarts, repIds, repName, decisions, dueCartIdsFor, affectedCartsFor, loggedThatDayFor, logged, loggedDueCount, lowRateMissedFor, misses, inputs };
 }
 
 // ── GET /api/carts/log-penalties?range= ───────────────────
@@ -3135,7 +3144,7 @@ router.get("/log-penalties",
       const to = range.to;
       const days = to >= from ? chargeableDaysIn(from, to) : [];
 
-      const { days: _boardDays, openCarts, repIds, repName, decisions, dueCartIdsFor, affectedCartsFor, loggedThatDayFor, logged, loggedDueCount, misses, inputs } =
+      const { days: _boardDays, openCarts, repIds, repName, decisions, dueCartIdsFor, affectedCartsFor, loggedThatDayFor, logged, loggedDueCount, lowRateMissedFor, misses, inputs } =
         await computeCartLogBoard(orgId, repFilter, from, to);
 
       // ⚠️ Closed days in the CURRENT week, computed OUTSIDE the range filter -
@@ -3176,7 +3185,8 @@ router.get("/log-penalties",
               dateKey,
               cartsDue: dueIds.size,
               logsMade: touched?.size ?? 0,
-              cartsLogged: loggedDue
+              cartsLogged: loggedDue,
+              lowRateMissed: lowRateMissedFor(repId, dateKey, dueIds, touched ?? new Set())
             });
           });
         });
@@ -3212,9 +3222,10 @@ router.get("/log-penalties",
       // they can still act on - and hiding it behind a date filter would make
       // the warning disappear exactly when someone is browsing history.
       const myRepId = scopeRepId ?? requestedRep;
+      // Same due rule as the history (paused reschedules / Interested left out).
+      const dueToday = dueCartIdsFor(openCarts.filter((row) => !myRepId || row.assigned_rep_id === myRepId), todayKey);
       const todaysCarts = openCarts.filter((row) =>
-        (!myRepId || row.assigned_rep_id === myRepId)
-        && lagosDateKey(row.assigned_at ?? row.created_at) <= todayKey);
+        (!myRepId || row.assigned_rep_id === myRepId) && dueToday.has(row.id as string));
       let todayAttempts = 0;
       if (myRepId) {
         todayAttempts = logged.get(`${myRepId}|${todayKey}`) ?? 0;
@@ -3224,7 +3235,8 @@ router.get("/log-penalties",
           repId: myRepId, repName: repName.get(myRepId) ?? "You",
           dateKey: todayKey, cartsDue: todaysCarts.length, logsMade: todayAttempts,
           // Intersected with the board, same as the historical rows above.
-          cartsLogged: loggedDueCount(myRepId, todayKey, new Set(todaysCarts.map((row) => row.id as string)))
+          cartsLogged: loggedDueCount(myRepId, todayKey, new Set(todaysCarts.map((row) => row.id as string))),
+          lowRateMissed: lowRateMissedFor(myRepId, todayKey, new Set(todaysCarts.map((row) => row.id as string)))
         })
         : null;
 
@@ -3244,7 +3256,8 @@ router.get("/log-penalties",
             dateKey: todayKey,
             cartsDue: theirDueIds.size,
             logsMade: logged.get(`${repId}|${todayKey}`) ?? 0,
-            cartsLogged: loggedDueCount(repId, todayKey, theirDueIds)
+            cartsLogged: loggedDueCount(repId, todayKey, theirDueIds),
+            lowRateMissed: lowRateMissedFor(repId, todayKey, theirDueIds)
           };
           const cartsRemaining = missedCartCount(input);
           return { ...input, cartsRemaining, atRisk: dayPenaltyAmount(input) };
