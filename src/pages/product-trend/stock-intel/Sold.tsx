@@ -27,7 +27,13 @@ const dayName = (key: string) => new Date(`${key}T12:00:00Z`).toLocaleDateString
 const daysOf = (w: DateWindow) => { const out: string[] = []; for (let d = w.start; d <= w.end && out.length < 400; d = shiftDay(d, 1)) out.push(d); return out; };
 
 type WithIt = { itemId: string; kind: "gift" | "cross_sell" | "extra" | "package"; pieces: number };
-type Group = { key: string; first: string; second: string | null; pieces: number; orders: number; byDay: Map<string, number>; withIt: WithIt[] };
+type Sub = { key: string; label: string; pieces: number; orders: number; byDay: Map<string, number> };
+type Group = { key: string; first: string; second: string | null; pieces: number; orders: number; byDay: Map<string, number>; withIt: WithIt[]; subs: Sub[] };
+/** What a row opens into: a state → its agents, an agent → its products, a product → its states. */
+const SUB_OF: Record<GroupBy, { dim: "agent" | "product" | "state"; title: string }> = {
+  state: { dim: "agent", title: "Agents in this state" }, agent: { dim: "product", title: "Products this agent sold" },
+  product: { dim: "state", title: "States this product sold in" }, productState: { dim: "agent", title: "Agents" }, productAgent: { dim: "state", title: "States" }
+};
 const KIND_TEXT: Record<WithIt["kind"], string> = { gift: "free gift", cross_sell: "cross-sell", extra: "extra item", package: "in the package" };
 const KIND_TONE: Record<WithIt["kind"], string> = {
   gift: "bg-pink-50 text-pink-800 ring-pink-200", cross_sell: "bg-violet-50 text-violet-800 ring-violet-200",
@@ -94,14 +100,22 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
   // Choices come from every loaded day, so a pick does not vanish when the dates change.
   const options = useMemo(() => {
     const all = sold?.lines ?? [];
-    const count = (key: (l: (typeof all)[number]) => string) => { const m = new Map<string, number>(); for (const l of all) m.set(key(l), (m.get(key(l)) ?? 0) + l.pieces); return m; };
+    // Counts are for the picked dates; names sold earlier stay listed (0) so a pick never vanishes.
+    const inRange = (day: string) => day >= range.start && day <= range.end;
+    const count = (key: (l: (typeof all)[number]) => string) => { const m = new Map<string, number>(); for (const l of all) m.set(key(l), (m.get(key(l)) ?? 0) + (inRange(l.day) ? l.pieces : 0)); return m; };
     const asList = (m: Map<string, number>, label: (k: string) => string) => [...m].map(([value, n]) => ({ value, label: label(value), n })).sort((x, y) => y.n - x.n);
     return {
       products: asList(count((l) => l.productId), ctx.productName),
       states: asList(count((l) => l.state), place),
-      agents: asList(count((l) => l.agentId), nameOfAgent)
+      // Agents narrow to the picked states / products, so "Lagos" lists only agents that sold in Lagos.
+      agents: asList((() => {
+        const st = new Set(pickStates), p = new Set(pickProducts), m = new Map<string, number>();
+        for (const l of all) if ((!st.size || st.has(l.state)) && (!p.size || p.has(l.productId))) m.set(l.agentId, (m.get(l.agentId) ?? 0) + (inRange(l.day) ? l.pieces : 0));
+        for (const id of pickAgents) if (!m.has(id)) m.set(id, 0);
+        return m;
+      })(), nameOfAgent)
     };
-  }, [sold, ctx, agentName]);
+  }, [sold, ctx, agentName, pickStates, pickProducts, pickAgents, range]);
 
   const totals = useMemo(() => {
     const pieces = lines.reduce((s, l) => s + l.pieces, 0);
@@ -139,10 +153,21 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
   const groups = useMemo(() => {
     const map = new Map<string, Group>();
     const add = (key: string, first: string, second: string | null, day: string, pieces: number, orders: number) => {
-      const g = map.get(key) ?? { key, first, second, pieces: 0, orders: 0, byDay: new Map(), withIt: [] };
+      const g = map.get(key) ?? { key, first, second, pieces: 0, orders: 0, byDay: new Map(), withIt: [], subs: [] };
       g.pieces += pieces; g.orders += orders; g.byDay.set(day, (g.byDay.get(day) ?? 0) + pieces);
       map.set(key, g);
+      return g;
     };
+    const dim = SUB_OF[groupBy].dim;
+    const subKey = (l: { productId: string; state: string; agentId: string }) => dim === "agent" ? l.agentId : dim === "product" ? l.productId : l.state;
+    const subLabel = (k: string) => dim === "agent" ? nameOfAgent(k) : dim === "product" ? ctx.productName(k) : place(k);
+    const addSub = (g: Group, k: string, day: string, pieces: number, orders: number) => {
+      let sub = g.subs.find((x) => x.key === k);
+      if (!sub) { sub = { key: k, label: subLabel(k), pieces: 0, orders: 0, byDay: new Map() }; g.subs.push(sub); }
+      sub.pieces += pieces; sub.orders += orders; sub.byDay.set(day, (sub.byDay.get(day) ?? 0) + pieces);
+    };
+    // State → agents: an order counted once even if it held two products (order cells).
+    const exactAgentOrders = groupBy === "state" && !pickProducts.length;
     for (const l of lines) {
       const product = ctx.productName(l.productId);
       if (groupBy === "product") add(l.productId, product, null, l.day, l.pieces, l.orders);
@@ -151,6 +176,11 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
       else if (groupBy === "state") add(l.state, place(l.state), null, l.day, l.pieces, pickProducts.length ? l.orders : 0);
       else add(l.agentId, nameOfAgent(l.agentId), null, l.day, l.pieces, pickProducts.length ? l.orders : 0);
     }
+    const keyOfLine = (x: { productId: string; state: string; agentId: string }) =>
+      groupBy === "product" ? x.productId : groupBy === "productState" ? `${x.productId}|${x.state}` : groupBy === "productAgent" ? `${x.productId}|${x.agentId}` : groupBy === "state" ? x.state : x.agentId;
+    for (const l of lines) { const g = map.get(keyOfLine(l)); if (g) addSub(g, subKey(l), l.day, l.pieces, exactAgentOrders ? 0 : l.orders); }
+    if (exactAgentOrders) for (const c of cells) { const g = map.get(c.state); const sub = g?.subs.find((x) => x.key === c.agentId); if (sub) sub.orders += c.orders; }
+    for (const g of map.values()) g.subs.sort((a, b) => b.pieces - a.pieces || a.label.localeCompare(b.label));
     const keyOf = (x: { productId: string; state: string; agentId: string }) =>
       groupBy === "product" ? x.productId : groupBy === "productState" ? `${x.productId}|${x.state}` : groupBy === "productAgent" ? `${x.productId}|${x.agentId}` : groupBy === "state" ? x.state : x.agentId;
     for (const e of extras) {
@@ -191,14 +221,20 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
   const toggleState = (state: string) => setPickStates((prev) => prev.includes(state) ? prev.filter((x) => x !== state) : [...prev, state]);
 
   const showDays = eachDay && days.length <= MAX_DAY_COLUMNS;
+  // With only a few rows (e.g. one state picked) they open by themselves.
+  const autoOpen = groups.length <= 3;
+  const isOpen = (key: string) => (autoOpen ? !openRows.has(key) : openRows.has(key));
   const firstHead = groupBy === "state" ? "State" : groupBy === "agent" ? "Agent" : "Product";
   const secondHead = groupBy === "productState" ? "State" : groupBy === "productAgent" ? "Agent" : null;
   const pastDays = days.filter((d) => d <= todayKey).length || 1;
 
   const exportCsv = () => downloadCsv(`pieces-sold-${range.start}-to-${range.end}.csv`, [
     [firstHead, ...(secondHead ? [secondHead] : []), "Pieces sold", "Orders", "A day", "Came with", ...days],
-    ...groups.map((g) => [g.first, ...(secondHead ? [g.second ?? ""] : []), g.pieces, g.orders, one(g.pieces / pastDays),
-      g.withIt.map((w) => `${ctx.productName(w.itemId)} x${w.pieces} (${KIND_TEXT[w.kind]})`).join("; "), ...days.map((d) => g.byDay.get(d) ?? 0)])
+    ...groups.flatMap((g) => [
+      [g.first, ...(secondHead ? [g.second ?? ""] : []), g.pieces, g.orders, one(g.pieces / pastDays),
+        g.withIt.map((w) => `${ctx.productName(w.itemId)} x${w.pieces} (${KIND_TEXT[w.kind]})`).join("; "), ...days.map((d) => g.byDay.get(d) ?? 0)],
+      ...g.subs.map((sub) => [`  - ${sub.label}`, ...(secondHead ? [""] : []), sub.pieces, sub.orders, one(sub.pieces / pastDays), "", ...days.map((d) => sub.byDay.get(d) ?? 0)])
+    ])
   ]);
 
   const select = "!min-h-0 h-9 rounded-xl border border-slate-200/80 bg-white px-3 text-sm font-bold text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
@@ -361,12 +397,13 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
                     <Fragment key={g.key}>
                     <tr className="border-t border-gray-100 dark:border-slate-800">
                       <td className="sticky left-0 bg-white px-3 py-2 font-semibold text-gray-900 dark:bg-slate-900 dark:text-slate-100">
-                        {g.withIt.length > 0 ? (
-                          <button type="button" onClick={() => toggleRow(g.key)} aria-expanded={openRows.has(g.key)} className="!min-h-0 inline-flex items-start gap-1.5 text-left">
-                            <ChevronRight className={`mt-0.5 h-4 w-4 shrink-0 text-gray-400 transition-transform ${openRows.has(g.key) ? "rotate-90" : ""}`} />
-                            <span>{g.first}{groupBy === "agent" && agentStates.get(g.key) && <span className="block text-[11px] font-medium text-gray-500">{agentStates.get(g.key)}</span>}<span className="block text-[11px] font-medium text-gray-500">+ {g.withIt.length} item{g.withIt.length === 1 ? "" : "s"} with it</span></span>
-                          </button>
-                        ) : <span className="block pl-[22px]">{g.first}{groupBy === "agent" && agentStates.get(g.key) && <span className="block text-[11px] font-medium text-gray-500">{agentStates.get(g.key)}</span>}</span>}
+                        <button type="button" onClick={() => toggleRow(g.key)} aria-expanded={isOpen(g.key)} className="!min-h-0 inline-flex items-start gap-1.5 text-left">
+                          <ChevronRight className={`mt-0.5 h-4 w-4 shrink-0 text-gray-400 transition-transform ${isOpen(g.key) ? "rotate-90" : ""}`} />
+                          <span>{g.first}
+                            {groupBy === "agent" && agentStates.get(g.key) && <span className="block text-[11px] font-medium text-gray-500">{agentStates.get(g.key)}</span>}
+                            <span className="block text-[11px] font-medium text-gray-500">{g.subs.length} {SUB_OF[groupBy].dim}{g.subs.length === 1 ? "" : "s"}{g.withIt.length > 0 && ` · + ${g.withIt.length} item${g.withIt.length === 1 ? "" : "s"} with it`}</span>
+                          </span>
+                        </button>
                       </td>
                       {secondHead && <td className="px-3 py-2 text-gray-700 dark:text-slate-300">{g.second}</td>}
                       <td className="px-3 py-2 text-right font-bold tabular-nums">{nf(g.pieces)}</td>
@@ -382,7 +419,28 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
                       )}
                       {showDays && days.map((d) => { const n = g.byDay.get(d) ?? 0; return <td key={d} className={`px-2 py-2 text-right tabular-nums ${n ? "font-semibold text-gray-900 dark:text-slate-100" : "text-gray-300"}`}>{n || "·"}</td>; })}
                     </tr>
-                    {openRows.has(g.key) && g.withIt.length > 0 && (
+                    {isOpen(g.key) && g.subs.map((sub, si) => (
+                      <tr key={`${g.key}|${sub.key}`} className="bg-[#f6fafe] text-[12px] dark:bg-slate-900">
+                        <td className="sticky left-0 bg-[#f6fafe] py-1.5 pl-[34px] pr-3 text-gray-800 dark:bg-slate-900 dark:text-slate-200">
+                          {si === 0 && <span className="mb-0.5 block text-[10.5px] font-semibold uppercase tracking-wide text-gray-400">{SUB_OF[groupBy].title}</span>}
+                          <span className="font-medium">{sub.label}</span>
+                        </td>
+                        {secondHead && <td />}
+                        <td className="px-3 py-1.5 text-right font-semibold tabular-nums">{nf(sub.pieces)}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums text-gray-600">{nf(sub.orders)}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums text-gray-600">{one(sub.pieces / pastDays)}</td>
+                        {!showDays && (
+                          <td className="px-3 py-1.5">
+                            <div className="flex items-center gap-2">
+                              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-100 dark:bg-slate-800"><div className="h-full rounded-full bg-sky-400" style={{ width: `${g.pieces ? (sub.pieces / g.pieces) * 100 : 0}%` }} /></div>
+                              <span className="w-10 text-right text-[11px] tabular-nums text-gray-500" title={`Share of ${g.first}`}>{g.pieces ? Math.round((sub.pieces / g.pieces) * 100) : 0}%</span>
+                            </div>
+                          </td>
+                        )}
+                        {showDays && days.map((d) => { const n = sub.byDay.get(d) ?? 0; return <td key={d} className={`px-2 py-1.5 text-right tabular-nums ${n ? "text-gray-900 dark:text-slate-100" : "text-gray-300"}`}>{n || "·"}</td>; })}
+                      </tr>
+                    ))}
+                    {isOpen(g.key) && g.withIt.length > 0 && (
                       <tr className="bg-gray-50/70 dark:bg-slate-800/40">
                         <td colSpan={showDays ? 4 + (secondHead ? 1 : 0) + days.length : 5 + (secondHead ? 1 : 0)} className="px-3 py-2.5 pl-[34px]">
                           <div className="mb-1.5 text-[11px] font-semibold text-gray-500">Came with it (not counted as sold products)</div>
