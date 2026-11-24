@@ -169,6 +169,27 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
     return list.sort((a, b) => sort === "name" ? `${a.first}${a.second}`.localeCompare(`${b.first}${b.second}`) : sort === "fewest" ? a.pieces - b.pieces : b.pieces - a.pieces);
   }, [lines, cells, extras, pickProducts, groupBy, sort, search, ctx, agentName]);
 
+  // By Agent: each state's total first, highest to lowest (Bright, 24 Nov 2026).
+  const stateSummary = useMemo(() => {
+    const map = new Map<string, { state: string; pieces: number; orders: number; agents: Set<string> }>();
+    for (const l of lines) {
+      const e = map.get(l.state) ?? { state: l.state, pieces: 0, orders: 0, agents: new Set<string>() };
+      e.pieces += l.pieces; e.agents.add(l.agentId);
+      if (pickProducts.length) e.orders += l.orders;
+      map.set(l.state, e);
+    }
+    if (!pickProducts.length) for (const c of cells) { const e = map.get(c.state); if (e) e.orders += c.orders; }
+    return [...map.values()].sort((a, b) => b.pieces - a.pieces || a.state.localeCompare(b.state));
+  }, [lines, cells, pickProducts]);
+  // Which state(s) each agent's sales came from, for the line under its name.
+  const agentStates = useMemo(() => {
+    const map = new Map<string, Map<string, number>>();
+    for (const l of lines) { const m = map.get(l.agentId) ?? new Map<string, number>(); m.set(l.state, (m.get(l.state) ?? 0) + l.pieces); map.set(l.agentId, m); }
+    return new Map([...map].map(([id, m]) => [id, [...m].sort((a, b) => b[1] - a[1]).map(([st]) => place(st)).join(", ")]));
+  }, [lines]);
+  const byAgent = groupBy === "agent" || groupBy === "productAgent";
+  const toggleState = (state: string) => setPickStates((prev) => prev.includes(state) ? prev.filter((x) => x !== state) : [...prev, state]);
+
   const showDays = eachDay && days.length <= MAX_DAY_COLUMNS;
   const firstHead = groupBy === "state" ? "State" : groupBy === "agent" ? "Agent" : "Product";
   const secondHead = groupBy === "productState" ? "State" : groupBy === "productAgent" ? "Agent" : null;
@@ -284,6 +305,35 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
             </div>
           )}
 
+          {byAgent && stateSummary.length > 0 && (
+            <div className="rounded-xl border border-gray-200 p-3 dark:border-slate-700">
+              <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+                <span className="text-[13px] font-bold text-gray-900 dark:text-slate-100">Sold by state <span className="font-medium text-gray-500">· highest to lowest</span></span>
+                <span className="text-[11.5px] text-gray-500">Click a state to see only its agents</span>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {stateSummary.map((st, i) => {
+                  const on = pickStates.includes(st.state);
+                  const share = totals.pieces ? (st.pieces / totals.pieces) * 100 : 0;
+                  return (
+                    <button key={st.state} type="button" onClick={() => toggleState(st.state)} aria-pressed={on}
+                      className={`!min-h-0 rounded-lg border px-3 py-2 text-left transition-colors ${on ? "border-sky-300 bg-sky-50 dark:bg-sky-500/10" : "border-gray-200 hover:bg-gray-50 dark:border-slate-700 dark:hover:bg-slate-800"}`}>
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="min-w-0 truncate text-[13px] font-semibold text-gray-900 dark:text-slate-100"><span className="mr-1.5 text-[11px] font-bold text-gray-400">{i + 1}</span>{place(st.state)}</span>
+                        <span className="shrink-0 text-[15px] font-black tabular-nums text-gray-900 dark:text-slate-50">{nf(st.pieces)}</span>
+                      </div>
+                      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-gray-100 dark:bg-slate-800"><div className="h-full rounded-full bg-[#1F8FE0]" style={{ width: `${share}%` }} /></div>
+                      <div className="mt-1 flex justify-between text-[11px] text-gray-500">
+                        <span>{nf(st.orders)} order{st.orders === 1 ? "" : "s"} · {st.agents.size} agent{st.agents.size === 1 ? "" : "s"}</span>
+                        <span className="tabular-nums">{Math.round(share)}%</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           <div>
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <span className="text-[12.5px] font-semibold text-gray-600 dark:text-slate-300">{groups.length} row{groups.length === 1 ? "" : "s"} · {GROUPS.find((g) => g.value === groupBy)!.label.toLowerCase()}{loading && <Loader2 className="ml-2 inline h-3.5 w-3.5 animate-spin" />}</span>
@@ -314,9 +364,9 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
                         {g.withIt.length > 0 ? (
                           <button type="button" onClick={() => toggleRow(g.key)} aria-expanded={openRows.has(g.key)} className="!min-h-0 inline-flex items-start gap-1.5 text-left">
                             <ChevronRight className={`mt-0.5 h-4 w-4 shrink-0 text-gray-400 transition-transform ${openRows.has(g.key) ? "rotate-90" : ""}`} />
-                            <span>{g.first}<span className="block text-[11px] font-medium text-gray-500">+ {g.withIt.length} item{g.withIt.length === 1 ? "" : "s"} with it</span></span>
+                            <span>{g.first}{groupBy === "agent" && agentStates.get(g.key) && <span className="block text-[11px] font-medium text-gray-500">{agentStates.get(g.key)}</span>}<span className="block text-[11px] font-medium text-gray-500">+ {g.withIt.length} item{g.withIt.length === 1 ? "" : "s"} with it</span></span>
                           </button>
-                        ) : <span className="pl-[22px]">{g.first}</span>}
+                        ) : <span className="block pl-[22px]">{g.first}{groupBy === "agent" && agentStates.get(g.key) && <span className="block text-[11px] font-medium text-gray-500">{agentStates.get(g.key)}</span>}</span>}
                       </td>
                       {secondHead && <td className="px-3 py-2 text-gray-700 dark:text-slate-300">{g.second}</td>}
                       <td className="px-3 py-2 text-right font-bold tabular-nums">{nf(g.pieces)}</td>
