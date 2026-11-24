@@ -64,15 +64,24 @@ async function claim(rows: Array<{ org_id: string; branch_id: string | null; car
   return new Set((data ?? []).map((r: any) => `${r.cart_id}|${r.rep_id}|${r.stage}`));
 }
 
-/** The Head of Sales for a branch (users.is_head_of_sales_rep + branch membership). */
-async function headOfSales(orgId: string, branchId: string) {
-  const [{ data: heads }, { data: members }] = await Promise.all([
+const MANAGER_LINK = "/dashboard/admin/follow-up-queue";
+
+/**
+ * Who hears about reps not calling: the branch's Head of Sales
+ * (users.is_head_of_sales_rep) AND its Managers (Bright, 24 Nov 2026:
+ * "manager" - the Head of Sales was also a rep being chased).
+ */
+async function supervisors(orgId: string, branchId: string) {
+  const [{ data: heads }, { data: managers }, { data: members }] = await Promise.all([
     supabase.from("users").select("id, name").eq("org_id", orgId).eq("active", true).eq("is_head_of_sales_rep", true),
+    supabase.from("users").select("id, name").eq("org_id", orgId).eq("active", true).eq("is_demo", false).eq("role", "Manager"),
     supabase.from("branch_memberships").select("user_id").eq("branch_id", branchId)
   ]);
   const inBranch = new Set((members ?? []).map((m: any) => String(m.user_id)));
-  const head = (heads ?? []).find((h: any) => inBranch.has(String(h.id)));
-  return head ? { id: String(head.id), name: String(head.name ?? "Head of Sales") } : null;
+  const out = new Map<string, { id: string; link: string }>();
+  for (const h of heads ?? []) if (inBranch.has(String(h.id))) out.set(String(h.id), { id: String(h.id), link: HOS_LINK });
+  for (const m of managers ?? []) if (inBranch.has(String(m.id)) && !out.has(String(m.id))) out.set(String(m.id), { id: String(m.id), link: MANAGER_LINK });
+  return [...out.values()];
 }
 
 const who = (cart: any) => String(cart.customer ?? "").trim() || "a customer";
@@ -175,14 +184,13 @@ export async function runCartCallEscalations(now = new Date()) {
       // Head of Sales: one alert per run naming each rep and their late carts.
       const late = [...top.values()].filter((w) => w.stage !== "remind");
       if (late.length > 0) {
-        const head = await headOfSales(branch.org_id, branch.id);
-        if (head) {
-          const perRep = new Map<string, string[]>();
-          for (const w of late) perRep.set(String(w.cart.assigned_rep_id), [...(perRep.get(String(w.cart.assigned_rep_id)) ?? []), `${who(w.cart)} ${mins(w.waited)}`]);
-          await sendHeavy(branch.org_id, branch.id, head.id, {
+        const perRep = new Map<string, string[]>();
+        for (const w of late) perRep.set(String(w.cart.assigned_rep_id), [...(perRep.get(String(w.cart.assigned_rep_id)) ?? []), `${who(w.cart)} ${mins(w.waited)}`]);
+        for (const boss of await supervisors(branch.org_id, branch.id)) {
+          await sendHeavy(branch.org_id, branch.id, boss.id, {
             title: `🚨 ${late.length} cart${late.length === 1 ? "" : "s"} not called in time`,
             message: `${[...perRep].map(([id, carts]) => `${repName.get(id) ?? "A rep"}: ${carts.join(", ")}`).join(" · ")}. Push them to call now.`,
-            link: HOS_LINK, kind: "hos_cart_not_called", tag: `hos-cart-not-called-${branch.id}`
+            link: boss.link, kind: "hos_cart_not_called", tag: `hos-cart-not-called-${branch.id}`
           });
           sent += 1;
         }
@@ -239,19 +247,20 @@ export async function runCartChase(slot: "morning" | "afternoon", now = new Date
         summary.push({ repName: String(rep.name ?? "A rep"), due: msg?.due ?? 0, never: msg?.never ?? 0, total: mine.length });
         if (msg) wanted.push({ repId: String(rep.id), msg });
       }
-      const head = await headOfSales(branch.org_id, branch.id);
+      const bosses = await supervisors(branch.org_id, branch.id);
       const hosMsg = hosChaseMessage(slot, summary);
       const won = await claim([
         ...wanted.map((w) => ({ org_id: branch.org_id, branch_id: branch.id, cart_id: "rep", rep_id: w.repId, stage })),
-        ...(head && hosMsg ? [{ org_id: branch.org_id, branch_id: branch.id, cart_id: "hos", rep_id: head.id, stage }] : [])
+        ...(hosMsg ? bosses.map((b) => ({ org_id: branch.org_id, branch_id: branch.id, cart_id: "hos", rep_id: b.id, stage })) : [])
       ]);
       for (const w of wanted) {
         if (!won.has(`rep|${w.repId}|${stage}`)) continue;
         await sendHeavy(branch.org_id, branch.id, w.repId, { title: w.msg.title, message: w.msg.message, link: REP_LINK, kind: "cart_chase", tag: `cart-chase-${slot}-${w.repId}` });
         sent += 1;
       }
-      if (head && hosMsg && won.has(`hos|${head.id}|${stage}`)) {
-        await sendHeavy(branch.org_id, branch.id, head.id, { title: hosMsg.title, message: hosMsg.message, link: HOS_LINK, kind: "hos_cart_chase", tag: `hos-cart-chase-${slot}-${branch.id}` });
+      for (const boss of bosses) {
+        if (!hosMsg || !won.has(`hos|${boss.id}|${stage}`)) continue;
+        await sendHeavy(branch.org_id, branch.id, boss.id, { title: hosMsg.title, message: hosMsg.message, link: boss.link, kind: "hos_cart_chase", tag: `hos-cart-chase-${slot}-${branch.id}` });
         sent += 1;
       }
     } catch (err) {
