@@ -93,3 +93,18 @@ test("a dated reschedule pauses the cart until the callback day, then it is due"
   assert.equal(pausedOn(logs, "c", "2026-11-30"), false);
   assert.equal(pausedOn(logs, "c", "2026-11-23"), false);
 });
+
+import { addWorkingDays, interestedPauses } from "./cart-log-integrity.js";
+
+test("Interested pauses a cart for its day and the next working day only; old Interested logs are left alone", () => {
+  assert.equal(addWorkingDays("2026-11-28", 1), "2026-11-30"); // Sat -> Mon
+  const pauses = interestedPauses([
+    { cartId: "a", savedAt: "2026-11-25T09:00:00Z", outcome: "Interested" },
+    { cartId: "a", savedAt: "2026-11-26T09:00:00Z", outcome: "Interested" }, // re-log does not extend
+    { cartId: "old", savedAt: "2026-11-20T09:00:00Z", outcome: "Interested" },
+    { cartId: "b", savedAt: "2026-11-25T09:00:00Z", outcome: "Unresponsive" }
+  ]);
+  assert.deepEqual(pauses, [{ cartId: "a", savedDay: "2026-11-25", outcome: "Interested", callbackDay: "2026-11-27" }]);
+  assert.equal(pausedOn(pauses, "a", "2026-11-26"), true);
+  assert.equal(pausedOn(pauses, "a", "2026-11-27"), false);
+});

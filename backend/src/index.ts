@@ -22,7 +22,7 @@ import { logger } from "./lib/logger.js";
 import { runtimeDataProfile } from "./lib/local-safety.js";
 import { syncDueOrderFollowUpNotifications } from "./lib/order-follow-up-notifications.js";
 import { syncDueCartCallbacks } from "./lib/cart-follow-up-notifications.js";
-import { runCartCallEscalations, runCartChase } from "./lib/cart-call-alerts.js";
+import { runCartCallEscalations, runCartChase, runInterestedChasers } from "./lib/cart-call-alerts.js";
 import { runSmartStockAlerts } from "./lib/smart-stock-alerts.js";
 import { runStockIntelAlerts } from "./lib/stock-intel-alerts.js";
 import { runPhantomStockCheck } from "./lib/phantom-stock-check.js";
@@ -748,6 +748,9 @@ cron.schedule("*/2 7-18 * * *", async () => {
   try {
     const result = await runCartCallEscalations();
     if (result.sent > 0) logger.info("cron: cart call escalations", { sent: result.sent });
+    // Interested carts not turned into an order: 24 hrs rep, 48 hrs rep + supervisors.
+    const interested = await runInterestedChasers();
+    if (interested.sent > 0) logger.info("cron: interested cart chasers", { sent: interested.sent });
   } catch (e) {
     logger.error("cron: cart call escalations crashed", { error: (e as Error).message });
   }

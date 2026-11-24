@@ -285,6 +285,43 @@ export type RescheduleLog = { cartId: string; savedDay: string; outcome: string;
  * Old Rescheduled logs with no date are not handled here (they stay finished).
  */
 export function pausedOn(logs: RescheduleLog[], cartId: string, dayKey: string) {
-  return logs.some((l) => l.cartId === cartId && l.outcome === "Rescheduled" && l.callbackDay
+  return logs.some((l) => l.cartId === cartId && l.callbackDay
     && l.savedDay <= dayKey && dayKey < l.callbackDay);
+}
+
+// ── "Interested" must become an order (Bright, 24 Nov 2026) ────────────────
+// 136 carts logged Interested since 29 Sep (₦5.5M) never became an order:
+// Interested FINISHED the cart (off the ₦500 board, no reminder). Now an
+// Interested cart is paused only for the day it was logged and the next
+// working day; if it has not been turned into an order by then it is due
+// again every day. Only Interested logs from INTERESTED_RULE_START count this
+// way; older ones still finish the cart, so nothing is charged after the fact.
+
+export const INTERESTED_RULE_START = "2026-11-24";
+/** Hours after the first Interested: remind the rep, then tell the supervisors. */
+export const INTERESTED_REMIND_HOURS = 24;
+export const INTERESTED_ESCALATE_HOURS = 48;
+
+/** Add working days (Sundays skipped). */
+export function addWorkingDays(dayKey: string, n: number) {
+  const d = new Date(`${dayKey}T12:00:00Z`);
+  let left = n;
+  while (left > 0) { d.setUTCDate(d.getUTCDate() + 1); if (d.getUTCDay() !== 0) left -= 1; }
+  return d.toISOString().slice(0, 10);
+}
+
+/** One pause per cart, from its FIRST Interested on/after the rule start (re-logging does not extend it). */
+export function interestedPauses(logs: Array<{ cartId: string; savedAt: string; outcome: string }>): RescheduleLog[] {
+  const first = new Map<string, string>();
+  for (const l of logs) {
+    if (l.outcome !== "Interested") continue;
+    const day = lagosDay(l.savedAt);
+    if (day < INTERESTED_RULE_START) continue;
+    const cur = first.get(l.cartId);
+    if (!cur || l.savedAt < cur) first.set(l.cartId, l.savedAt);
+  }
+  return [...first].map(([cartId, savedAt]) => {
+    const savedDay = lagosDay(savedAt);
+    return { cartId, savedDay, outcome: "Interested", callbackDay: addWorkingDays(savedDay, 2) };
+  });
 }

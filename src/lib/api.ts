@@ -3769,6 +3769,11 @@ export type CartIntegrityView = {
   sittings: Array<{ repId: string; startedAt: string; endedAt: string; carts: number; secondsPerCart: number; outcomes: string[] }>;
   flagged: Array<{ id: string; cartId: string; repId: string; repName: string; outcome: string; custom: string | null; note: string | null; reached: boolean; savedAt: string; tappedAt: string | null; reasons: string[] }>;
 };
+export type CartInterestedRow = {
+  cartId: string; customer: string | null; phone: string | null; product: string | null; amount: number; currency: string;
+  repId: string | null; repName: string; interestedAt: string; interestedNote: string | null; interestedBy: string | null;
+  lastLogAt: string | null; lastOutcome: string | null; logsAfter: number;
+};
 export type CartSpotCheck = {
   id: string; weekStart: string; repId: string; repName: string | null; cartId: string; attemptId: string;
   attemptOutcome: string | null; attemptNote: string | null; attemptedAt: string | null; customer: string | null; phone: string | null;
@@ -4010,6 +4015,8 @@ export const cartsApi = {
   },
   spotChecks: (weekStart?: string) => get<{ weekStart: string; rows: CartSpotCheck[] }>(`/api/carts/spot-checks${weekStart ? `?weekStart=${weekStart}` : ""}`),
   saveSpotCheck: (id: string, body: { status: CartSpotCheck["status"]; note?: string }) => put<{ row: CartSpotCheck }>(`/api/carts/spot-checks/${id}`, body),
+  /** Carts logged Interested that never became an order (Bright, 24 Nov 2026). */
+  interestedNotOrdered: (days: number) => get<{ days: number; rows: CartInterestedRow[] }>(`/api/carts/interested-not-ordered?days=${days}`),
   logContactAttempt: (cartId: string, body: unknown) =>
     post<{ row: CartAttemptRow; statusMovedTo: string | null }>(`/api/carts/${cartId}/contact-attempts`, body),
   followUpOverview: () => get<{ rows: CartFollowUpRow[] }>("/api/carts/follow-up-overview"),
