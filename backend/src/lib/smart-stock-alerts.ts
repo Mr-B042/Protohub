@@ -22,7 +22,7 @@ import {
   conservativeDeliveredForecast,
   type SmartStockCandidate
 } from "./smart-stock-candidates.js";
-import { REPORT_ROW_CEILING } from "./query-limits.js";
+import { REPORT_ROW_CEILING, selectByIdBatches } from "./query-limits.js";
 import type { UserRole } from "../types/index.js";
 
 const DAYS_OF_STOCK_THRESHOLD = 3;
@@ -36,7 +36,9 @@ const DEDUPE_WINDOW_HOURS = 24;
 // query with `invalid input value for enum user_role: "Call Rep"` (400), the
 // error below was discarded, and low-stock alerts silently reached NOBODY.
 // Untyped, nothing flagged it. Typed, it is a build error.
-const RECIPIENT_ROLES: readonly UserRole[] = ["Owner", "Admin", "Manager", "Inventory Manager", "Inventory Manager & Logistics Operations"];
+// ⚠️ No Owner (Bright, 25 Nov 2026: "should stop sending me, it is of no use").
+// Stock Intelligence's hub-risk / transfer alerts are the Owner's stock alerts.
+const RECIPIENT_ROLES: readonly UserRole[] = ["Admin", "Manager", "Inventory Manager", "Inventory Manager & Logistics Operations"];
 
 type AgentRow = { id: string; org_id: string; name: string; primary_base_state: string | null; status: string | null };
 type StockRow = { agent_id: string; product_id: string; quantity: number; defective: number; missing: number };
@@ -365,19 +367,26 @@ async function scanOrgForSmartStockAlerts(orgId: string): Promise<number> {
   // 6. Dedupe: drop candidates already alerted in the dedupe window
   const dedupeLinks = candidates.map((c) => dedupeLinkFor(c));
   const dedupeSince = new Date(Date.now() - DEDUPE_WINDOW_HOURS * 3_600_000).toISOString();
-  const { data: existingRaw } = await supabase
-    .from("system_notifications")
-    .select("link")
-    // system_notifications is 16,000+ rows and climbing. This is the only read
-    // on it without a natural bound - the other nine are .limit(1) existence
-    // checks - and a truncated dedupe set means re-alerting something already
-    // alerted, so it gets an explicit ceiling rather than trusting the volume.
-    .limit(REPORT_ROW_CEILING)
-    .eq("org_id", orgId)
-    .eq("type", "low_stock")
-    .in("link", dedupeLinks)
-    .gte("created_at", dedupeSince);
-  const recentLinks = new Set(((existingRaw ?? []) as { link: string | null }[]).map((r) => r.link ?? ""));
+  // ⚠️ IN SMALL BATCHES, AND A FAILED READ SENDS NOTHING (25 Nov 2026). Each
+  // link is ~200 characters; ~85 of them in one .in() made the request too
+  // long, the error was ignored, the "already sent" set came back empty, and
+  // every item was re-sent every hour - 2,231 alerts in one day. Sending
+  // nothing for an hour is far better than that.
+  let existingRaw: Array<{ link: string | null }> = [];
+  try {
+    existingRaw = await selectByIdBatches<{ link: string | null }>(dedupeLinks, (batch) => supabase
+      .from("system_notifications")
+      .select("link")
+      .limit(REPORT_ROW_CEILING)
+      .eq("org_id", orgId)
+      .eq("type", "low_stock")
+      .in("link", batch)
+      .gte("created_at", dedupeSince), 20);
+  } catch (error: any) {
+    logger.error("smart stock alerts: could not check what was already sent - NOTHING SENT this run", { orgId, error: error?.message });
+    return 0;
+  }
+  const recentLinks = new Set(existingRaw.map((r) => r.link ?? ""));
   const freshCandidates = candidates.filter(
     (c) => !recentLinks.has(dedupeLinkFor(c))
   );
