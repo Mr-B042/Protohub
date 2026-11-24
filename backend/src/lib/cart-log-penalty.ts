@@ -12,6 +12,11 @@
 
 /** Charged once per cart, per day that cart goes unlogged. */
 export const CART_LOG_MISS_AMOUNT = 500;
+/**
+ * An "Interested" cart being followed up like an order is charged like an
+ * order follow-up: ₦50 a day it is not logged (Bright, 24 Nov 2026).
+ */
+export const CART_INTERESTED_MISS_AMOUNT = 50;
 
 /**
  * Go-live. Monday 24 August 2026.
@@ -80,6 +85,8 @@ export type RepDayInput = {
    * covering the board - which cannot over-charge a rep on data we do not have.
    */
   cartsLogged?: number;
+  /** How many of the missed carts are Interested follow-ups, charged at ₦50 not ₦500. */
+  lowRateMissed?: number;
 };
 
 /** Carts the rep left untouched that day - the number actually charged for. */
@@ -97,7 +104,9 @@ export function missedCartCount(input: RepDayInput): number {
 
 /** What a day costs at the per-cart rate. */
 export function dayPenaltyAmount(input: RepDayInput): number {
-  return missedCartCount(input) * CART_LOG_MISS_AMOUNT;
+  const missed = missedCartCount(input);
+  const low = Math.min(missed, Math.max(0, Number(input.lowRateMissed) || 0));
+  return (missed - low) * CART_LOG_MISS_AMOUNT + low * CART_INTERESTED_MISS_AMOUNT;
 }
 
 export type RepDayStatus = "not_due" | "clear" | "missed" | "before_go_live";
@@ -201,7 +210,11 @@ export function todayStanding(
   } else if (rehearsal) {
     message = `${carts(remaining)} still unlogged. From ${startDate} that is ${sum}.`;
   } else {
-    message = `${carts(remaining)} still unlogged, at ₦${CART_LOG_MISS_AMOUNT} each. Clear them before the day ends or this is ${money(exposure)}.`;
+    const low = Math.min(remaining, Math.max(0, Number(input.lowRateMissed) || 0));
+    const rates = low > 0
+      ? ` (${low} Interested follow-up${low === 1 ? "" : "s"} at ₦${CART_INTERESTED_MISS_AMOUNT}, ${remaining - low} at ₦${CART_LOG_MISS_AMOUNT})`
+      : `, at ₦${CART_LOG_MISS_AMOUNT} each`;
+    message = `${carts(remaining)} still unlogged${rates}. Clear them before the day ends or this is ${money(exposure)}.`;
   }
 
   return {
