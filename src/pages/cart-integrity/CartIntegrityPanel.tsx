@@ -259,6 +259,7 @@ function InterestedNotOrdered({ onViewCart }: { onViewCart: (cartId: string) => 
   }, [rows]);
   const shown = (rows ?? []).filter((r) => (rep === "all" || r.repName === rep) && (!onlyDropped || r.logsAfter === 0));
   const total = shown.reduce((s, r) => s + r.amount, 0);
+  const dateOnly = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Africa/Lagos" });
   const ago = (iso: string) => { const d = Math.floor((Date.now() - Date.parse(iso)) / 86_400_000); return d === 0 ? "today" : d === 1 ? "1 day ago" : `${d} days ago`; };
   return (
     <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-3 dark:border-amber-500/30 dark:bg-amber-500/5">
@@ -286,10 +287,10 @@ function InterestedNotOrdered({ onViewCart }: { onViewCart: (cartId: string) => 
           </div>
           <p className="m-0 mt-2 text-[12px] font-semibold text-gray-700">{shown.length} cart{shown.length === 1 ? "" : "s"} · ₦{Math.round(total).toLocaleString("en-NG")}</p>
           {shown.length === 0 ? <p className="m-0 mt-1 text-[12px] text-gray-500">None in this period.</p> : (
-            <div className="mt-1.5 max-h-96 overflow-auto rounded-lg border border-gray-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-              <table className="w-full !min-w-[760px] text-[12px]">
+            <div data-smart-sticky="off" className="mt-1.5 max-h-96 overflow-auto rounded-lg border border-gray-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+              <table className="w-full !min-w-[860px] text-[12px]">
                 <thead className="sticky top-0 bg-gray-50 text-left text-[10.5px] font-bold uppercase tracking-wide text-gray-500 dark:bg-slate-800">
-                  <tr><th className="px-2.5 py-1.5">Customer</th><th className="px-2 py-1.5">Product</th><th className="px-2 py-1.5 text-right">Value</th><th className="px-2 py-1.5">Rep</th><th className="px-2 py-1.5">Said Interested</th><th className="px-2 py-1.5">Since then</th><th className="px-2 py-1.5" /></tr>
+                  <tr><th className="px-2.5 py-1.5">Customer</th><th className="px-2 py-1.5">Product</th><th className="px-2 py-1.5 text-right">Value</th><th className="px-2 py-1.5">Rep</th><th className="px-2 py-1.5">Assigned</th><th className="px-2 py-1.5">Said Interested</th><th className="px-2 py-1.5">Since then</th><th className="px-2 py-1.5" /></tr>
                 </thead>
                 <tbody>
                   {shown.map((r) => (
@@ -298,7 +299,8 @@ function InterestedNotOrdered({ onViewCart }: { onViewCart: (cartId: string) => 
                       <td className="px-2 py-1.5 text-gray-700">{r.product || "—"}</td>
                       <td className="px-2 py-1.5 text-right tabular-nums">₦{Math.round(r.amount).toLocaleString("en-NG")}</td>
                       <td className="px-2 py-1.5 text-gray-700">{r.repName}</td>
-                      <td className="px-2 py-1.5 text-gray-700">{ago(r.interestedAt)}{r.interestedNote && <span className="block italic text-gray-500">“{r.interestedNote}”</span>}</td>
+                      <td className="whitespace-nowrap px-2 py-1.5 text-gray-700">{r.assignedAt ? <>{dateOnly(r.assignedAt)}<span className="block text-[11px] text-gray-500">{ago(r.assignedAt)}</span></> : <span className="text-gray-400">—</span>}</td>
+                      <td className="px-2 py-1.5 text-gray-700"><span className="whitespace-nowrap">{dateOnly(r.interestedAt)}</span><span className="block text-[11px] text-gray-500">{ago(r.interestedAt)}</span>{r.interestedNote && <span className="block italic text-gray-500">“{r.interestedNote}”</span>}</td>
                       <td className={`px-2 py-1.5 ${r.logsAfter === 0 ? "font-semibold text-rose-700" : "text-gray-700"}`}>{r.logsAfter === 0 ? "Never touched again" : `${r.logsAfter} log${r.logsAfter === 1 ? "" : "s"} · last ${r.lastOutcome ?? ""}${r.lastLogAt ? `, ${ago(r.lastLogAt)}` : ""}`}</td>
                       <td className="px-2 py-1.5 text-right"><button type="button" onClick={() => onViewCart(r.cartId)} className="!min-h-0 text-[11.5px] font-semibold text-[#1F8FE0]">View cart</button></td>
                     </tr>

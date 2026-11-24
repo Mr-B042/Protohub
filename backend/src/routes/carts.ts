@@ -2051,7 +2051,7 @@ router.get("/interested-not-ordered", requireRole(...INTEGRITY_VIEWERS), async (
     if (ids.length === 0) { res.json({ days, rows: [] }); return; }
     const [carts, linked, allLogs] = await Promise.all([
       selectByIdBatches<any>(ids, (batch) => supabase.from("abandoned_carts")
-        .select("id, customer, phone, product_name, package_name, amount, currency, assigned_rep_id, status").eq("org_id", orgId).in("id", batch)),
+        .select("id, customer, phone, product_name, package_name, amount, currency, assigned_rep_id, assigned_at, created_at, status").eq("org_id", orgId).in("id", batch)),
       selectByIdBatches<any>(ids, (batch) => supabase.from("orders").select("source_cart_id").eq("org_id", orgId).in("source_cart_id", batch)),
       selectByIdBatches<any>(ids, (batch) => supabase.from(CART_ATTEMPTS).select("cart_id, created_at, outcome_code, custom_outcome").eq("org_id", orgId).in("cart_id", batch))
     ]);
@@ -2073,7 +2073,7 @@ router.get("/interested-not-ordered", requireRole(...INTEGRITY_VIEWERS), async (
         const after = mine.filter((l: any) => Date.parse(l.created_at) > Date.parse(f.created_at) + 10 * 60_000);
         return {
           cartId: String(c.id), customer: c.customer ?? null, phone: c.phone ?? null, product: c.product_name || c.package_name || null,
-          amount: Number(c.amount ?? 0), currency: c.currency ?? "NGN", repId: c.assigned_rep_id ?? null, repName: repName.get(String(c.assigned_rep_id)) ?? "Not assigned",
+          amount: Number(c.amount ?? 0), currency: c.currency ?? "NGN", repId: c.assigned_rep_id ?? null, repName: repName.get(String(c.assigned_rep_id)) ?? "Not assigned", assignedAt: c.assigned_at ?? null,
           interestedAt: String(f.created_at), interestedNote: f.outcome_note ?? null, interestedBy: f.rep_name ?? null,
           lastLogAt: mine[0] ? String(mine[0].created_at) : null, lastOutcome: mine[0]?.outcome_code ?? null, logsAfter: after.length
         };
