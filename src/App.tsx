@@ -66475,17 +66475,33 @@ ${waybillLineItems(w).length > 1
       if (row.attempts === 0) found.uncalled += 1;
       if (row.convertedOrderId) found.converted += 1;
       const last = row.lastAttemptAt ? new Date(row.lastAttemptAt).getTime() : 0;
-      if (row.attempts > 0 && !row.convertedOrderId && (!last || Date.now() - last > 3 * 86400000)) found.quiet += 1;
+      // Same "finished" rule as cartFollowUpFinished below (BUG-1002).
+      const finished = Boolean(row.convertedOrderId)
+        || ["Converted", "Not interested", "No response"].includes(String(row.status ?? ""))
+        || ["Not interested", "Wrong number"].includes(String(row.lastOutcome ?? ""));
+      if (row.attempts > 0 && !finished && (!last || Date.now() - last > 3 * 86400000)) found.quiet += 1;
       byRep.set(row.repId, found);
     }
     return Array.from(byRep.values()).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
   })();
 
+  /**
+   * A cart that needs no more follow-up: it became an order, or the customer
+   * said no / the number was wrong / it was closed. BUG-1002 (Chelsea, 24 Nov
+   * 2026): Details and Next actions only checked for an order, so "Not
+   * interested" carts sat in "No update in 3 days" and a delivered cart's
+   * old callback date still read "overdue". Same rule as the daily grid.
+   */
+  const cartFollowUpFinished = (row: { status?: string | null; convertedOrderId?: string | null; lastOutcome?: string | null }) =>
+    Boolean(row.convertedOrderId)
+    || ["Converted", "Not interested", "No response"].includes(String(row.status ?? ""))
+    || ["Not interested", "Wrong number"].includes(String(row.lastOutcome ?? ""));
+
   // One rule for both layouts, so Daily Log and Details can never disagree
   // about which carts are in view.
   const cartFollowUpMatchesFilter = (
     filter: string,
-    row: { status: string; convertedOrderId?: string | null },
+    row: { status: string; convertedOrderId?: string | null; lastOutcome?: string | null },
     attempts: number,
     lastAttemptAt?: string | null
   ) => {
@@ -66496,7 +66512,7 @@ ${waybillLineItems(w).length > 1
     if (filter === "Still open") return !row.convertedOrderId;
     if (filter === "Going quiet") {
       const at = lastAttemptAt ? new Date(lastAttemptAt).getTime() : 0;
-      return attempts > 0 && !row.convertedOrderId && (!at || Date.now() - at > 3 * 86400000);
+      return attempts > 0 && !cartFollowUpFinished(row) && (!at || Date.now() - at > 3 * 86400000);
     }
     return true;
   };
@@ -66512,7 +66528,7 @@ ${waybillLineItems(w).length > 1
     const dayIndex = (iso: string) =>
       Math.floor((new Date(iso).setHours(0, 0, 0, 0) - startOfToday.getTime()) / dayMs);
 
-    const open = rows.filter((row) => !row.convertedOrderId);
+    const open = rows.filter((row) => !cartFollowUpFinished(row));
     const withDate = open.filter((row) => Boolean(row.nextActionAt));
     // Someone who said "call me back" but has no date is the same lost
     // promise, just harder to see. It gets its own group rather than nothing.
@@ -66622,7 +66638,7 @@ ${waybillLineItems(w).length > 1
 
     const isQuiet = (row: CartFollowUpRow) => {
       const last = row.lastAttemptAt ? new Date(row.lastAttemptAt).getTime() : 0;
-      return row.attempts > 0 && !row.convertedOrderId && (!last || Date.now() - last > 3 * 86400000);
+      return row.attempts > 0 && !cartFollowUpFinished(row) && (!last || Date.now() - last > 3 * 86400000);
     };
 
     const rows = periodRows.filter((row) => {
@@ -66864,7 +66880,8 @@ ${waybillLineItems(w).length > 1
                   </tr>
                 ) : rows.map((row) => {
                   const days = daysSince(row.lastAttemptAt);
-                  const overdue = row.nextActionAt ? new Date(row.nextActionAt).getTime() < Date.now() : false;
+                  // A finished cart (ordered, delivered, said no) owes no callback.
+                  const overdue = row.nextActionAt && !cartFollowUpFinished(row) ? new Date(row.nextActionAt).getTime() < Date.now() : false;
                   const leftDays = daysSince(row.leftAt || row.createdAt);
                   const place = [row.city, row.state].filter(Boolean).join(", ");
                   const altWhatsapp = otherWhatsappLine(row.phone, row.whatsapp);
@@ -66950,7 +66967,12 @@ ${waybillLineItems(w).length > 1
                         )}
                       </td>
                       <td className="px-4 py-4 whitespace-nowrap text-[12px]">
-                        {row.nextActionAt ? (
+                        {row.nextActionAt && cartFollowUpFinished(row) ? (
+                          <span className="text-gray-400" title="This cart is finished, so the callback date no longer applies.">
+                            {new Date(row.nextActionAt).toLocaleDateString([], { dateStyle: "medium" })}
+                            <span className="block text-[11px]">not needed</span>
+                          </span>
+                        ) : row.nextActionAt ? (
                           <span className={overdue ? "font-bold text-rose-600" : "font-semibold text-gray-700"}>
                             {new Date(row.nextActionAt).toLocaleDateString([], { dateStyle: "medium" })}
                             {overdue ? <span className="block text-[11px]">overdue</span> : null}
