@@ -1,5 +1,8 @@
 import { tidyOrderState } from "../lib/order-state.js";
 import { writtenReasonProblem } from "../lib/cart-written-reason.js";
+import {
+  TAP_WINDOW_HOURS, buildIntegrity, duplicateOf, pickSpotChecks, reachedProblem, repeatProblem, type IntegrityLog, type PastLog
+} from "../lib/cart-log-integrity.js";
 import { liteCart } from "../lib/lite-lists.js";
 import { fetchPagesTogether } from "../lib/paged-fetch.js";
 import { canSeeSilentOrders, silentHeldCartProductIds } from "../lib/product-launch.js";
@@ -1803,9 +1806,14 @@ const AttemptSchema = z.object({
   ]),
   customOutcome: z.string().trim().max(160).optional(),
   outcomeNote: z.string().trim().max(1000).optional(),
-  customerReached: z.boolean().optional(),
+  // ⚠️ Required, and it must agree with the outcome (cart-log-integrity.ts).
+  // It used to default to "not reached" while the outcome defaulted to
+  // "Interested", so an untouched save read as a call that never happened.
+  customerReached: z.boolean({ required_error: "Say whether you spoke to the customer.", invalid_type_error: "Say whether you spoke to the customer." }),
   nextActionAt: z.string().trim().max(40).optional()
 }).superRefine((value, ctx) => {
+  const reached = reachedProblem(value.outcomeCode, value.customerReached);
+  if (reached) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["customerReached"], message: reached });
   // "Other" with no words is unreportable - it tells the next person nothing.
   if (value.outcomeCode === "Other" && !value.customOutcome?.trim()) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["customOutcome"], message: "Describe the outcome." });
@@ -1852,6 +1860,42 @@ router.post("/:id/contact-attempts",
         return;
       }
 
+      // ── Integrity (Bright, 24 Nov 2026 follow-up audit) ──
+      const repIdForRow = cart.assigned_rep_id ?? scopeId;
+      const nowIso = new Date().toISOString();
+      const { data: historyRows, error: historyError } = await supabase.from(CART_ATTEMPTS)
+        .select("*").eq("org_id", orgId).eq("cart_id", req.params.id)
+        .order("created_at", { ascending: false }).limit(100);
+      if (historyError) { res.status(500).json({ error: historyError.message }); return; }
+      const history: PastLog[] = (historyRows ?? []).map((h: any) => ({
+        id: String(h.id), repId: h.rep_id ? String(h.rep_id) : null, outcome: String(h.outcome_code ?? ""),
+        custom: h.custom_outcome ?? null, note: h.outcome_note ?? null, savedAt: String(h.created_at)
+      }));
+      // A double click or a slow network sends the same save twice: answer with
+      // the first one instead of writing a second row.
+      const dup = duplicateOf(history, repIdForRow, parsed.data.outcomeCode, parsed.data.customOutcome, parsed.data.outcomeNote, nowIso);
+      if (dup) {
+        res.status(200).json({ row: (historyRows ?? []).find((h: any) => String(h.id) === dup.id), statusMovedTo: null, duplicate: true });
+        return;
+      }
+      const repeated = repeatProblem(history, parsed.data.outcomeCode, parsed.data.customOutcome, parsed.data.outcomeNote, nowIso);
+      if (repeated) { res.status(400).json({ error: repeated }); return; }
+      // A log needs a Call / WhatsApp / SMS tap on this cart, by this person,
+      // within the last few hours. Email has no button, so it is not asked.
+      let tap: { tapped_at: string; channel: string } | null = null;
+      if (parsed.data.channel !== "Email") {
+        const since = new Date(Date.now() - TAP_WINDOW_HOURS * 3_600_000).toISOString();
+        const { data: taps, error: tapError } = await supabase.from("cart_contact_taps")
+          .select("tapped_at, channel").eq("org_id", orgId).eq("cart_id", req.params.id).eq("rep_id", req.user!.id)
+          .gte("tapped_at", since).order("tapped_at", { ascending: false }).limit(1);
+        if (tapError) { res.status(500).json({ error: tapError.message }); return; }
+        tap = (taps ?? [])[0] ?? null;
+        if (!tap && scopeRole === "Sales Rep") {
+          res.status(400).json({ error: "Tap Call or WhatsApp on this cart first, then log what happened. If you do not see those buttons, refresh the page." });
+          return;
+        }
+      }
+
       const { data, error } = await supabase.from(CART_ATTEMPTS).insert({
         org_id: orgId,
         cart_id: req.params.id,
@@ -1861,8 +1905,10 @@ router.post("/:id/contact-attempts",
         outcome_code: parsed.data.outcomeCode,
         custom_outcome: parsed.data.customOutcome ?? null,
         outcome_note: parsed.data.outcomeNote ?? null,
-        customer_reached: parsed.data.customerReached ?? false,
-        next_action_at: parsed.data.nextActionAt || null
+        customer_reached: parsed.data.customerReached,
+        next_action_at: parsed.data.nextActionAt || null,
+        tapped_at: tap?.tapped_at ?? null,
+        tap_channel: tap?.channel ?? null
       }).select("*").single();
       if (error) { res.status(500).json({ error: error.message }); return; }
 
@@ -1897,6 +1943,146 @@ router.post("/:id/contact-attempts",
     }
   }
 );
+
+// ── POST /api/carts/:id/contact-taps ──────────────────────
+// Recorded when a rep taps Call / WhatsApp / SMS for a cart inside Protohub.
+// A follow-up log needs one (cart-log-integrity.ts), and keeps its time.
+router.post("/:id/contact-taps",
+  requireRole("Owner", "Admin", "Manager", "Sales Rep"),
+  async (req, res) => {
+    const parsed = z.object({ channel: z.enum(["call", "whatsapp", "sms"]) }).safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+    const orgId = req.user!.orgId;
+    const { data: cart } = await supabase.from("abandoned_carts")
+      .select("id, assigned_rep_id, branch_id").eq("org_id", orgId).eq("id", req.params.id).maybeSingle();
+    if (!cart) { res.status(404).json({ error: "Cart not found." }); return; }
+    const { role, id } = scopeOf(req);
+    if (role === "Sales Rep" && cart.assigned_rep_id !== id) { res.status(403).json({ error: "That cart is not assigned to you." }); return; }
+    const { data, error } = await supabase.from("cart_contact_taps").insert({
+      org_id: orgId, branch_id: cart.branch_id ?? req.user!.branchId ?? null, cart_id: req.params.id, rep_id: req.user!.id, channel: parsed.data.channel
+    }).select("tapped_at").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.status(201).json({ tappedAt: data.tapped_at });
+  }
+);
+
+// ── GET /api/carts/follow-up-integrity?from&to ────────────
+// The Owner's "Check this" panel: each rep's logging patterns over a period
+// (rushed sittings, untouched saves, repeated words, no tap, late logging,
+// "Interested" carts that became orders, spot-check answers), worst first.
+const INTEGRITY_VIEWERS = ["Owner", "Admin", "Manager"] as const;
+const dayKeyOk = (v: unknown) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+const toIntegrityLog = (r: any): IntegrityLog => ({
+  id: String(r.id), cartId: String(r.cart_id), repId: String(r.rep_id ?? ""), repName: String(r.rep_name ?? ""),
+  outcome: String(r.outcome_code ?? ""), custom: r.custom_outcome ?? null, note: r.outcome_note ?? null,
+  reached: Boolean(r.customer_reached), nextActionAt: r.next_action_at ?? null, savedAt: String(r.created_at), tappedAt: r.tapped_at ?? null
+});
+const ATTEMPT_FIELDS = "id, cart_id, rep_id, rep_name, outcome_code, custom_outcome, outcome_note, customer_reached, next_action_at, created_at, tapped_at";
+
+async function loadAttemptsBetween(orgId: string, fromKey: string, toKey: string) {
+  const rows: any[] = [];
+  for (let page = 0; page < 50; page += 1) {
+    const { data, error } = await supabase.from(CART_ATTEMPTS).select(ATTEMPT_FIELDS).eq("org_id", orgId)
+      .gte("created_at", lagosStartOfDayUtc(fromKey)).lt("created_at", lagosStartOfDayUtc(addDays(toKey, 1)))
+      .order("created_at", { ascending: true }).order("id", { ascending: true }).range(page * 1000, page * 1000 + 999);
+    if (error) throw new Error(error.message);
+    rows.push(...(data ?? []));
+    if ((data ?? []).length < 1000) break;
+  }
+  return rows;
+}
+
+router.get("/follow-up-integrity", requireRole(...INTEGRITY_VIEWERS), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const today = lagosDateKey(new Date());
+    let from = dayKeyOk(req.query.from) ? String(req.query.from) : addDays(today, -6);
+    let to = dayKeyOk(req.query.to) ? String(req.query.to) : today;
+    if (to < from) [from, to] = [to, from];
+    if (addDays(from, 92) < to) from = addDays(to, -92);
+    const rows = await loadAttemptsBetween(orgId, from, to);
+    const logs = rows.map(toIntegrityLog).filter((l) => l.repId);
+    const cartIds = [...new Set(logs.map((l) => l.cartId))];
+    const before = cartIds.length === 0 ? [] : await selectByIdBatches<any>(cartIds, (batch) => supabase.from(CART_ATTEMPTS)
+      .select(ATTEMPT_FIELDS).eq("org_id", orgId).in("cart_id", batch).lt("created_at", lagosStartOfDayUtc(from)).limit(REPORT_ROW_CEILING));
+    const interested = [...new Set(logs.filter((l) => l.outcome === "Interested").map((l) => l.cartId))];
+    const orders = interested.length === 0 ? [] : await selectByIdBatches<any>(interested, (batch) => supabase.from("orders")
+      .select("source_cart_id").eq("org_id", orgId).in("source_cart_id", batch).limit(REPORT_ROW_CEILING));
+    const { data: firstTap } = await supabase.from("cart_contact_taps").select("tapped_at").eq("org_id", orgId)
+      .order("tapped_at", { ascending: true }).limit(1);
+    const { data: spot, error: spotError } = await supabase.from("cart_spot_checks").select("rep_id, status")
+      .eq("org_id", orgId).gte("week_start", addDays(from, -6)).lte("week_start", to);
+    if (spotError) throw new Error(spotError.message);
+    const repIds = [...new Set(logs.map((l) => l.repId))];
+    const { data: users } = repIds.length ? await supabase.from("users").select("id, name").in("id", repIds) : { data: [] as any[] };
+    const result = buildIntegrity({
+      logs, historyBefore: before.map(toIntegrityLog),
+      repNames: new Map((users ?? []).map((u: any) => [String(u.id), String(u.name ?? "Sales rep")])),
+      convertedCarts: new Set(orders.map((o: any) => String(o.source_cart_id))),
+      tapsSince: (firstTap ?? [])[0]?.tapped_at ?? null,
+      spot: (spot ?? []).map((s: any) => ({ repId: String(s.rep_id), status: String(s.status) }))
+    });
+    res.json({ from, to, ...result, flagged: result.flagged.slice(0, 300) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not check the follow-up logs." });
+  }
+});
+
+// ── Weekly spot-checks ────────────────────────────────────
+// GET  /api/carts/spot-checks?weekStart=YYYY-MM-DD (a Sunday; default this week)
+//      Picks up to 3 logged carts per rep the first time the week is opened,
+//      then always shows the same picks. Never shown to reps.
+// PUT  /api/carts/spot-checks/:id  { status, note }  the manager's answer.
+const sundayOf = (key: string) => addDays(key, -new Date(`${key}T12:00:00Z`).getUTCDay());
+
+router.get("/spot-checks", requireRole(...INTEGRITY_VIEWERS), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const today = lagosDateKey(new Date());
+    const weekStart = sundayOf(dayKeyOk(req.query.weekStart) ? String(req.query.weekStart) : today);
+    const read = () => supabase.from("cart_spot_checks").select("*").eq("org_id", orgId).eq("week_start", weekStart).order("rep_name").order("attempted_at");
+    let { data: existing, error } = await read();
+    if (error) throw new Error(error.message);
+    if ((existing ?? []).length === 0 && weekStart <= today) {
+      const weekEnd = addDays(weekStart, 6) < today ? addDays(weekStart, 6) : today;
+      const logs = (await loadAttemptsBetween(orgId, weekStart, weekEnd)).map(toIntegrityLog).filter((l) => l.repId);
+      const picks = pickSpotChecks(logs, weekStart);
+      if (picks.length > 0) {
+        const carts = await selectByIdBatches<any>(picks.map((p) => p.cartId), (batch) => supabase.from("abandoned_carts")
+          .select("id, customer, phone, branch_id").eq("org_id", orgId).in("id", batch));
+        const cartOf = new Map(carts.map((c: any) => [String(c.id), c]));
+        const { error: insertError } = await supabase.from("cart_spot_checks").upsert(picks.map((p) => ({
+          org_id: orgId, branch_id: cartOf.get(p.cartId)?.branch_id ?? req.user!.branchId ?? null, week_start: weekStart,
+          rep_id: p.repId, rep_name: p.repName, cart_id: p.cartId, attempt_id: p.id, attempt_outcome: p.outcome,
+          attempt_note: [p.outcome === "Not interested" || p.outcome === "Other" ? p.custom : null, p.note].filter(Boolean).join(" · ") || null,
+          attempted_at: p.savedAt, customer: cartOf.get(p.cartId)?.customer ?? null, phone: cartOf.get(p.cartId)?.phone ?? null
+        })), { onConflict: "org_id,week_start,attempt_id", ignoreDuplicates: true });
+        if (insertError) throw new Error(insertError.message);
+        ({ data: existing, error } = await read());
+        if (error) throw new Error(error.message);
+      }
+    }
+    res.json({ weekStart, rows: existing ?? [] });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load the spot checks." });
+  }
+});
+
+router.put("/spot-checks/:id", requireRole(...INTEGRITY_VIEWERS), async (req, res) => {
+  const parsed = z.object({
+    status: z.enum(["pending", "confirmed", "denied", "unreachable"]),
+    note: z.string().trim().max(500).optional()
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+  const done = parsed.data.status !== "pending";
+  const { data, error } = await supabase.from("cart_spot_checks").update({
+    status: parsed.data.status, result_note: parsed.data.note || null,
+    checked_by: done ? req.user!.id : null, checked_by_name: done ? req.user!.name : null, checked_at: done ? new Date().toISOString() : null
+  }).eq("org_id", req.user!.orgId).eq("id", req.params.id).select("*").maybeSingle();
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  if (!data) { res.status(404).json({ error: "Spot check not found." }); return; }
+  res.json({ row: data });
+});
 
 // ── GET /api/carts/follow-up-grid ─────────────────────────
 // Assigned carts as rows, the week's working days as columns - the same

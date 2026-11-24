@@ -3752,6 +3752,27 @@ export type CartAttemptRow = {
   id: string; cartId: string; repName?: string | null; attemptedAt: string;
   channel: string; outcomeCode: string; customOutcome?: string | null;
   outcomeNote?: string | null; customerReached: boolean; nextActionAt?: string | null;
+  /** When the rep tapped Call / WhatsApp before this log (null = before taps were recorded, or none). */
+  tappedAt?: string | null; tapChannel?: string | null;
+};
+
+// ── Cart follow-up integrity (24 Nov 2026 audit) ──
+export type CartIntegrityRep = {
+  repId: string; repName: string; logs: number; duplicates: number; cartsLogged: number;
+  rushedSittings: number; rushedCarts: number; quickConversations: number; untouched: number; contradictions: number;
+  repeatedWords: number; lateLogs: number; latePct: number; noTap: number; tapChecked: number;
+  saidInterested: number; interestedBecameOrders: number; spotChecked: number; spotDenied: number;
+  score: number; level: "high" | "medium" | "low";
+};
+export type CartIntegrityView = {
+  from: string; to: string; reps: CartIntegrityRep[];
+  sittings: Array<{ repId: string; startedAt: string; endedAt: string; carts: number; secondsPerCart: number; outcomes: string[] }>;
+  flagged: Array<{ id: string; cartId: string; repId: string; repName: string; outcome: string; custom: string | null; note: string | null; reached: boolean; savedAt: string; tappedAt: string | null; reasons: string[] }>;
+};
+export type CartSpotCheck = {
+  id: string; weekStart: string; repId: string; repName: string | null; cartId: string; attemptId: string;
+  attemptOutcome: string | null; attemptNote: string | null; attemptedAt: string | null; customer: string | null; phone: string | null;
+  status: "pending" | "confirmed" | "denied" | "unreachable"; resultNote: string | null; checkedByName: string | null; checkedAt: string | null;
 };
 
 export type CartFollowUpRow = {
@@ -3979,6 +4000,16 @@ export const cartsApi = {
     return get<CartFollowUpGrid>(`/api/carts/follow-up-grid${suffix}`);
   },
   contactAttempts: (cartId: string) => get<{ rows: CartAttemptRow[] }>(`/api/carts/${cartId}/contact-attempts`),
+  /** Recorded when the rep taps Call / WhatsApp / SMS for a cart; a log needs one first. */
+  tapContact: (cartId: string, channel: "call" | "whatsapp" | "sms") => post<{ tappedAt: string }>(`/api/carts/${cartId}/contact-taps`, { channel }),
+  integrity: (params: { from?: string; to?: string }) => {
+    const qs = new URLSearchParams();
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
+    return get<CartIntegrityView>(`/api/carts/follow-up-integrity${qs.toString() ? `?${qs}` : ""}`);
+  },
+  spotChecks: (weekStart?: string) => get<{ weekStart: string; rows: CartSpotCheck[] }>(`/api/carts/spot-checks${weekStart ? `?weekStart=${weekStart}` : ""}`),
+  saveSpotCheck: (id: string, body: { status: CartSpotCheck["status"]; note?: string }) => put<{ row: CartSpotCheck }>(`/api/carts/spot-checks/${id}`, body),
   logContactAttempt: (cartId: string, body: unknown) =>
     post<{ row: CartAttemptRow; statusMovedTo: string | null }>(`/api/carts/${cartId}/contact-attempts`, body),
   followUpOverview: () => get<{ rows: CartFollowUpRow[] }>("/api/carts/follow-up-overview"),
