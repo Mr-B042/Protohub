@@ -78,7 +78,7 @@ export function StockIntelTab({ tabBar, products, canCreateTransfer, onCreateTra
 
   const names = useMemo(() => new Map([...(data?.products ?? []), ...products].map((p) => [p.id, p.name])), [data, products]);
   const ctx: IntelCtx | null = data ? {
-    data, rows: data.result.rows, productName: (id) => names.get(id) ?? "Product", windowDays: data.windowDays,
+    data, rows: data.result.rows, productName: (id) => names.get(id) ?? "Product", windowDays: data.windowDays, productId: productId === "all" ? null : productId,
     canCreateTransfer, onCreateTransfer, canEdit: data.canEdit, statusFilter,
     setView: (next, status = "all") => { setViewState(next); setStatusFilter(status); window.scrollTo({ top: 0, behavior: "smooth" }); },
     openHub: setHubOpen, openPlan: (row) => { setPlanAll(false); setPlan(row); }, openPlanAll: () => setPlanAll(true),
