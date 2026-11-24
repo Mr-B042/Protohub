@@ -18,6 +18,25 @@ const left = (ms: number) => {
   const d = Math.floor(ms / 86_400_000), h = Math.floor((ms % 86_400_000) / 3_600_000), m = Math.floor((ms % 3_600_000) / 60_000);
   return d > 0 ? `${d}d ${h}h ${m}m` : h > 0 ? `${h}h ${m}m` : `${m}m`;
 };
+const PAGE_SIZE = 9;
+const TABS: Array<["todo" | "charging" | "rescheduled" | "done" | "all", string]> = [
+  ["todo", "To call today"], ["charging", "₦50 running"], ["rescheduled", "Rescheduled"], ["done", "Logged today"], ["all", "All"]
+];
+const TAB_TEST: Record<string, (r: InterestedFollowRow) => boolean> = {
+  todo: (r) => !r.loggedToday && r.state !== "rescheduled",
+  charging: (r) => r.state === "charging" && !r.loggedToday,
+  rescheduled: (r) => r.state === "rescheduled",
+  done: (r) => r.loggedToday,
+  all: () => true
+};
+/** 1 … 4 5 6 … 15 (0 = a gap). */
+const pageNumbers = (current: number, pages: number) => {
+  const want = new Set([1, pages, current - 1, current, current + 1].filter((n) => n >= 1 && n <= pages));
+  const sorted = [...want].sort((a, b) => a - b);
+  const out: number[] = [];
+  sorted.forEach((n, i) => { if (i > 0 && n - sorted[i - 1] > 1) out.push(0); out.push(n); });
+  return out;
+};
 const waLink = (phone: string) => `https://wa.me/${phone.replace(/\D/g, "").replace(/^0/, "234")}`;
 
 export function MyInterestedPanel({ isRep, onLog, onConvert, refreshKey = 0 }: {
@@ -32,6 +51,11 @@ export function MyInterestedPanel({ isRep, onLog, onConvert, refreshKey = 0 }: {
   const [now, setNow] = useState(Date.now());
   const [rep, setRep] = useState("all");
   const [showClosed, setShowClosed] = useState(false);
+  // Bright, 24 Nov 2026: "too long, endlessly" - tabs, search and pages of 9.
+  const [tab, setTab] = useState<"todo" | "charging" | "rescheduled" | "done" | "all">("todo");
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [tab, query, rep]);
 
   useEffect(() => {
     let cancelled = false;
@@ -94,11 +118,55 @@ export function MyInterestedPanel({ isRep, onLog, onConvert, refreshKey = 0 }: {
         </div>
       )}
 
-      {/* Cards */}
-      <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
-        {shown.map((r) => <Card key={r.cartId} row={r} now={now} isRep={isRep} onLog={onLog} onConvert={onConvert} />)}
-        {shown.length === 0 && <p className="m-0 text-[13px] text-gray-500">Nobody here right now.</p>}
+      {/* Tabs + search */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-gray-100 px-4 py-2.5 dark:border-slate-800">
+        <div className="inline-flex flex-wrap gap-1 rounded-xl bg-gray-100 p-1 dark:bg-slate-800">
+          {TABS.map(([key, label]) => {
+            const n = shown.filter(TAB_TEST[key]).length;
+            return (
+              <button key={key} type="button" onClick={() => setTab(key)}
+                className={`!min-h-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px] font-bold transition ${tab === key ? "bg-white text-gray-900 shadow-sm dark:bg-slate-900 dark:text-slate-50" : "text-gray-500 hover:text-gray-800 dark:text-slate-400"}`}>
+                {label}<span className={`rounded-md px-1.5 text-[11px] tabular-nums ${tab === key ? (key === "charging" && n > 0 ? "bg-rose-600 text-white" : "bg-emerald-600 text-white") : "bg-gray-200 text-gray-600 dark:bg-slate-700 dark:text-slate-300"}`}>{n}</span>
+              </button>
+            );
+          })}
+        </div>
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, phone or product…"
+          className="!min-h-0 ml-auto h-9 w-full rounded-xl border border-gray-200 bg-white px-3 text-[13px] sm:w-64 dark:border-slate-700 dark:bg-slate-900" />
       </div>
+
+      {/* Cards, 9 a page */}
+      {(() => {
+        const q = query.trim().toLowerCase();
+        const list = shown.filter(TAB_TEST[tab]).filter((r) => !q || `${r.customer ?? ""} ${r.phone ?? ""} ${r.product ?? ""} ${r.repName}`.toLowerCase().includes(q));
+        const pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+        const current = Math.min(page, pages);
+        const slice = list.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
+        return (
+          <>
+            <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
+              {slice.map((r) => <Card key={r.cartId} row={r} now={now} isRep={isRep} onLog={onLog} onConvert={onConvert} />)}
+              {list.length === 0 && (
+                <p className="m-0 py-6 text-center text-[13px] text-gray-500 sm:col-span-2 xl:col-span-3">
+                  {q ? "Nobody matches that search." : tab === "todo" ? "🎉 Everyone here is logged for today." : "Nobody here right now."}
+                </p>
+              )}
+            </div>
+            {pages > 1 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 px-4 py-3 dark:border-slate-800">
+                <span className="text-[12.5px] text-gray-500">{(current - 1) * PAGE_SIZE + 1}–{Math.min(current * PAGE_SIZE, list.length)} of {list.length}</span>
+                <div className="flex items-center gap-1">
+                  <button type="button" disabled={current === 1} onClick={() => setPage(current - 1)} className="!min-h-0 rounded-lg border border-gray-200 px-3 py-1.5 text-[12.5px] font-bold disabled:opacity-40 dark:border-slate-700">‹ Prev</button>
+                  {pageNumbers(current, pages).map((n, i) => n === 0
+                    ? <span key={`gap${i}`} className="px-1 text-gray-400">…</span>
+                    : <button key={n} type="button" onClick={() => setPage(n)} className={`!min-h-0 h-8 min-w-8 rounded-lg px-2 text-[12.5px] font-bold ${n === current ? "bg-emerald-600 text-white" : "border border-gray-200 text-gray-700 hover:bg-gray-50 dark:border-slate-700 dark:text-slate-200"}`}>{n}</button>)}
+                  <button type="button" disabled={current === pages} onClick={() => setPage(current + 1)} className="!min-h-0 rounded-lg border border-gray-200 px-3 py-1.5 text-[12.5px] font-bold disabled:opacity-40 dark:border-slate-700">Next ›</button>
+                </div>
+              </div>
+            )}
+          </>
+        );
+      })()}
 
       {!isRep && shownClosed.length > 0 && (
         <div className="border-t border-gray-100 px-4 py-3 dark:border-slate-800">
@@ -158,8 +226,7 @@ function Card({ row, now, isRep, onLog, onConvert }: { row: InterestedFollowRow;
 
       {row.state === "grace" && (
         <div className="mt-2.5">
-          <div className="h-1.5 overflow-hidden rounded-full bg-amber-100"><div className="h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-500" style={{ width: `${pct}%` }} /></div>
-          <div className="mt-1 text-[11px] text-gray-500">₦{FINE} a day from {dayLabel(row.fineStartsAt)} if not logged that day</div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-amber-100" title={`₦${FINE} a day from ${dayLabel(row.fineStartsAt)} if not logged that day`}><div className="h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-500" style={{ width: `${pct}%` }} /></div>
         </div>
       )}
 
