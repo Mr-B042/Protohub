@@ -3771,7 +3771,7 @@ export type CartIntegrityView = {
 };
 export type CartInterestedRow = {
   cartId: string; customer: string | null; phone: string | null; product: string | null; amount: number; currency: string;
-  repId: string | null; repName: string; interestedAt: string; interestedNote: string | null; interestedBy: string | null;
+  repId: string | null; repName: string; assignedAt: string | null; interestedAt: string; interestedNote: string | null; interestedBy: string | null;
   lastLogAt: string | null; lastOutcome: string | null; logsAfter: number;
 };
 export type CartSpotCheck = {
