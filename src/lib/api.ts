@@ -3769,6 +3769,15 @@ export type CartIntegrityView = {
   sittings: Array<{ repId: string; startedAt: string; endedAt: string; carts: number; secondsPerCart: number; outcomes: string[] }>;
   flagged: Array<{ id: string; cartId: string; repId: string; repName: string; outcome: string; custom: string | null; note: string | null; reached: boolean; savedAt: string; tappedAt: string | null; reasons: string[] }>;
 };
+export type InterestedFollowRow = {
+  cartId: string; kind: "past" | "new"; customer: string | null; phone: string | null; whatsapp: string | null; product: string | null;
+  amount: number; currency: string; repId: string; repName: string; firstInterestedAt: string; fineFrom: string; fineStartsAt: string;
+  lastOutcome: string | null; lastNote: string | null; lastLogAt: string | null; loggedToday: boolean;
+  state: "grace" | "charging" | "rescheduled"; callbackDay: string | null;
+};
+export type InterestedClosedRow = Omit<InterestedFollowRow, "state" | "callbackDay"> & {
+  closedAt: string; closedOutcome: string; closedReason: string | null; closedNote: string | null; closedWithoutTap: boolean; batch: number;
+};
 export type CartInterestedRow = {
   cartId: string; customer: string | null; phone: string | null; product: string | null; amount: number; currency: string;
   repId: string | null; repName: string; assignedAt: string | null; interestedAt: string; interestedNote: string | null; interestedBy: string | null;
@@ -4016,6 +4025,8 @@ export const cartsApi = {
   spotChecks: (weekStart?: string) => get<{ weekStart: string; rows: CartSpotCheck[] }>(`/api/carts/spot-checks${weekStart ? `?weekStart=${weekStart}` : ""}`),
   saveSpotCheck: (id: string, body: { status: CartSpotCheck["status"]; note?: string }) => put<{ row: CartSpotCheck }>(`/api/carts/spot-checks/${id}`, body),
   /** Carts logged Interested that never became an order (Bright, 24 Nov 2026). */
+  /** Interested customers being followed up, with when ₦50 a day starts (rep: own only). */
+  myInterested: () => get<{ today: string; rows: InterestedFollowRow[]; closed: InterestedClosedRow[] }>("/api/carts/my-interested"),
   interestedNotOrdered: (days: number) => get<{ days: number; rows: CartInterestedRow[] }>(`/api/carts/interested-not-ordered?days=${days}`),
   logContactAttempt: (cartId: string, body: unknown) =>
     post<{ row: CartAttemptRow; statusMovedTo: string | null }>(`/api/carts/${cartId}/contact-attempts`, body),

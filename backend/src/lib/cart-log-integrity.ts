@@ -230,14 +230,16 @@ export function buildIntegrity(args: {
 const hash = (text: string) => { let h = 2166136261; for (let i = 0; i < text.length; i += 1) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
 
 /** Up to 3 logs per rep (one per cart) whose customer a manager should call back. */
-export function pickSpotChecks(logs: IntegrityLog[], weekStart: string, perRep = SPOT_CHECKS_PER_REP) {
+export function pickSpotChecks(logs: IntegrityLog[], weekStart: string, perRep = SPOT_CHECKS_PER_REP, prefer: Set<string> = new Set()) {
   const { kept } = withoutDuplicates(logs);
   const byRep = new Map<string, IntegrityLog[]>();
   for (const l of kept) if (SPOT_CHECK_OUTCOMES.has(l.outcome)) byRep.set(l.repId, [...(byRep.get(l.repId) ?? []), l]);
   const picks: IntegrityLog[] = [];
   for (const list of byRep.values()) {
     const seenCart = new Set<string>();
-    for (const l of [...list].sort((a, b) => hash(`${weekStart}|${a.id}`) - hash(`${weekStart}|${b.id}`))) {
+    // Closes on carts in `prefer` (past Interested customers) are checked first.
+    const preferred = (l: IntegrityLog) => (prefer.has(l.cartId) && (l.outcome === "Not interested" || l.outcome === "Unresponsive") ? 0 : 1);
+    for (const l of [...list].sort((a, b) => preferred(a) - preferred(b) || hash(`${weekStart}|${a.id}`) - hash(`${weekStart}|${b.id}`))) {
       if (seenCart.has(l.cartId)) continue;
       seenCart.add(l.cartId); picks.push(l);
       if (seenCart.size >= perRep) break;

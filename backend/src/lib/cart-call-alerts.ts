@@ -377,3 +377,63 @@ export async function runInterestedChasers(now = new Date()) {
   }
   return { sent };
 }
+
+/**
+ * 5. Past Interested customers back on the list (migration 367, 24 Nov 2026).
+ *  - Once: each rep is told how many are back and when ₦50 a day starts.
+ *  - Watch: 5+ of them closed (Not interested / Wrong number) by one rep
+ *    within 30 minutes tells the supervisors, once per rep per day
+ *    (Bright: "watch out for spread quick close up").
+ */
+let backfillNoticeDone = false;
+export async function runInterestedBackfillWatch(now = new Date()) {
+  const nowMs = now.getTime();
+  const today = lagosParts(nowMs).day;
+  const { data: rows, error } = await supabase.from("cart_interested_followups").select("org_id, branch_id, cart_id, rep_id, grace_until, created_at").limit(5000);
+  if (error) throw error;
+  if (!rows || rows.length === 0) return { sent: 0 };
+  let sent = 0;
+  const branchOf = new Map(rows.map((r: any) => [String(r.cart_id), r]));
+
+  if (!backfillNoticeDone) {
+    const byRep = new Map<string, any[]>();
+    for (const r of rows) if (r.rep_id) byRep.set(String(r.rep_id), [...(byRep.get(String(r.rep_id)) ?? []), r]);
+    const won = await claim([...byRep.entries()].map(([repId, list]) => ({ org_id: list[0].org_id, branch_id: list[0].branch_id ?? null, cart_id: "backfill-notice", rep_id: repId, stage: "interested-backfill" })));
+    for (const [repId, list] of byRep) {
+      if (!won.has(`backfill-notice|${repId}|interested-backfill`)) continue;
+      const until = new Date(list[0].grace_until);
+      const day = until.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short", timeZone: "Africa/Lagos" });
+      await sendHeavy(list[0].org_id, list[0].branch_id ?? null, repId, {
+        title: `🛒 ${list.length} past Interested customer${list.length === 1 ? " is" : "s are"} back on your list`,
+        message: `They said Interested but never ordered. Call each one this week: convert to order, reschedule with a date, or close with their reason. Free until the end of this week; from ${day === "Sunday, 29 Nov" ? "Monday 30 Nov" : "next week"} each one not logged that day is ₦50. Open "My Interested customers" on Cart Follow-ups.`,
+        link: "/dashboard/admin/follow-up-queue", kind: "cart_chase", tag: `interested-backfill-${repId}`
+      });
+      sent += 1;
+    }
+    backfillNoticeDone = true;
+  }
+
+  // Rush watch.
+  const since = new Date(nowMs - 30 * 60_000).toISOString();
+  const closes = await selectByIdBatches<any>([...branchOf.keys()], (batch) => supabase.from("cart_contact_attempts")
+    .select("cart_id, rep_id, created_at, outcome_code").in("cart_id", batch).in("outcome_code", ["Not interested", "Wrong number"]).gte("created_at", since));
+  const byRep = new Map<string, any[]>();
+  for (const c of closes) byRep.set(String(c.rep_id), [...(byRep.get(String(c.rep_id)) ?? []), c]);
+  for (const [repId, list] of byRep) {
+    if (list.length < 5) continue;
+    const first = branchOf.get(String(list[0].cart_id))!;
+    const stage = `backfill-rush:${today}`;
+    const won = await claim([{ org_id: first.org_id, branch_id: first.branch_id ?? null, cart_id: "backfill-rush", rep_id: repId, stage }]);
+    if (!won.has(`backfill-rush|${repId}|${stage}`)) continue;
+    const { data: rep } = await supabase.from("users").select("name").eq("id", repId).maybeSingle();
+    for (const boss of await supervisors(first.org_id, first.branch_id)) {
+      await sendHeavy(first.org_id, first.branch_id ?? null, boss.id, {
+        title: `⚠️ ${(rep as any)?.name ?? "A rep"} closed ${list.length} past Interested customers in 30 minutes`,
+        message: `Closed as Not interested / Wrong number in one go. That is too fast for real calls. Check them in "My Interested customers" (Closed since) and call two back to confirm.`,
+        link: boss.link, kind: "hos_cart_not_called", tag: `backfill-rush-${repId}`
+      });
+      sent += 1;
+    }
+  }
+  return { sent };
+}
