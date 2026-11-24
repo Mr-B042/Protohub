@@ -2,7 +2,8 @@ import { tidyOrderState } from "../lib/order-state.js";
 import { writtenReasonProblem } from "../lib/cart-written-reason.js";
 import { sendRepCallNow } from "../lib/cart-call-alerts.js";
 import {
-  TAP_WINDOW_HOURS, buildIntegrity, duplicateOf, pickSpotChecks, reachedProblem, repeatProblem, type IntegrityLog, type PastLog
+  TAP_WINDOW_HOURS, buildIntegrity, duplicateOf, laterProblem, pausedOn, pickSpotChecks, reachedProblem, repeatProblem, rescheduleDateProblem,
+  type IntegrityLog, type PastLog, type RescheduleLog
 } from "../lib/cart-log-integrity.js";
 import { liteCart } from "../lib/lite-lists.js";
 import { fetchPagesTogether } from "../lib/paged-fetch.js";
@@ -1815,6 +1816,11 @@ const AttemptSchema = z.object({
 }).superRefine((value, ctx) => {
   const reached = reachedProblem(value.outcomeCode, value.customerReached);
   if (reached) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["customerReached"], message: reached });
+  // Bright, 24 Nov 2026: "another day" is a Rescheduled with the exact date, never Other text.
+  const later = laterProblem(value.outcomeCode, value.customOutcome, value.outcomeNote);
+  if (later) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["outcomeCode"], message: later });
+  const dateProblem = rescheduleDateProblem(value.outcomeCode, value.nextActionAt, lagosDateKey(new Date()));
+  if (dateProblem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["nextActionAt"], message: dateProblem });
   // "Other" with no words is unreportable - it tells the next person nothing.
   if (value.outcomeCode === "Other" && !value.customOutcome?.trim()) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["customOutcome"], message: "Describe the outcome." });
@@ -2742,11 +2748,20 @@ export async function computeCartLogBoard(orgId: string, repFilter: string | nul
       if (error) throw new Error(`Couldn't read the ${what}, so no charges are shown: ${error.message}`);
     }
     const allOutcomeRows = await selectByIdBatches<any>(cartIds, (batch) => supabase.from(CART_ATTEMPTS)
-      .select("cart_id, outcome_code")
+      .select("cart_id, outcome_code, next_action_at, attempted_at")
       .eq("org_id", orgId).in("cart_id", batch)
       .in("outcome_code", ["Interested", "Rescheduled", "Not interested", "Wrong number"]))
       .catch((error: any) => { throw new Error(`Couldn't check which carts are finished, so no charges are shown: ${error.message}`); });
-    const terminalOutcomeCartIds = new Set((allOutcomeRows ?? []).map((row: any) => String(row.cart_id).trim()));
+    // ⚠️ A Rescheduled WITH a date (required from 24 Nov 2026) does not finish
+    // the cart: it is paused until the callback day, then due again. Old
+    // Rescheduled logs without a date still finish it, so nothing already
+    // decided starts charging after the fact.
+    const finishing = (row: any) => !(row.outcome_code === "Rescheduled" && row.next_action_at);
+    const terminalOutcomeCartIds = new Set((allOutcomeRows ?? []).filter(finishing).map((row: any) => String(row.cart_id).trim()));
+    const reschedules: RescheduleLog[] = (allOutcomeRows ?? []).filter((row: any) => !finishing(row)).map((row: any) => ({
+      cartId: String(row.cart_id).trim(), savedDay: lagosDateKey(row.attempted_at), outcome: "Rescheduled",
+      callbackDay: String(row.next_action_at).slice(0, 10)
+    }));
 
     const repName = new Map(((repRows ?? []) as any[]).map((row) => [row.id, row.name]));
     const deliveredCart = new Set(((orderRows ?? []) as any[])
@@ -2792,6 +2807,8 @@ export async function computeCartLogBoard(orgId: string, repFilter: string | nul
     const dueCartIdsFor = (theirCarts: any[], dateKey: string) => new Set(
       theirCarts
         .filter((row) => lagosDateKey(row.assigned_at ?? row.created_at) <= dateKey)
+        // Paused by a dated reschedule: not due until the callback day.
+        .filter((row) => !pausedOn(reschedules, String(row.id).trim(), dateKey))
         .map((row) => row.id as string)
     );
     const loggedDueCount = (repId: string, dateKey: string, dueIds: Set<string>) => {

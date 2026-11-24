@@ -22,6 +22,7 @@ import { getOrgPushBranding } from "./push-branding.js";
 import { assignmentRulesForBranch } from "./cart-assignment.js";
 import { CART_LOG_MISS_AMOUNT, CART_LOG_PENALTY_START_DATE } from "./cart-log-penalty.js";
 import { selectByIdBatches } from "./query-limits.js";
+import { pausedOn, type RescheduleLog } from "./cart-log-integrity.js";
 import {
   chaseMessage, hosChaseMessage, isWorkingNow, lagosParts, stagesDue, workingMinutesBetween, type ChaseCart, type RepChase, type Stage
 } from "./cart-call-alerts-model.js";
@@ -236,7 +237,11 @@ export async function runCartChase(slot: "morning" | "afternoon", now = new Date
       const open = carts ?? [];
       if (open.length === 0) continue;
       const attempts = await selectByIdBatches<any>(open.map((c: any) => String(c.id)), (batch) =>
-        supabase.from("cart_contact_attempts").select("cart_id, created_at").in("cart_id", batch));
+        supabase.from("cart_contact_attempts").select("cart_id, created_at, outcome_code, next_action_at").in("cart_id", batch));
+      // A dated reschedule pauses the cart until the callback day (cart-log-integrity.ts).
+      const reschedules: RescheduleLog[] = attempts.filter((a: any) => a.outcome_code === "Rescheduled" && a.next_action_at).map((a: any) => ({
+        cartId: String(a.cart_id), savedDay: lagosParts(Date.parse(a.created_at)).day, outcome: "Rescheduled", callbackDay: String(a.next_action_at).slice(0, 10)
+      }));
       const ever = new Set(attempts.map((a: any) => String(a.cart_id)));
       const todaySet = new Set(attempts.filter((a: any) => String(a.created_at) >= todayStart).map((a: any) => String(a.cart_id)));
       const fine = today >= CART_LOG_PENALTY_START_DATE ? CART_LOG_MISS_AMOUNT : 0;
@@ -245,9 +250,12 @@ export async function runCartChase(slot: "morning" | "afternoon", now = new Date
       const summary: RepChase[] = [];
       const wanted: Array<{ repId: string; msg: NonNullable<ReturnType<typeof chaseMessage>> }> = [];
       for (const rep of branchReps) {
-        const mine: ChaseCart[] = open.filter((c: any) => String(c.assigned_rep_id) === String(rep.id)).map((c: any) => ({
-          id: String(c.id), customer: String(c.customer ?? "").trim(), product: what(c), neverCalled: !ever.has(String(c.id)), loggedToday: todaySet.has(String(c.id))
-        }));
+        const mine: ChaseCart[] = open.filter((c: any) => String(c.assigned_rep_id) === String(rep.id))
+          .filter((c: any) => !pausedOn(reschedules, String(c.id), today))
+          .map((c: any) => ({
+            id: String(c.id), customer: String(c.customer ?? "").trim(), product: what(c), neverCalled: !ever.has(String(c.id)), loggedToday: todaySet.has(String(c.id)),
+            callbackToday: reschedules.some((r) => r.cartId === String(c.id) && r.callbackDay === today)
+          }));
         if (mine.length === 0) continue;
         const msg = chaseMessage(slot, mine, fine);
         summary.push({ repName: String(rep.name ?? "A rep"), due: msg?.due ?? 0, never: msg?.never ?? 0, total: mine.length });

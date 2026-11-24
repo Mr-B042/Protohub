@@ -52,19 +52,23 @@ export function stagesDue(waited: number, callMinutes: number): Stage[] {
   return out;
 }
 
-export type ChaseCart = { id: string; customer: string; product: string; neverCalled: boolean; loggedToday: boolean };
+export type ChaseCart = { id: string; customer: string; product: string; neverCalled: boolean; loggedToday: boolean; callbackToday?: boolean };
 
 /** What one rep is told at the 9am / 2pm chase. null = nothing to chase. */
 export function chaseMessage(slot: "morning" | "afternoon", carts: ChaseCart[], finePerCart: number) {
   const due = carts.filter((c) => !c.loggedToday);
   if (due.length === 0) return null;
   const never = due.filter((c) => c.neverCalled).length;
-  const first = [...due].sort((a, b) => Number(b.neverCalled) - Number(a.neverCalled)).slice(0, 4)
+  const callbacks = due.filter((c) => c.callbackToday).length;
+  // Callbacks the customer asked for today first, then never-called carts.
+  const rank = (c: ChaseCart) => (c.callbackToday ? 2 : 0) + (c.neverCalled ? 1 : 0);
+  const first = [...due].sort((a, b) => rank(b) - rank(a)).slice(0, 4)
     .map((c) => `${c.customer || "No name"}${c.product ? ` (${c.product})` : ""}`);
   const title = slot === "morning"
     ? `🌅 Morning chase: call your ${due.length} cart${due.length === 1 ? "" : "s"} now`
     : `☀️ Afternoon chase: ${due.length} cart${due.length === 1 ? "" : "s"} still not called today`;
   const parts = [
+    callbacks > 0 ? `📅 ${callbacks} callback${callbacks === 1 ? "" : "s"} the customer asked for today` : null,
     never > 0 ? `${never} never called` : null,
     finePerCart > 0 ? `₦${finePerCart.toLocaleString("en-NG")} each if not logged today (₦${(finePerCart * due.length).toLocaleString("en-NG")})` : null,
     `Start with: ${first.join(", ")}${due.length > first.length ? ` +${due.length - first.length} more` : ""}`
