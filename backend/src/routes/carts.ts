@@ -1,5 +1,6 @@
 import { tidyOrderState } from "../lib/order-state.js";
 import { writtenReasonProblem } from "../lib/cart-written-reason.js";
+import { sendRepCallNow } from "../lib/cart-call-alerts.js";
 import {
   TAP_WINDOW_HOURS, buildIntegrity, duplicateOf, pickSpotChecks, reachedProblem, repeatProblem, type IntegrityLog, type PastLog
 } from "../lib/cart-log-integrity.js";
@@ -2564,6 +2565,10 @@ router.patch("/:id",
 
     const repChanged = repId !== undefined && repId && repId !== existing.assigned_rep_id;
     const newlyAssigned = data.status === "Assigned" || updates.status === "Assigned";
+    // A cart handed over by hand gets the same loud "Call now" as the rotation.
+    if (repChanged && data.assigned_rep_id) {
+      void sendRepCallNow(req.user!.orgId, String(data.assigned_rep_id), data).catch(() => undefined);
+    }
     if (repChanged && newlyAssigned && data.phone?.trim()) {
       void sendCartAssignedSms(req.user!.orgId, {
         id: data.id,

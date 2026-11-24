@@ -21,7 +21,8 @@ import { runLateSendAlerts } from "./lib/late-send.js";
 import { logger } from "./lib/logger.js";
 import { runtimeDataProfile } from "./lib/local-safety.js";
 import { syncDueOrderFollowUpNotifications } from "./lib/order-follow-up-notifications.js";
-import { syncDueCartCallbacks, sendCartFollowUpDigest } from "./lib/cart-follow-up-notifications.js";
+import { syncDueCartCallbacks } from "./lib/cart-follow-up-notifications.js";
+import { runCartCallEscalations, runCartChase } from "./lib/cart-call-alerts.js";
 import { runSmartStockAlerts } from "./lib/smart-stock-alerts.js";
 import { runStockIntelAlerts } from "./lib/stock-intel-alerts.js";
 import { runPhantomStockCheck } from "./lib/phantom-stock-check.js";
@@ -737,19 +738,29 @@ cron.schedule("*/15 * * * *", async () => {
   }
 });
 
-// ── Carts going quiet — once each working morning ─────────
-// 8am Lagos. One notification per rep listing how many carts they have gone
-// quiet on, not one per cart. Sundays off, matching the rest of the follow-up
-// rules - nobody is expected to work them.
-cron.schedule("0 7 * * 1-6", async () => {
-  logger.info("cron: cart follow-up digest");
+// ── Cart call alerts (Bright, 24 Nov 2026) ───────────────
+// The old 8am "Carts going quiet" digest is replaced by the 9am chase below,
+// so reps get one morning alert, not two (sendCartFollowUpDigest is kept).
+// Every 2 minutes in the day: carts not called at the branch's call time remind
+// the rep; at twice that, the rep AND the Head of Sales; after an hour, both
+// again. Working hours / Sundays are checked per branch inside the job.
+cron.schedule("*/2 7-18 * * *", async () => {
   try {
-    const result = await sendCartFollowUpDigest();
-    logger.info("cron: cart digest sent", { notified: result.notified });
+    const result = await runCartCallEscalations();
+    if (result.sent > 0) logger.info("cron: cart call escalations", { sent: result.sent });
   } catch (e) {
-    logger.error("cron: cart digest crashed", { error: (e as Error).message });
+    logger.error("cron: cart call escalations crashed", { error: (e as Error).message });
   }
-});
+}, { timezone: "Africa/Lagos" });
+// 9am and 2pm: every rep's carts not logged today, and the Head of Sales summary.
+cron.schedule("0 9 * * *", async () => {
+  try { logger.info("cron: cart morning chase", await runCartChase("morning")); }
+  catch (e) { logger.error("cron: cart morning chase crashed", { error: (e as Error).message }); }
+}, { timezone: "Africa/Lagos" });
+cron.schedule("0 14 * * *", async () => {
+  try { logger.info("cron: cart afternoon chase", await runCartChase("afternoon")); }
+  catch (e) { logger.error("cron: cart afternoon chase crashed", { error: (e as Error).message }); }
+}, { timezone: "Africa/Lagos" });
 
 // ── Smart low-stock alerts — every hour ──────────────────
 // Fires only for (state, product) pairs that sold this week AND are < 3 days
