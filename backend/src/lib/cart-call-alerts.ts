@@ -76,7 +76,8 @@ async function headOfSales(orgId: string, branchId: string) {
 }
 
 const who = (cart: any) => String(cart.customer ?? "").trim() || "a customer";
-const what = (cart: any) => String(cart.package_name || cart.product_name || "").trim();
+// The product, not the package ("Starter" alone says nothing).
+const what = (cart: any) => String(cart.product_name || cart.package_name || "").trim();
 const money = (cart: any) => {
   const n = Number(cart.amount ?? 0);
   return n > 0 ? `₦${Math.round(n).toLocaleString("en-NG")}` : "";
