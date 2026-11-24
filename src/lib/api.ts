@@ -6262,7 +6262,17 @@ export type StockIntelData = {
   received: Array<{ locationId: string; productId: string; units: number }>;
   outcomes: Array<{ state: string; orders: number; delivered: number }>;
 };
+/** Overview › Pieces Sold: delivered pieces per day x product x state x agent. */
+export type StockSoldData = {
+  today: string; start: string; end: string; from: string; to: string;
+  lines: Array<{ day: string; productId: string; state: string; agentId: string; pieces: number; orders: number }>;
+  orderCells: Array<{ day: string; state: string; agentId: string; orders: number }>;
+  days: Array<{ day: string; pieces: number; orders: number }>;
+  agents: Array<{ id: string; name: string }>;
+};
 export const stockIntelApi = {
+  sold: (args: { start: string; end: string; productId?: string | null }) =>
+    get<StockSoldData>(`/api/stock-intel/sold?start=${args.start}&end=${args.end}${args.productId ? `&productId=${encodeURIComponent(args.productId)}` : ""}`),
   load: (args: { windowDays: number; productId?: string | null }) =>
     get<StockIntelData>(`/api/stock-intel?windowDays=${args.windowDays}${args.productId ? `&productId=${encodeURIComponent(args.productId)}` : ""}`),
   saveRoute: (body: { destState: string; productId: string | null; sources: Array<string | null> }) => put<{ ok: boolean }>("/api/stock-intel/routes", body),

@@ -1,0 +1,380 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Check, ChevronDown, Download, Filter, Loader2, Package, Search, X } from "lucide-react";
+import DateWindowNav from "../../../components/DateWindowNav";
+import { PRESET_LABEL, presetRange, shiftDay, windowSize, type DateWindow, type PresetKey } from "../../../lib/date-window";
+import { stockIntelApi, type StockSoldData } from "../../../lib/api";
+import { SERIES_COLORS, downloadCsv, nf } from "../parts";
+import { Card, CardHead, one, place, type IntelCtx } from "./shared";
+
+// ── Overview › Pieces Sold (Bright, 24 Nov 2026) ────────────────────────────
+// Pieces DELIVERED per product, per day, per state, per agent, for any dates
+// (backend/src/lib/stock-sold.ts). Its date filter is its own: the stock
+// figures above and below are about stock right now and do not move with it.
+
+const CHIPS: PresetKey[] = ["today", "yesterday", "thisWeek", "lastWeek", "thisMonth", "lastMonth"];
+type GroupBy = "product" | "state" | "agent" | "productState" | "productAgent";
+const GROUPS: Array<{ value: GroupBy; label: string }> = [
+  { value: "product", label: "By Product" }, { value: "state", label: "By State" }, { value: "agent", label: "By Agent" },
+  { value: "productState", label: "Product by State" }, { value: "productAgent", label: "Product by Agent" }
+];
+type Sort = "most" | "fewest" | "name";
+const MAX_DAY_COLUMNS = 62;
+const lagosToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });
+const shortDay = (key: string) => new Date(`${key}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+const dayName = (key: string) => new Date(`${key}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+const daysOf = (w: DateWindow) => { const out: string[] = []; for (let d = w.start; d <= w.end && out.length < 400; d = shiftDay(d, 1)) out.push(d); return out; };
+
+type Group = { key: string; first: string; second: string | null; pieces: number; orders: number; byDay: Map<string, number> };
+
+export function SoldSection({ ctx }: { ctx: IntelCtx }) {
+  const todayKey = ctx.data.today || lagosToday();
+  const [range, setRange] = useState<DateWindow>(() => presetRange("today", todayKey));
+  const [sold, setSold] = useState<StockSoldData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [tick, setTick] = useState(0);
+  const [groupBy, setGroupBy] = useState<GroupBy>("product");
+  const [sort, setSort] = useState<Sort>("most");
+  const [search, setSearch] = useState("");
+  const [eachDay, setEachDay] = useState(false);
+  // Custom filters: any mix of products, states and agents at once (empty = all).
+  const [pickProducts, setPickProducts] = useState<string[]>([]);
+  const [pickStates, setPickStates] = useState<string[]>([]);
+  const [pickAgents, setPickAgents] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true); setError("");
+    stockIntelApi.sold({ start: range.start, end: range.end, productId: ctx.productId })
+      .then((r) => { if (!cancelled) setSold(r); })
+      .catch((e: any) => { if (!cancelled) setError(e?.message ?? "Could not count the pieces sold."); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [range.start, range.end, ctx.productId, tick]);
+
+  const agentName = useMemo(() => new Map((sold?.agents ?? []).map((a) => [a.id, a.name])), [sold]);
+  const nameOfAgent = (id: string) => (id ? agentName.get(id) ?? "Delivery agent" : "No agent");
+  const days = useMemo(() => daysOf(range), [range]);
+  // The tab's own product picker replaces this one; drop picks it would hide.
+  useEffect(() => { if (ctx.productId) setPickProducts([]); }, [ctx.productId]);
+  const filtering = pickProducts.length + pickStates.length + pickAgents.length > 0;
+  // Every loaded day, with the product / state / agent filters applied.
+  const kept = useMemo(() => {
+    const p = new Set(pickProducts), st = new Set(pickStates), a = new Set(pickAgents);
+    return (sold?.lines ?? []).filter((l) => (!p.size || p.has(l.productId)) && (!st.size || st.has(l.state)) && (!a.size || a.has(l.agentId)));
+  }, [sold, pickProducts, pickStates, pickAgents]);
+  const keptCells = useMemo(() => {
+    const st = new Set(pickStates), a = new Set(pickAgents);
+    return (sold?.orderCells ?? []).filter((c) => (!st.size || st.has(c.state)) && (!a.size || a.has(c.agentId)));
+  }, [sold, pickStates, pickAgents]);
+  const lines = useMemo(() => kept.filter((l) => l.day >= range.start && l.day <= range.end), [kept, range]);
+  const cells = useMemo(() => keptCells.filter((c) => c.day >= range.start && c.day <= range.end), [keptCells, range]);
+
+  const chipCount = (preset: PresetKey) => {
+    const r = presetRange(preset, todayKey);
+    return kept.filter((l) => l.day >= r.start && l.day <= r.end).reduce((s, l) => s + l.pieces, 0);
+  };
+
+  // Choices come from every loaded day, so a pick does not vanish when the dates change.
+  const options = useMemo(() => {
+    const all = sold?.lines ?? [];
+    const count = (key: (l: (typeof all)[number]) => string) => { const m = new Map<string, number>(); for (const l of all) m.set(key(l), (m.get(key(l)) ?? 0) + l.pieces); return m; };
+    const asList = (m: Map<string, number>, label: (k: string) => string) => [...m].map(([value, n]) => ({ value, label: label(value), n })).sort((x, y) => y.n - x.n);
+    return {
+      products: asList(count((l) => l.productId), ctx.productName),
+      states: asList(count((l) => l.state), place),
+      agents: asList(count((l) => l.agentId), nameOfAgent)
+    };
+  }, [sold, ctx, agentName]);
+
+  const totals = useMemo(() => {
+    const pieces = lines.reduce((s, l) => s + l.pieces, 0);
+    // With products picked, an order is counted once per picked product it held.
+    const orders = pickProducts.length ? lines.reduce((s, l) => s + l.orders, 0) : cells.reduce((s, c) => s + c.orders, 0);
+    const perDay = new Map<string, number>();
+    for (const l of lines) perDay.set(l.day, (perDay.get(l.day) ?? 0) + l.pieces);
+    const best = [...perDay].sort((a, b) => b[1] - a[1])[0];
+    const perProduct = new Map<string, number>();
+    for (const l of lines) perProduct.set(l.productId, (perProduct.get(l.productId) ?? 0) + l.pieces);
+    const top = [...perProduct].sort((a, b) => b[1] - a[1])[0];
+    const pastDays = days.filter((d) => d <= todayKey).length || 1;
+    return { pieces, orders, perDay, best, top, avg: pieces / pastDays, products: perProduct };
+  }, [lines, cells, pickProducts, days, todayKey]);
+
+  // Chart: each day, stacked by the five best-selling products, the rest as "Other".
+  const chart = useMemo(() => {
+    const top = [...totals.products].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([id]) => id);
+    const rows = days.map((day) => {
+      const entry: Record<string, number | string> = { day, label: shortDay(day) };
+      for (const id of top) entry[id] = 0;
+      entry.other = 0;
+      return entry;
+    });
+    const at = new Map(rows.map((r) => [r.day as string, r]));
+    for (const l of lines) {
+      const r = at.get(l.day);
+      if (!r) continue;
+      const k = top.includes(l.productId) ? l.productId : "other";
+      r[k] = (r[k] as number) + l.pieces;
+    }
+    return { rows, top, hasOther: rows.some((r) => (r.other as number) > 0) };
+  }, [lines, days, totals.products]);
+
+  const groups = useMemo(() => {
+    const map = new Map<string, Group>();
+    const add = (key: string, first: string, second: string | null, day: string, pieces: number, orders: number) => {
+      const g = map.get(key) ?? { key, first, second, pieces: 0, orders: 0, byDay: new Map() };
+      g.pieces += pieces; g.orders += orders; g.byDay.set(day, (g.byDay.get(day) ?? 0) + pieces);
+      map.set(key, g);
+    };
+    for (const l of lines) {
+      const product = ctx.productName(l.productId);
+      if (groupBy === "product") add(l.productId, product, null, l.day, l.pieces, l.orders);
+      else if (groupBy === "productState") add(`${l.productId}|${l.state}`, product, place(l.state), l.day, l.pieces, l.orders);
+      else if (groupBy === "productAgent") add(`${l.productId}|${l.agentId}`, product, nameOfAgent(l.agentId), l.day, l.pieces, l.orders);
+      else if (groupBy === "state") add(l.state, place(l.state), null, l.day, l.pieces, pickProducts.length ? l.orders : 0);
+      else add(l.agentId, nameOfAgent(l.agentId), null, l.day, l.pieces, pickProducts.length ? l.orders : 0);
+    }
+    // By state / agent, an order holding two products is still one order.
+    if ((groupBy === "state" || groupBy === "agent") && !pickProducts.length) {
+      for (const c of cells) { const g = map.get(groupBy === "state" ? c.state : c.agentId); if (g) g.orders += c.orders; }
+    }
+    const q = search.trim().toLowerCase();
+    const list = [...map.values()].filter((g) => !q || `${g.first} ${g.second ?? ""}`.toLowerCase().includes(q));
+    return list.sort((a, b) => sort === "name" ? `${a.first}${a.second}`.localeCompare(`${b.first}${b.second}`) : sort === "fewest" ? a.pieces - b.pieces : b.pieces - a.pieces);
+  }, [lines, cells, pickProducts, groupBy, sort, search, ctx, agentName]);
+
+  const showDays = eachDay && days.length <= MAX_DAY_COLUMNS;
+  const firstHead = groupBy === "state" ? "State" : groupBy === "agent" ? "Agent" : "Product";
+  const secondHead = groupBy === "productState" ? "State" : groupBy === "productAgent" ? "Agent" : null;
+  const pastDays = days.filter((d) => d <= todayKey).length || 1;
+
+  const exportCsv = () => downloadCsv(`pieces-sold-${range.start}-to-${range.end}.csv`, [
+    [firstHead, ...(secondHead ? [secondHead] : []), "Pieces sold", "Orders", "A day", ...days],
+    ...groups.map((g) => [g.first, ...(secondHead ? [g.second ?? ""] : []), g.pieces, g.orders, one(g.pieces / pastDays), ...days.map((d) => g.byDay.get(d) ?? 0)])
+  ]);
+
+  const select = "!min-h-0 h-9 rounded-xl border border-slate-200/80 bg-white px-3 text-sm font-bold text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
+
+  return (
+    <Card className="overflow-hidden">
+      <div className="p-4 pb-3">
+        <CardHead Icon={Package} title="Pieces Sold" info="Pieces delivered, counted on the day they were delivered. A package counts as its pieces; extra items on an order count too."
+          sub={`Pieces delivered by product, state and agent${ctx.productId ? ` · ${ctx.productName(ctx.productId)}` : ""}`}
+          action={<button type="button" onClick={exportCsv} disabled={groups.length === 0} className="!min-h-0 inline-flex h-9 items-center gap-1.5 rounded-lg border border-gray-200 px-3 text-[12.5px] font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-200"><Download className="h-4 w-4" />CSV</button>} />
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 border-y border-slate-200/80 bg-slate-50/60 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/30">
+        <div className="inline-flex flex-wrap items-center gap-1">
+          {CHIPS.map((preset) => {
+            const r = presetRange(preset, todayKey);
+            const active = range.start === r.start && range.end === r.end;
+            return (
+              <button key={preset} type="button" onClick={() => setRange(r)}
+                className={`!min-h-0 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold transition-all ${active ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200" : "text-slate-500 hover:bg-white hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"}`}>
+                {PRESET_LABEL[preset]}
+                <span className={`rounded-md px-1.5 py-0.5 text-[11px] font-black tabular-nums ${active ? "bg-emerald-100 text-emerald-800" : "bg-slate-200/70 text-slate-600 dark:bg-slate-700 dark:text-slate-300"}`}>{sold ? nf(chipCount(preset)) : "…"}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search product, state or agent…"
+              className="!min-h-0 h-9 w-full rounded-xl border border-slate-200/80 bg-white pl-9 pr-3 text-sm font-medium text-slate-700 shadow-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/20 sm:w-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+          </div>
+          <select aria-label="Group by" value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)} className={select}>{GROUPS.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}</select>
+          <select aria-label="Sort" value={sort} onChange={(e) => setSort(e.target.value as Sort)} className={select}>
+            <option value="most">Most Sold First</option><option value="fewest">Fewest Sold First</option><option value="name">A – Z</option>
+          </select>
+        </div>
+      </div>
+      <div className="border-b border-slate-200/80 bg-slate-50/60 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/30">
+        <DateWindowNav value={range} onChange={setRange} todayKey={todayKey} />
+      </div>
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200/80 bg-slate-50/60 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/30">
+        <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-500"><Filter className="h-4 w-4" />Filter:</span>
+        {!ctx.productId && <MultiPick label="Products" all="All products" options={options.products} value={pickProducts} onChange={setPickProducts} />}
+        <MultiPick label="States" all="All states" options={options.states} value={pickStates} onChange={setPickStates} />
+        <MultiPick label="Agents" all="All agents" options={options.agents} value={pickAgents} onChange={setPickAgents} />
+        {filtering && (
+          <>
+            {[...pickProducts.map((v) => ({ v, label: ctx.productName(v), drop: () => setPickProducts(pickProducts.filter((x) => x !== v)) })),
+              ...pickStates.map((v) => ({ v, label: place(v), drop: () => setPickStates(pickStates.filter((x) => x !== v)) })),
+              ...pickAgents.map((v) => ({ v, label: nameOfAgent(v), drop: () => setPickAgents(pickAgents.filter((x) => x !== v)) }))
+            ].map((chip) => (
+              <span key={chip.v} className="inline-flex max-w-[220px] items-center gap-1 rounded-full bg-sky-50 py-1 pl-2.5 pr-1 text-[12px] font-semibold text-sky-800 ring-1 ring-sky-200 dark:bg-sky-500/10 dark:text-sky-200">
+                <span className="truncate">{chip.label}</span>
+                <button type="button" aria-label={`Remove ${chip.label}`} onClick={chip.drop} className="!min-h-0 rounded-full p-0.5 hover:bg-sky-100"><X className="h-3 w-3" /></button>
+              </span>
+            ))}
+            <button type="button" onClick={() => { setPickProducts([]); setPickStates([]); setPickAgents([]); }} className="!min-h-0 text-[12.5px] font-semibold text-[#1F8FE0] hover:underline">Clear filters</button>
+          </>
+        )}
+      </div>
+
+      {error ? (
+        <div className="m-4 flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-800">
+          <span>{error}</span>
+          <button type="button" onClick={() => setTick((n) => n + 1)} className="!min-h-0 rounded-lg border border-rose-300 bg-white px-3 py-1.5 font-semibold text-rose-700">Try again</button>
+        </div>
+      ) : (
+        <div className={`space-y-4 p-4 transition-opacity ${loading ? "opacity-50" : ""}`}>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+            {([
+              ["Pieces sold", nf(totals.pieces), `${windowSize(range)} day${windowSize(range) === 1 ? "" : "s"}`],
+              ["Orders delivered", nf(totals.orders), totals.orders > 0 ? `${one(totals.pieces / totals.orders)} pieces an order` : "None yet"],
+              ["A day on average", one(totals.avg), "pieces a day"],
+              ["Best day", totals.best ? nf(totals.best[1]) : "—", totals.best ? dayName(totals.best[0]) : "No sales yet"],
+              ["Best seller", totals.top ? ctx.productName(totals.top[0]) : "—", totals.top ? `${nf(totals.top[1])} pieces` : "No sales yet"]
+            ] as Array<[string, string, string]>).map(([label, value, foot]) => (
+              <div key={label} className="min-w-0 rounded-xl border border-gray-200 px-3 py-2.5 dark:border-slate-700">
+                <div className="text-[11.5px] font-semibold text-gray-500">{label}</div>
+                <div className="truncate text-[19px] font-black tracking-tight text-gray-900 dark:text-slate-50">{value}</div>
+                <div className="truncate text-[11px] text-gray-500">{foot}</div>
+              </div>
+            ))}
+          </div>
+
+          {days.length > 1 && (
+            <div className="min-w-0">
+              <div className="h-[220px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chart.rows} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} interval="preserveStartEnd" minTickGap={12} />
+                  <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                  <Tooltip cursor={{ fill: "rgba(148,163,184,0.12)" }} formatter={(v: number, k: string) => [nf(v), k === "other" ? "Other products" : ctx.productName(k)]} labelFormatter={(_, p) => (p?.[0]?.payload?.day ? dayName(p[0].payload.day) : "")} />
+                  {chart.top.map((id, i) => <Bar key={id} dataKey={id} stackId="s" fill={SERIES_COLORS[i % SERIES_COLORS.length]} maxBarSize={36} />)}
+                  {chart.hasOther && <Bar dataKey="other" stackId="s" fill="#94a3b8" maxBarSize={36} />}
+                </BarChart>
+              </ResponsiveContainer>
+              </div>
+              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11.5px] text-gray-600 dark:text-slate-400">
+                {chart.top.map((id, i) => <span key={id} className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: SERIES_COLORS[i % SERIES_COLORS.length] }} />{ctx.productName(id)}</span>)}
+                {chart.hasOther && <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-slate-400" />Other products</span>}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <span className="text-[12.5px] font-semibold text-gray-600 dark:text-slate-300">{groups.length} row{groups.length === 1 ? "" : "s"} · {GROUPS.find((g) => g.value === groupBy)!.label.toLowerCase()}{loading && <Loader2 className="ml-2 inline h-3.5 w-3.5 animate-spin" />}</span>
+              <label className="inline-flex items-center gap-2 text-[12.5px] font-semibold text-gray-700 dark:text-slate-200">
+                <input type="checkbox" checked={eachDay} onChange={(e) => setEachDay(e.target.checked)} className="h-4 w-4 rounded border-gray-300" />
+                Show each day
+              </label>
+            </div>
+            {eachDay && days.length > MAX_DAY_COLUMNS && <p className="m-0 mb-2 text-[12px] text-amber-700">Pick {MAX_DAY_COLUMNS} days or fewer to see each day. The CSV still has every day.</p>}
+            <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-slate-700">
+              <table className={`w-full text-[12.5px] ${showDays ? "!min-w-[720px]" : "!min-w-0"}`}>
+                <thead className="bg-gray-50 dark:bg-slate-800/60">
+                  <tr className="text-left text-[11px] font-semibold text-gray-500">
+                    <th className="sticky left-0 bg-gray-50 px-3 py-2 dark:bg-slate-800">{firstHead}</th>
+                    {secondHead && <th className="px-3 py-2">{secondHead}</th>}
+                    <th className="px-3 py-2 text-right">Pieces sold</th>
+                    <th className="px-3 py-2 text-right">Orders</th>
+                    <th className="px-3 py-2 text-right">A day</th>
+                    {!showDays && <th className="w-[28%] px-3 py-2">Share</th>}
+                    {showDays && days.map((d) => <th key={d} className={`whitespace-nowrap px-2 py-2 text-right ${d === todayKey ? "text-[#1F8FE0]" : ""}`}>{shortDay(d)}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {groups.map((g) => (
+                    <tr key={g.key} className="border-t border-gray-100 dark:border-slate-800">
+                      <td className="sticky left-0 bg-white px-3 py-2 font-semibold text-gray-900 dark:bg-slate-900 dark:text-slate-100">{g.first}</td>
+                      {secondHead && <td className="px-3 py-2 text-gray-700 dark:text-slate-300">{g.second}</td>}
+                      <td className="px-3 py-2 text-right font-bold tabular-nums">{nf(g.pieces)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-gray-600">{nf(g.orders)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-gray-600">{one(g.pieces / pastDays)}</td>
+                      {!showDays && (
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <div className="h-2 flex-1 overflow-hidden rounded-full bg-gray-100 dark:bg-slate-800"><div className="h-full rounded-full bg-[#1F8FE0]" style={{ width: `${totals.pieces ? (g.pieces / totals.pieces) * 100 : 0}%` }} /></div>
+                            <span className="w-10 text-right text-[11.5px] tabular-nums text-gray-500">{totals.pieces ? Math.round((g.pieces / totals.pieces) * 100) : 0}%</span>
+                          </div>
+                        </td>
+                      )}
+                      {showDays && days.map((d) => { const n = g.byDay.get(d) ?? 0; return <td key={d} className={`px-2 py-2 text-right tabular-nums ${n ? "font-semibold text-gray-900 dark:text-slate-100" : "text-gray-300"}`}>{n || "·"}</td>; })}
+                    </tr>
+                  ))}
+                  {groups.length === 0 && !loading && (
+                    <tr><td colSpan={showDays ? 4 + (secondHead ? 1 : 0) + days.length : 5 + (secondHead ? 1 : 0)} className="py-10 text-center text-gray-500">{search ? "Nothing matches the search." : filtering ? "No pieces delivered on these dates for these filters." : "No pieces delivered on these dates."}</td></tr>
+                  )}
+                </tbody>
+                {groups.length > 1 && (
+                  <tfoot>
+                    <tr className="border-t-2 border-gray-200 font-bold dark:border-slate-700">
+                      <td className="sticky left-0 bg-white px-3 py-2 dark:bg-slate-900">Total{search && " (shown)"}</td>
+                      {secondHead && <td />}
+                      <td className="px-3 py-2 text-right tabular-nums">{nf(groups.reduce((s, g) => s + g.pieces, 0))}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-gray-600">{(groupBy === "state" || groupBy === "agent") && !pickProducts.length ? nf(groups.reduce((s, g) => s + g.orders, 0)) : ""}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-gray-600">{one(groups.reduce((s, g) => s + g.pieces, 0) / pastDays)}</td>
+                      {!showDays && <td />}
+                      {showDays && days.map((d) => <td key={d} className="px-2 py-2 text-right tabular-nums">{nf(groups.reduce((s, g) => s + (g.byDay.get(d) ?? 0), 0)) || "·"}</td>)}
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** A dropdown of checkboxes: pick any number (none picked = all). Portalled, so a card's overflow never clips it. */
+function MultiPick({ label, all, options, value, onChange }: {
+  label: string; all: string; options: Array<{ value: string; label: string; n: number }>; value: string[]; onChange: (next: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const btn = useRef<HTMLButtonElement | null>(null);
+  const panel = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const place = () => { const r = btn.current?.getBoundingClientRect(); if (r) setPos({ left: Math.max(8, Math.min(r.left, window.innerWidth - 288)), top: r.bottom + 6 }); };
+    place();
+    const down = (e: MouseEvent) => { const t = e.target as Node; if (!btn.current?.contains(t) && !panel.current?.contains(t)) setOpen(false); };
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", down); document.addEventListener("keydown", key);
+    window.addEventListener("resize", place); window.addEventListener("scroll", place, true);
+    return () => { document.removeEventListener("mousedown", down); document.removeEventListener("keydown", key); window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); };
+  }, [open]);
+  const picked = new Set(value);
+  const shown = options.filter((o) => !q.trim() || o.label.toLowerCase().includes(q.trim().toLowerCase()));
+  const text = value.length === 0 ? all : value.length === 1 ? options.find((o) => o.value === value[0])?.label ?? `1 ${label.toLowerCase()}` : `${value.length} ${label.toLowerCase()}`;
+  return (
+    <>
+      <button ref={btn} type="button" onClick={() => { setQ(""); setOpen((o) => !o); }}
+        className={`!min-h-0 inline-flex h-9 max-w-[220px] items-center gap-1.5 rounded-xl border px-3 text-sm font-bold shadow-sm ${value.length ? "border-sky-300 bg-sky-50 text-sky-800" : "border-slate-200/80 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"}`}>
+        <span className="text-slate-400">{label}:</span><span className="truncate">{text}</span><ChevronDown className="h-3.5 w-3.5 shrink-0" />
+      </button>
+      {open && pos && createPortal(
+        <div ref={panel} style={{ left: pos.left, top: pos.top }} className="fixed z-[80] w-[280px] rounded-xl border border-slate-200/80 bg-white p-2 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${label.toLowerCase()}…`}
+            className="!min-h-0 h-8 w-full rounded-lg border border-slate-200/80 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/20 dark:border-slate-700 dark:bg-slate-900" />
+          <div className="mt-1.5 flex justify-between px-1 text-[12px] font-semibold">
+            <button type="button" onClick={() => onChange([...new Set([...value, ...shown.map((o) => o.value)])])} className="!min-h-0 text-[#1F8FE0]">Select {q ? "shown" : "all"}</button>
+            <button type="button" onClick={() => onChange([])} className="!min-h-0 text-slate-500">Clear</button>
+          </div>
+          <div className="mt-1 max-h-[280px] overflow-y-auto">
+            {shown.map((o) => (
+              <button key={o.value} type="button" onClick={() => onChange(picked.has(o.value) ? value.filter((v) => v !== o.value) : [...value, o.value])}
+                className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] hover:bg-slate-50 dark:hover:bg-slate-800">
+                <span className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border ${picked.has(o.value) ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-slate-300"}`}>{picked.has(o.value) && <Check className="h-3 w-3" />}</span>
+                <span className="min-w-0 flex-1 truncate font-medium text-slate-800 dark:text-slate-100">{o.label}</span>
+                <span className="text-[11px] tabular-nums text-slate-400">{nf(o.n)}</span>
+              </button>
+            ))}
+            {shown.length === 0 && <p className="m-0 px-2 py-3 text-center text-[12.5px] text-slate-400">Nothing found.</p>}
+          </div>
+        </div>, document.body)}
+    </>
+  );
+}

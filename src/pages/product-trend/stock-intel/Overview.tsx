@@ -4,6 +4,7 @@ import type { StockIntelRow, StockIntelStatus } from "../../../lib/api";
 import { SidePanel, nf } from "../parts";
 import { IntelMap, type Callout } from "./IntelMap";
 import { buildRouteGroups, type RouteGroup } from "./network-model";
+import { SoldSection } from "./Sold";
 import {
   AgentCell, Card, CardHead, DaysChip, HouseIcon, MiniBars, STATUS_ORDER, STATUS_TONE, daysText, hubPlace, one, place, units, useHubGroups, type IntelCtx
 } from "./shared";
@@ -70,6 +71,7 @@ export function OverviewView({ ctx }: { ctx: IntelCtx }) {
 
   return (
     <div className="space-y-4">
+      <SoldSection ctx={ctx} />
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
         <Card className="p-4">
           <CardHead Icon={Boxes} title="Nigeria Stock Heatmap" info="Each state takes the colour of its most urgent agent. Click a state for its agents." sub={metric === "status" ? "Available stock coverage across states (selected product)" : `${METRICS.find((m) => m.value === metric)!.label} by state (selected product)`}

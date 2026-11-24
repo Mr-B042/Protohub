@@ -13,6 +13,8 @@ export type IntelCtx = {
   rows: StockIntelRow[];
   productName: (id: string) => string;
   windowDays: number;
+  /** The product picked at the top of the tab (null = all products). */
+  productId: string | null;
   canCreateTransfer: boolean;
   onCreateTransfer?: (request: TransferRequest) => void;
   canEdit: boolean;

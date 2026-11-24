@@ -4,11 +4,13 @@ import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { loadStockIntel } from "../lib/stock-intel-data.js";
+import { loadStockSold } from "../lib/stock-sold.js";
 
 // ── Stock Intelligence (Product Trend › Stock Intelligence) ─────────────────
 // GET  /api/stock-intel            the whole tab, worked out on the server
 //                                  (stock-intel-model.ts) so the alerts read
 //                                  the same figures.
+// GET  /api/stock-intel/sold       pieces sold per day/product/state/agent
 // PUT  /api/stock-intel/routes     Owner: where one state's restock comes from
 // PUT  /api/stock-intel/settings   Owner: lead time / safety days for a hub
 //
@@ -39,6 +41,20 @@ router.get("/", requireRole(...VIEWERS), async (req, res) => {
   } catch (error: any) {
     console.error("[stock-intel]", error?.message ?? error);
     res.status(500).json({ error: error?.message ?? "Could not work out the stock figures." });
+  }
+});
+
+// GET /api/stock-intel/sold?start=YYYY-MM-DD&end=YYYY-MM-DD&productId=
+// Pieces delivered per day x product x state x agent (Overview › Pieces Sold).
+router.get("/sold", requireRole(...VIEWERS), async (req, res) => {
+  const branchId = branchOf(req, res);
+  if (!branchId) return;
+  try {
+    const productId = typeof req.query.productId === "string" && /^[0-9a-f-]{36}$/i.test(req.query.productId) ? req.query.productId : null;
+    res.json(await loadStockSold({ orgId: req.user!.orgId, branchId, start: req.query.start, end: req.query.end, productId }));
+  } catch (error: any) {
+    console.error("[stock-intel sold]", error?.message ?? error);
+    res.status(500).json({ error: error?.message ?? "Could not count the pieces sold." });
   }
 });
 
