@@ -64,6 +64,12 @@ const PUSH_PRESENTATION = {
   remittance_overdue:      { icon: "/icons/notifications/remittance-overdue.png",   color: "#C2410C", requireInteraction: true,  vibrate: [260, 100, 200], defaultTitle: "Remittance Overdue" },
   stale_carts:             { icon: "/icons/notifications/stale-carts.png",          color: "#C26B14", requireInteraction: true,  vibrate: [200, 80, 160],  defaultTitle: "Stale Abandoned Carts" },
   abandoned_cart_new:      { icon: "/icons/notifications/stale-carts.png",          color: "#F59E0B", requireInteraction: false, vibrate: [120, 50, 120],  defaultTitle: "Abandoned Cart" },
+  // Cart call alerts (24 Nov 2026): LOUD - stay on screen, long strong buzz.
+  cart_call_now:           { icon: "/icons/notifications/stale-carts.png",          color: "#DC2626", requireInteraction: true,  vibrate: [500, 200, 500, 200, 900], defaultTitle: "Call now" },
+  cart_call_late:          { icon: "/icons/notifications/stale-carts.png",          color: "#DC2626", requireInteraction: true,  vibrate: [500, 200, 500, 200, 900], defaultTitle: "Cart not called" },
+  cart_chase:              { icon: "/icons/notifications/stale-carts.png",          color: "#EA580C", requireInteraction: true,  vibrate: [500, 200, 500, 200, 900], defaultTitle: "Cart chase" },
+  hos_cart_not_called:     { icon: "/icons/notifications/stale-carts.png",          color: "#DC2626", requireInteraction: true,  vibrate: [500, 200, 500, 200, 900], defaultTitle: "Carts not called" },
+  hos_cart_chase:          { icon: "/icons/notifications/stale-carts.png",          color: "#EA580C", requireInteraction: true,  vibrate: [500, 200, 500, 200, 900], defaultTitle: "Cart chase" },
   waybill_dispatched:      { icon: "/icons/notifications/waybill.png",              color: "#3F5CE8", requireInteraction: false, vibrate: [110, 40, 110],  defaultTitle: "Waybill Dispatched" },
   waybill_updated:         { icon: "/icons/notifications/waybill.png",              color: "#3F5CE8", requireInteraction: false, vibrate: [110, 40, 110],  defaultTitle: "Waybill Updated" },
   waybill_status_changed:  { icon: "/icons/notifications/waybill.png",              color: "#3F5CE8", requireInteraction: false, vibrate: [110, 40, 110],  defaultTitle: "Waybill Update" },

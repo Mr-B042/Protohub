@@ -299,6 +299,7 @@ const NOTIFICATION_ACCENT: Record<string, string> = {
   order_rescheduled: "#F59E0B",// amber
   order_follow_up: "#7C3AED",  // violet
   abandoned_cart_new: "#F59E0B", // amber
+  cart_call_now: "#DC2626", cart_call_late: "#DC2626", cart_chase: "#EA580C", hos_cart_not_called: "#DC2626", hos_cart_chase: "#EA580C",
   low_stock: "#EA580C",        // orange
   remittance_overdue: "#DC2626", // red
   needs_attention: "#F59E0B"    // amber
@@ -332,6 +333,8 @@ const NATIVE_ICON: Record<string, string> = {
   low_stock: "ic_stat_low_stock",
   remittance_overdue: "ic_stat_remittance_overdue",
   abandoned_cart_new: "ic_stat_stale_carts",
+  cart_call_now: "ic_stat_stale_carts", cart_call_late: "ic_stat_stale_carts", cart_chase: "ic_stat_stale_carts",
+  hos_cart_not_called: "ic_stat_stale_carts", hos_cart_chase: "ic_stat_stale_carts",
   waybill_dispatched: "ic_stat_waybill",
   waybill_updated: "ic_stat_waybill",
   waybill_status_changed: "ic_stat_waybill",

@@ -109,6 +109,12 @@ export async function notifyCartAssignedToRep(
   void telegramCartAssigned(orgId, cart.id, cart.assignedRepId);
   try {
     const { recipients, push } = await alertRecipients(orgId, "cart_assigned", cart.assignedRepId);
+    // The rep always gets the LOUD "Call now" alert (cart-call-alerts.ts, Bright
+    // 24 Nov 2026), whatever Alert Routing says, so they are taken out of the
+    // routed list here instead of getting it twice.
+    recipients.delete(cart.assignedRepId);
+    const { sendRepCallNow } = await import("./cart-call-alerts.js");
+    await sendRepCallNow(orgId, cart.assignedRepId, cart);
     if (recipients.size === 0) return;
 
     const title = `Cart assigned to ${cart.assignedRepName || "a sales rep"}`;
