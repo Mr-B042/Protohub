@@ -32,7 +32,7 @@ const BRANCH_TABLES = new Set([
   "delivery_distance_audits", "whatsapp_order_dispatches", "recovery_template_sends",
 
   // A cart's history, same reasoning.
-  "cart_journey_events", "cart_contact_attempts", "cart_log_misses", "cart_contact_taps", "cart_spot_checks",
+  "cart_journey_events", "cart_contact_attempts", "cart_log_misses", "cart_contact_taps", "cart_spot_checks", "cart_interested_followups",
 
   // What an agent covers, holds and is measured on.
   "agent_coverage", "agent_stock_audit", "agent_stock_drift_baseline",

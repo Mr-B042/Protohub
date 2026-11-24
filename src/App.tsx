@@ -228,6 +228,7 @@ import CartLogOwedBanner from "./components/CartLogOwedBanner";
 import OrderHistoryModal from "./components/OrderHistoryModal";
 import DateWindowNav from "./components/DateWindowNav";
 import { CartIntegrityPanel } from "./pages/cart-integrity/CartIntegrityPanel";
+import { MyInterestedPanel } from "./pages/cart-integrity/MyInterestedPanel";
 import type { UpsellPerfOrder } from "./pages/UpsellPerformancePage";
 import type { RepProductOrder } from "./pages/RepProductPerformancePage";
 import type { ManagerFundTxn, WeeklyLogMissRow } from "./lib/api";
@@ -9527,6 +9528,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     channel: "Call", outcomeCode: "", customOutcome: "", outcomeNote: "",
     customerReached: null as boolean | null, nextActionAt: ""
   });
+  /** Bumped after a cart log so "My Interested customers" reloads. */
+  const [interestedRefresh, setInterestedRefresh] = useState(0);
   /** Locks Save while a save is on its way: a second click wrote a second row. */
   const [cartAttemptSaving, setCartAttemptSaving] = useState(false);
   /** The Call / WhatsApp tap made in this window (a log needs one). */
@@ -45830,6 +45833,7 @@ ${waybillLineItems(w).length > 1
         nextActionAt: cartAttemptDraft.nextActionAt || undefined
       });
       setCartAttemptSaving(false);
+      setInterestedRefresh((n) => n + 1);
       if (cartFollowUpRunActive) {
         const logged = cartFollowUpLogged + 1;
         setCartFollowUpLogged(logged);
@@ -78516,6 +78520,29 @@ ${waybillLineItems(w).length > 1
                         : " - this is where their assigned rep logs each call."}
                     </p>
                   </div>
+                  <MyInterestedPanel
+                    isRep={cartFollowUpIsOwnWork}
+                    refreshKey={interestedRefresh}
+                    onLog={(row) => openCartFollowUpModal(cartFollowUps.find((cart) => cart.id === row.cartId) ?? {
+                      id: row.cartId, customer: row.customer ?? "", phone: row.phone ?? "", whatsapp: row.whatsapp,
+                      productName: row.product ?? "", baseProductName: row.product ?? "", packageName: null, amount: row.amount, currency: row.currency,
+                      city: "", state: "", status: "Contacted", repId: row.repId, repName: row.repName, createdAt: row.firstInterestedAt,
+                      lastActivity: row.lastLogAt ?? row.firstInterestedAt, attempts: 1
+                    } as CartFollowUpRow)}
+                    onConvert={(row) => void (async () => {
+                      // Older carts may not be in the browser yet: fetch this one first.
+                      if (!abandonedCarts.some((cart) => cart.id === row.cartId)) {
+                        try {
+                          const rows = await cartsApi.list({ id: row.cartId });
+                          const found = Array.isArray(rows) ? (rows as any[]).find((r) => r?.id === row.cartId) : null;
+                          if (found) setAbandonedCarts((prev) => [normalizeRealtimeCart(found), ...prev.filter((cart) => cart.id !== row.cartId)]);
+                          else { showToast("Could not open that cart. Refresh and try again."); return; }
+                        } catch (err: any) { showToast(err?.message ?? "Could not open that cart."); return; }
+                      }
+                      setSelectedCartId(row.cartId);
+                      setModal("convertCart");
+                    })()}
+                  />
                   {renderCartFollowUpTab()}
                 </div>
               )}

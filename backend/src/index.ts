@@ -22,7 +22,7 @@ import { logger } from "./lib/logger.js";
 import { runtimeDataProfile } from "./lib/local-safety.js";
 import { syncDueOrderFollowUpNotifications } from "./lib/order-follow-up-notifications.js";
 import { syncDueCartCallbacks } from "./lib/cart-follow-up-notifications.js";
-import { runCartCallEscalations, runCartChase, runInterestedChasers } from "./lib/cart-call-alerts.js";
+import { runCartCallEscalations, runCartChase, runInterestedBackfillWatch, runInterestedChasers } from "./lib/cart-call-alerts.js";
 import { runSmartStockAlerts } from "./lib/smart-stock-alerts.js";
 import { runStockIntelAlerts } from "./lib/stock-intel-alerts.js";
 import { runPhantomStockCheck } from "./lib/phantom-stock-check.js";
@@ -751,6 +751,9 @@ cron.schedule("*/2 7-18 * * *", async () => {
     // Interested carts not turned into an order: 24 hrs rep, 48 hrs rep + supervisors.
     const interested = await runInterestedChasers();
     if (interested.sent > 0) logger.info("cron: interested cart chasers", { sent: interested.sent });
+    // Past Interested back on the list: one notice per rep, and the rush-close watch.
+    const backfill = await runInterestedBackfillWatch();
+    if (backfill.sent > 0) logger.info("cron: interested backfill watch", { sent: backfill.sent });
   } catch (e) {
     logger.error("cron: cart call escalations crashed", { error: (e as Error).message });
   }
