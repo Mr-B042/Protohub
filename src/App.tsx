@@ -2530,7 +2530,7 @@ const orderLocations: OrderLocation[] = ["All Locations", "Lagos", "Abuja", "Por
 const CART_CONVERSATION_OUTCOMES = new Set(["Interested", "Not interested", "Wants to order now", "Price concern", "Asked to call back", "Rescheduled"]);
 const CART_NO_CONTACT_OUTCOMES = new Set(["Unresponsive", "Number not reachable"]);
 /** Keep in step with LATER_PATTERN / laterProblem in backend/src/lib/cart-log-integrity.ts (Bright, 24 Nov 2026). */
-const CART_LATER_PATTERN = /\b(tomorrow|next\s+(week|month|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|month\s*(end|ending)|end\s+of\s+(the\s+)?(month|week)|(monday|tuesday|wednesday|thursday|friday|saturday|sunday)|weekend|after\s+(salary|payday|pay\s*day|the\s+\d{1,2}(st|nd|rd|th)?)|salary|payday|pay\s*day|call\s*back\s+(on|by|next|after|in)|in\s+\d+\s+(days?|weeks?)|\d{1,2}(st|nd|rd|th)\b|reschedul\w*)\b/i;
+const CART_LATER_PATTERN = /\b(tomorrow|2mor+o?w?|tmrw?|tomm?or+ow?|next\s+(week|month|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|month\s*(end|ending)|(end|ending)\s+of\s+(the\s+)?(month|week)|mon|tues?|wed|thu(rs?)?|fri|sat|on\s+the\s+\d{1,2}|call\s+\w+\s+back\s+(on|by|next|after|in)|in\s+(a\s+)?(few|couple\s+of)\s+(days|weeks)|(monday|tuesday|wednesday|thursday|friday|saturday|sunday)|weekend|after\s+(salary|payday|pay\s*day|the\s+\d{1,2}(st|nd|rd|th)?)|salary|payday|pay\s*day|call\s*back\s+(on|by|next|after|in)|in\s+\d+\s+(days?|weeks?)|\d{1,2}(st|nd|rd|th)\b|reschedul\w*)\b/i;
 const CART_LATER_CHECKED = new Set(["Other", "Interested", "Asked to call back", "Price concern", "Wants to order now"]);
 const CART_RESCHEDULE_MAX_DAYS = 60;
 const CART_NOT_INTERESTED_REASONS = [
