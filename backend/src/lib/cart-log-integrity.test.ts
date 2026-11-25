@@ -108,3 +108,12 @@ test("Interested pauses a cart for its day and the next working day only; old In
   assert.equal(pausedOn(pauses, "a", "2026-11-26"), true);
   assert.equal(pausedOn(pauses, "a", "2026-11-27"), false);
 });
+
+test("later-day wording that slipped through on 25 Nov is now sent to Rescheduled", () => {
+  for (const words of ["He told me ending of the month", "He asked me to call him back on the 28", "Sat", "2morro", "tmrw", "call me in a few days"]) {
+    assert.match(laterProblem("Other", words, words)!, /Rescheduled/, words);
+  }
+  for (const words of ["Unresponsive", "Said she's gonna reach out whenever she's ready", "Asked for pictures of the product again", "She said she's busy and gonna call back", "Not available yet", "Product is unavailable at the location"]) {
+    assert.equal(laterProblem("Other", words, words), null, words);
+  }
+});
