@@ -24,6 +24,7 @@ import { runtimeDataProfile } from "./lib/local-safety.js";
 import { syncDueOrderFollowUpNotifications } from "./lib/order-follow-up-notifications.js";
 import { syncDueCartCallbacks } from "./lib/cart-follow-up-notifications.js";
 import { runCartCallEscalations, runCartChase, runInterestedBackfillWatch, runInterestedChasers } from "./lib/cart-call-alerts.js";
+import { runSameCustomerAlerts } from "./lib/same-customer-alerts.js";
 import { runSmartStockAlerts } from "./lib/smart-stock-alerts.js";
 import { runStockIntelAlerts } from "./lib/stock-intel-alerts.js";
 import { runPhantomStockCheck } from "./lib/phantom-stock-check.js";
@@ -586,6 +587,13 @@ cron.schedule("* 10-17 * * 1-6", async () => {
     const { sent } = await runLateSendAlerts();
     if (sent > 0) logger.info("cron: late order send alerts", { sent });
   } catch (e) { logger.error("cron: late order send alerts crashed", { error: (e as Error).message }); }
+}, { timezone: "Africa/Lagos" });
+// One customer with 2+ reps (Bright, 26 Nov 2026) - every 10 min, 7am-9pm.
+cron.schedule("*/10 7-20 * * *", async () => {
+  try {
+    const { alerted } = await runSameCustomerAlerts();
+    if (alerted > 0) logger.info("cron: same customer, other rep", { alerted });
+  } catch (e) { logger.error("cron: same customer alerts crashed", { error: (e as Error).message }); }
 }, { timezone: "Africa/Lagos" });
 }
 
