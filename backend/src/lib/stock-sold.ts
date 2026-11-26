@@ -18,6 +18,7 @@ import { tidyOrderState } from "./order-state.js";
 import { fetchAllRowsOrThrow, REPORT_ROW_CEILING } from "./query-limits.js";
 import { daysBetweenKeys, shiftDay } from "./stock-intel-model.js";
 import { loadHubStock } from "./state-restock.js";
+import { tidyState, waybillItems } from "./stock-intel-data.js";
 import { stockTotals } from "./state-restock-model.js";
 
 export const MAX_SOLD_RANGE_DAYS = 400;
@@ -45,14 +46,34 @@ export async function loadStockSold(args: { orgId: string; branchId: string; sta
   const to = [end, today].sort()[1];
 
   const fields = "id, product_id, product_name, quantity, delivered_date, state, agent_id, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines";
-  const [rows, agentsRes, hubStock] = await Promise.all([
+  // Restock = waybills FROM the warehouse (no sending hub; Bright: "our restock
+  // comes from the Lagos warehouse") dispatched in the loaded dates. Hub-to-hub
+  // waybills only move stock around, so they are not restock. Cancelled ones
+  // never left. Received = arrived; In Transit = on the way.
+  const restockRes = supabase.from("waybill_records")
+    .select("status, items, product_id, product_name, quantity, to_agent_location_id, to_agent_id, agent_id, dispatched_date")
+    .eq("org_id", args.orgId).eq("branch_id", args.branchId).is("from_agent_location_id", null)
+    .in("status", ["Received", "In Transit"]).gte("dispatched_date", from).lte("dispatched_date", to)
+    .limit(REPORT_ROW_CEILING);
+  const hubsRes = supabase.from("agent_locations").select("id, agent_id, state").eq("branch_id", args.branchId).limit(REPORT_ROW_CEILING);
+  const [rows, agentsRes, hubStock, restockRows, hubRows] = await Promise.all([
     fetchAllRowsOrThrow<SoldRow>(() => supabase.from("orders").select(fields)
       .eq("org_id", args.orgId).eq("branch_id", args.branchId).neq("launch_stage", "silent")
       .eq("status", "Delivered").gte("delivered_date", from).lte("delivered_date", to)
       .order("id", { ascending: true }) as any),
     supabase.from("agents").select("id, name").eq("org_id", args.orgId).eq("branch_id", args.branchId).limit(REPORT_ROW_CEILING),
-    loadHubStock(args.orgId, args.branchId)
+    loadHubStock(args.orgId, args.branchId),
+    restockRes.then((r) => { if (r.error) throw new Error(`Could not load waybills: ${r.error.message}`); return r.data ?? []; }),
+    hubsRes.then((r) => { if (r.error) throw new Error(`Could not load agent hubs: ${r.error.message}`); return r.data ?? []; })
   ]);
+  const hubOf = new Map(hubRows.map((h: any) => [String(h.id), { agentId: String(h.agent_id ?? ""), state: tidyState(h.state) }]));
+  const restock = restockRows.flatMap((w: any) => {
+    const hub = w.to_agent_location_id ? hubOf.get(String(w.to_agent_location_id)) : undefined;
+    const agentId = hub?.agentId || String(w.to_agent_id ?? w.agent_id ?? "");
+    return waybillItems(w)
+      .filter((item) => !args.productId || item.productId === args.productId)
+      .map((item) => ({ day: String(w.dispatched_date).slice(0, 10), productId: item.productId, state: hub?.state ?? "", agentId, pieces: item.quantity, arrived: w.status === "Received" }));
+  });
   if (agentsRes.error) throw new Error(`Could not load agents: ${agentsRes.error.message}`);
   const productIds = args.productId ? new Set([args.productId]) : null;
   const built = buildSold(rows, (row) => orderInventoryLinesBySource(row as any).map((l) => ({ productId: l.productId, quantity: Number(l.quantity) || 0, sourceType: l.sourceType, isFreeGift: l.isFreeGift })), { start: from, end: to, productIds, tidyState: (state) => String(tidyOrderState(state) ?? "") });
@@ -65,6 +86,7 @@ export async function loadStockSold(args: { orgId: string; branchId: string; sta
     today, start, end, from, to,
     ...built,
     stock,
+    restock,
     agents: (agentsRes.data ?? []).filter((a: any) => used.has(String(a.id))).map((a: any) => ({ id: String(a.id), name: String(a.name ?? "Delivery agent") }))
   };
 }

@@ -83,6 +83,24 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
   }, [sold, pickStates, pickAgents]);
   const lines = useMemo(() => kept.filter((l) => l.day >= range.start && l.day <= range.end), [kept, range]);
   const cells = useMemo(() => keptCells.filter((c) => c.day >= range.start && c.day <= range.end), [keptCells, range]);
+  // Restocked from the warehouse in the same dates, same filters (Bright, 26 Nov
+  // 2026: "are we balancing or just selling without restocking"). Filtered by
+  // where the stock was sent. Hub-to-hub waybills are not restock.
+  const restocked = useMemo(() => {
+    const p = new Set(pickProducts), st = new Set(pickStates), a = new Set(pickAgents);
+    // Like for like with "Pieces sold": only products sold as a MAIN product.
+    // Gift / package items (e.g. 10 hooks per rack) ride on the same waybills
+    // and would make restock look bigger than it is.
+    const mains = new Set((sold?.lines ?? []).map((l) => l.productId));
+    let arrived = 0, onTheWay = 0;
+    for (const r of sold?.restock ?? []) {
+      if (!mains.has(r.productId)) continue;
+      if (r.day < range.start || r.day > range.end) continue;
+      if ((p.size && !p.has(r.productId)) || (st.size && !st.has(r.state)) || (a.size && !a.has(r.agentId))) continue;
+      if (r.arrived) arrived += r.pieces; else onTheWay += r.pieces;
+    }
+    return { arrived, onTheWay, total: arrived + onTheWay, loaded: Boolean(sold?.restock) };
+  }, [sold, range, pickProducts, pickStates, pickAgents]);
   // Gifts and add-ons: never products of their own, only shown inside the main product.
   const extras = useMemo(() => {
     const p = new Set(pickProducts), st = new Set(pickStates), a = new Set(pickAgents);
@@ -350,18 +368,26 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
         </div>
       ) : (
         <div className={`space-y-4 p-4 transition-opacity ${loading ? "opacity-50" : ""}`}>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
             {([
               ["Pieces sold", nf(totals.pieces), `${windowSize(range)} day${windowSize(range) === 1 ? "" : "s"}`],
+              ...(restocked.loaded ? [(() => {
+                // Sold vs restocked in the same dates: are we balancing?
+                const gap = totals.pieces - restocked.total;
+                const sub = `${nf(restocked.arrived)} arrived${restocked.onTheWay ? ` · ${nf(restocked.onTheWay)} on the way` : ""}`;
+                const balance = gap > 0 ? `${nf(gap)} more sold than sent` : gap < 0 ? `${nf(-gap)} more sent than sold` : "Sent as much as sold";
+                return ["Restocked from warehouse", nf(restocked.total), `${sub} · ${balance}`, gap > 0 ? "text-rose-600 dark:text-rose-300 font-semibold" : "text-emerald-700 dark:text-emerald-300 font-semibold",
+                  `Pieces sent from the warehouse to agents in these dates (${sub}). Sold ${nf(totals.pieces)}. ${balance}. Only products sold as main products are counted (gift and package items are left out). Waybills between agents only move stock, so they are not counted.`];
+              })()] : []),
               ["Orders delivered", nf(totals.orders), totals.orders > 0 ? `${one(totals.pieces / totals.orders)} pieces an order` : "None yet"],
               ["A day on average", one(totals.avg), "pieces a day"],
               ["Best day", totals.best ? nf(totals.best[1]) : "—", totals.best ? dayName(totals.best[0]) : "No sales yet"],
               ["Best seller", totals.top ? ctx.productName(totals.top[0]) : "—", totals.top ? `${nf(totals.top[1])} pieces` : "No sales yet"]
-            ] as Array<[string, string, string]>).map(([label, value, foot]) => (
-              <div key={label} className="min-w-0 rounded-xl border border-gray-200 px-3 py-2.5 dark:border-slate-700">
+            ] as Array<[string, string, string, string?, string?]>).map(([label, value, foot, footTone, tip]) => (
+              <div key={label} title={tip} className="min-w-0 rounded-xl border border-gray-200 px-3 py-2.5 dark:border-slate-700">
                 <div className="text-[11.5px] font-semibold text-gray-500">{label}</div>
                 <div className="truncate text-[19px] font-black tracking-tight text-gray-900 dark:text-slate-50">{value}</div>
-                <div className="truncate text-[11px] text-gray-500">{foot}</div>
+                <div className={`text-[11px] leading-4 ${footTone ?? "truncate text-gray-500"}`}>{foot}</div>
               </div>
             ))}
           </div>
