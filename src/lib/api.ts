@@ -6432,6 +6432,8 @@ export type StockSoldData = {
   agents: Array<{ id: string; name: string }>;
   /** Stock RIGHT NOW per state x agent x product (not tied to the dates): left = shelf - defective - missing; onTheWay = in-transit waybills to it. */
   stock?: Array<{ state: string; agentId: string; productId: string; left: number; onTheWay: number }>;
+  /** Pieces sent FROM the warehouse (restock), by dispatch day and where they went. arrived = waybill received. */
+  restock?: Array<{ day: string; productId: string; state: string; agentId: string; pieces: number; arrived: boolean }>;
 };
 export const stockIntelApi = {
   sold: (args: { start: string; end: string; productId?: string | null }) =>
