@@ -12303,7 +12303,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             end: saved?.workingDayEnd ?? workingDayEnd
           };
         })
-        .catch((err: any) => { showToast(`Settings sync failed: ${err.message}`); });
+        .catch((err: any) => { showToast(`Settings not saved: ${err.message}`); });
     }, 600);
     return () => clearTimeout(handle);
   }, [companyName, companyLogo, companyAndroidAppUrl, topPerformerBonusEnabled, topPerformerBonusAmount, timezoneSetting, adminCartNotifications, smartStockRules, workingScheduleEnabled, workingDaysSetting, workingDayStart, workingDayEnd]);
@@ -13817,11 +13817,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // an error word first, an instruction ("Choose…", "Pick…", "Say whether…"),
   // or a "not saved" anywhere. Every message renders above open forms.
   const isInstructionToast = (message: string) =>
-    /^(choose|pick|select|say|describe|enter|type|add|fill|write|tap|open|tick|upload|attach|wait|please|you (need|must|have to|can't|cannot)|only|the [^.]{0,80} must)\b/i.test(message.trim());
+    /^(choose|pick|select|say|describe|enter|type|add|fill|write|tap|open|tick|upload|attach|wait|please|you (need|must|have to|can't|cannot)|only|the [^.]{0,80} must)\b/i.test(message.trim())
+    // "City is required.", "Name and email are required.", "5,000 is not an amount."
+    || /\b(is|are|are all|both) required\b|\bis not an amount\b/i.test(message);
   const isFailureToast = (message: string) =>
     /^(failed|cannot|can't|couldn't|could not|unable|error|not saved|nothing was saved)\b/i.test(message.trim())
-    || /\b(not saved|wasn't saved|was not saved|did not save|didn't save|not recorded|was not recorded|did not go through|didn't go through|not sent|was not sent)\b/i.test(message)
+    || /\b(not saved|wasn't saved|was not saved|did not save|didn't save|did not send|did not copy|did not change|did not match|not recorded|was not recorded|did not go through|didn't go through|not sent|was not sent|failed|was blocked|were undone|not found)\b/i.test(message)
     || isRecentErrorMessage(message);
+  // Nothing went wrong and nothing changed ("Nothing to export.", "No changes
+  // to save."): a plain notice, not a green tick that looks like a save.
+  const isNoticeToast = (message: string) =>
+    /^(no |nothing |there is nothing|this [^.]{0,60}\b(has no|is not|isn't|has not|hasn't)\b|that [^.]{0,60}\bno longer\b|still |force re-subscribe is not available|delivered orders are locked)/i.test(message.trim());
+  // Long enough to read: about 4 words a second, 3 to 10 seconds (notices at least 5).
+  const toastReadMs = (message: string, notice: boolean) =>
+    Math.min(10_000, Math.max(notice ? 5_000 : 3_000, 1_500 + message.split(/\s+/).length * 250));
   const isErrorToast = (message: string) => isFailureToast(message) || isInstructionToast(message);
   // Screens often wrap the server's message ("Could not save X: <message>.").
   // The server's message already starts "Not saved." and ends with a full
@@ -13835,10 +13844,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (!toast) return null;
     const shownToast = tidyToast(toast);
     if (!isErrorToast(toast)) {
+      const notice = isNoticeToast(toast);
       // Portalled above every open form (the error card below does the same).
       return createPortal(
-        <div className="toast" role="status" aria-live="polite">
-          <CheckCircle2 />
+        <div className={`toast${notice ? " toast-notice" : ""}`} role="status" aria-live="polite">
+          {notice ? <Info /> : <CheckCircle2 />}
           <span>{shownToast}</span>
           <button aria-label="Dismiss message" onClick={() => setToast("")}><X /></button>
         </div>,
@@ -19826,7 +19836,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Ad spend saved.");
     } catch {
       setExpenses(prevExpenses);
-      showToast("Save failed - changes rolled back. Check connection.");
+      showToast("Not saved, so your changes were undone. Check your internet, then try again.");
     }
     setAdSpendSaving(false);
   };
@@ -23873,7 +23883,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setRemittanceReceivedDate(todayKey());
     setRemittanceVarianceReason("");
     setRemittanceVarianceNote("");
-    showToast(`${order.id} remittance saved for ${remittanceReceivedDate} (${status}).${hasVariance ? (isOwnerVariance ? " Owner approval recorded." : " Sent to the Owner for approval.") : ""}${variance > 0 ? ` Excess ${formatMoney(variance)} recorded.` : ""}${newLogistics > 0 ? ` Delivery cost ${formatMoney(newLogistics)} booked to expenses.` : ""}`);
+    showToast(`Order #${order.id} remittance saved for ${remittanceReceivedDate} (${status}).${hasVariance ? (isOwnerVariance ? " Owner approval recorded." : " Sent to the Owner for approval.") : ""}${variance > 0 ? ` Excess ${formatMoney(variance)} recorded.` : ""}${newLogistics > 0 ? ` Delivery cost ${formatMoney(newLogistics)} booked to expenses.` : ""}`);
     ordersApi.update(order.id, { logistics_cost: newLogistics, amount_remitted: newRemitted, remittance_status: status, remittance_received_at: remittanceReceivedDate, remittance_reason: approvedRemittanceReason }).then(() => {
       // The batch view is built from financeSummaryData - server-loaded - not
       // from trackedOrders, so the optimistic update above does NOT move its
@@ -24311,10 +24321,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       void loadFinanceSummaryData({ quiet: true });
       void loadFinanceRemittanceData({ quiet: true });
       void loadWeeklyAccountingData({ quiet: true });
-      showToast(`${order.id} delivery fee saved. Record the cash when the agent pays.`);
+      showToast(`Order #${order.id} delivery fee saved. Record the cash when the agent pays.`);
     }).catch((err: any) => {
       setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? orderSnapshot : o));
-      showToast(`Delivery fee for ${order.id} not saved: ${err?.message ?? "please retry"}.`);
+      showToast(`Delivery fee for order #${order.id} not saved: ${err?.message ?? "please retry"}.`);
     });
   };
   // Both call sites end in the same row of buttons. The only difference is what
@@ -25063,14 +25073,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       amount: nextAmount
     } : o));
     closeModal();
-    showToast(`Cross-sell ${product.name} added to ${order.id}`);
+    showToast(`Cross-sell ${product.name} added to order #${order.id}`);
     ordersApi.update(order.id, {
       amount: nextAmount,
       cross_sell_lines: nextCrossSellLines,
       ...(crossSellReason ? { correction_reason: crossSellReason } : {})
     }).catch((err: any) => {
       setTrackedOrders((prev) => prev.map((item) => item.id === order.id ? orderSnapshot : item));
-      showToast(`Failed to save cross-sell on ${order.id}: ${err?.message ?? "please retry"}.`);
+      showToast(`Failed to save cross-sell on order #${order.id}: ${err?.message ?? "please retry"}.`);
     });
   };
 
@@ -25134,7 +25144,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ...(giftReason ? { correction_reason: giftReason } : {})
     }).catch((err: any) => {
       setTrackedOrders((prev) => prev.map((item) => item.id === order.id ? orderSnapshot : item));
-      showToast(`Failed to save free gift on ${order.id}: ${err?.message ?? "please retry"}.`);
+      showToast(`Failed to save free gift on order #${order.id}: ${err?.message ?? "please retry"}.`);
     });
   };
 
@@ -25451,7 +25461,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       bonusManuallyAdjusted: true
     } : o));
     closeModal();
-    showToast(`Bonus adjusted on ${order.id} - ${money(total)}`);
+    showToast(`Bonus adjusted on order #${order.id} - ${money(total)}`);
     ordersApi.update(order.id, {
       manual_bonus_components: components,
       manual_bonus_override: total,
@@ -25459,7 +25469,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       bonus_manually_adjusted: true
     }).catch((err: any) => {
       setTrackedOrders((prev) => prev.map((item) => item.id === order.id ? orderSnapshot : item));
-      showToast(`Failed to save bonus on ${order.id}: ${err?.message ?? "please retry"}.`);
+      showToast(`Failed to save bonus on order #${order.id}: ${err?.message ?? "please retry"}.`);
     });
   };
 
@@ -25843,7 +25853,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         setRepPenalties((prev) => prev.map((p) => p.id === record.id ? { ...p, id: saved.id } : p));
       } else {
         setRepPenalties((prev) => prev.filter((p) => p.id !== record.id));
-        showToast("Penalty saved but server returned no ID - please reload.");
+        showToast("Penalty saved, but this page didn't update. Refresh the page to see it.");
       }
     }).catch((err: any) => {
       setRepPenalties((prev) => prev.filter((p) => p.id !== record.id));
@@ -27054,10 +27064,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }).then(() => {
       void loadFinanceSummaryData({ quiet: true });
       void loadWeeklyAccountingData({ quiet: true });
-      showToast(`${order.id} delivery fee saved.`);
+      showToast(`Order #${order.id} delivery fee saved.`);
     }).catch((err: any) => {
       setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? orderSnapshot : o));
-      showToast(`Delivery fee for ${order.id} not synced: ${err?.message ?? "please retry"}.`);
+      showToast(`Delivery fee for order #${order.id} not saved: ${err?.message ?? "please retry"}.`);
     });
   };
   const productProfitabilityRowsAll = (activePage === "Finance & Accounting" ? products : []).map((product) => {
@@ -36836,7 +36846,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   useEffect(() => {
     if (!toast || isErrorToast(toast)) return;
-    const id = setTimeout(() => setToast(""), 3000);
+    const id = setTimeout(() => setToast(""), toastReadMs(toast, isNoticeToast(toast)));
     return () => clearTimeout(id);
   }, [toast]);
 
@@ -38746,14 +38756,14 @@ ${waybillLineItems(w).length > 1
             unitCost:     initial.unitCost,
             isPrimary:    true
           }).catch((err: any) => {
-            showToast(`Initial pricing for ${product.name} not synced: ${err?.message ?? "open Pricing to retry."}`);
+            showToast(`Initial pricing for ${product.name} not saved: ${err?.message ?? "open Pricing to retry."}`);
           });
         }
         if (stock > 0) {
           // Opening stock failure leaves the product created with 0 in DB
           // and the right number locally - surface that so the admin can retry.
           stockApi.update({ productId: saved.id, change: stock, note: "Opening stock" }).catch((err: any) => {
-            showToast(`Opening stock for ${product.name} not synced: ${err?.message ?? "please retry from Inventory."}`);
+            showToast(`Opening stock for ${product.name} not saved: ${err?.message ?? "please retry from Inventory."}`);
           });
         }
       })
@@ -38830,7 +38840,7 @@ ${waybillLineItems(w).length > 1
     // only one persists, leaving the warehouse balance off by 5 until reload.
     stockApi.update({ productId: _suProdId, change: actualChange, note: adjustmentNote }).catch((err: any) => {
       setProducts((value) => value.map((item) => item.id === _suProdId ? productSnapshot : item));
-      showToast(`Stock change for ${productSnapshot.name} not synced: ${err?.message ?? "please retry"}.`);
+      showToast(`Stock change for ${productSnapshot.name} not saved: ${err?.message ?? "please retry"}.`);
     });
   };
 
@@ -38986,7 +38996,7 @@ ${waybillLineItems(w).length > 1
       });
       const hasFailures = results.some((result) => result.status === "rejected");
       if (hasFailures) {
-        showToast(`"${candidateName}" duplicated, but some pricing/package settings did not sync. Open the product to verify.`);
+        showToast(`"${candidateName}" duplicated, but some pricing/package settings did not copy. Open the product and check them.`);
         return;
       }
       showToast(`Duplicated as "${candidateName}". Stock reset to 0.`);
@@ -41297,7 +41307,7 @@ ${waybillLineItems(w).length > 1
       const updated = normalizeTrackedOrder(await deliveryDistanceAuditsApi.updateOrderCoordinates(order.id, { ...parsed, geoSource: "manual" }));
       setTrackedOrders((value) => value.map((row) => row.id === updated.id ? { ...row, ...updated } : row));
       setDeliveryDistanceCoordDrafts((value) => ({ ...value, [key]: { latitude: String(parsed.latitude), longitude: String(parsed.longitude) } }));
-      showToast(`Customer GPS saved for order ${order.id}.`);
+      showToast(`Customer location saved for order #${order.id}.`);
     } catch (err: any) {
       showToast(`Failed to save customer GPS: ${err?.message ?? "please retry"}.`);
     } finally {
@@ -41307,7 +41317,7 @@ ${waybillLineItems(w).length > 1
 
   const saveAgentLocationDistanceCoordinates = async (agent: DeliveryAgentRecord, location: DeliveryAgentLocation) => {
     if (!location.id) {
-      showToast("This hub has not synced to the server yet.");
+      showToast("This hub isn't saved yet. Wait a few seconds, then try again.");
       return;
     }
     const key = `hub:${location.id}`;
@@ -41341,7 +41351,7 @@ ${waybillLineItems(w).length > 1
       const audit = normalizeDeliveryDistanceAudit(await deliveryDistanceAuditsApi.calculate(order.id));
       setDeliveryDistanceAudits((value) => [audit, ...value.filter((row) => row.orderId !== audit.orderId)]);
       const riskLabel = audit.risk === "suspicious" ? "suspicious" : audit.risk === "watch" ? "watch" : audit.risk === "missing" ? "needs fee" : "fair";
-      showToast(`Distance audit ready for ${order.id}: ${distanceLabel(audit.distanceMeters)} · ${riskLabel}.`);
+      showToast(`Distance audit ready for order #${order.id}: ${distanceLabel(audit.distanceMeters)} · ${riskLabel}.`);
     } catch (err: any) {
       showToast(err?.message ?? "Add hub/customer GPS before calculating distance.");
     } finally {
@@ -41550,7 +41560,7 @@ ${waybillLineItems(w).length > 1
         : item
       )
     );
-    showToast(`${order.id} scheduled for ${scheduleLabel}.`);
+    showToast(`Order #${order.id} scheduled for ${scheduleLabel}.`);
 
     const statusUpdates: Record<string, unknown> = {
       status: nextStatus,
@@ -41580,7 +41590,7 @@ ${waybillLineItems(w).length > 1
           });
           return;
         }
-        showToast(`Failed to save schedule for ${order.id}: ${err?.message ?? "please retry"}.`);
+        showToast(`Failed to save schedule for order #${order.id}: ${err?.message ?? "please retry"}.`);
       });
   };
 
@@ -41661,7 +41671,7 @@ ${waybillLineItems(w).length > 1
           setTrackedOrders((prev) => prev.map((o) => o.id === orderId ? order : o));
           showToast(`Could not approve the variance: ${err?.message ?? "please retry"}.`);
         });
-        showToast(`Cash variance approved on ${orderId}.`);
+        showToast(`Cash variance approved on order #${orderId}.`);
       }, { detail: "The cash is already recorded - this signs off on it." });
       return;
     }
@@ -41672,7 +41682,7 @@ ${waybillLineItems(w).length > 1
       setTrackedOrders((prev) => prev.map((o) => o.id === orderId ? order : o));
       showToast(`Could not reject the variance: ${err?.message ?? "please retry"}.`);
     });
-    showToast(`Cash variance rejected on ${orderId}.`);
+    showToast(`Cash variance rejected on order #${orderId}.`);
   };
 
   // Approve a whole batch of pending variances at once (one confirm, then fire each).
@@ -42035,7 +42045,7 @@ ${waybillLineItems(w).length > 1
       )
     );
     setAbandonedDraftCartId("");
-    showToast(`Recovered cart converted to ${orderId}.`);
+    showToast(`Recovered cart converted to order #${orderId}.`);
     // Public-form (unauth) submits already mark the cart Converted server-side
     // through the public-orders endpoint's cartId parameter - calling the
     // auth-required cartsApi.update from an unauthenticated context would
@@ -42044,7 +42054,7 @@ ${waybillLineItems(w).length > 1
       const snapshot = abandonedCarts.find((c) => c.id === _mdcId);
       cartsApi.update(_mdcId, { status: "Converted" }).catch((err: any) => {
         if (snapshot) setAbandonedCarts((value) => value.map((c) => c.id === _mdcId ? snapshot : c));
-        showToast(`Cart conversion not synced: ${err?.message ?? "please retry"}.`);
+        showToast(`Cart conversion not saved: ${err?.message ?? "please retry"}.`);
       });
     }
   };
@@ -42234,7 +42244,7 @@ ${waybillLineItems(w).length > 1
         void loadSalesLeads();
       }
       setCreateOrderContext("admin");
-      showToast(`${order.id} created and assigned to ${users.find((user) => user.id === order.assignedRepId)?.name ?? "round-robin queue"}.`);
+      showToast(`Order #${order.id} created and assigned to ${users.find((user) => user.id === order.assignedRepId)?.name ?? "the next sales rep in turn"}.`);
     } catch (err: any) {
       showToast(`Failed to create order: ${err?.message ?? "please retry"}.`);
     }
@@ -42572,7 +42582,7 @@ ${waybillLineItems(w).length > 1
       )
     );
     closeModal();
-    showToast(`${selectedOrder.id} reassigned.`);
+    showToast(`Order #${selectedOrder.id} reassigned.`);
     ordersApi.update(selectedOrder.id, {
       assigned_rep_id: reassignRepId,
       response: nextResponse,
@@ -42612,7 +42622,7 @@ ${waybillLineItems(w).length > 1
       ];
       setTrackedOrders((value) => value.map((order) => order.id === _so.id ? { ...order, assignedRepId: undefined, response: nextResponse, notes: nextNotes } : order));
       closeModal();
-      showToast(`${_so.id} is now unassigned.`);
+      showToast(`Order #${_so.id} no longer has a sales rep.`);
       ordersApi.update(_so.id, { assigned_rep_id: null, response: nextResponse, timeline_notes: nextNotes }).catch((err: any) => {
         setTrackedOrders((value) => value.map((order) => order.id === _so.id ? orderSnapshot : order));
         showToast(`Failed to remove assignment from ${_so.id}: ${err?.message ?? "please retry"}.`);
@@ -42668,7 +42678,7 @@ ${waybillLineItems(w).length > 1
     setOrderFollowUpDate("");
     setOrderFollowUpTime(workingHoursTimeValue());
     setShowRepFollowUpField(false);
-    showToast(`${selectedOrder.id} timeline updated.`);
+    showToast(`Order #${selectedOrder.id} timeline updated.`);
     ordersApi.update(selectedOrder.id, { response: nextResponse, timeline_notes: nextNotes })
       .then(async (updated: any) => {
         if (updated?.id) hydrateTrackedOrderFromApi(updated);
@@ -42676,7 +42686,7 @@ ${waybillLineItems(w).length > 1
       })
       .catch((err: any) => {
         setTrackedOrders((value) => value.map((order) => order.id === selectedOrder.id ? orderSnapshot : order));
-        showToast(`Failed to save note for ${selectedOrder.id}: ${err?.message ?? "please retry"}.`);
+        showToast(`Failed to save note for order #${selectedOrder.id}: ${err?.message ?? "please retry"}.`);
       });
   };
 
@@ -43063,7 +43073,7 @@ ${waybillLineItems(w).length > 1
       setStatusChangeOutcomePreset(attempt.outcomeCode);
       if (orderWorkspacePage === "Follow-up Queue") loadFollowUpKpi();
       closeModal();
-      showToast(`${selectedOrder.id} follow-up logged.`);
+      showToast(`Order #${selectedOrder.id} follow-up logged.`);
     } catch (err: any) {
       showToast(err?.message ?? `Could not log the follow-up for ${selectedOrder.id}.`);
     }
@@ -43404,12 +43414,12 @@ ${waybillLineItems(w).length > 1
           by: pending.by,
           noteText: (label) => extras ? `Order rescheduled for ${label}. ${extras}` : `Order rescheduled for ${label}.`
         });
-        showToast(`${selectedOrder.id} sales log saved and reschedule submitted.`);
+        showToast(`Order #${selectedOrder.id} sales log saved and reschedule submitted.`);
       } else if (pending?.kind === "status") {
         updateOrderStatus(selectedOrder.id, pending.status, pending.reason, false, pending.deliveredDate, pending.callOutcome);
-        showToast(`${selectedOrder.id} sales log saved and ${pending.callOutcome ?? pending.status} submitted.`);
+        showToast(`Order #${selectedOrder.id} sales log saved and ${pending.callOutcome ?? pending.status} submitted.`);
       } else {
-        showToast(`${selectedOrder.id} sales expansion log saved.`);
+        showToast(`Order #${selectedOrder.id} sales expansion log saved.`);
       }
     } catch (err: any) {
       showToast(err?.message ?? "Could not save the sales expansion log.");
@@ -43687,7 +43697,7 @@ ${waybillLineItems(w).length > 1
 
     const _soceId = selectedOrder.id;
     closeModal();
-    showToast(`${selectedOrder.id} saved.`);
+    showToast(`Order #${selectedOrder.id} saved.`);
     ordersApi.update(_soceId, {
       customer: createOrderCustomer.trim(),
       phone: createOrderPhone.trim(),
@@ -43733,7 +43743,7 @@ ${waybillLineItems(w).length > 1
     printWindow.document.write(`<html><head><title>Invoice ${esc(order.id)}</title><style>body{font-family:Arial,sans-serif;padding:32px;color:#111827}h1{margin:0 0 8px}.meta{color:#667085;margin-bottom:24px}table{width:100%;border-collapse:collapse;margin-top:20px}th,td{border:1px solid #d0d5dd;padding:12px;text-align:left}.total{font-size:22px;font-weight:800;text-align:right;margin-top:24px}</style></head><body><h1>Protohub Invoice</h1><p class="meta">${esc(order.id)} · ${esc(order.customer)} · ${esc(order.date)}</p><p><strong>Phone:</strong> ${esc(order.phone)}</p><p><strong>Address:</strong> ${esc(order.address ?? "")} ${esc(order.city ?? "")} ${esc(order.state ?? "")}</p><table><thead><tr><th>Product</th><th>Package</th><th>Qty</th><th>Total</th></tr></thead><tbody><tr><td>${esc(order.productName)}</td><td>${esc(order.packageName)}</td><td>${esc(quantityForOrder(order))}</td><td>${esc(formatProductMoney(order.amount, order.currency))}</td></tr></tbody></table><p class="total">Grand Total: ${esc(formatProductMoney(order.amount, order.currency))}</p></body></html>`);
     printWindow.document.close();
     printWindow.print();
-    showToast(`Print invoice opened for ${order.id}.`);
+    showToast(`Print invoice opened for order #${order.id}.`);
   };
 
   const downloadInvoiceForOrder = async (order: TrackedOrder) => {
@@ -43747,9 +43757,9 @@ ${waybillLineItems(w).length > 1
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
-      showToast(`Receipt downloaded for ${order.id}.`);
+      showToast(`Receipt downloaded for order #${order.id}.`);
     } catch (err: any) {
-      showToast(`Could not download receipt for ${order.id}: ${err?.message ?? "please retry"}.`);
+      showToast(`Could not download receipt for order #${order.id}: ${err?.message ?? "please retry"}.`);
     }
   };
 
@@ -43772,7 +43782,7 @@ ${waybillLineItems(w).length > 1
       setSelectedOrderId("");
       syncHashRoute(repOrderWorkspaceHash("", activeRepOrderWorkspacePage));
     }
-    showToast(`${_doId} deleted${_doStockDeducted ? " and stock restored" : ""}.`);
+    showToast(`Order #${_doId} deleted${_doStockDeducted ? " and stock restored" : ""}.`);
     ordersApi.delete(_doId).catch((err: any) => {
       // Restore only the optimistic order row. Inventory was never written by
       // the browser, so there is no second balance to compensate.
@@ -45193,7 +45203,7 @@ ${waybillLineItems(w).length > 1
     }).catch((err: any) => {
       setWaybillCreating(false);
       setWaybillRecords((prev) => prev.filter((w) => w.id !== record.id));
-      showToast(`Waybill not synced: ${err?.message ?? "please retry"}.`);
+      showToast(`Waybill not saved: ${err?.message ?? "please retry"}.`);
     });
     pushSystemNotification({
       type: "info",
@@ -45929,11 +45939,11 @@ ${waybillLineItems(w).length > 1
     const targetCartId = selectedCart.id;
     setAbandonedCarts((value) => value.map((cart) => (cart.id === targetCartId ? { ...cart, assignedRepId: reassignRepId, status: "Assigned", lastActivity: new Date().toISOString() } : cart)));
     closeModal();
-    showToast(`${targetCartId} assigned to ${users.find((user) => user.id === reassignRepId)?.name ?? "sales rep"}.`);
+    showToast(`${cartSnapshot.customer || "Cart"} given to ${users.find((user) => user.id === reassignRepId)?.name ?? "the sales rep"}.`);
     // Persist - the previous version was local-only; reassignments were lost on reload.
     cartsApi.update(targetCartId, { assignedRepId: reassignRepId, status: "Assigned" }).catch((err: any) => {
       setAbandonedCarts((value) => value.map((cart) => (cart.id === targetCartId ? cartSnapshot : cart)));
-      showToast(`Failed to assign ${targetCartId}: ${err?.message ?? "please retry"}.`);
+      showToast(`Could not give ${cartSnapshot.customer || "this cart"} to the rep: ${err?.message ?? "please retry"}.`);
     });
   };
 
@@ -45943,9 +45953,9 @@ ${waybillLineItems(w).length > 1
     cartsApi.update(cartId, { status }).catch((err: any) => {
       // Roll back local state so the table doesn't lie about persistence.
       if (snapshot) setAbandonedCarts((value) => value.map((cart) => (cart.id === cartId ? snapshot : cart)));
-      showToast(`Failed to save status for ${cartId}: ${err?.message ?? "please retry"}.`);
+      showToast(`Could not change ${snapshot?.customer || "this cart"}'s status: ${err?.message ?? "please retry"}.`);
     });
-    showToast(`${cartId} marked ${status}.`);
+    showToast(`${snapshot?.customer || "Cart"} marked "${status}".`);
   };
 
   // Assigns every selected cart to one rep in a single pass. Converted carts
@@ -46124,7 +46134,7 @@ ${waybillLineItems(w).length > 1
     if (routeWasFocused) {
       syncHashRoute("#/dashboard/admin/abandoned-carts");
     }
-    showToast(`${cart.id} deleted.`);
+    showToast(`Cart for ${cart.customer || "this customer"} deleted.`);
 
     cartsApi.delete(cart.id).catch((err: any) => {
       setAbandonedCarts((value) => [cartSnapshot, ...value.filter((item) => item.id !== cartSnapshot.id)]);
@@ -46366,7 +46376,7 @@ ${waybillLineItems(w).length > 1
     // showing up as Open Abandoned for other admins.
     cartsApi.update(selectedCart.id, { status: "Converted" }).catch((err: any) => {
       setAbandonedCarts((value) => value.map((cart) => cart.id === cartSnapshot.id ? cartSnapshot : cart));
-      showToast(`Cart status not synced: ${err?.message ?? "please retry"}.`);
+      showToast(`Cart status not saved: ${err?.message ?? "please retry"}.`);
     });
 
     // Conversion-specific notification (in addition to the backend's
@@ -71605,7 +71615,7 @@ ${waybillLineItems(w).length > 1
       ];
       setTrackedOrders((prev) => prev.map((item) => item.id === order.id ? { ...item, notes: nextNotes } : item));
       ordersApi.update(order.id, { timeline_notes: nextNotes }).then(() => {
-        showToast(`Note added to ${order.id}.`);
+        showToast(`Note added to order #${order.id}.`);
       }).catch((err: any) => {
         setTrackedOrders((prev) => prev.map((item) => item.id === order.id ? order : item));
         showToast(`Failed to save the note: ${err?.message ?? "please retry"}.`);
@@ -75195,7 +75205,7 @@ ${waybillLineItems(w).length > 1
                         className="h-8 max-w-[140px] px-2 border border-gray-200 rounded text-xs font-medium bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] disabled:opacity-50 disabled:cursor-not-allowed"
                         value={cart.status}
                         disabled={cart.status === "Converted"}
-                        onChange={(event) => { updateCartStatus(cart.id, event.target.value as Exclude<CartStatus, "All statuses">); showToast(`${cart.id} marked ${event.target.value}.`); }}
+                        onChange={(event) => { updateCartStatus(cart.id, event.target.value as Exclude<CartStatus, "All statuses">); showToast(`${cart.customer || "Cart"} marked "${event.target.value}".`); }}
                       >
                         {cartStatuses.filter((status) => status !== "All statuses").map((status) => <option key={status}>{status}</option>)}
                       </select>
@@ -75304,7 +75314,7 @@ ${waybillLineItems(w).length > 1
                             className="h-8 px-2 border border-gray-200 rounded text-xs font-medium bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] disabled:opacity-50 disabled:cursor-not-allowed"
                             value={cart.status}
                             disabled={cart.status === "Converted"}
-                            onChange={(event) => { updateCartStatus(cart.id, event.target.value as Exclude<CartStatus, "All statuses">); showToast(`${cart.id} marked ${event.target.value}.`); }}
+                            onChange={(event) => { updateCartStatus(cart.id, event.target.value as Exclude<CartStatus, "All statuses">); showToast(`${cart.customer || "Cart"} marked "${event.target.value}".`); }}
                           >
                             {cartStatuses.filter((status) => status !== "All statuses").map((status) => <option key={status}>{status}</option>)}
                           </select>
@@ -97784,7 +97794,7 @@ ${waybillLineItems(w).length > 1
                           setPushTestLoading(true);
                           try {
                             await sendTestPush();
-                            showToast("Test push queued. Lock the device and watch for the alert.");
+                            showToast("Test alert sent. Lock your phone and wait for it to arrive.");
                           } catch (e: any) {
                             showToast(e.message || "Test push failed.");
                           } finally {
@@ -104128,7 +104138,7 @@ ${waybillLineItems(w).length > 1
 	                                  showToast(`Failed to set delivery fee: ${err?.message ?? "please retry"}.`);
 	                                });
 	                                syncOrderDeliveryExpense(updated);
-	                                showToast(`Delivery fee for ${selectedOrder.id} set to ${formatProductMoney(fee, selectedOrder.currency)}.`);
+	                                showToast(`Delivery fee for order #${selectedOrder.id} set to ${formatProductMoney(fee, selectedOrder.currency)}.`);
 	                              }}
 	                              className={`!min-h-0 w-24 text-sm font-bold bg-transparent focus:outline-none ${orderTitleTextClass}`}
 	                            />
