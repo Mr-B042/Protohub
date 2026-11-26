@@ -183,6 +183,7 @@ import {
 } from "./lib/api";
 import { isRecentErrorMessage } from "./lib/api";
 import { SuccessToast } from "./components/SuccessToast";
+import { SameCustomerCopyDialog } from "./components/SameCustomerCopyDialog";
 import { NIGERIA_STATES, canonicalOrderState, UNPLACED_ORDER_STATE } from "./lib/nigeria";
 import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid,CartRecoverySummary, CartGridRow, CartLogPenaltiesView, CartLogRangePreset, RecoveryCalendarView, RecoveryFollowUpPairs, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, TargetPeriod, TargetProgressView, TargetSuggestion, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, CostChangeImpact, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView, UpsellPerformanceLog } from "./lib/api";
 import {
@@ -41259,15 +41260,90 @@ ${waybillLineItems(w).length > 1
   };
 
   // Copy to WhatsApp group, and note the first time it was done (shown beside the confirmed time).
+  // ── Same customer, other orders (Bright, 26 Nov 2026) ─────────────────────
+  // Two orders from one phone (last 10 digits) within 7 days, e.g. #6411 with
+  // Chelsea and #6412 with Esther. Shown as a badge on the order, and "Copy
+  // Order To WhatsApp Group" offers to send them together in one message.
+  // Held duplicates and cancelled orders are left out.
+  const sameCustomerIndex = useMemo(() => {
+    const map = new Map<string, TrackedOrder[]>();
+    for (const o of trackedOrders) {
+      const digits = String(o.phone ?? "").replace(/\D/g, "");
+      if (digits.length < 10 || o.reviewHold || o.status === "Cancelled") continue;
+      const key = digits.slice(-10);
+      map.set(key, [...(map.get(key) ?? []), o]);
+    }
+    return map;
+  }, [trackedOrders]);
+  const sameCustomerOrdersFor = (order: TrackedOrder): TrackedOrder[] => {
+    const digits = String(order.phone ?? "").replace(/\D/g, "");
+    if (digits.length < 10) return [];
+    const at = Date.parse(String(order.createdAt ?? order.date ?? ""));
+    return (sameCustomerIndex.get(digits.slice(-10)) ?? []).filter((o) => {
+      if (o.id === order.id) return false;
+      const otherAt = Date.parse(String(o.createdAt ?? o.date ?? ""));
+      return !Number.isFinite(at) || !Number.isFinite(otherAt) || Math.abs(otherAt - at) <= 7 * 86_400_000;
+    }).sort((a, b) => String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? "")));
+  };
+  const repNameOf = (order: TrackedOrder) => users.find((u) => u.id === order.assignedRepId)?.name ?? "Unassigned";
+  /** "Same customer · also #6412 Esther (5-in-1 Corner Racks)": tap to open the other order. */
+  const renderSameCustomerChip = (order: TrackedOrder, className = "") => {
+    const others = sameCustomerOrdersFor(order);
+    if (others.length === 0) return null;
+    const first = others[0];
+    const sameRep = others.every((o) => o.assignedRepId === order.assignedRepId);
+    return (
+      <button
+        type="button"
+        title={`Same customer (same phone) also has: ${others.map((o) => `#${o.id} ${o.productName ?? ""} with ${repNameOf(o)} (${orderStatusLabelFor(o)})`).join("; ")}. Tap to open.`}
+        onClick={(event) => { event.stopPropagation(); setSelectedOrderId(first.id); setModal("orderDetails"); }}
+        className={`!min-h-0 inline-flex max-w-[260px] items-start gap-1.5 rounded-2xl border px-2.5 py-1.5 text-left text-[11px] font-bold transition-colors ${sameRep ? "border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200" : "border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200"} ${className}`}
+      >
+        <Users className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0">
+          <span className="block">Same customer · also #{first.id}{others.length > 1 ? ` +${others.length - 1} more` : ""}</span>
+          <span className="block font-semibold opacity-80">{sameRep ? "" : first.assignedRepId ? `with ${repNameOf(first)}` : "not assigned yet"}{!sameRep && first.productName ? " · " : ""}{first.productName ?? ""}</span>
+        </span>
+      </button>
+    );
+  };
+
+  const copyOrdersForGroup = (orders: TrackedOrder[]) => {
+    const text = orders.length === 1
+      ? formatOrderForWhatsAppDispatch(orders[0])
+      : `📦 ${orders.length} ORDERS · SAME CUSTOMER · please deliver together\n\n${orders.map((o) => formatOrderForWhatsAppDispatch(o)).join("\n\n────────────\n\n")}`;
+    void copyText(text, orders.length === 1 ? `${orders[0].id} WhatsApp group copy` : `Orders ${orders.map((o) => `#${o.id}`).join(" + ")} for the WhatsApp group`);
+    for (const order of orders) {
+      if (order.groupSentAt) continue;
+      ordersApi.groupCopied(order.id)
+        .then((result) => {
+          if (!result?.groupSentAt) return;
+          setTrackedOrders((value) => value.map((item) => item.id === order.id ? { ...item, groupSentAt: result.groupSentAt ?? undefined } : item));
+        })
+        .catch(() => {});
+    }
+  };
+  const [sameCustomerCopy, setSameCustomerCopy] = useState<{ order: TrackedOrder; others: TrackedOrder[] } | null>(null);
   const copyOrderForGroup = (order: TrackedOrder) => {
-    void copyText(formatOrderForWhatsAppDispatch(order), `${order.id} WhatsApp group copy`);
-    if (order.groupSentAt) return;
-    ordersApi.groupCopied(order.id)
-      .then((result) => {
-        if (!result?.groupSentAt) return;
-        setTrackedOrders((value) => value.map((item) => item.id === order.id ? { ...item, groupSentAt: result.groupSentAt ?? undefined } : item));
-      })
-      .catch(() => {});
+    // Another order of this customer still to deliver: ask first (copy both / this one).
+    const open = sameCustomerOrdersFor(order).filter((o) => !["Delivered", "Cancelled", "Failed"].includes(String(o.status ?? "")));
+    if (open.length > 0) { setSameCustomerCopy({ order, others: open }); return; }
+    copyOrdersForGroup([order]);
+  };
+  const renderSameCustomerCopyDialog = () => {
+    if (!sameCustomerCopy) return null;
+    const { order, others } = sameCustomerCopy;
+    const all = [order, ...others].sort((a, b) => String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? "")));
+    return (
+      <SameCustomerCopyDialog
+        customer={order.customer || "This customer"}
+        phone={order.phone}
+        lines={all.map((o) => ({ id: o.id, product: [o.productName, o.packageName].filter(Boolean).join(" · ") || "Order", rep: repNameOf(o), status: orderStatusLabelFor(o), amount: formatProductMoney(Number(o.amount) || 0, o.currency), isThis: o.id === order.id }))}
+        onCopyAll={() => { setSameCustomerCopy(null); copyOrdersForGroup(all); }}
+        onCopyOne={() => { setSameCustomerCopy(null); copyOrdersForGroup([order]); }}
+        onClose={() => setSameCustomerCopy(null)}
+      />
+    );
   };
 
   const hydrateTrackedOrderFromApi = (raw: any) => {
@@ -76730,6 +76806,7 @@ ${waybillLineItems(w).length > 1
           })()}
         </section>
         {renderToast()}
+        {renderSameCustomerCopyDialog()}
       </main>
     );
   }
@@ -79794,6 +79871,7 @@ ${waybillLineItems(w).length > 1
                                 <MessageCircle className="mr-1 h-3.5 w-3.5" /> {groupSentText(order)}
                               </span>
                             )}
+                            {renderSameCustomerChip(order, "self-end")}
                           </div>
 
                           {orderWorkspacePage === "Follow-up Queue" && latestAttempt && (
@@ -79968,6 +80046,7 @@ ${waybillLineItems(w).length > 1
                                     <MessageCircle className="mr-1 h-3 w-3" /> {groupSentText(order)}
                                   </span>
                                 )}
+                                {renderSameCustomerChip(order, "mt-1")}
                                 {order.reviewHold && (
                                   <span
                                     className="mt-1.5 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-800 dark:bg-amber-500/15 dark:text-amber-200"
@@ -101507,6 +101586,7 @@ ${waybillLineItems(w).length > 1
           ) : null}
 
           {renderToast()}
+        {renderSameCustomerCopyDialog()}
           </div>
         </main>
       </div>
@@ -103568,6 +103648,7 @@ ${waybillLineItems(w).length > 1
 	                          <span>Ordered {formatOrderCreatedAt(selectedOrder)}</span>
 	                          <span>Rep: {users.find((u) => u.id === selectedOrder.assignedRepId)?.name ?? "Unassigned"}</span>
 	                        </div>
+	                        {renderSameCustomerChip(selectedOrder, "mt-2")}
 	                      </div>
 	                    </div>
 	                    <div className="flex shrink-0 flex-row items-center justify-between gap-3 sm:flex-col sm:items-end">
