@@ -3927,6 +3927,11 @@ th {
   font-weight: 800;
 }
 
+/* "Nothing happened" notices: neutral, so they never look like a save. */
+.toast.toast-notice {
+  background: #334155;
+}
+
 .toast svg {
   width: 20px;
   height: 20px;
