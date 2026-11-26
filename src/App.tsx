@@ -13823,14 +13823,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     || /\b(not saved|wasn't saved|was not saved|did not save|didn't save|not recorded|was not recorded|did not go through|didn't go through|not sent|was not sent)\b/i.test(message)
     || isRecentErrorMessage(message);
   const isErrorToast = (message: string) => isFailureToast(message) || isInstructionToast(message);
+  // Screens often wrap the server's message ("Could not save X: <message>.").
+  // The server's message already starts "Not saved." and ends with a full
+  // stop, so drop the repeat and the double full stop.
+  const tidyToast = (message: string) => message
+    .replace(/:\s+Not saved\.\s+/g, ". ")
+    .replace(/:\s+Not saved again,/g, ". Not saved again,")
+    .replace(/([.!?])\.(\s|$)/g, "$1$2")
+    .trim();
   const renderToast = () => {
     if (!toast) return null;
+    const shownToast = tidyToast(toast);
     if (!isErrorToast(toast)) {
       // Portalled above every open form (the error card below does the same).
       return createPortal(
         <div className="toast" role="status" aria-live="polite">
           <CheckCircle2 />
-          <span>{toast}</span>
+          <span>{shownToast}</span>
           <button aria-label="Dismiss message" onClick={() => setToast("")}><X /></button>
         </div>,
         document.body
@@ -13854,7 +13863,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             </div>
             <div className="min-w-0 flex-1 pt-0.5">
               <h3 className="text-base font-black text-white">{failed ? "This didn't go through" : "One thing first"}</h3>
-              <p className="mt-2 whitespace-pre-wrap break-words text-sm font-medium leading-relaxed text-rose-100/90">{toast}</p>
+              <p className="mt-2 whitespace-pre-wrap break-words text-sm font-medium leading-relaxed text-rose-100/90">{shownToast}</p>
             </div>
             <button
               type="button"

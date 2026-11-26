@@ -106,33 +106,58 @@ class ApiError extends Error {
 // another way: form-check messages keyed by a code field name, and any raw
 // technical text that still slips through.
 
-/** "nextActionAt" / "next_action_at" -> "Next action at". */
+// Names people see on screen for common form fields (code name -> screen name).
+const FIELD_SCREEN_NAMES: Record<string, string> = {
+  outcomecode: "What happened", customoutcome: "Reason", outcomenote: "Note", nextactionat: "Call-back date",
+  customerreached: "Did you speak to the customer", channel: "Call or WhatsApp", phone: "Phone number",
+  whatsapp: "WhatsApp number", customer: "Customer name", customername: "Customer name", amount: "Amount",
+  quantity: "Quantity", qty: "Quantity", productid: "Product", agentid: "Delivery agent", assignedrepid: "Sales rep",
+  repid: "Sales rep", state: "State", city: "Town", address: "Address", deliveryfee: "Delivery fee",
+  logisticscost: "Delivery fee", amountremitted: "Amount sent", email: "Email", password: "Password",
+  name: "Name", date: "Date", status: "Status", reason: "Reason", note: "Note", notes: "Note", role: "Role"
+};
+
+/** "nextActionAt" / "next_action_at" -> "Call-back date" (or "Next action at" when not listed). */
 function fieldName(key: string) {
+  const known = FIELD_SCREEN_NAMES[key.replace(/[_-]/g, "").toLowerCase()];
+  if (known) return known;
   const words = key.replace(/Id$/, "").replace(/_id$/, "").replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").trim().toLowerCase();
-  return words ? words.charAt(0).toUpperCase() + words.slice(1) : "This field";
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : "A box on the form";
 }
 
-/** One form-check message in plain words. A full sentence from the server stands on its own. */
+/**
+ * One form-check message in plain words: what is wrong with which box, and
+ * what to do. A full sentence the server wrote for people stands on its own.
+ */
 export function plainFieldMessage(key: string, message: string) {
   const text = message.trim();
   const field = fieldName(key);
-  if (/^required$/i.test(text) || /received (null|undefined)$/i.test(text)) return `"${field}" is missing. Fill it in and save again.`;
+  if (/^required$/i.test(text) || /received (null|undefined)$/i.test(text)) return `"${field}" is empty. Fill it in, then save again.`;
   const expected = text.match(/^Expected (\w+), received (\w+)$/i);
   if (expected) {
-    const kind = /number|bigint/i.test(expected[1]) ? "a number" : /boolean/i.test(expected[1]) ? "a yes/no answer" : /date/i.test(expected[1]) ? "a date" : "text";
-    return `"${field}" must be ${kind}. Check what you typed and save again.`;
+    if (/integer/i.test(expected[1])) return `"${field}" must be a whole number, like 3 (not 2.5). Change it, then save again.`;
+    if (/number|bigint/i.test(expected[1])) return `"${field}" must be a number. Type numbers only, with no commas, spaces or ₦ sign (write 5000, not 5,000).`;
+    if (/boolean/i.test(expected[1])) return `"${field}" needs a Yes or No. Tap one, then save again.`;
+    if (/date/i.test(expected[1])) return `"${field}" needs a date. Pick it from the calendar, then save again.`;
+    return `"${field}" is not filled in properly. Check it, then save again.`;
   }
   const choice = text.match(/^Invalid enum value\. Expected (.+), received '([^']*)'$/i);
-  if (choice) return `"${field}": "${choice[2]}" is not one of the choices. Pick one from the list.`;
-  if (/^String must contain at least \d+ character/i.test(text)) return `"${field}" is too short or empty. Fill it in and save again.`;
-  if (/^String must contain at most \d+ character/i.test(text)) return `"${field}" is too long. Shorten it and save again.`;
-  if (/^Number must be greater than( or equal to)? 0/i.test(text)) return `"${field}" must be more than 0.`;
-  if (/^Number must be/i.test(text)) return `"${field}": ${text.replace(/^Number must be/i, "must be")}.`;
-  if (/^Invalid (date|datetime|email|url|uuid)$/i.test(text)) return `"${field}" is not a valid ${text.split(" ")[1].toLowerCase()}. Check what you typed.`;
-  if (/^Invalid( input)?$/i.test(text)) return `"${field}" is not valid. Check what you typed and save again.`;
+  if (choice) return `"${field}": "${choice[2]}" is not one of the options. Pick one from the list, then save again.`;
+  if (/^String must contain at least \d+ character/i.test(text)) return `"${field}" is empty or too short. Write a bit more, then save again.`;
+  const tooLong = text.match(/^String must contain at most (\d+) character/i);
+  if (tooLong) return `"${field}" is too long. Keep it under ${tooLong[1]} letters, then save again.`;
+  const min = text.match(/^Number must be greater than (or equal to )?(-?[\d.]+)/i);
+  if (min) return `"${field}" must be ${min[1] ? "at least" : "more than"} ${min[2]}. Change it, then save again.`;
+  const max = text.match(/^Number must be less than (or equal to )?(-?[\d.]+)/i);
+  if (max) return `"${field}" must be ${max[1] ? "at most" : "less than"} ${max[2]}. Change it, then save again.`;
+  if (/^Expected integer/i.test(text)) return `"${field}" must be a whole number, like 3 (not 2.5). Change it, then save again.`;
+  if (/^Invalid email$/i.test(text)) return `"${field}" is not a proper email address. It should look like name@gmail.com.`;
+  if (/^Invalid (date|datetime)$/i.test(text)) return `"${field}" is not a proper date. Pick it again from the calendar.`;
+  if (/^Invalid (url)$/i.test(text)) return `"${field}" is not a proper web link. It should start with https://`;
+  if (/^Invalid( input| uuid)?$/i.test(text)) return `"${field}" is not filled in properly. Check it, then save again.`;
   // A sentence the server wrote for people (starts with a capital, 4+ words): no code name in front.
   if (/^[A-Z"“]/.test(text) && text.split(/\s+/).length >= 4) return text;
-  return `${field}: ${text}`;
+  return `"${field}": ${text}`;
 }
 
 const TECHNICAL_TEXT = /violates (check|not-null|unique|foreign key) constraint|relation "[^"]+"|column "[^"]+"|invalid input (syntax|value) for|duplicate key value|PGRST\d{3}|schema cache|Cannot read propert(y|ies) of (undefined|null)|^[\w$.]+ is not (a function|defined)$|^(TypeError|ReferenceError|SyntaxError)\b|^Internal server error\.?$/i;
@@ -140,8 +165,20 @@ const TECHNICAL_TEXT = /violates (check|not-null|unique|foreign key) constraint|
 /** Any raw technical text that still reaches the app, in plain words. */
 export function plainErrorMessage(message: string) {
   return TECHNICAL_TEXT.test(message)
-    ? "Something went wrong on our side, so this did not go through. This is not something you did. Tap Report a Bug (the details are attached automatically) so we can fix it."
+    ? "Not saved. Something broke on our side. You did nothing wrong. Try once more. If it happens again, tap Report a Bug so we can fix it."
     : message;
+}
+
+/** When the server gave no message of its own: plain words by the kind of failure. */
+export function statusMessage(status: number) {
+  if (status === 400 || status === 422) return "Not saved. Something on the form is not filled in properly. Check each box, then save again.";
+  if (status === 401) return "You were signed out because it has been a while. Sign in again, then try once more.";
+  if (status === 403) return "Your account isn't allowed to do this. If you need it for your work, ask the Owner to give you access.";
+  if (status === 404) return "This can't be found. Someone may have deleted or moved it. Refresh the page.";
+  if (status === 409) return "Someone else changed this while you were working. Refresh the page, then try again.";
+  if (status === 413) return "Not saved. It's too big to send. Use a smaller photo or fewer files.";
+  if (status === 429) return "Too many tries in a short time. Wait a minute, then try again.";
+  return "Not saved. Something broke on our side. You did nothing wrong. Try once more. If it happens again, tap Report a Bug so we can fix it.";
 }
 
 // Messages of recent failed saves/loads, so the app's message box can show
@@ -432,7 +469,9 @@ async function request<T>(
 
   if (!res.ok) {
     const payload = await res.json().catch(() => ({ error: res.statusText }));
-    const shown = plainErrorMessage(extractErrorMessage(payload, res.statusText || "Request failed."));
+    // No message of its own (only the browser's "Bad Request" / "Not Found"): say it in plain words.
+    const own = extractErrorMessage(payload, "");
+    const shown = own && own !== res.statusText ? plainErrorMessage(own) : statusMessage(res.status);
     // Kept in this tab only, for a bug report to attach (error-recorder.ts).
     // ⚠️ The TECHNICAL text (payload.detail) goes to the bug report; the person sees plain words.
     recordFailedRequest({ method, path, status: res.status, message: typeof payload?.detail === "string" ? payload.detail : extractErrorMessage(payload, res.statusText || "Request failed."), requestId: res.headers.get("x-request-id") ?? undefined });
@@ -708,7 +747,7 @@ export const productsApi = {
     });
     if (!res.ok) {
       const payload = await res.json().catch(() => ({ error: res.statusText }));
-      throw new ApiError(res.status, typeof payload?.error === "string" ? payload.error : res.statusText);
+      throw new ApiError(res.status, typeof payload?.error === "string" && payload.error.trim() ? plainErrorMessage(payload.error) : statusMessage(res.status));
     }
     const payload = snakeToCamel<{ product: any; related: any[]; media?: Record<string, string> }>(await res.json());
     const hydrateCompanionMedia = (product: any) => {
@@ -735,7 +774,7 @@ export const productsApi = {
     });
     if (!res.ok) {
       const payload = await res.json().catch(() => ({ error: res.statusText }));
-      throw new ApiError(res.status, typeof payload?.error === "string" ? payload.error : res.statusText);
+      throw new ApiError(res.status, typeof payload?.error === "string" && payload.error.trim() ? plainErrorMessage(payload.error) : statusMessage(res.status));
     }
     return snakeToCamel<{
       packages: Array<{
@@ -763,7 +802,7 @@ export const productsApi = {
     });
     if (!res.ok) {
       const payload = await res.json().catch(() => ({ error: res.statusText }));
-      throw new ApiError(res.status, typeof payload?.error === "string" ? payload.error : res.statusText);
+      throw new ApiError(res.status, typeof payload?.error === "string" && payload.error.trim() ? plainErrorMessage(payload.error) : statusMessage(res.status));
     }
     return snakeToCamel<{
       enabled: boolean;
