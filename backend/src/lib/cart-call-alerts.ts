@@ -73,7 +73,7 @@ const MANAGER_LINK = "/dashboard/admin/follow-up-queue";
  * branch has no Manager (Bright, 24 Nov 2026:
  * "manager" - the Head of Sales was also a rep being chased).
  */
-async function supervisors(orgId: string, branchId: string) {
+export async function supervisors(orgId: string, branchId: string) {
   const [{ data: heads }, { data: managers }, { data: admins }, { data: members }] = await Promise.all([
     supabase.from("users").select("id, name").eq("org_id", orgId).eq("active", true).eq("is_head_of_sales_rep", true),
     supabase.from("users").select("id, name").eq("org_id", orgId).eq("active", true).eq("is_demo", false).eq("role", "Manager"),
