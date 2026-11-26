@@ -182,6 +182,7 @@ import {
   readActiveBranch, writeActiveBranch,
 } from "./lib/api";
 import { isRecentErrorMessage } from "./lib/api";
+import { SuccessToast } from "./components/SuccessToast";
 import { NIGERIA_STATES, canonicalOrderState, UNPLACED_ORDER_STATE } from "./lib/nigeria";
 import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid,CartRecoverySummary, CartGridRow, CartLogPenaltiesView, CartLogRangePreset, RecoveryCalendarView, RecoveryFollowUpPairs, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, TargetPeriod, TargetProgressView, TargetSuggestion, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, CostChangeImpact, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView, UpsellPerformanceLog } from "./lib/api";
 import {
@@ -13844,16 +13845,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (!toast) return null;
     const shownToast = tidyToast(toast);
     if (!isErrorToast(toast)) {
+      // The success / notice card times itself (pauses while touched) - components/SuccessToast.tsx.
       const notice = isNoticeToast(toast);
-      // Portalled above every open form (the error card below does the same).
-      return createPortal(
-        <div className={`toast${notice ? " toast-notice" : ""}`} role="status" aria-live="polite">
-          {notice ? <Info /> : <CheckCircle2 />}
-          <span>{shownToast}</span>
-          <button aria-label="Dismiss message" onClick={() => setToast("")}><X /></button>
-        </div>,
-        document.body
-      );
+      return <SuccessToast message={shownToast} ms={toastReadMs(shownToast, notice)} notice={notice} onClose={() => setToast("")} />;
     }
     const failed = isFailureToast(toast);
     return createPortal(
@@ -36844,11 +36838,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     openWhatsAppForCart(cart);
   };
 
-  useEffect(() => {
-    if (!toast || isErrorToast(toast)) return;
-    const id = setTimeout(() => setToast(""), toastReadMs(toast, isNoticeToast(toast)));
-    return () => clearTimeout(id);
-  }, [toast]);
+  // Success and notice messages close themselves (SuccessToast); errors stay until closed.
 
   const handlePeriodChange = (nextPeriod: Period) => {
     setPeriod(nextPeriod);
