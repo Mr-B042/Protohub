@@ -243,6 +243,26 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
     }
     return { byState, byAgent, loaded: Boolean(sold?.stock) };
   }, [sold, pickProducts]);
+  // Each state's agents (Bright, 26 Nov 2026: "Oyo has different agents, we need
+  // a breakdown"): pieces and orders in the picked dates, stock left now.
+  // Agents holding stock in the state but with no sales are listed too.
+  const stateAgents = useMemo(() => {
+    type Sub = { agentId: string; pieces: number; orders: number; stock: { left: number; onTheWay: number } };
+    const map = new Map<string, Map<string, Sub>>();
+    const sub = (state: string, agentId: string) => {
+      const inState = map.get(state) ?? new Map<string, Sub>(); map.set(state, inState);
+      const cur = inState.get(agentId) ?? { agentId, pieces: 0, orders: 0, stock: { left: 0, onTheWay: 0 } }; inState.set(agentId, cur);
+      return cur;
+    };
+    for (const l of lines) { const e = sub(l.state, l.agentId); e.pieces += l.pieces; if (pickProducts.length) e.orders += l.orders; }
+    if (!pickProducts.length) for (const c of cells) { if (map.get(c.state)?.has(c.agentId)) sub(c.state, c.agentId).orders += c.orders; }
+    for (const row of sold?.stock ?? []) {
+      if (pickProducts.length && !pickProducts.includes(row.productId)) continue;
+      if (row.left <= 0 && row.onTheWay <= 0) continue;
+      const e = sub(row.state, row.agentId); e.stock.left += row.left; e.stock.onTheWay += row.onTheWay;
+    }
+    return new Map([...map].map(([state, m]) => [state, [...m.values()].sort((a, b) => b.pieces - a.pieces || b.stock.left - a.stock.left)]));
+  }, [lines, cells, sold, pickProducts]);
   const toggleAgent = (id: string) => setPickAgents((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
   const toggleState = (state: string) => setPickStates((prev) => prev.includes(state) ? prev.filter((x) => x !== state) : [...prev, state]);
 
@@ -370,7 +390,8 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
           {stateSummary.length > 0 && (
             <div className="grid gap-3 lg:grid-cols-2">
               <Ranking title="States" sub="highest to lowest" hint="Click to filter · left = in stock now"
-                rows={stateSummary.map((st) => ({ key: st.state, label: place(st.state), pieces: st.pieces, orders: st.orders, note: `${st.agents.size} agent${st.agents.size === 1 ? "" : "s"}`, on: pickStates.includes(st.state), stock: stockBy.loaded ? stockBy.byState.get(st.state) ?? { left: 0, onTheWay: 0 } : undefined }))}
+                rows={stateSummary.map((st) => ({ key: st.state, label: place(st.state), pieces: st.pieces, orders: st.orders, note: (() => { const n = stateAgents.get(st.state)?.length ?? st.agents.size; return `${n} agent${n === 1 ? "" : "s"}`; })(), on: pickStates.includes(st.state), stock: stockBy.loaded ? stockBy.byState.get(st.state) ?? { left: 0, onTheWay: 0 } : undefined,
+                  subs: (stateAgents.get(st.state) ?? []).map((ag) => ({ key: ag.agentId, label: nameOfAgent(ag.agentId), pieces: ag.pieces, orders: ag.orders, stock: stockBy.loaded ? ag.stock : undefined })) }))}
                 total={totals.pieces} onPick={toggleState} />
               <Ranking title="Agents" sub="highest to lowest" hint="Click to filter · left = in stock now"
                 rows={agentSummary.map((ag) => ({ key: ag.agentId, label: nameOfAgent(ag.agentId), pieces: ag.pieces, orders: ag.orders, note: agentStates.get(ag.agentId) ?? "", on: pickAgents.includes(ag.agentId), stock: stockBy.loaded ? stockBy.byAgent.get(ag.agentId) ?? { left: 0, onTheWay: 0 } : undefined }))}
@@ -545,9 +566,19 @@ function MultiPick({ label, all, options, value, onChange }: {
 /** A ranked list (highest first): rank, name, share bar, pieces, orders and stock left now. Clicking a row filters to it. */
 function Ranking({ title, sub, hint, rows, total, onPick }: {
   title: string; sub: string; hint: string; total: number; onPick: (key: string) => void;
-  rows: Array<{ key: string; label: string; pieces: number; orders: number; note: string; on: boolean; stock?: { left: number; onTheWay: number } }>;
+  rows: Array<{ key: string; label: string; pieces: number; orders: number; note: string; on: boolean; stock?: { left: number; onTheWay: number };
+    /** The row's breakdown (a state's agents), opened with its own toggle. */
+    subs?: Array<{ key: string; label: string; pieces: number; orders: number; stock?: { left: number; onTheWay: number } }> }>;
 }) {
   const withStock = rows.some((r) => r.stock);
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const toggle = (key: string) => setOpen((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+  const stockPill = (stock: { left: number; onTheWay: number } | undefined, sold: number, small = false) => (
+    <span className="flex flex-col items-end" title="In stock right now. Waybills sent out are already taken off; 'on the way' is still in transit to them.">
+      <span className={`rounded-full px-2 py-0.5 ${small ? "text-[10.5px]" : "text-[11px]"} font-black tabular-nums ${!stock || stock.left === 0 ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300" : stock.left + stock.onTheWay < sold ? "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-200" : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"}`}>{nf(stock?.left ?? 0)} left</span>
+      {stock && stock.onTheWay > 0 && <span className="mt-0.5 whitespace-nowrap text-[10px] font-semibold tabular-nums text-sky-600 dark:text-sky-300">+{nf(stock.onTheWay)} on the way</span>}
+    </span>
+  );
   return (
     <div className="min-w-0 rounded-xl border border-gray-200 p-3 dark:border-slate-700">
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
@@ -557,8 +588,11 @@ function Ranking({ title, sub, hint, rows, total, onPick }: {
       <div className="max-h-[320px] space-y-1 overflow-y-auto pr-1">
         {rows.map((r, i) => {
           const share = total ? (r.pieces / total) * 100 : 0;
+          const subs = r.subs ?? [];
+          const isOpen = open.has(r.key);
           return (
-            <button key={r.key || "none"} type="button" onClick={() => onPick(r.key)} aria-pressed={r.on}
+            <div key={r.key || "none"}>
+            <button type="button" onClick={() => onPick(r.key)} aria-pressed={r.on}
               className={`!min-h-0 grid w-full ${withStock ? "grid-cols-[22px_minmax(0,1fr)_minmax(48px,0.7fr)_40px_58px_92px]" : "grid-cols-[22px_minmax(0,1fr)_minmax(60px,0.8fr)_44px_64px]"} items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] transition-colors ${r.on ? "bg-sky-50 ring-1 ring-sky-200 dark:bg-sky-500/10" : "hover:bg-gray-50 dark:hover:bg-slate-800"}`}>
               <span className={`text-center text-[11px] font-bold ${i < 3 ? "text-[#1F8FE0]" : "text-gray-400"}`}>{i + 1}</span>
               <span className="min-w-0">
@@ -571,13 +605,27 @@ function Ranking({ title, sub, hint, rows, total, onPick }: {
               </span>
               <span className="text-right text-[14px] font-black tabular-nums text-gray-900 dark:text-slate-50" title="Pieces sold">{nf(r.pieces)}</span>
               <span className="text-right text-[11px] tabular-nums text-gray-500" title="Orders delivered">{nf(r.orders)} order{r.orders === 1 ? "" : "s"}</span>
-              {withStock && (
-                <span className="flex flex-col items-end" title="In stock right now. Waybills sent out are already taken off; 'on the way' is still in transit to them.">
-                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-black tabular-nums ${!r.stock || r.stock.left === 0 ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300" : r.stock.left + r.stock.onTheWay < r.pieces ? "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-200" : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"}`}>{nf(r.stock?.left ?? 0)} left</span>
-                  {r.stock && r.stock.onTheWay > 0 && <span className="mt-0.5 whitespace-nowrap text-[10px] font-semibold tabular-nums text-sky-600 dark:text-sky-300">+{nf(r.stock.onTheWay)} on the way</span>}
-                </span>
-              )}
+              {withStock && stockPill(r.stock, r.pieces)}
             </button>
+            {subs.length > 1 && (
+              <button type="button" onClick={() => toggle(r.key)} aria-expanded={isOpen}
+                className="!min-h-0 ml-[38px] mt-0.5 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-bold text-[#1F8FE0] hover:bg-sky-50 dark:hover:bg-sky-500/10">
+                {isOpen ? "Hide" : "Show"} {subs.length} agents <span className={`inline-block transition-transform ${isOpen ? "rotate-180" : ""}`}>▾</span>
+              </button>
+            )}
+            {isOpen && subs.length > 1 && (
+              <div className="mb-1 ml-[38px] mt-1 space-y-0.5 rounded-lg border border-gray-100 bg-gray-50/70 p-1.5 dark:border-slate-800 dark:bg-slate-900/40">
+                {subs.map((sub) => (
+                  <div key={sub.key || "none"} className={`grid ${withStock ? "grid-cols-[minmax(0,1fr)_34px_58px_92px]" : "grid-cols-[minmax(0,1fr)_34px_58px]"} items-center gap-2 rounded-md px-2 py-1 text-[12px]`}>
+                    <span className="truncate font-semibold text-gray-800 dark:text-slate-200">{sub.label}</span>
+                    <span className="text-right text-[13px] font-black tabular-nums text-gray-900 dark:text-slate-50" title="Pieces sold">{nf(sub.pieces)}</span>
+                    <span className="text-right text-[11px] tabular-nums text-gray-500" title="Orders delivered">{nf(sub.orders)} order{sub.orders === 1 ? "" : "s"}</span>
+                    {withStock && stockPill(sub.stock, sub.pieces, true)}
+                  </div>
+                ))}
+              </div>
+            )}
+            </div>
           );
         })}
       </div>
