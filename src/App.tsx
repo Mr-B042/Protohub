@@ -13930,6 +13930,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return () => { if (cartLivePollRef.current) { clearInterval(cartLivePollRef.current); cartLivePollRef.current = null; } };
   }, [selectedCartId]);
   const [expandedOrderCaptureDataId, setExpandedOrderCaptureDataId] = useState<string | null>(null);
+  // Order Details redesign (26 Nov 2026): which record tab is open, and the WhatsApp menu.
+  const [orderDetailsTab, setOrderDetailsTab] = useState<"timeline" | "history" | "notes" | "edits" | "form" | "journey">("timeline");
+  const [orderWaMenuOpen, setOrderWaMenuOpen] = useState(false);
+  useEffect(() => { setOrderDetailsTab("timeline"); setOrderWaMenuOpen(false); }, [selectedOrderId]);
   const [expandedCartCaptureDataId, setExpandedCartCaptureDataId] = useState<string | null>(null);
   const [expandedTrackingMonitorId, setExpandedTrackingMonitorId] = useState<string | null>(null);
   // Send Order Receipt sheet (Order Details): the order it is open for.
@@ -25163,7 +25167,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     });
   };
 
-  const renderOrderItemsReceipt = (order: TrackedOrder, options?: { className?: string; actions?: boolean; scriptTick?: boolean }) => {
+  const renderOrderItemsReceipt = (order: TrackedOrder, options?: { className?: string; actions?: boolean; scriptTick?: boolean; /** One column (Order Details side column): no side-by-side header or item rows. */ stacked?: boolean }) => {
+    const stacked = Boolean(options?.stacked);
     const actions = options?.actions ?? true;
     const crossSellTotal = orderAddOnTotals(order).crossSell;
     const mainQty = Math.max(1, quantityForOrder(order));
@@ -25257,7 +25262,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return (
         <article className={`relative overflow-hidden rounded-[26px] border p-3.5 sm:p-4 ${tone.shell}`}>
           <div className="pointer-events-none absolute -right-12 -top-16 h-32 w-32 rounded-full bg-white/50 blur-3xl dark:bg-white/5" />
-          <div className="relative grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(270px,0.82fr)] md:items-center">
+          <div className={`relative grid grid-cols-1 gap-4 ${stacked ? "" : "md:grid-cols-[minmax(0,1fr)_minmax(270px,0.82fr)] md:items-center"}`}>
             <div className="flex min-w-0 items-start gap-3">
               <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${tone.icon}`}>
                 <Icon className="h-5 w-5" />
@@ -25305,7 +25310,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         <div className="pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-sky-300/20 blur-3xl dark:bg-sky-400/10" />
         <div className="pointer-events-none absolute -bottom-24 left-6 h-44 w-44 rounded-full bg-emerald-300/15 blur-3xl dark:bg-emerald-400/10" />
         <div className="relative p-4 sm:p-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className={`flex flex-col gap-4 ${stacked ? "" : "lg:flex-row lg:items-start lg:justify-between"}`}>
             <div className="min-w-0 flex items-start gap-3">
               <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#1F8FE0] text-white shadow-[0_16px_34px_rgba(31,143,224,0.28)]">
                 <ShoppingBag className="h-5 w-5" />
@@ -25318,7 +25323,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </p>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:min-w-[360px]">
+            <div className={`grid grid-cols-2 gap-2 sm:grid-cols-3 ${stacked ? "" : "lg:min-w-[360px]"}`}>
               {lineStat("Items", itemCount)}
               {lineStat("Add-ons", addOnCount)}
               {lineStat("Grand total", formatProductMoney(order.amount, order.currency), "text-sky-700 dark:text-sky-200")}
@@ -48478,108 +48483,100 @@ ${waybillLineItems(w).length > 1
     return "Pending";
   };
 
+  // Follow-up Control (redesigned 26 Nov 2026). One header, three plain
+  // numbers, then ONE call timeline - the latest call used to show twice
+  // ("Latest attempt" card + first row of "Attempt history").
   const renderFollowUpWorkSection = (order: TrackedOrder, options?: { compact?: boolean }) => {
     const tasks = orderFollowUpTasksByOrder[order.id] ?? [];
     const attempts = orderContactAttemptsByOrder[order.id] ?? [];
     const activeTask = activeFollowUpTaskForOrder(tasks);
-    const latestAttempt = latestContactAttemptForOrder(attempts);
     const buyerHealth = order.buyerHealth ?? "healthy";
+    const overdue = order.overdueFollowUpCount ?? 0;
+    const openTasks = tasks.filter((task) => !["completed", "cancelled"].includes(task.effectiveStatus ?? task.status)).length;
+    const shown = attempts.slice(0, options?.compact ? 3 : 6);
+    const stat = (label: string, value: string, sub?: string, tone?: "bad") => (
+      <div className={`rounded-xl border px-3 py-2.5 ${orderBorderClass} ${tone === "bad" ? "bg-rose-50 border-rose-200 dark:bg-rose-500/10 dark:border-rose-500/30" : "bg-slate-50/70 dark:bg-slate-900/40"}`}>
+        <p className={`m-0 text-[10px] font-bold uppercase tracking-[0.14em] ${tone === "bad" ? "text-rose-600 dark:text-rose-300" : orderFaintTextClass}`}>{label}</p>
+        <p className={`m-0 mt-1 text-sm font-black leading-5 ${tone === "bad" ? "text-rose-700 dark:text-rose-200" : orderTitleTextClass}`}>{value}</p>
+        {sub ? <p className={`m-0 mt-0.5 text-[11px] leading-4 ${orderMutedTextClass}`}>{sub}</p> : null}
+      </div>
+    );
 
     return (
-      <section className={`${orderPanelMutedClass} rounded-xl p-4 flex flex-col gap-4`}>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h3 className={`text-sm font-semibold m-0 ${orderTitleTextClass}`}>Follow-up Control</h3>
-            <p className={`text-xs mt-1 mb-0 ${orderMutedTextClass}`}>Every due callback should end in a logged attempt, not just a reminder.</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={`inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold ${buyerHealthToneClass(buyerHealth)}`}>
-              Buyer Health · {buyerHealthLabel(buyerHealth)}
-            </span>
-            <button
-              type="button"
-              className="!min-h-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#1F8FE0] text-white text-xs font-semibold hover:bg-[#1560a8] transition-colors"
-              onClick={() => openFollowUpAttemptModal(order, activeTask)}
-            >
-              <Phone className="w-3.5 h-3.5" /> Log Follow-up
-            </button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-          <div className={`rounded-xl border ${orderBorderClass} p-3`}>
-            <p className={`text-[11px] font-bold uppercase tracking-[0.16em] m-0 ${orderFaintTextClass}`}>Next Action</p>
-            {activeTask ? (
-              <div className="mt-2 space-y-2">
-                <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${followUpTaskToneClass(activeTask)}`}>
-                  {humanizeFollowUpTaskType(activeTask.taskType)} · {activeTask.effectiveStatus ?? activeTask.status}
-                </span>
-                <p className={`m-0 text-sm font-semibold ${orderTitleTextClass}`}>{formatMoment(activeTask.dueAt)}</p>
-                <p className={`m-0 text-xs ${orderMutedTextClass}`}>{activeTask.note || "No task note saved yet."}</p>
-              </div>
-            ) : (
-              <p className={`m-0 mt-2 text-sm ${orderMutedTextClass}`}>No active follow-up task.</p>
-            )}
-          </div>
-
-          <div className={`rounded-xl border ${orderBorderClass} p-3`}>
-            <p className={`text-[11px] font-bold uppercase tracking-[0.16em] m-0 ${orderFaintTextClass}`}>Latest Attempt</p>
-            {latestAttempt ? (
-              <div className="mt-2 space-y-2">
-                <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${orderSecondaryButtonClass}`}>
-                  {latestAttempt.outcomeCode}
-                </span>
-                <p className={`m-0 text-sm font-semibold ${orderTitleTextClass}`}>{formatMoment(latestAttempt.attemptedAt)}</p>
-                <p className={`m-0 text-xs ${orderMutedTextClass}`}>{latestAttempt.outcomeNote || `${latestAttempt.channel} · ${latestAttempt.attemptType.replace(/_/g, " ")}`}</p>
-                {latestAttempt.nextActionAt && (
-                  <p className={`m-0 text-[11px] ${orderFaintTextClass}`}>Next {humanizeFollowUpTaskType(latestAttempt.nextActionType)} · {formatMoment(latestAttempt.nextActionAt)}</p>
-                )}
-              </div>
-            ) : (
-              <p className={`m-0 mt-2 text-sm ${orderMutedTextClass}`}>No follow-up attempt logged yet.</p>
-            )}
-          </div>
-
-          <div className={`rounded-xl border ${orderBorderClass} p-3`}>
-            <p className={`text-[11px] font-bold uppercase tracking-[0.16em] m-0 ${orderFaintTextClass}`}>Attempt Discipline</p>
-            <div className="mt-2 space-y-2">
-              <p className={`m-0 text-sm font-semibold ${orderTitleTextClass}`}>{attempts.length} logged attempt{attempts.length === 1 ? "" : "s"}</p>
-              <p className={`m-0 text-xs ${orderMutedTextClass}`}>{order.overdueFollowUpCount ?? 0} overdue reminder{(order.overdueFollowUpCount ?? 0) === 1 ? "" : "s"} · {tasks.filter((task) => !["completed", "cancelled"].includes(task.effectiveStatus ?? task.status)).length} open task{tasks.filter((task) => !["completed", "cancelled"].includes(task.effectiveStatus ?? task.status)).length === 1 ? "" : "s"}</p>
+      <section className={`rounded-2xl border p-4 flex flex-col gap-4 ${orderBorderClass}`}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-2.5">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-[#1F8FE0] dark:bg-sky-500/15 dark:text-sky-300"><Phone className="w-4 h-4" /></span>
+            <div className="min-w-0">
+              <h3 className={`m-0 text-sm font-black ${orderTitleTextClass}`}>Follow-up</h3>
+              <p className={`m-0 mt-0.5 text-xs ${orderMutedTextClass}`}>Log every call, so nothing is missed.</p>
             </div>
           </div>
+          <button
+            type="button"
+            className="!min-h-0 shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-[#1873b8] transition-colors"
+            onClick={() => openFollowUpAttemptModal(order, activeTask)}
+          >
+            <Plus className="w-3.5 h-3.5" /> Log call
+          </button>
         </div>
 
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-3">
-            <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Attempt History</p>
-            {orderFollowUpLoading && selectedOrderId === order.id && (
-              <span className={`text-[11px] ${orderMutedTextClass}`}>Refreshing…</span>
-            )}
-          </div>
-          {attempts.length === 0 ? (
-            <p className={`m-0 text-sm ${orderMutedTextClass}`}>No follow-up attempts logged yet.</p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {attempts.slice(0, options?.compact ? 3 : 6).map((attempt) => (
-                <div key={attempt.id} className={`rounded-xl border ${orderBorderClass} px-3 py-2.5`}>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${orderSecondaryButtonClass}`}>{attempt.outcomeCode}</span>
-                      <span className={`text-[11px] ${orderMutedTextClass}`}>{attempt.channel} · {attempt.attemptType.replace(/_/g, " ")}</span>
-                    </div>
-                    <span className={`text-[11px] ${orderFaintTextClass}`}>{formatMoment(attempt.attemptedAt)}</span>
-                  </div>
-                  {attempt.outcomeNote && (
-                    <p className={`m-0 mt-2 text-sm ${orderBodyTextClass}`}>{attempt.outcomeNote}</p>
-                  )}
-                  {attempt.nextActionAt && (
-                    <p className={`m-0 mt-2 text-[11px] ${orderMutedTextClass}`}>Next {humanizeFollowUpTaskType(attempt.nextActionType)} · {formatMoment(attempt.nextActionAt)}</p>
-                  )}
-                </div>
-              ))}
-            </div>
+        <div className="grid grid-cols-3 gap-2">
+          {stat("Next call", activeTask ? formatMoment(activeTask.dueAt) : "Not set", activeTask ? humanizeFollowUpTaskType(activeTask.taskType) : undefined)}
+          {stat("Calls logged", String(attempts.length), `${openTasks} open task${openTasks === 1 ? "" : "s"}`)}
+          {stat("Overdue", String(overdue), overdue > 0 ? "Call them now" : "Up to date", overdue > 0 ? "bad" : undefined)}
+        </div>
+        {activeTask?.note ? (
+          <p className={`m-0 -mt-1 rounded-xl px-3 py-2 text-xs ${orderBodyTextClass} bg-amber-50 dark:bg-amber-500/10`}><b>Next call note:</b> {activeTask.note}</p>
+        ) : null}
+
+        <div className="flex items-center justify-between gap-2">
+          <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${buyerHealthToneClass(buyerHealth)}`}>
+            Customer: {buyerHealthLabel(buyerHealth)}
+          </span>
+          {orderFollowUpLoading && selectedOrderId === order.id && (
+            <span className={`text-[11px] ${orderMutedTextClass}`}>Refreshing…</span>
           )}
         </div>
+
+        {attempts.length === 0 ? (
+          <div className={`rounded-xl border border-dashed px-4 py-5 text-center ${orderBorderClass}`}>
+            <p className={`m-0 text-sm font-bold ${orderTitleTextClass}`}>No calls logged yet</p>
+            <p className={`m-0 mt-1 text-xs ${orderMutedTextClass}`}>After you call, tap <b>Log call</b> and say what happened.</p>
+          </div>
+        ) : (
+          <ol className="relative m-0 flex list-none flex-col gap-3 p-0 pl-5">
+            <span className="absolute left-[7px] top-2 bottom-2 w-px bg-slate-200 dark:bg-slate-700" aria-hidden="true" />
+            {shown.map((attempt, index) => (
+              <li key={attempt.id} className="relative">
+                <span className={`absolute -left-5 top-1.5 h-3.5 w-3.5 rounded-full border-2 ${index === 0 ? "border-[#1F8FE0] bg-[#1F8FE0] shadow-[0_0_0_4px_rgba(31,143,224,0.15)]" : "border-slate-300 bg-white dark:border-slate-600 dark:bg-[#0f1822]"}`} aria-hidden="true" />
+                <div className={`rounded-xl border px-3 py-2.5 ${orderBorderClass} ${index === 0 ? "bg-blue-50/50 dark:bg-sky-500/5" : ""}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <p className={`m-0 min-w-0 text-sm font-bold leading-5 ${orderTitleTextClass}`}>{attempt.outcomeCode}</p>
+                    <span className={`shrink-0 text-[11px] font-semibold ${orderFaintTextClass}`}>{formatMoment(attempt.attemptedAt)}</span>
+                  </div>
+                  {attempt.outcomeNote && attempt.outcomeNote !== attempt.outcomeCode && (
+                    <p className={`m-0 mt-1 text-[13px] leading-5 ${orderBodyTextClass}`}>{attempt.outcomeNote}</p>
+                  )}
+                  <div className={`mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] ${orderMutedTextClass}`}>
+                    <span className="inline-flex items-center gap-1 capitalize">{/whatsapp/i.test(attempt.channel) ? <WhatsAppIcon className="w-3 h-3" /> : <Phone className="w-3 h-3" />}{attempt.channel}</span>
+                    <span aria-hidden="true">·</span>
+                    <span>{attempt.attemptType.replace(/_/g, " ")}</span>
+                    {index === 0 && <span className="rounded-full bg-[#1F8FE0]/10 px-1.5 py-0.5 text-[10px] font-black text-[#1F8FE0]">Latest</span>}
+                  </div>
+                  {attempt.nextActionAt && (
+                    <p className="m-0 mt-1.5 inline-flex items-center gap-1 rounded-lg bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
+                      <CalendarDays className="w-3 h-3" /> Next {humanizeFollowUpTaskType(attempt.nextActionType)} · {formatMoment(attempt.nextActionAt)}
+                    </p>
+                  )}
+                </div>
+              </li>
+            ))}
+            {attempts.length > shown.length && (
+              <li className={`text-[11px] font-semibold ${orderFaintTextClass}`}>+{attempts.length - shown.length} older call{attempts.length - shown.length === 1 ? "" : "s"} not shown</li>
+            )}
+          </ol>
+        )}
       </section>
     );
   };
@@ -102813,7 +102810,7 @@ ${waybillLineItems(w).length > 1
         return (
         <div className="modal-backdrop fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 dark:bg-[rgba(3,7,18,0.82)] backdrop-blur-[6px] p-2 sm:p-4 overflow-y-auto">
           <section
-            className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "sendToAgent" ? "h-[calc(100dvh-1rem)] sm:h-[46rem]" : ""} ${modal === "bonusBreakdown" || modal === "recordBatchRemittance" || modal === "pdaMediaViewer" || modal === "salesBonusFullReport" ? "max-w-5xl" :modal === "recordRemittance" || modal === "sendToAgent" || modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "logFollowUpAttempt" || modal === "addPersonalDeliveryAgent" ? "max-w-4xl" : modal === "createWaybill" ? "max-w-5xl" : modal === "cartFollowUp" ? "max-w-3xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" ? "max-w-3xl" : modal === "remittanceReceipts" ? "max-w-4xl" :modal === "createOrder" || modal === "editOrderItems" || modal === "addExtraItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
+            className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "sendToAgent" ? "h-[calc(100dvh-1rem)] sm:h-[46rem]" : ""} ${modal === "bonusBreakdown" || modal === "recordBatchRemittance" || modal === "pdaMediaViewer" || modal === "salesBonusFullReport" ? "max-w-5xl" :modal === "recordRemittance" || modal === "sendToAgent" || modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "logFollowUpAttempt" || modal === "addPersonalDeliveryAgent" ? "max-w-4xl" : modal === "createWaybill" ? "max-w-5xl" : modal === "orderDetails" && !isMarketerOrderView ? "max-w-6xl" : modal === "cartFollowUp" ? "max-w-3xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" ? "max-w-3xl" : modal === "remittanceReceipts" ? "max-w-4xl" :modal === "createOrder" || modal === "editOrderItems" || modal === "addExtraItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || (modal === "orderDetails" && isMarketerOrderView) || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
             style={orderDetailsGold ? { animation: "goldGlowPulse 2.6s ease-in-out infinite" } : undefined}
             role="dialog" aria-modal="true" aria-labelledby="modal-title"
           >
@@ -103536,7 +103533,127 @@ ${waybillLineItems(w).length > 1
 	            )}
 
 	            {modal === "orderDetails" && selectedOrder && !isMarketerOrderView && (
-	              <div className="px-6 py-5 flex flex-col gap-6">
+	              // Order Details, two columns + tabs (Bright, 26 Nov 2026: "modern,
+	              // and seamless so we don't scroll down to get information").
+	              // ⚠️ Every block below is the SAME block as before, moved: the
+	              // summary bar holds who/what/where/status, the left column the
+	              // order and delivery, the right column what to do next, and the
+	              // record (timeline, history, notes, edits, form, journey) sits in
+	              // tabs. The repeated "Dispatch to WhatsApp" / "Copy Order To
+	              // WhatsApp Group" buttons (4 copies each) are now one WhatsApp menu.
+	              <div className="px-4 sm:px-6 pb-5 flex flex-col gap-5">
+	                {/* Summary bar: stays on top while the window scrolls */}
+	                <div className={`relative sm:sticky sm:top-0 z-20 -mx-4 sm:-mx-6 border-b px-4 sm:px-6 pt-4 pb-3 bg-white/95 backdrop-blur dark:bg-[#0f1822]/95 ${orderBorderClass}`}>
+	                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+	                    <div className="flex min-w-0 items-start gap-3">
+	                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-[#1F8FE0] to-[#6366f1] text-base font-black text-white shadow-sm">
+	                        {(String(selectedOrder.customer ?? "").trim().charAt(0) || "#").toUpperCase()}
+	                      </div>
+	                      <div className="min-w-0">
+	                        <p className={`m-0 text-lg font-black leading-6 truncate ${orderTitleTextClass}`}>{selectedOrder.customer || "No name given"}</p>
+	                        <div className={`mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] font-semibold ${orderMutedTextClass}`}>
+	                          {selectedOrder.phone && (
+	                            <a href={`tel:${selectedOrder.phone}`} className="inline-flex items-center gap-1 text-[#1F8FE0] hover:underline"><Phone className="w-3.5 h-3.5" />{selectedOrder.phone}</a>
+	                          )}
+	                          {selectedOrder.whatsapp && selectedOrder.whatsapp !== selectedOrder.phone && (
+	                            <span className="inline-flex items-center gap-1"><WhatsAppIcon className="w-3.5 h-3.5" />{selectedOrder.whatsapp}</span>
+	                          )}
+	                          <span className="inline-flex items-center gap-1"><MapPin className="w-3.5 h-3.5" />{selectedOrder.location ?? orderLocationFromFields(selectedOrder.city ?? "", selectedOrder.state ?? "")}</span>
+	                        </div>
+	                        <div className={`mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] ${orderFaintTextClass}`}>
+	                          <span className="inline-flex items-center gap-1.5">
+	                            <OrderSourceLogo source={orderDisplaySourceFor(selectedOrder).label} className="h-4 w-4 shrink-0" aria-hidden="true" />
+	                            {orderDisplaySourceFor(selectedOrder).label}
+	                          </span>
+	                          <span>Ordered {formatOrderCreatedAt(selectedOrder)}</span>
+	                          <span>Rep: {users.find((u) => u.id === selectedOrder.assignedRepId)?.name ?? "Unassigned"}</span>
+	                        </div>
+	                      </div>
+	                    </div>
+	                    <div className="flex shrink-0 flex-row items-center justify-between gap-3 sm:flex-col sm:items-end">
+	                      <p className={`m-0 text-xl font-black tabular-nums ${orderTitleTextClass}`}>{formatProductMoney(Number(selectedOrder.amount) || 0, selectedOrder.currency)}</p>
+	                      <div className="flex flex-col items-end gap-1.5">
+	                        {/* The status chip only; the customer's note sits in the right column. */}
+	                        {(() => {
+	                          const view = resolveOrderStatusView(selectedOrder.status ?? "New", (selectedOrder.callOutcome ?? "").trim());
+	                          return (
+	                            <span className={`inline-flex items-center justify-center rounded-full px-3 py-1.5 text-[11px] font-black tracking-[0.01em] whitespace-nowrap ${statusBadgeBaseClasses} ${orderStatusGroupBadge[view.group]}`}>
+	                              {orderShowsAsScheduled(selectedOrder) ? ORDER_SCHEDULED_LABEL : view.label}
+	                            </span>
+	                          );
+	                        })()}
+	                        {renderSendOutTimer(selectedOrder, "inline")}
+	                      </div>
+	                    </div>
+	                  </div>
+	                  {/* Action bar */}
+	                  <div className="mt-3 flex flex-wrap items-center gap-2">
+	                    {selectedOrder.phone && (
+	                      <a href={`tel:${selectedOrder.phone}`} className="!min-h-0 inline-flex items-center gap-1.5 rounded-xl bg-[#1F8FE0] px-3.5 py-2 text-sm font-bold text-white shadow-sm hover:bg-[#1873b8] transition-colors">
+	                        <Phone className="w-4 h-4" /> Call
+	                      </a>
+	                    )}
+	                    <div className="relative">
+	                      <button
+	                        type="button"
+	                        className="!min-h-0 inline-flex items-center gap-1.5 rounded-xl bg-[#25D366] px-3.5 py-2 text-sm font-bold text-white shadow-sm hover:opacity-90"
+	                        aria-expanded={orderWaMenuOpen}
+	                        onClick={() => setOrderWaMenuOpen((open) => !open)}
+	                      >
+	                        <WhatsAppIcon className="w-4 h-4" /> WhatsApp <ChevronDown className={`w-3.5 h-3.5 transition-transform ${orderWaMenuOpen ? "rotate-180" : ""}`} />
+	                      </button>
+	                      {orderWaMenuOpen && (
+	                        <>
+	                          <div className="fixed inset-0 z-30" onClick={() => setOrderWaMenuOpen(false)} />
+	                          <div className={`absolute left-0 top-full z-40 mt-1.5 w-64 overflow-hidden rounded-2xl border bg-white p-1.5 shadow-xl dark:bg-[#111c27] ${orderBorderClass}`}>
+	                            {([
+	                              { label: "Chat with customer", hint: "Opens WhatsApp to this number", icon: <WhatsAppIcon className="w-4 h-4 text-[#25D366]" />, run: () => openWhatsAppForOrder(selectedOrder) },
+	                              { label: "Send to delivery group", hint: "Dispatch this order on WhatsApp", icon: <MessageCircle className="w-4 h-4 text-blue-600" />, run: () => openWhatsAppDispatchForOrder(selectedOrder) },
+	                              { label: "Copy order for a group", hint: "Copy, then paste in any group", icon: <Copy className="w-4 h-4 text-emerald-600" />, run: () => copyOrderForGroup(selectedOrder) },
+	                              { label: "Send order receipt", hint: "A receipt picture for the customer", icon: <ReceiptText className="w-4 h-4 text-[#1F8FE0]" />, run: () => setReceiptSheetOrderId(selectedOrder.id) }
+	                            ]).map((item) => (
+	                              <button
+	                                key={item.label}
+	                                type="button"
+	                                className="!min-h-0 flex w-full items-start gap-2.5 rounded-xl px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800/60"
+	                                onClick={() => { setOrderWaMenuOpen(false); item.run(); }}
+	                              >
+	                                <span className="mt-0.5 shrink-0">{item.icon}</span>
+	                                <span className="min-w-0">
+	                                  <span className={`block text-sm font-bold ${orderTitleTextClass}`}>{item.label}</span>
+	                                  <span className={`block text-[11px] ${orderFaintTextClass}`}>{item.hint}</span>
+	                                </span>
+	                              </button>
+	                            ))}
+	                          </div>
+	                        </>
+	                      )}
+	                    </div>
+	                    <button
+	                      className={`!min-h-0 inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-sm font-semibold transition-colors ${orderSecondaryButtonClass}`}
+	                      onClick={() => openAdminOrderRescheduleRoute(selectedOrder.id)}
+	                    >
+	                      <CalendarDays className="w-4 h-4" /> {scheduledMomentForOrder(selectedOrder) ? "Reschedule" : "Schedule Delivery"}
+	                    </button>
+	                    {selectedOrder.status === "Delivered" && (
+	                      <button
+	                        className="!min-h-0 inline-flex items-center gap-1.5 rounded-xl border border-emerald-300 px-3.5 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 transition-colors dark:text-emerald-200 dark:border-emerald-500/40"
+	                        onClick={() => openAdminOrderStatusRoute(selectedOrder.id, "Delivered")}
+	                      >
+	                        <CalendarDays className="w-4 h-4" /> Adjust Delivery Date
+	                      </button>
+	                    )}
+	                    <button
+	                      className={`!min-h-0 inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-sm font-semibold transition-colors ${orderSecondaryButtonClass}`}
+	                      onClick={() => openAdminOrderReassignRoute(selectedOrder.id)}
+	                    >
+	                      <UserPlus className="w-4 h-4" /> Reassign Sales Rep
+	                    </button>
+	                  </div>
+	                </div>
+
+	                {/* Things to know first: held, voucher, cash variance, recovered cart, no agent */}
+	                <div className="flex flex-col gap-3 empty:hidden">
 	                {renderOrderDateAuditStack(selectedOrder, { className: "space-y-1.5 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3" })}
 	                {/* Where this order came from, stated up front. A recovered
 	                    cart otherwise looks identical to a fresh order. */}
@@ -103636,105 +103753,6 @@ ${waybillLineItems(w).length > 1
 	                    </div>
 	                  </div>
 	                )}
-	                {/* Owner/admin always has full permissions - Reassign + Change Status always visible */}
-	                <div className="flex items-center justify-between gap-2 flex-wrap">
-	                  <div className="flex items-center gap-2 flex-wrap">
-	                    <span className="text-xs text-gray-400 font-medium">Quick Actions:</span>
-	                    {/* Admin/owner full-control row: includes New (revert) - unlike the rep tap-row which hides settable:false. */}
-                    {orderStatusViews
-                      .filter((view) => view.label !== orderStatusLabelFor(selectedOrder))
-                      .filter((view) => (selectedOrder.status ?? "New") !== "Delivered" || canSetStatusAfterDelivery(view.status))
-                      .map((view) => { const s = view.label;
-	                      const isReverting = (selectedOrder.status ?? "New") === "Delivered" && !["Cancelled", "Failed"].includes(view.status);
-	                      const missingRep   = view.status === "Delivered" && !selectedOrder.assignedRepId;
-	                      const missingAgent = view.status === "Delivered" && !selectedOrder.agentId;
-	                      const isBlockedDelivery = missingRep || missingAgent;
-	                      return (
-	                        <button
-	                          key={s}
-	                          disabled={isBlockedDelivery}
-	                          title={
-	                            isBlockedDelivery
-	                              ? (missingRep && missingAgent
-	                                  ? "No Sales Rep and no Agent assigned. Use 'Reassign Sales Rep' and 'Assign to Agent' first."
-	                                  : missingRep
-	                                    ? "No Sales Rep assigned. Use 'Reassign Sales Rep' first to enable delivery."
-	                                    : "No Agent assigned. Use 'Assign to Agent' first to enable delivery.")
-	                              : isReverting
-	                                ? "Warning: re-opening a delivered order will not automatically restore stock"
-	                                : undefined
-	                          }
-	                          className={`!min-h-0 px-2.5 py-1 text-xs font-medium rounded-full border transition-colors ${
-	                            isBlockedDelivery
-	                              ? "border-gray-200 text-gray-300 cursor-not-allowed bg-gray-50"
-	                              : isReverting
-	                                ? "border-amber-300 text-amber-700 hover:bg-amber-50"
-	                                : orderStatusGroupChip[view.group].idle
-	                          }`}
-	                          onClick={() => {
-	                            if (isBlockedDelivery) return;
-                              openAdminOrderStatusRoute(selectedOrder.id, view.status, { callOutcome: view.outcome ?? undefined });
-	                          }}
-	                        >→ {s}{isBlockedDelivery ? " 🔒" : ""}</button>
-	                      );
-	                    })}
-	                  </div>
-                    <div className="flex items-center gap-2 flex-wrap">
-	                  <button
-                        className="!min-h-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-blue-600 text-blue-600 text-sm font-medium hover:bg-blue-50 transition-colors shrink-0"
-                        onClick={() => openAdminOrderRescheduleRoute(selectedOrder.id)}
-                      >
-                        <CalendarDays className="w-4 h-4" /> {scheduledMomentForOrder(selectedOrder) ? "Reschedule" : "Schedule Delivery"}
-                      </button>
-	                  {selectedOrder.status === "Delivered" && (
-                        <button
-                          className="!min-h-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-emerald-600 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors shrink-0"
-                          onClick={() => {
-                            openAdminOrderStatusRoute(selectedOrder.id, "Delivered");
-                          }}
-                        >
-                          <CalendarDays className="w-4 h-4" /> Adjust Delivery Date
-                        </button>
-                      )}
-	                  <button className="!min-h-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-blue-600 text-blue-600 text-sm font-medium hover:bg-blue-50 transition-colors shrink-0" onClick={() => openAdminOrderReassignRoute(selectedOrder.id)}>
-	                    <UserPlus className="w-4 h-4" /> Reassign Sales Rep
-	                  </button>
-                      <button
-                        className="!min-h-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-blue-200 text-blue-700 text-sm font-medium hover:bg-blue-50 transition-colors shrink-0"
-                        onClick={() => openWhatsAppDispatchForOrder(selectedOrder)}
-                      >
-                        <MessageCircle className="w-4 h-4" /> Dispatch to WhatsApp
-                      </button>
-                      <button
-                        className="!min-h-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors shrink-0"
-                        onClick={() => copyOrderForGroup(selectedOrder)}
-                      >
-                        <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
-                      </button>
-                    </div>
-	                </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-orange-50 text-orange-700 text-sm font-semibold border border-orange-200 hover:bg-orange-100 transition-colors"
-                      onClick={() => openAdminOrderOutcomeShortcut(selectedOrder.id, "Failed", "Not Picking", "Customer is not picking calls.")}
-                    >
-                      <PhoneOff className="w-4 h-4" /> Not Picking
-                    </button>
-                    <button
-                      className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-yellow-50 text-yellow-700 text-sm font-semibold border border-yellow-200 hover:bg-yellow-100 transition-colors"
-                      onClick={() => openAdminOrderOutcomeShortcut(selectedOrder.id, "Postponed", "Not Ready", "Customer is not ready yet and asked for later follow-up.")}
-                    >
-                      <Clock className="w-4 h-4" /> Not Ready
-                    </button>
-                    <button
-                      className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 text-blue-700 text-sm font-semibold border border-blue-200 hover:bg-blue-100 transition-colors"
-                      onClick={() => openAdminOrderOutcomeShortcut(selectedOrder.id, "Postponed", "Will Call Back", "Customer asked to call back later.")}
-                    >
-                      <Phone className="w-4 h-4" /> Will Call Back
-                    </button>
-                  </div>
-	
 	                {/* Cleanup banner: delivered without an agent (legacy data) */}
 	                {(selectedOrder.status === "Delivered" && !selectedOrder.agentId) && (
 	                  <div className="flex items-start gap-3 bg-amber-50 border border-amber-300 rounded-lg px-4 py-3 dark:bg-amber-500/12 dark:border-amber-500/30">
@@ -103751,168 +103769,75 @@ ${waybillLineItems(w).length > 1
 	                  </div>
 	                )}
 
-	                {/* Section 1: Customer Information */}
-	                  <section>
-	                    <div className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b pb-2 mb-3 ${orderBorderClass}`}>
-	                      <h3 className={`font-semibold text-base m-0 ${orderTitleTextClass}`}>Customer Information</h3>
-	                      <div className="flex flex-wrap gap-2 self-start sm:self-auto">
-	                        <button
-	                          className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-blue-200 text-blue-700 text-sm font-medium hover:bg-blue-50 transition-colors"
-	                          onClick={() => openWhatsAppDispatchForOrder(selectedOrder)}
-	                        >
-	                          <MessageCircle className="w-4 h-4" /> Dispatch to WhatsApp
-	                        </button>
-	                        <button
-	                          className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors"
-	                          onClick={() => copyOrderForGroup(selectedOrder)}
-	                        >
-	                          <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
-	                        </button>
-	                      </div>
-	                    </div>
-	                  <div className="grid grid-cols-2 gap-4">
-	                    <div>
-	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Name</p>
-	                      <p className={`text-sm font-semibold m-0 mt-0.5 ${orderTitleTextClass}`}>{selectedOrder.customer}</p>
-	                    </div>
-	                    <div>
-	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Phone</p>
-	                      <p className={`text-sm font-semibold m-0 mt-0.5 ${orderTitleTextClass}`}>{selectedOrder.phone}</p>
-	                    </div>
-	                    {selectedOrder.whatsapp && (
-	                      <div>
-	                        <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>WhatsApp</p>
-	                        <p className={`text-sm font-semibold m-0 mt-0.5 ${orderTitleTextClass}`}>{selectedOrder.whatsapp}</p>
-	                      </div>
-	                    )}
-                      {(selectedOrder.whatsapp || selectedOrder.phone) && (
-                        <div className="col-span-2 space-y-2 pt-1">
-                          {/* WA delivery status panel - loads on demand for Owner/Admin */}
-                          {isOwnerOrAdmin && (
-                            <div>
-                              {!orderWaStatus ? (
-                                <button
-                                  type="button"
-                                  className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gray-200 text-gray-500 text-xs font-bold hover:bg-gray-50"
-                                  disabled={orderWaStatusLoading}
-                                  onClick={() => {
-                                    setOrderWaStatusLoading(true);
-                                    ordersWhatsAppResendApi.status(selectedOrder.id)
-                                      .then(r => setOrderWaStatus(r))
-                                      .catch(() => setOrderWaStatus({ messages: [], normalizedPhone: "" }))
-                                      .finally(() => setOrderWaStatusLoading(false));
-                                  }}
-                                >
-                                  <MessageCircle className="w-3.5 h-3.5" />
-                                  {orderWaStatusLoading ? "Checking…" : "Check WA delivery status"}
-                                </button>
-                              ) : (
-                                <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 space-y-2">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">WhatsApp messages</p>
-                                    <button type="button" className="!min-h-0 text-[10px] text-gray-400 hover:text-gray-600" onClick={() => setOrderWaStatus(null)}>hide</button>
+
+	                </div>
+
+	                <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] lg:items-start">
+	                  {/* LEFT: the order and its delivery */}
+	                  <div className="flex min-w-0 flex-col gap-5">
+		                {/* Section 4: Order Items */}
+		                {renderOrderItemsReceipt(selectedOrder, { scriptTick: true, stacked: true })}
+
+                {(() => {
+                  const fulfilmentLines: Array<OrderInventoryComponentSnapshot & { groupLabel: string }> = [
+                    ...(selectedOrder.packageComponentsSnapshot ?? []).map((line) => ({ ...line, groupLabel: "Main offer" })),
+                    ...(selectedOrder.crossSellLines ?? []).flatMap((line, index) =>
+                      crossSellLineInventoryComponents(line).map((component) => ({ ...component, groupLabel: `Add-on ${index + 1}` }))
+                    ),
+                    ...(selectedOrder.freeGiftLines ?? []).map((line, index) => ({
+                      productId: line.productId,
+                      productName: line.productName,
+                      quantity: line.quantity,
+                      isFreeGift: true,
+                      sourceType: "free_gift" as const,
+                      groupLabel: `Free gift ${index + 1}`
+                    }))
+                  ];
+                  if (fulfilmentLines.length === 0) return null;
+                  return (
+                    <section>
+                      <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Fulfilment Stock Breakdown</h3>
+                      <div className="rounded-lg border border-gray-200 overflow-hidden">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-gray-100 bg-gray-50/60">
+                              <th className="px-4 py-2 text-left text-xs font-medium text-gray-400">Stock item</th>
+                              <th className="px-4 py-2 text-center text-xs font-medium text-gray-400">Qty</th>
+                              <th className="px-4 py-2 text-right text-xs font-medium text-gray-400">Type</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {fulfilmentLines.map((line, idx) => (
+                              <tr key={`${line.groupLabel}-${line.productId ?? line.productName}-${idx}`} className="border-b border-gray-100 last:border-b-0">
+                                <td className="px-4 py-2.5 text-gray-800">
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="font-semibold">{line.productName}</span>
+                                    <span className="text-[11px] font-bold uppercase tracking-wide text-gray-400">{line.groupLabel}</span>
+                                    {line.note ? <span className="text-xs text-gray-500">{line.note}</span> : null}
                                   </div>
-                                  {orderWaStatus.messages.length === 0 ? (
-                                    <p className="m-0 text-xs text-gray-500">No WhatsApp messages sent to this customer yet.</p>
-                                  ) : orderWaStatus.messages.map(m => (
-                                    <div key={m.id} className="flex items-start justify-between gap-2">
-                                      <div className="min-w-0">
-                                        <p className="m-0 text-xs font-bold text-gray-700 truncate">{m.trigger?.replace(/_/g, " ")}</p>
-                                        <p className="m-0 text-[10px] text-gray-400">{formatMoment(m.created_at)}</p>
-                                      </div>
-                                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${m.status === "delivered" || m.status === "read" ? "bg-emerald-100 text-emerald-700" : m.status === "sent" ? "bg-blue-100 text-blue-700" : m.status === "failed" || m.error_message ? "bg-rose-100 text-rose-700" : "bg-gray-100 text-gray-600"}`}>
-                                        {m.error_message ? "failed" : m.status}
-                                      </span>
-                                    </div>
-                                  ))}
-                                  {orderWaStatus.messages.some(m => m.status === "sent" && !m.error_message) && (
-                                    <p className="m-0 text-[10px] text-amber-600 font-bold">⚠ "Sent" = reached WA servers. "Delivered" = confirmed on customer device.</p>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#25D366] text-white text-xs font-bold hover:opacity-90"
-                              onClick={() => openWhatsAppForOrder(selectedOrder)}
-                            >
-                              <WhatsAppIcon className="w-3.5 h-3.5" /> Open WhatsApp
-                            </button>
-                            <button
-                              type="button"
-                              className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#1F8FE0] text-white text-xs font-bold hover:opacity-90"
-                              onClick={() => setReceiptSheetOrderId(selectedOrder.id)}
-                            >
-                              <ReceiptText className="w-3.5 h-3.5" /> Send Order Receipt
-                            </button>
-                            {selectedOrder.status === "Delivered" && (
-                              // Reviews & UGC (Bright, 8 Nov 2026): the customer's own review link, ready for WhatsApp.
-                              <button
-                                type="button"
-                                className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-violet-200 text-violet-700 text-xs font-bold hover:bg-violet-50"
-                                onClick={() => {
-                                  void customerReviewsApi.link(selectedOrder.id).then(async ({ url }) => {
-                                    const first = String(selectedOrder.customer ?? "").trim().split(/\s+/)[0] || "there";
-                                    const text = `Hi ${first}, thank you for your order! How is your ${selectedOrder.productName || "order"}? It would mean a lot if you left a quick review (photos welcome): ${url}`;
-                                    await navigator.clipboard.writeText(text).catch(() => undefined);
-                                    showToast("Review link copied with a message. Paste it into WhatsApp.");
-                                  }).catch((err: any) => showToast(err?.message ?? "Could not make the review link."));
-                                }}
-                              >
-                                <Star className="w-3.5 h-3.5" /> Copy Review Link
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-blue-200 text-blue-700 text-xs font-bold transition-colors hover:bg-blue-50"
-                              onClick={() => openWhatsAppDispatchForOrder(selectedOrder)}
-                            >
-                              <MessageCircle className="w-3.5 h-3.5" /> Dispatch to WhatsApp
-                            </button>
-                            <button
-                              type="button"
-                              className={`!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-bold transition-colors ${orderSecondaryButtonClass}`}
-                              onClick={() => copyOrderForGroup(selectedOrder)}
-                            >
-                              <Copy className="w-3.5 h-3.5" /> Copy Order To WhatsApp Group
-                            </button>
-                            {isOwnerOrAdmin && (
-                              <button
-                                type="button"
-                                className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-amber-200 bg-amber-50 text-amber-700 text-xs font-bold hover:bg-amber-100 transition-colors"
-                                onClick={async () => {
-                                  try {
-                                    const r = await ordersWhatsAppResendApi.resend(selectedOrder.id);
-                                    showToast(r.message ?? "WhatsApp confirmation resent.");
-                                  } catch (err: any) {
-                                    showToast(`Resend failed: ${err?.message ?? "please retry"}.`);
-                                  }
-                                }}
-                              >
-                                <RefreshCw className="w-3.5 h-3.5" /> Resend receipt via WhatsApp
-                              </button>
-                            )}
-                          </div>
-                          {receiptSheetOrderId === selectedOrder.id && (
-                            <OrderReceiptSheet
-                              order={selectedOrder}
-                              onClose={() => setReceiptSheetOrderId(null)}
-                              onEdit={() => { setReceiptSheetOrderId(null); openAdminOrderEditRoute(selectedOrder.id); }}
-                              onOpenWhatsApp={(phone, text) => openWhatsAppPicker({ phone, message: text, customerName: selectedOrder.customer || `order ${selectedOrder.id}`, linkedOrderId: selectedOrder.id })}
-                              showToast={showToast}
-                            />
-                          )}
-                        </div>
-                      )}
-	                  </div>
-	                </section>
-	
+                                </td>
+                                <td className="px-4 py-2.5 text-center text-gray-700">{line.quantity}</td>
+                                <td className="px-4 py-2.5 text-right">
+                                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${line.isFreeGift ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                                    {line.isFreeGift ? "Free gift" : "Stock item"}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <p className="text-[11px] text-gray-500 mt-2">These are the real stock items Protohub will deduct when this order is delivered.</p>
+                    </section>
+                  );
+                })()}
+
+
+	                    <div className={`rounded-2xl border p-4 flex flex-col gap-5 ${orderBorderClass}`}>
 	                {/* Section 2: Order Information */}
 	                  <section>
                       <div className={`flex items-center justify-between gap-3 border-b pb-2 mb-3 ${orderBorderClass}`}>
-	                    <h3 className={`font-semibold text-base m-0 ${orderTitleTextClass}`}>Order Information</h3>
+	                    <h3 className={`font-semibold text-base m-0 ${orderTitleTextClass}`}>Delivery &amp; team</h3>
                         {isOwnerOrAdmin && selectedOrder.sourceCartId && (
                           <button
                             type="button"
@@ -103980,32 +103905,6 @@ ${waybillLineItems(w).length > 1
                         </div>
                       )}
 	                  <div className="grid grid-cols-2 gap-4">
-	                    <div>
-	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Status</p>
-	                      <div className="mt-0.5">
-	                        {renderOrderStatusSummary(selectedOrder)}
-	                        {renderSendOutTimer(selectedOrder, "inline", "mt-1.5")}
-	                      </div>
-	                    </div>
-	                      <div>
-	                        <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Source</p>
-	                        <div className="flex items-center gap-1.5 mt-0.5">
-	                        <OrderSourceLogo
-	                          source={orderDisplaySourceFor(selectedOrder).label}
-	                          className="h-6 w-6 shrink-0"
-	                          aria-hidden="true"
-	                        />
-	                        <span className={`text-sm font-semibold ${orderTitleTextClass}`}>{orderDisplaySourceFor(selectedOrder).label}</span>
-	                      </div>
-	                    </div>
-	                    <div>
-	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Location</p>
-	                      <p className={`text-sm font-semibold m-0 mt-0.5 ${orderTitleTextClass}`}>{selectedOrder.location ?? orderLocationFromFields(selectedOrder.city ?? "", selectedOrder.state ?? "")}</p>
-	                    </div>
-	                    <div>
-	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Order Date</p>
-	                      <p className={`text-sm font-semibold m-0 mt-0.5 ${orderTitleTextClass}`}>{formatOrderCreatedAt(selectedOrder)}</p>
-	                    </div>
 	                    <div>
 	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Scheduled Delivery</p>
 	                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
@@ -104159,6 +104058,7 @@ ${waybillLineItems(w).length > 1
 	                  </div>
 	                </section>
 
+
 	                {/* Section 3: Delivery Address */}
 	                  <section>
 	                    <h3 className={`font-semibold text-base border-b pb-2 mb-3 ${orderBorderClass} ${orderTitleTextClass}`}>Delivery Address</h3>
@@ -104167,63 +104067,9 @@ ${waybillLineItems(w).length > 1
 	                    </div>
 	                  </section>
 	
-		                {/* Section 4: Order Items */}
-		                {renderOrderItemsReceipt(selectedOrder, { scriptTick: true })}
 
-                {(() => {
-                  const fulfilmentLines: Array<OrderInventoryComponentSnapshot & { groupLabel: string }> = [
-                    ...(selectedOrder.packageComponentsSnapshot ?? []).map((line) => ({ ...line, groupLabel: "Main offer" })),
-                    ...(selectedOrder.crossSellLines ?? []).flatMap((line, index) =>
-                      crossSellLineInventoryComponents(line).map((component) => ({ ...component, groupLabel: `Add-on ${index + 1}` }))
-                    ),
-                    ...(selectedOrder.freeGiftLines ?? []).map((line, index) => ({
-                      productId: line.productId,
-                      productName: line.productName,
-                      quantity: line.quantity,
-                      isFreeGift: true,
-                      sourceType: "free_gift" as const,
-                      groupLabel: `Free gift ${index + 1}`
-                    }))
-                  ];
-                  if (fulfilmentLines.length === 0) return null;
-                  return (
-                    <section>
-                      <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Fulfilment Stock Breakdown</h3>
-                      <div className="rounded-lg border border-gray-200 overflow-hidden">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="border-b border-gray-100 bg-gray-50/60">
-                              <th className="px-4 py-2 text-left text-xs font-medium text-gray-400">Stock item</th>
-                              <th className="px-4 py-2 text-center text-xs font-medium text-gray-400">Qty</th>
-                              <th className="px-4 py-2 text-right text-xs font-medium text-gray-400">Type</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {fulfilmentLines.map((line, idx) => (
-                              <tr key={`${line.groupLabel}-${line.productId ?? line.productName}-${idx}`} className="border-b border-gray-100 last:border-b-0">
-                                <td className="px-4 py-2.5 text-gray-800">
-                                  <div className="flex flex-col gap-0.5">
-                                    <span className="font-semibold">{line.productName}</span>
-                                    <span className="text-[11px] font-bold uppercase tracking-wide text-gray-400">{line.groupLabel}</span>
-                                    {line.note ? <span className="text-xs text-gray-500">{line.note}</span> : null}
-                                  </div>
-                                </td>
-                                <td className="px-4 py-2.5 text-center text-gray-700">{line.quantity}</td>
-                                <td className="px-4 py-2.5 text-right">
-                                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${line.isFreeGift ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-                                    {line.isFreeGift ? "Free gift" : "Stock item"}
-                                  </span>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                      <p className="text-[11px] text-gray-500 mt-2">These are the real stock items Protohub will deduct when this order is delivered.</p>
-                    </section>
-                  );
-                })()}
-
+	                    </div>
+	                    <div className={`rounded-2xl border p-4 ${orderBorderClass}`}>
 	                {/* Section 4b: Upsell tracking + Bonus */}
 	                <section>
 	                  <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Bonus &amp; Upsell Tracking</h3>
@@ -104372,6 +104218,241 @@ ${waybillLineItems(w).length > 1
 	                  })()}
 	                </section>
 	
+
+	                    </div>
+	                  </div>
+
+	                  {/* RIGHT: what to do next (first on phones, where reps work) */}
+	                  <div className="order-first flex min-w-0 flex-col gap-5 lg:order-none">
+	                    {(() => {
+	                      const status = selectedOrder.status ?? "New";
+	                      const outcome = (selectedOrder.callOutcome ?? "").trim();
+	                      const view = resolveOrderStatusView(status, outcome);
+	                      if (!outcome || outcome.toLowerCase() === view.label.toLowerCase()) return null;
+	                      return renderCustomerSignalBadge(outcome, status, { label: "Customer note" });
+	                    })()}
+	                    <section className={`rounded-2xl border p-4 ${orderBorderClass}`}>
+	                      <h3 className={`m-0 text-sm font-black ${orderTitleTextClass}`}>What happened on the call?</h3>
+	                      <p className={`m-0 mt-0.5 text-xs ${orderMutedTextClass}`}>Tap the answer. It changes the order and asks for a note.</p>
+	                      <div className="mt-3 flex flex-wrap gap-2">
+	                        <button
+	                          className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-orange-50 text-orange-700 text-sm font-semibold border border-orange-200 hover:bg-orange-100 transition-colors dark:bg-orange-500/10 dark:text-orange-200 dark:border-orange-500/30"
+	                          onClick={() => openAdminOrderOutcomeShortcut(selectedOrder.id, "Failed", "Not Picking", "Customer is not picking calls.")}
+	                        >
+	                          <PhoneOff className="w-4 h-4" /> Not Picking
+	                        </button>
+	                        <button
+	                          className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-yellow-50 text-yellow-700 text-sm font-semibold border border-yellow-200 hover:bg-yellow-100 transition-colors dark:bg-yellow-500/10 dark:text-yellow-200 dark:border-yellow-500/30"
+	                          onClick={() => openAdminOrderOutcomeShortcut(selectedOrder.id, "Postponed", "Not Ready", "Customer is not ready yet and asked for later follow-up.")}
+	                        >
+	                          <Clock className="w-4 h-4" /> Not Ready
+	                        </button>
+	                        <button
+	                          className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-blue-50 text-blue-700 text-sm font-semibold border border-blue-200 hover:bg-blue-100 transition-colors dark:bg-blue-500/10 dark:text-blue-200 dark:border-blue-500/30"
+	                          onClick={() => openAdminOrderOutcomeShortcut(selectedOrder.id, "Postponed", "Will Call Back", "Customer asked to call back later.")}
+	                        >
+	                          <Phone className="w-4 h-4" /> Will Call Back
+	                        </button>
+	                      </div>
+	                      {/* Every status, grouped (Owner/Admin full-control row: includes New) */}
+	                      {(() => {
+	                        const views = orderStatusViews
+	                          .filter((view) => view.label !== orderStatusLabelFor(selectedOrder))
+	                          .filter((view) => (selectedOrder.status ?? "New") !== "Delivered" || canSetStatusAfterDelivery(view.status));
+	                        const groups: Array<{ title: string; match: (g: OrderStatusGroup) => boolean }> = [
+	                          { title: "Move it forward", match: (g) => g === "new" || g === "pending" || g === "ready" || g === "success" },
+	                          { title: "Not reached or later", match: (g) => g === "working" },
+	                          { title: "End the order", match: (g) => g === "dead" }
+	                        ];
+	                        return (
+	                          <div className={`mt-4 flex flex-col gap-3 border-t pt-3 ${orderBorderClass}`}>
+	                            <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.14em] ${orderFaintTextClass}`}>Change status</p>
+	                            {groups.map((group) => {
+	                              const inGroup = views.filter((view) => group.match(view.group));
+	                              if (inGroup.length === 0) return null;
+	                              return (
+	                                <div key={group.title}>
+	                                  <p className={`m-0 mb-1.5 text-xs font-semibold ${orderMutedTextClass}`}>{group.title}</p>
+	                                  <div className="flex flex-wrap gap-1.5">
+	                                    {inGroup.map((view) => {
+	                                      const isReverting = (selectedOrder.status ?? "New") === "Delivered" && !["Cancelled", "Failed"].includes(view.status);
+	                                      const missingRep = view.status === "Delivered" && !selectedOrder.assignedRepId;
+	                                      const missingAgent = view.status === "Delivered" && !selectedOrder.agentId;
+	                                      const isBlockedDelivery = missingRep || missingAgent;
+	                                      return (
+	                                        <button
+	                                          key={view.label}
+	                                          disabled={isBlockedDelivery}
+	                                          title={
+	                                            isBlockedDelivery
+	                                              ? (missingRep && missingAgent
+	                                                  ? "No Sales Rep and no Agent assigned. Use 'Reassign Sales Rep' and 'Assign to Agent' first."
+	                                                  : missingRep
+	                                                    ? "No Sales Rep assigned. Use 'Reassign Sales Rep' first to enable delivery."
+	                                                    : "No Agent assigned. Use 'Assign to Agent' first to enable delivery.")
+	                                              : isReverting
+	                                                ? "Warning: re-opening a delivered order will not automatically restore stock"
+	                                                : undefined
+	                                          }
+	                                          className={`!min-h-0 px-2.5 py-1 text-xs font-semibold rounded-full border transition-colors ${
+	                                            isBlockedDelivery
+	                                              ? "border-gray-200 text-gray-300 cursor-not-allowed bg-gray-50 dark:bg-slate-800/40 dark:border-slate-700 dark:text-slate-500"
+	                                              : isReverting
+	                                                ? "border-amber-300 text-amber-700 hover:bg-amber-50"
+	                                                : orderStatusGroupChip[view.group].idle
+	                                          }`}
+	                                          onClick={() => {
+	                                            if (isBlockedDelivery) return;
+	                                            openAdminOrderStatusRoute(selectedOrder.id, view.status, { callOutcome: view.outcome ?? undefined });
+	                                          }}
+	                                        >{view.label}{isBlockedDelivery ? " 🔒" : ""}</button>
+	                                      );
+	                                    })}
+	                                  </div>
+	                                </div>
+	                              );
+	                            })}
+	                          </div>
+	                        );
+	                      })()}
+	                    </section>
+
+	                    {renderFollowUpWorkSection(selectedOrder)}
+
+	                    {/* More message tools. Chat and receipt are in the WhatsApp menu above;
+	                        the receipt window itself opens from here. */}
+	                    {(isOwnerOrAdmin || selectedOrder.status === "Delivered" || receiptSheetOrderId === selectedOrder.id) && (
+	                      <section className={`rounded-2xl border p-4 ${orderBorderClass}`}>
+	                        <h3 className={`m-0 mb-3 text-sm font-black ${orderTitleTextClass}`}>More message tools</h3>
+                      {(selectedOrder.whatsapp || selectedOrder.phone) && (
+                        <div className="space-y-3">
+                          {/* WA delivery status panel - loads on demand for Owner/Admin */}
+                          {isOwnerOrAdmin && (
+                            <div>
+                              {!orderWaStatus ? (
+                                <button
+                                  type="button"
+                                  className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gray-200 text-gray-500 text-xs font-bold hover:bg-gray-50"
+                                  disabled={orderWaStatusLoading}
+                                  onClick={() => {
+                                    setOrderWaStatusLoading(true);
+                                    ordersWhatsAppResendApi.status(selectedOrder.id)
+                                      .then(r => setOrderWaStatus(r))
+                                      .catch(() => setOrderWaStatus({ messages: [], normalizedPhone: "" }))
+                                      .finally(() => setOrderWaStatusLoading(false));
+                                  }}
+                                >
+                                  <MessageCircle className="w-3.5 h-3.5" />
+                                  {orderWaStatusLoading ? "Checking…" : "Check WA delivery status"}
+                                </button>
+                              ) : (
+                                <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 space-y-2">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">WhatsApp messages</p>
+                                    <button type="button" className="!min-h-0 text-[10px] text-gray-400 hover:text-gray-600" onClick={() => setOrderWaStatus(null)}>hide</button>
+                                  </div>
+                                  {orderWaStatus.messages.length === 0 ? (
+                                    <p className="m-0 text-xs text-gray-500">No WhatsApp messages sent to this customer yet.</p>
+                                  ) : orderWaStatus.messages.map(m => (
+                                    <div key={m.id} className="flex items-start justify-between gap-2">
+                                      <div className="min-w-0">
+                                        <p className="m-0 text-xs font-bold text-gray-700 truncate">{m.trigger?.replace(/_/g, " ")}</p>
+                                        <p className="m-0 text-[10px] text-gray-400">{formatMoment(m.created_at)}</p>
+                                      </div>
+                                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${m.status === "delivered" || m.status === "read" ? "bg-emerald-100 text-emerald-700" : m.status === "sent" ? "bg-blue-100 text-blue-700" : m.status === "failed" || m.error_message ? "bg-rose-100 text-rose-700" : "bg-gray-100 text-gray-600"}`}>
+                                        {m.error_message ? "failed" : m.status}
+                                      </span>
+                                    </div>
+                                  ))}
+                                  {orderWaStatus.messages.some(m => m.status === "sent" && !m.error_message) && (
+                                    <p className="m-0 text-[10px] text-amber-600 font-bold">⚠ "Sent" = reached WA servers. "Delivered" = confirmed on customer device.</p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          <div className="flex flex-wrap gap-2">
+                            {selectedOrder.status === "Delivered" && (
+                              // Reviews & UGC (Bright, 8 Nov 2026): the customer's own review link, ready for WhatsApp.
+                              <button
+                                type="button"
+                                className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-violet-200 text-violet-700 text-xs font-bold hover:bg-violet-50"
+                                onClick={() => {
+                                  void customerReviewsApi.link(selectedOrder.id).then(async ({ url }) => {
+                                    const first = String(selectedOrder.customer ?? "").trim().split(/\s+/)[0] || "there";
+                                    const text = `Hi ${first}, thank you for your order! How is your ${selectedOrder.productName || "order"}? It would mean a lot if you left a quick review (photos welcome): ${url}`;
+                                    await navigator.clipboard.writeText(text).catch(() => undefined);
+                                    showToast("Review link copied with a message. Paste it into WhatsApp.");
+                                  }).catch((err: any) => showToast(err?.message ?? "Could not make the review link."));
+                                }}
+                              >
+                                <Star className="w-3.5 h-3.5" /> Copy Review Link
+                              </button>
+                            )}
+                            {isOwnerOrAdmin && (
+                              <button
+                                type="button"
+                                className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-amber-200 bg-amber-50 text-amber-700 text-xs font-bold hover:bg-amber-100 transition-colors"
+                                onClick={async () => {
+                                  try {
+                                    const r = await ordersWhatsAppResendApi.resend(selectedOrder.id);
+                                    showToast(r.message ?? "WhatsApp confirmation resent.");
+                                  } catch (err: any) {
+                                    showToast(`Resend failed: ${err?.message ?? "please retry"}.`);
+                                  }
+                                }}
+                              >
+                                <RefreshCw className="w-3.5 h-3.5" /> Resend receipt via WhatsApp
+                              </button>
+                            )}
+                          </div>
+                          {receiptSheetOrderId === selectedOrder.id && (
+                            <OrderReceiptSheet
+                              order={selectedOrder}
+                              onClose={() => setReceiptSheetOrderId(null)}
+                              onEdit={() => { setReceiptSheetOrderId(null); openAdminOrderEditRoute(selectedOrder.id); }}
+                              onOpenWhatsApp={(phone, text) => openWhatsAppPicker({ phone, message: text, customerName: selectedOrder.customer || `order ${selectedOrder.id}`, linkedOrderId: selectedOrder.id })}
+                              showToast={showToast}
+                            />
+                          )}
+                        </div>
+                      )}
+
+	                      </section>
+	                    )}
+	                  </div>
+	                </div>
+
+	                {/* The record, in tabs */}
+	                {(() => {
+	                  const tabs: Array<{ key: typeof orderDetailsTab; label: string; count?: number; show: boolean }> = [
+	                    { key: "timeline", label: "Timeline", show: true },
+	                    { key: "history", label: "History", count: orderAuditLog.length, show: orderAuditLog.length > 0 },
+	                    { key: "notes", label: "Notes", count: orderNotesFor(selectedOrder).length, show: orderNotesFor(selectedOrder).length > 0 },
+	                    { key: "edits", label: "Edits", count: orderFieldEdits.length, show: orderFieldEdits.length > 0 },
+	                    { key: "form", label: "Form", show: hasPublicFormSubmissionDetails(selectedOrder) },
+	                    { key: "journey", label: "Journey", show: Boolean(isOwnerOrAdmin && selectedOrder.sourceCartId) }
+	                  ];
+	                  const visible = tabs.filter((tab) => tab.show);
+	                  const active = visible.some((tab) => tab.key === orderDetailsTab) ? orderDetailsTab : "timeline";
+	                  return (
+	                    <div className="flex flex-col gap-4">
+	                      <div className={`flex gap-1 overflow-x-auto rounded-2xl border p-1 ${orderBorderClass} bg-slate-50 dark:bg-slate-900/40`} role="tablist">
+	                        {visible.map((tab) => (
+	                          <button
+	                            key={tab.key}
+	                            type="button"
+	                            role="tab"
+	                            aria-selected={active === tab.key}
+	                            className={`!min-h-0 shrink-0 rounded-xl px-3.5 py-2 text-sm font-bold transition-colors ${active === tab.key ? "bg-white text-[#1F8FE0] shadow-sm dark:bg-[#0f1822] dark:text-sky-300" : `${orderMutedTextClass} hover:text-slate-900 dark:hover:text-white`}`}
+	                            onClick={() => setOrderDetailsTab(tab.key)}
+	                          >
+	                            {tab.label}{tab.count ? <span className="ml-1.5 rounded-full bg-slate-200/80 px-1.5 py-0.5 text-[10px] font-black text-slate-600 dark:bg-slate-700 dark:text-slate-200">{tab.count}</span> : null}
+	                          </button>
+	                        ))}
+	                      </div>
+	                      {active === "timeline" && (
+	                        <>
 	                {/* Section 5: Order Timeline */}
 	                <section>
 	                  <h3 className={`font-semibold text-lg border-b ${orderBorderClass} pb-2 mb-4 ${orderTitleTextClass}`}>Order Timeline</h3>
@@ -104679,19 +104760,11 @@ ${waybillLineItems(w).length > 1
 	                  })()}
 	                </section>
 
-                  {renderFollowUpWorkSection(selectedOrder)}
-	
-	                {/* Section 6: Notes - only when notes exist */}
-	                {orderNotesFor(selectedOrder).length > 0 && (
-	                  <section>
-	                    <h3 className={`font-semibold text-lg border-b ${orderBorderClass} pb-2 mb-3 ${orderTitleTextClass}`}>Notes</h3>
-	                    <div className="flex flex-col gap-3">
-	                      {orderNotesFor(selectedOrder).map((note) => renderOrderNoteCard(note))}
-	                    </div>
-	                  </section>
-	                )}
-	
-	                	
+
+	                        </>
+	                      )}
+	                      {active === "history" && (
+	                        <>
 		                {/* Status Audit Timeline */}
 		                {orderAuditLog.length > 0 && (
 		                  <section>
@@ -104723,6 +104796,27 @@ ${waybillLineItems(w).length > 1
 		                  </section>
 		                )}
 
+
+	                        </>
+	                      )}
+	                      {active === "notes" && (
+	                        <>
+	                {/* Section 6: Notes - only when notes exist */}
+	                {orderNotesFor(selectedOrder).length > 0 && (
+	                  <section>
+	                    <h3 className={`font-semibold text-lg border-b ${orderBorderClass} pb-2 mb-3 ${orderTitleTextClass}`}>Notes</h3>
+	                    <div className="flex flex-col gap-3">
+	                      {orderNotesFor(selectedOrder).map((note) => renderOrderNoteCard(note))}
+	                    </div>
+	                  </section>
+	                )}
+
+
+
+	                        </>
+	                      )}
+	                      {active === "edits" && (
+	                        <>
 		                {/* Manual Field Edits */}
 		                {orderFieldEdits.length > 0 && (() => {
 		                  const FIELD_LABELS: Record<string, string> = {
@@ -104829,6 +104923,11 @@ ${waybillLineItems(w).length > 1
 		                  );
 		                })()}
 
+
+	                        </>
+	                      )}
+	                      {active === "form" && (
+	                        <>
 		                {/* Section 7: Form Submission + Capture Data */}
 		                {hasPublicFormSubmissionDetails(selectedOrder) && (() => {
 		                  const primarySections = publicFormSubmissionPrimarySectionsFor(selectedOrder);
@@ -104840,20 +104939,6 @@ ${waybillLineItems(w).length > 1
 		                        <div>
 		                          <h3 className={`font-semibold text-base m-0 ${orderTitleTextClass}`}>Form Submission</h3>
 		                          <p className={`m-0 mt-1 text-xs ${orderMutedTextClass}`}>Customer details, order intent, and attribution stay visible. Capture data is tucked away unless you need to inspect it.</p>
-		                        </div>
-		                        <div className="flex flex-wrap gap-2 self-start sm:self-auto">
-		                          <button
-		                            className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-blue-200 text-blue-700 text-sm font-medium hover:bg-blue-50 transition-colors"
-		                            onClick={() => openWhatsAppDispatchForOrder(selectedOrder)}
-		                          >
-		                            <MessageCircle className="w-4 h-4" /> Dispatch to WhatsApp
-		                          </button>
-		                          <button
-		                            className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors"
-		                            onClick={() => copyOrderForGroup(selectedOrder)}
-		                          >
-		                            <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
-		                          </button>
 		                        </div>
 		                      </div>
 		                      {renderPublicFormFieldSections(primarySections)}
@@ -104884,6 +104969,11 @@ ${waybillLineItems(w).length > 1
 		                  );
 		                })()}
 
+
+	                        </>
+	                      )}
+	                      {active === "journey" && (
+	                        <>
                   {isOwnerOrAdmin && selectedOrder.sourceCartId && (
                     <section>
                       <h3 className={`font-semibold text-base border-b ${orderBorderClass} pb-2 mb-3 ${orderTitleTextClass}`}>Customer Journey</h3>
@@ -104995,12 +105085,20 @@ ${waybillLineItems(w).length > 1
                     </section>
                   )}
 
+
+	                        </>
+	                      )}
+	                    </div>
+	                  );
+	                })()}
+
 	                {/* Footer */}
 	                <div className="flex justify-end pt-2 border-t border-gray-100">
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={closeModal}>Close</button>
 	                </div>
 	              </div>
 	            )}
+
 
 	            {modal === "orderWorkflow" && selectedOrder && (
 	              <div className="px-6 py-5 flex flex-col gap-4">
