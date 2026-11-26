@@ -17,6 +17,8 @@ import { lagosTodayKey } from "./salary-spread.js";
 import { tidyOrderState } from "./order-state.js";
 import { fetchAllRowsOrThrow, REPORT_ROW_CEILING } from "./query-limits.js";
 import { daysBetweenKeys, shiftDay } from "./stock-intel-model.js";
+import { loadHubStock } from "./state-restock.js";
+import { stockTotals } from "./state-restock-model.js";
 
 export const MAX_SOLD_RANGE_DAYS = 400;
 
@@ -43,20 +45,26 @@ export async function loadStockSold(args: { orgId: string; branchId: string; sta
   const to = [end, today].sort()[1];
 
   const fields = "id, product_id, product_name, quantity, delivered_date, state, agent_id, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines";
-  const [rows, agentsRes] = await Promise.all([
+  const [rows, agentsRes, hubStock] = await Promise.all([
     fetchAllRowsOrThrow<SoldRow>(() => supabase.from("orders").select(fields)
       .eq("org_id", args.orgId).eq("branch_id", args.branchId).neq("launch_stage", "silent")
       .eq("status", "Delivered").gte("delivered_date", from).lte("delivered_date", to)
       .order("id", { ascending: true }) as any),
-    supabase.from("agents").select("id, name").eq("org_id", args.orgId).eq("branch_id", args.branchId).limit(REPORT_ROW_CEILING)
+    supabase.from("agents").select("id, name").eq("org_id", args.orgId).eq("branch_id", args.branchId).limit(REPORT_ROW_CEILING),
+    loadHubStock(args.orgId, args.branchId)
   ]);
   if (agentsRes.error) throw new Error(`Could not load agents: ${agentsRes.error.message}`);
   const productIds = args.productId ? new Set([args.productId]) : null;
   const built = buildSold(rows, (row) => orderInventoryLinesBySource(row as any).map((l) => ({ productId: l.productId, quantity: Number(l.quantity) || 0, sourceType: l.sourceType, isFreeGift: l.isFreeGift })), { start: from, end: to, productIds, tidyState: (state) => String(tidyOrderState(state) ?? "") });
   const used = new Set(built.lines.map((l) => l.agentId));
+  // Stock RIGHT NOW (not tied to the date range), per state x agent x product,
+  // so the page can total it for whatever products are picked (Bright, 26 Nov).
+  const stock = [...stockTotals(hubStock.filter((row) => !productIds || productIds.has(row.productId)), (row) => `${row.state}::${row.agentId}::${row.productId}`)]
+    .map(([key, total]) => { const [state, agentId, productId] = key.split("::"); return { state, agentId, productId, left: total.left, onTheWay: total.onTheWay }; });
   return {
     today, start, end, from, to,
     ...built,
+    stock,
     agents: (agentsRes.data ?? []).filter((a: any) => used.has(String(a.id))).map((a: any) => ({ id: String(a.id), name: String(a.name ?? "Delivery agent") }))
   };
 }

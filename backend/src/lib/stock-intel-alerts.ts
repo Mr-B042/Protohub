@@ -7,7 +7,13 @@
 //   stock_transfer_chance  an agent is short and a fallback hub (Ogun for
 //                          Ibadan) can spare stock without becoming short.
 //
-// Same figures as the tab (loadStockIntel). Recipients come from Alert
+//   stock_state_restock    a busy state (sold 12+ of a product in 7 days)
+//                          has less than a week left (Bright, 26 Nov 2026:
+//                          "Lagos, Abuja, Rivers, Ogun, Owerri ... send
+//                          notifications for restock to logistics, manager
+//                          and owner"). Rule: state-restock-model.ts.
+//
+// Same figures as the tab (loadStockIntel / loadStockSold). Recipients come from Alert
 // Routing. One alert per hub x product a day (dedupe on the link). No money
 // and no customer details, so any routed role may see it.
 
@@ -18,12 +24,29 @@ import { sendPushToUsers } from "./push.js";
 import { getOrgPushBranding } from "./push-branding.js";
 import { loadStockIntel } from "./stock-intel-data.js";
 import type { FallbackChance, HubRisk } from "./stock-intel-model.js";
+import { loadStockSold } from "./stock-sold.js";
+import { RESTOCK_WINDOW_DAYS, stateRestockNeeds, type StateRestock } from "./state-restock-model.js";
+import { shiftDay } from "./stock-intel-model.js";
 
 const DEDUPE_HOURS = 24;
 const LINK_BASE = "/dashboard/admin/product-trend?tab=stock-intel";
 const place = (state: string) => (state === "FCT Abuja" ? "Abuja" : state);
 
-export type IntelAlert = { type: "stock_hub_risk" | "stock_transfer_chance"; title: string; message: string; link: string; productId: string };
+const ALERT_TYPES = ["stock_hub_risk", "stock_transfer_chance", "stock_state_restock"] as const;
+export type IntelAlert = { type: (typeof ALERT_TYPES)[number]; title: string; message: string; link: string; productId: string };
+
+/** Pure: one alert per busy state x product with less than a week left (tested). */
+export function stateRestockAlerts(needs: StateRestock[], productName: (id: string) => string): IntelAlert[] {
+  return needs.map((need) => {
+    const product = productName(need.productId);
+    return {
+      type: "stock_state_restock" as const, productId: need.productId,
+      title: `Restock ${place(need.state)}: ${product}`,
+      message: `${place(need.state)} sold ${need.sold} ${product} in the last ${RESTOCK_WINDOW_DAYS} days and has ${need.left} left${need.onTheWay > 0 ? ` (+${need.onTheWay} on the way)` : ""}. That is less than a week. Send at least ${need.send}.`,
+      link: `${LINK_BASE}&view=overview&state=${encodeURIComponent(need.state)}&product=${need.productId}`
+    };
+  });
+}
 
 /** Pure: the alerts for one branch's result (tested). */
 export function intelAlerts(args: { hubRisks: HubRisk[]; fallbacks: FallbackChance[]; productName: (id: string) => string }): IntelAlert[] {
@@ -54,12 +77,26 @@ export function intelAlerts(args: { hubRisks: HubRisk[]; fallbacks: FallbackChan
 async function scanBranch(orgId: string, branchId: string) {
   const data = await loadStockIntel({ orgId, branchId, windowDays: 7 });
   const names = new Map(data.products.map((p) => [p.id, p.name]));
-  const alerts = intelAlerts({ hubRisks: data.result.hubRisks, fallbacks: data.result.fallbacks, productName: (id) => names.get(id) ?? "Product" });
+  const productName = (id: string) => names.get(id) ?? "Product";
+  const alerts = intelAlerts({ hubRisks: data.result.hubRisks, fallbacks: data.result.fallbacks, productName });
+  // Busy states with less than a week left. Its own try: a failure here must
+  // not stop the hub alerts above.
+  try {
+    const sold = await loadStockSold({ orgId, branchId, start: shiftDay(data.today, -(RESTOCK_WINDOW_DAYS - 1)), end: data.today });
+    const weekStart = shiftDay(data.today, -(RESTOCK_WINDOW_DAYS - 1));
+    const needs = stateRestockNeeds({
+      sold: sold.lines.filter((line) => line.day >= weekStart && line.day <= data.today),
+      stock: sold.stock.map((row) => ({ locationId: "", ...row }))
+    });
+    alerts.push(...stateRestockAlerts(needs, productName));
+  } catch (err: any) {
+    logger.warn("stock-intel-alerts: state restock check failed", { orgId, branchId, error: err?.message ?? String(err) });
+  }
   if (alerts.length === 0) return 0;
 
   const since = new Date(Date.now() - DEDUPE_HOURS * 3_600_000).toISOString();
   const { data: recent, error: recentError } = await supabase.from("system_notifications").select("link")
-    .eq("org_id", orgId).in("type", ["stock_hub_risk", "stock_transfer_chance"]).gte("created_at", since).limit(5000);
+    .eq("org_id", orgId).in("type", [...ALERT_TYPES]).gte("created_at", since).limit(5000);
   if (recentError) { logger.warn("stock-intel-alerts: dedupe read failed", { orgId, error: recentError.message }); return 0; }
   const seen = new Set((recent ?? []).map((row: any) => String(row.link ?? "")));
   const fresh = alerts.filter((alert) => !seen.has(alert.link));
@@ -67,7 +104,7 @@ async function scanBranch(orgId: string, branchId: string) {
 
   const branding = await getOrgPushBranding(orgId).catch(() => ({ brandName: "Protohub", brandLogo: undefined }));
   let sent = 0;
-  for (const type of ["stock_hub_risk", "stock_transfer_chance"] as const) {
+  for (const type of ALERT_TYPES) {
     const batch = fresh.filter((alert) => alert.type === type);
     if (batch.length === 0) continue;
     const { recipients, push } = await alertRecipients(orgId, type);

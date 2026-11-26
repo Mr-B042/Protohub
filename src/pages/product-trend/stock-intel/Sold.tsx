@@ -229,6 +229,20 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
     if (!pickProducts.length) for (const c of cells) { const e = map.get(c.agentId); if (e) e.orders += c.orders; }
     return [...map.values()].sort((a, b) => b.pieces - a.pieces || b.orders - a.orders);
   }, [lines, cells, pickProducts]);
+  // Stock left right now (Bright, 26 Nov 2026), for the picked products if any.
+  // A waybill sent out of a hub already came off it; "on the way" = still in transit to it.
+  const stockBy = useMemo(() => {
+    const byState = new Map<string, { left: number; onTheWay: number }>();
+    const byAgent = new Map<string, { left: number; onTheWay: number }>();
+    for (const row of sold?.stock ?? []) {
+      if (pickProducts.length && !pickProducts.includes(row.productId)) continue;
+      for (const [map, key] of [[byState, row.state], [byAgent, row.agentId]] as const) {
+        const cur = map.get(key) ?? { left: 0, onTheWay: 0 };
+        cur.left += row.left; cur.onTheWay += row.onTheWay; map.set(key, cur);
+      }
+    }
+    return { byState, byAgent, loaded: Boolean(sold?.stock) };
+  }, [sold, pickProducts]);
   const toggleAgent = (id: string) => setPickAgents((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
   const toggleState = (state: string) => setPickStates((prev) => prev.includes(state) ? prev.filter((x) => x !== state) : [...prev, state]);
 
@@ -355,11 +369,11 @@ export function SoldSection({ ctx }: { ctx: IntelCtx }) {
 
           {stateSummary.length > 0 && (
             <div className="grid gap-3 lg:grid-cols-2">
-              <Ranking title="States" sub="highest to lowest" hint="Click to filter"
-                rows={stateSummary.map((st) => ({ key: st.state, label: place(st.state), pieces: st.pieces, orders: st.orders, note: `${st.agents.size} agent${st.agents.size === 1 ? "" : "s"}`, on: pickStates.includes(st.state) }))}
+              <Ranking title="States" sub="highest to lowest" hint="Click to filter · left = in stock now"
+                rows={stateSummary.map((st) => ({ key: st.state, label: place(st.state), pieces: st.pieces, orders: st.orders, note: `${st.agents.size} agent${st.agents.size === 1 ? "" : "s"}`, on: pickStates.includes(st.state), stock: stockBy.loaded ? stockBy.byState.get(st.state) ?? { left: 0, onTheWay: 0 } : undefined }))}
                 total={totals.pieces} onPick={toggleState} />
-              <Ranking title="Agents" sub="highest to lowest" hint="Click to filter"
-                rows={agentSummary.map((ag) => ({ key: ag.agentId, label: nameOfAgent(ag.agentId), pieces: ag.pieces, orders: ag.orders, note: agentStates.get(ag.agentId) ?? "", on: pickAgents.includes(ag.agentId) }))}
+              <Ranking title="Agents" sub="highest to lowest" hint="Click to filter · left = in stock now"
+                rows={agentSummary.map((ag) => ({ key: ag.agentId, label: nameOfAgent(ag.agentId), pieces: ag.pieces, orders: ag.orders, note: agentStates.get(ag.agentId) ?? "", on: pickAgents.includes(ag.agentId), stock: stockBy.loaded ? stockBy.byAgent.get(ag.agentId) ?? { left: 0, onTheWay: 0 } : undefined }))}
                 total={totals.pieces} onPick={toggleAgent} />
             </div>
           )}
@@ -528,11 +542,12 @@ function MultiPick({ label, all, options, value, onChange }: {
   );
 }
 
-/** A ranked list (highest first): rank, name, share bar, pieces and orders. Clicking a row filters to it. */
+/** A ranked list (highest first): rank, name, share bar, pieces, orders and stock left now. Clicking a row filters to it. */
 function Ranking({ title, sub, hint, rows, total, onPick }: {
   title: string; sub: string; hint: string; total: number; onPick: (key: string) => void;
-  rows: Array<{ key: string; label: string; pieces: number; orders: number; note: string; on: boolean }>;
+  rows: Array<{ key: string; label: string; pieces: number; orders: number; note: string; on: boolean; stock?: { left: number; onTheWay: number } }>;
 }) {
+  const withStock = rows.some((r) => r.stock);
   return (
     <div className="min-w-0 rounded-xl border border-gray-200 p-3 dark:border-slate-700">
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
@@ -544,7 +559,7 @@ function Ranking({ title, sub, hint, rows, total, onPick }: {
           const share = total ? (r.pieces / total) * 100 : 0;
           return (
             <button key={r.key || "none"} type="button" onClick={() => onPick(r.key)} aria-pressed={r.on}
-              className={`!min-h-0 grid w-full grid-cols-[22px_minmax(0,1fr)_minmax(60px,0.8fr)_44px_64px] items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] transition-colors ${r.on ? "bg-sky-50 ring-1 ring-sky-200 dark:bg-sky-500/10" : "hover:bg-gray-50 dark:hover:bg-slate-800"}`}>
+              className={`!min-h-0 grid w-full ${withStock ? "grid-cols-[22px_minmax(0,1fr)_minmax(48px,0.7fr)_40px_58px_92px]" : "grid-cols-[22px_minmax(0,1fr)_minmax(60px,0.8fr)_44px_64px]"} items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] transition-colors ${r.on ? "bg-sky-50 ring-1 ring-sky-200 dark:bg-sky-500/10" : "hover:bg-gray-50 dark:hover:bg-slate-800"}`}>
               <span className={`text-center text-[11px] font-bold ${i < 3 ? "text-[#1F8FE0]" : "text-gray-400"}`}>{i + 1}</span>
               <span className="min-w-0">
                 <span className="block truncate font-semibold text-gray-900 dark:text-slate-100">{r.label}</span>
@@ -556,6 +571,12 @@ function Ranking({ title, sub, hint, rows, total, onPick }: {
               </span>
               <span className="text-right text-[14px] font-black tabular-nums text-gray-900 dark:text-slate-50" title="Pieces sold">{nf(r.pieces)}</span>
               <span className="text-right text-[11px] tabular-nums text-gray-500" title="Orders delivered">{nf(r.orders)} order{r.orders === 1 ? "" : "s"}</span>
+              {withStock && (
+                <span className="flex flex-col items-end" title="In stock right now. Waybills sent out are already taken off; 'on the way' is still in transit to them.">
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-black tabular-nums ${!r.stock || r.stock.left === 0 ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300" : r.stock.left + r.stock.onTheWay < r.pieces ? "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-200" : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"}`}>{nf(r.stock?.left ?? 0)} left</span>
+                  {r.stock && r.stock.onTheWay > 0 && <span className="mt-0.5 whitespace-nowrap text-[10px] font-semibold tabular-nums text-sky-600 dark:text-sky-300">+{nf(r.stock.onTheWay)} on the way</span>}
+                </span>
+              )}
             </button>
           );
         })}

@@ -46,11 +46,11 @@ export type StockIntelData = {
   received: Array<{ locationId: string; productId: string; units: number }>;
 };
 
-const tidyState = (value: string | null | undefined) => String(tidyOrderState((value ?? "").trim().replace(/\s+/g, " ")) ?? "");
+export const tidyState = (value: string | null | undefined) => String(tidyOrderState((value ?? "").trim().replace(/\s+/g, " ")) ?? "");
 const num = (value: unknown) => Math.max(0, Number(value ?? 0) || 0);
 
 type WaybillItem = { productId: string; productName: string; quantity: number };
-function waybillItems(row: any): WaybillItem[] {
+export function waybillItems(row: any): WaybillItem[] {
   if (Array.isArray(row.items) && row.items.length > 0) {
     return row.items
       .map((item: any) => ({ productId: String(item.product_id ?? item.productId ?? ""), productName: String(item.product_name ?? item.productName ?? ""), quantity: num(item.quantity) }))

@@ -6430,6 +6430,8 @@ export type StockSoldData = {
   orderCells: Array<{ day: string; state: string; agentId: string; orders: number }>;
   days: Array<{ day: string; pieces: number; orders: number }>;
   agents: Array<{ id: string; name: string }>;
+  /** Stock RIGHT NOW per state x agent x product (not tied to the dates): left = shelf - defective - missing; onTheWay = in-transit waybills to it. */
+  stock?: Array<{ state: string; agentId: string; productId: string; left: number; onTheWay: number }>;
 };
 export const stockIntelApi = {
   sold: (args: { start: string; end: string; productId?: string | null }) =>

@@ -12,7 +12,7 @@ export type AlertKey =
   | "cart_new" | "cart_assigned"
   | "campaign_no_orders" | "ad_account_low_funds"
   | "email_list_issue"
-  | "stock_hub_risk" | "stock_transfer_chance"
+  | "stock_hub_risk" | "stock_transfer_chance" | "stock_state_restock"
   | "social_lead_new" | "social_lead_reply" | "social_lead_overdue" | "social_lead_follow_up";
 
 /** stay (Bright, 11 Nov 2026): the pop-up stays on screen until closed (Chrome/Edge; other browsers let it slide away). */
@@ -44,6 +44,8 @@ export const ALERTS: Record<AlertKey, AlertDef> = {
   // Email Marketing › Audience Health (Bright, 8 Nov 2026).
   // Product Trend › Stock Intelligence (Bright, 23 Nov 2026). No money or customer details in either.
   stock_hub_risk:        { group: "Stock", label: "Supply hub short for its network", hint: "A hub that restocks other states (Abuja for the north) cannot cover its own week and what the agents it supplies need.", repApplies: false, defaults: { roles: ["Owner", "Admin", "Inventory Manager", "Inventory Manager & Logistics Operations"], rep: false, push: true, stay: false } },
+  // Busy state (12+ sold in 7 days) with less than a week left (Bright, 26 Nov 2026: "logistics, manager and owner").
+  stock_state_restock:   { group: "Stock", label: "Busy state needs restock", hint: "A state that sold 12+ of a product in the last 7 days has less than a week of it left (stock left + on the way).", repApplies: false, defaults: { roles: ["Owner", "Admin", "Manager", "Inventory Manager", "Inventory Manager & Logistics Operations"], rep: false, push: true, stay: false } },
   stock_transfer_chance: { group: "Stock", label: "Stock can come from a nearby agent", hint: "An agent is running short and a fallback hub (Ogun for Ibadan) can spare stock without running short itself.", repApplies: false, defaults: { roles: ["Owner", "Inventory Manager", "Inventory Manager & Logistics Operations"], rep: false, push: true, stay: false } },
   email_list_issue:  { group: "Email", label: "Email list problem", hint: "Audience Health found a new Critical or High problem (bounces, spam complaints, unsubscribes, sending set-up).", repApplies: false, defaults: { roles: ["Owner"], rep: false, push: false, stay: false } },
 };
