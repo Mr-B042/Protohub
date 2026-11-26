@@ -14,75 +14,92 @@
 // Only TECHNICAL texts are rewritten; a route's own plain message passes
 // through untouched (friendlyError returns null).
 
-/** "customer_phone" -> "Customer phone". */
+// Names people see on screen for common database columns. Anything not here
+// is turned from "customer_phone" into "Customer phone".
+const FIELD_LABELS: Record<string, string> = {
+  outcome_code: "What happened", custom_outcome: "Reason", outcome_note: "Note", next_action_at: "Call-back date",
+  customer_reached: "Did you speak to the customer", phone: "Phone number", whatsapp: "WhatsApp number",
+  customer: "Customer name", customer_name: "Customer name", amount: "Amount", quantity: "Quantity",
+  product_id: "Product", agent_id: "Delivery agent", assigned_rep_id: "Sales rep", rep_id: "Sales rep",
+  state: "State", address: "Address", delivery_fee: "Delivery fee", logistics_cost: "Delivery fee",
+  email: "Email", name: "Name", date: "Date", status: "Status", reason: "Reason", note: "Note"
+};
+
+/** "customer_phone" -> "Customer phone" (or the screen name above). */
 export function fieldLabel(column: string): string {
-  const words = column.replace(/_id$/i, "").replace(/[_-]+/g, " ").trim().toLowerCase();
-  return words ? words.charAt(0).toUpperCase() + words.slice(1) : "A required field";
+  const key = column.trim().toLowerCase();
+  if (FIELD_LABELS[key]) return FIELD_LABELS[key];
+  const words = key.replace(/_id$/i, "").replace(/[_-]+/g, " ").trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : "A box on the form";
 }
 
-const OUR_SIDE = "This is a problem on our side, not something you did. Tap Report a Bug (the details are attached automatically) so we can fix it.";
+// Every message follows the same order, in short sentences:
+// 1. what happened  2. whose fault (say "You did nothing wrong" when it is ours)
+// 3. exactly what to do now.
+const REPORT_IT = "Tap Report a Bug so we can fix it. We will see what went wrong.";
 
 type Rule = { test: RegExp; message: (match: RegExpMatchArray) => string };
 
 const RULES: Rule[] = [
   {
     test: /violates check constraint "([^"]+)"/i,
-    message: () => `Not saved: one of your choices is not accepted yet. ${OUR_SIDE} If another option also fits, you can use that for now.`
+    message: () => `Not saved. You did nothing wrong: Protohub can't take one of the options you picked yet. For now, pick another option that fits and save again. ${REPORT_IT}`
   },
   {
     test: /null value in column "([^"]+)"[^]*violates not-null constraint/i,
-    message: (m) => `Not saved: "${fieldLabel(m[1])}" is missing. Fill it in and save again.`
+    message: (m) => `Not saved. "${fieldLabel(m[1])}" is empty. Fill it in, then save again.`
   },
   {
     test: /duplicate key value violates unique constraint/i,
-    message: () => "Not saved again: this already exists. Refresh the page to see it."
+    message: () => "Not saved again, because it's already saved. You may have tapped Save twice, or someone else saved it first. Refresh the page to see it."
   },
   {
     test: /violates foreign key constraint/i,
-    message: () => "Not saved: something this is linked to no longer exists (someone may have deleted or changed it). Refresh the page and try again."
+    message: () => "Not saved. Something you picked (like a product, agent or customer) was deleted or changed by someone else. Refresh the page, pick it again, then save."
   },
   {
     test: /invalid input value for enum [\w.]+: "([^"]*)"/i,
-    message: (m) => `Not saved: "${m[1]}" is not an accepted choice here. Pick one from the list.`
+    message: (m) => `Not saved. "${m[1]}" is not one of the options here. Pick one from the list, then save again.`
   },
   {
     test: /invalid input syntax for type (\w+)(?:: "([^"]*)")?/i,
     message: (m) => {
       const kind = m[1].toLowerCase();
-      const what = /int|numeric|real|double|bigint|smallint/.test(kind) ? "a number"
-        : /date|time/.test(kind) ? "a date or time"
-        : kind === "uuid" ? "a link to another record"
-        : kind === "boolean" ? "a yes/no answer" : "a value";
-      return `Not saved: ${what}${m[2] ? ` ("${m[2]}")` : ""} is in the wrong format. Check what you typed and save again.`;
+      const typed = m[2] ? ` You typed "${m[2]}".` : "";
+      if (/int|numeric|real|double|bigint|smallint/.test(kind)) return `Not saved. A number box has something that isn't a number.${typed} Type numbers only, with no commas, spaces or ₦ sign (write 5000, not 5,000). Then save again.`;
+      if (/date|time/.test(kind)) return `Not saved. A date or time is not filled in properly.${typed} Pick it again from the calendar, then save.`;
+      if (kind === "uuid") return "Not saved. Something you picked from a list didn't come through. Refresh the page, pick it again, then save.";
+      if (kind === "boolean") return "Not saved. A Yes / No question is not answered. Tap Yes or No, then save again.";
+      return `Not saved. Something you typed is not in the right form.${typed} Check what you typed, then save again.`;
     }
   },
   {
     test: /value too long for type/i,
-    message: () => "Not saved: some of the text is too long. Shorten it and save again."
+    message: () => "Not saved. Some of the text you typed is too long. Make it shorter, then save again."
   },
   {
     test: /canceling statement due to statement timeout|statement timeout/i,
-    message: () => "This took too long and was stopped, so nothing was saved. Try again in a minute."
+    message: () => "Not saved. Protohub took too long to answer. You did nothing wrong. Wait a minute and try again."
   },
   {
     test: /JWT expired|invalid JWT|jwt malformed/i,
-    message: () => "Your session expired. Sign out and sign in again, then retry."
+    message: () => "You were signed out because it has been a while. Sign in again, then try once more."
   },
   {
     test: /permission denied for (table|relation|schema|function|sequence|view)|row-level security/i,
-    message: () => "You don't have permission to do this. Ask the Owner if you need it."
+    message: () => "Your account isn't allowed to do this. If you need it for your work, ask the Owner to give you access."
   },
   {
     test: /fetch failed|ECONNRESET|ETIMEDOUT|ECONNREFUSED|socket hang up|upstream connect|network error|Failed to fetch/i,
-    message: () => "Protohub couldn't reach its database just now, so nothing was saved. Try again in a minute."
+    message: () => "Not saved. Protohub lost its connection for a moment. You did nothing wrong. Wait a minute and try again."
   },
   {
     test: /could not find the '[^']+' column|column "?[\w.]+"? (of relation "[^"]+" )?does not exist|relation "[^"]+" does not exist|function [\w.]+\(.*\) does not exist|schema cache|PGRST\d{3}/i,
-    message: () => `Not saved: part of Protohub's database is missing or out of date. ${OUR_SIDE}`
+    message: () => `Not saved. You did nothing wrong: part of Protohub is not set up yet on our side. ${REPORT_IT}`
   },
   {
     test: /^(TypeError|ReferenceError|SyntaxError|RangeError)\b|Cannot read propert(y|ies) of (undefined|null)|^[\w$.]+ is not (a function|defined|iterable)$|Unexpected token .* in JSON|^Internal server error\.?$/i,
-    message: () => `Something went wrong on our side, so this did not go through. ${OUR_SIDE}`
+    message: () => `Not saved. Something broke on our side. You did nothing wrong. Try once more. If it happens again, ${REPORT_IT.charAt(0).toLowerCase()}${REPORT_IT.slice(1)}`
   }
 ];
 
