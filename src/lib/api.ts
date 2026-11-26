@@ -94,7 +94,73 @@ const normalizeWhatsappSettingsResponse = (value: any) => ({
 class ApiError extends Error {
   constructor(public status: number, message: string, public code?: string) {
     super(message);
+    // Every failed request is remembered as an error for the message box (offline, session, server).
+    rememberErrorMessage(message);
   }
+}
+
+// ── Plain-words errors (Bright, 26 Nov 2026) ───────────────
+// "Always give them an error message instead of silent - this will teach them
+// why it didn't proceed and what to do." The server already rewrites database
+// texts (backend lib/friendly-error.ts); these cover what reaches the app
+// another way: form-check messages keyed by a code field name, and any raw
+// technical text that still slips through.
+
+/** "nextActionAt" / "next_action_at" -> "Next action at". */
+function fieldName(key: string) {
+  const words = key.replace(/Id$/, "").replace(/_id$/, "").replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").trim().toLowerCase();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : "This field";
+}
+
+/** One form-check message in plain words. A full sentence from the server stands on its own. */
+export function plainFieldMessage(key: string, message: string) {
+  const text = message.trim();
+  const field = fieldName(key);
+  if (/^required$/i.test(text) || /received (null|undefined)$/i.test(text)) return `"${field}" is missing. Fill it in and save again.`;
+  const expected = text.match(/^Expected (\w+), received (\w+)$/i);
+  if (expected) {
+    const kind = /number|bigint/i.test(expected[1]) ? "a number" : /boolean/i.test(expected[1]) ? "a yes/no answer" : /date/i.test(expected[1]) ? "a date" : "text";
+    return `"${field}" must be ${kind}. Check what you typed and save again.`;
+  }
+  const choice = text.match(/^Invalid enum value\. Expected (.+), received '([^']*)'$/i);
+  if (choice) return `"${field}": "${choice[2]}" is not one of the choices. Pick one from the list.`;
+  if (/^String must contain at least \d+ character/i.test(text)) return `"${field}" is too short or empty. Fill it in and save again.`;
+  if (/^String must contain at most \d+ character/i.test(text)) return `"${field}" is too long. Shorten it and save again.`;
+  if (/^Number must be greater than( or equal to)? 0/i.test(text)) return `"${field}" must be more than 0.`;
+  if (/^Number must be/i.test(text)) return `"${field}": ${text.replace(/^Number must be/i, "must be")}.`;
+  if (/^Invalid (date|datetime|email|url|uuid)$/i.test(text)) return `"${field}" is not a valid ${text.split(" ")[1].toLowerCase()}. Check what you typed.`;
+  if (/^Invalid( input)?$/i.test(text)) return `"${field}" is not valid. Check what you typed and save again.`;
+  // A sentence the server wrote for people (starts with a capital, 4+ words): no code name in front.
+  if (/^[A-Z"“]/.test(text) && text.split(/\s+/).length >= 4) return text;
+  return `${field}: ${text}`;
+}
+
+const TECHNICAL_TEXT = /violates (check|not-null|unique|foreign key) constraint|relation "[^"]+"|column "[^"]+"|invalid input (syntax|value) for|duplicate key value|PGRST\d{3}|schema cache|Cannot read propert(y|ies) of (undefined|null)|^[\w$.]+ is not (a function|defined)$|^(TypeError|ReferenceError|SyntaxError)\b|^Internal server error\.?$/i;
+
+/** Any raw technical text that still reaches the app, in plain words. */
+export function plainErrorMessage(message: string) {
+  return TECHNICAL_TEXT.test(message)
+    ? "Something went wrong on our side, so this did not go through. This is not something you did. Tap Report a Bug (the details are attached automatically) so we can fix it."
+    : message;
+}
+
+// Messages of recent failed saves/loads, so the app's message box can show
+// them as errors (on top of any open form, until dismissed) whatever their
+// first word is. A server message like "Pick the exact date..." is an error
+// to the person even though it does not start with "Failed".
+const recentErrorMessages = new Map<string, number>();
+function rememberErrorMessage(message: string) {
+  const now = Date.now();
+  recentErrorMessages.forEach((at, text) => { if (now - at > 30_000) recentErrorMessages.delete(text); });
+  recentErrorMessages.set(message.trim(), now);
+}
+/** True when this text came from a request that failed in the last 30 seconds (it may be wrapped: "Could not save: <message>."). */
+export function isRecentErrorMessage(text: string) {
+  const now = Date.now();
+  for (const [message, at] of recentErrorMessages) {
+    if (now - at <= 30_000 && message && text.includes(message)) return true;
+  }
+  return false;
 }
 
 function extractErrorMessage(payload: any, fallback: string) {
@@ -106,12 +172,12 @@ function extractErrorMessage(payload: any, fallback: string) {
         const lines = entry
           .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
           .map((item) => item.trim());
-        if (lines.length) parts.push(`${key}: ${lines.join(", ")}`);
+        if (lines.length) parts.push(...lines.map((line) => plainFieldMessage(key, line)));
       } else if (typeof entry === "string" && entry.trim()) {
-        parts.push(`${key}: ${entry.trim()}`);
+        parts.push(plainFieldMessage(key, entry));
       }
     }
-    return parts.length ? parts.join(" • ") : null;
+    return parts.length ? parts.join("\n") : null;
   };
 
   const structured = [
@@ -233,6 +299,7 @@ export function setApiPreviewReadOnly(readOnly: boolean) {
 export class PreviewReadOnlyError extends Error {
   constructor() {
     super("Preview is read-only. Turn it off in the preview bar to make real changes.");
+    rememberErrorMessage(this.message);
     this.name = "PreviewReadOnlyError";
   }
 }
@@ -365,9 +432,11 @@ async function request<T>(
 
   if (!res.ok) {
     const payload = await res.json().catch(() => ({ error: res.statusText }));
+    const shown = plainErrorMessage(extractErrorMessage(payload, res.statusText || "Request failed."));
     // Kept in this tab only, for a bug report to attach (error-recorder.ts).
-    recordFailedRequest({ method, path, status: res.status, message: extractErrorMessage(payload, res.statusText || "Request failed."), requestId: res.headers.get("x-request-id") ?? undefined });
-    throw new ApiError(res.status, extractErrorMessage(payload, res.statusText || "Request failed."), typeof payload?.code === "string" ? payload.code : undefined);
+    // ⚠️ The TECHNICAL text (payload.detail) goes to the bug report; the person sees plain words.
+    recordFailedRequest({ method, path, status: res.status, message: typeof payload?.detail === "string" ? payload.detail : extractErrorMessage(payload, res.statusText || "Request failed."), requestId: res.headers.get("x-request-id") ?? undefined });
+    throw new ApiError(res.status, shown, typeof payload?.code === "string" ? payload.code : undefined);
   }
 
   if (res.status === 204) return undefined as T;
