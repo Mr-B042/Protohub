@@ -3912,7 +3912,8 @@ th {
   position: fixed;
   right: 22px;
   bottom: 22px;
-  z-index: 20;
+  /* Above open forms (.modal-backdrop is z-50): a message under a form is a message nobody sees (BUG-1003). */
+  z-index: 90;
   max-width: min(420px, calc(100vw - 44px));
   min-height: 48px;
   border-radius: 10px;

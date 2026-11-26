@@ -19,6 +19,7 @@ import rateLimit from "express-rate-limit";
 import { cron, memoryAllocator, processMemory, watchRequestMemory } from "./lib/memory-watch.js";
 import { runLateSendAlerts } from "./lib/late-send.js";
 import { logger } from "./lib/logger.js";
+import { friendlyError } from "./lib/friendly-error.js";
 import { runtimeDataProfile } from "./lib/local-safety.js";
 import { syncDueOrderFollowUpNotifications } from "./lib/order-follow-up-notifications.js";
 import { syncDueCartCallbacks } from "./lib/cart-follow-up-notifications.js";
@@ -317,6 +318,26 @@ const authRateLimit = rateLimit({
   skipSuccessfulRequests: true,
   skip: (req) => isLoopbackIp(req.ip),
   message: { error: "Too many attempts. Please try again in 15 minutes." }
+});
+
+// ── Plain-words errors (Bright, 26 Nov 2026) ─────────────
+// ⚠️ Registered BEFORE every route on purpose. ~700 routes send the raw
+// database text as { error }; this rewrites only technical texts into "what
+// happened + what to do" and keeps the original as `detail` for bug reports.
+// A route's own plain message passes through untouched (lib/friendly-error.ts).
+app.use((req, res, next) => {
+  const sendJson = res.json.bind(res);
+  res.json = ((body: any) => {
+    if (res.statusCode >= 400 && body && typeof body === "object" && !Array.isArray(body) && typeof body.error === "string" && !body.detail) {
+      const friendly = friendlyError(body.error);
+      if (friendly) {
+        logger.warn("error rewritten for the user", { method: req.method, path: req.path, status: res.statusCode, detail: friendly.detail });
+        return sendJson({ ...body, error: friendly.message, detail: friendly.detail });
+      }
+    }
+    return sendJson(body);
+  }) as typeof res.json;
+  next();
 });
 
 // ── Body parsing ──────────────────────────────────────────

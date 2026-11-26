@@ -181,6 +181,7 @@ import {
   customerReviewsApi,
   readActiveBranch, writeActiveBranch,
 } from "./lib/api";
+import { isRecentErrorMessage } from "./lib/api";
 import { NIGERIA_STATES, canonicalOrderState, UNPLACED_ORDER_STATE } from "./lib/nigeria";
 import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid,CartRecoverySummary, CartGridRow, CartLogPenaltiesView, CartLogRangePreset, RecoveryCalendarView, RecoveryFollowUpPairs, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, TargetPeriod, TargetProgressView, TargetSuggestion, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, CostChangeImpact, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView, UpsellPerformanceLog } from "./lib/api";
 import {
@@ -13807,18 +13808,35 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // centered, manually-dismissed card instead of the small bottom-right
   // toast - they were disappearing after 3s before anyone could finish
   // reading a multi-clause message like a stock-shortfall explanation.
-  const isErrorToast = (message: string) => /^(failed|cannot|can't|couldn't|unable|error)\b/i.test(message.trim());
+  //
+  // ⚠️ Bright, 26 Nov 2026: "always give them an error message instead of
+  // silent". BUG-1003: a refused save said "new row for relation ..." - no
+  // error word first, so it showed as the small toast with a GREEN TICK, at
+  // z-20 UNDER the open form (z-50), gone in 3s. The rep saw nothing happen.
+  // Now an error is: anything from a failed request (whatever its wording),
+  // an error word first, an instruction ("Choose…", "Pick…", "Say whether…"),
+  // or a "not saved" anywhere. Every message renders above open forms.
+  const isInstructionToast = (message: string) =>
+    /^(choose|pick|select|say|describe|enter|type|add|fill|write|tap|open|tick|upload|attach|wait|please|you (need|must|have to|can't|cannot)|only|the [^.]{0,80} must)\b/i.test(message.trim());
+  const isFailureToast = (message: string) =>
+    /^(failed|cannot|can't|couldn't|could not|unable|error|not saved|nothing was saved)\b/i.test(message.trim())
+    || /\b(not saved|wasn't saved|was not saved|did not save|didn't save|not recorded|was not recorded|did not go through|didn't go through|not sent|was not sent)\b/i.test(message)
+    || isRecentErrorMessage(message);
+  const isErrorToast = (message: string) => isFailureToast(message) || isInstructionToast(message);
   const renderToast = () => {
     if (!toast) return null;
     if (!isErrorToast(toast)) {
-      return (
+      // Portalled above every open form (the error card below does the same).
+      return createPortal(
         <div className="toast" role="status" aria-live="polite">
           <CheckCircle2 />
           <span>{toast}</span>
           <button aria-label="Dismiss message" onClick={() => setToast("")}><X /></button>
-        </div>
+        </div>,
+        document.body
       );
     }
+    const failed = isFailureToast(toast);
     return createPortal(
       <div
         className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
@@ -13835,7 +13853,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <AlertTriangle className="w-6 h-6 text-rose-400" />
             </div>
             <div className="min-w-0 flex-1 pt-0.5">
-              <h3 className="text-base font-black text-white">Something needs your attention</h3>
+              <h3 className="text-base font-black text-white">{failed ? "This didn't go through" : "One thing first"}</h3>
               <p className="mt-2 whitespace-pre-wrap break-words text-sm font-medium leading-relaxed text-rose-100/90">{toast}</p>
             </div>
             <button
@@ -39766,6 +39784,8 @@ ${waybillLineItems(w).length > 1
   };
 
   const savePackage = async () => {
+    // Packages the state-stock rules could not be copied to (said in the save message, never silent).
+    const gateCopyFailed: string[] = [];
     if (packageSaving) return;
     if (!selectedProduct || !packageName.trim()) {
       showToast("Package name is required.");
@@ -39996,7 +40016,7 @@ ${waybillLineItems(w).length > 1
           };
 
           // Fetch ALL packages fresh from server so companion_products are guaranteed populated
-          const freshPkgs: ProductPackage[] = await productsApi.listPackages(_pkgProdId).catch(() => []);
+          const freshPkgs: ProductPackage[] = await productsApi.listPackages(_pkgProdId).catch(() => { gateCopyFailed.push("the other packages"); return []; });
 
           await Promise.all(
             freshPkgs
@@ -40025,9 +40045,10 @@ ${waybillLineItems(w).length > 1
                   payload.requiresStateStock = mainGate.requiresStateStock;
                 }
 
-                return productsApi.updatePackage(_pkgProdId, p.id, payload);
+                return productsApi.updatePackage(_pkgProdId, p.id, payload)
+                  .catch(() => { gateCopyFailed.push(p.name || "a package"); });
               })
-          ).catch(() => {});
+          );
         }
       }
       const saveWarnings = [
@@ -40038,7 +40059,9 @@ ${waybillLineItems(w).length > 1
           ? `${cleanedCompanionTargetCount} stale bundle target${cleanedCompanionTargetCount === 1 ? "" : "s"} cleared.`
           : ""
       ].filter(Boolean);
-      showToast(
+      if (gateCopyFailed.length > 0) {
+        showToast(`Package "${packageRecord.name}" saved, but its state and stock rules were not saved to ${gateCopyFailed.join(", ")}. Open ${gateCopyFailed.length === 1 ? "that package" : "those packages"} and save again.`);
+      } else showToast(
         `Package "${packageRecord.name}" saved ${packageRecord.active ? "and live" : "as draft"}.${saveWarnings.length > 0 ? ` ${saveWarnings.join(" ")}` : ""}`
       );
       resetPackageForm();
@@ -42890,9 +42913,18 @@ ${waybillLineItems(w).length > 1
     if (ids.length === 0) return;
     const totalAmount = followUpMisses.reduce((sum, miss) => sum + (Number(miss.amount ?? 50) || 0), 0);
     showConfirm(`Approve all ${ids.length} pending follow-up ${ids.length === 1 ? "penalty" : "penalties"} (${money(totalAmount)})?`, () => {
+      // ⚠️ Each result is checked (Bright, 26 Nov 2026: never silent). This
+      // used to say "Approved N" even when the saves failed.
+      const snapshot = followUpMisses;
       setFollowUpMisses([]);
-      ids.forEach((id) => followUpKpiApi.approveMiss(id).catch(() => {}));
-      showToast(`Approved ${ids.length} follow-up ${ids.length === 1 ? "penalty" : "penalties"}.`);
+      void Promise.allSettled(ids.map((id) => followUpKpiApi.approveMiss(id))).then((results) => {
+        const failedIds = new Set(ids.filter((_, i) => results[i].status === "rejected"));
+        if (failedIds.size === 0) { showToast(`Approved ${ids.length} follow-up ${ids.length === 1 ? "penalty" : "penalties"}.`); return; }
+        setFollowUpMisses((now) => [...snapshot.filter((m) => failedIds.has(m.id)), ...now]);
+        const reason = (results.find((r) => r.status === "rejected") as PromiseRejectedResult | undefined)?.reason?.message;
+        const done = ids.length - failedIds.size;
+        showToast(`${done > 0 ? `Approved ${done}, but ` : ""}${failedIds.size} ${failedIds.size === 1 ? "was" : "were"} not saved${reason ? `: ${reason}` : "."} They are back on the list - approve them again.`);
+      });
     }, { confirmLabel: "Approve all" });
   };
   const waiveAllFollowUpMisses = () => {
@@ -42900,9 +42932,18 @@ ${waybillLineItems(w).length > 1
     if (ids.length === 0) return;
     const totalAmount = followUpMisses.reduce((sum, miss) => sum + (Number(miss.amount ?? 50) || 0), 0);
     showConfirm(`Waive all ${ids.length} pending follow-up ${ids.length === 1 ? "penalty" : "penalties"} (${money(totalAmount)})? This removes the debt - it won't be charged.`, () => {
+      // ⚠️ Each result is checked (Bright, 26 Nov 2026: never silent). This
+      // used to say "Waived N" even when the saves failed.
+      const snapshot = followUpMisses;
       setFollowUpMisses([]);
-      ids.forEach((id) => followUpKpiApi.waiveMiss(id).catch(() => {}));
-      showToast(`Waived ${ids.length} follow-up ${ids.length === 1 ? "penalty" : "penalties"}.`);
+      void Promise.allSettled(ids.map((id) => followUpKpiApi.waiveMiss(id))).then((results) => {
+        const failedIds = new Set(ids.filter((_, i) => results[i].status === "rejected"));
+        if (failedIds.size === 0) { showToast(`Waived ${ids.length} follow-up ${ids.length === 1 ? "penalty" : "penalties"}.`); return; }
+        setFollowUpMisses((now) => [...snapshot.filter((m) => failedIds.has(m.id)), ...now]);
+        const reason = (results.find((r) => r.status === "rejected") as PromiseRejectedResult | undefined)?.reason?.message;
+        const done = ids.length - failedIds.size;
+        showToast(`${done > 0 ? `Waived ${done}, but ` : ""}${failedIds.size} ${failedIds.size === 1 ? "was" : "were"} not saved${reason ? `: ${reason}` : "."} They are back on the list - waive them again.`);
+      });
     }, { confirmLabel: "Waive all" });
   };
 
@@ -44267,7 +44308,8 @@ ${waybillLineItems(w).length > 1
               lastSeenAt: saved.lastSeenAt ?? saved.last_seen_at ?? u.lastSeenAt,
               permissions: defaultPermissions
             } : u));
-            teamApi.update(saved.id, { permissions: defaultPermissions }).catch(() => undefined);
+            teamApi.update(saved.id, { permissions: defaultPermissions })
+              .catch((err: any) => showToast(`Account created, but its page access was not saved: ${err?.message ?? "connection problem"}. Open User Management, edit this person and save their access again.`));
           }
         }).catch(() => {});
       })
@@ -46973,7 +47015,8 @@ ${waybillLineItems(w).length > 1
               permissions: defaultPermissions,
               marketingAttributionTags: sanitizeMarketingAttributionTags(saved.marketingAttributionTags ?? saved.marketing_attribution_tags ?? marketingTags)
             } : u));
-            teamApi.update(saved.id, { permissions: defaultPermissions }).catch(() => undefined);
+            teamApi.update(saved.id, { permissions: defaultPermissions })
+              .catch((err: any) => showToast(`Account created, but its page access was not saved: ${err?.message ?? "connection problem"}. Open User Management, edit this person and save their access again.`));
           }
         }).catch(() => {});
       })
