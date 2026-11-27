@@ -41308,27 +41308,23 @@ ${waybillLineItems(w).length > 1
     );
   };
 
-  const copyOrdersForGroup = (orders: TrackedOrder[]) => {
-    const text = orders.length === 1
-      ? formatOrderForWhatsAppDispatch(orders[0])
-      : `📦 ${orders.length} ORDERS · SAME CUSTOMER · please deliver together\n\n${orders.map((o) => formatOrderForWhatsAppDispatch(o)).join("\n\n────────────\n\n")}`;
-    void copyText(text, orders.length === 1 ? `${orders[0].id} WhatsApp group copy` : `Orders ${orders.map((o) => `#${o.id}`).join(" + ")} for the WhatsApp group`);
-    for (const order of orders) {
-      if (order.groupSentAt) continue;
-      ordersApi.groupCopied(order.id)
-        .then((result) => {
-          if (!result?.groupSentAt) return;
-          setTrackedOrders((value) => value.map((item) => item.id === order.id ? { ...item, groupSentAt: result.groupSentAt ?? undefined } : item));
-        })
-        .catch(() => {});
-    }
+  const copyOneOrderForGroup = (order: TrackedOrder) => {
+    void copyText(formatOrderForWhatsAppDispatch(order), `${order.id} WhatsApp group copy`);
+    if (order.groupSentAt) return;
+    ordersApi.groupCopied(order.id)
+      .then((result) => {
+        if (!result?.groupSentAt) return;
+        setTrackedOrders((value) => value.map((item) => item.id === order.id ? { ...item, groupSentAt: result.groupSentAt ?? undefined } : item));
+      })
+      .catch(() => {});
   };
   const [sameCustomerCopy, setSameCustomerCopy] = useState<{ order: TrackedOrder; others: TrackedOrder[] } | null>(null);
   const copyOrderForGroup = (order: TrackedOrder) => {
-    // Another order of this customer still to deliver: ask first (copy both / this one).
+    // Another order of this customer still to deliver: tell them first (who else
+    // has the customer), then copy THIS order only (Bright, 26 Nov 2026).
     const open = sameCustomerOrdersFor(order).filter((o) => !["Delivered", "Cancelled", "Failed"].includes(String(o.status ?? "")));
     if (open.length > 0) { setSameCustomerCopy({ order, others: open }); return; }
-    copyOrdersForGroup([order]);
+    copyOneOrderForGroup(order);
   };
   const renderSameCustomerCopyDialog = () => {
     if (!sameCustomerCopy) return null;
@@ -41339,8 +41335,8 @@ ${waybillLineItems(w).length > 1
         customer={order.customer || "This customer"}
         phone={order.phone}
         lines={all.map((o) => ({ id: o.id, product: [o.productName, o.packageName].filter(Boolean).join(" · ") || "Order", rep: repNameOf(o), status: orderStatusLabelFor(o), amount: formatProductMoney(Number(o.amount) || 0, o.currency), isThis: o.id === order.id }))}
-        onCopyAll={() => { setSameCustomerCopy(null); copyOrdersForGroup(all); }}
-        onCopyOne={() => { setSameCustomerCopy(null); copyOrdersForGroup([order]); }}
+        onCopy={() => { setSameCustomerCopy(null); copyOneOrderForGroup(order); }}
+        onOpen={(id) => { setSameCustomerCopy(null); setSelectedOrderId(id); setModal("orderDetails"); }}
         onClose={() => setSameCustomerCopy(null)}
       />
     );
